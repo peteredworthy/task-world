@@ -1,0 +1,232 @@
+"""Tests for CLIAgent construction, info, and prompt building."""
+
+import re
+from datetime import timedelta
+
+from orchestrator.agents.cli import CLIAgent
+from orchestrator.agents.nudger import NudgerConfig
+from orchestrator.agents.types import ExecutionContext
+from orchestrator.config.enums import AgentType
+
+
+def _make_context(
+    api_base_url: str | None = None,
+    prompt: str = "Do the thing",
+) -> ExecutionContext:
+    return ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt=prompt,
+        requirements=["R1"],
+        api_base_url=api_base_url,
+    )
+
+
+def test_cli_agent_info() -> None:
+    agent = CLIAgent(command="claude")
+    assert agent.info.agent_type == AgentType.CLI_SUBPROCESS
+    assert agent.info.name == "claude"
+
+
+def test_cli_agent_info_codex() -> None:
+    agent = CLIAgent(command="codex")
+    assert agent.info.name == "codex"
+
+
+def test_cli_agent_custom_nudger_config() -> None:
+    """Custom nudger config is accepted without error."""
+    config = NudgerConfig(output_timeout=timedelta(seconds=120), max_nudges=5)
+    agent = CLIAgent(command="claude", nudger_config=config)
+    assert agent.info.name == "claude"
+
+
+def test_cli_agent_custom_args() -> None:
+    """Custom args are accepted without error."""
+    agent = CLIAgent(command="python3", args=["-c", "print('hello')"])
+    assert agent.info.name == "python3"
+
+
+def test_stdin_mode_default_close() -> None:
+    """stdin_mode defaults to 'close'."""
+    agent = CLIAgent(command="claude")
+    assert agent._stdin_mode == "close"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_stdin_mode_open() -> None:
+    """stdin_mode can be set to 'open'."""
+    agent = CLIAgent(command="claude", stdin_mode="open")
+    assert agent._stdin_mode == "open"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_callback_channel_default_rest() -> None:
+    """callback_channel defaults to 'rest'."""
+    agent = CLIAgent(command="claude")
+    assert agent._callback_channel == "rest"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_callback_channel_mcp() -> None:
+    """callback_channel can be set to 'mcp'."""
+    agent = CLIAgent(command="claude", callback_channel="mcp")
+    assert agent._callback_channel == "mcp"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_model_parameter_none() -> None:
+    """When model is None, no --model flag is added to args."""
+    agent = CLIAgent(command="claude", args=["-p"])
+    assert agent._args == ["-p"]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_model_parameter_prepended() -> None:
+    """When model is set, --model flag is prepended to args."""
+    agent = CLIAgent(command="claude", model="claude-4", args=["-p"])
+    assert agent._args == ["--model", "claude-4", "-p"]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_model_parameter_no_args() -> None:
+    """When model is set and args is empty, only --model flag is in args."""
+    agent = CLIAgent(command="claude", model="gpt-5-mini")
+    assert agent._args == ["--model", "gpt-5-mini"]  # pyright: ignore[reportPrivateUsage]
+
+
+def test_build_prompt_without_api_url() -> None:
+    """Without api_base_url, prompt is returned unchanged."""
+    ctx = _make_context(api_base_url=None, prompt="Original prompt")
+    result = CLIAgent.build_prompt("Original prompt", ctx)
+    assert result == "Original prompt"
+
+
+def test_build_prompt_with_api_url() -> None:
+    """With api_base_url, prompt is enriched with REST API instructions."""
+    ctx = _make_context(api_base_url="http://localhost:8000")
+    result = CLIAgent.build_prompt("Do the thing", ctx)
+
+    assert "Do the thing" in result
+    assert "Orchestrator REST API" in result
+    assert "http://localhost:8000" in result
+    assert "run-1" in result
+    assert "task-1" in result
+    assert "PATCH" in result
+    assert "POST" in result
+    assert "GET" in result
+    assert "/checklist/" in result
+    assert "/submit" in result
+
+
+def test_build_prompt_strips_trailing_slash() -> None:
+    """Trailing slash on api_base_url is stripped to avoid double slashes."""
+    ctx = _make_context(api_base_url="http://localhost:8000/")
+    result = CLIAgent.build_prompt("prompt", ctx)
+
+    # Should not have double slashes like http://localhost:8000//api/...
+    assert "http://localhost:8000//api" not in result
+    assert "http://localhost:8000/api" in result
+
+
+def test_build_prompt_mcp_channel() -> None:
+    """With callback_channel='mcp', prompt is enriched with MCP instructions."""
+    ctx = _make_context(api_base_url="http://localhost:8000")
+    result = CLIAgent.build_prompt("Do the thing", ctx, callback_channel="mcp")
+
+    assert "Do the thing" in result
+    assert "Orchestrator MCP Server" in result
+    assert "http://localhost:8000/mcp/sse" in result
+    assert "run-1" in result
+    assert "task-1" in result
+    assert "orchestrator_get_requirements" in result
+    assert "orchestrator_update_checklist" in result
+    assert "orchestrator_submit" in result
+    # Should NOT contain REST API instructions
+    assert "PATCH" not in result
+    assert "REST API" not in result
+
+
+def test_build_prompt_mcp_strips_trailing_slash() -> None:
+    """MCP prompt also strips trailing slash from api_base_url."""
+    ctx = _make_context(api_base_url="http://localhost:8000/")
+    result = CLIAgent.build_prompt("prompt", ctx, callback_channel="mcp")
+
+    assert "http://localhost:8000/mcp/sse" in result
+    assert "http://localhost:8000//mcp" not in result
+
+
+def test_build_prompt_mcp_without_api_url() -> None:
+    """Without api_base_url, MCP prompt is returned unchanged."""
+    ctx = _make_context(api_base_url=None)
+    result = CLIAgent.build_prompt("Original", ctx, callback_channel="mcp")
+    assert result == "Original"
+
+
+# --- Prompt ↔ API route sync tests ---
+# These catch drift between the URL patterns hardcoded in build_prompt
+# and the actual API routes registered in FastAPI / MCP.
+
+
+def test_rest_prompt_routes_match_task_router() -> None:
+    """URL patterns in the REST enriched prompt match the actual FastAPI task routes.
+
+    If someone renames an API route but forgets to update build_prompt,
+    this test will fail.
+    """
+    from orchestrator.api.routers.tasks import router
+
+    # Collect all registered route path templates
+    route_paths: set[str] = set()
+    for route in router.routes:
+        if hasattr(route, "path"):
+            route_paths.add(route.path)  # type: ignore[union-attr]
+
+    # Build the enriched prompt and extract the path patterns
+    ctx = _make_context(api_base_url="http://example.com")
+    prompt = CLIAgent.build_prompt("task", ctx, callback_channel="rest")
+
+    # Extract paths mentioned in the prompt (after the base URL)
+    mentioned_paths = re.findall(r"http://example\.com(/api/runs/\S+)", prompt)
+    # Normalize: replace concrete IDs with FastAPI path params
+    normalized: set[str] = set()
+    for path in mentioned_paths:
+        path = path.replace("run-1", "{run_id}")
+        path = path.replace("task-1", "{task_id}")
+        # Remove trailing whitespace / arrow descriptions
+        path = path.split()[0]
+        normalized.add(path)
+
+    # Every path in the prompt must correspond to a registered route
+    for path in normalized:
+        assert path in route_paths, (
+            f"Prompt mentions {path!r} but no matching route found in task router. "
+            f"Registered routes: {sorted(route_paths)}"
+        )
+
+
+def test_mcp_prompt_tool_names_match_registered_tools() -> None:
+    """MCP tool names in the enriched prompt match the tools registered on the MCP server.
+
+    If someone renames an MCP tool but forgets to update build_prompt,
+    this test will fail.
+    """
+    from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS
+
+    registered_names = {t["name"] for t in ORCHESTRATOR_TOOLS}
+
+    # Build the MCP enriched prompt
+    ctx = _make_context(api_base_url="http://example.com")
+    prompt = CLIAgent.build_prompt("task", ctx, callback_channel="mcp")
+
+    # Extract tool names mentioned in the prompt (e.g., orchestrator_get_requirements)
+    mentioned_names = set(re.findall(r"(orchestrator_\w+)", prompt))
+
+    # Every tool name in the prompt must be a real registered tool
+    for name in mentioned_names:
+        assert name in registered_names, (
+            f"Prompt mentions MCP tool {name!r} but it's not registered. "
+            f"Registered tools: {sorted(registered_names)}"
+        )
+
+    # All agent-facing tools should be mentioned in the prompt
+    # (orchestrator_set_grade is verifier-only, so exclude it)
+    agent_tools = registered_names - {"orchestrator_set_grade"}
+    for name in agent_tools:
+        assert name in mentioned_names, (
+            f"Registered tool {name!r} is not mentioned in the MCP enriched prompt"
+        )
