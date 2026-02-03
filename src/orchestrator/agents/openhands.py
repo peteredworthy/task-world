@@ -74,14 +74,14 @@ try:
         Action as _OHAction,
         Observation as _OHObservation,
         TextContent as _OHTextContent,
-        register_tool as _oh_register_tool,
+        register_tool as _oh_register_tool,  # pyright: ignore[reportUnknownVariableType]
     )
     from openhands.sdk.tool.tool import (  # pyright: ignore[reportUnknownVariableType,reportMissingImports]
         ToolDefinition as _OHToolDefinition,
         ToolExecutor as _OHToolExecutor,
     )
 
-    _SDK_AVAILABLE = True
+    _SDK_AVAILABLE = True  # pyright: ignore[reportConstantRedefinition]
 except ImportError:
     pass
 
@@ -225,9 +225,9 @@ def _register_sdk_tools(tool_names: list[str] | None = None) -> None:
     register_builtin_tools(tool_names)
 
     # Register our custom tools in the SDK's global registry.
-    _oh_register_tool("OrcGetRequirementsTool", OrcGetRequirementsTool)  # pyright: ignore[reportPossiblyUnbound]
-    _oh_register_tool("OrcUpdateChecklistTool", OrcUpdateChecklistTool)  # pyright: ignore[reportPossiblyUnbound]
-    _oh_register_tool("OrcSubmitTool", OrcSubmitTool)  # pyright: ignore[reportPossiblyUnbound]
+    _oh_register_tool("OrcGetRequirementsTool", OrcGetRequirementsTool)  # pyright: ignore[reportPossiblyUnboundVariable]
+    _oh_register_tool("OrcUpdateChecklistTool", OrcUpdateChecklistTool)  # pyright: ignore[reportPossiblyUnboundVariable]
+    _oh_register_tool("OrcSubmitTool", OrcSubmitTool)  # pyright: ignore[reportPossiblyUnboundVariable]
 
     _tools_registered = True
 
@@ -274,23 +274,13 @@ class OpenHandsAgent:
         )
 
     async def check_health(self) -> bool:
-        """Check if the OpenHands server is reachable."""
-        url = f"{self._server_url}/api/health"
-        client = self._http_client
-        should_close = False
+        """Check if the local OpenHands agent is usable.
 
-        if client is None:
-            client = httpx.AsyncClient()
-            should_close = True
-
-        try:
-            response = await client.get(url, timeout=5.0)
-            return response.status_code == 200
-        except (httpx.ConnectError, httpx.TimeoutException, OSError):
-            return False
-        finally:
-            if should_close:
-                await client.aclose()
+        Returns True if the openhands-ai SDK is importable and an API key
+        is configured.  No remote server is involved — this agent runs
+        entirely in-process via LocalConversation.
+        """
+        return _SDK_AVAILABLE and bool(self._api_key)
 
     async def execute(
         self,

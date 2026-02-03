@@ -1,7 +1,7 @@
 """Integration tests for agents API endpoint."""
 
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -66,9 +66,10 @@ async def test_list_agents_includes_config_schema(client: AsyncClient) -> None:
     for agent_data in data:
         assert "config_schema" in agent_data
         assert isinstance(agent_data["config_schema"], list)
-        assert len(agent_data["config_schema"]) > 0
+        schema = cast(list[dict[str, Any]], agent_data["config_schema"])
+        assert len(schema) > 0
 
         # Each field has expected keys
-        for field in agent_data["config_schema"]:
+        for field in schema:
             assert "name" in field
             assert "field_type" in field

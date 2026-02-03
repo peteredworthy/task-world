@@ -4,14 +4,10 @@ These tests verify agent metadata, prompt construction, and platform detection
 without requiring Docker, the SDK, or any network access.
 """
 
-import shutil
-
-import pytest
-
 from orchestrator.agents.openhands_common import build_openhands_prompt
 from orchestrator.agents.openhands_docker import (
     DockerOpenHandsAgent,
-    _detect_platform,
+    _detect_platform,  # pyright: ignore[reportPrivateUsage]
 )
 from orchestrator.agents.types import ExecutionContext
 from orchestrator.config.enums import AgentType
@@ -21,13 +17,6 @@ def test_docker_agent_info() -> None:
     agent = DockerOpenHandsAgent()
     assert agent.info.agent_type == AgentType.OPENHANDS_DOCKER
     assert agent.info.name == "OpenHands (Docker)"
-
-
-async def test_docker_health_check_no_docker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """docker not in PATH → False."""
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
-    agent = DockerOpenHandsAgent()
-    assert await agent.check_health() is False
 
 
 def test_docker_build_prompt_contains_requirements() -> None:

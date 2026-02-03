@@ -1,7 +1,7 @@
 """Detect available agent tools on the system."""
 
+import asyncio
 import shutil
-import subprocess
 
 from orchestrator.agents.types import AgentConfigField, AgentOption
 from orchestrator.config.enums import AgentType
@@ -115,7 +115,7 @@ class ToolDetector:
         """Detect all available agent backends."""
         results: list[AgentOption] = []
         results.append(self._detect_openhands_local())
-        results.append(self._detect_openhands_docker())
+        results.append(await self._detect_openhands_docker())
         results.extend(self._detect_cli_tools())
         results.append(self._detect_user_managed())
         return results
@@ -142,7 +142,7 @@ class ToolDetector:
                 config_schema=_OPENHANDS_LOCAL_CONFIG,
             )
 
-    def _detect_openhands_docker(self) -> AgentOption:
+    async def _detect_openhands_docker(self) -> AgentOption:
         """Check if Docker-based OpenHands is available.
 
         Checks three things:
@@ -176,12 +176,14 @@ class ToolDetector:
 
         # 3. Check docker daemon running
         try:
-            result = subprocess.run(
-                ["docker", "info"],
-                capture_output=True,
-                timeout=10,
+            proc = await asyncio.create_subprocess_exec(
+                "docker",
+                "info",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
             )
-            if result.returncode != 0:
+            returncode = await asyncio.wait_for(proc.wait(), timeout=10)
+            if returncode != 0:
                 return AgentOption(
                     agent_type=AgentType.OPENHANDS_DOCKER,
                     name="OpenHands (Docker)",
@@ -190,7 +192,7 @@ class ToolDetector:
                     install_hint="Start Docker daemon",
                     config_schema=_OPENHANDS_DOCKER_CONFIG,
                 )
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        except (TimeoutError, FileNotFoundError, OSError):
             return AgentOption(
                 agent_type=AgentType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",

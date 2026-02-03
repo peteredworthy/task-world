@@ -22,7 +22,6 @@ class TaskStatusChanged(WorkflowEvent):
     task_id: str = ""
     old_status: TaskStatus = TaskStatus.PENDING
     new_status: TaskStatus = TaskStatus.PENDING
-    message: str | None = None
 
 
 @dataclass

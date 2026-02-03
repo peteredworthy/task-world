@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from orchestrator.config.enums import RunStatus, TaskStatus
-from orchestrator.state.models import Run
+from orchestrator.state.models import Attempt, Run
 
 
 def replay_events(run: Run, events: list[dict[str, Any]]) -> Run:
@@ -29,7 +29,7 @@ def replay_events(run: Run, events: list[dict[str, Any]]) -> Run:
         if event_type == "run_status_changed":
             _apply_run_status_changed(run, payload, timestamp)
         elif event_type == "task_status_changed":
-            _apply_task_status_changed(run, payload)
+            _apply_task_status_changed(run, payload, timestamp)
         elif event_type in ("checklist_gate_evaluated", "grades_evaluated"):
             # Informational events — actual state changes come from status events
             pass
@@ -46,7 +46,7 @@ def _apply_run_status_changed(run: Run, payload: dict[str, Any], timestamp: date
         run.started_at = timestamp
 
 
-def _apply_task_status_changed(run: Run, payload: dict[str, Any]) -> None:
+def _apply_task_status_changed(run: Run, payload: dict[str, Any], timestamp: datetime) -> None:
     """Apply a task_status_changed event."""
     task_id = payload["task_id"]
     new_status = TaskStatus(payload["new_status"])
@@ -55,7 +55,26 @@ def _apply_task_status_changed(run: Run, payload: dict[str, Any]) -> None:
         for task in step.tasks:
             if task.id == task_id:
                 task.status = new_status
-                # Increment current_attempt each time task transitions to BUILDING
                 if new_status == TaskStatus.BUILDING:
                     task.current_attempt += 1
+                    task.attempts.append(
+                        Attempt(
+                            attempt_num=task.current_attempt,
+                            started_at=timestamp,
+                        )
+                    )
+                elif (
+                    new_status
+                    in (
+                        TaskStatus.VERIFYING,
+                        TaskStatus.COMPLETED,
+                        TaskStatus.FAILED,
+                    )
+                    and task.attempts
+                ):
+                    task.attempts[-1].completed_at = timestamp
+                    if new_status == TaskStatus.COMPLETED:
+                        task.attempts[-1].outcome = "passed"
+                    elif new_status == TaskStatus.FAILED:
+                        task.attempts[-1].outcome = "failed"
                 return

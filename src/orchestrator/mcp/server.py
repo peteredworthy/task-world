@@ -148,7 +148,7 @@ class OrchestratorMCPServer:
 
         For mounting inside FastAPI, use the ``sse_app`` property instead.
         """
-        await self._mcp.run_sse_async(host=host, port=port)
+        await self._mcp.run_sse_async(host=host, port=port)  # type: ignore[call-arg]
 
     def tool_names(self) -> list[str]:
         """Return list of registered tool names."""

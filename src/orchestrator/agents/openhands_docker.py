@@ -14,11 +14,12 @@ Requires:
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import platform
 import shutil
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from orchestrator.agents.errors import (
     AgentCancelledError,
@@ -43,9 +44,6 @@ from orchestrator.agents.types import (
 )
 from orchestrator.config.enums import AgentType
 
-if TYPE_CHECKING:
-    pass
-
 # ---------------------------------------------------------------------------
 # SDK availability -- two separate guards
 # ---------------------------------------------------------------------------
@@ -62,7 +60,7 @@ try:
         Observation as _OHObservation,
         TextContent as _OHTextContent,
         Tool as _OHTool,
-        register_tool as _oh_register_tool,
+        register_tool as _oh_register_tool,  # pyright: ignore[reportUnknownVariableType]
     )
     from openhands.sdk.tool.tool import (  # pyright: ignore[reportUnknownVariableType,reportMissingImports]
         ToolDefinition as _OHToolDefinition,
@@ -229,9 +227,9 @@ def _register_sdk_tools(tool_names: list[str] | None = None) -> None:
 
     register_builtin_tools(tool_names)
 
-    _oh_register_tool("DockerOrcGetRequirementsTool", DockerOrcGetRequirementsTool)  # pyright: ignore[reportPossiblyUnbound]
-    _oh_register_tool("DockerOrcUpdateChecklistTool", DockerOrcUpdateChecklistTool)  # pyright: ignore[reportPossiblyUnbound]
-    _oh_register_tool("DockerOrcSubmitTool", DockerOrcSubmitTool)  # pyright: ignore[reportPossiblyUnbound]
+    _oh_register_tool("DockerOrcGetRequirementsTool", DockerOrcGetRequirementsTool)  # pyright: ignore[reportPossiblyUnboundVariable]
+    _oh_register_tool("DockerOrcUpdateChecklistTool", DockerOrcUpdateChecklistTool)  # pyright: ignore[reportPossiblyUnboundVariable]
+    _oh_register_tool("DockerOrcSubmitTool", DockerOrcSubmitTool)  # pyright: ignore[reportPossiblyUnboundVariable]
 
     _docker_tools_registered = True
 
@@ -364,7 +362,7 @@ class DockerOpenHandsAgent:
 
         workspace = None
         try:
-            llm = _OHLLM(  # pyright: ignore[reportPossiblyUnbound]
+            llm = _OHLLM(  # pyright: ignore[reportPossiblyUnboundVariable]
                 model=self._model,
                 api_key=SecretStr(self._api_key),
             )
@@ -372,23 +370,23 @@ class DockerOpenHandsAgent:
             from orchestrator.agents.openhands_common import DEFAULT_OPENHANDS_TOOLS
 
             tool_names = self._tools or DEFAULT_OPENHANDS_TOOLS
-            builtin_tools = [_OHTool(name=name) for name in tool_names]  # pyright: ignore[reportPossiblyUnbound]
+            builtin_tools = [_OHTool(name=name) for name in tool_names]  # pyright: ignore[reportPossiblyUnboundVariable]
             orchestrator_tools = [
-                _OHTool(  # pyright: ignore[reportPossiblyUnbound]
+                _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
                     name="DockerOrcGetRequirementsTool",
                     params={"requirements": context.requirements},
                 ),
-                _OHTool(  # pyright: ignore[reportPossiblyUnbound]
+                _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
                     name="DockerOrcUpdateChecklistTool",
                     params={"registry_key": registry_key},
                 ),
-                _OHTool(  # pyright: ignore[reportPossiblyUnbound]
+                _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
                     name="DockerOrcSubmitTool",
                     params={"registry_key": registry_key},
                 ),
             ]
 
-            agent = _OHAgent(  # pyright: ignore[reportPossiblyUnbound]
+            agent = _OHAgent(  # pyright: ignore[reportPossiblyUnboundVariable]
                 llm=llm,
                 tools=builtin_tools + orchestrator_tools,
             )
@@ -403,9 +401,9 @@ class DockerOpenHandsAgent:
             if resolved_platform is not None:
                 workspace_kwargs["platform"] = resolved_platform
 
-            workspace = _DockerWorkspace(**workspace_kwargs)  # pyright: ignore[reportPossiblyUnbound]
+            workspace = _DockerWorkspace(**workspace_kwargs)  # pyright: ignore[reportPossiblyUnboundVariable]
 
-            conversation = _OHConversation(  # pyright: ignore[reportPossiblyUnbound]
+            conversation = _OHConversation(  # pyright: ignore[reportPossiblyUnboundVariable]
                 agent=agent,
                 workspace=workspace,
                 max_iteration_per_run=self._max_iterations,
@@ -437,7 +435,9 @@ class DockerOpenHandsAgent:
                 try:
                     workspace.cleanup()  # pyright: ignore[reportUnknownMemberType]
                 except Exception:
-                    pass
+                    logging.getLogger(__name__).warning(
+                        "Failed to clean up Docker workspace", exc_info=True
+                    )
 
     async def cancel(self) -> None:
         """Cancel execution."""

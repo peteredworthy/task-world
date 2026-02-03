@@ -202,15 +202,16 @@ class WorkflowEngine:
                 )
             )
 
-        self._state.update_run(self._state.get_run(run_id))
-        self._emitter.emit(
-            TaskStatusChanged(
-                timestamp=self._clock.now(),
-                run_id=run_id,
-                event_type="task_status_changed",
-                task_id=task_id,
-                old_status=old_status,
-                new_status=result.new_status,
+        if result.success:
+            self._state.update_run(self._state.get_run(run_id))
+            self._emitter.emit(
+                TaskStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="task_status_changed",
+                    task_id=task_id,
+                    old_status=old_status,
+                    new_status=result.new_status,
+                )
             )
-        )
         return result

@@ -3,6 +3,7 @@
 import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -104,14 +105,15 @@ async def test_server_call_tool(server: OrchestratorMCPServer, service: Workflow
     assert len(result) > 0
 
 
-def _parse_mcp_result(raw: tuple) -> dict:  # type: ignore[type-arg]
+def _parse_mcp_result(raw: object) -> dict[str, Any]:
     """Extract JSON from FastMCP call_tool result.
 
-    call_tool returns (content_blocks_list, metadata_dict).
+    call_tool returns (content_blocks_list, metadata_dict) or a list of content blocks.
     """
-    content_blocks = raw[0]
-    text = content_blocks[0].text
-    return json.loads(text)
+    raw_tuple: Any = raw
+    content_blocks: Any = raw_tuple[0]
+    text: str = content_blocks[0].text
+    return json.loads(text)  # type: ignore[no-any-return]
 
 
 async def test_full_workflow_through_mcp_server(

@@ -9,7 +9,6 @@ LocalConversation runs entirely in-process — no remote server required.
 import os
 from pathlib import Path
 
-import httpx
 import pytest
 
 from orchestrator.agents.errors import AgentNotAvailableError
@@ -60,21 +59,15 @@ async def test_openhands_missing_api_key_raises() -> None:
             os.environ["OPENAI_API_KEY"] = saved
 
 
-async def test_openhands_server_unreachable_health_check() -> None:
-    """check_health returns False when no server is running."""
-
-    def _make_error_transport() -> httpx.MockTransport:
-        def handler(request: httpx.Request) -> httpx.Response:
-            raise httpx.ConnectError("Connection refused")
-
-        return httpx.MockTransport(handler)
-
-    client = httpx.AsyncClient(transport=_make_error_transport())
-    agent = OpenHandsAgent(api_key="test-key", http_client=client)
-
-    assert await agent.check_health() is False
-
-    await client.aclose()
+async def test_openhands_health_check_no_api_key() -> None:
+    """check_health returns False when no API key is set."""
+    saved = os.environ.pop("OPENAI_API_KEY", None)
+    try:
+        agent = OpenHandsAgent(api_key="")
+        assert await agent.check_health() is False
+    finally:
+        if saved is not None:
+            os.environ["OPENAI_API_KEY"] = saved
 
 
 # --- Real execution test (requires API key, no server) ---

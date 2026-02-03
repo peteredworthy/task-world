@@ -53,7 +53,7 @@ async def get_workflow_service(
             loop = asyncio.get_running_loop()
             loop.create_task(manager.broadcast_event(event))
         except RuntimeError:
-            pass  # No running loop (e.g. in tests without async context)
+            pass  # asyncio.get_running_loop() raises when no loop is running (e.g. tests)
 
     emitter.add_listener(_on_event)
 

@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import logging
 import time
 from datetime import datetime
 from typing import Any
@@ -79,6 +80,9 @@ class ConnectionManager:
     async def broadcast_event(self, event: object) -> None:
         """Broadcast a WorkflowEvent to the relevant run's subscribers."""
         if not dataclasses.is_dataclass(event) or isinstance(event, type):
+            logging.getLogger(__name__).debug(
+                "broadcast_event called with non-dataclass event: %s", type(event).__name__
+            )
             return
 
         data: dict[str, Any] = dataclasses.asdict(event)

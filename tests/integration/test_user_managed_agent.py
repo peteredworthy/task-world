@@ -162,9 +162,7 @@ async def test_user_managed_agent_cross_instance(
     run = await service_agent.create_run(_make_run())
     await service_agent.start_run(run.id)
     await service_agent.start_task(run.id, "task-1")
-    await service_agent.update_checklist_item(
-        run.id, "task-1", "R1", ChecklistStatus.DONE
-    )
+    await service_agent.update_checklist_item(run.id, "task-1", "R1", ChecklistStatus.DONE)
 
     agent = UserManagedAgent(service=service_agent, timeout_minutes=1)
 
@@ -262,9 +260,7 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
         registry = app.state.submit_event_registry
         session_factory = app.state.session_factory
         async with session_factory() as agent_session:
-            agent_service = WorkflowService(
-                agent_session, submit_event_registry=registry
-            )
+            agent_service = WorkflowService(agent_session, submit_event_registry=registry)
             agent = UserManagedAgent(service=agent_service, timeout_minutes=1)
 
             ctx = ExecutionContext(
@@ -275,9 +271,7 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
                 requirements=["R1"],
             )
 
-            async def on_update(
-                req_id: str, status: ChecklistStatus, note: str | None
-            ) -> None:
+            async def on_update(req_id: str, status: ChecklistStatus, note: str | None) -> None:
                 pass
 
             async def on_submit() -> None:
@@ -285,9 +279,7 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
 
             async def submit_via_rest_api() -> None:
                 await asyncio.sleep(0.2)
-                resp = await client.post(
-                    f"/api/runs/{run_id}/tasks/{task_id}/submit"
-                )
+                resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
                 assert resp.status_code == 200
                 assert resp.json()["success"] is True
 

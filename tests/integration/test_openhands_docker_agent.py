@@ -5,8 +5,10 @@ Tests are skipped when prerequisites are not met.
 """
 
 import os
+import shutil
 import subprocess
 from collections.abc import Generator
+from typing import Any
 
 import httpx
 import pytest
@@ -14,7 +16,8 @@ import pytest
 from orchestrator.agents.errors import AgentNotAvailableError
 from orchestrator.agents.openhands_docker import (
     DockerOpenHandsAgent,
-    _DOCKER_WORKSPACE_AVAILABLE,
+    _DOCKER_WORKSPACE_AVAILABLE,  # pyright: ignore[reportPrivateUsage]
+    _SDK_AVAILABLE,  # pyright: ignore[reportPrivateUsage]
 )
 from orchestrator.agents.types import ExecutionContext
 
@@ -73,7 +76,7 @@ _needs_workspace_pkg = pytest.mark.skipif(
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_containers() -> Generator[None, None, None]:
+def _cleanup_containers() -> Generator[None, None, None]:  # pyright: ignore[reportUnusedFunction]
     """Remove orphan agent-server containers before and after every test.
 
     Runs before (to handle leftovers from a previously crashed run) and after
@@ -90,10 +93,10 @@ def test_docker_workspace_lifecycle() -> None:
     """DockerWorkspace starts a container, serves health, and cleans up."""
     from openhands.workspace import DockerWorkspace  # pyright: ignore[reportMissingImports]
 
-    from orchestrator.agents.openhands_docker import _detect_platform
+    from orchestrator.agents.openhands_docker import _detect_platform  # pyright: ignore[reportPrivateUsage]
 
     platform = _detect_platform()
-    kwargs: dict[str, str] = {}
+    kwargs: dict[str, Any] = {}
     if platform is not None:
         kwargs["platform"] = platform
 
@@ -122,10 +125,10 @@ def test_docker_workspace_cleanup_on_exception() -> None:
     """Container is cleaned up even when an exception occurs inside the block."""
     from openhands.workspace import DockerWorkspace  # pyright: ignore[reportMissingImports]
 
-    from orchestrator.agents.openhands_docker import _detect_platform
+    from orchestrator.agents.openhands_docker import _detect_platform  # pyright: ignore[reportPrivateUsage]
 
     platform = _detect_platform()
-    kwargs: dict[str, str] = {}
+    kwargs: dict[str, Any] = {}
     if platform is not None:
         kwargs["platform"] = platform
 
@@ -145,11 +148,12 @@ async def test_docker_openhands_health_check() -> None:
     assert await agent.check_health() is True
 
 
-async def test_docker_openhands_health_check_no_docker(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.skipif(
+    shutil.which("docker") is not None,
+    reason="docker is available in PATH; cannot test missing-docker path",
+)
+async def test_docker_openhands_health_check_no_docker() -> None:
     """check_health() returns False when docker is not in PATH."""
-    import shutil
-
-    monkeypatch.setattr(shutil, "which", lambda _name: None)
     agent = DockerOpenHandsAgent()
     assert await agent.check_health() is False
 
@@ -176,60 +180,49 @@ async def test_docker_openhands_missing_api_key() -> None:
         await agent.execute(context, noop_checklist, noop_submit)
 
 
+@pytest.mark.skipif(_SDK_AVAILABLE, reason="SDK is installed; cannot test missing-SDK path")
 async def test_docker_openhands_sdk_not_available() -> None:
     """execute() raises AgentNotAvailableError when SDK is not installed."""
-    import orchestrator.agents.openhands_docker as mod
+    agent = DockerOpenHandsAgent(api_key="test-key")
+    context = ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt="test",
+        requirements=["test"],
+    )
 
-    original = mod._SDK_AVAILABLE
-    try:
-        mod._SDK_AVAILABLE = False  # pyright: ignore[reportConstantRedefinition]
-        agent = DockerOpenHandsAgent(api_key="test-key")
-        context = ExecutionContext(
-            run_id="run-1",
-            task_id="task-1",
-            working_dir="/tmp",
-            prompt="test",
-            requirements=["test"],
-        )
+    async def noop_checklist(req_id: str, status: object, note: str | None) -> None:
+        pass
 
-        async def noop_checklist(req_id: str, status: object, note: str | None) -> None:
-            pass
+    async def noop_submit() -> None:
+        pass
 
-        async def noop_submit() -> None:
-            pass
-
-        with pytest.raises(AgentNotAvailableError, match="SDK not installed"):
-            await agent.execute(context, noop_checklist, noop_submit)
-    finally:
-        mod._SDK_AVAILABLE = original  # pyright: ignore[reportConstantRedefinition]
+    with pytest.raises(AgentNotAvailableError, match="SDK not installed"):
+        await agent.execute(context, noop_checklist, noop_submit)
 
 
+@pytest.mark.skipif(
+    _DOCKER_WORKSPACE_AVAILABLE,
+    reason="openhands-workspace is installed; cannot test missing-workspace path",
+)
+@pytest.mark.skipif(not _SDK_AVAILABLE, reason="SDK not installed")
 async def test_docker_openhands_workspace_not_available() -> None:
     """execute() raises AgentNotAvailableError when workspace package is missing."""
-    import orchestrator.agents.openhands_docker as mod
+    agent = DockerOpenHandsAgent(api_key="test-key")
+    context = ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt="test",
+        requirements=["test"],
+    )
 
-    original_sdk = mod._SDK_AVAILABLE
-    original_ws = mod._DOCKER_WORKSPACE_AVAILABLE
-    try:
-        mod._SDK_AVAILABLE = True  # pyright: ignore[reportConstantRedefinition]
-        mod._DOCKER_WORKSPACE_AVAILABLE = False  # pyright: ignore[reportConstantRedefinition]
-        agent = DockerOpenHandsAgent(api_key="test-key")
-        context = ExecutionContext(
-            run_id="run-1",
-            task_id="task-1",
-            working_dir="/tmp",
-            prompt="test",
-            requirements=["test"],
-        )
+    async def noop_checklist(req_id: str, status: object, note: str | None) -> None:
+        pass
 
-        async def noop_checklist(req_id: str, status: object, note: str | None) -> None:
-            pass
+    async def noop_submit() -> None:
+        pass
 
-        async def noop_submit() -> None:
-            pass
-
-        with pytest.raises(AgentNotAvailableError, match="openhands-workspace"):
-            await agent.execute(context, noop_checklist, noop_submit)
-    finally:
-        mod._SDK_AVAILABLE = original_sdk  # pyright: ignore[reportConstantRedefinition]
-        mod._DOCKER_WORKSPACE_AVAILABLE = original_ws  # pyright: ignore[reportConstantRedefinition]
+    with pytest.raises(AgentNotAvailableError, match="openhands-workspace"):
+        await agent.execute(context, noop_checklist, noop_submit)

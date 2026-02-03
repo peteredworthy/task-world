@@ -61,7 +61,6 @@ class CLIAgent:
         if model is not None:
             base_args = ["--model", model, *base_args]
         self._args = base_args
-        self._model = model
         self._callback_channel = callback_channel
         self._stdin_mode = stdin_mode
         self._nudger_config = nudger_config or NudgerConfig()

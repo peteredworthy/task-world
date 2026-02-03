@@ -10,7 +10,7 @@ from orchestrator.db.event_store import EventStore
 from orchestrator.db.repositories import RunRepository
 from orchestrator.state.models import ChecklistItem, Run, TaskState
 from orchestrator.state.session import SessionStateManager
-from orchestrator.workflow.engine import WorkflowEngine
+from orchestrator.workflow.engine import Clock, WorkflowEngine
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import BufferingEmitter
 from orchestrator.workflow.transitions import TransitionResult
@@ -71,12 +71,13 @@ class WorkflowService:
         event_store: EventStore | None = None,
         event_emitter: PersistentEventEmitter | None = None,
         submit_event_registry: SubmitEventRegistry | None = None,
+        clock: Clock | None = None,
     ) -> None:
         self._session = session
         self._repo = repo or RunRepository(session)
         self._event_store = event_store or EventStore(session)
         self._event_emitter = event_emitter or PersistentEventEmitter(self._event_store)
-        self._clock = _ServiceClock()
+        self._clock = clock or _ServiceClock()
         self._submit_registry = submit_event_registry or SubmitEventRegistry()
 
     def _build_engine(

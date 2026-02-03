@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from orchestrator.agents.openhands import _SDK_AVAILABLE
+from orchestrator.agents.openhands import _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
 from orchestrator.agents.openhands_common import (
     GetRequirementsExecutor,
     SubmitExecutor,
@@ -56,7 +56,7 @@ def test_get_requirements_executor_call_with_factory() -> None:
 @pytest.mark.skipif(not _SDK_AVAILABLE, reason="openhands-ai not installed")
 def test_get_requirements_executor_call_returns_sdk_observation() -> None:
     """Calling the executor with the SDK factory returns a real SDK Observation."""
-    from orchestrator.agents.openhands import _obs_get_req
+    from orchestrator.agents.openhands import _obs_get_req  # pyright: ignore[reportPrivateUsage]
 
     executor = GetRequirementsExecutor(["R1", "R2"], observation_factory=_obs_get_req)
     result = executor(action=None)

@@ -42,5 +42,3 @@ class AgentType(str, Enum):
 
 class RoutineSource(str, Enum):
     LOCAL = "local"
-    PROJECT = "project"
-    EXTERNAL = "external"

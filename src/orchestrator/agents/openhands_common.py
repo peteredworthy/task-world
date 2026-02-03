@@ -11,6 +11,7 @@ rejects any subclass whose ``__qualname__`` contains ``<locals>``.
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any
 
 from orchestrator.agents.types import (
@@ -31,7 +32,7 @@ from orchestrator.config.enums import ChecklistStatus
 
 
 class CallbackRegistry:
-    """Thread-safe registry for non-serializable callbacks.
+    """Registry for non-serializable callbacks.
 
     Each ``execute()`` call registers its callbacks under a unique key.
     The ToolDefinition's ``create()`` method retrieves them by key.
@@ -189,6 +190,9 @@ def extract_metrics(conversation: Any) -> ExecutionMetrics:
             tokens_cache=total_cache,
         )
     except Exception:
+        logging.getLogger(__name__).warning(
+            "Failed to extract metrics from conversation", exc_info=True
+        )
         return ExecutionMetrics()
 
 

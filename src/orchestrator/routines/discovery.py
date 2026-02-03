@@ -5,6 +5,7 @@ from pathlib import Path
 
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.models import RoutineConfig
+from orchestrator.routines.errors import RoutineError
 from orchestrator.routines.loader import load_routine_from_path
 
 
@@ -39,14 +40,14 @@ def discover_routines(
             try:
                 config = load_routine_from_path(yaml_path)
                 routines.append(DiscoveredRoutine(config=config, source=source, path=yaml_path))
-            except Exception:
+            except RoutineError:
                 continue
 
         for yml_path in sorted(directory.glob("*.yml")):
             try:
                 config = load_routine_from_path(yml_path)
                 routines.append(DiscoveredRoutine(config=config, source=source, path=yml_path))
-            except Exception:
+            except RoutineError:
                 continue
 
     return routines
