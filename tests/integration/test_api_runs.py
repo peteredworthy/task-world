@@ -3,10 +3,12 @@
 from pathlib import Path
 
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
@@ -205,6 +207,148 @@ async def test_resume_invalid_state(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
+async def test_resume_with_agent_change(client: AsyncClient) -> None:
+    """Resume a paused run while changing the agent type and config."""
+    created = await _create_run(client)
+    run_id = created["id"]
+
+    # Set initial agent
+    response = await client.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "project_id": "proj-2",
+            "agent_type": "cli_subprocess",
+            "agent_config": {"timeout": 300},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+
+    # Start and pause the run
+    await client.post(f"/api/runs/{run_id}/start")
+    await client.post(f"/api/runs/{run_id}/pause")
+
+    # Resume with a different agent
+    response = await client.post(
+        f"/api/runs/{run_id}/resume",
+        json={
+            "agent_type": "user_managed",
+            "agent_config": {"custom_field": "value"},
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Verify the run is active with new agent
+    assert data["status"] == "active"
+    assert data["agent_type"] == "user_managed"
+    assert data["agent_config"] == {"custom_field": "value"}
+
+    # Verify the agent change event was emitted
+    events_response = await client.get(f"/api/runs/{run_id}/activity")
+    assert events_response.status_code == 200
+    events = events_response.json()["events"]
+
+    # Find the agent_changed event
+    agent_changed_events = [e for e in events if e["event_type"] == "agent_changed"]
+    assert len(agent_changed_events) == 1
+    event = agent_changed_events[0]
+    assert event["payload"]["old_agent"] == "cli_subprocess"
+    assert event["payload"]["new_agent"] == "user_managed"
+    assert event["payload"]["old_agent_config"] == {"timeout": 300}
+    assert event["payload"]["new_agent_config"] == {"custom_field": "value"}
+
+
+async def test_resume_without_agent_change(client: AsyncClient) -> None:
+    """Resume a paused run without changing the agent (no body or empty body)."""
+    created = await _create_run(client)
+    run_id = created["id"]
+
+    # Set initial agent
+    response = await client.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "project_id": "proj-3",
+            "agent_type": "cli_subprocess",
+            "agent_config": {"timeout": 300},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+
+    # Start and pause the run
+    await client.post(f"/api/runs/{run_id}/start")
+    await client.post(f"/api/runs/{run_id}/pause")
+
+    # Resume without changing agent (no request body)
+    response = await client.post(f"/api/runs/{run_id}/resume")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Verify the run is active with the same agent
+    assert data["status"] == "active"
+    assert data["agent_type"] == "cli_subprocess"
+    assert data["agent_config"] == {"timeout": 300}
+
+    # Verify no agent_changed event was emitted
+    events_response = await client.get(f"/api/runs/{run_id}/activity")
+    assert events_response.status_code == 200
+    events = events_response.json()["events"]
+    agent_changed_events = [e for e in events if e["event_type"] == "agent_changed"]
+    assert len(agent_changed_events) == 0
+
+
+async def test_resume_with_config_only_change(client: AsyncClient) -> None:
+    """Resume a paused run while changing only the agent config (not the type)."""
+    # Create a run with initial agent config
+    response = await client.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "project_id": "proj-4",
+            "agent_type": "cli_subprocess",
+            "agent_config": {"timeout": 300, "model": "gpt-4"},
+        },
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+
+    # Start and pause the run
+    await client.post(f"/api/runs/{run_id}/start")
+    await client.post(f"/api/runs/{run_id}/pause")
+
+    # Resume with updated config only (no agent_type change)
+    response = await client.post(
+        f"/api/runs/{run_id}/resume",
+        json={
+            "agent_config": {"timeout": 600, "model": "claude-3"},
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    # Verify the run is active with same agent type but updated config
+    assert data["status"] == "active"
+    assert data["agent_type"] == "cli_subprocess"
+    assert data["agent_config"] == {"timeout": 600, "model": "claude-3"}
+
+    # Verify the agent change event was emitted (config changed even though type didn't)
+    events_response = await client.get(f"/api/runs/{run_id}/activity")
+    assert events_response.status_code == 200
+    events = events_response.json()["events"]
+
+    # Find the agent_changed event
+    agent_changed_events = [e for e in events if e["event_type"] == "agent_changed"]
+    assert len(agent_changed_events) == 1
+    event = agent_changed_events[0]
+    assert event["payload"]["old_agent"] == "cli_subprocess"
+    assert event["payload"]["new_agent"] == "cli_subprocess"
+    assert event["payload"]["old_agent_config"] == {"timeout": 300, "model": "gpt-4"}
+    assert event["payload"]["new_agent_config"] == {"timeout": 600, "model": "claude-3"}
+
+
 async def test_create_run_with_agent_config(client: AsyncClient) -> None:
     """agent_config is stored and returned in the response."""
     response = await client.post(
@@ -227,3 +371,347 @@ async def test_create_run_agent_config_defaults_to_empty(client: AsyncClient) ->
     """agent_config defaults to empty dict when not provided."""
     data = await _create_run(client)
     assert data["agent_config"] == {}
+
+
+# --- B2: cancel_run and recent_hours tests ---
+
+
+async def test_cancel_run_from_active(client: AsyncClient) -> None:
+    """Cancel an active run -> FAILED."""
+    created = await _create_run(client)
+    run_id = created["id"]
+
+    await client.post(f"/api/runs/{run_id}/start")
+
+    response = await client.post(f"/api/runs/{run_id}/cancel")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "failed"
+    assert data["completed_at"] is not None
+
+
+async def test_cancel_run_from_paused(client: AsyncClient) -> None:
+    """Cancel a paused run -> FAILED."""
+    created = await _create_run(client)
+    run_id = created["id"]
+
+    await client.post(f"/api/runs/{run_id}/start")
+    await client.post(f"/api/runs/{run_id}/pause")
+
+    response = await client.post(f"/api/runs/{run_id}/cancel")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "failed"
+    assert data["completed_at"] is not None
+
+
+async def test_cancel_run_from_draft_invalid(client: AsyncClient) -> None:
+    """Cancel from DRAFT returns 409."""
+    created = await _create_run(client)
+    run_id = created["id"]
+
+    response = await client.post(f"/api/runs/{run_id}/cancel")
+    assert response.status_code == 409
+
+
+async def test_cancel_run_not_found(client: AsyncClient) -> None:
+    """Cancel a nonexistent run returns 404."""
+    response = await client.post("/api/runs/nonexistent/cancel")
+    assert response.status_code == 404
+
+
+async def test_list_runs_recent_hours(client: AsyncClient) -> None:
+    """recent_hours filter returns recently created runs."""
+    await _create_run(client)
+
+    # All runs were just created, so recent_hours=1 should return them
+    response = await client.get("/api/runs?recent_hours=1")
+    assert response.status_code == 200
+    assert len(response.json()["runs"]) == 1
+
+    # recent_hours=0 might return nothing (cutoff is exactly now)
+    # but we can't control time precisely, so just verify the param is accepted
+    response = await client.get("/api/runs?recent_hours=24")
+    assert response.status_code == 200
+    assert len(response.json()["runs"]) >= 1
+
+
+# --- E1: Embedded routine tests ---
+
+EMBEDDED_ROUTINE: dict[str, Any] = {
+    "id": "embedded-test",
+    "name": "Embedded Test Routine",
+    "steps": [
+        {
+            "id": "S-01",
+            "title": "Step One",
+            "tasks": [
+                {
+                    "id": "T-01",
+                    "title": "Task One",
+                    "task_context": "Do the embedded thing",
+                    "requirements": [{"id": "R1", "desc": "It works"}],
+                }
+            ],
+        }
+    ],
+}
+
+
+async def test_create_run_with_embedded_routine(client: AsyncClient) -> None:
+    """Create a run using an inline embedded routine dict."""
+    response = await client.post(
+        "/api/runs",
+        json={
+            "project_id": "proj-embedded",
+            "routine_embedded": EMBEDDED_ROUTINE,
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["project_id"] == "proj-embedded"
+    assert data["routine_id"] == "embedded-test"
+    assert data["routine_source"] == "embedded"
+    assert data["routine_embedded"] == EMBEDDED_ROUTINE
+    assert data["status"] == "draft"
+    assert len(data["steps"]) == 1
+    assert len(data["steps"][0]["tasks"]) == 1
+    assert data["steps"][0]["config_id"] == "S-01"
+    assert data["steps"][0]["tasks"][0]["config_id"] == "T-01"
+
+
+async def test_create_run_embedded_routine_persisted(client: AsyncClient) -> None:
+    """Embedded routine is persisted and returned on GET."""
+    create_resp = await client.post(
+        "/api/runs",
+        json={
+            "project_id": "proj-embedded",
+            "routine_embedded": EMBEDDED_ROUTINE,
+        },
+    )
+    assert create_resp.status_code == 201
+    run_id = create_resp.json()["id"]
+
+    get_resp = await client.get(f"/api/runs/{run_id}")
+    assert get_resp.status_code == 200
+    data = get_resp.json()
+    assert data["routine_embedded"] == EMBEDDED_ROUTINE
+    assert data["routine_source"] == "embedded"
+
+
+async def test_create_run_both_routine_id_and_embedded_fails(client: AsyncClient) -> None:
+    """Providing both routine_id and routine_embedded returns 422."""
+    response = await client.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "project_id": "proj-1",
+            "routine_embedded": EMBEDDED_ROUTINE,
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_create_run_neither_routine_id_nor_embedded_fails(client: AsyncClient) -> None:
+    """Providing neither routine_id nor routine_embedded returns 422."""
+    response = await client.post(
+        "/api/runs",
+        json={"project_id": "proj-1"},
+    )
+    assert response.status_code == 422
+
+
+async def test_create_run_embedded_routine_invalid_schema(client: AsyncClient) -> None:
+    """Embedded routine with invalid schema returns 422."""
+    response = await client.post(
+        "/api/runs",
+        json={
+            "project_id": "proj-1",
+            "routine_embedded": {"id": "bad", "name": "Bad"},
+            # Missing required 'steps' field
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_create_run_embedded_routine_with_ref_rejected(client: AsyncClient) -> None:
+    """Embedded routine containing 'ref' key is rejected by RoutineConfig validator."""
+    response = await client.post(
+        "/api/runs",
+        json={
+            "project_id": "proj-1",
+            "routine_embedded": {
+                "id": "bad-ref",
+                "name": "Bad Ref Routine",
+                "ref": "some-template",
+                "steps": [
+                    {
+                        "id": "S-01",
+                        "title": "Step",
+                        "tasks": [
+                            {
+                                "id": "T-01",
+                                "title": "Task",
+                                "task_context": "Context",
+                            }
+                        ],
+                    }
+                ],
+            },
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_create_run_embedded_with_config(client: AsyncClient) -> None:
+    """Embedded routine run can include runtime config."""
+    routine_with_inputs: dict[str, Any] = {
+        "id": "with-inputs",
+        "name": "Routine With Inputs",
+        "inputs": [
+            {"name": "target_branch", "required": True},
+        ],
+        "steps": [
+            {
+                "id": "S-01",
+                "title": "Step",
+                "tasks": [
+                    {
+                        "id": "T-01",
+                        "title": "Task",
+                        "task_context": "Deploy to branch",
+                        "requirements": [{"id": "R1", "desc": "Deployed"}],
+                    }
+                ],
+            }
+        ],
+    }
+    response = await client.post(
+        "/api/runs",
+        json={
+            "project_id": "proj-1",
+            "routine_embedded": routine_with_inputs,
+            "config": {"target_branch": "main"},
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["config"]["target_branch"] == "main"
+
+
+async def test_create_run_embedded_missing_required_input(client: AsyncClient) -> None:
+    """Embedded routine with missing required input returns 422."""
+    routine_with_inputs: dict[str, Any] = {
+        "id": "with-inputs",
+        "name": "Routine With Inputs",
+        "inputs": [
+            {"name": "target_branch", "required": True},
+        ],
+        "steps": [
+            {
+                "id": "S-01",
+                "title": "Step",
+                "tasks": [
+                    {
+                        "id": "T-01",
+                        "title": "Task",
+                        "task_context": "Deploy to branch",
+                    }
+                ],
+            }
+        ],
+    }
+    response = await client.post(
+        "/api/runs",
+        json={
+            "project_id": "proj-1",
+            "routine_embedded": routine_with_inputs,
+            # No config with target_branch
+        },
+    )
+    assert response.status_code == 422
+
+
+async def test_run_response_includes_cost_estimation(client: AsyncClient) -> None:
+    """Test that cost estimation is populated when token data exists."""
+    data = await _create_run(client)
+    run_id = data["id"]
+
+    # Initially, no tokens, so no cost estimate
+    response = await client.get(f"/api/runs/{run_id}")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["total_tokens_read"] == 0
+    assert data["total_tokens_write"] == 0
+    assert data["estimated_cost_usd"] is None
+    assert data["cost_disclaimer"] is None
+
+    # Simulate task execution by updating the run state with token data
+    from orchestrator.db.repositories import RunRepository
+
+    app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
+    session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
+
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = await repo.get(run_id)
+        run.total_tokens_read = 100000
+        run.total_tokens_write = 50000
+        run.total_tokens_cache = 10000
+        await repo.save(run)
+        await session.commit()
+
+    # Now fetch the run again
+    response = await client.get(f"/api/runs/{run_id}")
+    assert response.status_code == 200
+    data = response.json()
+
+    # Should now have cost estimation
+    assert data["total_tokens_read"] == 100000
+    assert data["total_tokens_write"] == 50000
+    assert data["total_tokens_cache"] == 10000
+    assert data["estimated_cost_usd"] is not None
+    assert data["estimated_cost_usd"] > 0
+    assert data["cost_disclaimer"] is not None
+    assert "gpt-4o" in data["cost_disclaimer"]
+    assert "Estimate only" in data["cost_disclaimer"]
+
+
+# --- Agent error handler tests ---
+
+
+async def test_agent_error_handlers_registered(client: AsyncClient) -> None:
+    """Verify that agent error handlers are registered in the FastAPI app.
+
+    Note: These handlers return specific HTTP status codes:
+    - AgentNotAvailableError -> 503 Service Unavailable
+    - AgentExecutionError -> 500 Internal Server Error
+    - AgentCancelledError -> 499 Client Closed Request
+
+    However, these errors are raised during agent.execute() calls, which happen
+    outside the API request/response cycle. The current architecture does not
+    have API endpoints that directly execute agents (agents are executed
+    externally or via background tasks).
+
+    This test verifies the handlers exist but cannot trigger them through the API.
+    Full end-to-end testing would require:
+    1. An endpoint that triggers agent execution synchronously, OR
+    2. A background task system that can propagate exceptions to API responses
+
+    For now, we verify handler registration and document the gap.
+    """
+    from orchestrator.agents.errors import (
+        AgentCancelledError,
+        AgentExecutionError,
+        AgentNotAvailableError,
+    )
+
+    app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
+
+    # Verify error handlers are registered
+    error_handlers = app.exception_handlers
+
+    # Check that our agent error types have handlers
+    assert AgentNotAvailableError in error_handlers
+    assert AgentExecutionError in error_handlers
+    assert AgentCancelledError in error_handlers

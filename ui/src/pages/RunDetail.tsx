@@ -1,0 +1,407 @@
+import { useState, useCallback, useEffect } from 'react';
+import { useParams, Link } from 'react-router-dom';
+import { useRun, useRoutine, usePauseRun } from '../hooks/useApi';
+import { useActivityStream } from '../hooks/useActivityStream';
+import { usePendingActions } from '../hooks/usePendingActions';
+import { WebSocketProvider } from '../context/WebSocketContext';
+import { useWebSocketStatus } from '../hooks/useWebSocketStatus';
+import { RunStatusBadge } from '../components/StatusBadge';
+import { ConnectionIndicator } from '../components/ConnectionIndicator';
+import { AgentGuidancePanel } from '../components/guidance/AgentGuidancePanel';
+import { ResumeDialog } from '../components/run/ResumeDialog';
+import { ClarificationModal } from '../components/detail/ClarificationModal';
+import { ApprovalModal } from '../components/detail/ApprovalModal';
+import { Spinner } from '../components/Spinner';
+import { MetricsBar } from '../components/detail/MetricsBar';
+import { ActivityFeed } from '../components/detail/ActivityFeed';
+import { UpcomingPlan } from '../components/detail/UpcomingPlan';
+import { classifyTasks } from '../lib/activity';
+import { formatRelativeTime } from '../lib/format';
+import { AgentIcon } from '../components/AgentIcon';
+import { ApiError } from '../api/client';
+import type { RunResponse } from '../types';
+import type { StepSummarySchema } from '../types/routines';
+import type { PendingAction } from '../types/clarifications';
+
+/** Compact horizontal progress bar showing step completion at a glance. */
+function StepProgressBar({
+  run,
+  routineSteps,
+}: {
+  run: RunResponse;
+  routineSteps: StepSummarySchema[] | undefined;
+}) {
+  const isTerminal = run.status === 'completed' || run.status === 'failed';
+
+  return (
+    <div className="flex items-center gap-1" role="progressbar" aria-label="Step progress">
+      {run.steps.map((step, i) => {
+        const isCurrent = i === run.current_step_index;
+        const completed = step.completed;
+        const isFuture = i > run.current_step_index && !completed;
+        const hasFailed = step.tasks.some(t => t.status === 'failed');
+        const stepTitle = step.title || routineSteps?.[i]?.title || step.config_id;
+        const doneCount = step.tasks.filter(t => t.status === 'completed').length;
+        const totalCount = step.tasks.length;
+
+        let bgClass = 'bg-border';
+        if (hasFailed) bgClass = 'bg-status-failed';
+        else if (completed) bgClass = 'bg-status-completed';
+        else if (isCurrent) bgClass = 'bg-accent-purple';
+
+        // Only pulse the current step when the run is actively running
+        const shouldPulse = isCurrent && !hasFailed && !isTerminal;
+
+        return (
+          <div
+            key={step.id}
+            className="flex-1 group relative"
+            title={`${stepTitle} (${doneCount}/${totalCount})`}
+          >
+            <div
+              className={
+                'h-2 rounded-full transition-colors ' +
+                bgClass +
+                (isFuture ? ' opacity-30' : '') +
+                (shouldPulse ? ' animate-pulse-dot' : '')
+              }
+            />
+            {/* Tooltip on hover */}
+            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-bg-elevated border border-border rounded text-[10px] text-text-secondary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
+              S{i + 1}: {stepTitle} ({doneCount}/{totalCount})
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Detect if the run is stuck: active but a task has failed with no remaining attempts. */
+function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | null } {
+  if (run.status !== 'active') return { stuck: false, failedTask: null };
+  for (const step of run.steps) {
+    const failed = step.tasks.find(
+      t => t.status === 'failed' && t.current_attempt >= t.max_attempts,
+    );
+    if (failed) {
+      return { stuck: true, failedTask: failed.title || failed.config_id };
+    }
+  }
+  return { stuck: false, failedTask: null };
+}
+
+function RunDetailInner({ runId }: { runId: string }) {
+  const { data: run, isLoading, error } = useRun(runId);
+  const { data: routine } = useRoutine(run?.routine_id);
+  const { data: activityData } = useActivityStream(runId);
+  const { data: pendingActionsData } = usePendingActions(runId);
+  const { status: wsStatus, reconnect: wsReconnect } = useWebSocketStatus();
+  const pauseRun = usePauseRun();
+  const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+  const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
+
+  const handleMutationError = useCallback((action: string) => (err: Error) => {
+    const detail = err instanceof ApiError
+      ? err.message
+      : 'Something went wrong';
+    setMutationError(`Failed to ${action} run: ${detail}`);
+  }, []);
+
+  // Auto-open modal when a pending action appears
+  useEffect(() => {
+    if (!pendingActionsData || pendingActionsData.length === 0) {
+      return;
+    }
+    // Only auto-open if no modal is currently open
+    if (!selectedPendingAction) {
+      setSelectedPendingAction(pendingActionsData[0]);
+    }
+  }, [pendingActionsData, selectedPendingAction]);
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Spinner />
+      </div>
+    );
+  }
+
+  if (error || !run) {
+    return (
+      <div className="rounded-md bg-status-failed/10 border border-status-failed/30 p-4">
+        <p className="text-sm text-status-failed">Failed to load run.</p>
+        <Link to="/" className="text-sm text-accent-purple hover:text-accent-purple/80 mt-2 inline-block">
+          Back to dashboard
+        </Link>
+      </div>
+    );
+  }
+
+  const routineName = routine?.name || run.routine_id || 'Run';
+  const routineSteps: StepSummarySchema[] | undefined = routine?.steps;
+  const events = activityData?.events ?? [];
+
+  // Classify tasks into active (have events or non-pending status) vs upcoming
+  const { active: activeTasks, upcoming } = classifyTasks(run, events);
+
+  // Check if the run is stuck (failed task blocking progress)
+  const { stuck: isStuck, failedTask: stuckTaskName } = isRunStuck(run);
+
+  // Find active task for guidance panel
+  const activeTask = run.agent_type === 'user_managed'
+    ? run.steps.flatMap(s => s.tasks).find(t => t.status === 'building' || t.status === 'verifying')
+    : null;
+
+  // Handle task selection from ActivityFeed
+  const handleTaskSelect = useCallback((taskId: string) => {
+    // Find the task's pending action if any
+    const pendingAction = pendingActionsData?.find(a => a.task_id === taskId);
+    if (pendingAction) {
+      setSelectedPendingAction(pendingAction);
+    }
+  }, [pendingActionsData]);
+
+  return (
+    <div className="flex h-full">
+      {/* Main content area */}
+      <div className="flex-1 min-w-0 overflow-y-auto">
+        <div className="p-4 sm:p-6">
+          {/* Breadcrumb */}
+          <nav className="mb-4" aria-label="Breadcrumb">
+            <Link
+              to="/"
+              className="text-sm text-text-muted hover:text-text-primary transition-colors"
+            >
+              {'\u2190'} Runs
+            </Link>
+            <span className="text-text-muted mx-2">/</span>
+            <span className="text-sm text-text-secondary">{routineName}</span>
+          </nav>
+
+          {/* Title row */}
+          <div className="flex items-start justify-between mb-1">
+            <div>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-bold text-text-primary">
+                  {routineName}
+                </h1>
+                <RunStatusBadge status={run.status} />
+                <ConnectionIndicator status={wsStatus} onReconnect={wsReconnect} />
+              </div>
+              <div className="flex items-center gap-3 mt-1.5">
+                <span className="inline-flex items-center rounded bg-bg-elevated px-2 py-0.5 text-[11px] font-mono text-text-muted">
+                  {run.id.slice(0, 8)}
+                </span>
+                {run.started_at && (
+                  <span className="text-xs text-text-muted">
+                    Started {formatRelativeTime(run.started_at)}
+                  </span>
+                )}
+                {!run.started_at && (
+                  <span className="text-xs text-text-muted">
+                    Created {formatRelativeTime(run.created_at)}
+                  </span>
+                )}
+              </div>
+              {run.agent_type && (
+                <div className="flex items-center gap-2 mt-1.5 text-xs text-text-secondary">
+                  <span className="text-text-muted">Agent:</span>
+                  <div className="flex items-center gap-1.5">
+                    <AgentIcon icon={run.agent_icon} className="h-3.5 w-3.5" />
+                    <span className="font-medium">{run.agent_type_display}</span>
+                    {'model' in run.agent_config && typeof run.agent_config.model === 'string' && (
+                      <>
+                        <span className="text-text-muted">·</span>
+                        <span className="text-text-muted">
+                          Model: {run.agent_config.model as string}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2 shrink-0">
+              {run.status === 'active' && (
+                <button
+                  onClick={() => {
+                    setMutationError(null);
+                    pauseRun.mutate(run.id, { onError: handleMutationError('pause') });
+                  }}
+                  disabled={pauseRun.isPending}
+                  className="px-3 py-1.5 text-xs font-medium text-status-paused bg-status-paused/10 border border-status-paused/30 rounded-md hover:bg-status-paused/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Pause this run"
+                >
+                  {pauseRun.isPending ? 'Pausing...' : 'Pause'}
+                </button>
+              )}
+              {run.status === 'paused' && (
+                <button
+                  onClick={() => setShowResumeDialog(true)}
+                  className="px-3 py-1.5 text-xs font-medium text-text-primary bg-accent-purple rounded-md hover:bg-accent-purple/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Resume this run"
+                >
+                  Resume
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Metrics Bar */}
+          <div className="mt-4 mb-6">
+            <MetricsBar run={run} />
+          </div>
+
+          {/* Mutation error banner */}
+          {mutationError && (
+            <div className="mb-6 rounded-md bg-status-failed/10 border border-status-failed/30 p-4 flex items-center justify-between">
+              <p className="text-sm text-status-failed">{mutationError}</p>
+              <button
+                onClick={() => setMutationError(null)}
+                className="ml-4 text-status-failed hover:text-status-failed/80"
+                aria-label="Dismiss error"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* Pending actions banner */}
+          {pendingActionsData && pendingActionsData.length > 0 && (
+            <div className="mb-6 rounded-md bg-yellow-50 border border-yellow-300 px-4 py-3 flex items-start gap-3">
+              <svg className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+              </svg>
+              <div className="flex-1">
+                <p className="text-sm font-medium text-yellow-800">Action required</p>
+                <p className="text-xs text-yellow-700 mt-0.5">
+                  {pendingActionsData.length === 1
+                    ? 'This run needs your input to continue.'
+                    : `${pendingActionsData.length} tasks need your input to continue.`}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedPendingAction(pendingActionsData[0])}
+                className="px-3 py-1.5 text-xs font-medium text-yellow-800 bg-yellow-100 border border-yellow-300 rounded-md hover:bg-yellow-200 transition-colors"
+              >
+                Review
+              </button>
+            </div>
+          )}
+
+          {/* Stuck-run warning banner */}
+          {isStuck && (
+            <div className="mb-6 rounded-md bg-status-failed/10 border border-status-failed/30 px-4 py-3 flex items-start gap-3">
+              <svg className="h-5 w-5 text-status-failed shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <div>
+                <p className="text-sm font-medium text-status-failed">Run blocked</p>
+                <p className="text-xs text-text-secondary mt-0.5">
+                  Task <span className="font-medium">{stuckTaskName}</span> failed after exhausting all attempts. This run cannot make further progress.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Agent guidance panel for user_managed */}
+          {activeTask && (
+            <div className="mb-6">
+              <AgentGuidancePanel
+                run={run}
+                task={activeTask}
+                onCancel={() => {
+                  setMutationError(null);
+                  pauseRun.mutate(run.id, { onError: handleMutationError('pause') });
+                }}
+              />
+            </div>
+          )}
+
+          {/* Step progress bar */}
+          <div className="mb-4">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wide">
+                Progress
+              </h2>
+              <span className="text-[11px] text-text-muted">
+                {run.status === 'completed'
+                  ? `All ${run.steps.length} steps done`
+                  : run.status === 'failed'
+                    ? `Failed at step ${run.current_step_index + 1} of ${run.steps.length}`
+                    : `Step ${run.current_step_index + 1} of ${run.steps.length}`}
+              </span>
+            </div>
+            <StepProgressBar run={run} routineSteps={routineSteps} />
+          </div>
+
+          {/* Activity Feed */}
+          <div className="mb-6">
+            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wide mb-3">
+              Activity
+            </h2>
+            <ActivityFeed
+              events={events}
+              activeTasks={activeTasks}
+              run={run}
+              onSelectTask={handleTaskSelect}
+              selectedTaskId={selectedPendingAction?.task_id ?? null}
+            />
+          </div>
+
+          {/* Upcoming Plan */}
+          {upcoming.length > 0 && (
+            <div className="mb-6">
+              <UpcomingPlan
+                tasks={upcoming}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+
+      <ResumeDialog
+        open={showResumeDialog}
+        run={run}
+        onClose={() => setShowResumeDialog(false)}
+      />
+
+      {/* Clarification Modal */}
+      {selectedPendingAction?.action_type === 'clarification' && selectedPendingAction.clarification_request && (
+        <ClarificationModal
+          open={true}
+          onClose={() => setSelectedPendingAction(null)}
+          clarificationRequest={selectedPendingAction.clarification_request}
+          runId={runId}
+          taskId={selectedPendingAction.task_id}
+        />
+      )}
+
+      {/* Approval Modal */}
+      {selectedPendingAction?.action_type === 'approval' && (
+        <ApprovalModal
+          open={true}
+          onClose={() => setSelectedPendingAction(null)}
+          pendingAction={selectedPendingAction}
+          runId={runId}
+        />
+      )}
+    </div>
+  );
+}
+
+export function RunDetail() {
+  const { runId } = useParams<{ runId: string }>();
+
+  return (
+    <WebSocketProvider runId={runId}>
+      <RunDetailInner runId={runId!} />
+    </WebSocketProvider>
+  );
+}

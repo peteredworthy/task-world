@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.models import RoutineConfig, StepConfig, TaskConfig
+from orchestrator.state.errors import MissingRequiredInputError
 from orchestrator.state.models import (
     ChecklistItem,
     Run,
@@ -40,6 +41,7 @@ def create_task_state(
     return TaskState(
         id=id_generator(),
         config_id=task_config.id,
+        title=task_config.title,
         checklist=create_checklist_from_requirements(task_config),
         max_attempts=task_config.retry.max_attempts,
     )
@@ -55,8 +57,32 @@ def create_step_state(
     return StepState(
         id=id_generator(),
         config_id=step_config.id,
+        title=step_config.title,
         tasks=tasks,
     )
+
+
+def validate_routine_inputs(routine: RoutineConfig, config: dict[str, Any]) -> dict[str, Any]:
+    """Validate and enrich config with defaults from routine inputs.
+
+    Args:
+        routine: The routine configuration with input definitions
+        config: User-provided configuration values
+
+    Returns:
+        Enriched config dict with defaults applied for missing optional inputs
+
+    Raises:
+        MissingRequiredInputError: If a required input is not provided
+    """
+    enriched = dict(config)
+    for inp in routine.inputs:
+        if inp.name not in enriched:
+            if inp.required:
+                raise MissingRequiredInputError(inp.name)
+            if inp.default is not None:
+                enriched[inp.name] = inp.default
+    return enriched
 
 
 def create_run_from_routine(
@@ -82,6 +108,7 @@ def create_run_from_routine(
     Returns:
         A new Run in DRAFT status
     """
+    validated_config = validate_routine_inputs(routine, config or {})
     run_id = id_generator()
 
     steps = [create_step_state(step_config, id_generator) for step_config in routine.steps]
@@ -92,6 +119,6 @@ def create_run_from_routine(
         routine_id=routine.id,
         routine_source=routine_source,
         routine_sha=routine_sha,
-        config=config or {},
+        config=validated_config,
         steps=steps,
     )

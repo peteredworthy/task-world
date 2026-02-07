@@ -1,0 +1,526 @@
+import { useState, useEffect, useRef } from 'react';
+import { useRoutines, useAgents, useCreateRun, useStartRun } from '../../hooks/useApi';
+import { Spinner } from '../Spinner';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
+import { useCreateRunModal } from '../../hooks/useCreateRunModal';
+import type { AgentOption } from '../../types/agents';
+
+interface CreateRunModalProps {
+  open: boolean;
+  onClose: () => void;
+}
+
+interface FormState {
+  selectedRoutine: string;
+  projectId: string;
+  featureName: string;
+  targetBranch: string;
+  selectedAgentIndex: string; // index into allAgents array, '' means none
+  autoStart: boolean;
+  configJson: string;
+  agentConfigJson: string;
+  configError: string;
+  agentConfigError: string;
+  prevOpen: boolean;
+}
+
+const INITIAL_FORM: FormState = {
+  selectedRoutine: '',
+  projectId: '',
+  featureName: '',
+  targetBranch: '',
+  selectedAgentIndex: '',
+  autoStart: true,
+  configJson: '{}',
+  agentConfigJson: '{}',
+  configError: '',
+  agentConfigError: '',
+  prevOpen: false,
+};
+
+function buildDefaultAgentConfig(agent: AgentOption): Record<string, unknown> {
+  const config: Record<string, unknown> = {};
+  for (const field of agent.config_schema) {
+    if (field.default !== null && field.default !== undefined) {
+      config[field.name] = field.default;
+    }
+  }
+  return config;
+}
+
+/** Map agent_type to a display icon and tint color */
+function agentVisual(agentType: string): { icon: string; tintBg: string; tintText: string } {
+  const lower = agentType.toLowerCase();
+  if (lower.includes('openhands')) {
+    return { icon: '\u{1F91A}', tintBg: 'bg-orange-500/10', tintText: 'text-orange-400' };
+  }
+  if (lower.includes('cli')) {
+    return { icon: '\u{1F4BB}', tintBg: 'bg-cyan-500/10', tintText: 'text-cyan-400' };
+  }
+  if (lower.includes('mcp')) {
+    return { icon: '\u{1F517}', tintBg: 'bg-violet-500/10', tintText: 'text-violet-400' };
+  }
+  if (lower.includes('user') || lower.includes('managed')) {
+    return { icon: '\u{1F464}', tintBg: 'bg-bg-elevated', tintText: 'text-text-muted' };
+  }
+  return { icon: '\u{1F916}', tintBg: 'bg-purple-500/10', tintText: 'text-purple-400' };
+}
+
+export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
+  const { data: routinesData, isLoading: loadingRoutines } = useRoutines();
+  const { data: agents, isLoading: loadingAgents } = useAgents();
+  const createRun = useCreateRun();
+  const startRun = useStartRun();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const { preSelectedRoutine } = useCreateRunModal();
+
+  const [form, setForm] = useState<FormState>(INITIAL_FORM);
+
+  // Reset form when modal opens (detect open transition via state)
+  if (open && !form.prevOpen) {
+    setForm({
+      ...INITIAL_FORM,
+      prevOpen: true,
+      selectedRoutine: preSelectedRoutine ?? ''
+    });
+  } else if (!open && form.prevOpen) {
+    setForm(prev => ({ ...prev, prevOpen: false }));
+  }
+
+  // Escape key to close
+  useEffect(() => {
+    if (!open) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose]);
+
+  // Scroll lock
+  useEffect(() => {
+    if (!open) return;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, [open]);
+
+  useFocusTrap(dialogRef, open);
+
+  if (!open) return null;
+
+  const routines = routinesData?.routines ?? [];
+  const allAgents = agents ?? [];
+  const titleId = 'create-run-modal-title';
+
+  const selectedAgent = form.selectedAgentIndex !== ''
+    ? allAgents[Number(form.selectedAgentIndex)]
+    : null;
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.selectedRoutine || !form.projectId) return;
+
+    // Build config from featureName (maps to configJson behavior)
+    let config: Record<string, unknown> = {};
+    if (form.featureName.trim()) {
+      config = { feature_name: form.featureName.trim() };
+    }
+    // Merge with any explicit configJson if the user edited it
+    try {
+      const parsed = JSON.parse(form.configJson);
+      config = { ...config, ...parsed };
+      setForm(prev => ({ ...prev, configError: '' }));
+    } catch {
+      setForm(prev => ({ ...prev, configError: 'Invalid JSON' }));
+      return;
+    }
+
+    if (form.targetBranch.trim()) {
+      config.target_branch = form.targetBranch.trim();
+    }
+
+    let agentConfig: Record<string, unknown> | undefined;
+    if (selectedAgent) {
+      try {
+        agentConfig = JSON.parse(form.agentConfigJson);
+        setForm(prev => ({ ...prev, agentConfigError: '' }));
+      } catch {
+        setForm(prev => ({ ...prev, agentConfigError: 'Invalid JSON' }));
+        return;
+      }
+    }
+
+    try {
+      const run = await createRun.mutateAsync({
+        routine_id: form.selectedRoutine,
+        project_id: form.projectId,
+        config,
+        agent_type: selectedAgent?.agent_type || undefined,
+        agent_config: agentConfig,
+      });
+
+      if (form.autoStart) {
+        await startRun.mutateAsync(run.id);
+      }
+
+      onClose();
+    } catch {
+      // error handled by mutation state
+    }
+  }
+
+  const loading = loadingRoutines || loadingAgents;
+  const submitting = createRun.isPending || startRun.isPending;
+  const canSubmit = !!form.selectedRoutine && !!form.projectId && !submitting;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+      onClick={onClose}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="bg-bg-primary border border-border rounded-xl shadow-2xl w-full max-w-[520px] mx-4 max-h-[90vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 pt-5 pb-4">
+          <div>
+            <h2
+              id={titleId}
+              className="text-lg font-semibold text-text-primary"
+            >
+              Configure New Agent Run
+            </h2>
+            <p className="text-text-muted text-[13px] mt-0.5">
+              Setup parameters for your next autonomous coding session.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="text-text-muted hover:text-text-primary transition-colors p-1 -mr-1 -mt-0.5 rounded-md hover:bg-bg-hover"
+            aria-label="Close"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="18"
+              height="18"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center justify-center py-16">
+            <Spinner />
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-y-auto px-6 pb-5 space-y-5">
+              {/* Routine Selection */}
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                  <span className="text-base leading-none">{'\u{1F4CB}'}</span>
+                  Routine
+                </label>
+                {routines.length === 0 ? (
+                  <p className="text-sm text-text-muted py-2">
+                    No routines found. Configure routine directories on the server.
+                  </p>
+                ) : (
+                  <select
+                    autoFocus
+                    required
+                    value={form.selectedRoutine}
+                    onChange={e => setForm(prev => ({ ...prev, selectedRoutine: e.target.value }))}
+                    className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 appearance-none cursor-pointer"
+                  >
+                    <option value="">Select a routine...</option>
+                    {routines.map(r => (
+                      <option key={r.id} value={r.id}>{r.name}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* Target Project */}
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                  <span className="text-base leading-none">{'\u{1F4C1}'}</span>
+                  Target Project
+                </label>
+                <div className="relative">
+                  <input
+                    required
+                    type="text"
+                    placeholder="/path/to/project"
+                    value={form.projectId}
+                    onChange={e => setForm(prev => ({ ...prev, projectId: e.target.value }))}
+                    className="w-full rounded-md border border-border bg-bg-card pl-3 pr-9 py-2.5 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
+                  />
+                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="text-text-muted"
+                    >
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                  </div>
+                </div>
+              </div>
+
+              {/* Configuration */}
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                  <span className="text-base leading-none">{'\u2699\uFE0F'}</span>
+                  Configuration
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-text-muted mb-1">Feature Name</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. user-auth"
+                      value={form.featureName}
+                      onChange={e => setForm(prev => ({ ...prev, featureName: e.target.value }))}
+                      className="w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-text-muted mb-1">Target Branch</label>
+                    <input
+                      type="text"
+                      placeholder="e.g. main"
+                      value={form.targetBranch}
+                      onChange={e => setForm(prev => ({ ...prev, targetBranch: e.target.value }))}
+                      className="w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Agent Selection */}
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                  <span className="text-base leading-none">{'\u{1F916}'}</span>
+                  Agent
+                </label>
+                {allAgents.length === 0 ? (
+                  <p className="text-sm text-text-muted py-2">
+                    No agents detected. Check server configuration.
+                  </p>
+                ) : (
+                  <div className="grid grid-cols-3 gap-2.5">
+                    {allAgents.map((agent, idx) => {
+                      const isSelected = form.selectedAgentIndex === String(idx);
+                      const visual = agentVisual(agent.agent_type);
+                      const disabled = !agent.available;
+
+                      return (
+                        <button
+                          key={`${agent.agent_type}:${agent.name}`}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            if (disabled) return;
+                            const newIdx = isSelected ? '' : String(idx);
+                            const agentConfigJson = !isSelected
+                              ? JSON.stringify(buildDefaultAgentConfig(agent), null, 2)
+                              : '{}';
+                            setForm(prev => ({
+                              ...prev,
+                              selectedAgentIndex: newIdx,
+                              agentConfigJson,
+                            }));
+                          }}
+                          className={`
+                            relative rounded-lg p-3.5 text-left transition-all
+                            ${disabled
+                              ? 'opacity-50 cursor-not-allowed bg-bg-card border border-border'
+                              : isSelected
+                                ? 'bg-bg-card border-2 border-accent-purple shadow-[0_0_12px_rgba(139,92,246,0.15)]'
+                                : 'bg-bg-card border border-border hover:border-border-hover cursor-pointer'
+                            }
+                          `}
+                        >
+                          {/* Radio indicator */}
+                          <div className="absolute top-2.5 right-2.5">
+                            <div
+                              className={`
+                                w-4 h-4 rounded-full border-2 flex items-center justify-center
+                                ${isSelected
+                                  ? 'border-accent-purple'
+                                  : 'border-border-hover'
+                                }
+                              `}
+                            >
+                              {isSelected && (
+                                <div className="w-2 h-2 rounded-full bg-accent-purple" />
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Agent icon */}
+                          <div
+                            className={`
+                              w-9 h-9 rounded-lg flex items-center justify-center text-lg mb-2
+                              ${visual.tintBg}
+                            `}
+                          >
+                            <span className={visual.tintText}>{visual.icon}</span>
+                          </div>
+
+                          {/* Name + availability */}
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[13px] font-medium text-text-primary truncate">
+                              {agent.name}
+                            </span>
+                            <span
+                              className={`
+                                inline-block w-1.5 h-1.5 rounded-full flex-shrink-0
+                                ${agent.available
+                                  ? 'bg-status-active'
+                                  : 'bg-status-failed'
+                                }
+                              `}
+                              title={agent.available ? 'Available' : 'Unavailable'}
+                            />
+                          </div>
+
+                          {/* Agent type subtitle */}
+                          <span className="text-[11px] text-text-muted mt-0.5 block truncate">
+                            {agent.agent_type}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Agent Configuration (shown when agent is selected) */}
+              {selectedAgent && (
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                    <span className="text-base leading-none">{'\u{1F527}'}</span>
+                    Agent Configuration
+                  </label>
+                  <textarea
+                    rows={3}
+                    value={form.agentConfigJson}
+                    onChange={e => setForm(prev => ({
+                      ...prev,
+                      agentConfigJson: e.target.value,
+                      agentConfigError: '',
+                    }))}
+                    className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm font-mono text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 resize-none"
+                  />
+                  {form.agentConfigError && (
+                    <p className="mt-1 text-xs text-status-failed">{form.agentConfigError}</p>
+                  )}
+                  <p className="mt-1 text-xs text-text-muted">{selectedAgent.detail}</p>
+                </div>
+              )}
+
+              {/* Advanced Config JSON (collapsed by default for power users) */}
+              <details className="group">
+                <summary className="flex items-center gap-1.5 text-sm font-medium text-text-secondary cursor-pointer select-none">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    className="transition-transform group-open:rotate-90"
+                  >
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                  Advanced Config (JSON)
+                </summary>
+                <div className="mt-2">
+                  <textarea
+                    rows={3}
+                    value={form.configJson}
+                    onChange={e => setForm(prev => ({
+                      ...prev,
+                      configJson: e.target.value,
+                      configError: '',
+                    }))}
+                    className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm font-mono text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 resize-none"
+                  />
+                  {form.configError && (
+                    <p className="mt-1 text-xs text-status-failed">{form.configError}</p>
+                  )}
+                </div>
+              </details>
+
+              {/* Error states */}
+              {createRun.isError && (
+                <div className="rounded-md bg-status-failed/10 border border-status-failed/20 px-3 py-2">
+                  <p className="text-sm text-status-failed">Failed to create run. Check your inputs.</p>
+                </div>
+              )}
+              {startRun.isError && (
+                <div className="rounded-md bg-status-failed/10 border border-status-failed/20 px-3 py-2">
+                  <p className="text-sm text-status-failed">Run created but failed to start.</p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-border flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-text-secondary bg-transparent border border-border-hover rounded-md hover:bg-bg-hover hover:text-text-primary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!canSubmit}
+                className="px-5 py-2 text-sm font-medium text-white bg-accent-purple rounded-md hover:bg-accent-purple/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <Spinner />
+                    <span>Creating...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>{'\u{1F680}'}</span>
+                    <span>Create & Start</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}

@@ -46,6 +46,10 @@ Documentation for implementing the Orchestrator system from scratch.
 | [16-SLICES-PHASE-6.md](./16-SLICES-PHASE-6.md) | Phase 6: Web UI (React dashboard) |
 | [17-SLICES-PHASE-7.md](./17-SLICES-PHASE-7.md) | Phase 7: Git Integration (worktrees, versioning) |
 | [18-SLICES-PHASE-8.md](./18-SLICES-PHASE-8.md) | Phase 8: CLI & Polish (commands, E2E tests) |
+| [19-SLICES-PHASE-9.md](./19-SLICES-PHASE-9.md) | Phase 9: Advanced Workflows (human gates, backtrack, dry-run) |
+| [19-TRAYCER-ANALYSIS.md](./19-TRAYCER-ANALYSIS.md) | Competitive analysis: Traycer and Epic Mode |
+| [20-TRAYCER-COMMUNITY-REQUESTS.md](./20-TRAYCER-COMMUNITY-REQUESTS.md) | Traycer community requests and implications for our design |
+| [21-SLICES-PHASE-10.md](./21-SLICES-PHASE-10.md) | Phase 10: Advanced Config (clarification, escalation, MCP client) |
 
 ---
 

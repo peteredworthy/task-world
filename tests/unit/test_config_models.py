@@ -1,9 +1,11 @@
 """Tests for configuration models."""
 
 import pytest
+import yaml
 
 from orchestrator.config.enums import Priority
 from orchestrator.config.models import (
+    GateConfig,
     RequirementConfig,
     RoutineConfig,
     StepConfig,
@@ -105,3 +107,272 @@ def test_step_requires_at_least_one_task() -> None:
             title="Step",
             tasks=[],
         )
+
+
+# --- Singular task: key normalization (Gap A3) ---
+
+
+def test_singular_task_dict_parsed_to_tasks_list() -> None:
+    """Singular 'task:' (dict value) is normalized to 'tasks: [TaskConfig]'."""
+    step = StepConfig(
+        id="S1",
+        title="Step 1",
+        task=TaskConfig(  # type: ignore[call-arg]
+            id="T1",
+            title="Task 1",
+            task_context="Do something",
+        ),
+    )
+    assert len(step.tasks) == 1
+    assert step.tasks[0].id == "T1"
+    assert step.tasks[0].title == "Task 1"
+
+
+def test_singular_task_raw_dict_parsed_to_tasks_list() -> None:
+    """Singular 'task:' as a raw dict (pre-validation) is normalized."""
+    step = StepConfig.model_validate(
+        {
+            "id": "S1",
+            "title": "Step 1",
+            "task": {
+                "id": "T1",
+                "title": "Task 1",
+                "task_context": "Do something",
+            },
+        }
+    )
+    assert len(step.tasks) == 1
+    assert step.tasks[0].id == "T1"
+
+
+def test_plural_tasks_still_works() -> None:
+    """Plural 'tasks:' list continues to work as before."""
+    step = StepConfig(
+        id="S1",
+        title="Step 1",
+        tasks=[
+            TaskConfig(id="T1", title="Task 1", task_context="Context 1"),
+            TaskConfig(id="T2", title="Task 2", task_context="Context 2"),
+        ],
+    )
+    assert len(step.tasks) == 2
+    assert step.tasks[0].id == "T1"
+    assert step.tasks[1].id == "T2"
+
+
+def test_both_task_and_tasks_raises_error() -> None:
+    """Specifying both 'task:' and 'tasks:' raises a validation error."""
+    with pytest.raises(ValueError, match="Cannot specify both 'task' and 'tasks'"):
+        StepConfig.model_validate(
+            {
+                "id": "S1",
+                "title": "Step 1",
+                "task": {
+                    "id": "T1",
+                    "title": "Task 1",
+                    "task_context": "Context",
+                },
+                "tasks": [
+                    {
+                        "id": "T2",
+                        "title": "Task 2",
+                        "task_context": "Context",
+                    }
+                ],
+            }
+        )
+
+
+def test_singular_task_via_yaml_loading() -> None:
+    """Singular 'task:' works end-to-end through YAML parsing."""
+    yaml_content = """
+id: test-routine
+name: Test Routine
+steps:
+  - id: S-01
+    title: Step 1
+    task:
+      id: T-01
+      title: Task 1
+      task_context: Do the thing
+"""
+    data = yaml.safe_load(yaml_content)
+    routine = RoutineConfig.model_validate(data)
+    assert len(routine.steps) == 1
+    assert len(routine.steps[0].tasks) == 1
+    assert routine.steps[0].tasks[0].id == "T-01"
+    assert routine.steps[0].tasks[0].title == "Task 1"
+    assert routine.steps[0].tasks[0].task_context == "Do the thing"
+
+
+def test_plural_tasks_via_yaml_loading() -> None:
+    """Plural 'tasks:' works end-to-end through YAML parsing."""
+    yaml_content = """
+id: test-routine
+name: Test Routine
+steps:
+  - id: S-01
+    title: Step 1
+    tasks:
+      - id: T-01
+        title: Task 1
+        task_context: First thing
+      - id: T-02
+        title: Task 2
+        task_context: Second thing
+"""
+    data = yaml.safe_load(yaml_content)
+    routine = RoutineConfig.model_validate(data)
+    assert len(routine.steps[0].tasks) == 2
+    assert routine.steps[0].tasks[0].id == "T-01"
+    assert routine.steps[0].tasks[1].id == "T-02"
+
+
+def test_both_task_and_tasks_via_yaml_raises_error() -> None:
+    """Both 'task:' and 'tasks:' in YAML raises validation error."""
+    yaml_content = """
+id: test-routine
+name: Test Routine
+steps:
+  - id: S-01
+    title: Step 1
+    task:
+      id: T-01
+      title: Task 1
+      task_context: Context
+    tasks:
+      - id: T-02
+        title: Task 2
+        task_context: Context
+"""
+    data = yaml.safe_load(yaml_content)
+    with pytest.raises(ValueError, match="Cannot specify both 'task' and 'tasks'"):
+        RoutineConfig.model_validate(data)
+
+
+# --- Gap coverage: GateConfig.summary_artifact ---
+
+
+def test_gate_config_with_summary_artifact() -> None:
+    """Test GateConfig with summary_artifact field set."""
+    from orchestrator.config.enums import GateType
+
+    gate = GateConfig(
+        type=GateType.HUMAN_APPROVAL,
+        approval_prompt="Please review the changes",
+        summary_artifact="docs/summary.md",
+    )
+    assert gate.type == GateType.HUMAN_APPROVAL
+    assert gate.summary_artifact == "docs/summary.md"
+    assert gate.approval_prompt == "Please review the changes"
+
+
+def test_gate_config_without_summary_artifact() -> None:
+    """Test GateConfig with summary_artifact as None (default)."""
+    from orchestrator.config.enums import GateType
+
+    gate = GateConfig(
+        type=GateType.HUMAN_APPROVAL,
+        approval_prompt="Please review",
+    )
+    assert gate.summary_artifact is None
+
+
+def test_gate_config_in_step_with_summary_artifact() -> None:
+    """Test StepConfig with gate containing summary_artifact."""
+    from orchestrator.config.enums import GateType
+
+    step = StepConfig(
+        id="S1",
+        title="Step with gate",
+        gate=GateConfig(
+            type=GateType.HUMAN_APPROVAL,
+            approval_prompt="Review required",
+            summary_artifact="docs/step1-summary.md",
+        ),
+        tasks=[
+            TaskConfig(id="T1", title="Task 1", task_context="Context"),
+        ],
+    )
+    assert step.gate is not None
+    assert step.gate.summary_artifact == "docs/step1-summary.md"
+
+
+# --- Gap coverage: RoutineConfig.clarifications ---
+
+
+def test_routine_config_with_clarifications() -> None:
+    """Test RoutineConfig with clarifications field set."""
+    from orchestrator.config.models import ClarificationsConfig
+
+    routine = RoutineConfig(
+        id="test-routine",
+        name="Test Routine",
+        clarifications=ClarificationsConfig(artifact_path="docs/my-clarifications.md"),
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Step 1",
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Task 1",
+                        task_context="Do something",
+                    ),
+                ],
+            )
+        ],
+    )
+    assert routine.clarifications is not None
+    assert routine.clarifications.artifact_path == "docs/my-clarifications.md"
+
+
+def test_routine_config_without_clarifications() -> None:
+    """Test RoutineConfig with clarifications as None (default)."""
+    routine = RoutineConfig(
+        id="test-routine",
+        name="Test Routine",
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Step 1",
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Task 1",
+                        task_context="Do something",
+                    ),
+                ],
+            )
+        ],
+    )
+    assert routine.clarifications is None
+
+
+def test_routine_with_clarifications_via_yaml() -> None:
+    """Test RoutineConfig with clarifications loaded from YAML."""
+    yaml_content = """
+id: test-routine
+name: Test Routine
+clarifications:
+  artifact_path: docs/clarifications.md
+steps:
+  - id: S-01
+    title: Step 1
+    task:
+      id: T-01
+      title: Task 1
+      task_context: Do something
+"""
+    data = yaml.safe_load(yaml_content)
+    routine = RoutineConfig.model_validate(data)
+    assert routine.clarifications is not None
+    assert routine.clarifications.artifact_path == "docs/clarifications.md"
+
+
+def test_clarifications_config_default_artifact_path() -> None:
+    """Test ClarificationsConfig with default artifact path."""
+    from orchestrator.config.models import ClarificationsConfig
+
+    config = ClarificationsConfig()
+    assert config.artifact_path == "docs/clarifications.md"

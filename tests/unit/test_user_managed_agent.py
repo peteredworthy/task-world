@@ -100,7 +100,7 @@ async def test_user_managed_timeout() -> None:
 async def test_user_managed_cancel() -> None:
     """Cancellation raises AgentCancelledError."""
     service = _FakeService()
-    agent = UserManagedAgent(service=service, timeout_minutes=1)  # type: ignore[arg-type]
+    agent = UserManagedAgent(service=service, timeout_minutes=1, poll_interval=0.05)  # type: ignore[arg-type]
     on_update, on_submit = _noop_callbacks()
 
     async def cancel_soon() -> None:

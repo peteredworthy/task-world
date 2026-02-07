@@ -99,6 +99,22 @@ class OrchestratorMCPServer:
             result = await handler.handle("orchestrator_set_grade", args)
             return json.dumps(result)
 
+        async def orchestrator_request_clarification(
+            run_id: str,
+            task_id: str,
+            questions: list[dict[str, str | list[str]]],
+        ) -> str:
+            """Request clarification from the human.
+
+            The task will pause until the human answers.
+            Answers will be appended to the clarifications artifact file.
+            """
+            result = await handler.handle(
+                "orchestrator_request_clarification",
+                {"run_id": run_id, "task_id": task_id, "questions": questions},
+            )
+            return json.dumps(result)
+
         self._mcp.add_tool(
             orchestrator_get_requirements,
             name="orchestrator_get_requirements",
@@ -118,6 +134,15 @@ class OrchestratorMCPServer:
             orchestrator_set_grade,
             name="orchestrator_set_grade",
             description="Set a grade for a requirement (used by verifier).",
+        )
+        self._mcp.add_tool(
+            orchestrator_request_clarification,
+            name="orchestrator_request_clarification",
+            description=(
+                "Request clarification from the human. "
+                "The task will pause until the human answers. "
+                "Answers will be appended to the clarifications artifact file."
+            ),
         )
 
     @property

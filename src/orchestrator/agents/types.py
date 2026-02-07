@@ -16,6 +16,11 @@ ChecklistUpdateCallback = Callable[[str, ChecklistStatus, str | None], Awaitable
 SubmitCallback = Callable[[], Awaitable[None]]
 """Called when agent submits work for verification."""
 
+LogLineCallback = Callable[[list[str]], Awaitable[None]]
+
+GradeCallback = Callable[[str, str, str | None], Awaitable[None]]
+"""(req_id, grade, grade_reason) -> None. run_id/task_id bound by caller."""
+
 
 class ExecutionMetrics(BaseModel):
     """Metrics collected during agent execution."""
@@ -32,6 +37,8 @@ class ExecutionResult(BaseModel):
     success: bool
     error: str | None = None
     metrics: ExecutionMetrics = ExecutionMetrics()
+    agent_metadata: dict[str, Any] = {}  # Runtime metadata like PID, container_id
+    output_lines: list[str] = []
 
 
 class ExecutionContext(BaseModel):
@@ -43,6 +50,7 @@ class ExecutionContext(BaseModel):
     prompt: str
     requirements: list[str]
     api_base_url: str | None = None
+    auth_token: str | None = None
 
 
 class AgentInfo(BaseModel):
@@ -72,6 +80,8 @@ class AgentOption(BaseModel):
 
     agent_type: AgentType
     name: str
+    title: str = ""
+    description: str = ""
     available: bool
     detail: str = ""
     install_hint: str = ""

@@ -258,6 +258,8 @@ completion:
 
 ### 5.3 Routine Schema
 
+> Note: Both singular `task:` and plural `tasks:` are accepted. The plural form is canonical.
+
 ```yaml
 routine:
   id: "planning"

@@ -42,13 +42,14 @@ def test_server_creation(server: OrchestratorMCPServer) -> None:
 
 
 def test_tool_names(server: OrchestratorMCPServer) -> None:
-    """Server registers all 4 tools."""
+    """Server registers all 5 tools."""
     names = server.tool_names()
-    assert len(names) == 4
+    assert len(names) == 5
     assert "orchestrator_get_requirements" in names
     assert "orchestrator_update_checklist" in names
     assert "orchestrator_submit" in names
     assert "orchestrator_set_grade" in names
+    assert "orchestrator_request_clarification" in names
 
 
 async def test_server_lists_tools(server: OrchestratorMCPServer) -> None:

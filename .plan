@@ -1,0 +1,74 @@
+# UI Improvements Plan
+
+## Problem Statement
+Three issues need fixing:
+
+1. **Action buttons on dashboard run cards** look the same as status indicators (same `bg-*/15 text-*` pill styling). They need to be more clearly interactive/clickable.
+2. **Status indicators** (badge like "ACTIVE", "DRAFT") are placed after the title in the middle of the row. They should move to the left of the title, and titles should align vertically across run cards.
+3. **Backend disconnection crashes the UI** — when the backend goes away while SSE is in use, the entire app shows "Something went wrong / An unexpected error occurred" (the ErrorBoundary). This needs graceful handling with automatic recovery.
+
+## Changes
+
+### 1. Restyle QuickActions buttons in RunCard.tsx (lines 91-153)
+Make action buttons clearly look like buttons rather than status pills:
+- Add a visible border to each button (`border border-*/40`)
+- Use slightly different padding and a cursor-pointer effect
+- Add a subtle icon before each label (play for Start, pause for Pause, refresh for Resume, trash for Delete)
+- Use outline/bordered style rather than the same `bg-*/15 text-*` pill pattern used for status badges
+
+**New button style:** `px-3 py-1 text-[11px] font-semibold rounded border transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed` with color-specific border + hover background. This differentiates them from the solid-fill `bg-*/20 text-*` status badges.
+
+### 2. Move status badge left of title in CollapsedRow and ExpandedView header (RunCard.tsx)
+Current order: `StatusIcon | Title | RunStatusBadge | Meta | ... | StepTimeline | Duration | QuickActions | Chevron`
+
+New order: `StatusIcon | RunStatusBadge | Title | Meta | ... | StepTimeline | Duration | QuickActions | Chevron`
+
+This puts the status badge immediately after the status icon (both visually "status" elements) and before the title. Since status badges are fixed-width (e.g., "ACTIVE", "DRAFT"), the titles will naturally align vertically across rows.
+
+Apply to both `CollapsedRow` (line ~300) and `ExpandedView` header (line ~370).
+
+### 3. Graceful network error handling
+
+The root cause: When the backend dies, React Query's `fetchApi` throws (network error), and the SSE `EventSource` fires `onerror`. If any of these propagate as an unhandled exception or cause a render error, the ErrorBoundary catches it and shows the full-page "Something went wrong" screen.
+
+**Fix approach:**
+
+#### 3a. Add `throwOnError: false` and better retry config to React Query (main.tsx)
+Update the QueryClient defaults:
+- `retry: 3` (up from 1) with `retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 30000)`
+- Ensure network errors don't bubble to ErrorBoundary
+
+#### 3b. Make the ErrorBoundary recoverable
+Instead of requiring a full page reload, the ErrorBoundary should:
+- Show an inline "Connection lost" banner with a retry button
+- Automatically attempt to clear the error state after a delay (e.g., 5 seconds)
+- On retry, reset `hasError` to false and re-render children
+
+#### 3c. Add a global connection status banner
+Create a `ConnectionBanner` component rendered in `Layout.tsx` that:
+- Monitors a simple health check (try fetching `/api/health` or use the existing `useRuns` error state)
+- When the backend is unreachable, shows a non-blocking yellow banner: "Connection lost. Retrying..."
+- When it reconnects, briefly shows "Reconnected" in green, then fades
+- This replaces the crash-to-ErrorBoundary behavior with a graceful degradation
+
+#### 3d. Harden useActivitySSE.ts error handling
+The SSE onerror handler already reconnects after 5s, but the error it sets may cause downstream issues. Ensure the error state is non-throwing (just a flag) and doesn't propagate to cause render crashes.
+
+#### 3e. Harden fetchApi in client.ts
+When `fetch()` itself throws (network error, not an HTTP error), wrap it to produce a friendly error rather than letting the raw TypeError propagate:
+```typescript
+try {
+  const res = await fetch(...);
+} catch (err) {
+  throw new ApiError(0, { detail: 'Unable to reach server' });
+}
+```
+
+## Files to modify
+1. `ui/src/components/dashboard/RunCard.tsx` — action button styling, status badge position
+2. `ui/src/components/ErrorBoundary.tsx` — auto-recovery behavior
+3. `ui/src/main.tsx` — QueryClient retry config
+4. `ui/src/api/client.ts` — network error wrapping in fetchApi
+5. `ui/src/hooks/useActivitySSE.ts` — ensure errors don't cause crashes
+6. `ui/src/components/Layout.tsx` — add ConnectionBanner
+7. `ui/src/components/ConnectionBanner.tsx` — **new file**, global connection status indicator

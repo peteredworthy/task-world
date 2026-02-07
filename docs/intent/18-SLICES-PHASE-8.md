@@ -430,8 +430,7 @@ From competitive analysis, consider adding:
 
 1. Single SQLite database (not distributed)
 2. Polling-based UI updates (WebSocket improves this)
-3. No authentication/authorization (single user)
-4. No cost tracking (token estimates only)
+3. No cost tracking (token estimates only)
 
 ---
 

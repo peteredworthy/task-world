@@ -20,7 +20,7 @@ Always read the relevant slice document before working on a phase. Each slice li
 | `docs/intent/13-SLICES-PHASE-3.md` | 3 | 3.1–3.4 | Persistence: SQLite, repository, event store, integrated persistence |
 | `docs/intent/14-SLICES-PHASE-4.md` | 4 | 4.1–4.5 | API: FastAPI setup, routine/run/task endpoints, WebSocket |
 | `docs/intent/15-SLICES-PHASE-5.md` | 5 | 5.1–5.6 | Agents: interface, tool detector, OpenHands, CLI+nudger, MCP |
-| `docs/intent/16-SLICES-PHASE-6.md` | 6 | 6.1–6.4 | Web UI: React/TypeScript/Vite/Tailwind/Zustand |
+| `docs/intent/16-SLICES-PHASE-6.md` | 6 | 6.1–6.4 | Web UI: React/TypeScript/Vite/Tailwind/TanStack Query |
 | `docs/intent/17-SLICES-PHASE-7.md` | 7 | 7.1–7.3 | Git: worktrees, routine versioning, completion actions |
 | `docs/intent/18-SLICES-PHASE-8.md` | 8 | 8.1–8.3 | CLI & polish: Click commands, error handling, E2E suite |
 
@@ -144,7 +144,7 @@ Project → Run → Routine (git-versioned) → Step → Task → Attempt (token
 
 ### Status Enums
 
-- **Run**: DRAFT → QUEUED → ACTIVE ↔ PAUSED → COMPLETED/FAILED
+- **Run**: DRAFT → ACTIVE ↔ PAUSED → COMPLETED/FAILED
 - **Task**: PENDING → BUILDING → VERIFYING → COMPLETED/FAILED
 
 ## Non-Negotiable Design Constraints
@@ -182,7 +182,7 @@ Follow slices sequentially -- each builds on previous. Never skip ahead.
 3. **Phase 3** (3.1-3.4): Persistence -- SQLite, repository pattern, session persistence, recovery
 4. **Phase 4** (4.1-4.5): API server -- FastAPI, REST endpoints, WebSocket
 5. **Phase 5** (5.1-5.6): Agent integration -- interface, tool detector, OpenHands, CLI+nudger, MCP
-6. **Phase 6** (6.1-6.4): Web UI -- React/TypeScript/Vite/Tailwind/Zustand
+6. **Phase 6** (6.1-6.4): Web UI -- React/TypeScript/Vite/Tailwind/TanStack Query
 7. **Phase 7** (7.1-7.3): Git integration -- worktrees, routine versioning, completion actions
 8. **Phase 8** (8.1-8.3): CLI & polish -- Click commands, error handling, full E2E suite
 
@@ -213,5 +213,5 @@ Store secrets in `.env` at project root (never committed -- protected by `.gitig
 ## Tech Stack
 
 - **Backend**: Python 3.11+, FastAPI, SQLAlchemy, Pydantic, GitPython, httpx, Click
-- **Frontend**: React 18+, TypeScript, Vite, TailwindCSS, Zustand
+- **Frontend**: React 18+, TypeScript, Vite, TailwindCSS, TanStack Query
 - **Dev tools**: uv (package mgmt), pytest + pytest-asyncio, pyright, ruff

@@ -7,6 +7,8 @@ from orchestrator.agents.types import (
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionResult,
+    GradeCallback,
+    LogLineCallback,
     SubmitCallback,
 )
 
@@ -23,6 +25,8 @@ class Agent(Protocol):
         context: ExecutionContext,
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
     ) -> ExecutionResult: ...
 
     async def cancel(self) -> None: ...

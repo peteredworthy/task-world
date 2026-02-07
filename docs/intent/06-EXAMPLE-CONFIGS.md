@@ -21,10 +21,9 @@ routines:
     - "git@github.com:myorg/shared-routines.git"
 
 agents:
-  openhands:
-    model: "gpt-5-mini"      # Used by both Local and Docker modes
-  openhands_docker:
-    server_image: "ghcr.io/openhands/agent-server:latest-python"
+  default_type: "cli_subprocess"
+  openhands_url: "http://localhost:3000"
+  user_managed_timeout_minutes: 60  # Inactivity timeout for user-managed agents
 
 dashboard:
   recent_hours: 24  # 1, 4, 24, 168
@@ -33,6 +32,10 @@ nudger:
   output_timeout: 60
   nudge_interval: 30
   max_nudges: 3
+
+websocket:
+  batching_enabled: true       # Enable event batching (default: true)
+  batch_window_seconds: 0.1    # Collect events for 100ms before sending (default: 0.1)
 ```
 
 ---
@@ -58,6 +61,8 @@ completion:
 ---
 
 ## 3. Planning Routine (Simplified)
+
+> Note: Both singular `task:` and plural `tasks:` are accepted. The plural form is canonical.
 
 ```yaml
 # routines/planning.yaml
@@ -201,6 +206,8 @@ routine:
 ---
 
 ## 4. Bug Fix Routine (Simplified)
+
+> Note: Both singular `task:` and plural `tasks:` are accepted. The plural form is canonical.
 
 ```yaml
 # routines/bug-fix.yaml

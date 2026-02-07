@@ -12,6 +12,7 @@ from orchestrator.config.enums import AgentType
 def _make_context(
     api_base_url: str | None = None,
     prompt: str = "Do the thing",
+    auth_token: str | None = None,
 ) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-1",
@@ -20,6 +21,7 @@ def _make_context(
         prompt=prompt,
         requirements=["R1"],
         api_base_url=api_base_url,
+        auth_token=auth_token,
     )
 
 
@@ -102,7 +104,8 @@ def test_build_prompt_with_api_url() -> None:
     result = CLIAgent.build_prompt("Do the thing", ctx)
 
     assert "Do the thing" in result
-    assert "Orchestrator REST API" in result
+    assert "Orchestrator Integration" in result
+    assert "REST API Endpoints" in result
     assert "http://localhost:8000" in result
     assert "run-1" in result
     assert "task-1" in result
@@ -129,7 +132,8 @@ def test_build_prompt_mcp_channel() -> None:
     result = CLIAgent.build_prompt("Do the thing", ctx, callback_channel="mcp")
 
     assert "Do the thing" in result
-    assert "Orchestrator MCP Server" in result
+    assert "Orchestrator Integration" in result
+    assert "MCP Server Connection" in result
     assert "http://localhost:8000/mcp/sse" in result
     assert "run-1" in result
     assert "task-1" in result
@@ -230,3 +234,42 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
         assert name in mentioned_names, (
             f"Registered tool {name!r} is not mentioned in the MCP enriched prompt"
         )
+
+
+# --- Auth token in prompt tests ---
+
+
+def test_build_prompt_rest_with_auth_token() -> None:
+    """REST prompt includes auth header when auth_token is set."""
+    ctx = _make_context(api_base_url="http://localhost:8000", auth_token="tok-abc123")
+    result = CLIAgent.build_prompt("Do the thing", ctx, callback_channel="rest")
+
+    assert "Authentication" in result
+    assert "Authorization: Bearer tok-abc123" in result
+
+
+def test_build_prompt_mcp_with_auth_token() -> None:
+    """MCP prompt includes auth header when auth_token is set."""
+    ctx = _make_context(api_base_url="http://localhost:8000", auth_token="tok-abc123")
+    result = CLIAgent.build_prompt("Do the thing", ctx, callback_channel="mcp")
+
+    assert "Authentication" in result
+    assert "Authorization: Bearer tok-abc123" in result
+
+
+def test_build_prompt_no_auth_section_without_token() -> None:
+    """No auth section when auth_token is None."""
+    ctx = _make_context(api_base_url="http://localhost:8000")
+    result = CLIAgent.build_prompt("Do the thing", ctx, callback_channel="rest")
+
+    assert "Authentication" not in result
+    assert "Bearer" not in result
+
+
+def test_build_prompt_no_auth_section_without_api_url() -> None:
+    """No auth section when api_base_url is None, even if auth_token is set."""
+    ctx = _make_context(api_base_url=None, auth_token="tok-abc123")
+    result = CLIAgent.build_prompt("Do the thing", ctx)
+
+    assert "Authentication" not in result
+    assert result == "Do the thing"

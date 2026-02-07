@@ -30,11 +30,12 @@ def _docker_available() -> bool:
 
 
 def _kill_orphan_agent_containers() -> None:
-    """Stop and remove any leftover agent-server-* containers.
+    """Kill and remove any leftover agent-server-* containers.
 
-    DockerWorkspace names containers ``agent-server-<uuid>`` and creates them
-    with ``--rm``, so stopping is sufficient to remove them.  We also attempt
-    ``docker rm -f`` as a safety net in case ``--rm`` was somehow absent.
+    Uses ``docker kill`` (immediate SIGKILL) instead of ``docker stop``
+    (which waits for a grace period) for fast cleanup in tests.
+    DockerWorkspace creates containers with ``--rm``, so killing also
+    removes them.  We also attempt ``docker rm -f`` as a safety net.
     """
     try:
         result = subprocess.run(
@@ -47,7 +48,8 @@ def _kill_orphan_agent_containers() -> None:
             return
         containers = [name.strip() for name in result.stdout.splitlines() if name.strip()]
         for name in containers:
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30)
+            subprocess.run(["docker", "kill", name], capture_output=True, timeout=10)
+            subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=10)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
 
@@ -87,6 +89,8 @@ def _cleanup_containers() -> Generator[None, None, None]:  # pyright: ignore[rep
     _kill_orphan_agent_containers()
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 @_needs_docker
 @_needs_workspace_pkg
 def test_docker_workspace_lifecycle() -> None:
@@ -114,11 +118,24 @@ def test_docker_workspace_lifecycle() -> None:
         running = _running_agent_container_names()
         assert len(running) == 1
 
+        # Force-kill the container before context manager exit to avoid
+        # the ~7s docker stop grace period.  The --rm flag on docker run
+        # auto-removes the container, so cleanup() becomes a no-op.
+        cid = ws._container_id  # pyright: ignore[reportPrivateUsage]
+        assert cid is not None
+        subprocess.run(
+            ["docker", "kill", cid],
+            capture_output=True,
+            timeout=10,
+        )
+
     # After context manager exit, container is cleaned up
     running_after = _running_agent_container_names()
     assert len(running_after) == 0
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 @_needs_docker
 @_needs_workspace_pkg
 def test_docker_workspace_cleanup_on_exception() -> None:
@@ -133,7 +150,14 @@ def test_docker_workspace_cleanup_on_exception() -> None:
         kwargs["platform"] = platform
 
     with pytest.raises(RuntimeError, match="deliberate"):
-        with DockerWorkspace(server_image="ghcr.io/openhands/agent-server:latest-python", **kwargs):
+        with DockerWorkspace(
+            server_image="ghcr.io/openhands/agent-server:latest-python", **kwargs
+        ) as ws:
+            # Force-kill the container before raising the exception to avoid
+            # the ~7s docker stop grace period during cleanup().
+            cid = ws._container_id  # pyright: ignore[reportPrivateUsage]
+            assert cid is not None
+            subprocess.run(["docker", "kill", cid], capture_output=True, timeout=10)
             raise RuntimeError("deliberate")
 
     # Container should be gone despite the exception

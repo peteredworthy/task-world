@@ -161,6 +161,8 @@ async def test_task_not_found(service: WorkflowService) -> None:
 async def test_checklist_item_not_found(service: WorkflowService) -> None:
     run = _make_simple_run()
     await service.create_run(run)
+    await service.start_run("run-1")
+    await service.start_task("run-1", "task-1")
 
     with pytest.raises(ChecklistItemNotFoundError):
         await service.update_checklist_item(
@@ -171,6 +173,10 @@ async def test_checklist_item_not_found(service: WorkflowService) -> None:
 async def test_set_grade_not_found(service: WorkflowService) -> None:
     run = _make_simple_run()
     await service.create_run(run)
+    await service.start_run("run-1")
+    await service.start_task("run-1", "task-1")
+    await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
+    await service.submit_for_verification("run-1", "task-1")
 
     with pytest.raises(ChecklistItemNotFoundError):
         await service.set_grade("run-1", "task-1", "nonexistent-req", "A")

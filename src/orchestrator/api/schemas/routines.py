@@ -29,3 +29,12 @@ class RoutineDetail(BaseModel):
 
 class RoutineListResponse(BaseModel):
     routines: list[RoutineSummary]
+
+
+class ValidateRoutineRequest(BaseModel):
+    yaml_content: str
+
+
+class ValidateRoutineResponse(BaseModel):
+    valid: bool
+    errors: list[str] = []

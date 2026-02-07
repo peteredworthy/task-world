@@ -1,0 +1,296 @@
+"""Integration tests for backward transition API."""
+
+from collections.abc import AsyncGenerator
+from pathlib import Path
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
+from orchestrator.api.app import create_app
+from orchestrator.config.enums import RoutineSource
+from orchestrator.db.connection import init_db
+
+FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
+
+
+@pytest.fixture
+async def client() -> AsyncGenerator[AsyncClient, None]:
+    app = create_app(
+        db_path=":memory:",
+        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+    )
+    await init_db(app.state.engine)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    await app.state.engine.dispose()
+
+
+async def test_transition_backward_basic(client: AsyncClient) -> None:
+    """Test basic backward transition to earlier step."""
+    # Create a run with 3 steps
+    routine = {
+        "id": "test-routine",
+        "name": "Test Routine",
+        "steps": [
+            {
+                "id": "step-1",
+                "title": "Step 1",
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "title": "Task 1",
+                        "task_context": "Context 1",
+                        "requirements": [{"id": "req-1", "desc": "Requirement 1"}],
+                    }
+                ],
+            },
+            {
+                "id": "step-2",
+                "title": "Step 2",
+                "tasks": [
+                    {
+                        "id": "task-2",
+                        "title": "Task 2",
+                        "task_context": "Context 2",
+                        "requirements": [{"id": "req-2", "desc": "Requirement 2"}],
+                    }
+                ],
+            },
+            {
+                "id": "step-3",
+                "title": "Step 3",
+                "tasks": [
+                    {
+                        "id": "task-3",
+                        "title": "Task 3",
+                        "task_context": "Context 3",
+                        "requirements": [{"id": "req-3", "desc": "Requirement 3"}],
+                    }
+                ],
+            },
+        ],
+    }
+
+    # Create run
+    create_resp = await client.post(
+        "/api/runs",
+        json={"routine_embedded": routine, "project_id": "/tmp/test-project"},
+    )
+    assert create_resp.status_code == 201
+    run_data = create_resp.json()
+    run_id = run_data["id"]
+
+    # Start the run
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 200
+
+    # Start task 1 and complete it to progress step 0
+    task1_id = run_data["steps"][0]["tasks"][0]["id"]
+    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/start")
+    # Mark requirement done
+    await client.patch(
+        f"/api/runs/{run_id}/tasks/{task1_id}/checklist/req-1",
+        json={"status": "done"},
+    )
+    # Submit for verification
+    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/submit")
+    # Set grade and complete
+    await client.put(
+        f"/api/runs/{run_id}/tasks/{task1_id}/checklist/req-1/grade",
+        json={"grade": "A"},
+    )
+    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification")
+
+    # Check we're now at step 1
+    run_resp = await client.get(f"/api/runs/{run_id}")
+    assert run_resp.json()["current_step_index"] == 1
+
+    # Transition backward to step 0
+    backward_resp = await client.post(
+        f"/api/runs/{run_id}/transition-back",
+        json={"target_step_index": 0, "reason": "Need to revise earlier work"},
+    )
+    assert backward_resp.status_code == 200
+    backward_data = backward_resp.json()
+
+    assert backward_data["current_step_index"] == 0
+    # Steps should be marked not completed
+    assert backward_data["steps"][0]["completed"] is False
+    assert backward_data["steps"][1]["completed"] is False
+    # First task should remain completed since it finished
+    assert backward_data["steps"][0]["tasks"][0]["status"] == "completed"
+
+
+async def test_transition_backward_invalid_target_out_of_bounds(client: AsyncClient) -> None:
+    """Test backward transition with out of bounds target."""
+    # Create a run with 2 steps
+    routine = {
+        "id": "test-routine",
+        "name": "Test Routine",
+        "steps": [
+            {
+                "id": "step-1",
+                "title": "Step 1",
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "title": "Task 1",
+                        "task_context": "Context 1",
+                        "requirements": [{"id": "req-1", "desc": "Requirement 1"}],
+                    }
+                ],
+            },
+            {
+                "id": "step-2",
+                "title": "Step 2",
+                "tasks": [
+                    {
+                        "id": "task-2",
+                        "title": "Task 2",
+                        "task_context": "Context 2",
+                        "requirements": [{"id": "req-2", "desc": "Requirement 2"}],
+                    }
+                ],
+            },
+        ],
+    }
+
+    create_resp = await client.post(
+        "/api/runs",
+        json={"routine_embedded": routine, "project_id": "/tmp/test-project"},
+    )
+    assert create_resp.status_code == 201
+    run_id = create_resp.json()["id"]
+
+    # Try to transition to invalid index (5 is out of bounds)
+    backward_resp = await client.post(
+        f"/api/runs/{run_id}/transition-back", json={"target_step_index": 5}
+    )
+    assert backward_resp.status_code == 409
+
+
+async def test_transition_backward_invalid_target_forward(client: AsyncClient) -> None:
+    """Test that transitioning forward is rejected."""
+    # Create a run with 2 steps
+    routine = {
+        "id": "test-routine",
+        "name": "Test Routine",
+        "steps": [
+            {
+                "id": "step-1",
+                "title": "Step 1",
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "title": "Task 1",
+                        "task_context": "Context 1",
+                        "requirements": [{"id": "req-1", "desc": "Requirement 1"}],
+                    }
+                ],
+            },
+            {
+                "id": "step-2",
+                "title": "Step 2",
+                "tasks": [
+                    {
+                        "id": "task-2",
+                        "title": "Task 2",
+                        "task_context": "Context 2",
+                        "requirements": [{"id": "req-2", "desc": "Requirement 2"}],
+                    }
+                ],
+            },
+        ],
+    }
+
+    create_resp = await client.post(
+        "/api/runs",
+        json={"routine_embedded": routine, "project_id": "/tmp/test-project"},
+    )
+    assert create_resp.status_code == 201
+    run_id = create_resp.json()["id"]
+
+    # Current step is 0, try to transition to 1 (forward, should fail)
+    backward_resp = await client.post(
+        f"/api/runs/{run_id}/transition-back", json={"target_step_index": 1}
+    )
+    assert backward_resp.status_code == 409
+
+
+async def test_transition_backward_event_emitted(client: AsyncClient) -> None:
+    """Test that backward transition emits proper event."""
+    # Create a run with 2 steps
+    routine = {
+        "id": "test-routine",
+        "name": "Test Routine",
+        "steps": [
+            {
+                "id": "step-1",
+                "title": "Step 1",
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "title": "Task 1",
+                        "task_context": "Context 1",
+                        "requirements": [{"id": "req-1", "desc": "Requirement 1"}],
+                    }
+                ],
+            },
+            {
+                "id": "step-2",
+                "title": "Step 2",
+                "tasks": [
+                    {
+                        "id": "task-2",
+                        "title": "Task 2",
+                        "task_context": "Context 2",
+                        "requirements": [{"id": "req-2", "desc": "Requirement 2"}],
+                    }
+                ],
+            },
+        ],
+    }
+
+    create_resp = await client.post(
+        "/api/runs",
+        json={"routine_embedded": routine, "project_id": "/tmp/test-project"},
+    )
+    assert create_resp.status_code == 201
+    run_data = create_resp.json()
+    run_id = run_data["id"]
+
+    # Start and complete step 0
+    await client.post(f"/api/runs/{run_id}/start")
+    task1_id = run_data["steps"][0]["tasks"][0]["id"]
+    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/start")
+    await client.patch(
+        f"/api/runs/{run_id}/tasks/{task1_id}/checklist/req-1",
+        json={"status": "done"},
+    )
+    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/submit")
+    await client.put(
+        f"/api/runs/{run_id}/tasks/{task1_id}/checklist/req-1/grade",
+        json={"grade": "A"},
+    )
+    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification")
+
+    # Transition backward
+    backward_resp = await client.post(
+        f"/api/runs/{run_id}/transition-back",
+        json={"target_step_index": 0, "reason": "Revision needed"},
+    )
+    assert backward_resp.status_code == 200
+
+    # Check activity log for backward transition event
+    activity_resp = await client.get(f"/api/runs/{run_id}/activity")
+    assert activity_resp.status_code == 200
+    activity_data = activity_resp.json()
+
+    # Find the backward transition event
+    backward_events = [e for e in activity_data["events"] if e["event_type"] == "run_step_backward"]
+    assert len(backward_events) == 1
+    event = backward_events[0]
+    assert event["payload"]["from_step_index"] == 1
+    assert event["payload"]["to_step_index"] == 0
+    assert event["payload"]["reason"] == "Revision needed"

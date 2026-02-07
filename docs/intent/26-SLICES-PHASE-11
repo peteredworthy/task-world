@@ -1,0 +1,1864 @@
+# Implementation Slices: Phase 11 - Environment File Management
+
+**Goal:** Manage non-git files (`.env`, local configs, credentials) across the run lifecycle with snapshotting, revert capabilities, and post-run copy-back.
+
+**End state:** Runs can ingest environment files from a user-specified directory, snapshot them at task boundaries, agents can revert files mid-task, and users can copy results back to a chosen location after completion.
+
+**Prerequisites:** Phase 3 (state machine), Phase 5 (agent integration), Phase 7 (git/worktree).
+
+---
+
+## Context: What We're Solving
+
+Git worktrees provide isolation for tracked files, but many critical files live outside git: `.env` with API keys, `config.local.yaml` with machine-specific settings, credential files, local database configs, etc. These files need to:
+
+1. **Survive across tasks** — a task may update `.env` and the next task should see those changes
+2. **Be restorable** — if a task corrupts a file, the agent or user needs to revert it
+3. **Be portable** — users working with Docker agents or remote worktrees can't rely on files being "just there"
+4. **Work cross-platform** — Windows, Linux, macOS with no platform-specific tooling
+
+### Design Decisions
+
+- **End-of-previous-task state** is what the next task sees (not start-of-run), because agents often legitimately modify env files during execution
+- **Full-file snapshots** rather than deltas — env files are small (typically < 10KB each), and full copies make revert trivially reliable
+- **User specifies source directory** at run creation — this is copied into the snapshot store and injected into the worktree
+- **Source directory recorded as default copy-back target** — but the user can override the destination at copy-back time
+- **Promotion is explicit** — files are never silently written back; the user or routine config must opt in
+
+---
+
+## Slice 11.1: Env File Store & Snapshot Engine
+
+### Goal
+Implement the core storage layer for environment file snapshots.
+
+### Deliverables
+
+```
+src/orchestrator/envfiles/
+├── __init__.py
+├── store.py           # EnvFileStore — snapshot read/write
+├── models.py          # EnvFileSpec, SnapshotManifest, SnapshotPoint
+├── errors.py          # EnvFileError, SnapshotNotFoundError
+tests/unit/test_envfile_store.py
+```
+
+### Architecture Constraints
+
+1. **Plain filesystem copies** — `shutil.copy2` for content, JSON for metadata. No custom binary formats, no compression.
+2. **Cross-platform** — Use `pathlib.Path` throughout; no symlinks, no hardlinks, no platform-specific calls.
+3. **Atomic writes** — Write to temp file then `os.replace()` to avoid partial snapshots on crash.
+4. **No git dependency** — This store is entirely independent of git.
+
+### Data Model
+
+```python
+from dataclasses import dataclass, field
+from pathlib import Path, PurePosixPath
+from datetime import datetime
+from enum import Enum
+
+class SnapshotPointType(Enum):
+    RUN_START = "run_start"
+    TASK_START = "task_start"
+    TASK_END = "task_end"
+    RUN_END = "run_end"
+
+@dataclass
+class EnvFileSpec:
+    """Declares a file to be managed outside git."""
+    relative_path: str          # Path relative to worktree root, e.g. ".env"
+    promote_on_success: bool = False  # Copy back to canonical store on successful run
+
+@dataclass
+class SnapshotPoint:
+    """Metadata for a single snapshot."""
+    snapshot_id: str            # e.g. "run_start", "task-T01_end"
+    point_type: SnapshotPointType
+    run_id: str
+    task_id: str | None         # None for run-level snapshots
+    timestamp: datetime
+    files: list[str]            # Relative paths that were captured
+
+@dataclass
+class SnapshotManifest:
+    """Index of all snapshots for a run."""
+    run_id: str
+    source_dir: str | None      # Original source directory (default copy-back target)
+    env_file_specs: list[EnvFileSpec]
+    snapshots: list[SnapshotPoint] = field(default_factory=list)
+```
+
+### Storage Layout
+
+```
+~/.orchestrator/env-store/
+├── {run_id}/
+│   ├── manifest.json               # SnapshotManifest
+│   ├── run_start/                   # Snapshot at run start
+│   │   ├── .env
+│   │   └── config.local.yaml
+│   ├── task-T01_start/              # Snapshot at task T01 start
+│   │   └── ...
+│   ├── task-T01_end/                # Snapshot at task T01 end
+│   │   └── ...
+│   ├── task-T02_start/
+│   │   └── ...
+│   └── run_end/                     # Final state
+│       └── ...
+└── canonical/
+    └── {project_id}/                # "Current truth" for new runs
+        ├── .env
+        └── config.local.yaml
+```
+
+### Implementation
+
+```python
+import json
+import os
+import shutil
+import tempfile
+from pathlib import Path
+from datetime import datetime, timezone
+
+class EnvFileStore:
+    def __init__(self, base_dir: Path | None = None):
+        self._base = base_dir or Path.home() / ".orchestrator" / "env-store"
+        self._base.mkdir(parents=True, exist_ok=True)
+
+    def _run_dir(self, run_id: str) -> Path:
+        return self._base / run_id
+
+    def _snapshot_dir(self, run_id: str, snapshot_id: str) -> Path:
+        return self._run_dir(run_id) / snapshot_id
+
+    def _canonical_dir(self, project_id: str) -> Path:
+        return self._base / "canonical" / project_id
+
+    def _manifest_path(self, run_id: str) -> Path:
+        return self._run_dir(run_id) / "manifest.json"
+
+    # --- Manifest ---
+
+    def save_manifest(self, manifest: SnapshotManifest) -> None:
+        """Atomically write manifest to disk."""
+        path = self._manifest_path(manifest.run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = _serialize_manifest(manifest)
+        _atomic_write_json(path, data)
+
+    def load_manifest(self, run_id: str) -> SnapshotManifest:
+        """Load manifest or raise SnapshotNotFoundError."""
+        path = self._manifest_path(run_id)
+        if not path.exists():
+            raise SnapshotNotFoundError(run_id=run_id, snapshot_id="manifest")
+        return _deserialize_manifest(json.loads(path.read_text()))
+
+    # --- Snapshotting ---
+
+    def capture_snapshot(
+        self,
+        run_id: str,
+        snapshot_id: str,
+        point_type: SnapshotPointType,
+        worktree_path: Path,
+        env_specs: list[EnvFileSpec],
+        task_id: str | None = None,
+    ) -> SnapshotPoint:
+        """Copy declared env files from worktree into snapshot store."""
+        snap_dir = self._snapshot_dir(run_id, snapshot_id)
+        snap_dir.mkdir(parents=True, exist_ok=True)
+
+        captured = []
+        for spec in env_specs:
+            src = worktree_path / spec.relative_path
+            if src.exists():
+                dst = snap_dir / spec.relative_path
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                captured.append(spec.relative_path)
+
+        return SnapshotPoint(
+            snapshot_id=snapshot_id,
+            point_type=point_type,
+            run_id=run_id,
+            task_id=task_id,
+            timestamp=datetime.now(timezone.utc),
+            files=captured,
+        )
+
+    def restore_snapshot(
+        self,
+        run_id: str,
+        snapshot_id: str,
+        worktree_path: Path,
+        files: list[str] | None = None,
+    ) -> list[str]:
+        """Copy files from a snapshot back into the worktree.
+
+        Args:
+            files: Specific files to restore. None = all files in snapshot.
+
+        Returns:
+            List of relative paths that were restored.
+        """
+        snap_dir = self._snapshot_dir(run_id, snapshot_id)
+        if not snap_dir.exists():
+            raise SnapshotNotFoundError(run_id=run_id, snapshot_id=snapshot_id)
+
+        manifest = self.load_manifest(run_id)
+        point = next(
+            (s for s in manifest.snapshots if s.snapshot_id == snapshot_id), None
+        )
+        if point is None:
+            raise SnapshotNotFoundError(run_id=run_id, snapshot_id=snapshot_id)
+
+        to_restore = files or point.files
+        restored = []
+        for rel_path in to_restore:
+            src = snap_dir / rel_path
+            if src.exists():
+                dst = worktree_path / rel_path
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                restored.append(rel_path)
+
+        return restored
+
+    # --- Ingest from source directory ---
+
+    def ingest_source(
+        self,
+        run_id: str,
+        source_dir: Path,
+        env_specs: list[EnvFileSpec],
+    ) -> list[str]:
+        """Copy env files from a user-provided source directory into
+        the run_start snapshot. Called at run creation time.
+
+        Returns:
+            List of relative paths that were ingested.
+        """
+        snap_dir = self._snapshot_dir(run_id, "run_start")
+        snap_dir.mkdir(parents=True, exist_ok=True)
+
+        ingested = []
+        for spec in env_specs:
+            src = source_dir / spec.relative_path
+            if src.exists():
+                dst = snap_dir / spec.relative_path
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                ingested.append(spec.relative_path)
+
+        return ingested
+
+    # --- Inject into worktree ---
+
+    def inject_into_worktree(
+        self,
+        run_id: str,
+        snapshot_id: str,
+        worktree_path: Path,
+    ) -> list[str]:
+        """Copy files from a snapshot into the worktree. Used at run/task start."""
+        return self.restore_snapshot(run_id, snapshot_id, worktree_path)
+
+    # --- Canonical (promote/load) ---
+
+    def promote_to_canonical(
+        self,
+        run_id: str,
+        project_id: str,
+        env_specs: list[EnvFileSpec],
+    ) -> list[str]:
+        """Copy promote_on_success files from run_end snapshot to canonical store."""
+        snap_dir = self._snapshot_dir(run_id, "run_end")
+        canon_dir = self._canonical_dir(project_id)
+        canon_dir.mkdir(parents=True, exist_ok=True)
+
+        promoted = []
+        for spec in env_specs:
+            if not spec.promote_on_success:
+                continue
+            src = snap_dir / spec.relative_path
+            if src.exists():
+                dst = canon_dir / spec.relative_path
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                promoted.append(spec.relative_path)
+
+        return promoted
+
+    def load_canonical(
+        self,
+        project_id: str,
+        env_specs: list[EnvFileSpec],
+        worktree_path: Path,
+    ) -> list[str]:
+        """Inject canonical env files into a worktree (used when no source_dir provided)."""
+        canon_dir = self._canonical_dir(project_id)
+        if not canon_dir.exists():
+            return []
+
+        loaded = []
+        for spec in env_specs:
+            src = canon_dir / spec.relative_path
+            if src.exists():
+                dst = worktree_path / spec.relative_path
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                loaded.append(spec.relative_path)
+
+        return loaded
+
+    # --- Copy-back to user target ---
+
+    def copy_back(
+        self,
+        run_id: str,
+        snapshot_id: str,
+        target_dir: Path,
+        files: list[str] | None = None,
+    ) -> list[str]:
+        """Copy files from a snapshot to a user-specified target directory.
+
+        Args:
+            target_dir: Where to write the files. Does not need to match original source.
+            files: Specific files to copy. None = all files in snapshot.
+
+        Returns:
+            List of relative paths copied.
+        """
+        snap_dir = self._snapshot_dir(run_id, snapshot_id)
+        if not snap_dir.exists():
+            raise SnapshotNotFoundError(run_id=run_id, snapshot_id=snapshot_id)
+
+        manifest = self.load_manifest(run_id)
+        point = next(
+            (s for s in manifest.snapshots if s.snapshot_id == snapshot_id), None
+        )
+        to_copy = files or (point.files if point else [])
+
+        copied = []
+        for rel_path in to_copy:
+            src = snap_dir / rel_path
+            if src.exists():
+                dst = target_dir / rel_path
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                copied.append(rel_path)
+
+        return copied
+
+    # --- Cleanup ---
+
+    def delete_run_snapshots(self, run_id: str) -> None:
+        """Remove all snapshots for a run."""
+        run_dir = self._run_dir(run_id)
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    """Write JSON atomically via temp file + os.replace."""
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        dir=path.parent, suffix=".tmp"
+    )
+    try:
+        with os.fdopen(tmp_fd, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+        os.replace(tmp_path, path)
+    except BaseException:
+        os.unlink(tmp_path)
+        raise
+
+
+def _serialize_manifest(manifest: SnapshotManifest) -> dict:
+    """Convert SnapshotManifest to JSON-serializable dict."""
+    return {
+        "run_id": manifest.run_id,
+        "source_dir": manifest.source_dir,
+        "env_file_specs": [
+            {"relative_path": s.relative_path, "promote_on_success": s.promote_on_success}
+            for s in manifest.env_file_specs
+        ],
+        "snapshots": [
+            {
+                "snapshot_id": s.snapshot_id,
+                "point_type": s.point_type.value,
+                "run_id": s.run_id,
+                "task_id": s.task_id,
+                "timestamp": s.timestamp.isoformat(),
+                "files": s.files,
+            }
+            for s in manifest.snapshots
+        ],
+    }
+
+
+def _deserialize_manifest(data: dict) -> SnapshotManifest:
+    """Reconstruct SnapshotManifest from parsed JSON."""
+    return SnapshotManifest(
+        run_id=data["run_id"],
+        source_dir=data.get("source_dir"),
+        env_file_specs=[
+            EnvFileSpec(
+                relative_path=s["relative_path"],
+                promote_on_success=s.get("promote_on_success", False),
+            )
+            for s in data.get("env_file_specs", [])
+        ],
+        snapshots=[
+            SnapshotPoint(
+                snapshot_id=s["snapshot_id"],
+                point_type=SnapshotPointType(s["point_type"]),
+                run_id=s["run_id"],
+                task_id=s.get("task_id"),
+                timestamp=datetime.fromisoformat(s["timestamp"]),
+                files=s.get("files", []),
+            )
+            for s in data.get("snapshots", [])
+        ],
+    )
+```
+
+### Verification
+
+#### Unit Tests
+```python
+def test_capture_and_restore(tmp_path):
+    store = EnvFileStore(base_dir=tmp_path / "env-store")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / ".env").write_text("SECRET=abc")
+
+    specs = [EnvFileSpec(relative_path=".env")]
+    point = store.capture_snapshot(
+        "run-1", "run_start", SnapshotPointType.RUN_START, worktree, specs
+    )
+    assert point.files == [".env"]
+
+    # Modify worktree
+    (worktree / ".env").write_text("SECRET=corrupted")
+
+    # Restore
+    restored = store.restore_snapshot("run-1", "run_start", worktree)
+    assert (worktree / ".env").read_text() == "SECRET=abc"
+
+def test_ingest_from_source(tmp_path):
+    store = EnvFileStore(base_dir=tmp_path / "env-store")
+    source = tmp_path / "my-env-dir"
+    source.mkdir()
+    (source / ".env").write_text("KEY=val")
+
+    specs = [EnvFileSpec(relative_path=".env")]
+    ingested = store.ingest_source("run-1", source, specs)
+    assert ingested == [".env"]
+
+def test_copy_back_to_different_location(tmp_path):
+    store = EnvFileStore(base_dir=tmp_path / "env-store")
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / ".env").write_text("FINAL=value")
+
+    specs = [EnvFileSpec(relative_path=".env")]
+    store.capture_snapshot(
+        "run-1", "run_end", SnapshotPointType.RUN_END, worktree, specs
+    )
+    # Save manifest so restore_snapshot can find the point
+    manifest = SnapshotManifest(
+        run_id="run-1", source_dir=str(worktree),
+        env_file_specs=specs,
+        snapshots=[SnapshotPoint(
+            snapshot_id="run_end", point_type=SnapshotPointType.RUN_END,
+            run_id="run-1", task_id=None,
+            timestamp=datetime.now(timezone.utc), files=[".env"],
+        )],
+    )
+    store.save_manifest(manifest)
+
+    # Copy back to a completely different directory
+    target = tmp_path / "deploy-server" / "config"
+    copied = store.copy_back("run-1", "run_end", target)
+    assert (target / ".env").read_text() == "FINAL=value"
+```
+
+### Definition of Done
+- [ ] EnvFileStore captures snapshots from worktree
+- [ ] EnvFileStore restores snapshots into worktree
+- [ ] Ingest from user-provided source directory works
+- [ ] Copy-back to arbitrary target directory works
+- [ ] Canonical promote/load works
+- [ ] Atomic writes prevent partial snapshots
+- [ ] All paths use pathlib (cross-platform)
+- [ ] Unit tests pass on all platforms
+
+---
+
+## Slice 11.2: Workflow Engine Integration
+
+### Goal
+Wire the env file store into the run and task lifecycle so snapshots happen automatically at the right moments.
+
+### Prerequisites
+- Slice 11.1 complete
+- Phase 3 (workflow engine) complete
+- Phase 7 (worktree manager) complete
+
+### Deliverables
+
+```
+src/orchestrator/envfiles/
+├── lifecycle.py        # EnvFileLifecycle — hooks into workflow events
+tests/unit/test_envfile_lifecycle.py
+tests/integration/test_envfile_workflow.py
+```
+
+### Architecture Constraints
+
+1. **Non-intrusive** — The lifecycle hooks are called by the workflow engine, not embedded in it
+2. **Graceful degradation** — If no env_files are configured, all operations are no-ops
+3. **Snapshot IDs are deterministic** — Built from run_id + task_id + point type
+4. **Docker-aware** — For Docker agents (OpenHands Docker), env files must be staged into the host-side workspace *before* the container is created, and captured from it *after* the container stops. The lifecycle hooks operate on the host-side `worktree_path` regardless of agent type; the Docker agent's `DockerWorkspace` mounts that path into the container.
+5. **Event sourcing** — All snapshot and revert operations emit events to the JSONL history log for crash recovery and audit trail
+6. **WebSocket broadcast** — Snapshot and revert events are broadcast to connected WebSocket clients for real-time UI updates
+
+### Implementation
+
+```python
+class EnvFileLifecycle:
+    """Manages env file snapshots across the run/task lifecycle.
+
+    Called by the workflow engine at key transition points.
+
+    For Docker agents (OpenHands Docker), the worktree_path is the host-side
+    workspace directory that gets mounted into the container. The lifecycle
+    operates on the host path — the DockerWorkspace mount handles visibility
+    inside the container. This means:
+    - on_run_start injects files into worktree_path BEFORE DockerWorkspace.create()
+    - on_task_end captures files from worktree_path AFTER container task completes
+    - on_run_end captures AFTER the final container stops
+
+    The workflow engine is responsible for calling these hooks at the right
+    point relative to container creation/destruction.
+    """
+
+    def __init__(self, store: EnvFileStore, event_logger: EventLogger | None = None):
+        self._store = store
+        self._event_logger = event_logger
+
+    async def on_run_start(
+        self,
+        run_id: str,
+        project_id: str,
+        worktree_path: Path,
+        env_specs: list[EnvFileSpec],
+        source_dir: Path | None = None,
+    ) -> None:
+        """Called when a run transitions to ACTIVE.
+
+        1. If source_dir provided: ingest files from source into run_start snapshot
+        2. Else: load from canonical store into worktree
+        3. Capture run_start snapshot (from worktree state after injection)
+        4. Save manifest
+        """
+        if not env_specs:
+            return
+
+        if source_dir:
+            # Ingest from user-provided directory
+            self._store.ingest_source(run_id, source_dir, env_specs)
+            # Inject into worktree
+            self._store.inject_into_worktree(run_id, "run_start", worktree_path)
+        else:
+            # Load from canonical
+            self._store.load_canonical(project_id, env_specs, worktree_path)
+            # Capture what we loaded as run_start
+            self._store.capture_snapshot(
+                run_id, "run_start", SnapshotPointType.RUN_START,
+                worktree_path, env_specs,
+            )
+
+        manifest = SnapshotManifest(
+            run_id=run_id,
+            source_dir=str(source_dir) if source_dir else None,
+            env_file_specs=env_specs,
+        )
+        # Add the run_start point
+        manifest.snapshots.append(SnapshotPoint(
+            snapshot_id="run_start",
+            point_type=SnapshotPointType.RUN_START,
+            run_id=run_id,
+            task_id=None,
+            timestamp=datetime.now(timezone.utc),
+            files=[s.relative_path for s in env_specs],
+        ))
+        self._store.save_manifest(manifest)
+
+    async def on_task_start(
+        self,
+        run_id: str,
+        task_id: str,
+        worktree_path: Path,
+    ) -> None:
+        """Called when a task begins execution.
+
+        Captures a task_start snapshot so the agent can revert to it.
+        """
+        manifest = self._store.load_manifest(run_id)
+        if not manifest.env_file_specs:
+            return
+
+        snapshot_id = f"task-{task_id}_start"
+        point = self._store.capture_snapshot(
+            run_id, snapshot_id, SnapshotPointType.TASK_START,
+            worktree_path, manifest.env_file_specs, task_id=task_id,
+        )
+        manifest.snapshots.append(point)
+        self._store.save_manifest(manifest)
+
+    async def on_task_end(
+        self,
+        run_id: str,
+        task_id: str,
+        worktree_path: Path,
+    ) -> None:
+        """Called when a task completes (success or failure).
+
+        Captures a task_end snapshot. The next task will see this state.
+        """
+        manifest = self._store.load_manifest(run_id)
+        if not manifest.env_file_specs:
+            return
+
+        snapshot_id = f"task-{task_id}_end"
+        point = self._store.capture_snapshot(
+            run_id, snapshot_id, SnapshotPointType.TASK_END,
+            worktree_path, manifest.env_file_specs, task_id=task_id,
+        )
+        manifest.snapshots.append(point)
+        self._store.save_manifest(manifest)
+
+    async def on_run_end(
+        self,
+        run_id: str,
+        project_id: str,
+        worktree_path: Path,
+        success: bool,
+    ) -> None:
+        """Called when a run completes.
+
+        1. Capture run_end snapshot
+        2. If success: promote configured files to canonical store
+        """
+        manifest = self._store.load_manifest(run_id)
+        if not manifest.env_file_specs:
+            return
+
+        point = self._store.capture_snapshot(
+            run_id, "run_end", SnapshotPointType.RUN_END,
+            worktree_path, manifest.env_file_specs,
+        )
+        manifest.snapshots.append(point)
+        self._store.save_manifest(manifest)
+
+        if success:
+            self._store.promote_to_canonical(
+                run_id, project_id, manifest.env_file_specs,
+            )
+
+    def _emit_event(self, run_id: str, event_type: str, data: dict) -> None:
+        """Emit an event to the JSONL history log and WebSocket broadcast."""
+        if self._event_logger:
+            self._event_logger.log(run_id, event_type, data)
+```
+
+### Docker Agent Call Ordering
+
+The workflow engine must call lifecycle hooks in the correct order relative to Docker container lifecycle. This is critical because the Docker agent mounts the host-side `worktree_path` into the container — files must be present on the host *before* the mount happens.
+
+```
+Run Start (Docker):
+  1. engine creates worktree_path on host
+  2. lifecycle.on_run_start(worktree_path)   ← injects env files onto host
+  3. DockerWorkspace.create(worktree_path)   ← mounts host dir into container
+  4. agent executes inside container
+
+Task Boundary (Docker):
+  1. container task completes (agent calls submit)
+  2. lifecycle.on_task_end(worktree_path)    ← captures from host (mount is live)
+  3. lifecycle.on_task_start(worktree_path)  ← captures for next task
+  4. agent starts next task inside same or new container
+
+Run End (Docker):
+  1. final task completes
+  2. lifecycle.on_run_end(worktree_path)     ← captures from host
+  3. DockerWorkspace.cleanup()               ← removes container
+```
+
+For **Local** and **CLI** agents, the ordering is simpler since there's no container mount boundary — the worktree_path is directly accessible.
+
+### Event Types
+
+The lifecycle emits these events to the JSONL history for crash recovery and audit:
+
+```python
+# Event types emitted by EnvFileLifecycle:
+"env_file_snapshot"   # {snapshot_id, point_type, files, task_id}
+"env_file_revert"     # {snapshot_id, files_restored, reverted_by: "agent"|"user"}
+"env_file_injected"   # {source: "source_dir"|"canonical", files}
+"env_file_promoted"   # {files, project_id}
+```
+
+These events are also broadcast via WebSocket so the UI can show real-time snapshot activity.
+
+### Verification
+
+#### Integration Tests
+```python
+async def test_full_lifecycle(tmp_path):
+    """Simulate: run_start → task_start → task_end → run_end"""
+    store = EnvFileStore(base_dir=tmp_path / "store")
+    lifecycle = EnvFileLifecycle(store)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / ".env").write_text("KEY=original")
+
+    specs = [EnvFileSpec(relative_path=".env", promote_on_success=True)]
+
+    # Run start — ingest from source
+    await lifecycle.on_run_start("run-1", "proj-1", worktree, specs, source)
+    assert (worktree / ".env").read_text() == "KEY=original"
+
+    # Task T01 start
+    await lifecycle.on_task_start("run-1", "T01", worktree)
+
+    # Agent modifies .env during task
+    (worktree / ".env").write_text("KEY=modified_by_agent")
+
+    # Task T01 end
+    await lifecycle.on_task_end("run-1", "T01", worktree)
+
+    # Task T02 should see modified state
+    await lifecycle.on_task_start("run-1", "T02", worktree)
+    assert (worktree / ".env").read_text() == "KEY=modified_by_agent"
+
+    # Run end (success)
+    await lifecycle.on_run_end("run-1", "proj-1", worktree, success=True)
+
+    # Canonical should be updated
+    canonical = store._canonical_dir("proj-1")
+    assert (canonical / ".env").read_text() == "KEY=modified_by_agent"
+```
+
+### Definition of Done
+- [ ] on_run_start injects from source_dir or canonical
+- [ ] on_task_start/end captures snapshots
+- [ ] on_run_end promotes on success, skips on failure
+- [ ] Next task sees end-of-previous-task state
+- [ ] Manifest tracks all snapshot points
+- [ ] No-op when env_specs is empty
+
+---
+
+## Slice 11.3: Agent Revert Tools
+
+### Goal
+Expose env file revert capabilities to agents via MCP tools, REST API, and OpenHands custom tools so the LLM can decide to revert a file mid-task.
+
+### Prerequisites
+- Slice 11.1, 11.2 complete
+- Slice 5.4 (OpenHands agent), 5.6 (MCP server) complete
+
+### Deliverables
+
+```
+src/orchestrator/envfiles/
+├── tools.py            # Tool definitions for agents
+src/orchestrator/mcp/
+├── tools.py            # Updated — add env file tools
+src/orchestrator/api/routers/
+├── envfiles.py         # REST endpoints for env file operations
+tests/unit/test_envfile_tools.py
+tests/integration/test_envfile_revert.py
+```
+
+### Architecture Constraints
+
+1. **Agent-initiated** — The LLM decides when to revert, not the orchestrator
+2. **Scoped to current run** — Agent can only revert files within its own run
+3. **Two revert targets** — "task_start" (undo my changes) or "run_start" (reset to clean state)
+4. **Selective revert** — Agent can revert a single file or all managed files
+5. **Consistent across agent types** — Same tool semantics for MCP, OpenHands, and CLI
+
+### Tool Definitions
+
+```python
+# Added to ORCHESTRATOR_TOOLS in src/orchestrator/mcp/tools.py
+
+ENV_FILE_TOOLS = [
+    {
+        "name": "orchestrator_revert_env_file",
+        "description": (
+            "Revert one or more environment files (non-git managed files like .env, "
+            "config.local.yaml) to an earlier state. Use this if you've accidentally "
+            "corrupted a config file or need to reset credentials to their original values. "
+            "You can revert to the state at the start of this task or the start of the run."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "revert_to": {
+                    "type": "string",
+                    "enum": ["task_start", "run_start"],
+                    "description": (
+                        "Which point to revert to. "
+                        "'task_start' undoes changes made during this task. "
+                        "'run_start' resets to the original state from when the run began."
+                    ),
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Specific files to revert (relative paths, e.g. ['.env']). "
+                        "Omit or pass empty array to revert all managed environment files."
+                    ),
+                },
+            },
+            "required": ["revert_to"],
+        },
+    },
+    {
+        "name": "orchestrator_list_env_files",
+        "description": (
+            "List the environment files managed by the orchestrator for this run, "
+            "including which snapshot points are available for revert."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+]
+```
+
+### Tool Executor
+
+```python
+class EnvFileToolExecutor:
+    """Handles env file tool calls from any agent type."""
+
+    def __init__(self, store: EnvFileStore):
+        self._store = store
+
+    async def revert_env_file(
+        self,
+        run_id: str,
+        task_id: str,
+        worktree_path: Path,
+        revert_to: str,
+        files: list[str] | None = None,
+    ) -> dict:
+        """Execute an orchestrator_revert_env_file tool call."""
+        manifest = self._store.load_manifest(run_id)
+
+        if revert_to == "task_start":
+            snapshot_id = f"task-{task_id}_start"
+        elif revert_to == "run_start":
+            snapshot_id = "run_start"
+        else:
+            return {"error": f"Invalid revert_to: {revert_to}. Use 'task_start' or 'run_start'."}
+
+        # Validate snapshot exists
+        point = next(
+            (s for s in manifest.snapshots if s.snapshot_id == snapshot_id), None
+        )
+        if point is None:
+            return {"error": f"No snapshot found for '{snapshot_id}'."}
+
+        restored = self._store.restore_snapshot(
+            run_id, snapshot_id, worktree_path, files=files or None,
+        )
+
+        return {
+            "reverted_to": snapshot_id,
+            "files_restored": restored,
+        }
+
+    async def list_env_files(
+        self,
+        run_id: str,
+    ) -> dict:
+        """Execute an orchestrator_list_env_files tool call."""
+        try:
+            manifest = self._store.load_manifest(run_id)
+        except SnapshotNotFoundError:
+            return {"managed_files": [], "snapshots": []}
+
+        return {
+            "managed_files": [
+                {"path": s.relative_path, "promote_on_success": s.promote_on_success}
+                for s in manifest.env_file_specs
+            ],
+            "snapshots": [
+                {
+                    "snapshot_id": s.snapshot_id,
+                    "type": s.point_type.value,
+                    "task_id": s.task_id,
+                    "timestamp": s.timestamp.isoformat(),
+                    "files": s.files,
+                }
+                for s in manifest.snapshots
+            ],
+        }
+```
+
+### REST API Endpoints
+
+```python
+# src/orchestrator/api/routers/envfiles.py
+
+router = APIRouter()
+
+@router.post("/runs/{run_id}/env-files/revert")
+async def revert_env_files(
+    run_id: str,
+    request: RevertEnvFileRequest,
+    executor: EnvFileToolExecutor = Depends(get_envfile_executor),
+    engine: WorkflowEngine = Depends(get_workflow_engine),
+):
+    """Revert env files to an earlier snapshot. Available during active tasks."""
+    run = await engine.get_run(run_id)
+    active_task = _get_active_task(run)
+    if not active_task:
+        raise HTTPException(400, "No active task — revert is only available during task execution")
+
+    result = await executor.revert_env_file(
+        run_id=run_id,
+        task_id=active_task.id,
+        worktree_path=Path(run.worktree_path),
+        revert_to=request.revert_to,
+        files=request.files,
+    )
+    return result
+
+@router.get("/runs/{run_id}/env-files")
+async def list_env_files(
+    run_id: str,
+    executor: EnvFileToolExecutor = Depends(get_envfile_executor),
+):
+    """List managed env files and available snapshots for a run."""
+    return await executor.list_env_files(run_id)
+
+@router.get("/runs/{run_id}/env-files/snapshots")
+async def list_snapshots(
+    run_id: str,
+    store: EnvFileStore = Depends(get_envfile_store),
+):
+    """List all snapshot points for a run."""
+    manifest = store.load_manifest(run_id)
+    return {
+        "source_dir": manifest.source_dir,
+        "snapshots": [
+            {
+                "snapshot_id": s.snapshot_id,
+                "type": s.point_type.value,
+                "task_id": s.task_id,
+                "timestamp": s.timestamp.isoformat(),
+                "files": s.files,
+            }
+            for s in manifest.snapshots
+        ],
+    }
+```
+
+### OpenHands Integration
+
+Add to the custom tool registration in `src/orchestrator/agents/openhands.py`:
+
+```python
+# In the tool registration section, alongside existing orchestrator tools:
+
+def _register_env_file_tools(executor: EnvFileToolExecutor, run_id: str, task_id: str, worktree_path: Path):
+    """Register env file revert tools for OpenHands agent."""
+
+    async def handle_revert(revert_to: str, files: list[str] | None = None) -> str:
+        result = await executor.revert_env_file(
+            run_id, task_id, worktree_path, revert_to, files
+        )
+        return json.dumps(result)
+
+    async def handle_list() -> str:
+        result = await executor.list_env_files(run_id)
+        return json.dumps(result)
+
+    # Register as custom SDK tools following the same pattern as
+    # orchestrator_update_checklist, orchestrator_submit, etc.
+    return [
+        _make_tool_definition("orchestrator_revert_env_file", ENV_FILE_TOOLS[0], handle_revert),
+        _make_tool_definition("orchestrator_list_env_files", ENV_FILE_TOOLS[1], handle_list),
+    ]
+```
+
+### CLI Agent Integration
+
+The CLI agent (subprocess-based) uses MCP, so the tools are automatically available via the MCP server — no additional wiring needed.
+
+### Verification
+
+#### Unit Tests
+```python
+async def test_agent_reverts_to_task_start(tmp_path):
+    store = EnvFileStore(base_dir=tmp_path / "store")
+    executor = EnvFileToolExecutor(store)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / ".env").write_text("KEY=original")
+
+    specs = [EnvFileSpec(relative_path=".env")]
+
+    # Simulate lifecycle: run_start, task_start
+    store.capture_snapshot("run-1", "run_start", SnapshotPointType.RUN_START, worktree, specs)
+    store.capture_snapshot("run-1", "task-T01_start", SnapshotPointType.TASK_START, worktree, specs, task_id="T01")
+    manifest = SnapshotManifest(run_id="run-1", source_dir=None, env_file_specs=specs, snapshots=[
+        SnapshotPoint("run_start", SnapshotPointType.RUN_START, "run-1", None, datetime.now(timezone.utc), [".env"]),
+        SnapshotPoint("task-T01_start", SnapshotPointType.TASK_START, "run-1", "T01", datetime.now(timezone.utc), [".env"]),
+    ])
+    store.save_manifest(manifest)
+
+    # Agent corrupts .env
+    (worktree / ".env").write_text("KEY=corrupted")
+
+    # Agent calls revert
+    result = await executor.revert_env_file("run-1", "T01", worktree, "task_start")
+    assert result["files_restored"] == [".env"]
+    assert (worktree / ".env").read_text() == "KEY=original"
+
+async def test_agent_reverts_single_file(tmp_path):
+    store = EnvFileStore(base_dir=tmp_path / "store")
+    executor = EnvFileToolExecutor(store)
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    (worktree / ".env").write_text("SECRET=a")
+    (worktree / "config.local.yaml").write_text("port: 3000")
+
+    specs = [EnvFileSpec(relative_path=".env"), EnvFileSpec(relative_path="config.local.yaml")]
+    store.capture_snapshot("run-1", "task-T01_start", SnapshotPointType.TASK_START, worktree, specs, task_id="T01")
+    manifest = SnapshotManifest(run_id="run-1", source_dir=None, env_file_specs=specs, snapshots=[
+        SnapshotPoint("task-T01_start", SnapshotPointType.TASK_START, "run-1", "T01", datetime.now(timezone.utc), [".env", "config.local.yaml"]),
+    ])
+    store.save_manifest(manifest)
+
+    # Agent modifies both
+    (worktree / ".env").write_text("SECRET=corrupted")
+    (worktree / "config.local.yaml").write_text("port: 9999")
+
+    # Agent reverts only .env
+    result = await executor.revert_env_file("run-1", "T01", worktree, "task_start", files=[".env"])
+    assert (worktree / ".env").read_text() == "SECRET=a"
+    assert (worktree / "config.local.yaml").read_text() == "port: 9999"  # Unchanged
+```
+
+### Definition of Done
+- [ ] MCP tools registered: `orchestrator_revert_env_file`, `orchestrator_list_env_files`
+- [ ] REST endpoints: POST `/runs/{id}/env-files/revert`, GET `/runs/{id}/env-files`
+- [ ] OpenHands custom tools registered and callable
+- [ ] CLI agents can access tools via MCP
+- [ ] Agent can revert to task_start or run_start
+- [ ] Agent can selectively revert individual files
+- [ ] Revert is scoped to current run only
+
+---
+
+## Slice 11.4: Run Creation & Configuration
+
+### Goal
+Extend run creation (API, CLI, UI) to accept env file configuration: source directory, file specs, and copy-back preferences.
+
+### Prerequisites
+- Slice 11.1 complete
+- Phase 4 (API), Phase 6 (UI), Phase 8 (CLI) available
+
+### Deliverables
+
+```
+src/orchestrator/api/schemas/
+├── envfiles.py         # Request/response schemas for env files
+src/orchestrator/api/routers/
+├── runs.py             # Updated — env_files in CreateRunRequest
+src/orchestrator/config/
+├── models.py           # Updated — EnvFileSpec in project/routine config
+```
+
+### Configuration in Routine YAML
+
+```yaml
+# routines/my-routine.yaml
+routine:
+  id: "deploy-staging"
+  name: "Deploy to Staging"
+
+  env_files:
+    - path: ".env"
+      promote_on_success: true
+    - path: "config/local.yaml"
+      promote_on_success: false
+    - path: ".credentials/service-account.json"
+      promote_on_success: false
+
+  steps:
+    # ...
+```
+
+### Configuration in Project YAML
+
+```yaml
+# orchestrator.yaml (project-level defaults)
+project:
+  name: "my-project"
+
+env_files:
+  - path: ".env"
+    promote_on_success: true
+```
+
+### Updated CreateRunRequest
+
+```python
+class EnvFileConfig(BaseModel):
+    """Env file configuration for a run."""
+    source_dir: str | None = None       # Directory to copy env files from
+    files: list[EnvFileSpecSchema] | None = None  # Override routine/project defaults
+
+class EnvFileSpecSchema(BaseModel):
+    path: str
+    promote_on_success: bool = False
+
+class CreateRunRequest(BaseModel):
+    routine_id: str
+    project_id: str
+    config: dict = {}
+    agent_type: AgentType | None = None
+    env_files: EnvFileConfig | None = None  # NEW
+```
+
+### Resolution Order for env_file_specs
+
+When creating a run, env file specs are resolved in this order (later overrides earlier):
+
+1. **Project config** `env_files` — base defaults
+2. **Routine config** `env_files` — routine-specific files
+3. **CreateRunRequest** `env_files.files` — per-run override
+
+If `env_files.source_dir` is provided in the request, files are ingested from there. Otherwise, files are loaded from the canonical store.
+
+### CLI Extension
+
+```bash
+# Create run with env files from a specific directory
+orchestrator run create deploy-staging \
+  --project ./my-project \
+  --env-source ~/secrets/staging/
+
+# Create run with custom file list (overrides routine config)
+orchestrator run create deploy-staging \
+  --project ./my-project \
+  --env-source ~/secrets/staging/ \
+  --env-file ".env:promote" \
+  --env-file "config/local.yaml"
+```
+
+### Updated Run Creation Flow
+
+```python
+# In workflow engine or run creation handler:
+
+async def create_and_prepare_run(
+    routine: RoutineConfig,
+    project: ProjectConfig,
+    request: CreateRunRequest,
+) -> Run:
+    run = create_run_from_routine(routine, project.id, request.config)
+    run.agent_type = request.agent_type
+
+    # Resolve env file specs
+    env_specs = _resolve_env_specs(project, routine, request.env_files)
+    run.env_file_specs = env_specs  # Stored on run for lifecycle to use
+    run.env_source_dir = request.env_files.source_dir if request.env_files else None
+
+    return run
+```
+
+### Verification
+
+```python
+def test_create_run_with_env_source(client, tmp_path):
+    source = tmp_path / "secrets"
+    source.mkdir()
+    (source / ".env").write_text("API_KEY=test123")
+
+    response = client.post("/api/runs", json={
+        "routine_id": "deploy-staging",
+        "project_id": "my-project",
+        "env_files": {
+            "source_dir": str(source),
+            "files": [{"path": ".env", "promote_on_success": True}],
+        },
+    })
+    assert response.status_code == 201
+
+def test_env_spec_resolution_order():
+    project_specs = [EnvFileSpec(".env", promote_on_success=False)]
+    routine_specs = [EnvFileSpec(".env", promote_on_success=True), EnvFileSpec("local.yaml")]
+    request_specs = None  # No override
+
+    resolved = _resolve_env_specs(project_specs, routine_specs, request_specs)
+    # Routine overrides project for .env; local.yaml added
+    assert len(resolved) == 2
+    assert resolved[0].relative_path == ".env"
+    assert resolved[0].promote_on_success == True  # Routine wins
+```
+
+### Definition of Done
+- [ ] CreateRunRequest accepts env_files config
+- [ ] Routine YAML supports env_files declaration
+- [ ] Project YAML supports env_files defaults
+- [ ] Resolution order: project → routine → request
+- [ ] CLI --env-source and --env-file flags work
+- [ ] Source directory recorded on run for default copy-back target
+- [ ] "Configure New Run" UI dialog includes env file source directory input
+- [ ] UI shows detected env_files from routine/project config with override capability
+
+### UI Changes: Configure New Run Dialog
+
+The existing "Configure New Agent Run" dialog (Slice 6.2) is extended with an optional "Environment Files" section. This section appears when the selected routine or project declares `env_files`.
+
+```typescript
+// Addition to the Configure New Run dialog
+
+interface EnvFileConfigSection {
+  routineEnvFiles: EnvFileSpecSchema[];  // From routine config
+  projectEnvFiles: EnvFileSpecSchema[];  // From project config
+}
+
+function EnvFileConfigPanel({ routineEnvFiles, projectEnvFiles }: EnvFileConfigSection) {
+  const [sourceDir, setSourceDir] = useState('');
+  const [overrideFiles, setOverrideFiles] = useState(false);
+  const [files, setFiles] = useState<EnvFileSpecSchema[]>(
+    // Merge routine and project specs (routine wins)
+    mergeEnvSpecs(projectEnvFiles, routineEnvFiles)
+  );
+
+  const mergedDefaults = mergeEnvSpecs(projectEnvFiles, routineEnvFiles);
+  const hasEnvFiles = mergedDefaults.length > 0;
+
+  if (!hasEnvFiles) return null;
+
+  return (
+    <div className="mb-4">
+      <label className="text-sm font-medium text-gray-200 flex items-center gap-2 mb-2">
+        🔐 Environment Files
+      </label>
+
+      {/* Source directory */}
+      <div className="mb-3">
+        <div className="text-xs text-gray-400 mb-1">
+          Source Directory (optional — leave empty to use saved canonical files)
+        </div>
+        <input
+          type="text"
+          value={sourceDir}
+          onChange={e => setSourceDir(e.target.value)}
+          placeholder="e.g. ~/secrets/staging/"
+          className="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm"
+        />
+      </div>
+
+      {/* Managed files list */}
+      <div className="text-xs text-gray-400 mb-1">
+        Managed files ({mergedDefaults.length} from routine/project config)
+      </div>
+      <div className="bg-gray-800 border border-gray-700 rounded p-2">
+        {mergedDefaults.map(f => (
+          <div key={f.path} className="flex items-center justify-between py-1 text-sm">
+            <span className="font-mono text-gray-300">{f.path}</span>
+            <span className={`text-xs ${f.promote_on_success ? 'text-green-400' : 'text-gray-500'}`}>
+              {f.promote_on_success ? 'auto-promote' : 'snapshot only'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+```
+
+This data is included in the `CreateRunRequest.env_files` field when the user clicks "Create & Start".
+
+---
+
+## Slice 11.5: Post-Run Copy-Back (CLI & UI)
+
+### Goal
+Enable users to copy env files from a completed run back to a directory of their choice, with the original source directory as the default target.
+
+### Prerequisites
+- Slices 11.1, 11.2, 11.4 complete
+- Phase 6 (UI), Phase 8 (CLI) available
+
+### Deliverables
+
+```
+src/orchestrator/api/routers/
+├── envfiles.py         # Updated — copy-back endpoint
+ui/src/components/
+├── EnvFileCopyBack.tsx  # UI for selecting files and target
+ui/src/pages/
+├── RunDetail.tsx        # Updated — add copy-back panel to completed runs
+```
+
+### REST Endpoint
+
+```python
+class CopyBackRequest(BaseModel):
+    target_dir: str                     # Where to write files
+    snapshot_id: str = "run_end"        # Which snapshot to copy from
+    files: list[str] | None = None      # Specific files, or None for all
+
+class CopyBackResponse(BaseModel):
+    target_dir: str
+    files_copied: list[str]
+
+@router.post("/runs/{run_id}/env-files/copy-back")
+async def copy_back_env_files(
+    run_id: str,
+    request: CopyBackRequest,
+    store: EnvFileStore = Depends(get_envfile_store),
+):
+    """Copy env files from a run snapshot to a user-specified directory."""
+    copied = store.copy_back(
+        run_id=run_id,
+        snapshot_id=request.snapshot_id,
+        target_dir=Path(request.target_dir),
+        files=request.files,
+    )
+    return CopyBackResponse(
+        target_dir=request.target_dir,
+        files_copied=copied,
+    )
+
+@router.get("/runs/{run_id}/env-files/default-target")
+async def get_default_copy_back_target(
+    run_id: str,
+    store: EnvFileStore = Depends(get_envfile_store),
+):
+    """Get the default copy-back target (original source directory)."""
+    manifest = store.load_manifest(run_id)
+    return {"default_target": manifest.source_dir}
+```
+
+### CLI Extension
+
+```bash
+# Copy back env files from completed run (uses default target = original source dir)
+orchestrator run copy-back run-abc123
+
+# Copy back to a different directory
+orchestrator run copy-back run-abc123 --target ~/deploy/production/
+
+# Copy back specific files only
+orchestrator run copy-back run-abc123 --target ~/deploy/ --file .env
+
+# Copy back from a specific snapshot (not just run_end)
+orchestrator run copy-back run-abc123 --target ~/deploy/ --snapshot task-T03_end
+
+# Interactive: show snapshots and let user choose
+orchestrator run copy-back run-abc123 --interactive
+```
+
+### CLI Implementation
+
+```python
+@app.command()
+def copy_back(
+    run_id: str,
+    target: str | None = typer.Option(None, help="Target directory. Defaults to original source dir."),
+    file: list[str] | None = typer.Option(None, help="Specific files to copy. Repeatable."),
+    snapshot: str = typer.Option("run_end", help="Snapshot to copy from."),
+    interactive: bool = typer.Option(False, help="Interactively select snapshot and files."),
+):
+    """Copy environment files from a completed run to a target directory."""
+    # Get default target if not specified
+    if target is None:
+        default = api_client.get(f"/runs/{run_id}/env-files/default-target")
+        target = default.get("default_target")
+        if target is None:
+            typer.echo("No default target directory. Please specify --target.", err=True)
+            raise typer.Exit(1)
+        typer.echo(f"Using default target: {target}")
+
+    if interactive:
+        snapshots = api_client.get(f"/runs/{run_id}/env-files/snapshots")
+        # Present snapshot list, let user pick
+        snapshot = _interactive_snapshot_select(snapshots["snapshots"])
+        # Present file list from chosen snapshot, let user pick
+        files_in_snap = next(s["files"] for s in snapshots["snapshots"] if s["snapshot_id"] == snapshot)
+        file = _interactive_file_select(files_in_snap)
+
+    result = api_client.post(f"/runs/{run_id}/env-files/copy-back", json={
+        "target_dir": target,
+        "snapshot_id": snapshot,
+        "files": file,
+    })
+
+    typer.echo(f"Copied {len(result['files_copied'])} files to {target}:")
+    for f in result["files_copied"]:
+        typer.echo(f"  ✓ {f}")
+```
+
+### UI Component
+
+```typescript
+interface EnvFileCopyBackProps {
+  runId: string;
+  defaultTarget: string | null;
+  snapshots: SnapshotInfo[];
+}
+
+function EnvFileCopyBack({ runId, defaultTarget, snapshots }: EnvFileCopyBackProps) {
+  const [targetDir, setTargetDir] = useState(defaultTarget || '');
+  const [selectedSnapshot, setSelectedSnapshot] = useState('run_end');
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);  // empty = all
+  const [result, setResult] = useState<CopyBackResult | null>(null);
+  const mutation = useCopyBackMutation(runId);
+
+  const currentSnapshot = snapshots.find(s => s.snapshot_id === selectedSnapshot);
+
+  const handleCopyBack = () => {
+    mutation.mutate({
+      target_dir: targetDir,
+      snapshot_id: selectedSnapshot,
+      files: selectedFiles.length > 0 ? selectedFiles : null,
+    }, {
+      onSuccess: (data) => setResult(data),
+    });
+  };
+
+  return (
+    <div className="border rounded-lg p-4 bg-gray-50 mt-4">
+      <h4 className="font-medium mb-3">Copy Environment Files</h4>
+
+      {/* Target directory */}
+      <div className="mb-3">
+        <label className="text-sm text-gray-600">Target Directory</label>
+        <input
+          type="text"
+          value={targetDir}
+          onChange={e => setTargetDir(e.target.value)}
+          placeholder="/path/to/target"
+          className="w-full border rounded px-3 py-2 mt-1"
+        />
+        {defaultTarget && targetDir !== defaultTarget && (
+          <button
+            className="text-xs text-blue-600 mt-1"
+            onClick={() => setTargetDir(defaultTarget)}
+          >
+            Reset to original source: {defaultTarget}
+          </button>
+        )}
+      </div>
+
+      {/* Snapshot selector */}
+      <div className="mb-3">
+        <label className="text-sm text-gray-600">Copy from snapshot</label>
+        <select
+          value={selectedSnapshot}
+          onChange={e => setSelectedSnapshot(e.target.value)}
+          className="w-full border rounded px-3 py-2 mt-1"
+        >
+          {snapshots.map(s => (
+            <option key={s.snapshot_id} value={s.snapshot_id}>
+              {s.snapshot_id} ({s.type}) — {formatTime(s.timestamp)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* File selector */}
+      {currentSnapshot && (
+        <div className="mb-3">
+          <label className="text-sm text-gray-600">Files (deselect to copy all)</label>
+          {currentSnapshot.files.map(f => (
+            <label key={f} className="flex items-center gap-2 mt-1">
+              <input
+                type="checkbox"
+                checked={selectedFiles.length === 0 || selectedFiles.includes(f)}
+                onChange={e => {
+                  if (selectedFiles.length === 0) {
+                    // Switching from "all" to selective
+                    setSelectedFiles(currentSnapshot.files.filter(x => x !== f));
+                  } else if (e.target.checked) {
+                    setSelectedFiles([...selectedFiles, f]);
+                  } else {
+                    setSelectedFiles(selectedFiles.filter(x => x !== f));
+                  }
+                }}
+              />
+              <span className="text-sm font-mono">{f}</span>
+            </label>
+          ))}
+        </div>
+      )}
+
+      <button
+        onClick={handleCopyBack}
+        disabled={!targetDir || mutation.isLoading}
+        className="btn-primary"
+      >
+        {mutation.isLoading ? 'Copying...' : 'Copy Files'}
+      </button>
+
+      {result && (
+        <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded">
+          <p className="text-sm text-green-800">
+            Copied {result.files_copied.length} files to {result.target_dir}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+```
+
+### Integration into RunDetail
+
+The `EnvFileCopyBack` component is shown on the Run Detail page when:
+- The run has env files configured (`env_file_specs` is non-empty)
+- The run status is `COMPLETED` or `FAILED` (snapshots exist to copy from)
+
+### Verification
+
+```python
+def test_copy_back_cli(tmp_path, cli_runner):
+    # Setup: create a completed run with env file snapshots
+    # ...
+    result = cli_runner.invoke(["run", "copy-back", "run-1", "--target", str(tmp_path / "output")])
+    assert result.exit_code == 0
+    assert (tmp_path / "output" / ".env").exists()
+
+def test_copy_back_to_different_dir_than_source(tmp_path, client):
+    # Source was ~/secrets/staging, copy back to ~/deploy/production
+    response = client.post("/api/runs/run-1/env-files/copy-back", json={
+        "target_dir": str(tmp_path / "deploy" / "production"),
+        "snapshot_id": "run_end",
+    })
+    assert response.status_code == 200
+    assert (tmp_path / "deploy" / "production" / ".env").exists()
+```
+
+### Definition of Done
+- [ ] REST endpoint: POST `/runs/{id}/env-files/copy-back`
+- [ ] REST endpoint: GET `/runs/{id}/env-files/default-target`
+- [ ] CLI `orchestrator run copy-back` with --target, --file, --snapshot, --interactive flags
+- [ ] UI component on Run Detail for completed runs
+- [ ] Default target is original source directory
+- [ ] User can override target to any directory
+- [ ] User can select specific snapshot and specific files
+- [ ] Copy-back works when target differs from source
+
+---
+
+## Slice 11.6: Security & Cleanup
+
+### Goal
+Ensure env file snapshots are handled securely and cleaned up appropriately.
+
+### Prerequisites
+- Slices 11.1–11.5 complete
+
+### Deliverables
+
+```
+src/orchestrator/envfiles/
+├── security.py         # File permission handling, validation
+├── cleanup.py          # Stale snapshot cleanup
+tests/unit/test_envfile_security.py
+tests/unit/test_envfile_cleanup.py
+```
+
+### Architecture Constraints
+
+1. **Restrictive file permissions** — Snapshot directories are created with user-only access (0o700 on Unix, ACL-restricted on Windows)
+2. **Path traversal prevention** — Reject any `relative_path` containing `..`, absolute paths, or paths outside the worktree
+3. **Size limits** — Refuse to snapshot files larger than a configurable max (default 1MB) to prevent accidental capture of large binaries
+4. **Cleanup policy** — Stale snapshots (from deleted runs or older than configurable retention) are cleaned up
+
+### Security Validation
+
+```python
+import re
+from pathlib import PurePosixPath
+
+MAX_ENV_FILE_SIZE = 1 * 1024 * 1024  # 1MB default
+
+def validate_env_file_path(relative_path: str) -> None:
+    """Reject paths that could escape the worktree."""
+    # No absolute paths
+    if PurePosixPath(relative_path).is_absolute():
+        raise EnvFileError(f"Absolute paths not allowed: {relative_path}")
+
+    # No parent traversal
+    if ".." in PurePosixPath(relative_path).parts:
+        raise EnvFileError(f"Path traversal not allowed: {relative_path}")
+
+    # No null bytes or control characters
+    if re.search(r"[\x00-\x1f]", relative_path):
+        raise EnvFileError(f"Control characters not allowed in path: {relative_path!r}")
+
+def validate_env_file_size(file_path: Path, max_size: int = MAX_ENV_FILE_SIZE) -> None:
+    """Reject files that exceed the size limit."""
+    size = file_path.stat().st_size
+    if size > max_size:
+        raise EnvFileError(
+            f"File {file_path.name} is {size} bytes, exceeds limit of {max_size} bytes"
+        )
+```
+
+### File Permissions
+
+```python
+import os
+import sys
+
+def set_restricted_permissions(path: Path) -> None:
+    """Set user-only permissions on a file or directory."""
+    if sys.platform == "win32":
+        # On Windows, rely on user-profile directory ACLs.
+        # The env-store lives under ~/.orchestrator/ which is already
+        # user-restricted. No additional action needed.
+        pass
+    else:
+        if path.is_dir():
+            os.chmod(path, 0o700)
+        else:
+            os.chmod(path, 0o600)
+```
+
+### Cleanup
+
+```python
+from datetime import timedelta
+
+class EnvFileCleanup:
+    def __init__(self, store: EnvFileStore, retention: timedelta = timedelta(days=30)):
+        self._store = store
+        self._retention = retention
+
+    def cleanup_deleted_runs(self, active_run_ids: set[str]) -> int:
+        """Remove snapshot directories for runs that no longer exist."""
+        removed = 0
+        base = self._store._base
+        for entry in base.iterdir():
+            if entry.name == "canonical" or not entry.is_dir():
+                continue
+            if entry.name not in active_run_ids:
+                shutil.rmtree(entry)
+                removed += 1
+        return removed
+
+    def cleanup_old_snapshots(self) -> int:
+        """Remove snapshots older than retention period."""
+        removed = 0
+        cutoff = datetime.now(timezone.utc) - self._retention
+        base = self._store._base
+        for entry in base.iterdir():
+            if entry.name == "canonical" or not entry.is_dir():
+                continue
+            manifest_path = entry / "manifest.json"
+            if manifest_path.exists():
+                manifest = json.loads(manifest_path.read_text())
+                # Check last snapshot timestamp
+                if manifest.get("snapshots"):
+                    last_ts = max(s["timestamp"] for s in manifest["snapshots"])
+                    if datetime.fromisoformat(last_ts) < cutoff:
+                        shutil.rmtree(entry)
+                        removed += 1
+        return removed
+```
+
+### Integration with Startup Recovery
+
+Add to the existing recovery-on-startup logic (Phase 8):
+
+```python
+async def recover_state():
+    # ... existing recovery ...
+
+    # Clean up orphaned env file snapshots
+    active_ids = {run.id for run in await get_all_runs()}
+    cleanup = EnvFileCleanup(env_file_store)
+    removed = cleanup.cleanup_deleted_runs(active_ids)
+    if removed:
+        logger.info(f"Cleaned up {removed} orphaned env file snapshot(s)")
+
+    # Recover env file state from event history
+    # If a run was active when the process crashed, the last env_file_snapshot
+    # event tells us the most recent snapshot. The worktree may have had
+    # modifications since then that weren't captured — this is acceptable
+    # because the snapshot captures happen at well-defined lifecycle boundaries.
+    for run in await get_active_runs():
+        try:
+            manifest = env_file_store.load_manifest(run.id)
+            logger.info(
+                f"Run {run.id}: env file manifest recovered, "
+                f"{len(manifest.snapshots)} snapshots available"
+            )
+        except SnapshotNotFoundError:
+            # Run may not have env files configured — this is fine
+            pass
+```
+
+### WebSocket Event Broadcasting
+
+Env file events are broadcast to connected WebSocket clients using the existing event bus (Phase 4, Slice 4.5):
+
+```python
+# These events are emitted on the existing WebSocket channel for the run:
+# ws://localhost:8000/ws/runs/{run_id}
+
+# Snapshot captured
+{
+    "type": "env_file_snapshot",
+    "run_id": "run-abc",
+    "snapshot_id": "task-T01_end",
+    "point_type": "task_end",
+    "task_id": "T01",
+    "files": [".env", "config.local.yaml"]
+}
+
+# Agent reverted a file
+{
+    "type": "env_file_revert",
+    "run_id": "run-abc",
+    "snapshot_id": "task-T01_start",
+    "files_restored": [".env"],
+    "reverted_by": "agent"
+}
+```
+
+The UI can use these to update the snapshot list in real-time on the Run Detail page.
+
+### Verification
+
+```python
+def test_rejects_path_traversal():
+    with pytest.raises(EnvFileError, match="traversal"):
+        validate_env_file_path("../../etc/passwd")
+
+def test_rejects_absolute_path():
+    with pytest.raises(EnvFileError, match="Absolute"):
+        validate_env_file_path("/etc/passwd")
+
+def test_rejects_oversized_file(tmp_path):
+    big_file = tmp_path / "huge.bin"
+    big_file.write_bytes(b"x" * (2 * 1024 * 1024))
+    with pytest.raises(EnvFileError, match="exceeds limit"):
+        validate_env_file_size(big_file)
+
+def test_cleanup_orphaned_snapshots(tmp_path):
+    store = EnvFileStore(base_dir=tmp_path)
+    # Create snapshot dirs for run-1 and run-2
+    (tmp_path / "run-1").mkdir()
+    (tmp_path / "run-2").mkdir()
+    (tmp_path / "canonical").mkdir()
+
+    cleanup = EnvFileCleanup(store)
+    removed = cleanup.cleanup_deleted_runs(active_run_ids={"run-1"})
+    assert removed == 1
+    assert (tmp_path / "run-1").exists()
+    assert not (tmp_path / "run-2").exists()
+    assert (tmp_path / "canonical").exists()  # Never cleaned
+```
+
+### Definition of Done
+- [ ] Path traversal prevention works
+- [ ] Absolute path rejection works
+- [ ] File size limit enforced
+- [ ] Permissions set on snapshot directories (Unix: 0o700)
+- [ ] Stale snapshot cleanup on startup
+- [ ] Retention-based cleanup works
+- [ ] Canonical directory is never cleaned by cleanup
+- [ ] Env file events emitted to JSONL history log
+- [ ] Env file events broadcast via WebSocket
+- [ ] Crash recovery correctly handles env file manifests for active runs
+
+---
+
+## Phase 11 Milestone Verification
+
+```bash
+# All tests pass
+uv run pytest tests/ -v -k "envfile"
+
+# Manual verification
+uv run python -c "
+import asyncio
+from pathlib import Path
+import tempfile
+
+from orchestrator.envfiles.store import EnvFileStore
+from orchestrator.envfiles.models import EnvFileSpec, SnapshotPointType
+from orchestrator.envfiles.lifecycle import EnvFileLifecycle
+
+async def main():
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base = Path(tmpdir)
+        store = EnvFileStore(base_dir=base / 'env-store')
+        lifecycle = EnvFileLifecycle(store)
+        
+        # Setup
+        source = base / 'source'
+        source.mkdir()
+        (source / '.env').write_text('API_KEY=secret123')
+        
+        worktree = base / 'worktree'
+        worktree.mkdir()
+        
+        specs = [EnvFileSpec('.env', promote_on_success=True)]
+        
+        # Run lifecycle
+        await lifecycle.on_run_start('run-1', 'proj-1', worktree, specs, source)
+        print(f'After run_start: {(worktree / \".env\").read_text()}')
+        
+        await lifecycle.on_task_start('run-1', 'T01', worktree)
+        (worktree / '.env').write_text('API_KEY=modified')
+        await lifecycle.on_task_end('run-1', 'T01', worktree)
+        
+        await lifecycle.on_task_start('run-1', 'T02', worktree)
+        print(f'Task T02 sees: {(worktree / \".env\").read_text()}')
+        
+        await lifecycle.on_run_end('run-1', 'proj-1', worktree, success=True)
+        
+        # Verify canonical was updated
+        canonical = store._canonical_dir('proj-1')
+        print(f'Canonical: {(canonical / \".env\").read_text()}')
+        
+        # Copy back to a different directory
+        deploy = base / 'deploy'
+        copied = store.copy_back('run-1', 'run_end', deploy)
+        print(f'Copied to deploy: {copied}')
+        print(f'Deploy .env: {(deploy / \".env\").read_text()}')
+        
+        print('SUCCESS!')
+
+asyncio.run(main())
+"
+```
+
+If all verifications pass, Phase 11 is complete.

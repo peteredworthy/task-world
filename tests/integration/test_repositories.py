@@ -289,7 +289,7 @@ async def test_factory_created_run_roundtrips(repo: RunRepository) -> None:
     assert loaded.project_id == "proj-1"
     assert loaded.routine_id == "complete-routine"
     assert loaded.routine_sha == "deadbeef"
-    assert loaded.config == {"feature_name": "auth"}
+    assert loaded.config == {"feature_name": "auth", "branch": "main"}
     assert len(loaded.steps) == 2
     assert loaded.steps[0].config_id == "S-01"
     assert loaded.steps[1].config_id == "S-02"

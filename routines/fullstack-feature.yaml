@@ -1,0 +1,198 @@
+routine:
+  id: fullstack-feature
+  name: Full-Stack Feature Implementation
+  description: End-to-end workflow for implementing a full-stack feature including design, backend, frontend, and testing.
+  inputs:
+    - name: feature_name
+      required: true
+      description: Name of the feature to implement
+    - name: target_branch
+      required: false
+      default: main
+      description: Git branch to base work on
+    - name: language
+      required: false
+      default: python
+      description: Primary backend language
+  steps:
+    - id: S-01
+      title: Design & Planning
+      step_context: Create a design document and implementation plan for the feature.
+      tasks:
+        - id: T-01
+          title: Write Design Doc
+          task_context: |
+            Create a design document for {{feature_name}}. Include:
+            - Problem statement and goals
+            - Proposed architecture
+            - API contract definitions
+            - Data model changes
+            - Security considerations
+          requirements:
+            - id: R-01
+              desc: Design doc created with architecture overview
+              priority: critical
+            - id: R-02
+              desc: API endpoints documented with request/response schemas
+              priority: critical
+            - id: R-03
+              desc: Data model changes specified
+              priority: expected
+            - id: R-04
+              desc: Security considerations addressed
+              priority: expected
+            - id: R-05
+              desc: Performance implications noted
+              priority: nice
+          verifier:
+            rubric:
+              - id: completeness
+                text: Does the design doc cover all required sections?
+              - id: clarity
+                text: Is the architecture clearly explained?
+            submission_template:
+              grade_scale: [A, B, C, D, F]
+              require_reason_if_below: A
+              require_remediation_if_below: B
+          retry:
+            max_attempts: 3
+
+    - id: S-02
+      title: Backend Implementation
+      step_context: Implement the backend API and data layer for the feature.
+      tasks:
+        - id: T-02
+          title: Implement Data Models
+          task_context: |
+            Create or modify data models for {{feature_name}} in {{language}}.
+            Follow existing patterns in the codebase.
+          requirements:
+            - id: R-06
+              desc: Database models created with proper types and constraints
+              priority: critical
+            - id: R-07
+              desc: Migration script generated
+              priority: expected
+            - id: R-08
+              desc: Model validation using Pydantic schemas
+              priority: expected
+          auto_verify:
+            items:
+              - id: models_exist
+                cmd: test -f models.py
+            tail_lines: 20
+          retry:
+            max_attempts: 2
+
+        - id: T-03
+          title: Implement API Endpoints
+          task_context: |
+            Create REST API endpoints for {{feature_name}}.
+            Include proper error handling, validation, and documentation.
+          requirements:
+            - id: R-09
+              desc: CRUD endpoints implemented and functional
+              priority: critical
+            - id: R-10
+              desc: Input validation on all endpoints
+              priority: critical
+            - id: R-11
+              desc: Proper HTTP status codes returned
+              priority: expected
+            - id: R-12
+              desc: OpenAPI documentation generated
+              priority: nice
+          verifier:
+            rubric:
+              - id: correctness
+                text: Do all endpoints return correct responses?
+              - id: error_handling
+                text: Are errors properly handled with appropriate status codes?
+          retry:
+            max_attempts: 3
+
+        - id: T-04
+          title: Write Backend Tests
+          task_context: |
+            Write comprehensive tests for the {{feature_name}} backend.
+            Include unit tests and integration tests.
+          requirements:
+            - id: R-13
+              desc: Unit tests cover all business logic
+              priority: critical
+            - id: R-14
+              desc: Integration tests verify API endpoints
+              priority: critical
+            - id: R-15
+              desc: Edge cases and error scenarios tested
+              priority: expected
+            - id: R-16
+              desc: Test coverage above 80%
+              priority: nice
+          auto_verify:
+            items:
+              - id: run_tests
+                cmd: pytest tests/ -v
+              - id: check_coverage
+                cmd: pytest --cov=src --cov-report=term --cov-fail-under=80
+                must: false
+            tail_lines: 50
+          retry:
+            max_attempts: 2
+
+    - id: S-03
+      title: Frontend & Integration
+      step_context: Build the frontend UI and ensure end-to-end integration works.
+      tasks:
+        - id: T-05
+          title: Implement UI Components
+          task_context: |
+            Create React components for the {{feature_name}} frontend.
+            Use TypeScript, Tailwind CSS, and follow existing patterns.
+          requirements:
+            - id: R-17
+              desc: UI components created and rendering correctly
+              priority: critical
+            - id: R-18
+              desc: Form validation and error states handled
+              priority: expected
+            - id: R-19
+              desc: Loading and empty states implemented
+              priority: expected
+            - id: R-20
+              desc: Responsive design for mobile and desktop
+              priority: nice
+            - id: R-21
+              desc: Accessibility attributes (ARIA labels, keyboard nav)
+              priority: nice
+          retry:
+            max_attempts: 3
+
+        - id: T-06
+          title: End-to-End Testing
+          task_context: |
+            Verify the full {{feature_name}} workflow works end-to-end.
+            Test the integration between frontend and backend.
+          requirements:
+            - id: R-22
+              desc: Happy path E2E test passes
+              priority: critical
+            - id: R-23
+              desc: Error scenarios handled gracefully
+              priority: expected
+            - id: R-24
+              desc: Performance within acceptable bounds
+              priority: nice
+          auto_verify:
+            items:
+              - id: e2e_test
+                cmd: npm run test:e2e
+            tail_lines: 30
+          verifier:
+            rubric:
+              - id: integration
+                text: Does the full workflow function correctly?
+              - id: ux
+                text: Is the user experience smooth and intuitive?
+          retry:
+            max_attempts: 2

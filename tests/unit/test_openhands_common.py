@@ -34,10 +34,11 @@ def test_build_openhands_prompt_includes_requirements() -> None:
     assert "- Add login form" in result
     assert "- Add logout button" in result
     assert "## Requirements" in result
-    assert "## Available Orchestrator Tools" in result
-    assert "get_requirements" in result
-    assert "update_checklist" in result
-    assert "submit" in result
+    assert "## Orchestrator Integration" in result
+    assert "### Available Tools" in result
+    assert "orc_get_requirements" in result
+    assert "orc_update_checklist" in result
+    assert "orc_submit" in result
 
 
 def test_build_openhands_prompt_empty_requirements() -> None:

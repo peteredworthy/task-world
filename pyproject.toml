@@ -18,11 +18,17 @@ dependencies = [
     "greenlet>=3.3.1",
     "alembic>=1.18.3",
     "mcp>=1.26.0",
-    "openhands-workspace>=1.10.0",
+    "openhands-workspace>=1.11.0",
+    "pyjwt>=2.11.0",
+    "openhands-tools>=1.10.0",
+    "python-dotenv>=1.0.0",
 ]
 
 [project.optional-dependencies]
-openhands = ["openhands-ai>=1.2,<2.0"]
+openhands = ["openhands-ai>=1.3.0,<2.0"]
+
+[project.scripts]
+orchestrator = "orchestrator.cli.main:cli"
 
 [dependency-groups]
 dev = [
@@ -32,6 +38,9 @@ dev = [
     "pyright>=1.1",
     "ruff>=0.1",
     "pre-commit>=4.5.1",
+    "detect-secrets>=1.5.0",
+    "pytest-xdist>=3.8.0",
+    "pytest-timeout>=2.4.0",
 ]
 
 [build-system]
@@ -44,6 +53,12 @@ packages = ["src/orchestrator"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+addopts = "-n auto --dist loadfile --timeout=30"
+timeout = 30
+markers = [
+    "slow: tests that invoke real external tools (LLMs, Docker, CLI agents)",
+    "e2e: end-to-end tests that run against a real HTTP server",
+]
 
 [tool.ruff]
 line-length = 100

@@ -375,6 +375,12 @@ async def main():
         working_dir='/tmp',
         prompt='Do something',
         requirements=['R1', 'R2'],
+        # auth_token: set from app.state.auth_config when auth is enabled.
+        # CLIAgent.build_prompt includes "Authorization: Bearer <token>"
+        # instructions in the enriched prompt so the subprocess can
+        # authenticate against REST/MCP endpoints.
+        # For UserManagedAgent: the caller (API/UI) must surface the token
+        # to the human operator (see Phase 6 Slice 6.4 AgentGuidancePanel).
     )
 
     result = await agent.execute(context, on_update, on_submit)

@@ -20,6 +20,7 @@ class RunModel(Base):
     routine_id: Mapped[str | None] = mapped_column(String, nullable=True)
     routine_sha: Mapped[str | None] = mapped_column(String, nullable=True)
     routine_source: Mapped[str | None] = mapped_column(String, nullable=True)
+    routine_embedded: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # Agent configuration
     agent_type: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -29,9 +30,15 @@ class RunModel(Base):
     worktree_enabled: Mapped[bool] = mapped_column(Integer, default=1)  # SQLite has no bool
     worktree_path: Mapped[str | None] = mapped_column(String, nullable=True)
     delete_worktree_on_completion: Mapped[bool] = mapped_column(Integer, default=0)
+    source_branch: Mapped[str | None] = mapped_column(String, nullable=True)
+    merge_strategy: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Config passed to routine
     config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    # Environment files
+    env_file_specs: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    env_source_dir: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Runtime state
     current_step_index: Mapped[int] = mapped_column(Integer, default=0)
@@ -41,6 +48,7 @@ class RunModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    agent_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Aggregate metrics
     total_tokens_read: Mapped[int] = mapped_column(Integer, default=0)
@@ -72,8 +80,12 @@ class StepModel(Base):
         String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
     )
     config_id: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False, default="")
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
     completed: Mapped[bool] = mapped_column(Integer, default=0)
+
+    # Human approval (stored as JSON)
+    human_approval: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # Relationships
     run: Mapped["RunModel"] = relationship("RunModel", back_populates="steps")
@@ -93,11 +105,16 @@ class TaskModel(Base):
         String, ForeignKey("steps.id", ondelete="CASCADE"), nullable=False
     )
     config_id: Mapped[str] = mapped_column(String, nullable=False)
+    title: Mapped[str] = mapped_column(String, nullable=False, default="")
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
     checklist: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     current_attempt: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+
+    # Pending action tracking
+    pending_action_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    pending_clarification_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Relationships
     step: Mapped["StepModel"] = relationship("StepModel", back_populates="tasks")
@@ -127,6 +144,17 @@ class AttemptModel(Base):
     tokens_write: Mapped[int] = mapped_column(Integer, default=0)
     tokens_cache: Mapped[int] = mapped_column(Integer, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    grade_snapshot: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    auto_verify_results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+
+    # Agent snapshot
+    agent_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent_model: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent_settings: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # Agent output capture
+    agent_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     task: Mapped["TaskModel"] = relationship("TaskModel", back_populates="attempts")
@@ -145,3 +173,45 @@ class EventModel(Base):
 
     # Relationships
     run: Mapped["RunModel"] = relationship("RunModel", back_populates="events")
+
+
+class ClarificationRequestModel(Base):
+    __tablename__ = "clarification_requests"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(
+        String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    task_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    attempt_num: Mapped[int] = mapped_column(Integer, nullable=False)
+    questions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Relationships
+    run: Mapped["RunModel"] = relationship("RunModel")
+    response: Mapped["ClarificationResponseModel | None"] = relationship(
+        "ClarificationResponseModel",
+        back_populates="request",
+        uselist=False,
+    )
+
+
+class ClarificationResponseModel(Base):
+    __tablename__ = "clarification_responses"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    request_id: Mapped[str] = mapped_column(
+        String,
+        ForeignKey("clarification_requests.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    answers: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    responded_by: Mapped[str] = mapped_column(String, nullable=False)
+    responded_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+    # Relationships
+    request: Mapped["ClarificationRequestModel"] = relationship(
+        "ClarificationRequestModel", back_populates="response"
+    )

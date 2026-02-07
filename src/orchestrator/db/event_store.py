@@ -59,3 +59,43 @@ class EventStore:
             {"type": e.event_type, "timestamp": e.timestamp, "payload": e.payload}
             for e in result.scalars()
         ]
+
+    async def get_events_paginated(
+        self,
+        run_id: str,
+        *,
+        after: int | None = None,
+        limit: int = 200,
+        event_type: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get events for a run with cursor pagination and optional filtering.
+
+        Args:
+            run_id: The run to query events for.
+            after: Cursor — only return events with id > after.
+            limit: Maximum number of events to return.
+            event_type: If provided, only return events of this type.
+
+        Returns:
+            List of event dicts including the ``id`` field.
+        """
+        stmt = select(EventModel).where(EventModel.run_id == run_id)
+
+        if after is not None:
+            stmt = stmt.where(EventModel.id > after)
+
+        if event_type is not None:
+            stmt = stmt.where(EventModel.event_type == event_type)
+
+        stmt = stmt.order_by(EventModel.id).limit(limit)
+
+        result = await self._session.execute(stmt)
+        return [
+            {
+                "id": e.id,
+                "event_type": e.event_type,
+                "timestamp": e.timestamp,
+                "payload": e.payload,
+            }
+            for e in result.scalars()
+        ]

@@ -49,7 +49,7 @@ async def test_mcp_sse_endpoint_exists(client: AsyncClient) -> None:
     # but we can verify the route exists by checking it doesn't return 404.
     import anyio
 
-    with anyio.move_on_after(2):
+    with anyio.move_on_after(0.2):
         async with client.stream("GET", "/mcp/sse") as response:
             # The SSE endpoint should return 200 with text/event-stream
             assert response.status_code == 200

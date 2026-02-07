@@ -1,0 +1,155 @@
+routine:
+  id: "example-backward-transitions"
+  name: "Example: Backward Transitions"
+  description: |
+    Demonstrates conditional backward transitions based on checklist states
+    and file artifact conditions.
+
+  inputs:
+    - name: "feature"
+      required: true
+      description: "Feature name for directory structure"
+
+  steps:
+    # Step 1: Initial Draft
+    - id: "S-01"
+      title: "Create Initial Draft"
+      step_context: "Generate initial design artifacts"
+      task:
+        id: "T-01"
+        title: "Generate Design Documents"
+        task_context: |
+          Create initial design documents for {{feature}}.
+
+          Create these files:
+          1. docs/{{feature}}/design.md - High-level design
+          2. docs/{{feature}}/design-questions.md - Open questions (use [ ] for open, [x] for resolved)
+
+        requirements:
+          - id: "R1"
+            desc: "Create design.md with architecture overview"
+            priority: critical
+          - id: "R2"
+            desc: "Create design-questions.md with initial questions"
+            priority: critical
+
+        auto_verify:
+          items:
+            - id: "files_exist"
+              cmd: "test -f docs/{{feature}}/design.md && test -f docs/{{feature}}/design-questions.md"
+              must: true
+
+        retry:
+          max_attempts: 2
+
+    # Step 2: Review and Feedback
+    - id: "S-02"
+      title: "Review Design"
+      step_context: "Human reviews design and provides feedback"
+      task:
+        id: "T-01"
+        title: "Review and Add Feedback"
+        task_context: |
+          Review the design documents and provide feedback:
+          - Add comments to design.md
+          - Answer questions in design-questions.md (mark with [x])
+          - Add new questions if needed (mark with [ ])
+          - If major conflicts found, create CONFLICTS.md listing them with [ ] for each
+
+        requirements:
+          - id: "R1"
+            desc: "Review design.md"
+            priority: critical
+          - id: "R2"
+            desc: "Update design-questions.md"
+            priority: critical
+
+        retry:
+          max_attempts: 1
+
+    # Step 3: Refinement - with backward transitions
+    - id: "S-03"
+      title: "Refine Design"
+      step_context: "Address feedback and resolve issues"
+      task:
+        id: "T-01"
+        title: "Incorporate Feedback"
+        task_context: |
+          Update design based on feedback:
+          - Address all review comments
+          - Resolve open questions
+          - Address conflicts if any exist
+
+          Update design.md and design-questions.md accordingly.
+
+        requirements:
+          - id: "R1"
+            desc: "Address all review comments"
+            priority: critical
+          - id: "R2"
+            desc: "Resolve open questions"
+            priority: expected
+          - id: "R3"
+            desc: "Resolve all conflicts"
+            priority: expected
+
+        retry:
+          max_attempts: 2
+
+      # Conditional backward transitions
+      transitions:
+        on_complete: "S-04"  # Normal progression
+        on_condition:
+          # If conflicts are unresolved, go back to review
+          - condition: "has_unresolved_conflicts"
+            target: "S-02"
+            max_iterations: 3
+            message: "Unresolved conflicts detected - returning to review step"
+          # If questions remain open, go back to review
+          - condition: "has_open_questions"
+            target: "S-02"
+            max_iterations: 3
+            message: "Open design questions remain - returning to review step"
+          # If R3 (resolve conflicts) is not complete, go back to review
+          - condition: "checklist:R3"
+            target: "S-02"
+            max_iterations: 2
+            message: "Conflict resolution requirement not met"
+
+    # Step 4: Final Check
+    - id: "S-04"
+      title: "Final Verification"
+      step_context: "Verify design is complete and consistent"
+      task:
+        id: "T-01"
+        title: "Verify Design Completeness"
+        task_context: |
+          Final verification:
+          - Ensure all questions are answered
+          - Ensure no unresolved conflicts
+          - Verify design is internally consistent
+
+        requirements:
+          - id: "R1"
+            desc: "All questions answered"
+            priority: critical
+          - id: "R2"
+            desc: "No unresolved conflicts"
+            priority: critical
+          - id: "R3"
+            desc: "Design is consistent"
+            priority: expected
+
+        verifier:
+          rubric:
+            - id: "completeness"
+              text: "Is the design complete and ready for implementation?"
+            - id: "clarity"
+              text: "Is the design clear and unambiguous?"
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+
+        retry:
+          max_attempts: 2

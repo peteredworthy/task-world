@@ -3,22 +3,27 @@
 from orchestrator.config.enums import (
     AgentType,
     ChecklistStatus,
+    GateType,
     Priority,
     RoutineSource,
     RunStatus,
+    StepType,
     TaskStatus,
 )
 from orchestrator.config.models import (
     AutoVerifyConfig,
     AutoVerifyItemConfig,
+    DryRunConfig,
     RequirementConfig,
     RetryConfig,
     RoutineConfig,
     RoutineInputConfig,
     RubricItemConfig,
     StepConfig,
+    StepTransitions,
     SubmissionTemplateConfig,
     TaskConfig,
+    TransitionCondition,
     VerifierConfig,
 )
 
@@ -27,6 +32,8 @@ __all__ = [
     "AutoVerifyConfig",
     "AutoVerifyItemConfig",
     "ChecklistStatus",
+    "DryRunConfig",
+    "GateType",
     "Priority",
     "RequirementConfig",
     "RetryConfig",
@@ -36,8 +43,11 @@ __all__ = [
     "RubricItemConfig",
     "RunStatus",
     "StepConfig",
+    "StepTransitions",
+    "StepType",
     "SubmissionTemplateConfig",
     "TaskConfig",
     "TaskStatus",
+    "TransitionCondition",
     "VerifierConfig",
 ]

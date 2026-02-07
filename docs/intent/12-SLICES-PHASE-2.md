@@ -491,9 +491,9 @@ tests/integration/test_workflow_execution.py
            self._emitter = emitter or NoOpEmitter()
        
        def start_run(self, run_id: str) -> Run:
-           """Start a run - move from DRAFT/QUEUED to ACTIVE."""
+           """Start a run - move from DRAFT to ACTIVE."""
            run = self._state.get_run(run_id)
-           if run.status not in (RunStatus.DRAFT, RunStatus.QUEUED):
+           if run.status != RunStatus.DRAFT:
                raise ValueError(f"Cannot start run in status {run.status.value}")
            
            old_status = run.status

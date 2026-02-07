@@ -42,6 +42,8 @@ from orchestrator.agents.types import (
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionResult,
+    GradeCallback,
+    LogLineCallback,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType
@@ -109,6 +111,14 @@ if _SDK_AVAILABLE:
     class OrcSubmitObservation(_OHObservation):  # type: ignore[misc]
         pass
 
+    class OrcSetGradeAction(_OHAction):  # type: ignore[misc]
+        req_id: str
+        grade: str
+        grade_reason: str | None = None
+
+    class OrcSetGradeObservation(_OHObservation):  # type: ignore[misc]
+        pass
+
     # --- Observation factories ---
 
     def _obs_get_req(text: str) -> OrcGetReqObservation:  # type: ignore[type-arg]
@@ -119,6 +129,9 @@ if _SDK_AVAILABLE:
 
     def _obs_submit(text: str) -> OrcSubmitObservation:  # type: ignore[type-arg]
         return OrcSubmitObservation(content=[_OHTextContent(text=text)])  # type: ignore[call-arg]
+
+    def _obs_set_grade(text: str) -> OrcSetGradeObservation:  # type: ignore[type-arg]
+        return OrcSetGradeObservation(content=[_OHTextContent(text=text)])  # type: ignore[call-arg]
 
     # --- ToolExecutor wrappers (must subclass SDK ABC) ---
 
@@ -138,6 +151,13 @@ if _SDK_AVAILABLE:
 
     class _SubmitExec(_OHToolExecutor):  # type: ignore[type-arg,misc]
         def __init__(self, inner: SubmitExecutor) -> None:
+            self._inner = inner
+
+        def __call__(self, action: Any, conversation: Any = None) -> Any:
+            return self._inner(action, conversation)
+
+    class _SetGradeExec(_OHToolExecutor):  # type: ignore[type-arg,misc]
+        def __init__(self, inner: Any) -> None:
             self._inner = inner
 
         def __call__(self, action: Any, conversation: Any = None) -> Any:
@@ -205,6 +225,37 @@ if _SDK_AVAILABLE:
                 )
             ]
 
+    class OrcSetGradeTool(
+        _OHToolDefinition[OrcSetGradeAction, OrcSetGradeObservation]  # type: ignore[type-arg]
+    ):
+        @classmethod
+        def create(cls, *args: Any, **kwargs: Any) -> list[OrcSetGradeTool]:
+            reg = _callback_registry.get(kwargs["registry_key"])
+            on_grade = reg.get("on_grade")
+            if on_grade is None:
+                # Return empty list if on_grade is not provided (builder phase)
+                return []
+
+            from orchestrator.agents.openhands_common import SetGradeExecutor
+
+            inner = SetGradeExecutor(
+                on_grade,
+                reg["loop"],
+                observation_factory=_obs_set_grade,
+            )
+            return [
+                cls(
+                    description=(
+                        "Set a grade on a requirement. "
+                        "Parameters: req_id (string), grade (one of: A, B, C, D, F), "
+                        "grade_reason (optional string explaining the grade)."
+                    ),
+                    action_type=OrcSetGradeAction,
+                    observation_type=OrcSetGradeObservation,
+                    executor=_SetGradeExec(inner),
+                )
+            ]
+
 
 # ---------------------------------------------------------------------------
 # SDK tool registration -- lazy, idempotent
@@ -228,6 +279,7 @@ def _register_sdk_tools(tool_names: list[str] | None = None) -> None:
     _oh_register_tool("OrcGetRequirementsTool", OrcGetRequirementsTool)  # pyright: ignore[reportPossiblyUnboundVariable]
     _oh_register_tool("OrcUpdateChecklistTool", OrcUpdateChecklistTool)  # pyright: ignore[reportPossiblyUnboundVariable]
     _oh_register_tool("OrcSubmitTool", OrcSubmitTool)  # pyright: ignore[reportPossiblyUnboundVariable]
+    _oh_register_tool("OrcSetGradeTool", OrcSetGradeTool)  # pyright: ignore[reportPossiblyUnboundVariable]
 
     _tools_registered = True
 
@@ -245,6 +297,20 @@ class OpenHandsAgent:
     Requires:
     - openhands-ai package installed
     - OPENAI_API_KEY environment variable set
+
+    Configuration:
+        The server_url parameter is currently unused by LocalConversation
+        (which runs in-process), but is preserved for compatibility with
+        future remote OpenHands support.
+
+        To use the openhands_url from global config:
+
+            from orchestrator.config.global_config import load_global_config
+
+            global_cfg = load_global_config()
+            agent = OpenHandsAgent(
+                server_url=global_cfg.agents.openhands_url or "http://localhost:3000",
+            )
     """
 
     def __init__(
@@ -255,6 +321,7 @@ class OpenHandsAgent:
         http_client: httpx.AsyncClient | None = None,
         max_iterations: int = 100,
         tools: list[str] | None = None,
+        llm_config: dict[str, Any] | None = None,
     ) -> None:
         self._server_url = server_url
         self._model = model
@@ -262,6 +329,7 @@ class OpenHandsAgent:
         self._http_client = http_client
         self._max_iterations = max_iterations
         self._tools = tools
+        self._llm_config = llm_config or {}
         self._cancelled = False
         self._conversation: _LocalConversation | None = None  # pyright: ignore[reportUnknownVariableType]
 
@@ -287,6 +355,8 @@ class OpenHandsAgent:
         context: ExecutionContext,
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via OpenHands.
 
@@ -331,6 +401,7 @@ class OpenHandsAgent:
             on_checklist_update,
             on_submit,
             loop,
+            on_grade=on_grade,
         )
 
         try:
@@ -338,6 +409,7 @@ class OpenHandsAgent:
             llm = OHLLM(
                 model=self._model,
                 api_key=SecretStr(self._api_key),
+                **self._llm_config,
             )
 
             # Build Agent with built-in + custom tools.
@@ -358,6 +430,10 @@ class OpenHandsAgent:
                     name="OrcSubmitTool",
                     params={"registry_key": registry_key},
                 ),
+                OHTool(
+                    name="OrcSetGradeTool",
+                    params={"registry_key": registry_key},
+                ),
             ]
 
             agent = OHAgent(
@@ -365,8 +441,9 @@ class OpenHandsAgent:
                 tools=builtin_tools + orchestrator_tools,
             )
 
-            # Build prompt
-            full_prompt = build_openhands_prompt(context)
+            # Build prompt (with verifier flag if on_grade is provided)
+            is_verifier = on_grade is not None
+            full_prompt = build_openhands_prompt(context, is_verifier=is_verifier)
 
             # Create conversation
             conversation = LocalConversation(

@@ -53,24 +53,41 @@ ui/
 2. Create API client `src/api/client.ts`:
    ```typescript
    const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-   
+
+   // JWT token for authenticated requests (set via VITE_AUTH_TOKEN env var
+   // or read from server output when AUTH_DISABLED=false).
+   let authToken: string | null = import.meta.env.VITE_AUTH_TOKEN || null;
+
+   export function setAuthToken(token: string | null) {
+     authToken = token;
+   }
+
+   export function getAuthToken(): string | null {
+     return authToken;
+   }
+
    export async function fetchApi<T>(
      path: string,
      options?: RequestInit
    ): Promise<T> {
+     const headers: Record<string, string> = {
+       'Content-Type': 'application/json',
+       ...(options?.headers as Record<string, string>),
+     };
+     if (authToken) {
+       headers['Authorization'] = `Bearer ${authToken}`;
+     }
+
      const response = await fetch(`${API_BASE}${path}`, {
        ...options,
-       headers: {
-         'Content-Type': 'application/json',
-         ...options?.headers,
-       },
+       headers,
      });
-     
+
      if (!response.ok) {
        const error = await response.json();
        throw new Error(error.error || 'API request failed');
      }
-     
+
      return response.json();
    }
    
@@ -347,46 +364,47 @@ interface AgentGuidancePanelProps {
   task: TaskDetail;
   prompt: BuilderPrompt;
   mcpUrl: string;
+  authToken: string | null;  // JWT token when auth is enabled, null when disabled
   onStarted: () => void;
   onCancel: () => void;
 }
 
-function AgentGuidancePanel({ 
-  run, task, prompt, mcpUrl, onStarted, onCancel 
+function AgentGuidancePanel({
+  run, task, prompt, mcpUrl, authToken, onStarted, onCancel
 }: AgentGuidancePanelProps) {
   const [copied, setCopied] = useState(false);
   const [waiting, setWaiting] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  
+
   // Timer for elapsed time
   useEffect(() => {
     if (!waiting) return;
     const interval = setInterval(() => setElapsed(e => e + 1), 1000);
     return () => clearInterval(interval);
   }, [waiting]);
-  
+
   const handleCopy = async () => {
     await navigator.clipboard.writeText(prompt.user);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-  
+
   const handleStarted = () => {
     setWaiting(true);
     onStarted();
   };
-  
+
   return (
     <div className="border rounded-lg p-6 bg-gray-50">
       <h3 className="font-medium mb-4">Start Your Agent</h3>
-      
+
       <div className="mb-4">
         <label className="text-sm text-gray-600">Copy this prompt:</label>
         <div className="relative mt-1">
           <pre className="bg-white border rounded p-3 text-sm overflow-auto max-h-48">
             {prompt.user}
           </pre>
-          <button 
+          <button
             onClick={handleCopy}
             className="absolute top-2 right-2 btn-icon"
           >
@@ -394,14 +412,29 @@ function AgentGuidancePanel({
           </button>
         </div>
       </div>
-      
+
       <div className="mb-4">
         <label className="text-sm text-gray-600">MCP Server URL:</label>
         <code className="block bg-white border rounded p-2 mt-1">
           {mcpUrl}
         </code>
       </div>
-      
+
+      {authToken && (
+        <div className="mb-4">
+          <label className="text-sm text-gray-600">Authentication:</label>
+          <p className="text-sm text-gray-500 mt-1">
+            Include this header with all API/MCP requests:
+          </p>
+          <code className="block bg-white border rounded p-2 mt-1 break-all">
+            Authorization: Bearer {authToken}
+          </code>
+          <p className="text-xs text-gray-400 mt-1">
+            For WebSocket connections, append <code>?token={authToken}</code> to the URL.
+          </p>
+        </div>
+      )}
+
       {waiting ? (
         <div className="text-center py-4">
           <Spinner />
@@ -424,6 +457,7 @@ function AgentGuidancePanel({
 ### Definition of Done
 - [ ] Prompt displayed and copyable
 - [ ] MCP URL shown
+- [ ] Auth token shown when auth is enabled (with Bearer header and WebSocket query param instructions)
 - [ ] Waiting state with timer
 - [ ] Cancel button works
 
@@ -450,25 +484,29 @@ ui/src/
 function useRunWebSocket(runId: string) {
   const queryClient = useQueryClient();
   const [connected, setConnected] = useState(false);
-  
+
   useEffect(() => {
-    const ws = new WebSocket(`ws://localhost:8000/ws/runs/${runId}`);
-    
+    // Append ?token= for WebSocket auth when auth is enabled
+    const token = getAuthToken();
+    const wsBase = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+    const tokenParam = token ? `?token=${token}` : '';
+    const ws = new WebSocket(`${wsBase}/ws/runs/${runId}${tokenParam}`);
+
     ws.onopen = () => setConnected(true);
     ws.onclose = () => setConnected(false);
-    
+
     ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
-      
+
       // Update query cache with new data
       if (message.type === 'task_status_changed') {
         queryClient.invalidateQueries({ queryKey: ['run', runId] });
       }
     };
-    
+
     return () => ws.close();
   }, [runId, queryClient]);
-  
+
   return { connected };
 }
 ```

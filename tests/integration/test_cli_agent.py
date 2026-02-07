@@ -68,6 +68,18 @@ async def test_python_command() -> None:
     assert result.success is True
 
 
+async def test_cli_agent_stores_pid() -> None:
+    """CLI agent stores the subprocess PID in agent_metadata."""
+    agent = CLIAgent(command="echo", args=["test"])
+    on_update, on_submit = _noop_callbacks()
+
+    result = await agent.execute(_make_context(), on_update, on_submit)
+    assert result.success is True
+    assert "pid" in result.agent_metadata
+    assert isinstance(result.agent_metadata["pid"], int)
+    assert result.agent_metadata["pid"] > 0
+
+
 async def test_nonexistent_command() -> None:
     """Nonexistent command raises AgentNotAvailableError."""
     agent = CLIAgent(command="nonexistent_command_xyz_12345")
@@ -86,6 +98,67 @@ async def test_failing_command() -> None:
     assert result.success is False
     assert result.error is not None
     assert "exit" in result.error.lower() or "code" in result.error.lower()
+
+
+async def test_on_submit_called_after_success() -> None:
+    """on_submit callback is called when subprocess exits with code 0."""
+    agent = CLIAgent(command="echo", args=["success"])
+    submit_called = False
+
+    async def on_update(req_id: str, status: ChecklistStatus, note: str | None) -> None:
+        pass
+
+    async def on_submit() -> None:
+        nonlocal submit_called
+        submit_called = True
+
+    result = await agent.execute(_make_context(), on_update, on_submit)
+    assert result.success is True
+    assert submit_called is True, "on_submit should be called after successful execution"
+
+
+async def test_on_submit_not_called_after_failure() -> None:
+    """on_submit callback is NOT called when subprocess exits with non-zero code."""
+    agent = CLIAgent(command="python3", args=["-c", "raise SystemExit(1)"])
+    submit_called = False
+
+    async def on_update(req_id: str, status: ChecklistStatus, note: str | None) -> None:
+        pass
+
+    async def on_submit() -> None:
+        nonlocal submit_called
+        submit_called = True
+
+    result = await agent.execute(_make_context(), on_update, on_submit)
+    assert result.success is False
+    assert submit_called is False, "on_submit should NOT be called after failed execution"
+
+
+async def test_on_submit_not_called_after_stuck_kill() -> None:
+    """on_submit callback is NOT called when agent is killed for being stuck."""
+    agent = CLIAgent(
+        command="python3",
+        args=["-c", "import time; time.sleep(300)"],
+        nudger_config=NudgerConfig(
+            output_timeout=timedelta(milliseconds=200),
+            max_nudges=1,
+            nudge_interval=timedelta(seconds=0),
+        ),
+        poll_interval=0.05,
+    )
+    submit_called = False
+
+    async def on_update(req_id: str, status: ChecklistStatus, note: str | None) -> None:
+        pass
+
+    async def on_submit() -> None:
+        nonlocal submit_called
+        submit_called = True
+
+    with pytest.raises(AgentExecutionError, match="stuck"):
+        await agent.execute(_make_context(), on_update, on_submit)
+
+    assert submit_called is False, "on_submit should NOT be called when agent is killed"
 
 
 async def test_prompt_enrichment_reaches_subprocess() -> None:
@@ -160,10 +233,11 @@ async def test_stuck_subprocess_triggers_kill() -> None:
         command="python3",
         args=["-c", "import time; time.sleep(300)"],
         nudger_config=NudgerConfig(
-            output_timeout=timedelta(seconds=1),
+            output_timeout=timedelta(milliseconds=200),
             max_nudges=1,
             nudge_interval=timedelta(seconds=0),
         ),
+        poll_interval=0.05,
     )
     on_update, on_submit = _noop_callbacks()
 
@@ -174,11 +248,14 @@ async def test_stuck_subprocess_triggers_kill() -> None:
 # --- Real CLI agent tests (require claude / codex in PATH) ---
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 @_needs_claude
 async def test_claude_creates_file(tmp_path: Path) -> None:
     """Claude CLI creates a file when asked."""
     agent = CLIAgent(
         command="claude",
+        model="claude-haiku-4-5-20251001",
         args=[
             "-p",
             "--dangerously-skip-permissions",
@@ -196,6 +273,8 @@ async def test_claude_creates_file(tmp_path: Path) -> None:
     assert (tmp_path / "hello.txt").exists()
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 @_needs_codex
 async def test_codex_creates_file(tmp_path: Path) -> None:
     """Codex CLI creates a file when asked."""
@@ -218,11 +297,14 @@ async def test_codex_creates_file(tmp_path: Path) -> None:
     assert (tmp_path / "hello.txt").exists()
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 @_needs_claude
 async def test_claude_simple_output(tmp_path: Path) -> None:
     """Claude CLI prints a specific string when asked."""
     agent = CLIAgent(
         command="claude",
+        model="claude-haiku-4-5-20251001",
         args=[
             "-p",
             "--dangerously-skip-permissions",

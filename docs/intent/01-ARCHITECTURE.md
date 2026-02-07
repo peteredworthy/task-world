@@ -123,7 +123,7 @@ No auto-selection - user chooses from detected available options.
 
 ### 2.2 Core Components
 
-#### 2.2.1 API Server (`orchestrator.server`)
+#### 2.2.1 API Server (`orchestrator.api`)
 
 FastAPI application providing:
 - REST endpoints for CRUD operations
@@ -133,16 +133,16 @@ FastAPI application providing:
 #### 2.2.2 Workflow Engine (`orchestrator.workflow`)
 
 State machine managing:
-- Run lifecycle (draft → queued → active → complete/failed)
+- Run lifecycle (draft → active → complete/failed)
 - Pessimistic locking for task state
 - Checklist gate enforcement
 - Auto-verification execution (sandboxed when using OpenHands)
 - Builder ↔ Verifier transitions with fresh context
 - Retry logic with attempt tracking
 
-#### 2.2.3 Routine Resolver (`orchestrator.routines`)
+#### 2.2.3 Routine Management (`orchestrator.routines`)
 
-Routine management:
+Routine loading and discovery:
 - Loading from git repositories (local, project, allowlisted external)
 - Git SHA versioning - routines must be committed
 - Simplified schema (no ref/use inheritance)
@@ -171,12 +171,12 @@ Git operations:
 - Branch tracking per run
 - Completion actions (MR, merge, cleanup)
 
-#### 2.2.7 State Persistence (`orchestrator.state`)
+#### 2.2.7 State Persistence (`orchestrator.db`, `orchestrator.state`)
 
 Storage layer:
-- SQLite for relational data (migrations deferred until stable)
-- JSON files for session state
-- JSONL for history/audit (event sourcing for recovery)
+- SQLite for relational data (`db/connection.py`, `db/models.py`)
+- JSON files for session state (`state/session.py`)
+- JSONL for history/audit (`db/event_store.py`, event sourcing for recovery)
 - File-based artifacts (option to store in repo)
 
 ---
@@ -222,7 +222,6 @@ Storage layer:
 ```python
 class RunStatus(Enum):
     DRAFT = "draft"
-    QUEUED = "queued"
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
@@ -283,11 +282,6 @@ class Run(BaseModel):
                               ▼
                         ┌───────────┐
                         │   DRAFT   │ ← select agent type
-                        └─────┬─────┘
-                              │ queue
-                              ▼
-                        ┌───────────┐
-                        │  QUEUED   │
                         └─────┬─────┘
                               │ start (acquire lock)
                               ▼
@@ -460,18 +454,20 @@ class UserManagedAgentStatus(Enum):
 
 No `ref:` or `use:` inheritance. Explicit and flat.
 
+> Note: Both singular `task:` and plural `tasks:` are accepted. The plural form is canonical.
+
 ```yaml
 # Routine definition
 routine:
   id: "planning"
   name: "Feature Planning"
-  
+
   inputs:
     - name: "feature_name"
       required: true
     - name: "target_branch"
       default: "main"
-  
+
   steps:
     - id: "S-01"
       title: "Requirements"
@@ -560,39 +556,39 @@ Est. Cost: $0.45 ⓘ
 ```
 orchestrator/
 ├── src/orchestrator/
-│   ├── server/
+│   ├── api/                      # FastAPI application
 │   │   ├── app.py
-│   │   ├── routes/
+│   │   ├── routers/              # REST endpoints
 │   │   │   ├── projects.py
 │   │   │   ├── routines.py
 │   │   │   ├── runs.py
 │   │   │   └── tasks.py
 │   │   └── websocket.py
-│   ├── workflow/
+│   ├── workflow/                 # State machine
 │   │   ├── engine.py
 │   │   ├── gates.py
+│   │   ├── prompts.py            # Prompt generation
 │   │   └── transitions.py
-│   ├── agents/
-│   │   ├── base.py
+│   ├── agents/                   # Agent integrations
+│   │   ├── interface.py          # Agent protocol
+│   │   ├── detector.py           # Tool detection
 │   │   ├── openhands.py
 │   │   ├── cli.py
-│   │   ├── nudger.py
-│   │   └── prompts.py
-│   ├── routines/
-│   │   ├── resolver.py
+│   │   └── nudger.py
+│   ├── routines/                 # Routine management
+│   │   ├── loader.py             # Load from git
+│   │   ├── discovery.py          # Discover from directories
 │   │   └── versioning.py
-│   ├── tools/
-│   │   └── detector.py
-│   ├── projects/
-│   │   ├── registry.py
+│   ├── projects/                 # Git operations
 │   │   └── worktree.py
-│   ├── config/
-│   │   ├── loader.py
+│   ├── config/                   # Configuration
 │   │   └── models.py
-│   └── state/
-│       ├── database.py
-│       ├── session.py
-│       └── history.py
+│   ├── db/                       # Database layer
+│   │   ├── connection.py         # SQLite async
+│   │   ├── event_store.py        # Event persistence
+│   │   └── models.py             # ORM models
+│   └── state/                    # Runtime state
+│       └── session.py            # JSON state
 ├── ui/
 │   └── src/
 │       ├── components/
@@ -603,7 +599,8 @@ orchestrator/
 │       └── hooks/
 ├── tests/
 │   ├── unit/
-│   └── integration/  # Requires real API keys
+│   ├── integration/
+│   └── e2e/
 └── examples/
     └── routines/
 ```
@@ -624,7 +621,7 @@ orchestrator/
 - **React 18+** with TypeScript
 - **Vite** - Build tool
 - **TailwindCSS** - Styling
-- **Zustand** - State management
+- **TanStack Query** - Server state management (caching, refetching)
 
 ### Development
 - **uv** - Package management

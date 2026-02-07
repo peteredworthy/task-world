@@ -5,7 +5,6 @@ from enum import Enum
 
 class RunStatus(str, Enum):
     DRAFT = "draft"
-    QUEUED = "queued"
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
@@ -15,6 +14,7 @@ class RunStatus(str, Enum):
 class TaskStatus(str, Enum):
     PENDING = "pending"
     BUILDING = "building"
+    PENDING_USER_ACTION = "pending_user_action"
     VERIFYING = "verifying"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -42,3 +42,22 @@ class AgentType(str, Enum):
 
 class RoutineSource(str, Enum):
     LOCAL = "local"
+    EMBEDDED = "embedded"
+    PROJECT = "project"
+
+
+class GateType(str, Enum):
+    CHECKLIST = "checklist"
+    GRADE_THRESHOLD = "grade_threshold"
+    HUMAN_APPROVAL = "human_approval"
+    AUTO_VERIFY = "auto_verify"
+
+
+class MergeStrategy(str, Enum):
+    SQUASH = "squash"  # default - condense run commits into one
+    MERGE = "merge"  # preserve full history with merge commit
+
+
+class StepType(str, Enum):
+    STANDARD = "standard"
+    DRY_RUN = "dry_run"

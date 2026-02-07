@@ -1,14 +1,19 @@
-"""Docker-based OpenHands agent integration.
+"""Docker-based OpenHands agent integration using hybrid approach.
 
-Uses the openhands-ai SDK with ``DockerWorkspace`` from ``openhands-workspace``
-to run an agent whose tool execution happens inside an ephemeral Docker
-container.  Agent reasoning and LLM calls stay on the host process.
+Uses a hybrid architecture where:
+- Agent loop runs locally (LocalConversation) for callback support
+- Built-in tool execution (terminal, file operations) routes to Docker container
+- Custom orchestrator tools execute locally with callbacks
+
+This approach fixes the issue where custom tools with callbacks couldn't work
+with RemoteConversation (which serializes everything to the container).
 
 Requires:
-- openhands-ai package installed (SDK: Agent, LLM, Conversation, etc.)
+- openhands-ai package installed (SDK: Agent, LLM, LocalConversation, etc.)
 - openhands-workspace package installed (DockerWorkspace)
 - Docker daemon running
 - OPENAI_API_KEY environment variable set
+- Project directory must be accessible for mounting into the container
 """
 
 from __future__ import annotations
@@ -20,6 +25,8 @@ import platform
 import shutil
 import uuid
 from typing import Any
+
+from pydantic import Field
 
 from orchestrator.agents.errors import (
     AgentCancelledError,
@@ -33,13 +40,14 @@ from orchestrator.agents.openhands_common import (
     UpdateChecklistExecutor,
     build_openhands_prompt,
     extract_metrics,
-    register_builtin_tools,
 )
 from orchestrator.agents.types import (
     AgentInfo,
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionResult,
+    GradeCallback,
+    LogLineCallback,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType
@@ -55,16 +63,21 @@ try:
     from openhands.sdk import (  # pyright: ignore[reportUnknownVariableType,reportMissingImports]
         Action as _OHAction,
         Agent as _OHAgent,
-        Conversation as _OHConversation,
         LLM as _OHLLM,
         Observation as _OHObservation,
-        TextContent as _OHTextContent,
         Tool as _OHTool,
         register_tool as _oh_register_tool,  # pyright: ignore[reportUnknownVariableType]
     )
+    from openhands.sdk.llm import TextContent as _OHTextContent  # pyright: ignore[reportMissingImports]
     from openhands.sdk.tool.tool import (  # pyright: ignore[reportUnknownVariableType,reportMissingImports]
         ToolDefinition as _OHToolDefinition,
         ToolExecutor as _OHToolExecutor,
+    )
+    from openhands.sdk.conversation.impl.local_conversation import (  # pyright: ignore[reportMissingImports]
+        LocalConversation as _OHLocalConversation,
+    )
+    from openhands.sdk.workspace import (  # pyright: ignore[reportMissingImports]
+        LocalWorkspace as _OHLocalWorkspace,
     )
 
     _SDK_AVAILABLE = True  # pyright: ignore[reportConstantRedefinition]
@@ -80,10 +93,28 @@ except ImportError:
 
 
 # ---------------------------------------------------------------------------
-# Callback registry -- independent from local agent's registry
+# Registries -- store non-serializable objects by key
 # ---------------------------------------------------------------------------
 
 _callback_registry = CallbackRegistry()
+
+# Workspace registry for Docker execution routing
+_workspace_registry: dict[str, Any] = {}
+
+
+def _register_workspace(key: str, workspace: Any) -> None:
+    """Register a workspace for tool execution routing."""
+    _workspace_registry[key] = workspace
+
+
+def _get_workspace(key: str) -> Any:
+    """Get a registered workspace by key."""
+    return _workspace_registry.get(key)
+
+
+def _pop_workspace(key: str) -> Any:
+    """Remove and return a workspace from the registry."""
+    return _workspace_registry.pop(key, None)
 
 
 # ---------------------------------------------------------------------------
@@ -91,6 +122,84 @@ _callback_registry = CallbackRegistry()
 # ---------------------------------------------------------------------------
 
 if _SDK_AVAILABLE:
+    # --- Terminal tool that routes to Docker ---
+
+    class DockerTerminalAction(_OHAction):  # type: ignore[misc]
+        """Action for terminal commands executed in Docker."""
+
+        command: str = Field(description="The bash command to execute.")
+        timeout: float | None = Field(default=None, description="Optional timeout in seconds.")
+
+    class DockerTerminalObservation(_OHObservation):  # type: ignore[misc]
+        """Observation from terminal command in Docker."""
+
+        exit_code: int | None = Field(default=None, description="Exit code of the command.")
+
+    class _DockerTerminalExecutor(_OHToolExecutor):  # type: ignore[type-arg,misc]
+        """Executor that routes terminal commands to Docker container."""
+
+        def __init__(self, workspace_key: str, working_dir: str) -> None:
+            self._workspace_key = workspace_key
+            self._working_dir = working_dir
+
+        def __call__(self, action: Any, conversation: Any = None) -> Any:
+            workspace = _get_workspace(self._workspace_key)
+            if workspace is None:
+                return DockerTerminalObservation(
+                    content=[_OHTextContent(text="Error: Docker workspace not found")],  # pyright: ignore[reportPossiblyUnboundVariable,reportArgumentType]
+                    is_error=True,
+                    exit_code=-1,
+                )
+
+            timeout = getattr(action, "timeout", None) or 30.0
+            command = getattr(action, "command", "")
+
+            try:
+                result = workspace.execute_command(command, cwd=self._working_dir, timeout=timeout)
+
+                output = result.stdout or ""
+                if result.stderr:
+                    output = f"{output}\n{result.stderr}" if output else result.stderr
+
+                return DockerTerminalObservation(
+                    content=[_OHTextContent(text=output or "(no output)")],  # pyright: ignore[reportPossiblyUnboundVariable,reportArgumentType]
+                    exit_code=result.exit_code,
+                )
+            except Exception as exc:
+                return DockerTerminalObservation(
+                    content=[_OHTextContent(text=f"Error executing command: {exc}")],  # pyright: ignore[reportPossiblyUnboundVariable,reportArgumentType]
+                    is_error=True,
+                    exit_code=-1,
+                )
+
+    class DockerTerminalTool(
+        _OHToolDefinition[DockerTerminalAction, DockerTerminalObservation]  # type: ignore[type-arg]
+    ):
+        """Terminal tool that routes execution to Docker container."""
+
+        @classmethod
+        def create(cls, *args: Any, **kwargs: Any) -> list["DockerTerminalTool"]:
+            workspace_key = kwargs.get("workspace_key")
+            working_dir = kwargs.get("working_dir", "/workspace")
+
+            if workspace_key is None:
+                raise ValueError("workspace_key is required for DockerTerminalTool")
+
+            executor = _DockerTerminalExecutor(workspace_key, working_dir)
+
+            return [
+                cls(
+                    description=(
+                        "Execute a bash command in the Docker container. "
+                        "Use this for running shell commands, scripts, and system operations."
+                    ),
+                    action_type=DockerTerminalAction,
+                    observation_type=DockerTerminalObservation,
+                    executor=executor,
+                )
+            ]
+
+    # --- Orchestrator tools (run locally with callbacks) ---
 
     class DockerOrcGetReqAction(_OHAction):  # type: ignore[misc]
         pass
@@ -112,6 +221,14 @@ if _SDK_AVAILABLE:
     class DockerOrcSubmitObservation(_OHObservation):  # type: ignore[misc]
         pass
 
+    class DockerOrcSetGradeAction(_OHAction):  # type: ignore[misc]
+        req_id: str
+        grade: str
+        grade_reason: str | None = None
+
+    class DockerOrcSetGradeObservation(_OHObservation):  # type: ignore[misc]
+        pass
+
     # --- Observation factories ---
 
     def _obs_get_req(text: str) -> DockerOrcGetReqObservation:  # type: ignore[type-arg]
@@ -122,6 +239,9 @@ if _SDK_AVAILABLE:
 
     def _obs_submit(text: str) -> DockerOrcSubmitObservation:  # type: ignore[type-arg]
         return DockerOrcSubmitObservation(content=[_OHTextContent(text=text)])  # type: ignore[call-arg]
+
+    def _obs_set_grade(text: str) -> DockerOrcSetGradeObservation:  # type: ignore[type-arg]
+        return DockerOrcSetGradeObservation(content=[_OHTextContent(text=text)])  # type: ignore[call-arg]
 
     # --- ToolExecutor wrappers ---
 
@@ -146,13 +266,20 @@ if _SDK_AVAILABLE:
         def __call__(self, action: Any, conversation: Any = None) -> Any:
             return self._inner(action, conversation)
 
+    class _DockerSetGradeExec(_OHToolExecutor):  # type: ignore[type-arg,misc]
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def __call__(self, action: Any, conversation: Any = None) -> Any:
+            return self._inner(action, conversation)
+
     # --- ToolDefinition subclasses ---
 
     class DockerOrcGetRequirementsTool(
         _OHToolDefinition[DockerOrcGetReqAction, DockerOrcGetReqObservation]  # type: ignore[type-arg]
     ):
         @classmethod
-        def create(cls, *args: Any, **kwargs: Any) -> list[DockerOrcGetRequirementsTool]:
+        def create(cls, *args: Any, **kwargs: Any) -> list["DockerOrcGetRequirementsTool"]:
             reqs: list[str] = kwargs.get("requirements", [])
             inner = GetRequirementsExecutor(reqs, observation_factory=_obs_get_req)
             return [
@@ -168,7 +295,7 @@ if _SDK_AVAILABLE:
         _OHToolDefinition[DockerOrcUpdateAction, DockerOrcUpdateObservation]  # type: ignore[type-arg]
     ):
         @classmethod
-        def create(cls, *args: Any, **kwargs: Any) -> list[DockerOrcUpdateChecklistTool]:
+        def create(cls, *args: Any, **kwargs: Any) -> list["DockerOrcUpdateChecklistTool"]:
             reg = _callback_registry.get(kwargs["registry_key"])
             inner = UpdateChecklistExecutor(
                 reg["on_checklist_update"],
@@ -192,7 +319,7 @@ if _SDK_AVAILABLE:
         _OHToolDefinition[DockerOrcSubmitAction, DockerOrcSubmitObservation]  # type: ignore[type-arg]
     ):
         @classmethod
-        def create(cls, *args: Any, **kwargs: Any) -> list[DockerOrcSubmitTool]:
+        def create(cls, *args: Any, **kwargs: Any) -> list["DockerOrcSubmitTool"]:
             reg = _callback_registry.get(kwargs["registry_key"])
             inner = SubmitExecutor(
                 reg["on_submit"],
@@ -208,6 +335,37 @@ if _SDK_AVAILABLE:
                 )
             ]
 
+    class DockerOrcSetGradeTool(
+        _OHToolDefinition[DockerOrcSetGradeAction, DockerOrcSetGradeObservation]  # type: ignore[type-arg]
+    ):
+        @classmethod
+        def create(cls, *args: Any, **kwargs: Any) -> list["DockerOrcSetGradeTool"]:
+            reg = _callback_registry.get(kwargs["registry_key"])
+            on_grade = reg.get("on_grade")
+            if on_grade is None:
+                # Return empty list if on_grade is not provided (builder phase)
+                return []
+
+            from orchestrator.agents.openhands_common import SetGradeExecutor
+
+            inner = SetGradeExecutor(
+                on_grade,
+                reg["loop"],
+                observation_factory=_obs_set_grade,
+            )
+            return [
+                cls(
+                    description=(
+                        "Set a grade on a requirement. "
+                        "Parameters: req_id (string), grade (one of: A, B, C, D, F), "
+                        "grade_reason (optional string explaining the grade)."
+                    ),
+                    action_type=DockerOrcSetGradeAction,
+                    observation_type=DockerOrcSetGradeObservation,
+                    executor=_DockerSetGradeExec(inner),
+                )
+            ]
+
 
 # ---------------------------------------------------------------------------
 # SDK tool registration -- lazy, idempotent
@@ -216,7 +374,7 @@ if _SDK_AVAILABLE:
 _docker_tools_registered = False
 
 
-def _register_sdk_tools(tool_names: list[str] | None = None) -> None:
+def _register_sdk_tools() -> None:
     """Register custom Docker-specific tools in the SDK registry.
 
     Must be called after the SDK is confirmed available. Idempotent.
@@ -225,11 +383,12 @@ def _register_sdk_tools(tool_names: list[str] | None = None) -> None:
     if _docker_tools_registered:
         return
 
-    register_builtin_tools(tool_names)
-
+    # Register our custom tools
+    _oh_register_tool("DockerTerminalTool", DockerTerminalTool)  # pyright: ignore[reportPossiblyUnboundVariable]
     _oh_register_tool("DockerOrcGetRequirementsTool", DockerOrcGetRequirementsTool)  # pyright: ignore[reportPossiblyUnboundVariable]
     _oh_register_tool("DockerOrcUpdateChecklistTool", DockerOrcUpdateChecklistTool)  # pyright: ignore[reportPossiblyUnboundVariable]
     _oh_register_tool("DockerOrcSubmitTool", DockerOrcSubmitTool)  # pyright: ignore[reportPossiblyUnboundVariable]
+    _oh_register_tool("DockerOrcSetGradeTool", DockerOrcSetGradeTool)  # pyright: ignore[reportPossiblyUnboundVariable]
 
     _docker_tools_registered = True
 
@@ -256,17 +415,20 @@ def _detect_platform() -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Docker OpenHands Agent
+# Docker OpenHands Agent (Hybrid Approach)
 # ---------------------------------------------------------------------------
 
 
 class DockerOpenHandsAgent:
-    """Agent that executes via an ephemeral Docker container.
+    """Agent that executes via an ephemeral Docker container using hybrid approach.
 
-    Uses ``DockerWorkspace`` (from ``openhands-workspace``) to manage the
-    container lifecycle.  ``Conversation`` (from ``openhands-ai``) drives the
-    agent loop on the host, with tool execution routed to the container over
-    HTTP.
+    Uses a hybrid architecture where:
+    - Agent loop runs locally (LocalConversation) for callback support
+    - Built-in tool execution routes to Docker container via HTTP API
+    - Custom orchestrator tools execute locally with callbacks
+
+    This fixes the issue where RemoteConversation couldn't support custom tools
+    with callbacks (since callbacks can't be serialized to the container).
 
     Requires:
     - openhands-ai package installed
@@ -277,12 +439,13 @@ class DockerOpenHandsAgent:
 
     def __init__(
         self,
-        model: str = "gpt-5-mini",
+        model: str = "gpt-4o-mini",
         api_key: str | None = None,
         max_iterations: int = 100,
         server_image: str = "ghcr.io/openhands/agent-server:latest-python",
         docker_platform: str | None = None,
         tools: list[str] | None = None,
+        llm_config: dict[str, Any] | None = None,
     ) -> None:
         self._model = model
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
@@ -290,6 +453,7 @@ class DockerOpenHandsAgent:
         self._server_image = server_image
         self._platform = docker_platform
         self._tools = tools
+        self._llm_config = llm_config or {}
         self._cancelled = False
         self._conversation: Any = None
 
@@ -318,12 +482,14 @@ class DockerOpenHandsAgent:
         context: ExecutionContext,
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
     ) -> ExecutionResult:
-        """Execute a task via an ephemeral Docker container.
+        """Execute a task via Docker container using hybrid approach.
 
-        Creates a ``DockerWorkspace`` (which starts the container), builds a
-        ``Conversation`` with the agent on the host, and runs the agent loop.
-        Tool execution is routed to the container; LLM calls stay on host.
+        Creates a DockerWorkspace for the container, but uses LocalConversation
+        for the agent loop. This keeps callbacks working locally while routing
+        built-in tool execution to the container.
         """
         if not _SDK_AVAILABLE:
             raise AgentNotAvailableError(
@@ -346,32 +512,59 @@ class DockerOpenHandsAgent:
         if self._cancelled:
             raise AgentCancelledError("openhands_docker")
 
-        _register_sdk_tools(self._tools)
+        _register_sdk_tools()
 
         from pydantic import SecretStr
 
         loop = asyncio.get_running_loop()
 
-        registry_key = uuid.uuid4().hex
+        # Generate unique keys for this session
+        session_key = uuid.uuid4().hex
+        registry_key = f"cb_{session_key}"
+        workspace_key = f"ws_{session_key}"
+
         _callback_registry.register(
             registry_key,
             on_checklist_update,
             on_submit,
             loop,
+            on_grade=on_grade,
         )
 
-        workspace = None
+        docker_workspace = None
         try:
+            # Start Docker container
+            resolved_platform = self._platform or _detect_platform()
+            workspace_kwargs: dict[str, Any] = {
+                "server_image": self._server_image,
+                "volumes": [f"{context.working_dir}:/workspace:rw"],
+                "detach_logs": False,  # Don't spam logs
+            }
+            if resolved_platform is not None:
+                workspace_kwargs["platform"] = resolved_platform
+
+            docker_workspace = _DockerWorkspace(**workspace_kwargs)  # pyright: ignore[reportPossiblyUnboundVariable]
+
+            # Register workspace for tool execution routing
+            _register_workspace(workspace_key, docker_workspace)
+
+            # Create LLM
             llm = _OHLLM(  # pyright: ignore[reportPossiblyUnboundVariable]
                 model=self._model,
                 api_key=SecretStr(self._api_key),
+                **self._llm_config,
             )
 
-            from orchestrator.agents.openhands_common import DEFAULT_OPENHANDS_TOOLS
-
-            tool_names = self._tools or DEFAULT_OPENHANDS_TOOLS
-            builtin_tools = [_OHTool(name=name) for name in tool_names]  # pyright: ignore[reportPossiblyUnboundVariable]
-            orchestrator_tools = [
+            # Build tools list
+            # Our DockerTerminalTool replaces the standard terminal tool
+            tools = [
+                _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
+                    name="DockerTerminalTool",
+                    params={
+                        "workspace_key": workspace_key,
+                        "working_dir": "/workspace",
+                    },
+                ),
                 _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
                     name="DockerOrcGetRequirementsTool",
                     params={"requirements": context.requirements},
@@ -384,28 +577,28 @@ class DockerOpenHandsAgent:
                     name="DockerOrcSubmitTool",
                     params={"registry_key": registry_key},
                 ),
+                _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
+                    name="DockerOrcSetGradeTool",
+                    params={"registry_key": registry_key},
+                ),
             ]
 
             agent = _OHAgent(  # pyright: ignore[reportPossiblyUnboundVariable]
                 llm=llm,
-                tools=builtin_tools + orchestrator_tools,
+                tools=tools,
             )
 
-            full_prompt = build_openhands_prompt(context)
+            # Build prompt (with verifier flag if on_grade is provided)
+            is_verifier = on_grade is not None
+            full_prompt = build_openhands_prompt(context, is_verifier=is_verifier)
 
-            resolved_platform = self._platform or _detect_platform()
+            # Use LocalConversation with a local workspace
+            # The actual execution routes to Docker via our custom tools
+            local_workspace = _OHLocalWorkspace(working_dir=context.working_dir)  # pyright: ignore[reportPossiblyUnboundVariable]
 
-            workspace_kwargs: dict[str, Any] = {
-                "server_image": self._server_image,
-            }
-            if resolved_platform is not None:
-                workspace_kwargs["platform"] = resolved_platform
-
-            workspace = _DockerWorkspace(**workspace_kwargs)  # pyright: ignore[reportPossiblyUnboundVariable]
-
-            conversation = _OHConversation(  # pyright: ignore[reportPossiblyUnboundVariable]
+            conversation = _OHLocalConversation(  # pyright: ignore[reportPossiblyUnboundVariable]
                 agent=agent,
-                workspace=workspace,
+                workspace=local_workspace,
                 max_iteration_per_run=self._max_iterations,
                 visualizer=None,
             )
@@ -430,10 +623,11 @@ class DockerOpenHandsAgent:
             raise AgentExecutionError("openhands_docker", str(exc)) from exc
         finally:
             _callback_registry.pop(registry_key)
+            _pop_workspace(workspace_key)
             self._conversation = None
-            if workspace is not None:
+            if docker_workspace is not None:
                 try:
-                    workspace.cleanup()  # pyright: ignore[reportUnknownMemberType]
+                    docker_workspace.cleanup()  # pyright: ignore[reportUnknownMemberType]
                 except Exception:
                     logging.getLogger(__name__).warning(
                         "Failed to clean up Docker workspace", exc_info=True

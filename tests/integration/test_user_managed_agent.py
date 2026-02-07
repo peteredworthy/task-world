@@ -181,7 +181,7 @@ async def test_user_managed_agent_cross_instance(
         pass
 
     async def submit_via_different_service() -> None:
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.05)
         # This simulates the REST/MCP handler calling submit on a fresh service
         await service_api.submit_for_verification(run.id, "task-1")
 
@@ -278,7 +278,7 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
                 pass
 
             async def submit_via_rest_api() -> None:
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.05)
                 resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
                 assert resp.status_code == 200
                 assert resp.json()["success"] is True

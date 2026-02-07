@@ -8,17 +8,32 @@ from orchestrator.agents.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
+from orchestrator.api.auth import AuthError
+from orchestrator.envfiles.errors import SnapshotNotFoundError
+from orchestrator.git.errors import BranchNotFoundError, MergeConflictError
 from orchestrator.routines.errors import RoutineNotFoundError, RoutineValidationError
 from orchestrator.state.errors import (
     ChecklistItemNotFoundError,
+    MissingRequiredInputError,
     RunNotFoundError,
+    StepNotFoundError,
     TaskNotFoundError,
 )
 from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow.locks import TaskLockedError
 
 
 def register_error_handlers(app: FastAPI) -> None:
     """Register domain exception -> HTTP response mappings."""
+
+    @app.exception_handler(AuthError)
+    async def auth_error(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: AuthError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=401,
+            content={"error": "authentication_failed", "detail": str(exc)},
+        )
 
     @app.exception_handler(RunNotFoundError)
     async def run_not_found(  # type: ignore[reportUnusedFunction]
@@ -27,6 +42,15 @@ def register_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=404,
             content={"error": "run_not_found", "run_id": exc.run_id},
+        )
+
+    @app.exception_handler(StepNotFoundError)
+    async def step_not_found(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: StepNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "step_not_found", "step_id": exc.step_id},
         )
 
     @app.exception_handler(TaskNotFoundError)
@@ -74,6 +98,18 @@ def register_error_handlers(app: FastAPI) -> None:
             },
         )
 
+    @app.exception_handler(MissingRequiredInputError)
+    async def missing_required_input(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: MissingRequiredInputError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error": "missing_required_input",
+                "input_name": exc.input_name,
+            },
+        )
+
     @app.exception_handler(InvalidTransitionError)
     async def invalid_transition(  # type: ignore[reportUnusedFunction]
         _request: Request, exc: InvalidTransitionError
@@ -97,6 +133,19 @@ def register_error_handlers(app: FastAPI) -> None:
                 "error": "gate_blocked",
                 "gate_name": exc.gate_name,
                 "blocking_items": exc.blocking_items,
+            },
+        )
+
+    @app.exception_handler(TaskLockedError)
+    async def task_locked(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: TaskLockedError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "task_locked",
+                "task_id": exc.task_id,
+                "locked_by": exc.locked_by,
             },
         )
 
@@ -132,5 +181,41 @@ def register_error_handlers(app: FastAPI) -> None:
                 "error": "agent_execution_error",
                 "agent_type": exc.agent_type,
                 "message": exc.message,
+            },
+        )
+
+    @app.exception_handler(SnapshotNotFoundError)
+    async def snapshot_not_found(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: SnapshotNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "snapshot_not_found",
+                "run_id": exc.run_id,
+                "snapshot_id": exc.snapshot_id,
+            },
+        )
+
+    @app.exception_handler(BranchNotFoundError)
+    async def branch_not_found(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: BranchNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "branch_not_found", "branch": exc.branch},
+        )
+
+    @app.exception_handler(MergeConflictError)
+    async def merge_conflict(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: MergeConflictError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "merge_conflict",
+                "source": exc.source,
+                "target": exc.target,
+                "conflicting_files": exc.conflicting_files,
             },
         )

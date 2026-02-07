@@ -196,7 +196,6 @@ tests/unit/
    
    class RunStatus(str, Enum):
        DRAFT = "draft"
-       QUEUED = "queued"
        ACTIVE = "active"
        PAUSED = "paused"
        COMPLETED = "completed"

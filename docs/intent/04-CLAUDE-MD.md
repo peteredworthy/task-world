@@ -82,30 +82,32 @@ task
 
 ```
 src/orchestrator/
-├── server/          # FastAPI app
-│   ├── routes/      # API endpoints
-│   └── websocket.py # Real-time (throttled)
-├── workflow/        # State machine
-│   ├── engine.py    # Core orchestration
-│   ├── gates.py     # Checklist/grade gates
+├── api/                      # FastAPI app
+│   ├── routers/              # API endpoints
+│   └── websocket.py          # Real-time (throttled)
+├── workflow/                 # State machine
+│   ├── engine.py             # Core orchestration
+│   ├── gates.py              # Checklist/grade gates
+│   ├── prompts.py            # Prompt generation
 │   └── transitions.py
-├── agents/          # Agent integrations
-│   ├── base.py      # Interface
-│   ├── openhands.py # OpenHands
-│   ├── cli.py       # CLI subprocess
-│   ├── nudger.py    # Stuck detection
-│   └── prompts.py   # Prompt generation
-├── routines/        # Routine management
-│   ├── resolver.py  # Load from git
-│   └── versioning.py # SHA tracking
-├── tools/           # Tool detection
-│   └── detector.py  # Find available agents
-├── projects/        # Git operations
-│   └── worktree.py  # Worktree management
-└── state/           # Persistence
-    ├── database.py  # SQLite
-    ├── session.py   # JSON state
-    └── history.py   # JSONL events
+├── agents/                   # Agent integrations
+│   ├── interface.py          # Agent protocol
+│   ├── detector.py           # Find available agents
+│   ├── openhands.py          # OpenHands
+│   ├── cli.py                # CLI subprocess
+│   └── nudger.py             # Stuck detection
+├── routines/                 # Routine management
+│   ├── loader.py             # Load from git
+│   ├── discovery.py          # Discover routines from directories
+│   └── versioning.py         # SHA tracking
+├── db/                       # Database layer
+│   ├── connection.py         # SQLite (async)
+│   ├── event_store.py        # Event persistence
+│   └── models.py             # ORM models
+├── projects/                 # Git operations
+│   └── worktree.py           # Worktree management
+└── state/                    # Runtime state
+    └── session.py            # JSON state
 ```
 
 ---

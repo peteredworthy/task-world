@@ -18,6 +18,7 @@ from orchestrator.agents.types import (
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionMetrics,
+    GradeCallback,
     SubmitCallback,
 )
 from orchestrator.config.enums import ChecklistStatus
@@ -47,11 +48,13 @@ class CallbackRegistry:
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
         loop: asyncio.AbstractEventLoop,
+        on_grade: GradeCallback | None = None,
     ) -> None:
         """Register callbacks under the given key."""
         self._store[key] = {
             "on_checklist_update": on_checklist_update,
             "on_submit": on_submit,
+            "on_grade": on_grade,
             "loop": loop,
         }
 
@@ -161,6 +164,41 @@ class SubmitExecutor:
         return self._make_obs("Task submitted for verification.")
 
 
+class SetGradeExecutor:
+    """Bridges the SDK's synchronous tool call to the async grade callback."""
+
+    def __init__(
+        self,
+        callback: GradeCallback,
+        loop: asyncio.AbstractEventLoop,
+        observation_factory: Any = None,
+    ) -> None:
+        self._callback = callback
+        self._loop = loop
+        self._make_obs = observation_factory
+
+    def __call__(self, action: Any, conversation: Any = None) -> Any:
+        req_id: str = action.req_id
+        grade: str = action.grade
+        grade_reason: str | None = getattr(action, "grade_reason", None)
+
+        # Validate grade
+        valid_grades = ["A", "B", "C", "D", "F"]
+        if grade not in valid_grades:
+            raise ValueError(f"Invalid grade '{grade}'. Valid values: {', '.join(valid_grades)}")
+
+        coro = self._callback(req_id, grade, grade_reason)
+        future = asyncio.run_coroutine_threadsafe(  # pyright: ignore[reportUnknownVariableType]
+            coro,  # pyright: ignore[reportArgumentType]
+            self._loop,
+        )
+        future.result(timeout=60)  # pyright: ignore[reportUnknownMemberType]
+
+        if self._make_obs is None:
+            raise RuntimeError("observation_factory not provided")
+        return self._make_obs(f"Set grade '{grade}' on requirement '{req_id}'.")
+
+
 # ---------------------------------------------------------------------------
 # Metrics extraction -- shared between local and Docker agents
 # ---------------------------------------------------------------------------
@@ -201,20 +239,66 @@ def extract_metrics(conversation: Any) -> ExecutionMetrics:
 # ---------------------------------------------------------------------------
 
 
-def build_openhands_prompt(context: ExecutionContext) -> str:
-    """Build the full prompt with requirements and tool instructions."""
+def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False) -> str:
+    """Build the full prompt with requirements and tool instructions.
+
+    Args:
+        context: Execution context with prompt and requirements.
+        is_verifier: If True, includes grading tools for verifier phase.
+    """
     requirements_text = "\n".join(f"- {req}" for req in context.requirements)
+
+    if is_verifier:
+        return (
+            f"{context.prompt}\n\n"
+            f"## Requirements\n{requirements_text}\n\n"
+            "## Orchestrator Integration (Verifier)\n"
+            "You are connected to an orchestrator. Your role is to VERIFY the builder's work.\n\n"
+            "### Required Workflow\n"
+            "1. Review the code changes made by the builder.\n"
+            "2. Grade EVERY requirement using **orc_set_grade**.\n"
+            "3. After grading all requirements, call **orc_submit** to complete verification.\n"
+            "4. Grades: A (excellent), B (good), C (adequate), D (poor), F (failing)\n\n"
+            "### Available Tools\n"
+            "- **orc_get_requirements**()\n"
+            "  Returns all checklist items with their current status and grades.\n\n"
+            "- **orc_set_grade**(req_id, grade, grade_reason?)\n"
+            "  Set a grade on a requirement.\n"
+            "  - req_id: The requirement ID (e.g. 'R-01', 'R-02')\n"
+            "  - grade: One of 'A', 'B', 'C', 'D', 'F'\n"
+            "  - grade_reason: Optional explanation for the grade\n"
+            "  Example: orc_set_grade('R-01', 'A', 'Well implemented')\n\n"
+            "- **orc_submit**()\n"
+            "  Complete the verification after grading all requirements."
+        )
+
     return (
         f"{context.prompt}\n\n"
         f"## Requirements\n{requirements_text}\n\n"
-        "## Available Orchestrator Tools\n"
-        "- **get_requirements**: Returns the list of requirements.\n"
-        "- **update_checklist**: Mark a requirement done/blocked/not_applicable. "
-        "Parameters: req_id (string), status (string), note (optional string).\n"
-        "- **submit**: Submit your work for verification.\n\n"
-        "When you complete a requirement, call update_checklist with "
-        "the requirement text and status 'done'.\n"
-        "When all requirements are complete, call submit."
+        "## Orchestrator Integration\n"
+        "You are connected to an orchestrator that tracks your progress. "
+        "Use the tools below to report your work.\n\n"
+        "### Required Workflow\n"
+        "1. Read the requirements above carefully.\n"
+        "2. Implement each requirement.\n"
+        "3. After completing each requirement, call **orc_update_checklist** "
+        "to mark it 'done'.\n"
+        "4. Once ALL requirements are addressed, call **orc_submit** to submit.\n"
+        "5. All CRITICAL requirements must be 'done' before submission succeeds.\n\n"
+        "### Available Tools\n"
+        "- **orc_get_requirements**()\n"
+        "  Returns all checklist items with their current status and grades.\n"
+        "  Call this first to see the exact requirement IDs.\n\n"
+        "- **orc_update_checklist**(req_id, status, note?)\n"
+        "  Mark a requirement as done, blocked, or not_applicable.\n"
+        "  - req_id: The requirement ID (e.g. 'R-01', 'R-02')\n"
+        "  - status: 'done', 'blocked', or 'not_applicable'\n"
+        "  - note: Optional explanation\n"
+        "  Example: orc_update_checklist('R-01', 'done')\n\n"
+        "- **orc_submit**()\n"
+        "  Submit your work for verification by a reviewer.\n"
+        "  Only call this after addressing all requirements.\n"
+        "  Submission will fail if any CRITICAL requirement is not 'done'."
     )
 
 

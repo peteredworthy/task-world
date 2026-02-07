@@ -78,3 +78,109 @@ async def test_empty_dir_returns_empty_list(empty_client: AsyncClient) -> None:
     response = await empty_client.get("/api/routines")
     assert response.status_code == 200
     assert response.json() == {"routines": []}
+
+
+# --- B3: validate routine endpoint tests ---
+
+VALID_ROUTINE_YAML = """\
+routine:
+  id: test-routine
+  name: Test Routine
+  steps:
+    - id: S-01
+      title: Step One
+      tasks:
+        - id: T-01
+          title: Task One
+          task_context: Do something
+          requirements:
+            - id: R1
+              desc: Requirement 1
+"""
+
+VALID_ROUTINE_YAML_UNWRAPPED = """\
+id: test-routine
+name: Test Routine
+steps:
+  - id: S-01
+    title: Step One
+    tasks:
+      - id: T-01
+        title: Task One
+        task_context: Do something
+        requirements:
+          - id: R1
+            desc: Requirement 1
+"""
+
+INVALID_ROUTINE_YAML_MISSING_FIELD = """\
+routine:
+  name: Missing ID
+  steps: []
+"""
+
+INVALID_YAML_SYNTAX = """\
+routine:
+  id: bad
+  name: [unterminated
+"""
+
+
+async def test_validate_routine_valid(client: AsyncClient) -> None:
+    """Valid YAML with routine: wrapper returns valid=true."""
+    response = await client.post(
+        "/api/routines/validate",
+        json={"yaml_content": VALID_ROUTINE_YAML},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["valid"] is True
+    assert data["errors"] == []
+
+
+async def test_validate_routine_valid_unwrapped(client: AsyncClient) -> None:
+    """Valid YAML without routine: wrapper returns valid=true."""
+    response = await client.post(
+        "/api/routines/validate",
+        json={"yaml_content": VALID_ROUTINE_YAML_UNWRAPPED},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["valid"] is True
+    assert data["errors"] == []
+
+
+async def test_validate_routine_invalid_missing_field(client: AsyncClient) -> None:
+    """YAML missing required field returns valid=false with error details."""
+    response = await client.post(
+        "/api/routines/validate",
+        json={"yaml_content": INVALID_ROUTINE_YAML_MISSING_FIELD},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["valid"] is False
+    assert len(data["errors"]) > 0
+
+
+async def test_validate_routine_invalid_yaml_syntax(client: AsyncClient) -> None:
+    """Malformed YAML returns valid=false with parse error."""
+    response = await client.post(
+        "/api/routines/validate",
+        json={"yaml_content": INVALID_YAML_SYNTAX},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["valid"] is False
+    assert any("YAML parse error" in e for e in data["errors"])
+
+
+async def test_validate_routine_empty_yaml(client: AsyncClient) -> None:
+    """Empty YAML content returns valid=false."""
+    response = await client.post(
+        "/api/routines/validate",
+        json={"yaml_content": ""},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["valid"] is False
+    assert any("Empty" in e for e in data["errors"])

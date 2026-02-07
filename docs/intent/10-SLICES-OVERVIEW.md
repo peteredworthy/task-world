@@ -56,10 +56,12 @@ Each slice must prove:
 | **Phase 2** | Workflow Engine | 2.1-2.5 | State machine, gates, transitions |
 | **Phase 3** | Persistence | 3.1-3.4 | Database, sessions, history |
 | **Phase 4** | API Server | 4.1-4.5 | REST endpoints, WebSocket |
-| **Phase 5** | Agent Integration | 5.1-5.5 | OpenHands, CLI, MCP |
+| **Phase 5** | Agent Integration | 5.1-5.6 | OpenHands, CLI, MCP |
 | **Phase 6** | Web UI | 6.1-6.4 | Dashboard, run detail, guidance |
 | **Phase 7** | Git Integration | 7.1-7.3 | Worktrees, versioning |
 | **Phase 8** | CLI & Polish | 8.1-8.3 | Commands, error handling |
+| **Phase 9** | Advanced Workflows | 9.1-9.6 | Human gates, backward transitions, dry-run |
+| **Phase 10** | Advanced Config | 10.1-10.5 | Clarification, model escalation, MCP client |
 
 ---
 
@@ -71,8 +73,8 @@ Phase 1: Foundation
     └── 1.2 Config models
           └── 1.3 Routine loading
                 └── 1.4 State models
-                      └── 1.5 Session state
-                            └── 1.6 History logger
+                      └── 1.5 Run Factory
+                            └── 1.6 Session State Manager
 
 Phase 2: Workflow Engine (depends on Phase 1)
   2.1 Checklist logic
@@ -117,6 +119,21 @@ Phase 8: CLI & Polish (depends on all)
   8.1 CLI commands
     └── 8.2 Error handling
           └── 8.3 Full e2e suite
+
+Phase 9: Advanced Workflows (depends on Phase 2, 3, 5)
+  9.1 Human-only gate type
+    └── 9.2 Backward transitions
+          └── 9.3 Artifact registry
+                └── 9.4 Dry-run verification
+                      └── 9.5 Multi-artifact context
+                            └── 9.6 Planning routine template
+
+Phase 10: Advanced Config (depends on Phase 2, 5, 9)
+  10.1 Clarification state machine
+    └── 10.2 Model config inheritance
+          └── 10.3 Model escalation on failure
+                └── 10.4 MCP client integration
+                      └── 10.5 Per-task tool scoping
 ```
 
 ---
@@ -125,14 +142,16 @@ Phase 8: CLI & Polish (depends on all)
 
 | Document | Phases | Focus |
 |----------|--------|-------|
-| [10-SLICES-PHASE-1.md](./10-SLICES-PHASE-1.md) | 1.1-1.6 | Foundation |
-| [11-SLICES-PHASE-2.md](./11-SLICES-PHASE-2.md) | 2.1-2.5 | Workflow Engine |
-| [12-SLICES-PHASE-3.md](./12-SLICES-PHASE-3.md) | 3.1-3.4 | Persistence |
-| [13-SLICES-PHASE-4.md](./13-SLICES-PHASE-4.md) | 4.1-4.5 | API Server |
-| [14-SLICES-PHASE-5.md](./14-SLICES-PHASE-5.md) | 5.1-5.6 | Agent Integration |
-| [15-SLICES-PHASE-6.md](./15-SLICES-PHASE-6.md) | 6.1-6.4 | Web UI |
-| [16-SLICES-PHASE-7.md](./16-SLICES-PHASE-7.md) | 7.1-7.3 | Git Integration |
-| [17-SLICES-PHASE-8.md](./17-SLICES-PHASE-8.md) | 8.1-8.3 | CLI & Polish |
+| [11-SLICES-PHASE-1.md](./11-SLICES-PHASE-1.md) | 1 (1.1-1.6) | Foundation |
+| [12-SLICES-PHASE-2.md](./12-SLICES-PHASE-2.md) | 2 (2.1-2.5) | Workflow Engine |
+| [13-SLICES-PHASE-3.md](./13-SLICES-PHASE-3.md) | 3 (3.1-3.4) | Persistence |
+| [14-SLICES-PHASE-4.md](./14-SLICES-PHASE-4.md) | 4 (4.1-4.5) | API Server |
+| [15-SLICES-PHASE-5.md](./15-SLICES-PHASE-5.md) | 5 (5.1-5.6) | Agent Integration |
+| [16-SLICES-PHASE-6.md](./16-SLICES-PHASE-6.md) | 6 (6.1-6.4) | Web UI |
+| [17-SLICES-PHASE-7.md](./17-SLICES-PHASE-7.md) | 7 (7.1-7.3) | Git Integration |
+| [18-SLICES-PHASE-8.md](./18-SLICES-PHASE-8.md) | 8 (8.1-8.3) | CLI & Polish |
+| [19-SLICES-PHASE-9.md](./19-SLICES-PHASE-9.md) | 9 (9.1-9.6) | Advanced Workflows |
+| [21-SLICES-PHASE-10.md](./21-SLICES-PHASE-10.md) | 10 (10.1-10.5) | Advanced Config |
 
 ---
 
@@ -391,7 +410,7 @@ uv run pytest --cov=orchestrator --cov-report=html
 ## Getting Started
 
 1. Read this overview completely
-2. Read Phase 1 document (10-SLICES-PHASE-1.md)
+2. Read Phase 1 document (11-SLICES-PHASE-1.md)
 3. Implement slice 1.1 (Project Skeleton)
 4. Verify slice 1.1 passes all tests
 5. Continue to slice 1.2

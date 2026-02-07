@@ -132,7 +132,9 @@ async def test_full_lifecycle_survives_restart(db_path: Path) -> None:
         service2 = WorkflowService(session2)
         loaded = await service2.get_run("run-1")
 
-        assert loaded.status == RunStatus.ACTIVE
+        assert loaded.status == RunStatus.COMPLETED
+        assert loaded.completed_at is not None
+        assert loaded.steps[0].completed is True
         task = loaded.steps[0].tasks[0]
         assert task.status == TaskStatus.COMPLETED
         assert task.current_attempt == 1
@@ -209,7 +211,7 @@ async def test_routine_fixture_roundtrip(db_path: Path) -> None:
         assert loaded.project_id == "proj-1"
         assert loaded.routine_id == "complete-routine"
         assert loaded.routine_sha == "deadbeef"
-        assert loaded.config == {"feature_name": "auth"}
+        assert loaded.config == {"feature_name": "auth", "branch": "main"}
         assert len(loaded.steps) == 2
         assert loaded.steps[0].config_id == "S-01"
         assert loaded.steps[1].config_id == "S-02"

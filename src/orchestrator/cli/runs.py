@@ -1,0 +1,694 @@
+"""Run management commands."""
+
+import asyncio
+import json
+import signal
+import sys
+from pathlib import Path
+from typing import Any
+
+import click
+import httpx
+import websockets
+
+from orchestrator.config.enums import AgentType, RoutineSource, RunStatus
+from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db.repositories import RunRepository
+from orchestrator.routines.discovery import discover_routines
+from orchestrator.state.factory import create_run_from_routine
+from orchestrator.workflow.locks import InMemoryLockManager
+from orchestrator.workflow.service import WorkflowService
+
+from orchestrator.cli.approve import approve_command
+
+
+@click.group()
+def runs() -> None:
+    """Manage runs."""
+    pass
+
+
+# Register the approve command
+runs.add_command(approve_command)
+
+
+@runs.command("list")
+@click.option("--project", "-p", help="Filter by project")
+@click.option("--status", "-s", help="Filter by status")
+@click.pass_context
+def list_runs(ctx: click.Context, project: str | None, status: str | None) -> None:
+    """List runs."""
+
+    async def _list() -> None:
+        db_path = ctx.obj["db"]
+        as_json = ctx.obj["json"]
+
+        engine = create_engine(db_path)
+        await init_db(engine)
+        session_factory = create_session_factory(engine)
+
+        async with session_factory() as session:
+            repo = RunRepository(session)
+
+            # Apply filters
+            if project:
+                runs_list = await repo.list_by_project(project)
+            elif status:
+                try:
+                    status_enum = RunStatus(status)
+                    runs_list = await repo.list_by_status(status_enum)
+                except ValueError:
+                    click.echo(f"Error: Invalid status '{status}'", err=True)
+                    sys.exit(1)
+            else:
+                runs_list = await repo.list_all()
+
+        await engine.dispose()
+
+        if as_json:
+            # Serialize to JSON
+            result = [
+                {
+                    "id": run.id,
+                    "routine_id": run.routine_id,
+                    "project_id": run.project_id,
+                    "status": run.status.value,
+                    "created_at": run.created_at.isoformat() if run.created_at else None,
+                    "started_at": run.started_at.isoformat() if run.started_at else None,
+                    "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                }
+                for run in runs_list
+            ]
+            click.echo(json.dumps(result, indent=2))
+        else:
+            # Human-readable output
+            if not runs_list:
+                click.echo("No runs found.")
+                return
+
+            for run in runs_list:
+                status_str = run.status.value
+                click.echo(
+                    f"{run.id} | {run.routine_id or '<embedded>'} | {status_str} | {run.project_id}"
+                )
+
+    asyncio.run(_list())
+
+
+@runs.command("create")
+@click.argument("routine_id")
+@click.option("--project", "-p", required=True, help="Project directory path")
+@click.option("--config", "-c", multiple=True, help="Config key=value pairs")
+@click.option(
+    "--agent", "-a", help="Agent type (openhands_local, cli_subprocess, user_managed, etc.)"
+)
+@click.option("--agent-config", "-ac", multiple=True, help="Agent config key=value pairs")
+@click.option("--init", "init_project", is_flag=True, help="Initialize project directory with git")
+@click.pass_context
+def create_run(
+    ctx: click.Context,
+    routine_id: str,
+    project: str,
+    config: tuple[str, ...],
+    agent: str | None,
+    agent_config: tuple[str, ...],
+    init_project: bool,
+) -> None:
+    """Create a new run."""
+
+    async def _create() -> None:
+        db_path = ctx.obj["db"]
+        as_json = ctx.obj["json"]
+
+        # Parse config
+        cfg: dict[str, str] = {}
+        for kv in config:
+            if "=" not in kv:
+                click.echo(f"Error: Invalid config format '{kv}'. Expected key=value", err=True)
+                sys.exit(1)
+            key, value = kv.split("=", 1)
+            cfg[key] = value
+
+        # Parse agent config
+        agent_cfg: dict[str, str] = {}
+        for kv in agent_config:
+            if "=" not in kv:
+                click.echo(
+                    f"Error: Invalid agent config format '{kv}'. Expected key=value", err=True
+                )
+                sys.exit(1)
+            key, value = kv.split("=", 1)
+            agent_cfg[key] = value
+
+        # Initialize project if --init flag is set
+        if init_project:
+            from orchestrator.git.project_init import init_project as do_init
+
+            project_path = Path(project)
+            if project_path.exists():
+                click.echo(f"Error: Project path already exists: {project}", err=True)
+                sys.exit(1)
+            result = do_init(project_path)
+            click.echo(f"Initialized project at {result.path}")
+
+        engine = create_engine(db_path)
+        await init_db(engine)
+        session_factory = create_session_factory(engine)
+
+        async with session_factory() as session:
+            repo = RunRepository(session)
+
+            # Discover routines
+            routine_dirs = [
+                (Path("routines"), RoutineSource.LOCAL),
+                (Path(project) / "routines", RoutineSource.PROJECT),
+            ]
+            discovered = discover_routines(routine_dirs)
+
+            # Find the routine
+            routine_config = None
+            for routine in discovered:
+                if routine.config.id == routine_id:
+                    routine_config = routine.config
+                    break
+
+            if routine_config is None:
+                click.echo(f"Error: Routine '{routine_id}' not found", err=True)
+                sys.exit(1)
+
+            # Create run
+            run = create_run_from_routine(
+                routine=routine_config,
+                project_id=project,
+                config=cfg,
+            )
+
+            # Set agent if provided
+            if agent:
+                try:
+                    run.agent_type = AgentType(agent)
+                except ValueError:
+                    click.echo(f"Error: Invalid agent type '{agent}'", err=True)
+                    sys.exit(1)
+                if agent_cfg:
+                    run.agent_config = agent_cfg
+
+            # Save to database
+            await repo.save(run)
+            await session.commit()
+
+        await engine.dispose()
+
+        if as_json:
+            result = {
+                "id": run.id,
+                "routine_id": run.routine_id,
+                "project_id": run.project_id,
+                "status": run.status.value,
+                "agent_type": run.agent_type.value if run.agent_type else None,
+            }
+            click.echo(json.dumps(result, indent=2))
+        else:
+            agent_str = f" with agent {run.agent_type.value}" if run.agent_type else ""
+            click.echo(f"Created run {run.id}{agent_str}")
+
+    asyncio.run(_create())
+
+
+@runs.command("start")
+@click.argument("run_id")
+@click.pass_context
+def start_run(ctx: click.Context, run_id: str) -> None:
+    """Start a run (DRAFT -> ACTIVE)."""
+
+    async def _start() -> None:
+        db_path = ctx.obj["db"]
+        as_json = ctx.obj["json"]
+
+        engine = create_engine(db_path)
+        await init_db(engine)
+        session_factory = create_session_factory(engine)
+
+        async with session_factory() as session:
+            lock_manager = InMemoryLockManager()
+
+            service = WorkflowService(
+                session=session,
+                lock_manager=lock_manager,
+            )
+
+            try:
+                # Start the run
+                run = await service.start_run(run_id=run_id)
+                await session.commit()
+
+            except Exception as e:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
+
+        await engine.dispose()
+
+        if as_json:
+            result = {
+                "id": run.id,
+                "status": run.status.value,
+                "agent_type": run.agent_type.value if run.agent_type else None,
+            }
+            click.echo(json.dumps(result, indent=2))
+        else:
+            agent_str = f" with agent {run.agent_type.value}" if run.agent_type else ""
+            click.echo(f"Started run {run.id}{agent_str}")
+
+    asyncio.run(_start())
+
+
+@runs.command("watch")
+@click.argument("run_id")
+@click.option("--url", default="http://localhost:8000", help="API server URL")
+@click.pass_context
+def watch_run(ctx: click.Context, run_id: str, url: str) -> None:
+    """Watch a run in real-time."""
+
+    async def _watch() -> None:
+        # Convert http:// to ws://
+        ws_url = url.replace("http://", "ws://").replace("https://", "wss://")
+        ws_url = f"{ws_url.rstrip('/')}/ws/runs/{run_id}"
+
+        shutdown = False
+
+        def signal_handler(sig: int, frame: object) -> None:
+            nonlocal shutdown
+            shutdown = True
+
+        # Register Ctrl+C handler
+        signal.signal(signal.SIGINT, signal_handler)
+
+        click.echo(f"Watching run {run_id}... (Press Ctrl+C to stop)")
+
+        try:
+            async with websockets.connect(ws_url) as websocket:  # type: ignore[attr-defined]
+                while not shutdown:
+                    try:
+                        # Set a short timeout so we can check shutdown flag
+                        message = await asyncio.wait_for(websocket.recv(), timeout=0.5)
+                        if ctx.obj["json"]:
+                            # Output raw JSON
+                            click.echo(message)
+                        else:
+                            # Parse and format
+                            try:
+                                event = json.loads(message)
+                                event_type = event.get("event_type", "unknown")
+                                timestamp = event.get("timestamp", "")
+                                click.echo(f"[{timestamp}] {event_type}")
+                                # Show key fields based on event type
+                                if "task_id" in event:
+                                    click.echo(f"  Task: {event.get('task_id')}")
+                                if "status" in event:
+                                    click.echo(f"  Status: {event.get('status')}")
+                                if "message" in event:
+                                    click.echo(f"  Message: {event.get('message')}")
+                            except json.JSONDecodeError:
+                                click.echo(message)
+                    except asyncio.TimeoutError:
+                        continue  # Check shutdown flag and loop
+
+        except websockets.exceptions.WebSocketException as e:  # type: ignore[attr-defined]
+            click.echo(f"WebSocket error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            if not shutdown:
+                click.echo(f"Error: {e}", err=True)
+                sys.exit(1)
+
+        click.echo("\nStopped watching.")
+
+    asyncio.run(_watch())
+
+
+@runs.command("pause")
+@click.argument("run_id")
+@click.option("--url", default="http://localhost:8000", help="API server URL")
+@click.pass_context
+def pause_run(ctx: click.Context, run_id: str, url: str) -> None:
+    """Pause a run (ACTIVE -> PAUSED)."""
+
+    async def _pause() -> None:
+        as_json = ctx.obj["json"]
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/pause"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(api_url)
+                response.raise_for_status()
+                result = response.json()
+
+        except httpx.HTTPStatusError as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e), "status": e.response.status_code}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e)}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Paused run {run_id}")
+            click.echo(f"Status: {result.get('status')}")
+
+    asyncio.run(_pause())
+
+
+@runs.command("resume")
+@click.argument("run_id")
+@click.option("--url", default="http://localhost:8000", help="API server URL")
+@click.option(
+    "--agent",
+    "-a",
+    help="Agent type to switch to (openhands_local, cli_subprocess, user_managed, etc.)",
+)
+@click.option("--agent-config", "-ac", multiple=True, help="Agent config key=value pairs")
+@click.pass_context
+def resume_run(
+    ctx: click.Context, run_id: str, url: str, agent: str | None, agent_config: tuple[str, ...]
+) -> None:
+    """Resume a run (PAUSED -> ACTIVE), optionally changing the agent."""
+
+    async def _resume() -> None:
+        as_json = ctx.obj["json"]
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/resume"
+
+        # Build request body
+        request_body: dict[str, Any] = {}
+
+        if agent:
+            # Validate agent type
+            try:
+                AgentType(agent)  # Validate it's a valid enum value
+                request_body["agent_type"] = agent
+            except ValueError:
+                click.echo(f"Error: Invalid agent type '{agent}'", err=True)
+                sys.exit(1)
+
+        # Parse agent config if provided
+        if agent_config:
+            agent_cfg: dict[str, str] = {}
+            for kv in agent_config:
+                if "=" not in kv:
+                    click.echo(
+                        f"Error: Invalid agent config format '{kv}'. Expected key=value", err=True
+                    )
+                    sys.exit(1)
+                key, value = kv.split("=", 1)
+                agent_cfg[key] = value
+            request_body["agent_config"] = agent_cfg
+
+        try:
+            async with httpx.AsyncClient() as client:
+                # Send request body only if we have agent settings to change
+                if request_body:
+                    response = await client.post(api_url, json=request_body)
+                else:
+                    response = await client.post(api_url)
+                response.raise_for_status()
+                result = response.json()
+
+        except httpx.HTTPStatusError as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e), "status": e.response.status_code}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e)}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            agent_str = f" with agent {result.get('agent_type')}" if agent else ""
+            click.echo(f"Resumed run {run_id}{agent_str}")
+            click.echo(f"Status: {result.get('status')}")
+
+    asyncio.run(_resume())
+
+
+@runs.command("cancel")
+@click.argument("run_id")
+@click.option("--url", default="http://localhost:8000", help="API server URL")
+@click.pass_context
+def cancel_run(ctx: click.Context, run_id: str, url: str) -> None:
+    """Cancel a run (ACTIVE/PAUSED -> FAILED)."""
+
+    async def _cancel() -> None:
+        as_json = ctx.obj["json"]
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/cancel"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(api_url)
+                response.raise_for_status()
+                result = response.json()
+
+        except httpx.HTTPStatusError as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e), "status": e.response.status_code}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e)}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Cancelled run {run_id}")
+            click.echo(f"Status: {result.get('status')}")
+
+    asyncio.run(_cancel())
+
+
+@runs.command("status")
+@click.argument("run_id")
+@click.option("--url", default="http://localhost:8000", help="API server URL")
+@click.pass_context
+def status_run(ctx: click.Context, run_id: str, url: str) -> None:
+    """Show run status and details."""
+
+    async def _status() -> None:
+        as_json = ctx.obj["json"]
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(api_url)
+                response.raise_for_status()
+                result = response.json()
+
+        except httpx.HTTPStatusError as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e), "status": e.response.status_code}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e)}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            # Human-readable format
+            click.echo(f"Run: {result.get('id')}")
+            click.echo(f"Status: {result.get('status')}")
+            click.echo(f"Project: {result.get('project_id')}")
+            if result.get("routine_id"):
+                click.echo(f"Routine: {result.get('routine_id')}")
+            if result.get("agent_type"):
+                click.echo(f"Agent: {result.get('agent_type')}")
+
+            # Show step progress
+            steps = result.get("steps", [])
+            current_step_idx = result.get("current_step_index", 0)
+            click.echo(f"\nSteps ({current_step_idx + 1}/{len(steps)}):")
+            for i, step in enumerate(steps):
+                status_icon = "✓" if step.get("completed") else "○"
+                current_marker = "→" if i == current_step_idx else " "
+                click.echo(f"  {current_marker} {status_icon} {step.get('title', 'Untitled')}")
+
+                # Show task status
+                tasks = step.get("tasks", [])
+                for task in tasks:
+                    task_status = task.get("status")
+                    task_title = task.get("title", "Untitled")
+                    click.echo(f"       - {task_title}: {task_status}")
+
+            # Show timestamps
+            click.echo(f"\nCreated: {result.get('created_at')}")
+            if result.get("started_at"):
+                click.echo(f"Started: {result.get('started_at')}")
+            if result.get("completed_at"):
+                click.echo(f"Completed: {result.get('completed_at')}")
+
+            # Show token usage if any
+            total_tokens = (
+                result.get("total_tokens_read", 0)
+                + result.get("total_tokens_write", 0)
+                + result.get("total_tokens_cache", 0)
+            )
+            if total_tokens > 0:
+                click.echo(f"\nTokens used: {total_tokens:,}")
+                if result.get("estimated_cost_usd"):
+                    click.echo(f"Estimated cost: ${result.get('estimated_cost_usd'):.4f}")
+
+    asyncio.run(_status())
+
+
+@runs.command("branch-status")
+@click.argument("run_id")
+@click.option("--url", default="http://localhost:8000", help="API server URL")
+@click.pass_context
+def branch_status(ctx: click.Context, run_id: str, url: str) -> None:
+    """Show branch status for a run (behind/ahead, merge-ability)."""
+
+    async def _branch_status() -> None:
+        as_json = ctx.obj["json"]
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/branch-status"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(api_url)
+                response.raise_for_status()
+                result = response.json()
+
+        except httpx.HTTPStatusError as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e), "status": e.response.status_code}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e)}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Branch: {result.get('run_branch')}")
+            click.echo(f"Source: {result.get('source_branch')}")
+            click.echo(f"Behind: {result.get('behind_count')} commits")
+            click.echo(f"Ahead:  {result.get('ahead_count')} commits")
+            if result.get("has_conflicts"):
+                click.echo("Merge:  CONFLICTS detected")
+            elif result.get("can_merge_cleanly"):
+                click.echo("Merge:  Clean merge possible")
+
+    asyncio.run(_branch_status())
+
+
+@runs.command("back-merge")
+@click.argument("run_id")
+@click.option("--url", default="http://localhost:8000", help="API server URL")
+@click.pass_context
+def back_merge_cmd(ctx: click.Context, run_id: str, url: str) -> None:
+    """Pull source branch updates into run branch."""
+
+    async def _back_merge() -> None:
+        as_json = ctx.obj["json"]
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/back-merge"
+
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(api_url)
+                response.raise_for_status()
+                result = response.json()
+
+        except httpx.HTTPStatusError as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e), "status": e.response.status_code}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e)}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Back-merge complete: {result.get('message')}")
+            click.echo(f"Commit: {result.get('merge_commit')}")
+
+    asyncio.run(_back_merge())
+
+
+@runs.command("merge-back")
+@click.argument("run_id")
+@click.option(
+    "--strategy", type=click.Choice(["squash", "merge"]), default=None, help="Merge strategy"
+)
+@click.option("--url", default="http://localhost:8000", help="API server URL")
+@click.pass_context
+def merge_back_cmd(ctx: click.Context, run_id: str, strategy: str | None, url: str) -> None:
+    """Merge run branch back into source branch."""
+
+    async def _merge_back() -> None:
+        as_json = ctx.obj["json"]
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/merge-back"
+
+        request_body: dict[str, Any] = {}
+        if strategy:
+            request_body["strategy"] = strategy
+
+        try:
+            async with httpx.AsyncClient() as client:
+                if request_body:
+                    response = await client.post(api_url, json=request_body)
+                else:
+                    response = await client.post(api_url)
+                response.raise_for_status()
+                result = response.json()
+
+        except httpx.HTTPStatusError as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e), "status": e.response.status_code}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+        except Exception as e:
+            if as_json:
+                click.echo(json.dumps({"error": str(e)}))
+            else:
+                click.echo(f"Error: {e}", err=True)
+            sys.exit(1)
+
+        if as_json:
+            click.echo(json.dumps(result, indent=2))
+        else:
+            click.echo(f"Merge-back complete: {result.get('message')}")
+            click.echo(f"Strategy: {result.get('strategy')}")
+            click.echo(f"Commit: {result.get('merge_commit')}")
+
+    asyncio.run(_merge_back())

@@ -4,7 +4,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field, model_validator
 
-from orchestrator.config.enums import Priority
+from orchestrator.config.enums import GateType, Priority, StepType
 
 
 def _check_for_inheritance_keys(v: dict[str, Any]) -> None:
@@ -79,6 +79,37 @@ class RetryConfig(BaseModel):
     max_attempts: int = 3
 
 
+class GateConfig(BaseModel):
+    """Gate configuration for a step or task."""
+
+    type: GateType
+    # For human_approval
+    approval_prompt: str | None = None
+    require_comment: bool = False
+    summary_artifact: str | None = None  # Path for summary artifact (human_approval gate)
+    # For grade_threshold
+    critical_threshold: str = "A"
+    expected_threshold: str = "B"
+
+
+class ArtifactSpec(BaseModel):
+    """Expected artifact specification for a task."""
+
+    path: str
+    required: bool = True
+    track_resolution: bool = False
+
+
+class ContextSource(BaseModel):
+    """Configuration for context from an artifact."""
+
+    artifact: str  # Path pattern (supports {{variables}})
+    as_name: str = Field(alias="as")  # Variable name in context
+    required: bool = True
+    section: str | None = None  # Extract specific section
+    max_tokens: int | None = None  # Limit for this artifact
+
+
 class TaskConfig(BaseModel):
     """A task within a step."""
 
@@ -90,6 +121,32 @@ class TaskConfig(BaseModel):
     auto_verify: AutoVerifyConfig = Field(default_factory=AutoVerifyConfig)
     verifier: VerifierConfig = Field(default_factory=VerifierConfig)
     retry: RetryConfig = Field(default_factory=RetryConfig)
+    artifacts: list[ArtifactSpec] = Field(default_factory=lambda: [])
+    context_from: list[ContextSource] = Field(default_factory=lambda: [])
+
+
+class TransitionCondition(BaseModel):
+    """Condition for a backward transition."""
+
+    condition: str
+    target: str
+    max_iterations: int = 3
+    message: str | None = None
+
+
+class StepTransitions(BaseModel):
+    """Transition configuration for a step."""
+
+    on_complete: str | None = None
+    on_condition: list[TransitionCondition] = Field(default_factory=lambda: [])
+
+
+class DryRunConfig(BaseModel):
+    """Configuration for a dry-run step."""
+
+    target_steps: list[str]
+    context_limit: int = 4000
+    report_path: str
 
 
 class StepConfig(BaseModel):
@@ -98,7 +155,23 @@ class StepConfig(BaseModel):
     id: str
     title: str
     step_context: str | None = None
+    gate: GateConfig | None = None
     tasks: list[TaskConfig] = Field(min_length=1)
+    transitions: StepTransitions | None = None
+    type: StepType = StepType.STANDARD
+    dry_run: DryRunConfig | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_task_key(cls, data: Any) -> Any:  # noqa: ANN401
+        """Accept singular 'task:' as shorthand for 'tasks: [task]'."""
+        if isinstance(data, dict):
+            d = cast(dict[str, Any], data)
+            if "task" in d and "tasks" not in d:
+                d["tasks"] = [d.pop("task")]
+            elif "task" in data and "tasks" in data:
+                raise ValueError("Cannot specify both 'task' and 'tasks' in a step")
+        return data  # type: ignore[no-any-return]
 
     @model_validator(mode="before")
     @classmethod
@@ -106,6 +179,19 @@ class StepConfig(BaseModel):
         """Reject ref/use in step data and nested task/tasks."""
         _check_value_recursive(data)
         return data  # type: ignore[no-any-return]
+
+
+class ClarificationsConfig(BaseModel):
+    """Clarifications configuration for a routine."""
+
+    artifact_path: str = "docs/clarifications.md"
+
+
+class EnvFileConfig(BaseModel):
+    """Environment file declaration in routine/project config."""
+
+    path: str
+    promote_on_success: bool = False
 
 
 class RoutineInputConfig(BaseModel):
@@ -125,6 +211,8 @@ class RoutineConfig(BaseModel):
     description: str | None = None
     inputs: list[RoutineInputConfig] = Field(default_factory=lambda: [])
     steps: list[StepConfig]
+    env_files: list[EnvFileConfig] = Field(default_factory=lambda: [])
+    clarifications: ClarificationsConfig | None = None
 
     @model_validator(mode="before")
     @classmethod

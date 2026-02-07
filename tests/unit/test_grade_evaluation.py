@@ -92,7 +92,57 @@ def test_no_grade_items_skipped() -> None:
             _item(req_id="R1", priority=Priority.CRITICAL, grade=None),
         ]
     )
+    assert result.passed is False
+    assert len(result.failing_items) == 1
+    assert "Not graded" in result.failing_items[0]
+
+
+def test_ungraded_expected_item_fails() -> None:
+    result = evaluate_grades(
+        [
+            _item(req_id="R1", priority=Priority.EXPECTED, grade=None),
+        ]
+    )
+    assert result.passed is False
+    assert len(result.failing_items) == 1
+    assert "Not graded" in result.failing_items[0]
+
+
+def test_ungraded_nice_item_does_not_fail() -> None:
+    """NICE items can remain ungraded without affecting pass/fail."""
+    result = evaluate_grades(
+        [
+            _item(req_id="R1", priority=Priority.CRITICAL, grade="A"),
+            _item(req_id="R2", priority=Priority.NICE, grade=None),
+        ]
+    )
     assert result.passed is True
+    assert len(result.failing_items) == 0
+
+
+def test_mixed_graded_and_ungraded_critical_fails() -> None:
+    """If any CRITICAL item is ungraded, the evaluation fails even if others pass."""
+    result = evaluate_grades(
+        [
+            _item(req_id="R1", priority=Priority.CRITICAL, grade="A"),
+            _item(req_id="R2", priority=Priority.CRITICAL, grade=None),
+        ]
+    )
+    assert result.passed is False
+    assert any("R2" in item for item in result.failing_items)
+
+
+def test_all_items_ungraded_no_grades_set() -> None:
+    """When only NICE items exist and none are graded, still passes (no required items)."""
+    result = evaluate_grades(
+        [
+            _item(req_id="R1", priority=Priority.NICE, grade=None),
+        ]
+    )
+    # No CRITICAL or EXPECTED items to fail, no graded items
+    # This edge case: graded_count=0, failing=0 → "no grades set"
+    assert result.passed is False
+    assert result.message == "no grades set"
 
 
 def test_revision_guidance_collected() -> None:

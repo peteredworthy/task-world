@@ -39,10 +39,19 @@ def evaluate_grades(
     """Evaluate grades against thresholds by priority."""
     failing: list[str] = []
     guidance: list[str] = []
+    graded_count = 0
 
     for item in checklist:
         if item.grade is None:
+            # Ungraded CRITICAL and EXPECTED items are treated as failing.
+            # Only NICE items may remain ungraded without affecting pass/fail.
+            if item.priority == Priority.CRITICAL:
+                failing.append(f"{item.req_id}: Not graded (CRITICAL requirement)")
+            elif item.priority == Priority.EXPECTED:
+                failing.append(f"{item.req_id}: Not graded (EXPECTED requirement)")
             continue
+
+        graded_count += 1
 
         if item.priority == Priority.CRITICAL:
             if not grade_meets_threshold(item.grade, critical_threshold, grade_order):
@@ -54,6 +63,11 @@ def evaluate_grades(
                 failing.append(f"{item.req_id}: Grade {item.grade} below {expected_threshold}")
                 if item.grade_reason:
                     guidance.append(f"{item.req_id}: {item.grade_reason}")
+
+    if graded_count == 0 and len(failing) == 0:
+        return GradeResult(
+            passed=False, failing_items=[], revision_guidance=[], message="no grades set"
+        )
 
     passed = len(failing) == 0
     message: str | None = None

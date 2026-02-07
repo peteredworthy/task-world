@@ -73,13 +73,20 @@ async def test_openhands_health_check_no_api_key() -> None:
 # --- Real execution test (requires API key, no server) ---
 
 
+@pytest.mark.slow
+@pytest.mark.timeout(120)
 @_needs_api_key
 async def test_openhands_executes_file_creation(tmp_path: Path) -> None:
-    """OpenHands agent creates a file when given a simple task.
+    """OpenHands agent creates a file and uses orchestrator tools.
 
     Uses LocalConversation which runs in-process — only needs OPENAI_API_KEY.
+
+    Verifies:
+    - Agent creates the requested file
+    - Agent calls update_checklist to mark requirement as done
+    - Agent calls submit when finished
     """
-    agent = OpenHandsAgent(max_iterations=30)
+    agent = OpenHandsAgent(max_iterations=30, llm_config={"reasoning_effort": "low"})
 
     updates: list[tuple[str, ChecklistStatus, str | None]] = []
     submitted = False
@@ -97,12 +104,26 @@ async def test_openhands_executes_file_creation(tmp_path: Path) -> None:
         working_dir=str(tmp_path),
         prompt=(
             "Create a file called test_output.txt containing the text "
-            "'OpenHands was here'. Do not do anything else."
+            "'OpenHands was here'.\n\n"
+            "After creating the file, you MUST:\n"
+            "1. Call update_checklist with req_id='Create test_output.txt' and status='done'\n"
+            "2. Call submit to indicate you are finished"
         ),
         requirements=["Create test_output.txt"],
     )
 
     result = await agent.execute(ctx, on_update, on_submit)
 
+    # Verify execution succeeded
     assert result.success is True
+
+    # Verify file was created
     assert (tmp_path / "test_output.txt").exists()
+
+    # Verify orchestrator tools were called
+    assert len(updates) >= 1, "Agent should have called update_checklist at least once"
+    assert any(status == ChecklistStatus.DONE for _, status, _ in updates), (
+        f"Agent should have marked a requirement as done, got: {updates}"
+    )
+
+    assert submitted is True, "Agent should have called submit when finished"

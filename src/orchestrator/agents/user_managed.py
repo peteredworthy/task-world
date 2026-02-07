@@ -23,6 +23,8 @@ from orchestrator.agents.types import (
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
+    GradeCallback,
+    LogLineCallback,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType
@@ -45,10 +47,12 @@ class UserManagedAgent:
         service: WorkflowService,
         callback_channel: str = "mcp",
         timeout_minutes: int = 60,
+        poll_interval: float = 1.0,
     ) -> None:
         self._service = service
         self._callback_channel = callback_channel
         self._timeout_minutes = timeout_minutes
+        self._poll_interval = poll_interval
         self._cancelled = False
 
     @property
@@ -63,6 +67,8 @@ class UserManagedAgent:
         context: ExecutionContext,
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
     ) -> ExecutionResult:
         """Wait for an external submit notification, then return.
 
@@ -97,9 +103,8 @@ class UserManagedAgent:
         while not event.is_set():
             if self._cancelled:
                 raise AgentCancelledError("user_managed")
-            # Check every second so cancellation is responsive
             try:
-                await asyncio.wait_for(event.wait(), timeout=1.0)
+                await asyncio.wait_for(event.wait(), timeout=self._poll_interval)
             except TimeoutError:
                 continue
 

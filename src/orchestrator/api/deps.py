@@ -8,13 +8,19 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.api.auth import AuthConfig
 from orchestrator.api.websocket import ConnectionManager
 from orchestrator.config.enums import RoutineSource
+from orchestrator.config.global_config import GlobalConfig
 from orchestrator.db.event_store import EventStore
 from orchestrator.db.repositories import RunRepository
+from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import WorkflowEvent
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.agents.executor import AgentExecutor
+from orchestrator.envfiles.store import EnvFileStore
+from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 
 
 async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
@@ -36,11 +42,17 @@ async def get_event_store(
     return EventStore(session)
 
 
+def get_env_lifecycle(request: Request) -> EnvFileLifecycle | None:
+    """Get the env file lifecycle from app state, if configured."""
+    return getattr(request.app.state, "env_lifecycle", None)
+
+
 async def get_workflow_service(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     repo: Annotated[RunRepository, Depends(get_run_repository)],
     event_store: Annotated[EventStore, Depends(get_event_store)],
+    env_lifecycle: Annotated[EnvFileLifecycle | None, Depends(get_env_lifecycle)] = None,
 ) -> WorkflowService:
     emitter = PersistentEventEmitter(event_store)
 
@@ -63,9 +75,40 @@ async def get_workflow_service(
         event_store=event_store,
         event_emitter=emitter,
         submit_event_registry=request.app.state.submit_event_registry,
+        auto_verify_runner=LocalAutoVerifyRunner(),
+        lock_manager=request.app.state.lock_manager,
+        env_lifecycle=env_lifecycle,
     )
 
 
 def get_routine_dirs(request: Request) -> list[tuple[Path, RoutineSource]]:
     """Get routine directories from app state."""
     return request.app.state.routine_dirs  # type: ignore[no-any-return]
+
+
+def get_auth_config(request: Request) -> AuthConfig:
+    """Get auth configuration from app state."""
+    return request.app.state.auth_config  # type: ignore[no-any-return]
+
+
+def get_global_config(request: Request) -> GlobalConfig:
+    """Get global configuration from app state."""
+    return request.app.state.global_config  # type: ignore[no-any-return]
+
+
+def get_agent_executor(request: Request) -> AgentExecutor:
+    """Get the agent executor from app state."""
+    return request.app.state.agent_executor  # type: ignore[no-any-return]
+
+
+def get_envfile_store(request: Request) -> EnvFileStore:
+    """Get the env file store from app state."""
+    return request.app.state.envfile_store  # type: ignore[no-any-return]
+
+
+def get_current_user() -> str:
+    """Get current user for human interaction actions.
+
+    For now, returns a default user. Will be wired to auth system later.
+    """
+    return "default-user"

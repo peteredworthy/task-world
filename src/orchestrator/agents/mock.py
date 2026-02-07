@@ -9,6 +9,8 @@ from orchestrator.agents.types import (
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
+    GradeCallback,
+    LogLineCallback,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType, ChecklistStatus
@@ -62,6 +64,8 @@ class MockAgent:
         context: ExecutionContext,
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
     ) -> ExecutionResult:
         """Execute mock agent behavior."""
         if self._behavior.should_fail:

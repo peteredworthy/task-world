@@ -14,6 +14,7 @@ from orchestrator.config.enums import (
     RunStatus,
     TaskStatus,
 )
+from orchestrator.envfiles.models import EnvFileSpec
 
 
 def generate_id() -> str:
@@ -46,6 +47,14 @@ class AttemptMetrics(BaseModel):
     duration_ms: int = 0
 
 
+class GradeSnapshotItem(BaseModel):
+    """Snapshot of a single checklist item's grade at attempt completion."""
+
+    req_id: str
+    grade: str | None = None
+    grade_reason: str | None = None
+
+
 class Attempt(BaseModel):
     """A single builder-verifier cycle."""
 
@@ -58,6 +67,17 @@ class Attempt(BaseModel):
     verifier_comment: str | None = None
     outcome: str | None = None  # "passed", "revision_needed", "failed"
     metrics: AttemptMetrics = Field(default_factory=AttemptMetrics)
+    grade_snapshot: list[GradeSnapshotItem] = Field(default_factory=lambda: [])
+    auto_verify_results: list[dict[str, Any]] = Field(default_factory=lambda: [])
+
+    # Agent snapshot - record what agent was used for this attempt
+    agent_type: AgentType | None = None
+    agent_model: str | None = None  # e.g. "claude-sonnet-4-5-20250514"
+    agent_settings: dict[str, Any] = Field(default_factory=dict)
+
+    # Agent output capture
+    agent_output: str | None = None  # Final captured output (joined lines)
+    error: str | None = None  # Error message if agent failed
 
 
 class TaskState(BaseModel):
@@ -65,11 +85,22 @@ class TaskState(BaseModel):
 
     id: str = Field(default_factory=generate_id)
     config_id: str
+    title: str = ""
     status: TaskStatus = TaskStatus.PENDING
     checklist: list[ChecklistItem] = Field(default_factory=lambda: [])
     attempts: list[Attempt] = Field(default_factory=lambda: [])
     current_attempt: int = 0
     max_attempts: int = 3
+    pending_action_type: str | None = None  # "clarification" | "approval"
+    pending_clarification_id: str | None = None
+
+
+class HumanApproval(BaseModel):
+    """Record of human gate approval."""
+
+    approved_by: str
+    approved_at: datetime
+    comment: str | None = None
 
 
 class StepState(BaseModel):
@@ -77,8 +108,33 @@ class StepState(BaseModel):
 
     id: str = Field(default_factory=generate_id)
     config_id: str
+    title: str = ""
     tasks: list[TaskState] = Field(default_factory=lambda: [])
     completed: bool = False
+    human_approval: HumanApproval | None = None
+
+
+class TransitionTracker(BaseModel):
+    """Track backward transitions to prevent infinite loops."""
+
+    counts: dict[str, int] = Field(default_factory=dict)
+
+    def record_transition(self, from_step: str, to_step: str) -> None:
+        """Record a transition from one step to another."""
+        key = f"{from_step}->{to_step}"
+        self.counts[key] = self.counts.get(key, 0) + 1
+
+    def can_transition(self, from_step: str, to_step: str, max_iterations: int) -> bool:
+        """Check if a transition can occur without exceeding max iterations."""
+        key = f"{from_step}->{to_step}"
+        return self.counts.get(key, 0) < max_iterations
+
+    def get_count(self, from_step: str, to_step: str) -> int:
+        """Get the number of times a transition has occurred."""
+        key = f"{from_step}->{to_step}"
+        return self.counts.get(key, 0)
+
+    model_config = {"arbitrary_types_allowed": True}
 
 
 class Run(BaseModel):
@@ -92,6 +148,7 @@ class Run(BaseModel):
     routine_id: str | None = None
     routine_sha: str | None = None
     routine_source: RoutineSource | None = None
+    routine_embedded: dict[str, Any] | None = None
 
     # Agent configuration
     agent_type: AgentType | None = None
@@ -101,19 +158,27 @@ class Run(BaseModel):
     worktree_enabled: bool = True
     worktree_path: str | None = None
     delete_worktree_on_completion: bool = False
+    source_branch: str | None = None
+    merge_strategy: str = "squash"
 
     # Config passed to routine
     config: dict[str, Any] = Field(default_factory=lambda: {})
 
+    # Environment files
+    env_file_specs: list[EnvFileSpec] = Field(default_factory=lambda: [])
+    env_source_dir: str | None = None
+
     # Runtime state
     steps: list[StepState] = Field(default_factory=lambda: [])
     current_step_index: int = 0
+    transition_tracker: TransitionTracker | None = Field(default_factory=TransitionTracker)
 
     # Timestamps
     created_at: datetime = Field(default_factory=_utc_now)
     updated_at: datetime = Field(default_factory=_utc_now)
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    agent_started_at: datetime | None = None
 
     # Aggregate metrics
     total_tokens_read: int = 0

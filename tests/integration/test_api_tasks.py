@@ -105,18 +105,18 @@ async def test_full_task_lifecycle(client: AsyncClient) -> None:
 
 
 async def test_gate_failure_response(client: AsyncClient) -> None:
-    """Submit with open checklist item should fail."""
+    """Submit with open checklist item should return 409 (gate blocked)."""
     run_id, task_id = await _setup_active_run(client)
 
     # Start task
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
-    # Submit without completing checklist
+    # Submit without completing checklist - should get 409 with gate error
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 200
+    assert resp.status_code == 409
     data = resp.json()
-    assert data["success"] is False
-    assert data["new_status"] == "building"
+    assert data["error"] == "gate_blocked"
+    assert data["gate_name"] == "checklist"
 
 
 async def test_revision_cycle(client: AsyncClient) -> None:
@@ -162,6 +162,13 @@ async def test_checklist_not_found(client: AsyncClient) -> None:
 
 async def test_grade_not_found(client: AsyncClient) -> None:
     run_id, task_id = await _setup_active_run(client)
+    # Advance task to VERIFYING so set_grade guard passes
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+    await client.patch(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
+        json={"status": "done"},
+    )
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
     resp = await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/NONEXISTENT/grade",
         json={"grade": "A"},
@@ -172,3 +179,103 @@ async def test_grade_not_found(client: AsyncClient) -> None:
 async def test_run_not_found_for_task(client: AsyncClient) -> None:
     resp = await client.get("/api/runs/nonexistent/tasks/whatever")
     assert resp.status_code == 404
+
+
+async def test_prompt_returns_builder_when_building(client: AsyncClient) -> None:
+    """Prompt endpoint returns builder prompt when task is in BUILDING state."""
+    run_id, task_id = await _setup_active_run(client)
+
+    # Start task -> BUILDING
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["phase"] == "building"
+    assert "software developer" in data["system"].lower()
+    assert "## Task" in data["user"]
+    assert "## Requirements" in data["user"]
+
+
+async def test_prompt_returns_verifier_when_verifying(client: AsyncClient) -> None:
+    """Prompt endpoint returns verifier prompt when task is in VERIFYING state."""
+    run_id, task_id = await _setup_active_run(client)
+
+    # Start task -> BUILDING
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+
+    # Complete checklist and submit -> VERIFYING
+    await client.patch(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
+        json={"status": "done"},
+    )
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert resp.json()["new_status"] == "verifying"
+
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["phase"] == "verifying"
+    assert "code reviewer" in data["system"].lower()
+    assert "## Requirements to Verify" in data["user"]
+
+
+async def test_prompt_rejects_pending_task(client: AsyncClient) -> None:
+    """Prompt endpoint returns 409 when task is in PENDING state."""
+    run_id, task_id = await _setup_active_run(client)
+
+    # Task is still PENDING (not started)
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
+    assert resp.status_code == 409
+    data = resp.json()
+    assert data["error"] == "invalid_transition"
+    assert data["from_status"] == "pending"
+
+
+async def test_prompt_rejects_completed_task(client: AsyncClient) -> None:
+    """Prompt endpoint returns 409 when task is in COMPLETED state."""
+    run_id, task_id = await _setup_active_run(client)
+
+    # Full lifecycle to reach COMPLETED
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+    await client.patch(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
+        json={"status": "done"},
+    )
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    await client.put(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
+        json={"grade": "A"},
+    )
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+
+    # Task is now COMPLETED
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
+    assert resp.status_code == 409
+    data = resp.json()
+    assert data["error"] == "invalid_transition"
+    assert data["from_status"] == "completed"
+
+
+async def test_submit_with_unfinished_checklist_returns_409(client: AsyncClient) -> None:
+    """Submit task when checklist gate fails should return 409 with gate details."""
+    # 1. Create and start a run
+    run_id, task_id = await _setup_active_run(client)
+
+    # 2. Start the first task (status becomes BUILDING)
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+    assert resp.status_code == 200
+    assert resp.json()["new_status"] == "building"
+
+    # 3. DO NOT mark checklist items as done (checklist gate will fail)
+
+    # 4. Try to submit - should get 409 with GateBlockedError details
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert resp.status_code == 409
+
+    # 5. Verify response includes gate blocking details
+    data = resp.json()
+    assert data["error"] == "gate_blocked"
+    assert data["gate_name"] == "checklist"
+    assert "blocking_items" in data
+    assert len(data["blocking_items"]) > 0  # Should have at least R1 as unmet

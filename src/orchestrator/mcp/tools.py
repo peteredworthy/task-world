@@ -9,9 +9,11 @@ from __future__ import annotations
 from typing import Any
 
 from orchestrator.config.enums import ChecklistStatus
+from orchestrator.mcp.clarification_tools import CLARIFICATION_TOOL
+from orchestrator.workflow.clarifications import ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService
 
-# JSON schemas for the 4 orchestrator MCP tools
+# JSON schemas for the orchestrator MCP tools
 ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
     {
         "name": "orchestrator_get_requirements",
@@ -80,6 +82,7 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
             "required": ["run_id", "task_id", "req_id", "grade"],
         },
     },
+    CLARIFICATION_TOOL,
 ]
 
 
@@ -103,6 +106,8 @@ class ToolHandler:
             return await self._submit(arguments)
         elif tool_name == "orchestrator_set_grade":
             return await self._set_grade(arguments)
+        elif tool_name == "orchestrator_request_clarification":
+            return await self._request_clarification(arguments)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -161,4 +166,41 @@ class ToolHandler:
             "req_id": item.req_id,
             "grade": item.grade,
             "grade_reason": item.grade_reason,
+        }
+
+    async def _request_clarification(self, args: dict[str, Any]) -> dict[str, Any]:
+        import uuid
+
+        run_id: str = args["run_id"]
+        task_id: str = args["task_id"]
+        questions_data: list[dict[str, Any]] = args["questions"]
+
+        # Convert dict questions to ClarificationQuestion objects
+        questions = [
+            ClarificationQuestion(
+                id=str(uuid.uuid4()),
+                question=q["question"],
+                context=q["context"],
+                options=q["options"],
+            )
+            for q in questions_data
+        ]
+
+        # Request clarification via service
+        request = await self._service.request_clarification(run_id, task_id, questions)
+
+        return {
+            "request_id": request.id,
+            "run_id": request.run_id,
+            "task_id": request.task_id,
+            "questions": [
+                {
+                    "id": q.id,
+                    "question": q.question,
+                    "context": q.context,
+                    "options": q.options,
+                }
+                for q in request.questions
+            ],
+            "created_at": request.created_at.isoformat(),
         }

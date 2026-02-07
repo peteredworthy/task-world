@@ -28,6 +28,13 @@ _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
         default=100,
         description="Maximum agent iterations per run",
     ),
+    AgentConfigField(
+        name="reasoning_effort",
+        field_type="select",
+        default="high",
+        description="LLM reasoning effort level",
+        options=["low", "medium", "high"],
+    ),
 ]
 
 _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
@@ -55,6 +62,13 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
         field_type="string",
         default="ghcr.io/openhands/agent-server:latest-python",
         description="Docker image for the agent server",
+    ),
+    AgentConfigField(
+        name="reasoning_effort",
+        field_type="select",
+        default="high",
+        description="LLM reasoning effort level",
+        options=["low", "medium", "high"],
     ),
 ]
 
@@ -128,6 +142,8 @@ class ToolDetector:
             return AgentOption(
                 agent_type=AgentType.OPENHANDS_LOCAL,
                 name="OpenHands (local)",
+                title="OpenHands Local Agent",
+                description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
                 available=True,
                 detail="openhands-ai SDK installed",
                 config_schema=_OPENHANDS_LOCAL_CONFIG,
@@ -136,6 +152,8 @@ class ToolDetector:
             return AgentOption(
                 agent_type=AgentType.OPENHANDS_LOCAL,
                 name="OpenHands (local)",
+                title="OpenHands Local Agent",
+                description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
                 available=False,
                 detail="openhands-ai SDK not installed",
                 install_hint="Install with: uv sync --extra openhands",
@@ -157,6 +175,8 @@ class ToolDetector:
             return AgentOption(
                 agent_type=AgentType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
+                title="OpenHands Docker Agent",
+                description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
                 available=False,
                 detail="openhands-workspace package not installed",
                 install_hint="Install with: uv add openhands-workspace",
@@ -168,6 +188,8 @@ class ToolDetector:
             return AgentOption(
                 agent_type=AgentType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
+                title="OpenHands Docker Agent",
+                description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
                 available=False,
                 detail="docker CLI not found in PATH",
                 install_hint="Install Docker: https://docs.docker.com/get-docker/",
@@ -187,6 +209,8 @@ class ToolDetector:
                 return AgentOption(
                     agent_type=AgentType.OPENHANDS_DOCKER,
                     name="OpenHands (Docker)",
+                    title="OpenHands Docker Agent",
+                    description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
                     available=False,
                     detail="Docker daemon not running",
                     install_hint="Start Docker daemon",
@@ -196,6 +220,8 @@ class ToolDetector:
             return AgentOption(
                 agent_type=AgentType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
+                title="OpenHands Docker Agent",
+                description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
                 available=False,
                 detail="Failed to check Docker daemon status",
                 install_hint="Start Docker daemon",
@@ -205,6 +231,8 @@ class ToolDetector:
         return AgentOption(
             agent_type=AgentType.OPENHANDS_DOCKER,
             name="OpenHands (Docker)",
+            title="OpenHands Docker Agent",
+            description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
             available=True,
             detail="DockerWorkspace available, Docker daemon running",
             config_schema=_OPENHANDS_DOCKER_CONFIG,
@@ -221,6 +249,8 @@ class ToolDetector:
                     AgentOption(
                         agent_type=AgentType.CLI_SUBPROCESS,
                         name=tool_name,
+                        title=f"{tool_name.capitalize()} CLI Agent",
+                        description=f"Subprocess agent running the {tool_name} CLI tool. Sends prompts via stdin and reads outputs from stdout.",
                         available=True,
                         detail=f"Found at {path}",
                         config_schema=_CLI_SUBPROCESS_CONFIG,
@@ -231,6 +261,8 @@ class ToolDetector:
                     AgentOption(
                         agent_type=AgentType.CLI_SUBPROCESS,
                         name=tool_name,
+                        title=f"{tool_name.capitalize()} CLI Agent",
+                        description=f"Subprocess agent running the {tool_name} CLI tool. Sends prompts via stdin and reads outputs from stdout.",
                         available=False,
                         detail=f"{tool_name} not found in PATH",
                         install_hint=f"Install {tool_name} CLI tool",
@@ -245,6 +277,8 @@ class ToolDetector:
         return AgentOption(
             agent_type=AgentType.USER_MANAGED,
             name="User Managed",
+            title="User Managed Agent",
+            description="Passive agent that waits for external actors (humans or third-party tools) to complete work via REST API or MCP.",
             available=True,
             detail="Always available for external agent connections",
             config_schema=_USER_MANAGED_CONFIG,

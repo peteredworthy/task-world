@@ -88,6 +88,7 @@ def test_builder_prompt_basic() -> None:
     assert len(prompt.requirements) == 2
     assert "Create the feature" in prompt.requirements[0]
     assert "software developer" in prompt.system.lower()
+    assert "builder phase" in prompt.system.lower()
     assert prompt.previous_feedback is None
 
 
@@ -141,6 +142,7 @@ def test_verifier_prompt_basic() -> None:
 
     assert len(prompt.requirements) == 2
     assert "code reviewer" in prompt.system.lower()
+    assert "verifier phase" in prompt.system.lower()
     assert "Grade each requirement" in prompt.submission_instructions
 
 
@@ -188,3 +190,254 @@ def test_verifier_prompt_submission_instructions() -> None:
     assert "A, B, C" in prompt.submission_instructions
     assert "reason if grade below A" in prompt.submission_instructions
     assert "remediation if grade below B" in prompt.submission_instructions
+
+
+# --- step_context in builder prompt ---
+
+
+def test_builder_prompt_without_step_context_unchanged() -> None:
+    """Prompt without step_context should not include Step Context section."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+
+    assert prompt.step_context is None
+    assert "## Step Context" not in prompt.user
+    # Prompt should start with ## Task
+    assert prompt.user.startswith("## Task\n")
+
+
+def test_builder_prompt_with_step_context() -> None:
+    """Prompt with step_context should include Step Context section before task."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config, state, {"feature": "auth"}, step_context="This step sets up the backend."
+    )
+
+    assert prompt.step_context == "This step sets up the backend."
+    assert "## Step Context\nThis step sets up the backend." in prompt.user
+    # Step Context should appear before Task
+    step_ctx_pos = prompt.user.index("## Step Context")
+    task_pos = prompt.user.index("## Task")
+    assert step_ctx_pos < task_pos
+
+
+def test_builder_prompt_step_context_variable_substitution() -> None:
+    """Variable substitution should work in step_context the same as task_context."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth", "team": "platform"},
+        step_context="Setting up {{feature}} for {{team}}.",
+    )
+
+    assert prompt.step_context == "Setting up auth for platform."
+    assert "{{feature}}" not in prompt.step_context
+    assert "{{team}}" not in prompt.step_context
+    assert "Setting up auth for platform." in prompt.user
+
+
+def test_builder_prompt_step_context_with_previous_feedback() -> None:
+    """Step context and previous feedback should both appear in the prompt."""
+    config = _task_config()
+    state = _task_state(verifier_comment="Fix error handling")
+    prompt = generate_builder_prompt(
+        config, state, {"feature": "auth"}, step_context="Backend setup step."
+    )
+
+    assert "## Step Context" in prompt.user
+    assert "## Previous Feedback" in prompt.user
+    # Order: Step Context, Task, Requirements, Previous Feedback
+    step_ctx_pos = prompt.user.index("## Step Context")
+    task_pos = prompt.user.index("## Task")
+    feedback_pos = prompt.user.index("## Previous Feedback")
+    assert step_ctx_pos < task_pos < feedback_pos
+
+
+# --- step_context in verifier prompt ---
+
+
+def test_verifier_prompt_without_step_context_unchanged() -> None:
+    """Verifier prompt without step_context should not include Step Context section."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_verifier_prompt(config, state)
+
+    assert prompt.step_context is None
+    assert "## Step Context" not in prompt.user
+    # Prompt should start with ## Requirements to Verify
+    assert prompt.user.startswith("## Requirements to Verify")
+
+
+def test_verifier_prompt_with_step_context() -> None:
+    """Verifier prompt with step_context should include Step Context section."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_verifier_prompt(config, state, step_context="This step sets up the backend.")
+
+    assert prompt.step_context == "This step sets up the backend."
+    assert "## Step Context\nThis step sets up the backend." in prompt.user
+    # Step Context should appear before Requirements to Verify
+    step_ctx_pos = prompt.user.index("## Step Context")
+    req_pos = prompt.user.index("## Requirements to Verify")
+    assert step_ctx_pos < req_pos
+
+
+def test_verifier_prompt_step_context_is_not_substituted() -> None:
+    """Verifier prompt does not do variable substitution on step_context.
+
+    Variable substitution is a builder-only feature (builder has config dict,
+    verifier does not). The step_context is passed through as-is.
+    """
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_verifier_prompt(
+        config, state, step_context="Review the {{feature}} implementation."
+    )
+
+    # Verifier does not do variable substitution, so {{feature}} remains as-is
+    assert prompt.step_context == "Review the {{feature}} implementation."
+    assert "Review the {{feature}} implementation." in prompt.user
+
+
+# --- clarifications_path in builder prompt ---
+
+
+def test_builder_prompt_without_clarifications_path_unchanged() -> None:
+    """Prompt without clarifications_path should not include Clarifications section."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+
+    assert prompt.clarifications_path is None
+    assert "## Clarifications" not in prompt.user
+
+
+def test_builder_prompt_with_clarifications_path() -> None:
+    """Prompt with clarifications_path should include Clarifications section."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config, state, {"feature": "auth"}, clarifications_path="/tmp/clarifications.md"
+    )
+
+    assert prompt.clarifications_path == "/tmp/clarifications.md"
+    assert "## Clarifications" in prompt.user
+    assert "/tmp/clarifications.md" in prompt.user
+    assert "Previous clarifications from the human are recorded in:" in prompt.user
+    assert "Review this file for context on decisions made." in prompt.user
+    assert "use the request_clarification tool" in prompt.user
+
+
+def test_builder_prompt_clarifications_path_positioned_after_step_context() -> None:
+    """Clarifications section should appear after Step Context but before Task."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        step_context="Backend setup step.",
+        clarifications_path="/tmp/clarifications.md",
+    )
+
+    step_ctx_pos = prompt.user.index("## Step Context")
+    clarifications_pos = prompt.user.index("## Clarifications")
+    task_pos = prompt.user.index("## Task")
+    assert step_ctx_pos < clarifications_pos < task_pos
+
+
+def test_builder_prompt_clarifications_path_without_step_context() -> None:
+    """Clarifications section should appear before Task when no Step Context."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config, state, {"feature": "auth"}, clarifications_path="/tmp/clarifications.md"
+    )
+
+    clarifications_pos = prompt.user.index("## Clarifications")
+    task_pos = prompt.user.index("## Task")
+    assert clarifications_pos < task_pos
+    # Should start with Step Context or Clarifications
+    assert (
+        prompt.user.startswith("## Clarifications") or prompt.user.startswith("## Step Context")
+    ) or "## Step Context" not in prompt.user
+
+
+def test_builder_prompt_clarifications_with_all_sections() -> None:
+    """All sections should appear in correct order: Step Context, Clarifications, Task, Requirements, Previous Feedback."""
+    config = _task_config()
+    state = _task_state(verifier_comment="Fix error handling")
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        step_context="Backend setup.",
+        clarifications_path="/tmp/clarifications.md",
+    )
+
+    step_ctx_pos = prompt.user.index("## Step Context")
+    clarifications_pos = prompt.user.index("## Clarifications")
+    task_pos = prompt.user.index("## Task")
+    req_pos = prompt.user.index("## Requirements")
+    feedback_pos = prompt.user.index("## Previous Feedback")
+
+    assert step_ctx_pos < clarifications_pos < task_pos < req_pos < feedback_pos
+
+
+# --- clarifications_path in verifier prompt ---
+
+
+def test_verifier_prompt_without_clarifications_path_unchanged() -> None:
+    """Prompt without clarifications_path should not include Clarifications section."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_verifier_prompt(config, state)
+
+    assert prompt.clarifications_path is None
+    assert "## Clarifications" not in prompt.user
+
+
+def test_verifier_prompt_with_clarifications_path() -> None:
+    """Prompt with clarifications_path should include Clarifications section."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_verifier_prompt(config, state, clarifications_path="/tmp/clarifications.md")
+
+    assert prompt.clarifications_path == "/tmp/clarifications.md"
+    assert "## Clarifications" in prompt.user
+    assert "/tmp/clarifications.md" in prompt.user
+    assert "Previous clarifications from the human are recorded in:" in prompt.user
+    assert "Review this file for context on decisions made." in prompt.user
+    assert "use the request_clarification tool" in prompt.user
+
+
+def test_verifier_prompt_clarifications_path_positioned_after_step_context() -> None:
+    """Clarifications section should appear after Step Context but before Requirements."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_verifier_prompt(
+        config,
+        state,
+        step_context="Backend review step.",
+        clarifications_path="/tmp/clarifications.md",
+    )
+
+    step_ctx_pos = prompt.user.index("## Step Context")
+    clarifications_pos = prompt.user.index("## Clarifications")
+    req_pos = prompt.user.index("## Requirements to Verify")
+    assert step_ctx_pos < clarifications_pos < req_pos
+
+
+def test_verifier_prompt_clarifications_path_without_step_context() -> None:
+    """Clarifications section should appear before Requirements when no Step Context."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_verifier_prompt(config, state, clarifications_path="/tmp/clarifications.md")
+
+    clarifications_pos = prompt.user.index("## Clarifications")
+    req_pos = prompt.user.index("## Requirements to Verify")
+    assert clarifications_pos < req_pos
