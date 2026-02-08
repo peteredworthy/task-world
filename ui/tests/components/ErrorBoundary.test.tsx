@@ -18,7 +18,7 @@ describe('ErrorBoundary', () => {
     expect(getByText('All good')).toBeInTheDocument();
   });
 
-  it('renders recovery UI when child throws', () => {
+  it('renders retrying UI when child throws (before max crashes)', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
     const { getByText } = render(
@@ -27,29 +27,8 @@ describe('ErrorBoundary', () => {
       </ErrorBoundary>,
     );
 
-    expect(getByText('Something went wrong')).toBeInTheDocument();
-    expect(getByText('Reload')).toBeInTheDocument();
-
-    spy.mockRestore();
-  });
-
-  it('reload button calls window.location.reload', () => {
-    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const reloadSpy = vi.fn();
-    Object.defineProperty(window, 'location', {
-      value: { ...window.location, reload: reloadSpy },
-      writable: true,
-      configurable: true,
-    });
-
-    const { getByText } = render(
-      <ErrorBoundary>
-        <ThrowingChild />
-      </ErrorBoundary>,
-    );
-
-    fireEvent.click(getByText('Reload'));
-    expect(reloadSpy).toHaveBeenCalled();
+    // On first crash, shows auto-retry message
+    expect(getByText('Connection issue — retrying...')).toBeInTheDocument();
 
     spy.mockRestore();
   });

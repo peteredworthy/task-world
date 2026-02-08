@@ -45,11 +45,17 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 async def _create_run(
     client: AsyncClient,
     routine_id: str = "simple-routine",
-    project_id: str = "proj-1",
+    repo_name: str = "proj-1",
+    branch: str = "main",
     **extra: Any,
 ) -> dict[str, Any]:
     """Create a run via POST and return the response body."""
-    body: dict[str, Any] = {"routine_id": routine_id, "project_id": project_id, **extra}
+    body: dict[str, Any] = {
+        "routine_id": routine_id,
+        "repo_name": repo_name,
+        "branch": branch,
+        **extra,
+    }
     resp = await client.post("/api/runs", json=body)
     assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
     return resp.json()
@@ -454,7 +460,8 @@ async def test_embedded_routine_full_lifecycle(client: AsyncClient) -> None:
     resp = await client.post(
         "/api/runs",
         json={
-            "project_id": "proj-embedded",
+            "repo_name": "proj-embedded",
+            "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
         },
     )
@@ -606,15 +613,18 @@ async def test_auto_verify_results_in_response(client: AsyncClient, tmp_path: Pa
     Auto-verify runs when:
     1. routine_embedded has auto_verify items for the task
     2. An AutoVerifyRunner is injected (LocalAutoVerifyRunner in deps.py)
-    3. The project path resolves to a real directory
+    3. The run has a worktree_path that resolves to a real directory
 
-    We use tmp_path as the project_id so it resolves to a valid directory.
+    We set worktree_path to tmp_path so auto-verify commands can run.
     """
+    from orchestrator.db.repositories import RunRepository
+
     # 1. Create run with embedded routine that has auto_verify
     resp = await client.post(
         "/api/runs",
         json={
-            "project_id": str(tmp_path),
+            "repo_name": "test-repo",
+            "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE_WITH_AUTO_VERIFY,
         },
     )
@@ -622,6 +632,16 @@ async def test_auto_verify_results_in_response(client: AsyncClient, tmp_path: Pa
     run_data = resp.json()
     run_id = run_data["id"]
     task_id = run_data["steps"][0]["tasks"][0]["id"]
+
+    # Update the run's worktree_path so auto-verify can run
+    app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
+    session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = await repo.get(run_id)
+        run.worktree_path = str(tmp_path)
+        await repo.save(run)
+        await session.commit()
 
     # 2. Start the run and task
     await _start_run(client, run_id)
@@ -809,7 +829,8 @@ async def test_embedded_routine_persists_across_requests(
     resp = await client.post(
         "/api/runs",
         json={
-            "project_id": "proj-persist",
+            "repo_name": "proj-persist",
+            "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE_PERSIST,
         },
     )

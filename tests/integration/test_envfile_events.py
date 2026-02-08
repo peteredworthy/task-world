@@ -64,7 +64,7 @@ async def test_on_run_start_emits_event(
 
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -97,7 +97,7 @@ async def test_on_task_start_emits_event(
     # First initialize with on_run_start
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -139,7 +139,7 @@ async def test_on_task_end_emits_event(
     # Initialize with on_run_start
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -180,7 +180,7 @@ async def test_on_run_end_emits_event(
     # Initialize with on_run_start
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -192,7 +192,7 @@ async def test_on_run_end_emits_event(
     # Capture run_end
     await lifecycle.on_run_end(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         success=True,
     )
@@ -219,7 +219,7 @@ async def test_no_events_when_no_env_specs(
 
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=[],
         source_dir=None,

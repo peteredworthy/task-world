@@ -47,12 +47,18 @@ def get_env_lifecycle(request: Request) -> EnvFileLifecycle | None:
     return getattr(request.app.state, "env_lifecycle", None)
 
 
+def get_global_config(request: Request) -> GlobalConfig:
+    """Get global configuration from app state."""
+    return request.app.state.global_config  # type: ignore[no-any-return]
+
+
 async def get_workflow_service(
     request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     repo: Annotated[RunRepository, Depends(get_run_repository)],
     event_store: Annotated[EventStore, Depends(get_event_store)],
-    env_lifecycle: Annotated[EnvFileLifecycle | None, Depends(get_env_lifecycle)] = None,
+    env_lifecycle: Annotated[EnvFileLifecycle | None, Depends(get_env_lifecycle)],
+    global_config: Annotated[GlobalConfig, Depends(get_global_config)],
 ) -> WorkflowService:
     emitter = PersistentEventEmitter(event_store)
 
@@ -77,6 +83,7 @@ async def get_workflow_service(
         submit_event_registry=request.app.state.submit_event_registry,
         auto_verify_runner=LocalAutoVerifyRunner(),
         lock_manager=request.app.state.lock_manager,
+        global_config=global_config,
         env_lifecycle=env_lifecycle,
     )
 
@@ -91,9 +98,16 @@ def get_auth_config(request: Request) -> AuthConfig:
     return request.app.state.auth_config  # type: ignore[no-any-return]
 
 
-def get_global_config(request: Request) -> GlobalConfig:
-    """Get global configuration from app state."""
-    return request.app.state.global_config  # type: ignore[no-any-return]
+def get_repos_path(request: Request) -> Path:
+    """Get the repos directory path from global config."""
+    config: GlobalConfig = request.app.state.global_config
+    return config.paths.get_repos_path()
+
+
+def get_worktrees_path(request: Request) -> Path:
+    """Get the worktrees directory path from global config."""
+    config: GlobalConfig = request.app.state.global_config
+    return config.paths.get_worktrees_path()
 
 
 def get_agent_executor(request: Request) -> AgentExecutor:

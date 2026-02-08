@@ -19,8 +19,13 @@ from orchestrator.agents.errors import (
     AgentNotAvailableError,
 )
 from orchestrator.agents.types import ExecutionContext
-from orchestrator.config.enums import AgentType, ChecklistStatus, RunStatus, TaskStatus
-from orchestrator.workflow.events import AgentErrorEvent, AgentOutputEvent
+from orchestrator.config.enums import AgentType, ChecklistStatus, GateType, RunStatus, TaskStatus
+from orchestrator.workflow.events import (
+    AgentErrorEvent,
+    AgentOutputEvent,
+    ApprovalRequested,
+    WorkflowEvent,
+)
 from orchestrator.workflow.prompts import generate_builder_prompt
 
 if TYPE_CHECKING:
@@ -28,7 +33,7 @@ if TYPE_CHECKING:
 
     from orchestrator.agents.monitor import AgentMonitor
     from orchestrator.config.global_config import GlobalConfig
-    from orchestrator.state.models import Run, TaskState
+    from orchestrator.state.models import Run, StepState, TaskState
     from orchestrator.workflow.locks import LockManager
     from orchestrator.workflow.service import SubmitEventRegistry, WorkflowService
 
@@ -100,8 +105,9 @@ class AgentExecutor:
 
         This method:
         1. Starts the run (changes status to ACTIVE)
-        2. Spawns the agent in a background task
-        3. Returns immediately while agent works
+        2. Creates a git worktree if enabled
+        3. Spawns the agent in a background task
+        4. Returns immediately while agent works
 
         Args:
             run_id: The run to start
@@ -112,6 +118,55 @@ class AgentExecutor:
         """
         # First, start the run (changes status to ACTIVE)
         run = await service.start_run(run_id)
+
+        # Create worktree if enabled and we have config for repo/worktree paths
+        if run.worktree_enabled and run.source_branch and self._global_config is not None:
+            try:
+                from orchestrator.git.worktree import WorktreeManager
+
+                repos_dir = self._global_config.paths.get_repos_path()
+                worktrees_dir = self._global_config.paths.get_worktrees_path()
+                repo_path = repos_dir / run.repo_name
+
+                if repo_path.is_dir():
+                    wt_mgr = WorktreeManager(repo_path, worktrees_dir)
+                    wt_info = wt_mgr.create(run.id, run.source_branch)
+                    run = await service.set_worktree_path(run_id, str(wt_info.path))
+                    logger.info(
+                        f"Run {run_id}: created worktree at {wt_info.path} "
+                        f"(branch={wt_info.branch})"
+                    )
+
+                    # Copy scaffolding if routine has it
+                    if run.routine_path and run.routine_commit:
+                        try:
+                            from orchestrator.scaffolding.copier import copy_scaffolding
+
+                            scaffolding_result = copy_scaffolding(
+                                repo_path=repo_path,
+                                routine_path=run.routine_path,
+                                routine_commit=run.routine_commit,
+                                worktree_path=wt_info.path,
+                            )
+                            if scaffolding_result.files_copied > 0:
+                                logger.info(
+                                    f"Run {run_id}: copied {scaffolding_result.files_copied} "
+                                    f"scaffolding files to {scaffolding_result.target_path}"
+                                )
+                            else:
+                                logger.debug(
+                                    f"Run {run_id}: no scaffolding files found for routine"
+                                )
+                        except Exception as e:
+                            # Scaffolding is optional - log but don't fail the run
+                            logger.warning(f"Run {run_id}: scaffolding copy failed: {e}")
+                else:
+                    logger.info(
+                        f"Run {run_id}: repo {run.repo_name} not found at {repo_path}, "
+                        f"skipping worktree creation"
+                    )
+            except Exception as e:
+                logger.warning(f"Run {run_id}: worktree creation failed: {e}")
 
         # Skip spawning if disabled (e.g., in tests)
         if not self._spawn_agents:
@@ -165,7 +220,36 @@ class AgentExecutor:
                         break
 
                     # Find the first pending or building task
-                    task_state = self._find_next_task(run)
+                    task_state, blocked_by_gate = self._find_next_task(run)
+                    if blocked_by_gate:
+                        # Step has an unsatisfied human_approval gate
+                        # Find the blocked step for logging/event
+                        blocked_step = None
+                        for step in run.steps:
+                            for task in step.tasks:
+                                if task.status in (
+                                    TaskStatus.PENDING,
+                                    TaskStatus.BUILDING,
+                                    TaskStatus.VERIFYING,
+                                ):
+                                    blocked_step = step
+                                    break
+                            if blocked_step is not None:
+                                break
+
+                        step_id = blocked_step.id if blocked_step else ""
+                        logger.info(
+                            f"Run {run_id}: blocked by human_approval gate "
+                            f"on step {step_id}, waiting for approval"
+                        )
+                        event = ApprovalRequested(
+                            timestamp=datetime.now(timezone.utc),
+                            run_id=run_id,
+                            event_type="approval_requested",
+                            step_id=step_id,
+                        )
+                        await self._emit_log_event(event)
+                        break
                     if task_state is None:
                         logger.info(f"Run {run_id}: no pending tasks, checking run completion")
                         # All tasks done - run will be marked complete by the workflow
@@ -223,18 +307,49 @@ class AgentExecutor:
             self._running_tasks.pop(run_id, None)
             logger.info(f"Run {run_id}: agent loop ended")
 
-    def _find_next_task(self, run: Run) -> TaskState | None:
+    def _is_step_gate_satisfied(self, run: Run, step: StepState) -> bool:
+        """Check if a step's human_approval gate is satisfied.
+
+        Returns True if the step has no human_approval gate, or if the gate
+        has been approved. Returns False if the gate requires approval and
+        no approval has been recorded yet.
+        """
+        from orchestrator.config.models import RoutineConfig
+
+        if run.routine_embedded is None:
+            return True
+
+        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        for step_config in routine_config.steps:
+            if step_config.id == step.config_id:
+                if (
+                    step_config.gate is not None
+                    and step_config.gate.type == GateType.HUMAN_APPROVAL
+                    and step.human_approval is None
+                ):
+                    return False
+                break
+        return True
+
+    def _find_next_task(self, run: Run) -> tuple[TaskState | None, bool]:
         """Find the next task to execute.
 
         Looks for tasks in PENDING, BUILDING, or VERIFYING status.
         VERIFYING tasks need to be completed (via complete_verification)
         before the loop can move on.
+
+        Returns:
+            A tuple of (task, blocked_by_gate). If the first executable task's
+            step has an unsatisfied human_approval gate, returns (None, True).
+            If no tasks remain, returns (None, False).
         """
         for step in run.steps:
             for task in step.tasks:
                 if task.status in (TaskStatus.PENDING, TaskStatus.BUILDING, TaskStatus.VERIFYING):
-                    return task
-        return None
+                    if not self._is_step_gate_satisfied(run, step):
+                        return (None, True)
+                    return (task, False)
+        return (None, False)
 
     async def _execute_task(
         self,
@@ -292,8 +407,13 @@ class AgentExecutor:
         # Create the agent
         agent = self._create_agent(agent_type, agent_config)
 
-        # Build the context
-        working_dir = run.worktree_path or run.project_id
+        # Build the context - worktree_path is required for agent execution
+        if not run.worktree_path:
+            raise AgentExecutionError(
+                agent_type=agent_type.value,
+                message="Cannot run agent without worktree_path set on run",
+            )
+        working_dir = run.worktree_path
         prompt = generate_builder_prompt(
             task_config, task_state, run.config, step_context=step_context
         )
@@ -391,13 +511,24 @@ class AgentExecutor:
         # Create the agent for verification
         agent = self._create_agent(agent_type, agent_config)
 
-        # Build the verifier context
-        working_dir = run.worktree_path or run.project_id
+        # Build the verifier context - worktree_path is required
+        if not run.worktree_path:
+            raise AgentExecutionError(
+                agent_type=agent_type.value,
+                message="Cannot run agent without worktree_path set on run",
+            )
+        working_dir = run.worktree_path
         prompt = generate_verifier_prompt(task_config, task_state)
         # Include both ID and description so agent can use the ID for callbacks
         requirements = [f"{item.req_id}: {item.desc}" for item in task_state.checklist]
         # Also build a map from description to ID for fuzzy matching
         req_desc_to_id = {item.desc.lower().strip(): item.req_id for item in task_state.checklist}
+
+        # Get the end_commit from the current attempt
+        end_commit = None
+        if task_state.attempts:
+            current_attempt = task_state.attempts[-1]
+            end_commit = current_attempt.end_commit
 
         context = ExecutionContext(
             run_id=run.id,
@@ -406,6 +537,7 @@ class AgentExecutor:
             prompt=f"{prompt.system}\n\n{prompt.user}",
             requirements=requirements,
             api_base_url=self._api_base_url,
+            end_commit=end_commit,
         )
 
         # Store the verifier prompt BEFORE agent execution
@@ -462,7 +594,7 @@ class AgentExecutor:
 
         logger.info(f"Task {task_state.id}: verifier execution complete, success={result.success}")
 
-    async def _emit_log_event(self, event: AgentOutputEvent | AgentErrorEvent) -> None:
+    async def _emit_log_event(self, event: WorkflowEvent) -> None:
         """Persist a log event using a separate session to avoid transaction conflicts."""
         try:
             async with self._session_factory() as session:

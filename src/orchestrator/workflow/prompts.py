@@ -75,9 +75,11 @@ def generate_builder_prompt(
     # Get previous feedback if this is a revision
     previous_feedback: str | None = None
     if task_state.attempts:
-        last_attempt = task_state.attempts[-1]
-        if last_attempt.verifier_comment:
-            previous_feedback = last_attempt.verifier_comment
+        # Look for the latest non-empty feedback so revision attempts can carry it forward.
+        for attempt in reversed(task_state.attempts):
+            if attempt.verifier_comment:
+                previous_feedback = attempt.verifier_comment
+                break
 
     system = (
         "You are a skilled software developer working within an orchestrated workflow.\n\n"
@@ -90,11 +92,16 @@ def generate_builder_prompt(
         "(update checklist with the requirement ID, e.g. 'R-01', and status 'done').\n"
         "4. If a requirement is not applicable, mark it 'not_applicable' with a note explaining why.\n"
         "5. If a requirement is blocked by something outside your control, mark it 'blocked' with a note.\n"
-        "6. Once all requirements are addressed, submit your work for verification.\n\n"
+        "6. Before submitting for verification, commit your changes to git:\n"
+        "   - Stage all relevant changes with: git add <files>\n"
+        "   - Commit with a descriptive message summarizing your implementation\n"
+        "   - Example: git commit -m 'Implement authentication system with login and signup'\n"
+        "7. Once all requirements are addressed and changes are committed, submit your work for verification.\n\n"
         "## Important\n"
         "- You MUST update the checklist for each requirement before submitting.\n"
         "- All CRITICAL requirements must be marked 'done' before submission will succeed.\n"
-        "- After submission, a verifier will review your work and grade each requirement.\n"
+        "- You MUST commit your changes to git before submitting for verification.\n"
+        "- The verifier will review the committed code and grade each requirement.\n"
         "- If the verifier finds issues, you may be asked to revise (with feedback provided)."
     )
 

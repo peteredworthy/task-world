@@ -32,7 +32,7 @@ async def _setup_active_run(client: AsyncClient) -> tuple[str, str]:
     """Create a run and start it, returning (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
@@ -45,7 +45,7 @@ async def test_activity_empty_for_new_run(client: AsyncClient) -> None:
     """A freshly created (not started) run has no events."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     run_id = resp.json()["id"]
 

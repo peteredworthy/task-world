@@ -49,7 +49,8 @@ def _make_simple_run() -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="simple-routine",
         routine_source=RoutineSource.LOCAL,
@@ -187,7 +188,8 @@ async def test_multi_step_routine(service: WorkflowService) -> None:
     routine = load_routine_from_path(FIXTURES / "valid_complete.yaml")
     run = create_run_from_routine(
         routine=routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={"feature_name": "auth"},
         routine_source=RoutineSource.LOCAL,
     )
@@ -216,14 +218,14 @@ async def test_list_runs(service: WorkflowService) -> None:
     assert runs[0].id == "run-1"
 
 
-async def test_list_runs_by_project(service: WorkflowService) -> None:
+async def test_list_runs_by_repo(service: WorkflowService) -> None:
     run = _make_simple_run()
     await service.create_run(run)
 
-    runs = await service.list_runs_by_project("proj-1")
+    runs = await service.list_runs_by_repo("proj-1")
     assert len(runs) == 1
 
-    runs = await service.list_runs_by_project("other-project")
+    runs = await service.list_runs_by_repo("other-project")
     assert len(runs) == 0
 
 

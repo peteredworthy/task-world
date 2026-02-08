@@ -34,7 +34,7 @@ async def _create_run(client: AsyncClient) -> dict[str, Any]:
     """Helper: create a run and return the response data."""
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     assert response.status_code == 201
     return response.json()
@@ -42,7 +42,7 @@ async def _create_run(client: AsyncClient) -> dict[str, Any]:
 
 async def test_create_run(client: AsyncClient) -> None:
     data = await _create_run(client)
-    assert data["project_id"] == "proj-1"
+    assert data["repo_name"] == "proj-1"
     assert data["routine_id"] == "simple-routine"
     assert data["status"] == "draft"
     assert len(data["steps"]) == 1
@@ -52,7 +52,7 @@ async def test_create_run(client: AsyncClient) -> None:
 async def test_create_run_routine_not_found(client: AsyncClient) -> None:
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "nonexistent", "project_id": "proj-1"},
+        json={"routine_id": "nonexistent", "repo_name": "proj-1", "branch": "main"},
     )
     assert response.status_code == 404
 
@@ -74,11 +74,11 @@ async def test_list_runs(client: AsyncClient) -> None:
 async def test_list_runs_filter_by_project(client: AsyncClient) -> None:
     await _create_run(client)
 
-    response = await client.get("/api/runs?project_id=proj-1")
+    response = await client.get("/api/runs?repo_name=proj-1")
     assert response.status_code == 200
     assert len(response.json()["runs"]) == 1
 
-    response = await client.get("/api/runs?project_id=other-project")
+    response = await client.get("/api/runs?repo_name=other-project")
     assert response.status_code == 200
     assert len(response.json()["runs"]) == 0
 
@@ -103,7 +103,7 @@ async def test_get_run(client: AsyncClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == run_id
-    assert data["project_id"] == "proj-1"
+    assert data["repo_name"] == "proj-1"
 
 
 async def test_get_run_not_found(client: AsyncClient) -> None:
@@ -217,7 +217,8 @@ async def test_resume_with_agent_change(client: AsyncClient) -> None:
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": "proj-2",
+            "repo_name": "proj-2",
+            "branch": "main",
             "agent_type": "cli_subprocess",
             "agent_config": {"timeout": 300},
         },
@@ -270,7 +271,8 @@ async def test_resume_without_agent_change(client: AsyncClient) -> None:
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": "proj-3",
+            "repo_name": "proj-3",
+            "branch": "main",
             "agent_type": "cli_subprocess",
             "agent_config": {"timeout": 300},
         },
@@ -307,7 +309,8 @@ async def test_resume_with_config_only_change(client: AsyncClient) -> None:
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": "proj-4",
+            "repo_name": "proj-4",
+            "branch": "main",
             "agent_type": "cli_subprocess",
             "agent_config": {"timeout": 300, "model": "gpt-4"},
         },
@@ -355,7 +358,8 @@ async def test_create_run_with_agent_config(client: AsyncClient) -> None:
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": "proj-1",
+            "repo_name": "proj-1",
+            "branch": "main",
             "agent_type": "cli_subprocess",
             "agent_config": {"model": "claude-4", "callback_channel": "mcp"},
         },
@@ -463,13 +467,14 @@ async def test_create_run_with_embedded_routine(client: AsyncClient) -> None:
     response = await client.post(
         "/api/runs",
         json={
-            "project_id": "proj-embedded",
+            "repo_name": "proj-embedded",
+            "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
         },
     )
     assert response.status_code == 201
     data = response.json()
-    assert data["project_id"] == "proj-embedded"
+    assert data["repo_name"] == "proj-embedded"
     assert data["routine_id"] == "embedded-test"
     assert data["routine_source"] == "embedded"
     assert data["routine_embedded"] == EMBEDDED_ROUTINE
@@ -485,7 +490,8 @@ async def test_create_run_embedded_routine_persisted(client: AsyncClient) -> Non
     create_resp = await client.post(
         "/api/runs",
         json={
-            "project_id": "proj-embedded",
+            "repo_name": "proj-embedded",
+            "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
         },
     )
@@ -505,7 +511,8 @@ async def test_create_run_both_routine_id_and_embedded_fails(client: AsyncClient
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": "proj-1",
+            "repo_name": "proj-1",
+            "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
         },
     )
@@ -516,7 +523,7 @@ async def test_create_run_neither_routine_id_nor_embedded_fails(client: AsyncCli
     """Providing neither routine_id nor routine_embedded returns 422."""
     response = await client.post(
         "/api/runs",
-        json={"project_id": "proj-1"},
+        json={"repo_name": "proj-1", "branch": "main"},
     )
     assert response.status_code == 422
 
@@ -526,7 +533,8 @@ async def test_create_run_embedded_routine_invalid_schema(client: AsyncClient) -
     response = await client.post(
         "/api/runs",
         json={
-            "project_id": "proj-1",
+            "repo_name": "proj-1",
+            "branch": "main",
             "routine_embedded": {"id": "bad", "name": "Bad"},
             # Missing required 'steps' field
         },
@@ -539,7 +547,8 @@ async def test_create_run_embedded_routine_with_ref_rejected(client: AsyncClient
     response = await client.post(
         "/api/runs",
         json={
-            "project_id": "proj-1",
+            "repo_name": "proj-1",
+            "branch": "main",
             "routine_embedded": {
                 "id": "bad-ref",
                 "name": "Bad Ref Routine",
@@ -589,7 +598,8 @@ async def test_create_run_embedded_with_config(client: AsyncClient) -> None:
     response = await client.post(
         "/api/runs",
         json={
-            "project_id": "proj-1",
+            "repo_name": "proj-1",
+            "branch": "main",
             "routine_embedded": routine_with_inputs,
             "config": {"target_branch": "main"},
         },
@@ -624,7 +634,8 @@ async def test_create_run_embedded_missing_required_input(client: AsyncClient) -
     response = await client.post(
         "/api/runs",
         json={
-            "project_id": "proj-1",
+            "repo_name": "proj-1",
+            "branch": "main",
             "routine_embedded": routine_with_inputs,
             # No config with target_branch
         },

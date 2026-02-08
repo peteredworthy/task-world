@@ -40,7 +40,7 @@ export interface EnvFileSpec {
 
 export interface RunResponse {
   id: string;
-  project_id: string;
+  repo_name: string;
   status: RunStatus;
   routine_id: string | null;
   routine_sha: string | null;
@@ -78,7 +78,8 @@ export interface RunListResponse {
 
 export interface CreateRunRequest {
   routine_id?: string;
-  project_id: string;
+  repo_name: string;
+  branch: string;
   routine_embedded?: Record<string, unknown>;
   config?: Record<string, unknown>;
   agent_type?: string;

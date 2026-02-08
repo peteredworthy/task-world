@@ -42,14 +42,16 @@ def test_server_creation(server: OrchestratorMCPServer) -> None:
 
 
 def test_tool_names(server: OrchestratorMCPServer) -> None:
-    """Server registers all 5 tools."""
+    """Server registers all 7 tools."""
     names = server.tool_names()
-    assert len(names) == 5
+    assert len(names) == 7
     assert "orchestrator_get_requirements" in names
     assert "orchestrator_update_checklist" in names
     assert "orchestrator_submit" in names
     assert "orchestrator_set_grade" in names
     assert "orchestrator_request_clarification" in names
+    assert "orchestrator_list_repos" in names
+    assert "orchestrator_list_branches" in names
 
 
 async def test_server_lists_tools(server: OrchestratorMCPServer) -> None:
@@ -67,7 +69,8 @@ async def test_server_call_tool(server: OrchestratorMCPServer, service: Workflow
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="test-routine",
         routine_source=RoutineSource.LOCAL,
@@ -125,7 +128,8 @@ async def test_full_workflow_through_mcp_server(
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="test-routine",
         routine_source=RoutineSource.LOCAL,

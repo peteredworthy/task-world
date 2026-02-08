@@ -154,14 +154,6 @@ function RunDetailInner({ runId }: { runId: string }) {
     ? run.steps.flatMap(s => s.tasks).find(t => t.status === 'building' || t.status === 'verifying')
     : null;
 
-  // Handle task selection from ActivityFeed
-  const handleTaskSelect = useCallback((taskId: string) => {
-    // Find the task's pending action if any
-    const pendingAction = pendingActionsData?.find(a => a.task_id === taskId);
-    if (pendingAction) {
-      setSelectedPendingAction(pendingAction);
-    }
-  }, [pendingActionsData]);
 
   return (
     <div className="flex h-full">
@@ -350,8 +342,6 @@ function RunDetailInner({ runId }: { runId: string }) {
               events={events}
               activeTasks={activeTasks}
               run={run}
-              onSelectTask={handleTaskSelect}
-              selectedTaskId={selectedPendingAction?.task_id ?? null}
             />
           </div>
 

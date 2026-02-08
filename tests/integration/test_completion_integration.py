@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import ChecklistStatus, Priority, RunStatus, TaskStatus
+from orchestrator.config.global_config import GlobalConfig, PathsConfig
 from orchestrator.config.models import (
     RequirementConfig,
     RetryConfig,
@@ -27,11 +28,18 @@ from orchestrator.workflow.service import WorkflowService
 
 
 @pytest.fixture
-def git_repo() -> Generator[Path, None, None]:
-    """Create a temporary git repository."""
+def git_repo() -> Generator[tuple[Path, Path], None, None]:
+    """Create a temporary git repository and worktrees directory.
+
+    Yields:
+        Tuple of (repo_path, worktrees_dir)
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo_path = Path(tmpdir) / "repo"
+        base = Path(tmpdir)
+        repo_path = base / "repo"
+        worktrees_dir = base / "worktrees"
         repo_path.mkdir()
+        worktrees_dir.mkdir()
 
         # Initialize git repo
         subprocess.run(
@@ -69,7 +77,7 @@ def git_repo() -> Generator[Path, None, None]:
             capture_output=True,
         )
 
-        yield repo_path
+        yield repo_path, worktrees_dir
 
 
 @pytest.fixture
@@ -117,18 +125,19 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 @pytest.mark.asyncio
 async def test_worktree_deleted_on_successful_completion(
-    db_session: AsyncSession, git_repo: Path, simple_routine: RoutineConfig
+    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
 ) -> None:
     """Test that worktree is deleted when run completes successfully with delete flag."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a worktree
     run_id = "test-run-1"
     wt_info = manager.create(run_id)
     assert wt_info.path.exists()
 
-    # Create a run with worktree configured
-    run = create_run_from_routine(simple_routine, str(git_repo))
+    # Create a run with worktree configured (use "repo" to match directory name)
+    run = create_run_from_routine(simple_routine, "repo", source_branch="main")
     run.id = run_id
     run.worktree_path = str(wt_info.path)
     run.delete_worktree_on_completion = True
@@ -141,8 +150,16 @@ async def test_worktree_deleted_on_successful_completion(
         item.grade = "A"
         item.status = ChecklistStatus.DONE
 
-    # Create workflow service with worktree manager
-    service = WorkflowService(db_session, worktree_manager=manager)
+    # Create global config with paths
+    global_config = GlobalConfig(
+        paths=PathsConfig(
+            repos_dir=str(repo_path.parent),
+            worktrees_dir=str(worktrees_dir),
+        )
+    )
+
+    # Create workflow service with global config
+    service = WorkflowService(db_session, global_config=global_config)
     await service.create_run(run)
 
     # Complete verification (should complete the run and delete worktree)
@@ -161,18 +178,19 @@ async def test_worktree_deleted_on_successful_completion(
 
 @pytest.mark.asyncio
 async def test_worktree_kept_when_flag_false(
-    db_session: AsyncSession, git_repo: Path, simple_routine: RoutineConfig
+    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
 ) -> None:
     """Test that worktree is kept when delete_worktree_on_completion is False."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a worktree
     run_id = "test-run-2"
     wt_info = manager.create(run_id)
     assert wt_info.path.exists()
 
-    # Create a run with delete flag set to False
-    run = create_run_from_routine(simple_routine, str(git_repo))
+    # Create a run with delete flag set to False (use "repo" to match directory name)
+    run = create_run_from_routine(simple_routine, "repo", source_branch="main")
     run.id = run_id
     run.worktree_path = str(wt_info.path)
     run.delete_worktree_on_completion = False  # Keep worktree
@@ -185,8 +203,16 @@ async def test_worktree_kept_when_flag_false(
         item.grade = "A"
         item.status = ChecklistStatus.DONE
 
-    # Create workflow service with worktree manager
-    service = WorkflowService(db_session, worktree_manager=manager)
+    # Create global config with paths
+    global_config = GlobalConfig(
+        paths=PathsConfig(
+            repos_dir=str(repo_path.parent),
+            worktrees_dir=str(worktrees_dir),
+        )
+    )
+
+    # Create workflow service with global config
+    service = WorkflowService(db_session, global_config=global_config)
     await service.create_run(run)
 
     # Complete verification
@@ -208,25 +234,34 @@ async def test_worktree_kept_when_flag_false(
 
 @pytest.mark.asyncio
 async def test_worktree_deleted_on_cancelled_run(
-    db_session: AsyncSession, git_repo: Path, simple_routine: RoutineConfig
+    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
 ) -> None:
     """Test that worktree is deleted when run is cancelled with delete flag."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a worktree
     run_id = "test-run-3"
     wt_info = manager.create(run_id)
     assert wt_info.path.exists()
 
-    # Create a run with worktree configured
-    run = create_run_from_routine(simple_routine, str(git_repo))
+    # Create a run with worktree configured (use "repo" to match directory name)
+    run = create_run_from_routine(simple_routine, "repo", source_branch="main")
     run.id = run_id
     run.worktree_path = str(wt_info.path)
     run.delete_worktree_on_completion = True
     run.status = RunStatus.ACTIVE
 
-    # Create workflow service with worktree manager
-    service = WorkflowService(db_session, worktree_manager=manager)
+    # Create global config with paths
+    global_config = GlobalConfig(
+        paths=PathsConfig(
+            repos_dir=str(repo_path.parent),
+            worktrees_dir=str(worktrees_dir),
+        )
+    )
+
+    # Create workflow service with global config
+    service = WorkflowService(db_session, global_config=global_config)
     await service.create_run(run)
 
     # Cancel the run
@@ -240,9 +275,12 @@ async def test_worktree_deleted_on_cancelled_run(
 
 
 @pytest.mark.asyncio
-async def test_worktree_deleted_on_failed_run(db_session: AsyncSession, git_repo: Path) -> None:
+async def test_worktree_deleted_on_failed_run(
+    db_session: AsyncSession, git_repo: tuple[Path, Path]
+) -> None:
     """Test that worktree is deleted when run fails with delete flag."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a worktree
     run_id = "test-run-4"
@@ -276,8 +314,8 @@ async def test_worktree_deleted_on_failed_run(db_session: AsyncSession, git_repo
         ],
     )
 
-    # Create a run with worktree configured
-    run = create_run_from_routine(routine, str(git_repo))
+    # Create a run with worktree configured (use "repo" to match directory name)
+    run = create_run_from_routine(routine, "repo", source_branch="main")
     run.id = run_id
     run.worktree_path = str(wt_info.path)
     run.delete_worktree_on_completion = True
@@ -291,8 +329,16 @@ async def test_worktree_deleted_on_failed_run(db_session: AsyncSession, git_repo
     task.current_attempt = 1  # Max attempts reached
     task.attempts = [Attempt(attempt_num=1)]  # Add attempt for grade evaluation
 
-    # Create workflow service with worktree manager
-    service = WorkflowService(db_session, worktree_manager=manager)
+    # Create global config with paths
+    global_config = GlobalConfig(
+        paths=PathsConfig(
+            repos_dir=str(repo_path.parent),
+            worktrees_dir=str(worktrees_dir),
+        )
+    )
+
+    # Create workflow service with global config
+    service = WorkflowService(db_session, global_config=global_config)
     await service.create_run(run)
 
     # Complete verification (should fail the task and run)
@@ -312,11 +358,11 @@ async def test_worktree_deleted_on_failed_run(db_session: AsyncSession, git_repo
 
 @pytest.mark.asyncio
 async def test_no_error_when_worktree_manager_not_configured(
-    db_session: AsyncSession, git_repo: Path, simple_routine: RoutineConfig
+    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
 ) -> None:
     """Test that completion works when WorktreeManager is not configured."""
     # Create a run (no worktree created)
-    run = create_run_from_routine(simple_routine, str(git_repo))
+    run = create_run_from_routine(simple_routine, "repo", source_branch="main")
     run.worktree_path = "/some/path"  # Set path but no manager
     run.delete_worktree_on_completion = True
     run.status = RunStatus.ACTIVE
@@ -328,8 +374,8 @@ async def test_no_error_when_worktree_manager_not_configured(
         item.grade = "A"
         item.status = ChecklistStatus.DONE
 
-    # Create workflow service WITHOUT worktree manager
-    service = WorkflowService(db_session, worktree_manager=None)
+    # Create workflow service WITHOUT global config (no worktree manager available)
+    service = WorkflowService(db_session, global_config=None)
     await service.create_run(run)
 
     # Complete verification (should complete without error)
@@ -345,13 +391,13 @@ async def test_no_error_when_worktree_manager_not_configured(
 
 @pytest.mark.asyncio
 async def test_no_error_when_worktree_path_not_set(
-    db_session: AsyncSession, git_repo: Path, simple_routine: RoutineConfig
+    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
 ) -> None:
     """Test that completion works when worktree_path is None."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
 
     # Create a run without worktree_path
-    run = create_run_from_routine(simple_routine, str(git_repo))
+    run = create_run_from_routine(simple_routine, "repo", source_branch="main")
     run.worktree_path = None  # No worktree configured
     run.delete_worktree_on_completion = True
     run.status = RunStatus.ACTIVE
@@ -363,8 +409,16 @@ async def test_no_error_when_worktree_path_not_set(
         item.grade = "A"
         item.status = ChecklistStatus.DONE
 
-    # Create workflow service with worktree manager
-    service = WorkflowService(db_session, worktree_manager=manager)
+    # Create global config with paths
+    global_config = GlobalConfig(
+        paths=PathsConfig(
+            repos_dir=str(repo_path.parent),
+            worktrees_dir=str(worktrees_dir),
+        )
+    )
+
+    # Create workflow service with global config
+    service = WorkflowService(db_session, global_config=global_config)
     await service.create_run(run)
 
     # Complete verification (should complete without error)

@@ -61,7 +61,8 @@ def _create_test_run(
 
     run = create_run_from_routine(
         routine=routine,
-        project_id="/test/project",
+        repo_name="test-project",
+        source_branch="main",
         id_generator=lambda: run_id,  # Use fixed ID for testing
     )
     run.agent_type = agent_type

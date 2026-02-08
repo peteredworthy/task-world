@@ -67,3 +67,14 @@ line-length = 100
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
+include = ["src"]
+exclude = [
+    ".venv",
+    "**/__pycache__",
+    "docs",
+    "repos",
+    "worktrees",
+    "scripts",
+    "tests",
+    "ui",
+]

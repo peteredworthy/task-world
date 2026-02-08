@@ -23,11 +23,11 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
     await engine.dispose()
 
 
-def _make_run(run_id: str = "run-1", project_id: str = "proj-1") -> RunModel:
+def _make_run(run_id: str = "run-1", repo_name: str = "proj-1") -> RunModel:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return RunModel(
         id=run_id,
-        project_id=project_id,
+        repo_name=repo_name,
         status="draft",
         agent_config={},
         config={},
@@ -62,7 +62,7 @@ async def test_crud_run(session: AsyncSession) -> None:
 
     result = await session.execute(select(RunModel).where(RunModel.id == "run-1"))
     loaded = result.scalar_one()
-    assert loaded.project_id == "proj-1"
+    assert loaded.repo_name == "proj-1"
     assert loaded.status == "draft"
 
 
@@ -184,7 +184,8 @@ async def test_run_fields_roundtrip(session: AsyncSession) -> None:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     run = RunModel(
         id="run-full",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status="active",
         routine_id="routine-1",
         routine_sha="abc123",

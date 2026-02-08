@@ -28,7 +28,7 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
         for i in range(10):
             response = await c.post(
                 "/api/runs",
-                json={"routine_id": "simple-routine", "project_id": f"proj-{i}"},
+                json={"routine_id": "simple-routine", "repo_name": f"proj-{i}", "branch": "main"},
             )
             assert response.status_code == 201
 

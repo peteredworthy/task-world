@@ -184,7 +184,8 @@ async def api_client(api_server: tuple[str, Any]) -> AsyncGenerator[httpx.AsyncC
 async def create_run(
     client: httpx.AsyncClient,
     routine_id: str = "simple-routine",
-    project_id: str = "proj-1",
+    repo_name: str = "test-repo",
+    branch: str = "main",
     **extra: Any,
 ) -> dict[str, Any]:
     """Create a run via API.
@@ -192,7 +193,8 @@ async def create_run(
     Args:
         client: HTTP client
         routine_id: ID of the routine to use
-        project_id: Project identifier
+        repo_name: Repository name
+        branch: Branch to base worktree on
         **extra: Additional fields for the request
 
     Returns:
@@ -201,7 +203,12 @@ async def create_run(
     Raises:
         AssertionError: If the request fails
     """
-    body: dict[str, Any] = {"routine_id": routine_id, "project_id": project_id, **extra}
+    body: dict[str, Any] = {
+        "routine_id": routine_id,
+        "repo_name": repo_name,
+        "branch": branch,
+        **extra,
+    }
     response = await client.post("/api/runs", json=body)
     assert response.status_code == 201, f"Expected 201, got {response.status_code}: {response.text}"
     return response.json()

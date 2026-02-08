@@ -54,7 +54,7 @@ function makeStep(overrides: Partial<StepSummary> = {}): StepSummary {
 function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
   return {
     id: 'run-1',
-    project_id: 'proj-1',
+    repo_name: 'proj-1',
     status: 'active' as RunStatus,
     routine_id: null,
     routine_sha: null,

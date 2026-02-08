@@ -365,7 +365,7 @@ async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state() -> Non
             # Create and set up run via REST API
             resp = await client.post(
                 "/api/runs",
-                json={"routine_id": "simple-routine", "project_id": "proj-1"},
+                json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
             )
             assert resp.status_code == 201
             run_id = resp.json()["id"]

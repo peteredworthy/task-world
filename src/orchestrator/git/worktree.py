@@ -19,16 +19,16 @@ class WorktreeInfo:
 class WorktreeManager:
     """Manages git worktrees for run isolation."""
 
-    def __init__(self, repo_path: Path, worktree_dir: Path | None = None):
+    def __init__(self, repo_path: Path, worktree_dir: Path):
         """
         Initialize the worktree manager.
 
         Args:
             repo_path: Path to the main git repository
-            worktree_dir: Directory for worktrees (default: repo/.worktrees)
+            worktree_dir: Directory for worktrees (centralized, from global config)
         """
         self._repo = repo_path
-        self._worktree_dir = worktree_dir or repo_path / ".worktrees"
+        self._worktree_dir = worktree_dir
 
     def create(self, run_id: str, base_branch: str = "main") -> WorktreeInfo:
         """

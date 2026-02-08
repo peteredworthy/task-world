@@ -4,7 +4,6 @@ import { runStatusColor, taskStatusColor, checklistStatusColor, priorityColor, g
 describe('runStatusColor', () => {
   it.each([
     ['draft', 'bg-status-pending/20 text-status-pending'],
-    ['queued', 'bg-status-paused/20 text-status-paused'],
     ['active', 'bg-status-active/20 text-status-active'],
     ['paused', 'bg-status-paused/20 text-status-paused'],
     ['completed', 'bg-status-completed/20 text-status-completed'],

@@ -45,7 +45,8 @@ def _make_run() -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="simple-routine",
         routine_source=RoutineSource.LOCAL,
@@ -223,7 +224,8 @@ async def test_recovery_with_routine_fixture(session: AsyncSession) -> None:
     routine = load_routine_from_path(FIXTURES / "valid_simple.yaml")
     run = create_run_from_routine(
         routine=routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         routine_source=RoutineSource.LOCAL,
     )
 
@@ -240,7 +242,8 @@ async def test_recovery_with_routine_fixture(session: AsyncSession) -> None:
     # Create a fresh run from the same routine
     fresh = create_run_from_routine(
         routine=routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         routine_source=RoutineSource.LOCAL,
     )
     # Transplant the same IDs so event replay can find the right entities

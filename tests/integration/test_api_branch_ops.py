@@ -58,9 +58,24 @@ def git_repo(tmp_path: Path) -> Path:
 @pytest.fixture
 async def client_with_repo(git_repo: Path) -> AsyncGenerator[tuple[AsyncClient, Path], None]:
     """Create test client with a real git repo as project."""
+    from orchestrator.config.global_config import GlobalConfig, PathsConfig
+
+    # Configure global config with proper repos/worktrees directories
+    repos_dir = git_repo.parent
+    worktrees_dir = repos_dir / "worktrees"
+    worktrees_dir.mkdir(exist_ok=True)
+
+    global_config = GlobalConfig(
+        paths=PathsConfig(
+            repos_dir=str(repos_dir),
+            worktrees_dir=str(worktrees_dir),
+        )
+    )
+
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+        global_config=global_config,
     )
     await init_db(app.state.engine)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
@@ -75,8 +90,8 @@ async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": str(project_path),
-            "source_branch": "main",
+            "repo_name": project_path.name,  # Use just the repo name, not the full path
+            "branch": "main",
         },
     )
     assert resp.status_code == 201
@@ -161,8 +176,8 @@ async def test_back_merge_requires_active_or_paused(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": str(repo),
-            "source_branch": "main",
+            "repo_name": str(repo),
+            "branch": "main",
         },
     )
     run_id = resp.json()["id"]
@@ -181,7 +196,8 @@ async def test_branch_status_no_worktree(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": "not-a-git-repo",
+            "repo_name": "not-a-git-repo",
+            "branch": "main",
         },
     )
     run_id = resp.json()["id"]

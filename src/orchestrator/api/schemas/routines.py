@@ -38,3 +38,4 @@ class ValidateRoutineRequest(BaseModel):
 class ValidateRoutineResponse(BaseModel):
     valid: bool
     errors: list[str] = []
+    builder_feedback: list[str] = []

@@ -37,7 +37,8 @@ async def session_with_run(session: AsyncSession) -> AsyncSession:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     run = RunModel(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status="draft",
         agent_config={},
         config={},
@@ -117,7 +118,8 @@ async def test_filter_by_run_id(session: AsyncSession) -> None:
         session.add(
             RunModel(
                 id=run_id,
-                project_id="proj-1",
+                repo_name="proj-1",
+                source_branch="main",
                 status="draft",
                 agent_config={},
                 config={},

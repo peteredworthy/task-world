@@ -15,7 +15,8 @@ def test_create_run_from_loaded_routine() -> None:
 
     run = create_run_from_routine(
         routine=routine,
-        project_id="test-project",
+        repo_name="test-project",
+        source_branch="main",
         config={"feature_name": "authentication"},
         routine_source=RoutineSource.LOCAL,
     )

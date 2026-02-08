@@ -4,6 +4,7 @@ import click
 from dotenv import load_dotenv
 
 from orchestrator.cli.agents import agents
+from orchestrator.cli.repos import repos
 from orchestrator.cli.routines import routines
 from orchestrator.cli.runs import runs
 
@@ -26,6 +27,7 @@ def cli(ctx: click.Context, db: str, json: bool) -> None:
 cli.add_command(runs)
 cli.add_command(routines)
 cli.add_command(agents)
+cli.add_command(repos)
 
 
 if __name__ == "__main__":

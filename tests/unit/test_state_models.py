@@ -16,7 +16,7 @@ from orchestrator.state.models import (
 
 
 def test_run_default_values() -> None:
-    run = Run(project_id="test-project")
+    run = Run(repo_name="test-project")
     assert run.status == RunStatus.DRAFT
     assert run.id is not None
     assert len(run.id) == 36  # UUID format
@@ -25,7 +25,8 @@ def test_run_default_values() -> None:
 
 def test_run_with_values() -> None:
     run = Run(
-        project_id="test-project",
+        repo_name="test-project",
+        source_branch="main",
         routine_id="planning",
         agent_type=AgentType.OPENHANDS_LOCAL,
         config={"feature": "auth"},

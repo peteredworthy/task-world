@@ -30,7 +30,7 @@ async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
     """Create a run, start it, and start building a task. Returns (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
@@ -177,7 +177,7 @@ async def test_get_pending_actions_empty(client: AsyncClient) -> None:
     """Test getting pending actions when there are none."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     run_id = resp.json()["id"]
 
@@ -258,7 +258,7 @@ async def test_create_clarification_invalid_task(client: AsyncClient) -> None:
     """Test creating a clarification for a non-existent task."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     run_id = resp.json()["id"]
 

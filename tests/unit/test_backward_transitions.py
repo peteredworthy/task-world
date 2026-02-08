@@ -75,7 +75,7 @@ def test_evaluate_condition_checklist_incomplete_true() -> None:
             status=ChecklistStatus.OPEN,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("checklist_incomplete", checklist, run) is True
 
 
@@ -89,7 +89,7 @@ def test_evaluate_condition_checklist_incomplete_false() -> None:
             status=ChecklistStatus.DONE,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("checklist_incomplete", checklist, run) is False
 
 
@@ -103,7 +103,7 @@ def test_evaluate_condition_checklist_incomplete_expected_not_done() -> None:
             status=ChecklistStatus.OPEN,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("checklist_incomplete", checklist, run) is False
 
 
@@ -123,7 +123,7 @@ def test_evaluate_condition_checklist_specific_item() -> None:
             status=ChecklistStatus.DONE,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("checklist:R1", checklist, run) is True
     assert evaluate_condition("checklist:R2", checklist, run) is False
 
@@ -138,21 +138,21 @@ def test_evaluate_condition_checklist_item_not_found() -> None:
             status=ChecklistStatus.DONE,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("checklist:R999", checklist, run) is False
 
 
 def test_evaluate_condition_has_unresolved_conflicts_no_worktree() -> None:
     """has_unresolved_conflicts returns False when no worktree provided."""
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("has_unresolved_conflicts", checklist, run) is False
 
 
 def test_evaluate_condition_has_unresolved_conflicts_no_file(tmp_path: Path) -> None:
     """has_unresolved_conflicts returns False when CONFLICTS.md doesn't exist."""
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("has_unresolved_conflicts", checklist, run, tmp_path) is False
 
 
@@ -163,7 +163,7 @@ def test_evaluate_condition_has_unresolved_conflicts_with_unresolved(tmp_path: P
         "# Conflicts\n\n- [ ] Unresolved conflict 1\n- [x] Resolved conflict 2"
     )
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("has_unresolved_conflicts", checklist, run, tmp_path) is True
 
 
@@ -172,21 +172,21 @@ def test_evaluate_condition_has_unresolved_conflicts_all_resolved(tmp_path: Path
     conflicts_file = tmp_path / "CONFLICTS.md"
     conflicts_file.write_text("# Conflicts\n\n- [x] Resolved conflict 1\n- [x] Resolved conflict 2")
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("has_unresolved_conflicts", checklist, run, tmp_path) is False
 
 
 def test_evaluate_condition_has_open_questions_no_worktree() -> None:
     """has_open_questions returns False when no worktree provided."""
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("has_open_questions", checklist, run) is False
 
 
 def test_evaluate_condition_has_open_questions_no_file(tmp_path: Path) -> None:
     """has_open_questions returns False when design-questions.md doesn't exist."""
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("has_open_questions", checklist, run, tmp_path) is False
 
 
@@ -195,7 +195,7 @@ def test_evaluate_condition_has_open_questions_with_open(tmp_path: Path) -> None
     questions_file = tmp_path / "design-questions.md"
     questions_file.write_text("# Questions\n\n- [ ] Open question 1\n- [x] Answered question 2")
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("has_open_questions", checklist, run, tmp_path) is True
 
 
@@ -204,14 +204,14 @@ def test_evaluate_condition_has_open_questions_all_answered(tmp_path: Path) -> N
     questions_file = tmp_path / "design-questions.md"
     questions_file.write_text("# Questions\n\n- [x] Answered question 1\n- [x] Answered question 2")
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("has_open_questions", checklist, run, tmp_path) is False
 
 
 def test_evaluate_condition_unknown() -> None:
     """Unknown conditions return False."""
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     assert evaluate_condition("unknown_condition", checklist, run) is False
 
 
@@ -227,7 +227,7 @@ def test_evaluate_transition_conditions_no_transitions() -> None:
     )
     step_state = StepState(id="step-1", config_id="S-01")
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
 
     target, message = evaluate_transition_conditions(step_config, step_state, checklist, run)
     assert target is None
@@ -261,7 +261,7 @@ def test_evaluate_transition_conditions_condition_not_met() -> None:
             status=ChecklistStatus.DONE,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
 
     target, message = evaluate_transition_conditions(step_config, step_state, checklist, run)
     assert target == "S-02"
@@ -295,7 +295,7 @@ def test_evaluate_transition_conditions_condition_met() -> None:
             status=ChecklistStatus.OPEN,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
 
     target, message = evaluate_transition_conditions(step_config, step_state, checklist, run)
     assert target == "S-00"
@@ -332,7 +332,7 @@ def test_evaluate_transition_conditions_max_iterations_reached() -> None:
             status=ChecklistStatus.OPEN,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
 
     # Record the transition twice to reach max
     run.transition_tracker = TransitionTracker()
@@ -386,7 +386,7 @@ def test_evaluate_transition_conditions_multiple_conditions_first_wins() -> None
             status=ChecklistStatus.OPEN,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
 
     target, message = evaluate_transition_conditions(step_config, step_state, checklist, run)
     assert target == "S-00"  # First condition wins
@@ -432,7 +432,7 @@ def test_evaluate_transition_conditions_second_condition_after_first_max() -> No
             status=ChecklistStatus.OPEN,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
 
     # Record first transition to reach max
     run.transition_tracker = TransitionTracker()
@@ -470,7 +470,7 @@ def test_evaluate_transition_conditions_initializes_tracker() -> None:
             status=ChecklistStatus.OPEN,
         ),
     ]
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     run.transition_tracker = None  # Explicitly set to None
 
     evaluate_transition_conditions(step_config, step_state, checklist, run)
@@ -501,7 +501,7 @@ def test_evaluate_transition_conditions_with_worktree(tmp_path: Path) -> None:
     )
     step_state = StepState(id="step-1", config_id="S-01")
     checklist: list[ChecklistItem] = []
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
 
     target, message = evaluate_transition_conditions(
         step_config, step_state, checklist, run, tmp_path
@@ -520,7 +520,7 @@ def test_transition_backward_basic() -> None:
     from orchestrator.workflow.events import BufferingEmitter, RunStepBackward
 
     # Create a run with 3 steps
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     run.steps = [
         StepState(id="step-1", config_id="S-01", completed=True),
         StepState(id="step-2", config_id="S-02", completed=True),
@@ -584,7 +584,7 @@ def test_transition_backward_invalid_target_out_of_bounds() -> None:
     from orchestrator.workflow.engine import WorkflowEngine
     from orchestrator.workflow.errors import InvalidTransitionError
 
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     run.steps = [
         StepState(id="step-1", config_id="S-01"),
         StepState(id="step-2", config_id="S-02"),
@@ -606,7 +606,7 @@ def test_transition_backward_invalid_target_forward() -> None:
     from orchestrator.workflow.engine import WorkflowEngine
     from orchestrator.workflow.errors import InvalidTransitionError
 
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     run.steps = [
         StepState(id="step-1", config_id="S-01"),
         StepState(id="step-2", config_id="S-02"),
@@ -628,7 +628,7 @@ def test_transition_backward_invalid_target_same_step() -> None:
     from orchestrator.workflow.engine import WorkflowEngine
     from orchestrator.workflow.errors import InvalidTransitionError
 
-    run = Run(id="run-1", project_id="proj-1")
+    run = Run(id="run-1", repo_name="proj-1")
     run.steps = [
         StepState(id="step-1", config_id="S-01"),
         StepState(id="step-2", config_id="S-02"),

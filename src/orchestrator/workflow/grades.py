@@ -65,8 +65,11 @@ def evaluate_grades(
                     guidance.append(f"{item.req_id}: {item.grade_reason}")
 
     if graded_count == 0 and len(failing) == 0:
+        # No graded items and nothing failing means either the checklist is
+        # empty or contains only optional (NICE) items.  Either way, there
+        # are no required criteria to block on, so pass.
         return GradeResult(
-            passed=False, failing_items=[], revision_guidance=[], message="no grades set"
+            passed=True, failing_items=[], revision_guidance=[], message="no grades required"
         )
 
     passed = len(failing) == 0

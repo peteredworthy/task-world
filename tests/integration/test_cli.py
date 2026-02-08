@@ -62,7 +62,8 @@ async def test_runs_status_via_api(test_app: FastAPI, runner: CliRunner) -> None
         create_response = await client.post(
             "/api/runs",
             json={
-                "project_id": "/tmp/test-project",
+                "repo_name": "test-repo",
+                "branch": "main",
                 "routine_embedded": {
                     "id": "test-routine",
                     "name": "Test Routine",
@@ -108,7 +109,8 @@ async def test_pause_resume_cancel_via_api(test_app: FastAPI) -> None:
         create_response = await client.post(
             "/api/runs",
             json={
-                "project_id": "/tmp/test-project",
+                "repo_name": "test-repo",
+                "branch": "main",
                 "routine_embedded": {
                     "id": "test-routine",
                     "name": "Test Routine",
@@ -168,7 +170,8 @@ async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
         create_response = await client.post(
             "/api/runs",
             json={
-                "project_id": "/tmp/test-project",
+                "repo_name": "test-repo",
+                "branch": "main",
                 "routine_embedded": {
                     "id": "test-routine",
                     "name": "Test Routine",

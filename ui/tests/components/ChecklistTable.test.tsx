@@ -80,14 +80,12 @@ describe('ChecklistTable', () => {
     expect(screen.getByText('-')).toBeInTheDocument();
   });
 
-  it('shows grade_reason in a tooltip element when present', () => {
+  it('shows grade_reason as text when present', () => {
     cleanup();
     const items = [
       makeItem({ req_id: 'R1', desc: 'Graded item', grade: 'B', grade_reason: 'Missing edge case handling' }),
     ];
     render(<ChecklistTable items={items} />);
-    const gradeWrapper = screen.getByTitle('Missing edge case handling');
-    expect(gradeWrapper).toBeInTheDocument();
     expect(screen.getByText('Missing edge case handling')).toBeInTheDocument();
   });
 

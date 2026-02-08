@@ -87,10 +87,13 @@ def validate_routine_inputs(routine: RoutineConfig, config: dict[str, Any]) -> d
 
 def create_run_from_routine(
     routine: RoutineConfig,
-    project_id: str,
+    repo_name: str,
+    source_branch: str,
     config: dict[str, Any] | None = None,
     routine_source: RoutineSource | None = None,
     routine_sha: str | None = None,
+    routine_path: str | None = None,
+    routine_commit: str | None = None,
     id_generator: Callable[[], str] = default_id_generator,
 ) -> Run:
     """Create a Run instance from a RoutineConfig.
@@ -99,10 +102,13 @@ def create_run_from_routine(
 
     Args:
         routine: The routine configuration
-        project_id: ID of the project
+        repo_name: Name of the repository in repos directory
+        source_branch: Branch to base worktree on
         config: Runtime configuration values
         routine_source: Where the routine came from
         routine_sha: Git SHA of the routine
+        routine_path: Path within repo for project routines
+        routine_commit: Commit SHA when routine was read
         id_generator: Function to generate IDs (inject for testing)
 
     Returns:
@@ -115,10 +121,13 @@ def create_run_from_routine(
 
     return Run(
         id=run_id,
-        project_id=project_id,
+        repo_name=repo_name,
+        source_branch=source_branch,
         routine_id=routine.id,
         routine_source=routine_source,
         routine_sha=routine_sha,
+        routine_path=routine_path,
+        routine_commit=routine_commit,
         config=validated_config,
         steps=steps,
     )

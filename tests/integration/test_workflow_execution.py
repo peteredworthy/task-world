@@ -26,7 +26,8 @@ def test_full_lifecycle() -> None:
     # 2. Create run
     run = create_run_from_routine(
         routine=routine,
-        project_id="test-project",
+        repo_name="test-project",
+        source_branch="main",
         config={"feature": "auth"},
     )
 
@@ -93,7 +94,7 @@ def test_full_lifecycle() -> None:
 def test_revision_lifecycle() -> None:
     """Test that revision (fail -> retry) works end-to-end."""
     routine = load_routine_from_path(FIXTURES / "valid_simple.yaml")
-    run = create_run_from_routine(routine=routine, project_id="test-project")
+    run = create_run_from_routine(routine=routine, repo_name="test-project", source_branch="main")
 
     manager = SessionStateManager()
     manager.add_run(run)

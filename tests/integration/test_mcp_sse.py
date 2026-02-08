@@ -86,7 +86,7 @@ async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
     """Create a run with a building task via the REST API, returning (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
@@ -149,7 +149,7 @@ async def test_mcp_handler_updates_database_state(
     # Create a run via REST API
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]

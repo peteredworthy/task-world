@@ -44,7 +44,8 @@ def _make_run_with_pending_approval() -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         routine_id="simple-routine",
         routine_source=RoutineSource.LOCAL,

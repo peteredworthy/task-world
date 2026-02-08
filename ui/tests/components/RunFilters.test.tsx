@@ -23,11 +23,11 @@ describe('RunFilters', () => {
     const labels = options.map(o => o.textContent);
     expect(labels).toContain('All statuses');
     expect(labels).toContain('Draft');
-    expect(labels).toContain('Queued');
     expect(labels).toContain('Active');
     expect(labels).toContain('Paused');
     expect(labels).toContain('Completed');
     expect(labels).toContain('Failed');
+    expect(labels).toContain('Needs Input');
   });
 
   it('renders all recency options', () => {

@@ -33,7 +33,7 @@ VALID_EMBEDDED_ROUTINE = {
 
 def test_create_run_request_with_routine_id_only() -> None:
     """CreateRunRequest with only routine_id is valid."""
-    req = CreateRunRequest(routine_id="my-routine", project_id="proj-1")
+    req = CreateRunRequest(routine_id="my-routine", repo_name="proj-1", branch="main")
     assert req.routine_id == "my-routine"
     assert req.routine_embedded is None
 
@@ -41,7 +41,8 @@ def test_create_run_request_with_routine_id_only() -> None:
 def test_create_run_request_with_routine_embedded_only() -> None:
     """CreateRunRequest with only routine_embedded is valid."""
     req = CreateRunRequest(
-        project_id="proj-1",
+        repo_name="proj-1",
+        branch="main",
         routine_embedded=VALID_EMBEDDED_ROUTINE,
     )
     assert req.routine_id is None
@@ -55,7 +56,8 @@ def test_create_run_request_with_both_raises() -> None:
     ):
         CreateRunRequest(
             routine_id="my-routine",
-            project_id="proj-1",
+            repo_name="proj-1",
+            branch="main",
             routine_embedded=VALID_EMBEDDED_ROUTINE,
         )
 
@@ -65,14 +67,15 @@ def test_create_run_request_with_neither_raises() -> None:
     with pytest.raises(
         ValidationError, match="routine_id.*routine_embedded|routine_embedded.*routine_id"
     ):
-        CreateRunRequest(project_id="proj-1")
+        CreateRunRequest(repo_name="proj-1", branch="main")
 
 
 def test_create_run_request_preserves_config() -> None:
     """Config, agent_type, and agent_config pass through correctly."""
     req = CreateRunRequest(
         routine_id="my-routine",
-        project_id="proj-1",
+        repo_name="proj-1",
+        branch="main",
         config={"key": "value"},
         agent_type="cli_subprocess",
         agent_config={"model": "test"},

@@ -31,13 +31,13 @@ async def test_multiple_runs_independent_state(api_client: AsyncClient) -> None:
     that state changes in one run don't affect the others.
     """
     # Create three runs
-    run1_data = await create_run(api_client, routine_id="simple-routine", project_id="multi-1")
+    run1_data = await create_run(api_client, routine_id="simple-routine", repo_name="multi-1")
     run1_id = run1_data["id"]
 
-    run2_data = await create_run(api_client, routine_id="simple-routine", project_id="multi-2")
+    run2_data = await create_run(api_client, routine_id="simple-routine", repo_name="multi-2")
     run2_id = run2_data["id"]
 
-    run3_data = await create_run(api_client, routine_id="simple-routine", project_id="multi-3")
+    run3_data = await create_run(api_client, routine_id="simple-routine", repo_name="multi-3")
     run3_id = run3_data["id"]
 
     # Start all runs
@@ -92,7 +92,7 @@ async def test_concurrent_task_operations(api_client: AsyncClient) -> None:
     run_tasks: list[tuple[str, str]] = []
     for i in range(3):
         run_data = await create_run(
-            api_client, routine_id="simple-routine", project_id=f"concurrent-{i}"
+            api_client, routine_id="simple-routine", repo_name=f"concurrent-{i}"
         )
         run_data = await start_run(api_client, run_data["id"])
         task_id = get_first_task_id(run_data)
@@ -139,17 +139,17 @@ async def test_multiple_runs_different_routines(api_client: AsyncClient) -> None
     # Note: This test would require multiple routine fixtures
     # For now, we'll just verify that the same routine can be used multiple times
     run1_data = await create_run(
-        api_client, routine_id="simple-routine", project_id="routine-test-1"
+        api_client, routine_id="simple-routine", repo_name="routine-test-1"
     )
     run2_data = await create_run(
-        api_client, routine_id="simple-routine", project_id="routine-test-2"
+        api_client, routine_id="simple-routine", repo_name="routine-test-2"
     )
 
     # Verify both runs have independent routine configurations
     assert run1_data["routine_id"] == "simple-routine"
     assert run2_data["routine_id"] == "simple-routine"
     assert run1_data["id"] != run2_data["id"]
-    assert run1_data["project_id"] != run2_data["project_id"]
+    assert run1_data["repo_name"] != run2_data["repo_name"]
 
 
 @pytest.mark.e2e
@@ -160,10 +160,10 @@ async def test_run_isolation_with_revisions(api_client: AsyncClient) -> None:
     others normally to verify isolation.
     """
     # Create two runs
-    run1_data = await create_run(api_client, routine_id="simple-routine", project_id="isolation-1")
+    run1_data = await create_run(api_client, routine_id="simple-routine", repo_name="isolation-1")
     run1_id = run1_data["id"]
 
-    run2_data = await create_run(api_client, routine_id="simple-routine", project_id="isolation-2")
+    run2_data = await create_run(api_client, routine_id="simple-routine", repo_name="isolation-2")
     run2_id = run2_data["id"]
 
     # Start both
@@ -229,14 +229,14 @@ async def test_run_list_filtering(api_client: AsyncClient) -> None:
     # Create 2 draft runs
     for i in range(2):
         run_data = await create_run(
-            api_client, routine_id="simple-routine", project_id=f"filter-draft-{i}"
+            api_client, routine_id="simple-routine", repo_name=f"filter-draft-{i}"
         )
         draft_runs.append(run_data["id"])
 
     # Create 2 active runs
     for i in range(2):
         run_data = await create_run(
-            api_client, routine_id="simple-routine", project_id=f"filter-active-{i}"
+            api_client, routine_id="simple-routine", repo_name=f"filter-active-{i}"
         )
         await start_run(api_client, run_data["id"])
         active_runs.append(run_data["id"])
@@ -244,7 +244,7 @@ async def test_run_list_filtering(api_client: AsyncClient) -> None:
     # Create 2 completed runs
     for i in range(2):
         run_data = await create_run(
-            api_client, routine_id="simple-routine", project_id=f"filter-completed-{i}"
+            api_client, routine_id="simple-routine", repo_name=f"filter-completed-{i}"
         )
         run_id = run_data["id"]
         run_data = await start_run(api_client, run_id)
@@ -294,7 +294,7 @@ async def test_concurrent_checklist_updates(api_client: AsyncClient) -> None:
 
     for i in range(num_runs):
         run_data = await create_run(
-            api_client, routine_id="simple-routine", project_id=f"checklist-{i}"
+            api_client, routine_id="simple-routine", repo_name=f"checklist-{i}"
         )
         run_data = await start_run(api_client, run_data["id"])
         task_id = get_first_task_id(run_data)

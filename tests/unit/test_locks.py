@@ -224,7 +224,8 @@ def _make_run(
 ) -> Run:
     return Run(
         id=run_id,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=status,
         steps=[
             StepState(
@@ -381,7 +382,8 @@ class TestEngineWithLocks:
         """When a task fails (max attempts), lock is released."""
         run = Run(
             id="run-1",
-            project_id="proj-1",
+            repo_name="proj-1",
+            source_branch="main",
             status=RunStatus.DRAFT,
             steps=[
                 StepState(

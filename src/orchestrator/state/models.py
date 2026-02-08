@@ -79,6 +79,10 @@ class Attempt(BaseModel):
     agent_output: str | None = None  # Final captured output (joined lines)
     error: str | None = None  # Error message if agent failed
 
+    # Git tracking - commit SHAs for builder/verifier handoff
+    start_commit: str | None = None  # Commit at attempt start
+    end_commit: str | None = None  # Commit at attempt end (after builder)
+
 
 class TaskState(BaseModel):
     """Runtime state of a task."""
@@ -141,7 +145,7 @@ class Run(BaseModel):
     """Runtime state of an entire run."""
 
     id: str = Field(default_factory=generate_id)
-    project_id: str
+    repo_name: str
     status: RunStatus = RunStatus.DRAFT
 
     # Routine reference
@@ -149,6 +153,10 @@ class Run(BaseModel):
     routine_sha: str | None = None
     routine_source: RoutineSource | None = None
     routine_embedded: dict[str, Any] | None = None
+
+    # Routine traceability (for project routines)
+    routine_path: str | None = None  # Path within repo (e.g., "routines/feature.yaml")
+    routine_commit: str | None = None  # Commit SHA when routine was read
 
     # Agent configuration
     agent_type: AgentType | None = None

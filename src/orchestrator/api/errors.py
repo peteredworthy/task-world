@@ -11,6 +11,7 @@ from orchestrator.agents.errors import (
 from orchestrator.api.auth import AuthError
 from orchestrator.envfiles.errors import SnapshotNotFoundError
 from orchestrator.git.errors import BranchNotFoundError, MergeConflictError
+from orchestrator.repos.errors import RepoNotFoundError
 from orchestrator.routines.errors import RoutineNotFoundError, RoutineValidationError
 from orchestrator.state.errors import (
     ChecklistItemNotFoundError,
@@ -218,4 +219,13 @@ def register_error_handlers(app: FastAPI) -> None:
                 "target": exc.target,
                 "conflicting_files": exc.conflicting_files,
             },
+        )
+
+    @app.exception_handler(RepoNotFoundError)
+    async def repo_not_found(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: RepoNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={"error": "repo_not_found", "name": exc.name},
         )

@@ -590,6 +590,37 @@ class DockerOpenHandsAgent:
 
             # Build prompt (with verifier flag if on_grade is provided)
             is_verifier = on_grade is not None
+
+            # If this is verifier mode and we have an end_commit, checkout that commit first
+            if is_verifier and context.end_commit:
+                _logger = logging.getLogger(__name__)
+                _logger.info(
+                    f"Verifier mode: checking out commit {context.end_commit} "
+                    f"in Docker container for run {context.run_id}"
+                )
+                try:
+                    # Checkout the specific commit in the Docker container
+                    checkout_result = docker_workspace.execute_command(
+                        f"git checkout {context.end_commit}",
+                        cwd="/workspace",
+                        timeout=30.0,
+                    )
+                    if checkout_result.exit_code != 0:
+                        error_msg = (
+                            f"Failed to checkout commit {context.end_commit}: "
+                            f"{checkout_result.stderr or checkout_result.stdout}"
+                        )
+                        _logger.error(error_msg)
+                        raise AgentExecutionError("openhands_docker", error_msg)
+                    _logger.info(f"Successfully checked out commit {context.end_commit}")
+                except Exception as exc:
+                    if isinstance(exc, AgentExecutionError):
+                        raise
+                    raise AgentExecutionError(
+                        "openhands_docker",
+                        f"Error checking out commit {context.end_commit}: {exc}",
+                    ) from exc
+
             full_prompt = build_openhands_prompt(context, is_verifier=is_verifier)
 
             # Use LocalConversation with a local workspace

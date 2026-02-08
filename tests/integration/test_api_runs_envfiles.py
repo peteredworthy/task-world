@@ -27,7 +27,8 @@ async def test_create_run_with_env_files_from_request(client: AsyncClient) -> No
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "env_files": {
                 "source_dir": "/path/to/source",
                 "files": [
@@ -52,7 +53,8 @@ async def test_create_run_with_env_files_from_embedded_routine(client: AsyncClie
     resp = await client.post(
         "/api/runs",
         json={
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "routine_embedded": {
                 "id": "test-routine",
                 "name": "Test Routine",
@@ -90,7 +92,8 @@ async def test_create_run_request_overrides_routine_env_files(client: AsyncClien
     resp = await client.post(
         "/api/runs",
         json={
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "routine_embedded": {
                 "id": "test-routine",
                 "name": "Test Routine",
@@ -137,7 +140,8 @@ async def test_create_run_without_env_files(client: AsyncClient) -> None:
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
         },
     )
     assert resp.status_code == 201
@@ -151,7 +155,8 @@ async def test_create_run_with_empty_env_files_list_overrides_routine(client: As
     resp = await client.post(
         "/api/runs",
         json={
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "routine_embedded": {
                 "id": "test-routine",
                 "name": "Test Routine",

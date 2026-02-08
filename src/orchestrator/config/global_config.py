@@ -64,6 +64,35 @@ class WebSocketConfig(BaseModel):
     batch_window_seconds: float = 0.1
 
 
+class PathsConfig(BaseModel):
+    """Paths for repos and worktrees directories."""
+
+    repos_dir: str = "repos"
+    worktrees_dir: str = "worktrees"
+
+    def get_repos_path(self, base: Path | None = None) -> Path:
+        """Get the resolved repos directory path.
+
+        If repos_dir is relative, resolves against base (or cwd if not provided).
+        If repos_dir is absolute, returns it as-is.
+        """
+        path = Path(self.repos_dir)
+        if path.is_absolute():
+            return path
+        return (base or Path.cwd()) / path
+
+    def get_worktrees_path(self, base: Path | None = None) -> Path:
+        """Get the resolved worktrees directory path.
+
+        If worktrees_dir is relative, resolves against base (or cwd if not provided).
+        If worktrees_dir is absolute, returns it as-is.
+        """
+        path = Path(self.worktrees_dir)
+        if path.is_absolute():
+            return path
+        return (base or Path.cwd()) / path
+
+
 class GlobalConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     database: DatabaseConfig = DatabaseConfig()
@@ -72,6 +101,7 @@ class GlobalConfig(BaseModel):
     dashboard: DashboardConfig = DashboardConfig()
     nudger: NudgerConfig = NudgerConfig()
     websocket: WebSocketConfig = WebSocketConfig()
+    paths: PathsConfig = PathsConfig()
 
 
 class ConfigLoadError(Exception):

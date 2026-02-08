@@ -5,7 +5,7 @@ from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS
 
 def test_tool_definitions_well_formed() -> None:
     """Verify tool definitions have required fields."""
-    assert len(ORCHESTRATOR_TOOLS) == 5
+    assert len(ORCHESTRATOR_TOOLS) == 7
 
     for tool in ORCHESTRATOR_TOOLS:
         assert "name" in tool
@@ -22,4 +22,6 @@ def test_tool_definitions_well_formed() -> None:
         "orchestrator_submit",
         "orchestrator_set_grade",
         "orchestrator_request_clarification",
+        "orchestrator_list_repos",
+        "orchestrator_list_branches",
     }

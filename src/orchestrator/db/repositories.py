@@ -110,6 +110,8 @@ def _to_domain(model: RunModel) -> Run:
                         agent_settings=att_model.agent_settings or {},
                         agent_output=att_model.agent_output,
                         error=att_model.error,
+                        start_commit=att_model.start_commit,
+                        end_commit=att_model.end_commit,
                     )
                 )
 
@@ -181,12 +183,14 @@ def _to_domain(model: RunModel) -> Run:
 
     return Run(
         id=model.id,
-        project_id=model.project_id,
+        repo_name=model.repo_name,
         status=RunStatus(model.status),
         routine_id=model.routine_id,
         routine_sha=model.routine_sha,
         routine_source=RoutineSource(model.routine_source) if model.routine_source else None,
         routine_embedded=model.routine_embedded,
+        routine_path=model.routine_path,
+        routine_commit=model.routine_commit,
         agent_type=AgentType(model.agent_type) if model.agent_type else None,
         agent_config=model.agent_config or {},
         worktree_enabled=bool(model.worktree_enabled),
@@ -247,6 +251,8 @@ def _to_model(run: Run) -> RunModel:
                         agent_settings=att.agent_settings if att.agent_settings else None,
                         agent_output=att.agent_output,
                         error=att.error,
+                        start_commit=att.start_commit,
+                        end_commit=att.end_commit,
                     )
                 )
 
@@ -292,12 +298,14 @@ def _to_model(run: Run) -> RunModel:
 
     return RunModel(
         id=run.id,
-        project_id=run.project_id,
+        repo_name=run.repo_name,
         status=run.status.value,
         routine_id=run.routine_id,
         routine_sha=run.routine_sha,
         routine_source=run.routine_source.value if run.routine_source else None,
         routine_embedded=run.routine_embedded,
+        routine_path=run.routine_path,
+        routine_commit=run.routine_commit,
         agent_type=run.agent_type.value if run.agent_type else None,
         agent_config=run.agent_config,
         worktree_enabled=run.worktree_enabled,
@@ -349,10 +357,10 @@ class RunRepository:
         result = await self._session.execute(query)
         return [_to_domain(m) for m in result.scalars().all()]
 
-    async def list_by_project(self, project_id: str) -> list[Run]:
-        """List runs filtered by project ID."""
+    async def list_by_repo(self, repo_name: str) -> list[Run]:
+        """List runs filtered by repository name."""
         result = await self._session.execute(
-            _eager_run_query().where(RunModel.project_id == project_id)
+            _eager_run_query().where(RunModel.repo_name == repo_name)
         )
         return [_to_domain(m) for m in result.scalars().all()]
 
@@ -363,11 +371,11 @@ class RunRepository:
         )
         return [_to_domain(m) for m in result.scalars().all()]
 
-    async def list_by_project_and_status(self, project_id: str, status: RunStatus) -> list[Run]:
-        """List runs filtered by both project ID and status."""
+    async def list_by_repo_and_status(self, repo_name: str, status: RunStatus) -> list[Run]:
+        """List runs filtered by both repository name and status."""
         result = await self._session.execute(
             _eager_run_query().where(
-                RunModel.project_id == project_id,
+                RunModel.repo_name == repo_name,
                 RunModel.status == status.value,
             )
         )
@@ -381,10 +389,10 @@ class RunRepository:
         )
         return [_to_domain(m) for m in result.scalars().all()]
 
-    async def list_project_ids(self) -> list[str]:
-        """Return unique project_id values from all runs."""
+    async def list_repo_names(self) -> list[str]:
+        """Return unique repo_name values from all runs."""
         result = await self._session.execute(
-            select(distinct(RunModel.project_id)).order_by(RunModel.project_id)
+            select(distinct(RunModel.repo_name)).order_by(RunModel.repo_name)
         )
         return [row[0] for row in result.all()]
 

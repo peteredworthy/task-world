@@ -81,7 +81,8 @@ def test_create_run_deterministic_ids(
 ) -> None:
     run = create_run_from_routine(
         routine=simple_routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         id_generator=sequential_id_generator,
     )
 
@@ -94,7 +95,8 @@ def test_create_run_deterministic_ids(
 def test_create_run_with_config(simple_routine: RoutineConfig) -> None:
     run = create_run_from_routine(
         routine=simple_routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={"feature": "auth", "branch": "main"},
     )
 
@@ -105,7 +107,8 @@ def test_create_run_with_config(simple_routine: RoutineConfig) -> None:
 def test_create_run_with_source(simple_routine: RoutineConfig) -> None:
     run = create_run_from_routine(
         routine=simple_routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         routine_source=RoutineSource.LOCAL,
         routine_sha="abc123",
     )
@@ -117,7 +120,8 @@ def test_create_run_with_source(simple_routine: RoutineConfig) -> None:
 def test_checklist_populated(simple_routine: RoutineConfig) -> None:
     run = create_run_from_routine(
         routine=simple_routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
     )
 
     task = run.steps[0].tasks[0]
@@ -250,7 +254,7 @@ def test_create_run_from_routine_validates_inputs() -> None:
     )
 
     with pytest.raises(MissingRequiredInputError):
-        create_run_from_routine(routine=routine, project_id="proj-1")
+        create_run_from_routine(routine=routine, repo_name="proj-1", source_branch="main")
 
 
 def test_create_run_from_routine_applies_defaults() -> None:
@@ -261,7 +265,7 @@ def test_create_run_from_routine_applies_defaults() -> None:
         ]
     )
 
-    run = create_run_from_routine(routine=routine, project_id="proj-1")
+    run = create_run_from_routine(routine=routine, repo_name="proj-1", source_branch="main")
 
     assert run.config["branch"] == "main"
 

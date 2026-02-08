@@ -66,7 +66,8 @@ def _make_run() -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="simple-routine",
         routine_source=RoutineSource.LOCAL,
@@ -243,7 +244,7 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
         # Set up run via REST API (creates data in the shared in-memory DB)
         resp = await client.post(
             "/api/runs",
-            json={"routine_id": "simple-routine", "project_id": "proj-1"},
+            json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
         )
         assert resp.status_code == 201
         run_id = resp.json()["id"]

@@ -35,7 +35,8 @@ def _make_run(
 ) -> Run:
     return Run(
         id=run_id,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=status,
         steps=[
             StepState(
@@ -253,7 +254,8 @@ def test_complete_verification_advances_step() -> None:
     """When all tasks in step 1 complete, step index advances to step 2."""
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         started_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
         steps=[
@@ -312,7 +314,8 @@ def test_run_auto_completes_when_all_steps_done() -> None:
     """Run transitions to COMPLETED when all tasks in all steps are done."""
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         started_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
         steps=[
@@ -408,7 +411,8 @@ def test_run_auto_fails_when_task_fails() -> None:
     """Run transitions to FAILED when a task fails and all steps are done."""
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         started_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
         steps=[

@@ -95,10 +95,10 @@ export function Dashboard() {
       );
     }
 
-    // Client-side project filter
+    // Client-side repo filter
     if (projectFilter) {
       const lower = projectFilter.toLowerCase();
-      filtered = filtered.filter(r => r.project_id.toLowerCase().includes(lower));
+      filtered = filtered.filter(r => r.repo_name.toLowerCase().includes(lower));
     }
 
     // Client-side recency filter: use dataUpdatedAt as fresh timestamp
@@ -114,7 +114,7 @@ export function Dashboard() {
       const q = searchQuery.toLowerCase();
       filtered = filtered.filter(r =>
         r.id.toLowerCase().includes(q) ||
-        r.project_id.toLowerCase().includes(q) ||
+        r.repo_name.toLowerCase().includes(q) ||
         (r.routine_id ?? '').toLowerCase().includes(q) ||
         r.status.toLowerCase().includes(q)
       );

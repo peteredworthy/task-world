@@ -75,7 +75,7 @@ class EnvFileLifecycle:
     async def on_run_start(
         self,
         run_id: str,
-        project_id: str,
+        repo_name: str,
         worktree_path: Path,
         env_specs: list[EnvFileSpec],
         source_dir: Path | None = None,
@@ -122,7 +122,7 @@ class EnvFileLifecycle:
                 },
             )
         else:
-            self.store.load_canonical(project_id, env_specs, worktree_path)
+            self.store.load_canonical(repo_name, env_specs, worktree_path)
             point = self.store.capture_snapshot(
                 run_id,
                 "run_start",
@@ -229,7 +229,7 @@ class EnvFileLifecycle:
     async def on_run_end(
         self,
         run_id: str,
-        project_id: str,
+        repo_name: str,
         worktree_path: Path,
         success: bool,
     ) -> None:
@@ -266,6 +266,6 @@ class EnvFileLifecycle:
         if success:
             self.store.promote_to_canonical(
                 run_id,
-                project_id,
+                repo_name,
                 manifest.env_file_specs,
             )

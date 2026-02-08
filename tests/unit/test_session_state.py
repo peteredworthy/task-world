@@ -26,7 +26,8 @@ def manager() -> SessionStateManager:
 def sample_run() -> Run:
     return Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         steps=[
             StepState(
                 id="step-1",

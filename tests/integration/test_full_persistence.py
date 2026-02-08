@@ -41,7 +41,8 @@ def _make_run() -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="simple-routine",
         routine_source=RoutineSource.LOCAL,
@@ -182,7 +183,8 @@ async def test_routine_fixture_roundtrip(db_path: Path) -> None:
     routine = load_routine_from_path(FIXTURES / "valid_complete.yaml")
     run = create_run_from_routine(
         routine=routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={"feature_name": "auth"},
         routine_source=RoutineSource.LOCAL,
         routine_sha="deadbeef",
@@ -208,7 +210,7 @@ async def test_routine_fixture_roundtrip(db_path: Path) -> None:
         repo2 = RunRepository(session2)
         loaded = await repo2.get(run.id)
 
-        assert loaded.project_id == "proj-1"
+        assert loaded.repo_name == "proj-1"
         assert loaded.routine_id == "complete-routine"
         assert loaded.routine_sha == "deadbeef"
         assert loaded.config == {"feature_name": "auth", "branch": "main"}

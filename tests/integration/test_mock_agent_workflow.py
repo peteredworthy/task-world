@@ -39,7 +39,8 @@ def _make_run_with_requirements(req_ids: list[str]) -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="test-routine",
         routine_source=RoutineSource.LOCAL,

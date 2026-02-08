@@ -155,12 +155,14 @@ def _run_to_response(run: Run) -> RunResponse:
 
     return RunResponse(
         id=run.id,
-        project_id=run.project_id,
+        repo_name=run.repo_name,
         status=run.status.value,
         routine_id=run.routine_id,
         routine_sha=run.routine_sha,
         routine_source=run.routine_source.value if run.routine_source else None,
         routine_embedded=run.routine_embedded,
+        routine_path=run.routine_path,
+        routine_commit=run.routine_commit,
         agent_type=run.agent_type.value if run.agent_type else None,
         agent_type_display=get_agent_display_name(run.agent_type),
         agent_icon=get_agent_icon(run.agent_type),
@@ -198,18 +200,6 @@ async def create_run(
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
 ) -> RunResponse:
     """Create a new run from a routine (by ID or embedded inline)."""
-    # Initialize project if requested
-    if request.init_project:
-        from orchestrator.git.project_init import init_project
-
-        project_path = Path(request.project_id)
-        if project_path.exists():
-            raise HTTPException(
-                status_code=409,
-                detail=f"Project path already exists: {request.project_id}",
-            )
-        init_project(project_path)
-
     if request.routine_embedded is not None:
         # Inline/embedded routine: parse and validate the provided dict
         try:
@@ -224,7 +214,8 @@ async def create_run(
             ) from exc
         run = create_run_from_routine(
             routine=routine_config,
-            project_id=request.project_id,
+            repo_name=request.repo_name,
+            source_branch=request.branch,
             config=request.config if request.config else None,
             routine_source=RoutineSource.EMBEDDED,
         )
@@ -245,15 +236,13 @@ async def create_run(
 
         run = create_run_from_routine(
             routine=routine_config,
-            project_id=request.project_id,
+            repo_name=request.repo_name,
+            source_branch=request.branch,
             config=request.config if request.config else None,
             routine_source=source,
         )
         # Store routine config for auto-verify and prompt generation
-        run.routine_embedded = routine_config.model_dump(mode="json")
-
-    if request.source_branch is not None:
-        run.source_branch = request.source_branch
+        run.routine_embedded = routine_config.model_dump(mode="json", by_alias=True)
 
     if request.merge_strategy is not None:
         run.merge_strategy = request.merge_strategy
@@ -288,7 +277,7 @@ async def create_run(
 async def list_runs(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
-    project_id: str | None = Query(default=None),
+    repo_name: str | None = Query(default=None),
     status: str | None = Query(default=None),
     recent_hours: int | None = Query(default=None),
     limit: int | None = Query(default=None, description="Maximum number of runs to return"),
@@ -300,10 +289,10 @@ async def list_runs(
     """
     if recent_hours is not None:
         runs = await service.list_runs_recent(recent_hours)
-    elif project_id is not None and status is not None:
-        runs = await service.list_runs_by_project_and_status(project_id, RunStatus(status))
-    elif project_id is not None:
-        runs = await service.list_runs_by_project(project_id)
+    elif repo_name is not None and status is not None:
+        runs = await service.list_runs_by_repo_and_status(repo_name, RunStatus(status))
+    elif repo_name is not None:
+        runs = await service.list_runs_by_repo(repo_name)
     elif status is not None:
         runs = await service.list_runs_by_status(RunStatus(status))
     else:
@@ -595,11 +584,14 @@ async def approve_step(
     step_id: str,
     approval: HumanApprovalRequest,
     repository: Annotated[RunRepository, Depends(get_run_repository)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
 ) -> StepResponse:
     """Human approval for a step gate.
 
     Records the approval and re-evaluates the step gate. If the gate now passes,
-    the run can proceed to the next step.
+    the run can proceed to the next step. For managed agents, re-spawns the
+    agent loop so execution continues.
     """
     # Get the run
     run = await repository.get(run_id)
@@ -626,8 +618,21 @@ async def approve_step(
     # Update step with approval
     step.human_approval = human_approval
 
-    # Save the run
-    run = await repository.save(run)
+    # Save the run and commit
+    await repository.save(run)
+    await session.commit()
+
+    # Re-spawn agent if run is active and uses a managed agent type
+    if (
+        run.status == RunStatus.ACTIVE
+        and run.agent_type is not None
+        and not executor.is_running(run_id)
+    ):
+        spawned = executor.spawn_for_run(run_id, run.agent_type, run.agent_config)
+        if spawned:
+            logger.info(
+                f"API: Re-spawned {run.agent_type.value} agent after step approval for run {run_id}"
+            )
 
     # Build response
     approval_response = None
@@ -880,6 +885,7 @@ async def back_merge_endpoint(
 async def merge_back_endpoint(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    config: Annotated[GlobalConfig, Depends(get_global_config)],
     request: MergeBackRequest | None = None,
 ) -> MergeBackResponse:
     """Merge run branch back into source branch.
@@ -905,8 +911,9 @@ async def merge_back_endpoint(
     strategy = (request.strategy if request and request.strategy else None) or run.merge_strategy
     run_branch = f"orchestrator/run-{run.id}"
 
-    # merge_back operates on the main repo, which is the project_id path
-    sha = merge_back(Path(run.project_id), run_branch, run.source_branch, strategy=strategy)
+    # merge_back operates on the main repo in the repos directory
+    repo_path = config.paths.get_repos_path() / run.repo_name
+    sha = merge_back(repo_path, run_branch, run.source_branch, strategy=strategy)
 
     return MergeBackResponse(
         merge_commit=sha,

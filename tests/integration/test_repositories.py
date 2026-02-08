@@ -51,7 +51,8 @@ def _make_simple_run(run_id: str = "run-1") -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id=run_id,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="simple-routine",
         routine_source=RoutineSource.LOCAL,
@@ -88,7 +89,7 @@ async def test_save_and_get_simple_run(repo: RunRepository) -> None:
     loaded = await repo.get("run-1")
 
     assert loaded.id == "run-1"
-    assert loaded.project_id == "proj-1"
+    assert loaded.repo_name == "proj-1"
     assert loaded.status == RunStatus.DRAFT
     assert loaded.routine_id == "simple-routine"
     assert loaded.routine_source == RoutineSource.LOCAL
@@ -108,7 +109,8 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     run = Run(
         id="run-complex",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         routine_id="complete-routine",
         routine_source=RoutineSource.LOCAL,
@@ -230,14 +232,14 @@ async def test_list_all(repo: RunRepository) -> None:
     assert ids == {"run-1", "run-2"}
 
 
-async def test_list_by_project(repo: RunRepository) -> None:
+async def test_list_by_repo(repo: RunRepository) -> None:
     run1 = _make_simple_run("run-1")
     run2 = _make_simple_run("run-2")
-    run2.project_id = "proj-2"
+    run2.repo_name = "proj-2"
     await repo.save(run1)
     await repo.save(run2)
 
-    proj1_runs = await repo.list_by_project("proj-1")
+    proj1_runs = await repo.list_by_repo("proj-1")
     assert len(proj1_runs) == 1
     assert proj1_runs[0].id == "run-1"
 
@@ -277,7 +279,8 @@ async def test_factory_created_run_roundtrips(repo: RunRepository) -> None:
     routine = load_routine_from_path(FIXTURES / "valid_complete.yaml")
     run = create_run_from_routine(
         routine=routine,
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={"feature_name": "auth"},
         routine_source=RoutineSource.LOCAL,
         routine_sha="deadbeef",
@@ -286,7 +289,7 @@ async def test_factory_created_run_roundtrips(repo: RunRepository) -> None:
     await repo.save(run)
     loaded = await repo.get(run.id)
 
-    assert loaded.project_id == "proj-1"
+    assert loaded.repo_name == "proj-1"
     assert loaded.routine_id == "complete-routine"
     assert loaded.routine_sha == "deadbeef"
     assert loaded.config == {"feature_name": "auth", "branch": "main"}

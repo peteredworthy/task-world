@@ -12,11 +12,18 @@ from orchestrator.git.worktree import WorktreeManager
 
 
 @pytest.fixture
-def git_repo() -> Generator[Path, None, None]:
-    """Create a temporary git repository for testing."""
+def git_repo() -> Generator[tuple[Path, Path], None, None]:
+    """Create a temporary git repository and worktrees directory for testing.
+
+    Yields:
+        Tuple of (repo_path, worktrees_dir)
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo = Path(tmpdir) / "repo"
+        base = Path(tmpdir)
+        repo = base / "repo"
+        worktrees = base / "worktrees"
         repo.mkdir()
+        worktrees.mkdir()
 
         # Initialize git repo
         subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
@@ -43,18 +50,19 @@ def git_repo() -> Generator[Path, None, None]:
             capture_output=True,
         )
 
-        yield repo
+        yield repo, worktrees
 
 
-def test_create_worktree(git_repo: Path) -> None:
+def test_create_worktree(git_repo: tuple[Path, Path]) -> None:
     """Test creating a worktree for a run."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees = git_repo
+    manager = WorktreeManager(repo, worktrees)
 
     # Create worktree
     wt = manager.create("test-run-1")
 
     # Verify worktree info
-    expected_path = (git_repo / ".worktrees" / "run-test-run-1").resolve()
+    expected_path = (worktrees / "run-test-run-1").resolve()
     assert wt.path == expected_path
     assert wt.branch == "orchestrator/run-test-run-1"
     assert len(wt.commit) == 40  # SHA is 40 chars
@@ -67,27 +75,29 @@ def test_create_worktree(git_repo: Path) -> None:
     # Verify branch was created
     result = subprocess.run(
         ["git", "branch", "--list", wt.branch],
-        cwd=git_repo,
+        cwd=repo,
         capture_output=True,
         text=True,
     )
     assert wt.branch in result.stdout
 
 
-def test_create_worktree_custom_base_branch(git_repo: Path) -> None:
+def test_create_worktree_custom_base_branch(git_repo: tuple[Path, Path]) -> None:
     """Test creating a worktree from a custom base branch."""
+    repo, worktrees = git_repo
+
     # Create a feature branch
     subprocess.run(
         ["git", "checkout", "-b", "feature"],
-        cwd=git_repo,
+        cwd=repo,
         check=True,
         capture_output=True,
     )
-    (git_repo / "feature.txt").write_text("feature file\n")
-    subprocess.run(["git", "add", "."], cwd=git_repo, check=True, capture_output=True)
+    (repo / "feature.txt").write_text("feature file\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", "Add feature"],
-        cwd=git_repo,
+        cwd=repo,
         check=True,
         capture_output=True,
     )
@@ -95,7 +105,7 @@ def test_create_worktree_custom_base_branch(git_repo: Path) -> None:
     # Get feature commit SHA
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
-        cwd=git_repo,
+        cwd=repo,
         capture_output=True,
         text=True,
         check=True,
@@ -105,13 +115,13 @@ def test_create_worktree_custom_base_branch(git_repo: Path) -> None:
     # Switch back to main
     subprocess.run(
         ["git", "checkout", "main"],
-        cwd=git_repo,
+        cwd=repo,
         check=True,
         capture_output=True,
     )
 
     # Create worktree from feature branch
-    manager = WorktreeManager(git_repo)
+    manager = WorktreeManager(repo, worktrees)
     wt = manager.create("test-run-2", base_branch="feature")
 
     # Verify worktree has feature commit
@@ -119,10 +129,11 @@ def test_create_worktree_custom_base_branch(git_repo: Path) -> None:
     assert (wt.path / "feature.txt").exists()
 
 
-def test_create_worktree_custom_directory(git_repo: Path) -> None:
+def test_create_worktree_custom_directory(git_repo: tuple[Path, Path]) -> None:
     """Test creating a worktree in a custom directory."""
-    custom_dir = git_repo / "custom-worktrees"
-    manager = WorktreeManager(git_repo, worktree_dir=custom_dir)
+    repo, _ = git_repo
+    custom_dir = repo.parent / "custom-worktrees"
+    manager = WorktreeManager(repo, worktree_dir=custom_dir)
 
     wt = manager.create("test-run-3")
 
@@ -131,9 +142,10 @@ def test_create_worktree_custom_directory(git_repo: Path) -> None:
     assert wt.path.exists()
 
 
-def test_create_worktree_already_exists(git_repo: Path) -> None:
+def test_create_worktree_already_exists(git_repo: tuple[Path, Path]) -> None:
     """Test creating a worktree that already exists raises an error."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees = git_repo
+    manager = WorktreeManager(repo, worktrees)
 
     # Create first worktree
     manager.create("test-run-4")
@@ -146,9 +158,10 @@ def test_create_worktree_already_exists(git_repo: Path) -> None:
     assert "test-run-4" in str(exc_info.value)
 
 
-def test_create_worktree_invalid_base_branch(git_repo: Path) -> None:
+def test_create_worktree_invalid_base_branch(git_repo: tuple[Path, Path]) -> None:
     """Test creating a worktree from non-existent branch raises an error."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees = git_repo
+    manager = WorktreeManager(repo, worktrees)
 
     with pytest.raises(GitCommandError) as exc_info:
         manager.create("test-run-5", base_branch="nonexistent")
@@ -159,9 +172,10 @@ def test_create_worktree_invalid_base_branch(git_repo: Path) -> None:
     )
 
 
-def test_worktree_isolation(git_repo: Path) -> None:
+def test_worktree_isolation(git_repo: tuple[Path, Path]) -> None:
     """Test that worktree changes don't affect main repo."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees = git_repo
+    manager = WorktreeManager(repo, worktrees)
 
     # Create worktree
     wt = manager.create("test-run-6")
@@ -177,15 +191,16 @@ def test_worktree_isolation(git_repo: Path) -> None:
     )
 
     # Verify main repo is unchanged
-    assert not (git_repo / "worktree-file.txt").exists()
+    assert not (repo / "worktree-file.txt").exists()
 
     # Verify changes are in worktree
     assert (wt.path / "worktree-file.txt").exists()
 
 
-def test_delete_worktree(git_repo: Path) -> None:
+def test_delete_worktree(git_repo: tuple[Path, Path]) -> None:
     """Test deleting a worktree."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees = git_repo
+    manager = WorktreeManager(repo, worktrees)
 
     # Create and then delete
     wt = manager.create("test-run-7")
@@ -195,9 +210,10 @@ def test_delete_worktree(git_repo: Path) -> None:
     assert not wt.path.exists()
 
 
-def test_delete_worktree_with_uncommitted_changes(git_repo: Path) -> None:
+def test_delete_worktree_with_uncommitted_changes(git_repo: tuple[Path, Path]) -> None:
     """Test deleting a worktree with uncommitted changes requires force."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees = git_repo
+    manager = WorktreeManager(repo, worktrees)
 
     # Create worktree and make uncommitted changes
     wt = manager.create("test-run-8")
@@ -215,9 +231,10 @@ def test_delete_worktree_with_uncommitted_changes(git_repo: Path) -> None:
     assert not wt.path.exists()
 
 
-def test_delete_worktree_not_found(git_repo: Path) -> None:
+def test_delete_worktree_not_found(git_repo: tuple[Path, Path]) -> None:
     """Test deleting a non-existent worktree raises an error."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees = git_repo
+    manager = WorktreeManager(repo, worktrees)
 
     with pytest.raises(WorktreeNotFoundError) as exc_info:
         manager.delete("nonexistent-run")
@@ -226,18 +243,20 @@ def test_delete_worktree_not_found(git_repo: Path) -> None:
     assert "nonexistent-run" in str(exc_info.value)
 
 
-def test_list_worktrees_empty(git_repo: Path) -> None:
+def test_list_worktrees_empty(git_repo: tuple[Path, Path]) -> None:
     """Test listing worktrees when none exist."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     worktrees = manager.list()
 
     assert worktrees == []
 
 
-def test_list_worktrees_single(git_repo: Path) -> None:
+def test_list_worktrees_single(git_repo: tuple[Path, Path]) -> None:
     """Test listing a single worktree."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create worktree
     wt = manager.create("test-run-9")
@@ -251,9 +270,10 @@ def test_list_worktrees_single(git_repo: Path) -> None:
     assert worktrees[0].commit == wt.commit
 
 
-def test_list_worktrees_multiple(git_repo: Path) -> None:
+def test_list_worktrees_multiple(git_repo: tuple[Path, Path]) -> None:
     """Test listing multiple worktrees."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create multiple worktrees
     wt1 = manager.create("test-run-10")
@@ -272,15 +292,16 @@ def test_list_worktrees_multiple(git_repo: Path) -> None:
     assert wt3.path in paths
 
 
-def test_list_worktrees_filters_non_orchestrator(git_repo: Path) -> None:
+def test_list_worktrees_filters_non_orchestrator(git_repo: tuple[Path, Path]) -> None:
     """Test that list() only returns orchestrator-managed worktrees."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create orchestrator worktree
     wt_orchestrator = manager.create("test-run-13")
 
     # Create non-orchestrator worktree manually
-    manual_path = git_repo / ".worktrees" / "manual"
+    manual_path = worktrees_dir / "manual"
     subprocess.run(
         [
             "git",
@@ -291,7 +312,7 @@ def test_list_worktrees_filters_non_orchestrator(git_repo: Path) -> None:
             str(manual_path),
             "main",
         ],
-        cwd=git_repo,
+        cwd=repo,
         check=True,
         capture_output=True,
     )
@@ -304,9 +325,10 @@ def test_list_worktrees_filters_non_orchestrator(git_repo: Path) -> None:
     assert worktrees[0].path == wt_orchestrator.path
 
 
-def test_cleanup_stale_removes_inactive(git_repo: Path) -> None:
+def test_cleanup_stale_removes_inactive(git_repo: tuple[Path, Path]) -> None:
     """Test cleanup_stale removes worktrees for inactive runs."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create worktrees
     wt1 = manager.create("active-run-1")
@@ -330,9 +352,10 @@ def test_cleanup_stale_removes_inactive(git_repo: Path) -> None:
     assert not wt3.path.exists()
 
 
-def test_cleanup_stale_no_active_runs(git_repo: Path) -> None:
+def test_cleanup_stale_no_active_runs(git_repo: tuple[Path, Path]) -> None:
     """Test cleanup_stale removes all worktrees when no runs are active."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create worktrees
     wt1 = manager.create("stale-run-3")
@@ -350,9 +373,10 @@ def test_cleanup_stale_no_active_runs(git_repo: Path) -> None:
     assert not wt2.path.exists()
 
 
-def test_cleanup_stale_all_active(git_repo: Path) -> None:
+def test_cleanup_stale_all_active(git_repo: tuple[Path, Path]) -> None:
     """Test cleanup_stale removes nothing when all runs are active."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create worktrees
     wt1 = manager.create("active-run-2")
@@ -370,9 +394,10 @@ def test_cleanup_stale_all_active(git_repo: Path) -> None:
     assert wt2.path.exists()
 
 
-def test_cleanup_stale_empty_list(git_repo: Path) -> None:
+def test_cleanup_stale_empty_list(git_repo: tuple[Path, Path]) -> None:
     """Test cleanup_stale with no worktrees returns zero."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # No worktrees
     active_runs = {"some-run"}
@@ -383,9 +408,10 @@ def test_cleanup_stale_empty_list(git_repo: Path) -> None:
     assert removed == 0
 
 
-def test_cleanup_stale_with_uncommitted_changes(git_repo: Path) -> None:
+def test_cleanup_stale_with_uncommitted_changes(git_repo: tuple[Path, Path]) -> None:
     """Test cleanup_stale can remove worktrees with uncommitted changes."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create worktree with uncommitted changes
     wt = manager.create("stale-run-5")
@@ -399,10 +425,11 @@ def test_cleanup_stale_with_uncommitted_changes(git_repo: Path) -> None:
     assert not wt.path.exists()
 
 
-def test_worktree_manager_with_relative_path(git_repo: Path) -> None:
+def test_worktree_manager_with_relative_path(git_repo: tuple[Path, Path]) -> None:
     """Test WorktreeManager works with repository path."""
-    # Create manager with absolute path
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    # Create manager with absolute paths
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create worktree
     wt = manager.create("test-run-14")
@@ -412,9 +439,10 @@ def test_worktree_manager_with_relative_path(git_repo: Path) -> None:
     assert wt.path.is_absolute()
 
 
-def test_concurrent_worktrees_different_branches(git_repo: Path) -> None:
+def test_concurrent_worktrees_different_branches(git_repo: tuple[Path, Path]) -> None:
     """Test multiple worktrees can coexist with different branches."""
-    manager = WorktreeManager(git_repo)
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
 
     # Create multiple worktrees
     wt1 = manager.create("concurrent-1")
@@ -434,7 +462,7 @@ def test_concurrent_worktrees_different_branches(git_repo: Path) -> None:
     # Verify all branches exist
     result = subprocess.run(
         ["git", "branch", "--list", "orchestrator/*"],
-        cwd=git_repo,
+        cwd=repo,
         capture_output=True,
         text=True,
     )

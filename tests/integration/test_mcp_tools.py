@@ -1,7 +1,9 @@
 """Integration tests for MCP ToolHandler with real WorkflowService."""
 
+import subprocess
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +45,8 @@ def _make_run() -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.DRAFT,
         routine_id="test-routine",
         routine_source=RoutineSource.LOCAL,
@@ -218,3 +221,144 @@ async def test_full_workflow_via_tools(handler: ToolHandler, service: WorkflowSe
     # 5. Complete verification
     result = await service.complete_verification("run-1", "task-1")
     assert result.new_status == TaskStatus.COMPLETED
+
+
+# --- Repo tool tests ---
+
+
+def _init_repo(path: Path) -> None:
+    """Initialize a git repo with an initial commit."""
+    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    (path / "README.md").write_text("# Test\n")
+    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "branch", "-M", "main"], cwd=path, check=True, capture_output=True)
+
+
+@pytest.fixture
+def repos_dir(tmp_path: Path) -> Path:
+    """Create a repos directory with sample repos."""
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    return repos
+
+
+@pytest.fixture
+def handler_with_repos(service: WorkflowService, repos_dir: Path) -> ToolHandler:
+    """Create a ToolHandler with repos_dir configured."""
+    return ToolHandler(service, repos_dir=repos_dir)
+
+
+async def test_list_repos_empty(handler_with_repos: ToolHandler) -> None:
+    """List repos returns empty list when no repos exist."""
+    result = await handler_with_repos.handle("orchestrator_list_repos", {})
+    assert result["repos"] == []
+
+
+async def test_list_repos_with_repos(handler_with_repos: ToolHandler, repos_dir: Path) -> None:
+    """List repos returns repos in the repos directory."""
+    # Create two repos
+    repo1 = repos_dir / "alpha"
+    repo1.mkdir()
+    _init_repo(repo1)
+
+    repo2 = repos_dir / "beta"
+    repo2.mkdir()
+    _init_repo(repo2)
+
+    result = await handler_with_repos.handle("orchestrator_list_repos", {})
+    repos = result["repos"]
+    assert len(repos) == 2
+    names = {r["name"] for r in repos}
+    assert names == {"alpha", "beta"}
+    for r in repos:
+        assert "path" in r
+        assert "default_branch" in r
+
+
+async def test_list_repos_no_repos_dir(handler: ToolHandler) -> None:
+    """List repos returns error when repos_dir is not configured."""
+    result = await handler.handle("orchestrator_list_repos", {})
+    assert "error" in result
+    assert result["repos"] == []
+
+
+async def test_list_branches(handler_with_repos: ToolHandler, repos_dir: Path) -> None:
+    """List branches returns branches in a repo."""
+    repo = repos_dir / "myrepo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    # Create additional branches
+    subprocess.run(
+        ["git", "checkout", "-b", "feature/auth"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+
+    result = await handler_with_repos.handle(
+        "orchestrator_list_branches",
+        {"repo_name": "myrepo"},
+    )
+    branches = result["branches"]
+    assert len(branches) == 2
+    names = {b["name"] for b in branches}
+    assert "main" in names
+    assert "feature/auth" in names
+
+
+async def test_list_branches_with_pattern(handler_with_repos: ToolHandler, repos_dir: Path) -> None:
+    """List branches filters by pattern."""
+    repo = repos_dir / "myrepo"
+    repo.mkdir()
+    _init_repo(repo)
+
+    # Create multiple branches
+    for name in ["feature/auth", "feature/api", "bugfix/login"]:
+        subprocess.run(
+            ["git", "checkout", "-b", name],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+
+    result = await handler_with_repos.handle(
+        "orchestrator_list_branches",
+        {"repo_name": "myrepo", "pattern": "feature/*"},
+    )
+    branches = result["branches"]
+    assert len(branches) == 2
+    names = {b["name"] for b in branches}
+    assert names == {"feature/auth", "feature/api"}
+
+
+async def test_list_branches_repo_not_found(
+    handler_with_repos: ToolHandler,
+) -> None:
+    """List branches returns error for non-existent repo."""
+    result = await handler_with_repos.handle(
+        "orchestrator_list_branches",
+        {"repo_name": "nonexistent"},
+    )
+    assert "error" in result
+    assert result["branches"] == []

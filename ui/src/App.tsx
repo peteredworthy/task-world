@@ -9,6 +9,7 @@ import { RunDetail } from './pages/RunDetail';
 import { RoutineLibrary } from './pages/RoutineLibrary';
 import { Agents } from './pages/Agents';
 import { History } from './pages/History';
+import { Repos } from './pages/Repos';
 
 export default function App() {
   return (
@@ -21,6 +22,7 @@ export default function App() {
             <Route path="/routines" element={<RoutineLibrary />} />
             <Route path="/agents" element={<Agents />} />
             <Route path="/history" element={<History />} />
+            <Route path="/repos" element={<Repos />} />
             <Route path="*" element={<NotFound />} />
           </Route>
         </Routes>

@@ -8,6 +8,7 @@ have explicit parameter names matching its schema.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from mcp.server import FastMCP
 
@@ -26,13 +27,15 @@ class OrchestratorMCPServer:
         self,
         service: WorkflowService | None = None,
         handler: ToolHandler | None = None,
+        repos_dir: Path | None = None,
     ) -> None:
         if handler is not None:
             self._handler = handler
         elif service is not None:
-            self._handler = ToolHandler(service)
+            self._handler = ToolHandler(service, repos_dir=repos_dir)
         else:
             raise ValueError("Either service or handler must be provided")
+        self._repos_dir = repos_dir
         self._mcp = FastMCP(
             name="orchestrator",
             instructions=(
@@ -143,6 +146,40 @@ class OrchestratorMCPServer:
                 "The task will pause until the human answers. "
                 "Answers will be appended to the clarifications artifact file."
             ),
+        )
+
+        async def orchestrator_list_repos() -> str:
+            """List available repositories in the repos directory."""
+            result = await handler.handle("orchestrator_list_repos", {})
+            return json.dumps(result)
+
+        async def orchestrator_list_branches(
+            repo_name: str,
+            pattern: str = "",
+            local_only: bool = False,
+            limit: int = 100,
+        ) -> str:
+            """List branches in a repository with optional glob pattern filter."""
+            result = await handler.handle(
+                "orchestrator_list_branches",
+                {
+                    "repo_name": repo_name,
+                    "pattern": pattern,
+                    "local_only": local_only,
+                    "limit": limit,
+                },
+            )
+            return json.dumps(result)
+
+        self._mcp.add_tool(
+            orchestrator_list_repos,
+            name="orchestrator_list_repos",
+            description="List available repositories in the repos directory.",
+        )
+        self._mcp.add_tool(
+            orchestrator_list_branches,
+            name="orchestrator_list_branches",
+            description="List branches in a repository with optional glob pattern filter.",
         )
 
     @property

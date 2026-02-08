@@ -132,17 +132,24 @@ def test_mixed_graded_and_ungraded_critical_fails() -> None:
     assert any("R2" in item for item in result.failing_items)
 
 
-def test_all_items_ungraded_no_grades_set() -> None:
-    """When only NICE items exist and none are graded, still passes (no required items)."""
+def test_all_items_ungraded_nice_only_passes() -> None:
+    """When only NICE items exist and none are graded, passes (no required items)."""
     result = evaluate_grades(
         [
             _item(req_id="R1", priority=Priority.NICE, grade=None),
         ]
     )
     # No CRITICAL or EXPECTED items to fail, no graded items
-    # This edge case: graded_count=0, failing=0 → "no grades set"
-    assert result.passed is False
-    assert result.message == "no grades set"
+    # Only optional items present → pass
+    assert result.passed is True
+    assert result.message == "no grades required"
+
+
+def test_empty_checklist_passes() -> None:
+    """Empty checklist (no items at all) passes grade evaluation."""
+    result = evaluate_grades([])
+    assert result.passed is True
+    assert result.message == "no grades required"
 
 
 def test_revision_guidance_collected() -> None:

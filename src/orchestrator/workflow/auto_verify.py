@@ -2,7 +2,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
@@ -44,19 +44,29 @@ class LocalAutoVerifyRunner:
         return proc.returncode or 0, tail
 
 
+def _resolve_variables(template: str, variables: dict[str, Any]) -> str:
+    """Resolve {{variable}} placeholders in a template string."""
+    result = template
+    for key, value in variables.items():
+        result = result.replace(f"{{{{{key}}}}}", str(value))
+    return result
+
+
 async def run_auto_verify(
     config: AutoVerifyConfig,
     runner: AutoVerifyRunner,
     cwd: Path,
+    variables: dict[str, Any] | None = None,
 ) -> list[AutoVerifyResult]:
     """Run all auto-verify commands and collect results."""
     results: list[AutoVerifyResult] = []
     for item in config.items:
-        exit_code, output = await runner.run_command(item.cmd, cwd, config.tail_lines)
+        cmd = _resolve_variables(item.cmd, variables) if variables else item.cmd
+        exit_code, output = await runner.run_command(cmd, cwd, config.tail_lines)
         results.append(
             AutoVerifyResult(
                 item_id=item.id,
-                cmd=item.cmd,
+                cmd=cmd,
                 passed=(exit_code == 0),
                 exit_code=exit_code,
                 output=output,

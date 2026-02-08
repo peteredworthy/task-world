@@ -95,7 +95,8 @@ async def test_executor_pauses_run_on_agent_not_available(
 
         run = create_run_from_routine(
             routine=routine.config,
-            project_id="/tmp/test-project",
+            repo_name="test-project",
+            source_branch="main",
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
@@ -167,7 +168,8 @@ async def test_executor_pauses_run_on_agent_execution_error(
 
         run = create_run_from_routine(
             routine=routine.config,
-            project_id="/tmp/test-project",
+            repo_name="test-project",
+            source_branch="main",
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
@@ -279,7 +281,8 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
 
         run = create_run_from_routine(
             routine=routine.config,
-            project_id="/tmp/test-project",
+            repo_name="test-project",
+            source_branch="main",
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
@@ -314,7 +317,7 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
 
 
 async def test_executor_persists_builder_prompt_before_execution(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
+    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
     """Builder prompt should be persisted before agent execution starts."""
     # Create executor with spawning enabled
@@ -350,10 +353,12 @@ async def test_executor_persists_builder_prompt_before_execution(
 
         run = create_run_from_routine(
             routine=routine.config,
-            project_id="/tmp/test-project",
+            repo_name="test-project",
+            source_branch="main",
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
+        run.worktree_path = str(tmp_path)  # Set worktree for CLI agent to work
         run.agent_type = AgentType.CLI_SUBPROCESS
         # Use a command that exits immediately with error
         run.agent_config = {"command": "false"}

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { CreateRunRequest, UpdateChecklistRequest, SetGradeRequest } from '../types';
 
-export function useRuns(params?: { status?: string; project_id?: string }) {
+export function useRuns(params?: { status?: string; repo_name?: string }) {
   return useQuery({
     queryKey: ['runs', params],
     queryFn: () => api.listRuns(params),
@@ -191,5 +191,45 @@ export function useAttemptLogs(runId: string, taskId: string, attemptNum: number
     queryFn: () => api.getAttemptLogs(runId, taskId, attemptNum!),
     enabled: attemptNum !== undefined,
     staleTime: 30000, // Logs don't change once attempt is complete
+  });
+}
+
+// Repos hooks
+export function useRepos() {
+  return useQuery({
+    queryKey: ['repos'],
+    queryFn: () => api.listRepos(),
+  });
+}
+
+export function useRepo(name: string | undefined) {
+  return useQuery({
+    queryKey: ['repo', name],
+    queryFn: () => api.getRepo(name!),
+    enabled: !!name,
+  });
+}
+
+export function useBranches(repoName: string | undefined, params?: { pattern?: string; include_remote?: boolean }) {
+  return useQuery({
+    queryKey: ['branches', repoName, params],
+    queryFn: () => api.listBranches(repoName!, params),
+    enabled: !!repoName,
+  });
+}
+
+export function useBranchCount(repoName: string | undefined, params?: { pattern?: string; include_remote?: boolean }) {
+  return useQuery({
+    queryKey: ['branch-count', repoName, params],
+    queryFn: () => api.countBranches(repoName!, params),
+    enabled: !!repoName,
+  });
+}
+
+export function useRepoRoutines(repoName: string | undefined, branch: string | undefined) {
+  return useQuery({
+    queryKey: ['repo-routines', repoName, branch],
+    queryFn: () => api.listRepoRoutines(repoName!, branch!),
+    enabled: !!repoName && !!branch,
   });
 }

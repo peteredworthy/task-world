@@ -29,7 +29,7 @@ async def test_full_workflow_happy_path(api_client: AsyncClient) -> None:
     representing the ideal "happy path" where everything succeeds on the first try.
     """
     # 1. Create a run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="test-proj-1")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="test-proj-1")
     run_id = run_data["id"]
     assert run_data["status"] == "draft"
     assert run_data["current_step_index"] == 0
@@ -96,7 +96,7 @@ async def test_workflow_with_task_context(api_client: AsyncClient) -> None:
     consistently available across all workflow transitions.
     """
     # Create and start run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="test-proj-2")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="test-proj-2")
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
 
@@ -129,7 +129,7 @@ async def test_workflow_tracks_attempts(api_client: AsyncClient) -> None:
     attempt records with outcomes.
     """
     # Create and start run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="test-proj-3")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="test-proj-3")
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
 
@@ -163,7 +163,7 @@ async def test_run_progression_updates_current_step(api_client: AsyncClient) -> 
     advances correctly.
     """
     # Create and start run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="test-proj-4")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="test-proj-4")
     run_id = run_data["id"]
     assert run_data["current_step_index"] == 0
 

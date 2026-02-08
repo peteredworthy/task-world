@@ -51,6 +51,7 @@ class ExecutionContext(BaseModel):
     requirements: list[str]
     api_base_url: str | None = None
     auth_token: str | None = None
+    end_commit: str | None = None  # For verifier: commit to checkout before verification
 
 
 class AgentInfo(BaseModel):

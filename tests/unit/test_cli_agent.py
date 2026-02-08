@@ -228,8 +228,16 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
         )
 
     # All agent-facing tools should be mentioned in the prompt
-    # (orchestrator_set_grade is verifier-only, so exclude it)
-    agent_tools = registered_names - {"orchestrator_set_grade"}
+    # Exclude:
+    # - orchestrator_set_grade: verifier-only
+    # - orchestrator_list_repos: informational, not workflow-related
+    # - orchestrator_list_branches: informational, not workflow-related
+    excluded_tools = {
+        "orchestrator_set_grade",
+        "orchestrator_list_repos",
+        "orchestrator_list_branches",
+    }
+    agent_tools = registered_names - excluded_tools
     for name in agent_tools:
         assert name in mentioned_names, (
             f"Registered tool {name!r} is not mentioned in the MCP enriched prompt"

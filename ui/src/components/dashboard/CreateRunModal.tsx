@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { useRoutines, useAgents, useCreateRun, useStartRun } from '../../hooks/useApi';
+import { useRepos, useAgents, useCreateRun, useStartRun } from '../../hooks/useApi';
 import { Spinner } from '../Spinner';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useCreateRunModal } from '../../hooks/useCreateRunModal';
+import { BranchSelector } from '../BranchSelector';
+import { RoutineSelector } from '../RoutineSelector';
 import type { AgentOption } from '../../types/agents';
 
 interface CreateRunModalProps {
@@ -12,7 +14,7 @@ interface CreateRunModalProps {
 
 interface FormState {
   selectedRoutine: string;
-  projectId: string;
+  repoName: string;
   featureName: string;
   targetBranch: string;
   selectedAgentIndex: string; // index into allAgents array, '' means none
@@ -26,7 +28,7 @@ interface FormState {
 
 const INITIAL_FORM: FormState = {
   selectedRoutine: '',
-  projectId: '',
+  repoName: '',
   featureName: '',
   targetBranch: '',
   selectedAgentIndex: '',
@@ -67,7 +69,7 @@ function agentVisual(agentType: string): { icon: string; tintBg: string; tintTex
 }
 
 export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
-  const { data: routinesData, isLoading: loadingRoutines } = useRoutines();
+  const { data: reposData, isLoading: loadingRepos } = useRepos();
   const { data: agents, isLoading: loadingAgents } = useAgents();
   const createRun = useCreateRun();
   const startRun = useStartRun();
@@ -108,7 +110,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
 
   if (!open) return null;
 
-  const routines = routinesData?.routines ?? [];
+  const repos = reposData?.repos ?? [];
   const allAgents = agents ?? [];
   const titleId = 'create-run-modal-title';
 
@@ -118,7 +120,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.selectedRoutine || !form.projectId) return;
+    if (!form.selectedRoutine || !form.repoName) return;
 
     // Build config from featureName (maps to configJson behavior)
     let config: Record<string, unknown> = {};
@@ -153,7 +155,8 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
     try {
       const run = await createRun.mutateAsync({
         routine_id: form.selectedRoutine,
-        project_id: form.projectId,
+        repo_name: form.repoName,
+        branch: form.targetBranch || 'main',
         config,
         agent_type: selectedAgent?.agent_type || undefined,
         agent_config: agentConfig,
@@ -169,9 +172,9 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
     }
   }
 
-  const loading = loadingRoutines || loadingAgents;
+  const loading = loadingRepos || loadingAgents;
   const submitting = createRun.isPending || startRun.isPending;
-  const canSubmit = !!form.selectedRoutine && !!form.projectId && !submitting;
+  const canSubmit = !!form.selectedRoutine && !!form.repoName && !submitting;
 
   return (
     <div
@@ -229,65 +232,66 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
             <div className="flex-1 overflow-y-auto px-6 pb-5 space-y-5">
-              {/* Routine Selection */}
+              {/* Repository Selection */}
               <div>
                 <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
-                  <span className="text-base leading-none">{'\u{1F4CB}'}</span>
-                  Routine
+                  <span className="text-base leading-none">{'\u{1F4C1}'}</span>
+                  Repository
                 </label>
-                {routines.length === 0 ? (
+                {repos.length === 0 ? (
                   <p className="text-sm text-text-muted py-2">
-                    No routines found. Configure routine directories on the server.
+                    No repositories found. Register repos via CLI or API.
                   </p>
                 ) : (
                   <select
                     autoFocus
                     required
-                    value={form.selectedRoutine}
-                    onChange={e => setForm(prev => ({ ...prev, selectedRoutine: e.target.value }))}
+                    value={form.repoName}
+                    onChange={e => setForm(prev => ({ ...prev, repoName: e.target.value, targetBranch: '' }))}
                     className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 appearance-none cursor-pointer"
                   >
-                    <option value="">Select a routine...</option>
-                    {routines.map(r => (
-                      <option key={r.id} value={r.id}>{r.name}</option>
+                    <option value="">Select a repository...</option>
+                    {repos.map(repo => (
+                      <option key={repo.name} value={repo.name}>
+                        {repo.name} ({repo.path})
+                      </option>
                     ))}
                   </select>
                 )}
               </div>
 
-              {/* Target Project */}
-              <div>
-                <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
-                  <span className="text-base leading-none">{'\u{1F4C1}'}</span>
-                  Target Project
-                </label>
-                <div className="relative">
-                  <input
-                    required
-                    type="text"
-                    placeholder="/path/to/project"
-                    value={form.projectId}
-                    onChange={e => setForm(prev => ({ ...prev, projectId: e.target.value }))}
-                    className="w-full rounded-md border border-border bg-bg-card pl-3 pr-9 py-2.5 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
+              {/* Branch Selection */}
+              {form.repoName && (
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                    <span className="text-base leading-none">{'\u{1F333}'}</span>
+                    Branch
+                  </label>
+                  <BranchSelector
+                    repoName={form.repoName}
+                    value={form.targetBranch}
+                    onChange={branch => setForm(prev => ({ ...prev, targetBranch: branch }))}
+                    includeRemote={false}
                   />
-                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="text-text-muted"
-                    >
-                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                    </svg>
-                  </div>
                 </div>
-              </div>
+              )}
+
+              {/* Routine Selection */}
+              {form.repoName && form.targetBranch && (
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                    <span className="text-base leading-none">{'\u{1F4CB}'}</span>
+                    Routine
+                  </label>
+                  <RoutineSelector
+                    repoName={form.repoName}
+                    branch={form.targetBranch}
+                    value={form.selectedRoutine}
+                    onChange={routineId => setForm(prev => ({ ...prev, selectedRoutine: routineId }))}
+                    required
+                  />
+                </div>
+              )}
 
               {/* Configuration */}
               <div>
@@ -295,27 +299,15 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                   <span className="text-base leading-none">{'\u2699\uFE0F'}</span>
                   Configuration
                 </label>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs text-text-muted mb-1">Feature Name</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. user-auth"
-                      value={form.featureName}
-                      onChange={e => setForm(prev => ({ ...prev, featureName: e.target.value }))}
-                      className="w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-text-muted mb-1">Target Branch</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. main"
-                      value={form.targetBranch}
-                      onChange={e => setForm(prev => ({ ...prev, targetBranch: e.target.value }))}
-                      className="w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-xs text-text-muted mb-1">Feature Name</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. user-auth"
+                    value={form.featureName}
+                    onChange={e => setForm(prev => ({ ...prev, featureName: e.target.value }))}
+                    className="w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
+                  />
                 </div>
               </div>
 

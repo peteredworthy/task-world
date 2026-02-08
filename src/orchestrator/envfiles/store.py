@@ -35,8 +35,8 @@ class EnvFileStore:
     def snapshot_dir(self, run_id: str, snapshot_id: str) -> Path:
         return self.run_dir(run_id) / snapshot_id
 
-    def canonical_dir(self, project_id: str) -> Path:
-        return self._base / "canonical" / project_id
+    def canonical_dir(self, repo_name: str) -> Path:
+        return self._base / "canonical" / repo_name
 
     def _manifest_path(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "manifest.json"
@@ -178,12 +178,12 @@ class EnvFileStore:
     def promote_to_canonical(
         self,
         run_id: str,
-        project_id: str,
+        repo_name: str,
         env_specs: list[EnvFileSpec],
     ) -> list[str]:
         """Copy promote_on_success files from run_end snapshot to canonical store."""
         snap_dir = self.snapshot_dir(run_id, "run_end")
-        canon_dir = self.canonical_dir(project_id)
+        canon_dir = self.canonical_dir(repo_name)
         canon_dir.mkdir(parents=True, exist_ok=True)
         set_restricted_permissions(canon_dir)
 
@@ -202,12 +202,12 @@ class EnvFileStore:
 
     def load_canonical(
         self,
-        project_id: str,
+        repo_name: str,
         env_specs: list[EnvFileSpec],
         worktree_path: Path,
     ) -> list[str]:
         """Inject canonical env files into a worktree (used when no source_dir provided)."""
-        canon_dir = self.canonical_dir(project_id)
+        canon_dir = self.canonical_dir(repo_name)
         if not canon_dir.exists():
             return []
 

@@ -33,10 +33,10 @@ runs.add_command(approve_command)
 
 
 @runs.command("list")
-@click.option("--project", "-p", help="Filter by project")
+@click.option("--repo", "-r", help="Filter by repository name")
 @click.option("--status", "-s", help="Filter by status")
 @click.pass_context
-def list_runs(ctx: click.Context, project: str | None, status: str | None) -> None:
+def list_runs(ctx: click.Context, repo: str | None, status: str | None) -> None:
     """List runs."""
 
     async def _list() -> None:
@@ -48,20 +48,20 @@ def list_runs(ctx: click.Context, project: str | None, status: str | None) -> No
         session_factory = create_session_factory(engine)
 
         async with session_factory() as session:
-            repo = RunRepository(session)
+            repository = RunRepository(session)
 
             # Apply filters
-            if project:
-                runs_list = await repo.list_by_project(project)
+            if repo:
+                runs_list = await repository.list_by_repo(repo)
             elif status:
                 try:
                     status_enum = RunStatus(status)
-                    runs_list = await repo.list_by_status(status_enum)
+                    runs_list = await repository.list_by_status(status_enum)
                 except ValueError:
                     click.echo(f"Error: Invalid status '{status}'", err=True)
                     sys.exit(1)
             else:
-                runs_list = await repo.list_all()
+                runs_list = await repository.list_all()
 
         await engine.dispose()
 
@@ -71,7 +71,7 @@ def list_runs(ctx: click.Context, project: str | None, status: str | None) -> No
                 {
                     "id": run.id,
                     "routine_id": run.routine_id,
-                    "project_id": run.project_id,
+                    "repo_name": run.repo_name,
                     "status": run.status.value,
                     "created_at": run.created_at.isoformat() if run.created_at else None,
                     "started_at": run.started_at.isoformat() if run.started_at else None,
@@ -89,7 +89,7 @@ def list_runs(ctx: click.Context, project: str | None, status: str | None) -> No
             for run in runs_list:
                 status_str = run.status.value
                 click.echo(
-                    f"{run.id} | {run.routine_id or '<embedded>'} | {status_str} | {run.project_id}"
+                    f"{run.id} | {run.routine_id or '<embedded>'} | {status_str} | {run.repo_name}"
                 )
 
     asyncio.run(_list())
@@ -97,22 +97,22 @@ def list_runs(ctx: click.Context, project: str | None, status: str | None) -> No
 
 @runs.command("create")
 @click.argument("routine_id")
-@click.option("--project", "-p", required=True, help="Project directory path")
+@click.option("--repo", "-r", required=True, help="Repository name in repos directory")
+@click.option("--branch", "-b", required=True, help="Branch to base worktree on")
 @click.option("--config", "-c", multiple=True, help="Config key=value pairs")
 @click.option(
     "--agent", "-a", help="Agent type (openhands_local, cli_subprocess, user_managed, etc.)"
 )
 @click.option("--agent-config", "-ac", multiple=True, help="Agent config key=value pairs")
-@click.option("--init", "init_project", is_flag=True, help="Initialize project directory with git")
 @click.pass_context
 def create_run(
     ctx: click.Context,
     routine_id: str,
-    project: str,
+    repo: str,
+    branch: str,
     config: tuple[str, ...],
     agent: str | None,
     agent_config: tuple[str, ...],
-    init_project: bool,
 ) -> None:
     """Create a new run."""
 
@@ -140,28 +140,16 @@ def create_run(
             key, value = kv.split("=", 1)
             agent_cfg[key] = value
 
-        # Initialize project if --init flag is set
-        if init_project:
-            from orchestrator.git.project_init import init_project as do_init
-
-            project_path = Path(project)
-            if project_path.exists():
-                click.echo(f"Error: Project path already exists: {project}", err=True)
-                sys.exit(1)
-            result = do_init(project_path)
-            click.echo(f"Initialized project at {result.path}")
-
         engine = create_engine(db_path)
         await init_db(engine)
         session_factory = create_session_factory(engine)
 
         async with session_factory() as session:
-            repo = RunRepository(session)
+            repository = RunRepository(session)
 
             # Discover routines
             routine_dirs = [
                 (Path("routines"), RoutineSource.LOCAL),
-                (Path(project) / "routines", RoutineSource.PROJECT),
             ]
             discovered = discover_routines(routine_dirs)
 
@@ -179,7 +167,8 @@ def create_run(
             # Create run
             run = create_run_from_routine(
                 routine=routine_config,
-                project_id=project,
+                repo_name=repo,
+                source_branch=branch,
                 config=cfg,
             )
 
@@ -194,7 +183,7 @@ def create_run(
                     run.agent_config = agent_cfg
 
             # Save to database
-            await repo.save(run)
+            await repository.save(run)
             await session.commit()
 
         await engine.dispose()
@@ -203,7 +192,7 @@ def create_run(
             result = {
                 "id": run.id,
                 "routine_id": run.routine_id,
-                "project_id": run.project_id,
+                "repo_name": run.repo_name,
                 "status": run.status.value,
                 "agent_type": run.agent_type.value if run.agent_type else None,
             }
@@ -517,7 +506,7 @@ def status_run(ctx: click.Context, run_id: str, url: str) -> None:
             # Human-readable format
             click.echo(f"Run: {result.get('id')}")
             click.echo(f"Status: {result.get('status')}")
-            click.echo(f"Project: {result.get('project_id')}")
+            click.echo(f"Repository: {result.get('repo_name')}")
             if result.get("routine_id"):
                 click.echo(f"Routine: {result.get('routine_id')}")
             if result.get("agent_type"):

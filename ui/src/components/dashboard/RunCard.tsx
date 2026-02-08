@@ -345,7 +345,7 @@ function CollapsedRow(props: RunCardProps) {
           </>
         )}
         <span className="text-border-hover">|</span>
-        <span className="truncate" title={run.project_id}>{run.project_id}</span>
+        <span className="truncate" title={run.repo_name}>{run.repo_name}</span>
         {run.agent_icon !== 'none' && (
           <>
             <span className="text-border-hover">|</span>
@@ -428,7 +428,7 @@ function ExpandedView(props: RunCardProps) {
             </>
           )}
           <span className="text-border-hover">|</span>
-          <span className="truncate" title={run.project_id}>{run.project_id}</span>
+          <span className="truncate" title={run.repo_name}>{run.repo_name}</span>
           {run.agent_icon !== 'none' && (
             <>
               <span className="text-border-hover">|</span>

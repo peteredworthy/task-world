@@ -5,10 +5,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.agents.executor import AgentExecutor
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import GateType, RoutineSource
+from orchestrator.config.enums import AgentType, GateType, RoutineSource, TaskStatus
 from orchestrator.db.connection import init_db
 from orchestrator.config.models import (
     GateConfig,
@@ -22,17 +25,23 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
-    """Create a test client with in-memory database."""
-    app = create_app(
+async def app() -> AsyncGenerator[FastAPI, None]:
+    """Create a test app with in-memory database."""
+    application = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
-    await init_db(app.state.engine)
+    await init_db(application.state.engine)
+    yield application
+    await application.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
+    """Create a test client with in-memory database."""
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
-    await app.state.engine.dispose()
 
 
 @pytest.fixture
@@ -96,7 +105,8 @@ async def test_approve_step_endpoint(
     create_response = await client.post(
         "/api/runs",
         json={
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "routine_embedded": routine_with_human_gate.model_dump(mode="json"),
         },
     )
@@ -143,7 +153,8 @@ async def test_approve_step_without_comment(
     create_response = await client.post(
         "/api/runs",
         json={
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "routine_embedded": routine_with_human_gate.model_dump(mode="json"),
         },
     )
@@ -177,7 +188,8 @@ async def test_approve_nonexistent_step(
     create_response = await client.post(
         "/api/runs",
         json={
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "routine_embedded": routine_with_human_gate.model_dump(mode="json"),
         },
     )
@@ -226,7 +238,8 @@ async def test_approve_step_multiple_times(
     create_response = await client.post(
         "/api/runs",
         json={
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "routine_embedded": routine_with_human_gate.model_dump(mode="json"),
         },
     )
@@ -273,7 +286,8 @@ async def test_approve_step_audit_trail(
     create_response = await client.post(
         "/api/runs",
         json={
-            "project_id": "test-project",
+            "repo_name": "test-project",
+            "branch": "main",
             "routine_embedded": routine_with_human_gate.model_dump(mode="json"),
         },
     )
@@ -306,3 +320,333 @@ async def test_approve_step_audit_trail(
     # Verify timestamp is reasonable
     approved_at = datetime.fromisoformat(approval["approved_at"].replace("Z", "+00:00"))
     assert before <= approved_at <= after
+
+
+@pytest.mark.asyncio
+async def test_executor_stops_at_human_approval_gate(
+    app: FastAPI,
+) -> None:
+    """Executor's _find_next_task returns blocked when step has unsatisfied human_approval gate."""
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+
+    executor = AgentExecutor(
+        session_factory=session_factory,
+        spawn_agents=False,
+    )
+
+    # Create a run with a human_approval gate on the first step
+    routine = RoutineConfig(
+        id="gate-test",
+        name="Gate Test",
+        description="Test",
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Gated Step",
+                gate=GateConfig(
+                    type=GateType.HUMAN_APPROVAL,
+                    approval_prompt="Please review",
+                ),
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Gated Task",
+                        task_context="Work that needs approval first",
+                        requirements=[
+                            RequirementConfig(id="R1", desc="Do something"),
+                        ],
+                    )
+                ],
+            ),
+        ],
+    )
+
+    async with session_factory() as session:
+        from orchestrator.db.event_store import EventStore
+        from orchestrator.db.repositories import RunRepository
+        from orchestrator.state.factory import create_run_from_routine
+        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
+        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow.service import WorkflowService
+
+        repo = RunRepository(session)
+        event_store = EventStore(session)
+        emitter = PersistentEventEmitter(event_store)
+        service = WorkflowService(
+            session=session,
+            repo=repo,
+            event_store=event_store,
+            event_emitter=emitter,
+            auto_verify_runner=LocalAutoVerifyRunner(),
+        )
+
+        run = create_run_from_routine(
+            routine=routine,
+            repo_name="test-project",
+            source_branch="main",
+            routine_source=RoutineSource.EMBEDDED,
+        )
+        run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
+        run.agent_type = AgentType.CLI_SUBPROCESS
+        run = await service.create_run(run)
+        await session.commit()
+
+        # Start the run (just changes status, no agent spawned because spawn_agents=False)
+        run = await service.start_run(run.id)
+        await session.commit()
+
+        # Verify tasks are PENDING
+        assert run.steps[0].tasks[0].status == TaskStatus.PENDING
+
+        # The executor should detect the gate is unsatisfied
+        task, blocked = executor._find_next_task(run)
+        assert task is None
+        assert blocked is True
+
+        # Verify the gate helper directly
+        assert executor._is_step_gate_satisfied(run, run.steps[0]) is False
+
+
+@pytest.mark.asyncio
+async def test_executor_proceeds_after_gate_approved(
+    app: FastAPI,
+) -> None:
+    """After human_approval gate is satisfied, _find_next_task returns the task."""
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+
+    executor = AgentExecutor(
+        session_factory=session_factory,
+        spawn_agents=False,
+    )
+
+    routine = RoutineConfig(
+        id="gate-test-2",
+        name="Gate Test 2",
+        description="Test",
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Gated Step",
+                gate=GateConfig(
+                    type=GateType.HUMAN_APPROVAL,
+                    approval_prompt="Please review",
+                ),
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Gated Task",
+                        task_context="Work that needs approval first",
+                        requirements=[
+                            RequirementConfig(id="R1", desc="Do something"),
+                        ],
+                    )
+                ],
+            ),
+        ],
+    )
+
+    async with session_factory() as session:
+        from orchestrator.db.event_store import EventStore
+        from orchestrator.db.repositories import RunRepository
+        from orchestrator.state.factory import create_run_from_routine
+        from orchestrator.state.models import HumanApproval
+        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
+        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow.service import WorkflowService
+
+        repo = RunRepository(session)
+        event_store = EventStore(session)
+        emitter = PersistentEventEmitter(event_store)
+        service = WorkflowService(
+            session=session,
+            repo=repo,
+            event_store=event_store,
+            event_emitter=emitter,
+            auto_verify_runner=LocalAutoVerifyRunner(),
+        )
+
+        run = create_run_from_routine(
+            routine=routine,
+            repo_name="test-project",
+            source_branch="main",
+            routine_source=RoutineSource.EMBEDDED,
+        )
+        run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
+        run.agent_type = AgentType.CLI_SUBPROCESS
+        run = await service.create_run(run)
+        await session.commit()
+
+        run = await service.start_run(run.id)
+        await session.commit()
+
+        # Before approval: blocked
+        task, blocked = executor._find_next_task(run)
+        assert blocked is True
+        assert task is None
+
+        # Approve the step
+        run.steps[0].human_approval = HumanApproval(
+            approved_by="reviewer@example.com",
+            approved_at=datetime.now(timezone.utc),
+            comment="Approved",
+        )
+
+        # After approval: not blocked, task returned
+        task, blocked = executor._find_next_task(run)
+        assert blocked is False
+        assert task is not None
+        assert task.config_id == "T-01"
+
+
+@pytest.mark.asyncio
+async def test_approve_step_respawns_agent_for_active_run(
+    app: FastAPI,
+    client: AsyncClient,
+) -> None:
+    """Approving a step on an ACTIVE run should attempt to re-spawn the agent."""
+    routine = RoutineConfig(
+        id="respawn-test",
+        name="Respawn Test",
+        description="Test agent re-spawn after approval",
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Gated Step",
+                gate=GateConfig(
+                    type=GateType.HUMAN_APPROVAL,
+                    approval_prompt="Review before proceeding",
+                ),
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Gated Task",
+                        task_context="Do work",
+                        requirements=[
+                            RequirementConfig(id="R1", desc="Complete work"),
+                        ],
+                    )
+                ],
+            ),
+        ],
+    )
+
+    # Create run
+    create_resp = await client.post(
+        "/api/runs",
+        json={
+            "repo_name": "test-project",
+            "branch": "main",
+            "routine_embedded": routine.model_dump(mode="json"),
+            "agent_type": "cli_subprocess",
+        },
+    )
+    assert create_resp.status_code == 201
+    run_data = create_resp.json()
+    run_id = run_data["id"]
+    step_id = run_data["steps"][0]["id"]
+
+    # Start the run (spawn_agents is False for :memory: DB, so no agent actually runs)
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 200
+    assert start_resp.json()["status"] == "active"
+
+    # All tasks should still be PENDING (agent didn't run because spawn_agents=False)
+    run_resp = await client.get(f"/api/runs/{run_id}")
+    assert run_resp.status_code == 200
+    tasks = run_resp.json()["steps"][0]["tasks"]
+    assert all(t["status"] == "pending" for t in tasks)
+
+    # Approve the step - this should succeed and attempt to re-spawn
+    # (spawn_for_run will return False because spawn_agents=False in test,
+    # but the endpoint logic is exercised)
+    approve_resp = await client.post(
+        f"/api/runs/{run_id}/steps/{step_id}/approve",
+        json={
+            "approved_by": "reviewer@example.com",
+            "comment": "Approved",
+        },
+    )
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["human_approval"]["approved_by"] == "reviewer@example.com"
+
+    # Verify the approval was persisted and run is still ACTIVE
+    run_resp = await client.get(f"/api/runs/{run_id}")
+    assert run_resp.status_code == 200
+    assert run_resp.json()["status"] == "active"
+    # Verify step shows as approved in the response
+    step_data = run_resp.json()["steps"][0]
+    assert step_data["approval_status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_step_without_gate_not_blocked(
+    app: FastAPI,
+) -> None:
+    """Steps without a human_approval gate should not be blocked."""
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+
+    executor = AgentExecutor(
+        session_factory=session_factory,
+        spawn_agents=False,
+    )
+
+    routine = RoutineConfig(
+        id="no-gate-test",
+        name="No Gate Test",
+        description="Test",
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Normal Step",
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Normal Task",
+                        task_context="Just do work",
+                        requirements=[
+                            RequirementConfig(id="R1", desc="Do something"),
+                        ],
+                    )
+                ],
+            ),
+        ],
+    )
+
+    async with session_factory() as session:
+        from orchestrator.db.event_store import EventStore
+        from orchestrator.db.repositories import RunRepository
+        from orchestrator.state.factory import create_run_from_routine
+        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
+        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow.service import WorkflowService
+
+        repo = RunRepository(session)
+        event_store = EventStore(session)
+        emitter = PersistentEventEmitter(event_store)
+        service = WorkflowService(
+            session=session,
+            repo=repo,
+            event_store=event_store,
+            event_emitter=emitter,
+            auto_verify_runner=LocalAutoVerifyRunner(),
+        )
+
+        run = create_run_from_routine(
+            routine=routine,
+            repo_name="test-project",
+            source_branch="main",
+            routine_source=RoutineSource.EMBEDDED,
+        )
+        run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
+        run.agent_type = AgentType.CLI_SUBPROCESS
+        run = await service.create_run(run)
+        await session.commit()
+
+        run = await service.start_run(run.id)
+        await session.commit()
+
+        # No gate - should not be blocked
+        task, blocked = executor._find_next_task(run)
+        assert blocked is False
+        assert task is not None
+        assert task.config_id == "T-01"

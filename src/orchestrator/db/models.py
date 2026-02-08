@@ -13,7 +13,7 @@ class RunModel(Base):
     __tablename__ = "runs"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    project_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    repo_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String, nullable=False, index=True)
 
     # Routine reference
@@ -21,6 +21,10 @@ class RunModel(Base):
     routine_sha: Mapped[str | None] = mapped_column(String, nullable=True)
     routine_source: Mapped[str | None] = mapped_column(String, nullable=True)
     routine_embedded: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    # Routine traceability (for project routines)
+    routine_path: Mapped[str | None] = mapped_column(String, nullable=True)
+    routine_commit: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Agent configuration
     agent_type: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -155,6 +159,10 @@ class AttemptModel(Base):
     # Agent output capture
     agent_output: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Git tracking - commit SHAs for builder/verifier handoff
+    start_commit: Mapped[str | None] = mapped_column(String, nullable=True)
+    end_commit: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Relationships
     task: Mapped["TaskModel"] = relationship("TaskModel", back_populates="attempts")

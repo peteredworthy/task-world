@@ -384,7 +384,8 @@ def test_step_complete_empty_tasks() -> None:
 def test_step_progression_advances_index() -> None:
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         current_step_index=0,
         steps=[
@@ -409,7 +410,8 @@ def test_step_progression_advances_index() -> None:
 def test_step_progression_no_change_when_not_done() -> None:
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         current_step_index=0,
         steps=[
@@ -430,7 +432,8 @@ def test_step_progression_advances_past_multiple_complete() -> None:
     """If steps 0 and 1 are both complete, index should advance to 2."""
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         current_step_index=0,
         steps=[
@@ -463,7 +466,8 @@ def test_step_progression_stays_on_last_step() -> None:
     """When the last step completes, index stays at len-1."""
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         current_step_index=0,
         steps=[
@@ -486,7 +490,8 @@ def test_step_progression_stays_on_last_step() -> None:
 def test_run_completes_when_all_steps_done() -> None:
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         steps=[
             StepState(
@@ -506,7 +511,8 @@ def test_run_completes_when_all_steps_done() -> None:
 def test_run_fails_when_any_task_failed() -> None:
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         steps=[
             StepState(
@@ -529,7 +535,8 @@ def test_run_fails_when_any_task_failed() -> None:
 def test_run_no_completion_if_step_incomplete() -> None:
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         steps=[
             StepState(
@@ -554,7 +561,8 @@ def test_run_no_completion_if_step_incomplete() -> None:
 def test_run_no_completion_if_not_active() -> None:
     run = Run(
         id="run-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.PAUSED,
         steps=[
             StepState(

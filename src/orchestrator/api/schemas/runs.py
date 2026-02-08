@@ -22,15 +22,14 @@ class EnvFileRequestConfig(BaseModel):
 
 class CreateRunRequest(BaseModel):
     routine_id: str | None = None
-    project_id: str
+    repo_name: str
+    branch: str  # Source branch to base worktree on
     routine_embedded: dict[str, Any] | None = None
     config: dict[str, Any] = {}
     agent_type: str | None = None
     agent_config: dict[str, Any] = {}
     env_files: EnvFileRequestConfig | None = None
-    source_branch: str | None = None
     merge_strategy: str | None = None
-    init_project: bool = False
 
     @model_validator(mode="after")
     def validate_routine_source(self) -> "CreateRunRequest":
@@ -77,12 +76,14 @@ class StepSummary(BaseModel):
 
 class RunResponse(BaseModel):
     id: str
-    project_id: str
+    repo_name: str
     status: str
     routine_id: str | None = None
     routine_sha: str | None = None
     routine_source: str | None = None
     routine_embedded: dict[str, Any] | None = None
+    routine_path: str | None = None
+    routine_commit: str | None = None
     agent_type: str | None = None
     agent_type_display: str
     agent_icon: str

@@ -18,11 +18,18 @@ from orchestrator.workflow.completion import handle_run_completion
 
 
 @pytest.fixture
-def git_repo() -> Generator[Path, None, None]:
-    """Create a temporary git repository."""
+def git_repo() -> Generator[tuple[Path, Path], None, None]:
+    """Create a temporary git repository and worktrees directory.
+
+    Yields:
+        Tuple of (repo_path, worktrees_dir)
+    """
     with tempfile.TemporaryDirectory() as tmpdir:
-        repo_path = Path(tmpdir) / "repo"
+        base = Path(tmpdir)
+        repo_path = base / "repo"
+        worktrees_dir = base / "worktrees"
         repo_path.mkdir()
+        worktrees_dir.mkdir()
 
         # Initialize git repo
         subprocess.run(
@@ -60,12 +67,13 @@ def git_repo() -> Generator[Path, None, None]:
             capture_output=True,
         )
 
-        yield repo_path
+        yield repo_path, worktrees_dir
 
 
-def test_worktree_deleted_when_configured(git_repo: Path) -> None:
+def test_worktree_deleted_when_configured(git_repo: tuple[Path, Path]) -> None:
     """Test that worktree is deleted when delete_worktree_on_completion is True."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a worktree for a run
     run_id = "test-run-1"
@@ -75,7 +83,7 @@ def test_worktree_deleted_when_configured(git_repo: Path) -> None:
     # Create a run with delete_worktree_on_completion=True
     run = Run(
         id=run_id,
-        project_id=str(git_repo),
+        repo_name="test-repo",
         status=RunStatus.COMPLETED,
         worktree_path=str(wt_info.path),
         delete_worktree_on_completion=True,
@@ -88,9 +96,10 @@ def test_worktree_deleted_when_configured(git_repo: Path) -> None:
     assert not wt_info.path.exists()
 
 
-def test_worktree_kept_when_configured(git_repo: Path) -> None:
+def test_worktree_kept_when_configured(git_repo: tuple[Path, Path]) -> None:
     """Test that worktree is kept when delete_worktree_on_completion is False."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a worktree for a run
     run_id = "test-run-2"
@@ -100,7 +109,7 @@ def test_worktree_kept_when_configured(git_repo: Path) -> None:
     # Create a run with delete_worktree_on_completion=False
     run = Run(
         id=run_id,
-        project_id=str(git_repo),
+        repo_name="test-repo",
         status=RunStatus.COMPLETED,
         worktree_path=str(wt_info.path),
         delete_worktree_on_completion=False,
@@ -116,15 +125,16 @@ def test_worktree_kept_when_configured(git_repo: Path) -> None:
     manager.delete(run_id, force=True)
 
 
-def test_no_error_when_no_worktree_exists(git_repo: Path) -> None:
+def test_no_error_when_no_worktree_exists(git_repo: tuple[Path, Path]) -> None:
     """Test that handle_run_completion doesn't error when no worktree exists."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a run without creating an actual worktree
     run_id = "test-run-3"
     run = Run(
         id=run_id,
-        project_id=str(git_repo),
+        repo_name="test-repo",
         status=RunStatus.COMPLETED,
         worktree_path=None,  # No worktree path
         delete_worktree_on_completion=True,
@@ -134,9 +144,10 @@ def test_no_error_when_no_worktree_exists(git_repo: Path) -> None:
     handle_run_completion(run, manager)
 
 
-def test_no_error_when_worktree_already_deleted(git_repo: Path) -> None:
+def test_no_error_when_worktree_already_deleted(git_repo: tuple[Path, Path]) -> None:
     """Test that handle_run_completion doesn't error when worktree was already deleted."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a worktree then delete it manually
     run_id = "test-run-4"
@@ -148,7 +159,7 @@ def test_no_error_when_worktree_already_deleted(git_repo: Path) -> None:
     # Create a run that references the deleted worktree
     run = Run(
         id=run_id,
-        project_id=str(git_repo),
+        repo_name="test-repo",
         status=RunStatus.COMPLETED,
         worktree_path=str(wt_info.path),
         delete_worktree_on_completion=True,
@@ -158,9 +169,10 @@ def test_no_error_when_worktree_already_deleted(git_repo: Path) -> None:
     handle_run_completion(run, manager)
 
 
-def test_worktree_cleanup_with_uncommitted_changes(git_repo: Path) -> None:
+def test_worktree_cleanup_with_uncommitted_changes(git_repo: tuple[Path, Path]) -> None:
     """Test that worktree cleanup works even with uncommitted changes (force=True)."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a worktree for a run
     run_id = "test-run-5"
@@ -174,7 +186,7 @@ def test_worktree_cleanup_with_uncommitted_changes(git_repo: Path) -> None:
     # Create a run with delete_worktree_on_completion=True
     run = Run(
         id=run_id,
-        project_id=str(git_repo),
+        repo_name="test-repo",
         status=RunStatus.COMPLETED,
         worktree_path=str(wt_info.path),
         delete_worktree_on_completion=True,
@@ -187,9 +199,10 @@ def test_worktree_cleanup_with_uncommitted_changes(git_repo: Path) -> None:
     assert not wt_info.path.exists()
 
 
-def test_completion_respects_delete_flag(git_repo: Path) -> None:
+def test_completion_respects_delete_flag(git_repo: tuple[Path, Path]) -> None:
     """Test that completion only deletes when explicitly configured."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create two worktrees
     run1_id = "test-run-6"
@@ -204,7 +217,7 @@ def test_completion_respects_delete_flag(git_repo: Path) -> None:
     # Run 1: delete_worktree_on_completion=True
     run1 = Run(
         id=run1_id,
-        project_id=str(git_repo),
+        repo_name="test-repo",
         status=RunStatus.COMPLETED,
         worktree_path=str(wt1_info.path),
         delete_worktree_on_completion=True,
@@ -213,7 +226,7 @@ def test_completion_respects_delete_flag(git_repo: Path) -> None:
     # Run 2: delete_worktree_on_completion=False
     run2 = Run(
         id=run2_id,
-        project_id=str(git_repo),
+        repo_name="test-repo",
         status=RunStatus.COMPLETED,
         worktree_path=str(wt2_info.path),
         delete_worktree_on_completion=False,
@@ -231,14 +244,15 @@ def test_completion_respects_delete_flag(git_repo: Path) -> None:
     manager.delete(run2_id, force=True)
 
 
-def test_completion_without_worktree_path(git_repo: Path) -> None:
+def test_completion_without_worktree_path(git_repo: tuple[Path, Path]) -> None:
     """Test that completion works when worktree_path is None."""
-    manager = WorktreeManager(git_repo)
+    repo_path, worktrees_dir = git_repo
+    manager = WorktreeManager(repo_path, worktrees_dir)
 
     # Create a run without worktree_path set
     run = Run(
         id="test-run-8",
-        project_id=str(git_repo),
+        repo_name="test-repo",
         status=RunStatus.COMPLETED,
         worktree_path=None,
         delete_worktree_on_completion=True,

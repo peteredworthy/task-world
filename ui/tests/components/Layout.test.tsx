@@ -1,23 +1,32 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from '../../src/components/Layout';
 import { CreateRunProvider } from '../../src/context/CreateRunContext';
+import { SettingsProvider } from '../../src/context/SettingsContext';
 
 afterEach(cleanup);
 
 function renderLayout(initialPath: string = '/', outletContent: string = 'Outlet content') {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   return render(
-    <MemoryRouter initialEntries={[initialPath]}>
-      <CreateRunProvider>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<div>{outletContent}</div>} />
-            <Route path="/runs/:id" element={<div>{outletContent}</div>} />
-          </Route>
-        </Routes>
-      </CreateRunProvider>
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[initialPath]}>
+        <SettingsProvider>
+          <CreateRunProvider>
+            <Routes>
+              <Route element={<Layout />}>
+                <Route path="/" element={<div>{outletContent}</div>} />
+                <Route path="/runs/:id" element={<div>{outletContent}</div>} />
+              </Route>
+            </Routes>
+          </CreateRunProvider>
+        </SettingsProvider>
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 

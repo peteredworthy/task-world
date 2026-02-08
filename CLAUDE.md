@@ -8,6 +8,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Design documentation lives in `docs/intent/`. Implementation follows the phased plan in the slice documents. Phases 1-4 are implemented; Phase 5+ is next.
 
+## Quick Navigation
+
+See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for:
+- **Directory map** - Full project structure with file descriptions
+- **How to run** - Backend (port 8000), frontend (port 5173), and all service URLs
+- **API routes** - Complete REST endpoint reference
+- **CLI commands** - All orchestrator commands
+- **Tech stack** - Python/FastAPI backend, React/Vite frontend
+
 ## Slice Documents
 
 Always read the relevant slice document before working on a phase. Each slice lists deliverables, architecture constraints, implementation steps, and definition-of-done checklists.

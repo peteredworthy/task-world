@@ -30,7 +30,7 @@ async def _create_and_start_run(client: AsyncClient) -> tuple[str, str]:
     """Helper: create, start a run, and return (run_id, task_id)."""
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     assert response.status_code == 201
     data = response.json()
@@ -172,7 +172,7 @@ async def test_guidance_with_no_active_task(client: AsyncClient) -> None:
     """GET /runs/{id}/guidance handles runs with no active tasks."""
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     assert response.status_code == 201
     run_id = response.json()["id"]
@@ -223,7 +223,7 @@ async def test_full_user_managed_lifecycle(client: AsyncClient) -> None:
     # Create and start run
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     assert response.status_code == 201
     run_id = response.json()["id"]
@@ -319,7 +319,8 @@ async def test_guidance_with_embedded_routine(client: AsyncClient) -> None:
         "/api/runs",
         json={
             "routine_embedded": embedded,
-            "project_id": "proj-1",
+            "repo_name": "proj-1",
+            "branch": "main",
         },
     )
     assert response.status_code == 201

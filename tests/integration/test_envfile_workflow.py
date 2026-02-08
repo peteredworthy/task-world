@@ -65,7 +65,7 @@ async def test_full_lifecycle_with_multiple_tasks(
     # === PHASE 1: Run Start ===
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -126,7 +126,7 @@ async def test_full_lifecycle_with_multiple_tasks(
     # === PHASE 8: Run End (success) ===
     await lifecycle.on_run_end(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         success=True,
     )
@@ -168,7 +168,7 @@ async def test_next_task_sees_previous_task_changes(
     # Start run
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -229,7 +229,7 @@ async def test_no_promotion_on_failure(
     # Start run
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -244,7 +244,7 @@ async def test_no_promotion_on_failure(
     # Run end with FAILURE
     await lifecycle.on_run_end(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         success=False,
     )
@@ -274,7 +274,7 @@ async def test_snapshot_restoration_at_any_point(
     # Run lifecycle
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -290,7 +290,7 @@ async def test_snapshot_restoration_at_any_point(
 
     await lifecycle.on_run_end(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         success=True,
     )
@@ -338,7 +338,7 @@ async def test_lifecycle_with_no_source_dir_uses_canonical(
     # Start run WITHOUT source_dir
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=None,
@@ -360,7 +360,7 @@ async def test_lifecycle_with_no_source_dir_uses_canonical(
 
     await lifecycle.on_run_end(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         success=True,
     )

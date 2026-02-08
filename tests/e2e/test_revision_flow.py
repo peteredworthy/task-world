@@ -28,7 +28,7 @@ async def test_revision_flow_gate_blocked(api_client: AsyncClient) -> None:
     should block and keep the task in BUILDING state.
     """
     # Create and start run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="rev-proj-1")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-1")
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
 
@@ -65,7 +65,7 @@ async def test_revision_flow_failed_grades(api_client: AsyncClient) -> None:
     transition back to BUILDING with a new attempt.
     """
     # Create and start run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="rev-proj-2")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-2")
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
 
@@ -114,7 +114,7 @@ async def test_revision_flow_multiple_rounds(api_client: AsyncClient) -> None:
     to create new attempts until it eventually passes.
     """
     # Create and start run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="rev-proj-3")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-3")
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
 
@@ -163,7 +163,7 @@ async def test_revision_preserves_checklist_state(api_client: AsyncClient) -> No
     as done to re-submit.
     """
     # Create and start run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="rev-proj-4")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-4")
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
 
@@ -204,7 +204,7 @@ async def test_revision_preserves_task_context(api_client: AsyncClient) -> None:
     consistent across revision cycles.
     """
     # Create and start run
-    run_data = await create_run(api_client, routine_id="simple-routine", project_id="rev-proj-5")
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-5")
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
 

@@ -23,10 +23,11 @@ from orchestrator.db.connection import create_engine, create_session_factory, in
 from orchestrator.db.event_store import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
+from orchestrator.workflow.prompts import generate_builder_prompt
 from orchestrator.workflow.service import (
     WorkflowService,
-    resolve_auto_verify_config,
     find_task_config,
+    resolve_auto_verify_config,
 )
 
 
@@ -76,7 +77,8 @@ def _make_run_with_auto_verify(
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-av",
-        project_id=project_path,
+        repo_name="test-repo",
+        worktree_path=project_path,  # Set worktree_path for auto-verify to work
         status=RunStatus.DRAFT,
         routine_id="av-routine",
         routine_source=RoutineSource.EMBEDDED,
@@ -112,7 +114,8 @@ def _make_run_without_auto_verify(project_path: str) -> Run:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-no-av",
-        project_id=project_path,
+        repo_name="test-repo",
+        worktree_path=project_path,
         status=RunStatus.DRAFT,
         routine_id="no-av-routine",
         routine_source=RoutineSource.EMBEDDED,
@@ -199,7 +202,7 @@ class TestResolveAutoVerifyConfig:
         now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
         run = Run(
             id="run-1",
-            project_id="/tmp",
+            repo_name="/tmp",
             status=RunStatus.DRAFT,
             routine_id="some-routine",
             routine_embedded=None,
@@ -301,6 +304,19 @@ async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_p
     assert len(task.attempts[0].auto_verify_results) == 2
     assert task.attempts[0].auto_verify_results[0]["passed"] is False
     assert task.attempts[0].auto_verify_results[0]["item_id"] == "check1"
+    assert task.attempts[0].verifier_comment is not None
+    assert "Auto-verify failed" in task.attempts[0].verifier_comment
+    assert "command `false` failed" in task.attempts[0].verifier_comment
+
+    # Revision prompt should include previous feedback even though a new attempt exists.
+    from orchestrator.config.models import RoutineConfig
+
+    routine = RoutineConfig.model_validate(run.routine_embedded)
+    task_config = find_task_config(routine, "T-01")
+    assert task_config is not None
+    prompt = generate_builder_prompt(task_config, task, run.config)
+    assert "Previous Feedback (Revision Required)" in prompt.user
+    assert "command `false` failed" in prompt.user
 
 
 async def test_submit_with_failing_non_must_still_verifying(

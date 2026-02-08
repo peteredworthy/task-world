@@ -57,13 +57,28 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _do_configure_and_migrate(connection: Connection) -> None:
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        render_as_batch=True,  # Required for SQLite
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode (async).
+    """Run migrations in 'online' mode.
 
-    In this scenario we need to create an async Engine
-    and associate a connection with the context.
-
+    If a connection is provided via ``config.attributes["connection"]``
+    (programmatic invocation from ``init_db``), use it directly.
+    Otherwise create an async engine from the ini-file settings (CLI usage).
     """
+    existing_connection = config.attributes.get("connection", None)
+    if existing_connection is not None:
+        _do_configure_and_migrate(existing_connection)
+        return
+
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -72,17 +87,8 @@ def run_migrations_online() -> None:
 
     async def do_run_migrations() -> None:
         async with connectable.connect() as connection:
-            await connection.run_sync(do_configure_and_migrate)
+            await connection.run_sync(_do_configure_and_migrate)
         await connectable.dispose()
-
-    def do_configure_and_migrate(connection: Connection) -> None:
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            render_as_batch=True,  # Required for SQLite
-        )
-        with context.begin_transaction():
-            context.run_migrations()
 
     asyncio.run(do_run_migrations())
 

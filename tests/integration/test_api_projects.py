@@ -28,11 +28,11 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     await app.state.engine.dispose()
 
 
-async def _create_run(client: AsyncClient, project_id: str = "proj-1") -> dict[str, Any]:
-    """Helper: create a run with the given project_id."""
+async def _create_run(client: AsyncClient, repo_name: str = "proj-1") -> dict[str, Any]:
+    """Helper: create a run with the given repo_name."""
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": project_id},
+        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
     )
     assert response.status_code == 201
     return response.json()
@@ -47,10 +47,10 @@ async def test_list_projects_empty(client: AsyncClient) -> None:
 
 
 async def test_list_projects_returns_unique_ids(client: AsyncClient) -> None:
-    """Create runs with different project_ids, verify unique list returned."""
-    await _create_run(client, project_id="alpha")
-    await _create_run(client, project_id="beta")
-    await _create_run(client, project_id="gamma")
+    """Create runs with different repo_names, verify unique list returned."""
+    await _create_run(client, repo_name="alpha")
+    await _create_run(client, repo_name="beta")
+    await _create_run(client, repo_name="gamma")
 
     response = await client.get("/api/projects")
     assert response.status_code == 200
@@ -59,10 +59,10 @@ async def test_list_projects_returns_unique_ids(client: AsyncClient) -> None:
 
 
 async def test_list_projects_deduplicates(client: AsyncClient) -> None:
-    """Multiple runs with same project_id -> it appears only once."""
-    await _create_run(client, project_id="shared-project")
-    await _create_run(client, project_id="shared-project")
-    await _create_run(client, project_id="other-project")
+    """Multiple runs with same repo_name -> it appears only once."""
+    await _create_run(client, repo_name="shared-project")
+    await _create_run(client, repo_name="shared-project")
+    await _create_run(client, repo_name="other-project")
 
     response = await client.get("/api/projects")
     assert response.status_code == 200

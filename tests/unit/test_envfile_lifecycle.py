@@ -62,7 +62,7 @@ async def test_on_run_start_with_source_dir_injects_files(
 
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -102,7 +102,7 @@ async def test_on_run_start_without_source_dir_loads_from_canonical(
 
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=None,
@@ -135,7 +135,7 @@ async def test_on_task_start_captures_snapshot(
     # Setup run
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -175,7 +175,7 @@ async def test_on_task_end_captures_snapshot(
     # Setup run
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -212,7 +212,7 @@ async def test_on_run_end_with_success_promotes_to_canonical(
     # Setup run
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -224,7 +224,7 @@ async def test_on_run_end_with_success_promotes_to_canonical(
 
     await lifecycle.on_run_end(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         success=True,
     )
@@ -257,7 +257,7 @@ async def test_on_run_end_without_success_does_not_promote(
     # Setup run
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -268,7 +268,7 @@ async def test_on_run_end_without_success_does_not_promote(
 
     await lifecycle.on_run_end(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         success=False,
     )
@@ -295,7 +295,7 @@ async def test_all_methods_noop_when_env_specs_empty(
     # on_run_start with empty env_specs
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=[],
         source_dir=None,
@@ -311,7 +311,7 @@ async def test_all_methods_noop_when_env_specs_empty(
 
     # on_run_end should be no-op
     await lifecycle.on_run_end(
-        run_id=run_id, project_id=project_id, worktree_path=worktree, success=True
+        run_id=run_id, repo_name=project_id, worktree_path=worktree, success=True
     )
 
 
@@ -328,7 +328,7 @@ async def test_all_methods_noop_when_manifest_missing(
     await lifecycle.on_task_start(run_id=run_id, task_id=task_id, worktree_path=worktree)
     await lifecycle.on_task_end(run_id=run_id, task_id=task_id, worktree_path=worktree)
     await lifecycle.on_run_end(
-        run_id=run_id, project_id=project_id, worktree_path=worktree, success=True
+        run_id=run_id, repo_name=project_id, worktree_path=worktree, success=True
     )
 
     # No manifest should exist
@@ -351,7 +351,7 @@ async def test_full_lifecycle_integration(
     # Step 1: Start run
     await lifecycle.on_run_start(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         env_specs=env_specs,
         source_dir=source_dir,
@@ -390,7 +390,7 @@ async def test_full_lifecycle_integration(
     # Step 8: End run with success
     await lifecycle.on_run_end(
         run_id=run_id,
-        project_id=project_id,
+        repo_name=project_id,
         worktree_path=worktree,
         success=True,
     )

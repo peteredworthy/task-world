@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import AgentType, ChecklistStatus, RunStatus, TaskStatus
+from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, TaskConfig
 from orchestrator.db.event_store import EventStore
 from orchestrator.db.repositories import RunRepository
@@ -47,6 +48,7 @@ from orchestrator.workflow.transitions import (
 )
 from orchestrator.workflow.completion import handle_run_completion
 from orchestrator.git.worktree import WorktreeManager
+from orchestrator.git.utils import get_head_commit
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 
 
@@ -104,19 +106,15 @@ def resolve_auto_verify_config(run: Run, task_config_id: str) -> AutoVerifyConfi
     return task_config.auto_verify
 
 
-def _resolve_project_path(run: Run) -> Path | None:
+def _resolve_working_path(run: Run) -> Path | None:
     """Resolve the working directory for auto-verify commands from the run.
 
-    Uses worktree_path if available, otherwise falls back to project_id.
-    Returns None if neither is usable as a path.
+    Uses worktree_path if available. Returns None if not set or not a valid directory.
     """
     if run.worktree_path:
         p = Path(run.worktree_path)
         if p.is_dir():
             return p
-    p = Path(run.project_id)
-    if p.is_dir():
-        return p
     return None
 
 
@@ -149,7 +147,7 @@ class WorkflowService:
         clock: Clock | None = None,
         auto_verify_runner: AutoVerifyRunner | None = None,
         lock_manager: LockManager | None = None,
-        worktree_manager: WorktreeManager | None = None,
+        global_config: GlobalConfig | None = None,
         env_lifecycle: EnvFileLifecycle | None = None,
     ) -> None:
         self._session = session
@@ -160,7 +158,7 @@ class WorkflowService:
         self._submit_registry = submit_event_registry or SubmitEventRegistry()
         self._auto_verify_runner = auto_verify_runner
         self._lock_manager = lock_manager
-        self._worktree_manager = worktree_manager
+        self._global_config = global_config
         self._env_lifecycle = env_lifecycle
 
     def _build_engine(
@@ -207,6 +205,27 @@ class WorkflowService:
             sanitized[key] = value
         return sanitized
 
+    def _create_worktree_manager(self, run: Run) -> WorktreeManager | None:
+        """Create a WorktreeManager for a specific run's repository.
+
+        Args:
+            run: The run to create a worktree manager for
+
+        Returns:
+            WorktreeManager instance or None if global_config is not available
+        """
+        if self._global_config is None:
+            return None
+
+        repos_dir = self._global_config.paths.get_repos_path()
+        worktrees_dir = self._global_config.paths.get_worktrees_path()
+        repo_path = repos_dir / run.repo_name
+
+        if not repo_path.is_dir():
+            return None
+
+        return WorktreeManager(repo_path, worktrees_dir)
+
     # --- Delegating to WorkflowEngine ---
 
     async def cancel_run(self, run_id: str, reason: str | None = None) -> Run:
@@ -233,14 +252,16 @@ class WorkflowService:
             worktree_path = Path(updated_run.worktree_path)
             await self._env_lifecycle.on_run_end(
                 run_id=run_id,
-                project_id=updated_run.project_id,
+                repo_name=updated_run.repo_name,
                 worktree_path=worktree_path,
                 success=False,
             )
 
         # Handle completion actions for cancelled (FAILED) runs
-        if self._worktree_manager is not None and updated_run.status == RunStatus.FAILED:
-            handle_run_completion(updated_run, self._worktree_manager)
+        if updated_run.status == RunStatus.FAILED:
+            worktree_manager = self._create_worktree_manager(updated_run)
+            if worktree_manager is not None:
+                handle_run_completion(updated_run, worktree_manager)
 
         return result
 
@@ -258,24 +279,14 @@ class WorkflowService:
         run = await self._repo.get(run_id)
         logger.info(
             f"Starting run {run_id}: agent_type={run.agent_type}, "
-            f"project={run.project_id}, routine={run.routine_id}"
+            f"repo={run.repo_name}, routine={run.routine_id}"
         )
 
         engine, state, buffer = self._build_engine(run)
         engine.start_run(run_id)
 
-        # Create worktree if enabled and project is a git repo
-        updated_run = state.get_run(run_id)
-        if updated_run.worktree_enabled and not updated_run.worktree_path:
-            project_path = Path(updated_run.project_id)
-            if project_path.is_dir() and (project_path / ".git").exists():
-                manager = WorktreeManager(project_path)
-                source = updated_run.source_branch or "main"
-                wt_info = manager.create(run_id, base_branch=source)
-                updated_run.worktree_path = str(wt_info.path)
-                updated_run.source_branch = source
-                state.update_run(updated_run)
-
+        # Note: worktree creation is now handled by the caller (API layer)
+        # who has access to the repos_dir configuration
         result = await self._persist(state, run_id, buffer)
 
         # Call env_lifecycle hook if configured and worktree is available
@@ -284,7 +295,7 @@ class WorkflowService:
             source_dir = Path(result.env_source_dir) if result.env_source_dir else None
             await self._env_lifecycle.on_run_start(
                 run_id=run_id,
-                project_id=result.project_id,
+                repo_name=result.repo_name,
                 worktree_path=worktree_path,
                 env_specs=result.env_file_specs,
                 source_dir=source_dir,
@@ -392,6 +403,14 @@ class WorkflowService:
             raise InvalidTransitionError(run.status.value, "start_task (requires ACTIVE run)")
         engine, state, buffer = self._build_engine(run)
         result = engine.start_task(run_id, task_id)
+
+        # Capture start commit for git tracking
+        if result.success and run.worktree_path:
+            task = state.get_task(run_id, task_id)
+            if task.attempts:
+                worktree_path = Path(run.worktree_path)
+                task.attempts[-1].start_commit = get_head_commit(worktree_path)
+
         await self._persist(state, run_id, buffer)
 
         # Call env_lifecycle hook if configured and worktree is available
@@ -439,15 +458,23 @@ class WorkflowService:
             await self._persist(state, run_id, buffer)
             return result
 
-        # --- Auto-verify phase ---
+        # --- Capture end commit for git tracking ---
         task = state.get_task(run_id, task_id)
+        if run.worktree_path and task.attempts:
+            worktree_path = Path(run.worktree_path)
+            task.attempts[-1].end_commit = get_head_commit(worktree_path)
+
+        # --- Auto-verify phase ---
         auto_verify_config = resolve_auto_verify_config(run, task.config_id)
 
         if auto_verify_config is not None and self._auto_verify_runner is not None:
-            project_path = _resolve_project_path(run)
+            project_path = _resolve_working_path(run)
             if project_path is not None:
                 av_results = await run_auto_verify(
-                    auto_verify_config, self._auto_verify_runner, project_path
+                    auto_verify_config,
+                    self._auto_verify_runner,
+                    project_path,
+                    variables=run.config,
                 )
 
                 # Store results in the current attempt
@@ -472,9 +499,53 @@ class WorkflowService:
                 )
 
                 if not all_must_passed:
-                    # Must-items failed: transition back to BUILDING (revision)
+                    # Store actionable feedback on the completed attempt so the
+                    # next builder prompt can include concrete remediation details.
+                    if task.attempts:
+                        failing_lines: list[str] = []
+                        for av in av_results:
+                            if av.item_id not in failing_must_ids:
+                                continue
+                            output = av.output.strip() if av.output else ""
+                            snippet = output if output else "(no command output)"
+                            failing_lines.append(
+                                f"- [{av.item_id}] command `{av.cmd}` failed (exit {av.exit_code})\n"
+                                f"  Output:\n{snippet}"
+                            )
+                        if failing_lines:
+                            task.attempts[-1].verifier_comment = (
+                                "Auto-verify failed. Fix the following and resubmit:\n"
+                                + "\n".join(failing_lines)
+                            )
+
+                    # Must-items failed: check max_attempts before retrying
                     run_obj = state.get_run(run_id)
                     old_status = task.status
+
+                    if task.current_attempt >= task.max_attempts:
+                        # Max attempts exceeded: fail the task
+                        task.status = TaskStatus.FAILED
+                        if task.attempts:
+                            task.attempts[-1].outcome = "failed"
+                        buffer.emit(
+                            TaskStatusChanged(
+                                timestamp=self._clock.now(),
+                                run_id=run_id,
+                                event_type="task_status_changed",
+                                task_id=task_id,
+                                old_status=old_status,
+                                new_status=TaskStatus.FAILED,
+                            )
+                        )
+                        state.update_run(run_obj)
+                        await self._persist(state, run_id, buffer)
+                        self._notify_submit(task_id)
+                        return TransitionResult(
+                            success=True,
+                            new_status=TaskStatus.FAILED,
+                            error=f"Auto-verify failed after max attempts ({task.max_attempts})",
+                        )
+
                     rev_result = transition_to_building(task, self._clock.now())
                     if rev_result.success:
                         # Populate agent snapshot on the newly created attempt
@@ -556,17 +627,16 @@ class WorkflowService:
             success = updated_run.status == RunStatus.COMPLETED
             await self._env_lifecycle.on_run_end(
                 run_id=run_id,
-                project_id=updated_run.project_id,
+                repo_name=updated_run.repo_name,
                 worktree_path=worktree_path,
                 success=success,
             )
 
         # Handle completion actions if run reached terminal state
-        if self._worktree_manager is not None and updated_run.status in (
-            RunStatus.COMPLETED,
-            RunStatus.FAILED,
-        ):
-            handle_run_completion(updated_run, self._worktree_manager)
+        if updated_run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+            worktree_manager = self._create_worktree_manager(updated_run)
+            if worktree_manager is not None:
+                handle_run_completion(updated_run, worktree_manager)
 
         return result
 
@@ -584,23 +654,21 @@ class WorkflowService:
         """List runs created within the last N hours."""
         return await self._repo.list_recent(hours)
 
-    async def list_project_ids(self) -> list[str]:
-        """List unique project IDs across all runs."""
-        return await self._repo.list_project_ids()
+    async def list_repo_names(self) -> list[str]:
+        """List unique repository names across all runs."""
+        return await self._repo.list_repo_names()
 
-    async def list_runs_by_project(self, project_id: str) -> list[Run]:
-        """List runs for a project."""
-        return await self._repo.list_by_project(project_id)
+    async def list_runs_by_repo(self, repo_name: str) -> list[Run]:
+        """List runs for a repository."""
+        return await self._repo.list_by_repo(repo_name)
 
     async def list_runs_by_status(self, status: RunStatus) -> list[Run]:
         """List runs filtered by status."""
         return await self._repo.list_by_status(status)
 
-    async def list_runs_by_project_and_status(
-        self, project_id: str, status: RunStatus
-    ) -> list[Run]:
-        """List runs filtered by both project and status."""
-        return await self._repo.list_by_project_and_status(project_id, status)
+    async def list_runs_by_repo_and_status(self, repo_name: str, status: RunStatus) -> list[Run]:
+        """List runs filtered by both repository and status."""
+        return await self._repo.list_by_repo_and_status(repo_name, status)
 
     async def get_task(self, run_id: str, task_id: str) -> TaskState:
         """Get a task by run ID and task ID."""
@@ -614,6 +682,14 @@ class WorkflowService:
         await self._repo.save(run)
         await self._session.commit()
         return await self._repo.get(run.id)
+
+    async def set_worktree_path(self, run_id: str, worktree_path: str) -> Run:
+        """Set the worktree path on a run after worktree creation."""
+        run = await self._repo.get(run_id)
+        run.worktree_path = worktree_path
+        await self._repo.save(run)
+        await self._session.commit()
+        return run
 
     async def delete_run(self, run_id: str) -> None:
         """Delete a run."""

@@ -81,7 +81,8 @@ def test_dry_run_result_empty_lists():
 def test_build_dry_run_context_basic():
     """Test building dry-run context with basic inputs."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={"feature": "auth", "version": "v1"},
     )
 
@@ -121,7 +122,8 @@ def test_build_dry_run_context_basic():
 def test_build_dry_run_context_respects_token_limit():
     """Test that context building respects token limit."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={},
     )
 
@@ -161,7 +163,8 @@ def test_build_dry_run_context_respects_token_limit():
 def test_build_dry_run_context_empty_artifacts():
     """Test context building with no artifacts."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={"key": "value"},
     )
 
@@ -195,7 +198,8 @@ def test_build_dry_run_context_empty_artifacts():
 def test_build_dry_run_context_no_step_context():
     """Test context building when step has no context."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={"key": "value"},  # Add config so section appears
     )
 
@@ -440,7 +444,8 @@ def test_get_step_by_id_not_found():
 def test_execute_dry_run_single_step():
     """Test executing dry-run for single step."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={"feature": "auth"},
     )
 
@@ -484,7 +489,8 @@ def test_execute_dry_run_single_step():
 def test_execute_dry_run_multiple_steps():
     """Test executing dry-run for multiple steps."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={},
     )
 
@@ -538,7 +544,8 @@ def test_execute_dry_run_multiple_steps():
 def test_execute_dry_run_with_artifacts():
     """Test executing dry-run with artifacts from prior steps."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={},
     )
 
@@ -587,7 +594,8 @@ def test_execute_dry_run_with_artifacts():
 def test_execute_dry_run_step_not_found():
     """Test dry-run fails when target step not found."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={},
     )
 
@@ -627,7 +635,8 @@ def test_execute_dry_run_step_not_found():
 def test_execute_dry_run_multiple_tasks_in_step():
     """Test dry-run with step containing multiple tasks."""
     run = Run(
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         config={},
     )
 

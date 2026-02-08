@@ -4,8 +4,6 @@ Tests that the system can recover from server restarts and that state
 is properly persisted across server lifecycles.
 """
 
-import signal
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -35,9 +33,7 @@ async def test_state_persists_across_requests(
     that state changes are properly persisted and can be retrieved.
     """
     # Create a run
-    run_data = await create_run(
-        api_client, routine_id="simple-routine", project_id="persist-proj-1"
-    )
+    run_data = await create_run(api_client, routine_id="simple-routine", repo_name="persist-proj-1")
     run_id = run_data["id"]
 
     # Start the run
@@ -81,13 +77,13 @@ async def test_multiple_runs_persist_independently(api_client: httpx.AsyncClient
     don't affect the others.
     """
     # Create three runs
-    run1_data = await create_run(api_client, routine_id="simple-routine", project_id="multi-proj-1")
+    run1_data = await create_run(api_client, routine_id="simple-routine", repo_name="multi-proj-1")
     run1_id = run1_data["id"]
 
-    run2_data = await create_run(api_client, routine_id="simple-routine", project_id="multi-proj-2")
+    run2_data = await create_run(api_client, routine_id="simple-routine", repo_name="multi-proj-2")
     run2_id = run2_data["id"]
 
-    run3_data = await create_run(api_client, routine_id="simple-routine", project_id="multi-proj-3")
+    run3_data = await create_run(api_client, routine_id="simple-routine", repo_name="multi-proj-3")
     run3_id = run3_data["id"]
 
     # Start only run1
@@ -128,7 +124,7 @@ async def test_task_attempts_persisted(api_client: httpx.AsyncClient) -> None:
     """
     # Create and start run
     run_data = await create_run(
-        api_client, routine_id="simple-routine", project_id="attempts-proj-1"
+        api_client, routine_id="simple-routine", repo_name="attempts-proj-1"
     )
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
@@ -170,7 +166,7 @@ async def test_checklist_state_persisted(api_client: httpx.AsyncClient) -> None:
     """
     # Create and start run
     run_data = await create_run(
-        api_client, routine_id="simple-routine", project_id="checklist-proj-1"
+        api_client, routine_id="simple-routine", repo_name="checklist-proj-1"
     )
     run_id = run_data["id"]
     run_data = await start_run(api_client, run_id)
@@ -206,18 +202,18 @@ async def test_run_list_reflects_persisted_state(api_client: httpx.AsyncClient) 
     """
     # Create runs in different states
     draft_run = await create_run(
-        api_client, routine_id="simple-routine", project_id="list-proj-draft"
+        api_client, routine_id="simple-routine", repo_name="list-proj-draft"
     )
     draft_run_id = draft_run["id"]
 
     active_run = await create_run(
-        api_client, routine_id="simple-routine", project_id="list-proj-active"
+        api_client, routine_id="simple-routine", repo_name="list-proj-active"
     )
     active_run_id = active_run["id"]
     await start_run(api_client, active_run_id)
 
     completed_run = await create_run(
-        api_client, routine_id="simple-routine", project_id="list-proj-completed"
+        api_client, routine_id="simple-routine", repo_name="list-proj-completed"
     )
     completed_run_id = completed_run["id"]
     completed_run = await start_run(api_client, completed_run_id)
@@ -244,34 +240,3 @@ async def test_run_list_reflects_persisted_state(api_client: httpx.AsyncClient) 
     assert run_map[draft_run_id]["status"] == "draft"
     assert run_map[active_run_id]["status"] == "active"
     assert run_map[completed_run_id]["status"] == "completed"
-
-
-@pytest.mark.e2e
-@pytest.mark.skip(reason="Server restart requires complex subprocess management")
-async def test_recovery_from_server_restart(
-    api_server: tuple[str, subprocess.Popen[bytes]],
-) -> None:
-    """Test that system can recover from server crash/restart.
-
-    This test would verify event replay and state reconstruction, but
-    requires complex server lifecycle management that's better tested
-    at the integration level.
-    """
-    base_url, process = api_server
-
-    # Create a client
-    async with httpx.AsyncClient(base_url=base_url, timeout=30.0) as client:
-        # Create and partially complete a run
-        run_data = await create_run(
-            client, routine_id="simple-routine", project_id="restart-proj-1"
-        )
-        run_id = run_data["id"]
-        await start_run(client, run_id)
-
-        # Kill the server
-        process.send_signal(signal.SIGTERM)
-        process.wait(timeout=5.0)
-
-        # Server would need to be restarted here with same database
-        # This is complex in a pytest fixture context, so we skip this test
-        # and rely on integration tests for recovery verification

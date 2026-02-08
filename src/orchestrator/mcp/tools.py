@@ -6,10 +6,13 @@ It is tested independently of server transport.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from orchestrator.config.enums import ChecklistStatus
 from orchestrator.mcp.clarification_tools import CLARIFICATION_TOOL
+from orchestrator.repos.discovery import get_repo, list_branches, list_repos
+from orchestrator.repos.errors import RepoNotFoundError
 from orchestrator.workflow.clarifications import ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService
 
@@ -83,14 +86,51 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
         },
     },
     CLARIFICATION_TOOL,
+    {
+        "name": "orchestrator_list_repos",
+        "description": "List available repositories in the repos directory.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "orchestrator_list_branches",
+        "description": "List branches in a repository with optional glob pattern filter.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "repo_name": {"type": "string", "description": "Name of the repository"},
+                "pattern": {
+                    "type": "string",
+                    "description": "Optional glob pattern to filter branches (e.g., 'feat*', '*/auth')",
+                },
+                "local_only": {
+                    "type": "boolean",
+                    "description": "If true, only list local branches (default: false)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of branches to return (default: 100)",
+                },
+            },
+            "required": ["repo_name"],
+        },
+    },
 ]
 
 
 class ToolHandler:
     """Dispatches MCP tool calls to WorkflowService methods."""
 
-    def __init__(self, service: WorkflowService) -> None:
+    def __init__(
+        self,
+        service: WorkflowService,
+        repos_dir: Path | None = None,
+    ) -> None:
         self._service = service
+        self._repos_dir = repos_dir
 
     async def handle(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Dispatch a tool call and return the result as a dict.
@@ -108,6 +148,10 @@ class ToolHandler:
             return await self._set_grade(arguments)
         elif tool_name == "orchestrator_request_clarification":
             return await self._request_clarification(arguments)
+        elif tool_name == "orchestrator_list_repos":
+            return await self._list_repos(arguments)
+        elif tool_name == "orchestrator_list_branches":
+            return await self._list_branches(arguments)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -204,3 +248,60 @@ class ToolHandler:
             ],
             "created_at": request.created_at.isoformat(),
         }
+
+    async def _list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
+        """List available repositories."""
+        if self._repos_dir is None:
+            return {"error": "repos_dir not configured", "repos": []}
+
+        try:
+            repos = list_repos(self._repos_dir)
+            return {
+                "repos": [
+                    {
+                        "name": repo.name,
+                        "path": str(repo.path),
+                        "default_branch": repo.default_branch,
+                    }
+                    for repo in repos
+                ]
+            }
+        except Exception as e:
+            return {"error": str(e), "repos": []}
+
+    async def _list_branches(self, args: dict[str, Any]) -> dict[str, Any]:
+        """List branches in a repository."""
+        if self._repos_dir is None:
+            return {"error": "repos_dir not configured", "branches": []}
+
+        repo_name: str = args["repo_name"]
+        pattern: str = args.get("pattern", "")
+        local_only: bool = args.get("local_only", False)
+        limit: int = args.get("limit", 100)
+
+        try:
+            repo = get_repo(self._repos_dir, repo_name)
+            branches = list_branches(
+                repo.path,
+                pattern=pattern,
+                local_only=local_only,
+                limit=limit,
+            )
+            return {
+                "repo_name": repo_name,
+                "pattern": pattern,
+                "branches": [
+                    {
+                        "name": b.name,
+                        "is_remote": b.is_remote,
+                        "commit": b.commit,
+                    }
+                    for b in branches
+                ],
+                "total": len(branches),
+                "truncated": len(branches) == limit,
+            }
+        except RepoNotFoundError as e:
+            return {"error": str(e), "branches": []}
+        except Exception as e:
+            return {"error": str(e), "branches": []}

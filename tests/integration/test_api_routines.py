@@ -136,6 +136,7 @@ async def test_validate_routine_valid(client: AsyncClient) -> None:
     data = response.json()
     assert data["valid"] is True
     assert data["errors"] == []
+    assert data["builder_feedback"] == []
 
 
 async def test_validate_routine_valid_unwrapped(client: AsyncClient) -> None:
@@ -148,6 +149,7 @@ async def test_validate_routine_valid_unwrapped(client: AsyncClient) -> None:
     data = response.json()
     assert data["valid"] is True
     assert data["errors"] == []
+    assert data["builder_feedback"] == []
 
 
 async def test_validate_routine_invalid_missing_field(client: AsyncClient) -> None:
@@ -160,6 +162,7 @@ async def test_validate_routine_invalid_missing_field(client: AsyncClient) -> No
     data = response.json()
     assert data["valid"] is False
     assert len(data["errors"]) > 0
+    assert len(data["builder_feedback"]) > 0
 
 
 async def test_validate_routine_invalid_yaml_syntax(client: AsyncClient) -> None:
@@ -172,6 +175,7 @@ async def test_validate_routine_invalid_yaml_syntax(client: AsyncClient) -> None
     data = response.json()
     assert data["valid"] is False
     assert any("YAML parse error" in e for e in data["errors"])
+    assert len(data["builder_feedback"]) > 0
 
 
 async def test_validate_routine_empty_yaml(client: AsyncClient) -> None:
@@ -184,3 +188,4 @@ async def test_validate_routine_empty_yaml(client: AsyncClient) -> None:
     data = response.json()
     assert data["valid"] is False
     assert any("Empty" in e for e in data["errors"])
+    assert len(data["builder_feedback"]) > 0

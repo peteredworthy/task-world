@@ -30,7 +30,7 @@ function makeStep(overrides: Partial<StepSummary> & { id: string; config_id: str
 function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
   return {
     id: 'run-1',
-    project_id: '/home/user/project',
+    repo_name: '/home/user/project',
     status: 'draft',
     routine_id: 'my-routine',
     routine_sha: null,
@@ -79,8 +79,8 @@ function renderCard(run: RunResponse, props: Partial<Parameters<typeof RunCard>[
 }
 
 describe('RunCard', () => {
-  it('renders routine name and project_id', () => {
-    const run = makeRun({ routine_id: 'test-routine', project_id: '/tmp/proj' });
+  it('renders routine name and repo_name', () => {
+    const run = makeRun({ routine_id: 'test-routine', repo_name: '/tmp/proj' });
     renderCard(run, { routineName: 'Test Routine' });
     expect(screen.getByText('Test Routine')).toBeInTheDocument();
     expect(screen.getByText('/tmp/proj')).toBeInTheDocument();

@@ -73,7 +73,8 @@ def _make_run_with_attempt(
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
     return Run(
         id="run-log-1",
-        project_id="proj-1",
+        repo_name="proj-1",
+        source_branch="main",
         status=RunStatus.ACTIVE,
         routine_id="simple-routine",
         routine_source=RoutineSource.LOCAL,
@@ -262,7 +263,7 @@ async def _setup_run_with_logs(client: AsyncClient) -> tuple[str, str]:
     # Create the run
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "project_id": "proj-1"},
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
     )
     assert resp.status_code == 201
     run_id = resp.json()["id"]
