@@ -3,12 +3,18 @@ import type {
   AgentLogsResponse,
   AgentOption,
   ApproveTaskRequest,
+  BranchCountResponse,
+  BranchesListResponse,
   ChecklistItemSchema,
   ClarificationRequest,
   CreateRunRequest,
   PendingAction,
+  ProjectRoutineResponse,
+  ProjectRoutinesListResponse,
   PromptResponse,
   RejectTaskRequest,
+  RepoResponse,
+  ReposListResponse,
   RespondToClarificationRequest,
   RoutineDetail,
   RoutineListResponse,
@@ -19,8 +25,9 @@ import type {
   TransitionResponse,
   UpdateChecklistRequest,
 } from '../types';
+import { joinBaseUrl, normalizeBaseUrl } from '../lib/url';
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? '';
+const BASE_URL = normalizeBaseUrl(import.meta.env.VITE_API_URL);
 
 let authToken: string | null = import.meta.env.VITE_AUTH_TOKEN ?? null;
 
@@ -79,7 +86,7 @@ async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
 
   let res: Response;
   try {
-    res = await fetch(`${BASE_URL}${path}`, { ...init, headers });
+    res = await fetch(joinBaseUrl(BASE_URL, path), { ...init, headers });
   } catch {
     throw new ApiError(0, { detail: 'Unable to reach server. Is the backend running?' });
   }
@@ -97,10 +104,10 @@ async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  listRuns(params?: { status?: string; project_id?: string }): Promise<RunListResponse> {
+  listRuns(params?: { status?: string; repo_name?: string }): Promise<RunListResponse> {
     const sp = new URLSearchParams();
     if (params?.status) sp.set('status', params.status);
-    if (params?.project_id) sp.set('project_id', params.project_id);
+    if (params?.repo_name) sp.set('repo_name', params.repo_name);
     const qs = sp.toString();
     return fetchApi('/api/runs' + (qs ? '?' + qs : ''));
   },
@@ -227,5 +234,38 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     });
+  },
+
+  // Repos API
+  listRepos(): Promise<ReposListResponse> {
+    return fetchApi('/api/repos');
+  },
+
+  getRepo(name: string): Promise<RepoResponse> {
+    return fetchApi('/api/repos/' + name);
+  },
+
+  listBranches(repoName: string, params?: { pattern?: string; include_remote?: boolean }): Promise<BranchesListResponse> {
+    const sp = new URLSearchParams();
+    if (params?.pattern) sp.set('pattern', params.pattern);
+    if (params?.include_remote !== undefined) sp.set('include_remote', String(params.include_remote));
+    const qs = sp.toString();
+    return fetchApi('/api/repos/' + repoName + '/branches' + (qs ? '?' + qs : ''));
+  },
+
+  countBranches(repoName: string, params?: { pattern?: string; include_remote?: boolean }): Promise<BranchCountResponse> {
+    const sp = new URLSearchParams();
+    if (params?.pattern) sp.set('pattern', params.pattern);
+    if (params?.include_remote !== undefined) sp.set('include_remote', String(params.include_remote));
+    const qs = sp.toString();
+    return fetchApi('/api/repos/' + repoName + '/branches/count' + (qs ? '?' + qs : ''));
+  },
+
+  listRepoRoutines(repoName: string, branch: string): Promise<ProjectRoutinesListResponse> {
+    return fetchApi('/api/repos/' + repoName + '/routines?branch=' + encodeURIComponent(branch));
+  },
+
+  getRepoRoutine(repoName: string, routineId: string, branch: string): Promise<ProjectRoutineResponse> {
+    return fetchApi('/api/repos/' + repoName + '/routines/' + routineId + '?branch=' + encodeURIComponent(branch));
   },
 };

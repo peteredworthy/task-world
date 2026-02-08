@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ApiError } from '../api/client';
+import { joinBaseUrl, normalizeBaseUrl } from '../lib/url';
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? '';
+const BASE_URL = normalizeBaseUrl(import.meta.env.VITE_API_URL);
 
 export function ConnectionBanner() {
   const [dismissed, setDismissed] = useState(false);
@@ -12,7 +13,7 @@ export function ConnectionBanner() {
     queryFn: async () => {
       let res: Response;
       try {
-        res = await fetch(`${BASE_URL}/health`);
+        res = await fetch(joinBaseUrl(BASE_URL, '/health'));
       } catch {
         throw new ApiError(0, { detail: 'unreachable' });
       }
@@ -20,7 +21,8 @@ export function ConnectionBanner() {
       return res.json();
     },
     refetchInterval: 10_000,
-    retry: false,
+    retry: 2,
+    retryDelay: 2000,
   });
 
   // Reset dismissal when connection restores

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ActivityEvent } from '../types/activity';
+import { joinBaseUrl, normalizeBaseUrl } from '../lib/url';
 
-const BASE_URL = import.meta.env.VITE_API_URL ?? '';
+const BASE_URL = normalizeBaseUrl(import.meta.env.VITE_API_URL);
 const MAX_BACKOFF_MS = 30_000;
 
 interface UseActivitySSEOptions {
@@ -34,7 +35,8 @@ export function useActivitySSE(runId: string | undefined, options: UseActivitySS
       if (lastEventIdRef.current !== null) {
         params.set('since_id', String(lastEventIdRef.current));
       }
-      const url = `${BASE_URL}/api/runs/${runId}/activity/stream?${params.toString()}`;
+      const query = params.toString();
+      const url = joinBaseUrl(BASE_URL, `/api/runs/${runId}/activity/stream${query ? `?${query}` : ''}`);
 
       try {
         const eventSource = new EventSource(url);

@@ -22,7 +22,7 @@ from orchestrator.api.auth import (
 from orchestrator.api.errors import register_error_handlers
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
 from orchestrator.config.enums import RoutineSource
-from orchestrator.config.global_config import load_global_config
+from orchestrator.config.global_config import GlobalConfig, load_global_config
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
@@ -88,6 +88,7 @@ def create_app(
     auth_disabled: bool | None = None,
     jwt_secret: str | None = None,
     spawn_agents: bool | None = None,
+    global_config: GlobalConfig | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -100,9 +101,11 @@ def create_app(
         jwt_secret: JWT signing secret. Auto-generated if empty when auth is enabled.
         spawn_agents: Whether to spawn managed agents when runs start. Defaults to
             True for production, False when using in-memory SQLite (tests).
+        global_config: Optional pre-built global configuration. Falls back to
+            loading from ``~/.orchestrator/config.yaml``.
     """
     # Load global config for defaults
-    global_cfg = load_global_config()
+    global_cfg = global_config or load_global_config()
 
     if db_path is None:
         db_path = global_cfg.database.path
@@ -113,7 +116,17 @@ def create_app(
     app = FastAPI(title="Orchestrator", version="0.1.0", lifespan=_lifespan)
 
     # CORS
-    cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:5173").split(",")
+    # Default to common local frontend origins so localhost/127.0.0.1 host swaps
+    # don't trigger false "backend unreachable" errors in development.
+    default_cors_origins = ",".join(
+        [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:4173",
+            "http://127.0.0.1:4173",
+        ]
+    )
+    cors_origins = os.environ.get("CORS_ORIGINS", default_cors_origins).split(",")
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[o.strip() for o in cors_origins],
@@ -196,6 +209,7 @@ def create_app(
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.envfiles import router as envfiles_router
     from orchestrator.api.routers.projects import router as projects_router
+    from orchestrator.api.routers.repos import router as repos_router
     from orchestrator.api.routers.routines import router as routines_router
     from orchestrator.api.routers.runs import router as runs_router
     from orchestrator.api.routers.tasks import router as tasks_router
@@ -206,6 +220,7 @@ def create_app(
     app.include_router(config_router, dependencies=auth_deps)
     app.include_router(envfiles_router, dependencies=auth_deps)
     app.include_router(projects_router, dependencies=auth_deps)
+    app.include_router(repos_router, dependencies=auth_deps)
     app.include_router(routines_router, dependencies=auth_deps)
     app.include_router(runs_router, dependencies=auth_deps)
     app.include_router(tasks_router, dependencies=auth_deps)
@@ -254,6 +269,8 @@ class _SessionPerCallHandler:
 
         session_factory = self._app.state.session_factory
         env_lifecycle = getattr(self._app.state, "env_lifecycle", None)
+        settings = getattr(self._app.state, "settings", None)
+        repos_dir = settings.repos_dir if settings else None
         async with session_factory() as session:
             repo = RunRepository(session)
             event_store = EventStore(session)
@@ -267,7 +284,7 @@ class _SessionPerCallHandler:
                 lock_manager=self._app.state.lock_manager,
                 env_lifecycle=env_lifecycle,
             )
-            handler = ToolHandler(service)
+            handler = ToolHandler(service, repos_dir=repos_dir)
             return await handler.handle(tool_name, arguments)
 
 

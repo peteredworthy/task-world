@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { getAuthToken } from '../api/client';
+import { normalizeBaseUrl } from '../lib/url';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'failed';
 
@@ -19,9 +20,9 @@ function createWebSocket(
   const apiUrl = import.meta.env.VITE_API_URL as string | undefined;
 
   if (wsOverride) {
-    baseUrl = wsOverride.replace(/\/+$/, '');
+    baseUrl = normalizeBaseUrl(wsOverride);
   } else if (apiUrl) {
-    baseUrl = apiUrl.replace(/\/+$/, '').replace(/^http/, 'ws');
+    baseUrl = normalizeBaseUrl(apiUrl).replace(/^http/, 'ws');
   } else {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     baseUrl = proto + '//' + window.location.host;
