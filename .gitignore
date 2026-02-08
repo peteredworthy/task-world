@@ -43,3 +43,7 @@ htmlcov/
 # Frontend
 ui/node_modules/
 ui/dist/
+
+# Local nested repos/worktrees (keep on disk, exclude from parent repo)
+repos/
+worktrees/
