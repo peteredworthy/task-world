@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from orchestrator.agents.action_log import ActionLog
 from orchestrator.config.enums import (
     AgentType,
     ChecklistStatus,
@@ -45,6 +46,7 @@ class AttemptMetrics(BaseModel):
     tokens_write: int = 0
     tokens_cache: int = 0
     duration_ms: int = 0
+    num_actions: int = 0
 
 
 class GradeSnapshotItem(BaseModel):
@@ -78,6 +80,9 @@ class Attempt(BaseModel):
     # Agent output capture
     agent_output: str | None = None  # Final captured output (joined lines)
     error: str | None = None  # Error message if agent failed
+
+    # Structured action log (tool calls, text, metrics)
+    action_log: ActionLog | None = None
 
     # Git tracking - commit SHAs for builder/verifier handoff
     start_commit: str | None = None  # Commit at attempt start
@@ -193,3 +198,4 @@ class Run(BaseModel):
     total_tokens_write: int = 0
     total_tokens_cache: int = 0
     total_duration_ms: int = 0
+    total_num_actions: int = 0

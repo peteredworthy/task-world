@@ -106,6 +106,7 @@ class RunResponse(BaseModel):
     total_tokens_write: int = 0
     total_tokens_cache: int = 0
     total_duration_ms: int = 0
+    total_num_actions: int = 0
     estimated_cost_usd: float | None = None
     cost_disclaimer: str | None = None
 
@@ -177,7 +178,9 @@ class MergeBackResponse(BaseModel):
     message: str
 
 
-def get_agent_display_name(agent_type: AgentType | None) -> str:
+def get_agent_display_name(
+    agent_type: AgentType | None, agent_config: dict[str, Any] | None = None
+) -> str:
     """Get human-readable display name for an agent type.
 
     Args:
@@ -195,8 +198,12 @@ def get_agent_display_name(agent_type: AgentType | None) -> str:
         AgentType.CLI_SUBPROCESS: "Claude CLI",
         AgentType.USER_MANAGED: "External Agent",
     }
-
-    return display_map.get(agent_type, "Unknown Agent")
+    display_name = display_map.get(agent_type, "Unknown Agent")
+    if agent_type == AgentType.CLI_SUBPROCESS:
+        command = (agent_config or {}).get("command")
+        if isinstance(command, str) and command.strip():
+            return f"{command} CLI"
+    return display_name
 
 
 def get_agent_icon(agent_type: AgentType | None) -> str:

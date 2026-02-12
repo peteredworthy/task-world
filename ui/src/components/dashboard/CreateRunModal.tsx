@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
-import { useRepos, useAgents, useCreateRun, useStartRun } from '../../hooks/useApi';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useRepos, useAgents, useCreateRun, useStartRun, useRoutine } from '../../hooks/useApi';
 import { Spinner } from '../Spinner';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useCreateRunModal } from '../../hooks/useCreateRunModal';
 import { BranchSelector } from '../BranchSelector';
 import { RoutineSelector } from '../RoutineSelector';
+import type { RoutineSelection } from '../RoutineSelector';
 import type { AgentOption } from '../../types/agents';
 
 interface CreateRunModalProps {
@@ -12,10 +13,17 @@ interface CreateRunModalProps {
   onClose: () => void;
 }
 
+interface RoutineInput {
+  name: string;
+  required: boolean;
+  default: string | null;
+  description: string | null;
+}
+
 interface FormState {
   selectedRoutine: string;
   repoName: string;
-  featureName: string;
+  inputValues: Record<string, string>;
   targetBranch: string;
   selectedAgentIndex: string; // index into allAgents array, '' means none
   autoStart: boolean;
@@ -29,7 +37,7 @@ interface FormState {
 const INITIAL_FORM: FormState = {
   selectedRoutine: '',
   repoName: '',
-  featureName: '',
+  inputValues: {},
   targetBranch: '',
   selectedAgentIndex: '',
   autoStart: true,
@@ -46,6 +54,10 @@ function buildDefaultAgentConfig(agent: AgentOption): Record<string, unknown> {
     if (field.default !== null && field.default !== undefined) {
       config[field.name] = field.default;
     }
+  }
+  // CLI backends share agent_type, so pin the selected command explicitly.
+  if (agent.agent_type === 'cli_subprocess' && typeof config.command !== 'string') {
+    config.command = agent.name;
   }
   return config;
 }
@@ -77,6 +89,47 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
   const { preSelectedRoutine } = useCreateRunModal();
 
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
+  const [routineSelection, setRoutineSelection] = useState<RoutineSelection | null>(null);
+
+  // For templates, fetch full routine detail to get input definitions
+  const isTemplate = routineSelection && !routineSelection.isProjectRoutine;
+  const { data: templateDetail } = useRoutine(isTemplate ? routineSelection.routineId : null);
+
+  // Extract routine inputs from either the project routine config or template detail
+  const routineInputs: RoutineInput[] = useMemo(() => {
+    if (routineSelection?.isProjectRoutine && routineSelection.config) {
+      const inputs = (routineSelection.config as Record<string, unknown>).inputs;
+      if (Array.isArray(inputs)) {
+        return inputs.map((inp: Record<string, unknown>) => ({
+          name: String(inp.name ?? ''),
+          required: Boolean(inp.required),
+          default: inp.default != null ? String(inp.default) : null,
+          description: inp.description != null ? String(inp.description) : null,
+        }));
+      }
+    }
+    if (templateDetail?.inputs) {
+      return templateDetail.inputs.map((inp: Record<string, unknown>) => ({
+        name: String(inp.name ?? ''),
+        required: Boolean(inp.required),
+        default: inp.default != null ? String(inp.default) : null,
+        description: inp.description != null ? String(inp.description) : null,
+      }));
+    }
+    return [];
+  }, [routineSelection, templateDetail]);
+
+  // Pre-populate default values when routine inputs change
+  useEffect(() => {
+    if (routineInputs.length === 0) return;
+    const defaults: Record<string, string> = {};
+    for (const inp of routineInputs) {
+      if (inp.default != null) {
+        defaults[inp.name] = inp.default;
+      }
+    }
+    setForm(prev => ({ ...prev, inputValues: defaults }));
+  }, [routineInputs]);
 
   // Reset form when modal opens (detect open transition via state)
   if (open && !form.prevOpen) {
@@ -85,6 +138,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
       prevOpen: true,
       selectedRoutine: preSelectedRoutine ?? ''
     });
+    setRoutineSelection(null);
   } else if (!open && form.prevOpen) {
     setForm(prev => ({ ...prev, prevOpen: false }));
   }
@@ -122,10 +176,12 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
     e.preventDefault();
     if (!form.selectedRoutine || !form.repoName) return;
 
-    // Build config from featureName (maps to configJson behavior)
+    // Build config from routine input values
     let config: Record<string, unknown> = {};
-    if (form.featureName.trim()) {
-      config = { feature_name: form.featureName.trim() };
+    for (const [key, value] of Object.entries(form.inputValues)) {
+      if (value.trim()) {
+        config[key] = value.trim();
+      }
     }
     // Merge with any explicit configJson if the user edited it
     try {
@@ -135,10 +191,6 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
     } catch {
       setForm(prev => ({ ...prev, configError: 'Invalid JSON' }));
       return;
-    }
-
-    if (form.targetBranch.trim()) {
-      config.target_branch = form.targetBranch.trim();
     }
 
     let agentConfig: Record<string, unknown> | undefined;
@@ -153,8 +205,12 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
     }
 
     try {
+      // Project routines must be sent as routine_embedded (backend can't discover them by ID).
+      // Fall back to routine_id if config is missing for any reason.
+      const useEmbedded = routineSelection?.isProjectRoutine && routineSelection.config;
       const run = await createRun.mutateAsync({
-        routine_id: form.selectedRoutine,
+        routine_id: useEmbedded ? undefined : form.selectedRoutine || undefined,
+        routine_embedded: useEmbedded ? routineSelection.config : undefined,
         repo_name: form.repoName,
         branch: form.targetBranch || 'main',
         config,
@@ -247,7 +303,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                     autoFocus
                     required
                     value={form.repoName}
-                    onChange={e => setForm(prev => ({ ...prev, repoName: e.target.value, targetBranch: '' }))}
+                    onChange={e => setForm(prev => ({ ...prev, repoName: e.target.value, targetBranch: 'main', selectedRoutine: '' }))}
                     className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 appearance-none cursor-pointer"
                   >
                     <option value="">Select a repository...</option>
@@ -270,14 +326,14 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                   <BranchSelector
                     repoName={form.repoName}
                     value={form.targetBranch}
-                    onChange={branch => setForm(prev => ({ ...prev, targetBranch: branch }))}
+                    onChange={branch => setForm(prev => ({ ...prev, targetBranch: branch, selectedRoutine: '' }))}
                     includeRemote={false}
                   />
                 </div>
               )}
 
               {/* Routine Selection */}
-              {form.repoName && form.targetBranch && (
+              {form.repoName && (
                 <div>
                   <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
                     <span className="text-base leading-none">{'\u{1F4CB}'}</span>
@@ -285,31 +341,47 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                   </label>
                   <RoutineSelector
                     repoName={form.repoName}
-                    branch={form.targetBranch}
+                    branch={form.targetBranch || 'main'}
                     value={form.selectedRoutine}
-                    onChange={routineId => setForm(prev => ({ ...prev, selectedRoutine: routineId }))}
+                    onChange={routineId => setForm(prev => ({ ...prev, selectedRoutine: routineId, inputValues: {} }))}
+                    onSelectionChange={setRoutineSelection}
                     required
                   />
                 </div>
               )}
 
-              {/* Configuration */}
-              <div>
-                <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
-                  <span className="text-base leading-none">{'\u2699\uFE0F'}</span>
-                  Configuration
-                </label>
+              {/* Routine Inputs */}
+              {routineInputs.length > 0 && (
                 <div>
-                  <label className="block text-xs text-text-muted mb-1">Feature Name</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. user-auth"
-                    value={form.featureName}
-                    onChange={e => setForm(prev => ({ ...prev, featureName: e.target.value }))}
-                    className="w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
-                  />
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                    <span className="text-base leading-none">{'\u2699\uFE0F'}</span>
+                    Configuration
+                  </label>
+                  <div className="space-y-3">
+                    {routineInputs.map(inp => (
+                      <div key={inp.name}>
+                        <label className="block text-xs text-text-muted mb-1">
+                          {inp.name}
+                          {inp.required && <span className="text-status-failed ml-0.5">*</span>}
+                        </label>
+                        <input
+                          type="text"
+                          placeholder={inp.default ?? (inp.description ?? `Enter ${inp.name}`)}
+                          value={form.inputValues[inp.name] ?? ''}
+                          onChange={e => setForm(prev => ({
+                            ...prev,
+                            inputValues: { ...prev.inputValues, [inp.name]: e.target.value },
+                          }))}
+                          className="w-full rounded-md border border-border bg-bg-card px-3 py-2 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
+                        />
+                        {inp.description && (
+                          <p className="mt-0.5 text-[11px] text-text-muted">{inp.description}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Agent Selection */}
               <div>

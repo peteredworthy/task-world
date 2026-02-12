@@ -40,6 +40,35 @@
 }
 
 @layer base {
+  html,
+  body {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-hover) var(--color-bg-card);
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  html::-webkit-scrollbar-track,
+  body::-webkit-scrollbar-track {
+    background: var(--color-bg-card);
+  }
+
+  html::-webkit-scrollbar-thumb,
+  body::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-border-hover) 80%, black);
+    border-radius: 9999px;
+    border: 2px solid var(--color-bg-card);
+  }
+
+  html::-webkit-scrollbar-thumb:hover,
+  body::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--color-text-muted) 70%, black);
+  }
+
   body {
     background-color: var(--color-bg-primary);
     color: var(--color-text-primary);
@@ -83,4 +112,30 @@
 
 .animate-slide-down {
   animation: slide-down 0.3s ease-out;
+}
+
+/* Dark themed scrollbar for horizontal/overflow containers */
+.scrollbar-dark {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) var(--color-bg-card);
+}
+
+.scrollbar-dark::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.scrollbar-dark::-webkit-scrollbar-track {
+  background: var(--color-bg-card);
+  border-radius: 9999px;
+}
+
+.scrollbar-dark::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border-hover) 80%, black);
+  border-radius: 9999px;
+  border: 2px solid var(--color-bg-card);
+}
+
+.scrollbar-dark::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-muted) 70%, black);
 }

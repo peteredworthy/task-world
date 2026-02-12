@@ -38,6 +38,8 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
       return payload.passed ? 'Grades passed' : 'Grades failed';
     case 'step_completed':
       return 'Step completed';
+    case 'agent_error':
+      return (payload.error_message as string) || 'Agent error';
     default:
       return eventType.replace(/_/g, ' ');
   }
@@ -171,17 +173,20 @@ function TaskGroupCard({
 
       {/* Event timeline */}
       <div className="px-3 py-2 space-y-1">
-        {group.events.map(ev => (
-          <div key={ev.id} className="flex items-center gap-2 text-xs">
-            <span className="w-1.5 h-1.5 rounded-full bg-border shrink-0" />
-            <span className="text-text-secondary">
-              {eventLabel(ev.event_type, ev.payload)}
-            </span>
-            <span className="text-text-muted ml-auto text-[10px] whitespace-nowrap">
-              {formatRelativeTime(ev.timestamp)}
-            </span>
-          </div>
-        ))}
+        {group.events.map(ev => {
+          const isError = ev.event_type === 'agent_error';
+          return (
+            <div key={ev.id} className="flex items-center gap-2 text-xs">
+              <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (isError ? 'bg-status-failed' : 'bg-border')} />
+              <span className={isError ? 'text-status-failed font-medium' : 'text-text-secondary'}>
+                {eventLabel(ev.event_type, ev.payload)}
+              </span>
+              <span className="text-text-muted ml-auto text-[10px] whitespace-nowrap">
+                {formatRelativeTime(ev.timestamp)}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </Wrapper>
   );
@@ -285,12 +290,28 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
   const allTasks = run ? run.steps.flatMap(s => s.tasks) : [];
   const allSteps = run ? run.steps : [];
 
+  // Track which step IDs have been anchored so we only add the id to the first task per step
+  const anchoredStepIds = new Set<string>();
+
+  /** Return an id attribute for the first task in each step (for scroll-to-step). */
+  function getStepAnchorId(taskId: string): string | undefined {
+    const step = allSteps.find(s => s.tasks.some(t => t.id === taskId));
+    if (step && !anchoredStepIds.has(step.id)) {
+      anchoredStepIds.add(step.id);
+      return `step-${step.id}`;
+    }
+    return undefined;
+  }
+
   return (
     <div className="space-y-2" role="feed" aria-label="Activity log">
       {groups.map((group, i) => {
+        // Skip milestone rows — they add noise (agent output, step-complete, auto-verify, etc.)
         if (group.kind === 'milestone') {
-          return <MilestoneRow key={group.event.id} item={group} />;
+          return null;
         }
+
+        const anchorId = getStepAnchorId(group.task_id);
 
         if (useExpandableCards) {
           const taskData = allTasks.find(t => t.id === group.task_id);
@@ -299,57 +320,63 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
           const stepTitle = step?.title || step?.config_id || group.step_title;
 
           return (
-            <TaskDetailCard
-              key={group.task_id + '-' + i}
-              taskId={group.task_id}
-              taskTitle={group.task_title}
-              stepTitle={stepTitle}
-              status={taskData?.status ?? 'pending'}
-              events={group.events}
-              gradeSummary={taskData?.grade_summary ?? []}
-              attemptsSummary={taskData?.attempts_summary ?? []}
-              runId={run!.id}
-            />
+            <div key={group.task_id + '-' + i} id={anchorId}>
+              <TaskDetailCard
+                taskId={group.task_id}
+                taskTitle={group.task_title}
+                stepTitle={stepTitle}
+                status={taskData?.status ?? 'pending'}
+                events={group.events}
+                gradeSummary={taskData?.grade_summary ?? []}
+                attemptsSummary={taskData?.attempts_summary ?? []}
+                runId={run!.id}
+              />
+            </div>
           );
         }
 
         return (
-          <TaskGroupCard
-            key={group.task_id + '-' + i}
-            group={group}
-            isSelected={selectedTaskId === group.task_id}
-            onSelect={() => onSelectTask?.(group.task_id)}
-          />
+          <div key={group.task_id + '-' + i} id={anchorId}>
+            <TaskGroupCard
+              group={group}
+              isSelected={selectedTaskId === group.task_id}
+              onSelect={() => onSelectTask?.(group.task_id)}
+            />
+          </div>
         );
       })}
       {statusOnlyTasks.map(task => {
+        const anchorId = getStepAnchorId(task.task_id);
+
         if (useExpandableCards) {
           const taskData = allTasks.find(t => t.id === task.task_id);
           const step = allSteps.find(s => s.tasks.some(t => t.id === task.task_id));
           const stepTitle = step?.title || step?.config_id || task.step_title;
 
           return (
-            <TaskDetailCard
-              key={task.task_id}
-              taskId={task.task_id}
-              taskTitle={task.task_title}
-              stepTitle={stepTitle}
-              status={taskData?.status ?? task.status}
-              events={[]}
-              gradeSummary={taskData?.grade_summary ?? []}
-              attemptsSummary={taskData?.attempts_summary ?? []}
-              runId={run!.id}
-            />
+            <div key={task.task_id} id={anchorId}>
+              <TaskDetailCard
+                taskId={task.task_id}
+                taskTitle={task.task_title}
+                stepTitle={stepTitle}
+                status={taskData?.status ?? task.status}
+                events={[]}
+                gradeSummary={taskData?.grade_summary ?? []}
+                attemptsSummary={taskData?.attempts_summary ?? []}
+                runId={run!.id}
+              />
+            </div>
           );
         }
 
         return (
-          <ActiveTaskCard
-            key={task.task_id}
-            task={task}
-            isSelected={selectedTaskId === task.task_id}
-            onSelect={() => onSelectTask?.(task.task_id)}
-          />
+          <div key={task.task_id} id={anchorId}>
+            <ActiveTaskCard
+              task={task}
+              isSelected={selectedTaskId === task.task_id}
+              onSelect={() => onSelectTask?.(task.task_id)}
+            />
+          </div>
         );
       })}
     </div>

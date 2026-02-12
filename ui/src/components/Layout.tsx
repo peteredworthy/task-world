@@ -36,7 +36,7 @@ export function Layout() {
   return (
     <div className="flex min-h-screen bg-bg-primary">
       <Sidebar />
-      <div className="flex-1 flex flex-col overflow-auto pb-16 md:pb-0">
+      <div className="flex-1 flex flex-col overflow-auto scrollbar-dark pb-16 md:pb-0">
         <header className="sticky top-0 z-40 bg-bg-card border-b border-border">
           <div className="px-6">
             <div className="flex items-center justify-between h-14">

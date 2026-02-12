@@ -100,6 +100,11 @@ def test_get_agent_display_name_cli_subprocess() -> None:
     assert get_agent_display_name(AgentType.CLI_SUBPROCESS) == "Claude CLI"
 
 
+def test_get_agent_display_name_cli_subprocess_uses_command_when_present() -> None:
+    """CLI subprocess display uses selected command when available."""
+    assert get_agent_display_name(AgentType.CLI_SUBPROCESS, {"command": "codex"}) == "codex CLI"
+
+
 def test_get_agent_display_name_user_managed() -> None:
     """User managed agent returns correct display name."""
     assert get_agent_display_name(AgentType.USER_MANAGED) == "External Agent"

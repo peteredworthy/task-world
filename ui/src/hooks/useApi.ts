@@ -127,6 +127,15 @@ export function useDeleteRun() {
   });
 }
 
+export function useMergeBack() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, strategy }: { runId: string; strategy?: string }) =>
+      api.mergeBack(runId, strategy),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['runs'] }),
+  });
+}
+
 export function useStartTask() {
   const qc = useQueryClient();
   return useMutation({

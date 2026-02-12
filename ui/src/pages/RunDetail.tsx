@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useRun, useRoutine, usePauseRun } from '../hooks/useApi';
+import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack } from '../hooks/useApi';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { usePendingActions } from '../hooks/usePendingActions';
 import { WebSocketProvider } from '../context/WebSocketContext';
@@ -15,7 +15,7 @@ import { Spinner } from '../components/Spinner';
 import { MetricsBar } from '../components/detail/MetricsBar';
 import { ActivityFeed } from '../components/detail/ActivityFeed';
 import { UpcomingPlan } from '../components/detail/UpcomingPlan';
-import { classifyTasks } from '../lib/activity';
+import { classifyTasks, getLastAgentError } from '../lib/activity';
 import { formatRelativeTime } from '../lib/format';
 import { AgentIcon } from '../components/AgentIcon';
 import { ApiError } from '../api/client';
@@ -23,7 +23,7 @@ import type { RunResponse } from '../types';
 import type { StepSummarySchema } from '../types/routines';
 import type { PendingAction } from '../types/clarifications';
 
-/** Compact horizontal progress bar showing step completion at a glance. */
+/** Compact horizontal progress bar showing step completion at a glance. Blocks scroll to step. */
 function StepProgressBar({
   run,
   routineSteps,
@@ -32,6 +32,13 @@ function StepProgressBar({
   routineSteps: StepSummarySchema[] | undefined;
 }) {
   const isTerminal = run.status === 'completed' || run.status === 'failed';
+
+  const scrollToStep = (stepId: string) => {
+    const el = document.getElementById(`step-${stepId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
 
   return (
     <div className="flex items-center gap-1" role="progressbar" aria-label="Step progress">
@@ -53,10 +60,12 @@ function StepProgressBar({
         const shouldPulse = isCurrent && !hasFailed && !isTerminal;
 
         return (
-          <div
+          <button
             key={step.id}
-            className="flex-1 group relative"
+            className="flex-1 group relative cursor-pointer"
             title={`${stepTitle} (${doneCount}/${totalCount})`}
+            onClick={() => scrollToStep(step.id)}
+            aria-label={`Jump to step ${i + 1}: ${stepTitle}`}
           >
             <div
               className={
@@ -70,7 +79,7 @@ function StepProgressBar({
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-bg-elevated border border-border rounded text-[10px] text-text-secondary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
               S{i + 1}: {stepTitle} ({doneCount}/{totalCount})
             </div>
-          </div>
+          </button>
         );
       })}
     </div>
@@ -98,8 +107,11 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { data: pendingActionsData } = usePendingActions(runId);
   const { status: wsStatus, reconnect: wsReconnect } = useWebSocketStatus();
   const pauseRun = usePauseRun();
+  const cancelRun = useCancelRun();
+  const mergeBack = useMergeBack();
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
+  const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
@@ -148,6 +160,11 @@ function RunDetailInner({ runId }: { runId: string }) {
 
   // Check if the run is stuck (failed task blocking progress)
   const { stuck: isStuck, failedTask: stuckTaskName } = isRunStuck(run);
+
+  // Check for agent errors (e.g. run paused because agent crashed)
+  const agentError = (run.status === 'paused' || run.status === 'failed')
+    ? getLastAgentError(events)
+    : null;
 
   // Find active task for guidance panel
   const activeTask = run.agent_type === 'user_managed'
@@ -240,6 +257,38 @@ function RunDetailInner({ runId }: { runId: string }) {
                   Resume
                 </button>
               )}
+              {(run.status === 'active' || run.status === 'paused') && (
+                <button
+                  onClick={() => {
+                    setMutationError(null);
+                    cancelRun.mutate(run.id, { onError: handleMutationError('abort') });
+                  }}
+                  disabled={cancelRun.isPending}
+                  className="px-3 py-1.5 text-xs font-medium text-status-failed bg-status-failed/10 border border-status-failed/30 rounded-md hover:bg-status-failed/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Abort this run"
+                >
+                  {cancelRun.isPending ? 'Aborting...' : 'Abort Run'}
+                </button>
+              )}
+              {run.status === 'completed' && !mergeResult && (
+                <button
+                  onClick={() => {
+                    setMutationError(null);
+                    mergeBack.mutate(
+                      { runId: run.id },
+                      {
+                        onSuccess: (data) => setMergeResult(data.message),
+                        onError: handleMutationError('merge back'),
+                      },
+                    );
+                  }}
+                  disabled={mergeBack.isPending}
+                  className="px-3 py-1.5 text-xs font-medium text-text-primary bg-status-completed/20 border border-status-completed/40 rounded-md hover:bg-status-completed/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  aria-label="Merge run branch back to source"
+                >
+                  {mergeBack.isPending ? 'Merging...' : `Merge to ${run.source_branch || 'main'}`}
+                </button>
+              )}
             </div>
           </div>
 
@@ -256,6 +305,27 @@ function RunDetailInner({ runId }: { runId: string }) {
                 onClick={() => setMutationError(null)}
                 className="ml-4 text-status-failed hover:text-status-failed/80"
                 aria-label="Dismiss error"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+          )}
+
+          {/* Merge success banner */}
+          {mergeResult && (
+            <div className="mb-6 rounded-md bg-status-completed/10 border border-status-completed/30 p-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <svg className="h-4 w-4 text-status-completed shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+                <p className="text-sm text-status-completed">{mergeResult}</p>
+              </div>
+              <button
+                onClick={() => setMergeResult(null)}
+                className="ml-4 text-status-completed hover:text-status-completed/80"
+                aria-label="Dismiss"
               >
                 <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -297,6 +367,23 @@ function RunDetailInner({ runId }: { runId: string }) {
                 <p className="text-sm font-medium text-status-failed">Run blocked</p>
                 <p className="text-xs text-text-secondary mt-0.5">
                   Task <span className="font-medium">{stuckTaskName}</span> failed after exhausting all attempts. This run cannot make further progress.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Agent error banner — shown when run paused/failed due to agent error */}
+          {agentError && (
+            <div className="mb-6 rounded-md bg-status-failed/10 border border-status-failed/30 px-4 py-3 flex items-start gap-3">
+              <svg className="h-5 w-5 text-status-failed shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-status-failed">
+                  Agent error{agentError.taskTitle ? ` — ${agentError.taskTitle}` : ''}
+                </p>
+                <p className="text-xs text-text-secondary mt-0.5 font-mono break-all">
+                  {agentError.errorMessage}
                 </p>
               </div>
             </div>

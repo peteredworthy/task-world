@@ -37,6 +37,10 @@ async def test_detect_cli_tools_real() -> None:
     names = {o.name for o in cli_options}
     assert "claude" in names
     assert "codex" in names
+    for option in cli_options:
+        command_field = next((f for f in option.config_schema if f.name == "command"), None)
+        assert command_field is not None
+        assert command_field.default == option.name
 
 
 async def test_user_managed_always_available() -> None:

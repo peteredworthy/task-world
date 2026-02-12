@@ -33,10 +33,18 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
     }
     case 'checklist_gate_evaluated':
       return payload.passed ? 'Gate passed' : 'Gate blocked';
-    case 'grades_evaluated':
-      return payload.passed ? 'Grades passed' : 'Grades failed';
+    case 'grades_evaluated': {
+      if (payload.passed) return 'Grades passed';
+      const failing = payload.failing_items as string[] | undefined;
+      if (failing && failing.length > 0) {
+        return `Grades failed: ${failing.join('; ')}`;
+      }
+      return 'Grades failed';
+    }
     case 'step_completed':
       return 'Step completed';
+    case 'agent_error':
+      return (payload.error_message as string) || 'Agent error';
     default:
       return eventType.replace(/_/g, ' ');
   }
@@ -132,6 +140,88 @@ function PromptBlock({ label, text }: { label: string; text: string }) {
       <pre className="text-xs text-text-secondary bg-bg-card border border-border rounded-md p-3 overflow-x-auto max-h-60 overflow-y-auto font-mono whitespace-pre-wrap">
         {text}
       </pre>
+    </div>
+  );
+}
+
+/** Concise failure summary showing why an attempt failed. */
+function FailureSummary({
+  snapshot,
+  checklist,
+}: {
+  snapshot: GradeSnapshotItem[];
+  checklist: ChecklistItemSchema[];
+}) {
+  const checklistMap = new Map(checklist.map(c => [c.req_id, c]));
+
+  const issues: { reqId: string; desc: string; reason: string }[] = [];
+  for (const gs of snapshot) {
+    const cl = checklistMap.get(gs.req_id);
+    const desc = cl?.desc ?? gs.req_id;
+    const priority = cl?.priority ?? 'expected';
+
+    if (gs.grade === null) {
+      issues.push({ reqId: gs.req_id, desc, reason: `Not graded (${priority})` });
+    } else if (priority === 'critical' && gs.grade !== 'A') {
+      issues.push({ reqId: gs.req_id, desc, reason: `Grade ${gs.grade} below A` });
+    } else if (priority === 'expected' && gs.grade !== 'A' && gs.grade !== 'B') {
+      issues.push({ reqId: gs.req_id, desc, reason: `Grade ${gs.grade} below B` });
+    }
+  }
+
+  if (issues.length === 0) return null;
+
+  return (
+    <div className="rounded bg-status-failed/10 border border-status-failed/30 px-2.5 py-2">
+      <span className="text-[10px] font-semibold text-status-failed uppercase block mb-1">
+        Why verification failed
+      </span>
+      <ul className="space-y-0.5">
+        {issues.map(i => (
+          <li key={i.reqId} className="text-xs text-text-secondary">
+            <span className="text-status-failed font-medium">{i.reqId}</span>
+            {' '}{i.desc} — <span className="text-text-muted">{i.reason}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Display auto-verify check results. */
+function AutoVerifyResults({ results }: { results: Record<string, unknown>[] }) {
+  return (
+    <div>
+      <h5 className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1">
+        Auto-Verify Checks
+      </h5>
+      <div className="space-y-1">
+        {results.map((r, i) => {
+          const passed = r.passed as boolean;
+          const itemId = (r.item_id as string) ?? `check-${i}`;
+          const cmd = r.cmd as string | undefined;
+          const exitCode = r.exit_code as number | undefined;
+          const output = r.output as string | undefined;
+
+          return (
+            <div key={itemId} className={'rounded border px-2 py-1.5 text-xs ' + (passed ? 'bg-bg-card border-border' : 'bg-status-failed/5 border-status-failed/20')}>
+              <div className="flex items-center gap-2">
+                <span className={passed ? 'text-status-completed' : 'text-status-failed'}>
+                  {passed ? '\u2713' : '\u2717'}
+                </span>
+                <span className="font-medium text-text-primary">{itemId}</span>
+                {cmd && <code className="text-text-muted text-[10px] truncate ml-auto">{cmd}</code>}
+              </div>
+              {!passed && exitCode !== undefined && (
+                <div className="text-[10px] text-text-muted mt-0.5 ml-5">exit code {exitCode}</div>
+              )}
+              {!passed && output && (
+                <pre className="text-[10px] text-text-muted mt-1 ml-5 whitespace-pre-wrap max-h-24 overflow-y-auto font-mono">{output}</pre>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -289,9 +379,29 @@ function AttemptCard({
         </div>
       </div>
 
+      {/* Error banner */}
+      {att.error && (
+        <div className="rounded bg-status-failed/10 border border-status-failed/30 px-2.5 py-2">
+          <span className="text-[10px] font-semibold text-status-failed uppercase block mb-1">
+            Error
+          </span>
+          <p className="text-xs text-status-failed whitespace-pre-wrap">{att.error}</p>
+        </div>
+      )}
+
+      {/* Failure summary — show when outcome is not passed and there are ungraded/failing items */}
+      {att.outcome && att.outcome !== 'passed' && att.grade_snapshot.length > 0 && (
+        <FailureSummary snapshot={att.grade_snapshot} checklist={checklist} />
+      )}
+
       {/* Grades for this attempt */}
       {att.grade_snapshot.length > 0 && (
         <AttemptGrades snapshot={att.grade_snapshot} checklist={checklist} />
+      )}
+
+      {/* Auto-verify results */}
+      {att.auto_verify_results && att.auto_verify_results.length > 0 && (
+        <AutoVerifyResults results={att.auto_verify_results} />
       )}
 
       {/* Verifier feedback */}
@@ -307,7 +417,7 @@ function AttemptCard({
       )}
 
       {/* Agent Logs / Conversation */}
-      {att.has_output && (
+      {(att.has_output || att.has_action_log) && (
         <div>
           <h5 className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1">
             Agent Log
@@ -375,6 +485,7 @@ export function TaskDetailCard({
   runId,
 }: TaskDetailCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [attemptsOpen, setAttemptsOpen] = useState(false);
   const { data: detail, isLoading } = useTask(runId, expanded ? taskId : undefined);
 
   const attemptCount = attemptsSummary.length;
@@ -449,6 +560,30 @@ export function TaskDetailCard({
                 </div>
               )}
 
+              {/* Failure summary — shown prominently when task failed or has revision */}
+              {detail.attempts.length > 0 && (() => {
+                const latest = detail.attempts[detail.attempts.length - 1];
+                if (latest.outcome === 'passed') return null;
+                const hasFailure = latest.error || latest.grade_snapshot.some(g => g.grade === null || (g.grade !== 'A' && g.grade !== 'B'));
+                if (!hasFailure) return null;
+                return (
+                  <div className="rounded-lg border-2 border-status-failed/30 bg-status-failed/5 px-3 py-2.5">
+                    <h4 className="text-xs font-semibold text-status-failed uppercase tracking-wide mb-1.5">
+                      Why this failed
+                    </h4>
+                    {latest.error && (
+                      <p className="text-sm text-status-failed mb-2">{latest.error}</p>
+                    )}
+                    <FailureSummary snapshot={latest.grade_snapshot} checklist={detail.checklist} />
+                    {latest.auto_verify_results && latest.auto_verify_results.length > 0 && (
+                      <div className="mt-2">
+                        <AutoVerifyResults results={latest.auto_verify_results} />
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {/* Verifier Feedback — shown prominently if latest attempt has feedback */}
               {detail.attempts.length > 0 && detail.attempts[detail.attempts.length - 1].verifier_comment && (
                 <div className="rounded-lg border-2 border-accent-purple/30 bg-accent-purple/5 px-3 py-2.5">
@@ -461,25 +596,46 @@ export function TaskDetailCard({
                 </div>
               )}
 
-              {/* Attempt History — each attempt includes its grades, prompts, and verifier feedback */}
+              {/* Attempt History — collapsible, default collapsed */}
               <div>
-                <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+                <button
+                  onClick={() => setAttemptsOpen(!attemptsOpen)}
+                  className="flex items-center gap-1.5 text-xs font-semibold text-text-muted uppercase tracking-wide hover:text-text-primary transition-colors"
+                >
+                  <svg
+                    className={'h-3 w-3 transition-transform ' + (attemptsOpen ? 'rotate-90' : '')}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                    strokeWidth={2}
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                  </svg>
                   Attempts
-                </h4>
-                {detail.attempts.length === 0 ? (
-                  <p className="text-xs text-text-muted italic">No attempts yet</p>
-                ) : (
-                  <div className="space-y-3">
-                    {detail.attempts.map((att, i) => (
-                      <AttemptCard
-                        key={att.id}
-                        att={att}
-                        checklist={detail.checklist}
-                        isLatest={i === detail.attempts.length - 1}
-                        runId={runId}
-                        taskId={taskId}
-                      />
-                    ))}
+                  {detail.attempts.length > 0 && (
+                    <span className="text-[10px] text-text-muted font-normal normal-case">
+                      ({detail.attempts.length})
+                    </span>
+                  )}
+                </button>
+                {attemptsOpen && (
+                  <div className="mt-2">
+                    {detail.attempts.length === 0 ? (
+                      <p className="text-xs text-text-muted italic">No attempts yet</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {detail.attempts.map((att, i) => (
+                          <AttemptCard
+                            key={att.id}
+                            att={att}
+                            checklist={detail.checklist}
+                            isLatest={i === detail.attempts.length - 1}
+                            runId={runId}
+                            taskId={taskId}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -493,17 +649,20 @@ export function TaskDetailCard({
                 Events
               </h4>
               <div className="space-y-1">
-                {events.map(ev => (
-                  <div key={ev.id} className="flex items-center gap-2 text-xs">
-                    <span className="w-1.5 h-1.5 rounded-full bg-border shrink-0" />
-                    <span className="text-text-secondary">
-                      {eventLabel(ev.event_type, ev.payload)}
-                    </span>
-                    <span className="text-text-muted ml-auto text-[10px] whitespace-nowrap">
-                      {formatRelativeTime(ev.timestamp)}
-                    </span>
-                  </div>
-                ))}
+                {events.map(ev => {
+                  const isError = ev.event_type === 'agent_error';
+                  return (
+                    <div key={ev.id} className="flex items-center gap-2 text-xs">
+                      <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (isError ? 'bg-status-failed' : 'bg-border')} />
+                      <span className={isError ? 'text-status-failed font-medium' : 'text-text-secondary'}>
+                        {eventLabel(ev.event_type, ev.payload)}
+                      </span>
+                      <span className="text-text-muted ml-auto text-[10px] whitespace-nowrap">
+                        {formatRelativeTime(ev.timestamp)}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

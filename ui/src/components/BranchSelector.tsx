@@ -25,6 +25,12 @@ export function BranchSelector({ repoName, value, onChange, includeRemote = fals
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Sync internal state when parent value changes (e.g. repo selection resets branch)
+  useEffect(() => {
+    setInputValue(value);
+    setDebouncedPattern(value);
+  }, [value]);
+
   // Debounce the pattern used for API calls
   useEffect(() => {
     const timer = setTimeout(() => {

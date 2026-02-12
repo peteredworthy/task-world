@@ -80,9 +80,19 @@ routine:
           verifier:
             rubric:
               - id: "artifact_quality"
-                text: "Do all created artifacts contain substantive, project-specific content?"
+                text: |
+                  Evaluate artifact quality per requirement:
+                  R1 (intent.md) — A: has a concrete goal statement, bounded scope with explicit exclusions,
+                  and measurable completion criteria (e.g. "game renders at 60fps"). B: has goal/scope/criteria
+                  but they are vague or unmeasurable (e.g. "game works well").
+                  R2 (plan.md) — A: milestones are ordered with explicit dependencies, each milestone has
+                  a concrete deliverable. B: milestones listed but ordering rationale or deliverables are unclear.
+                  R3 (design-questions.md) — A: questions are ranked by impact, each has ≥2 concrete options
+                  with trade-offs. B: questions listed but not prioritized or options are generic.
+                  R4 (architecture.md) — A: names specific files/modules to create, testing approach references
+                  concrete tools or patterns. B: describes architecture in general terms without file-level specifics.
               - id: "completeness"
-                text: "Are all required files created with useful structure?"
+                text: "Are all four required files present with non-trivial content (not just headings)?"
           retry:
             max_attempts: 2
 
@@ -148,7 +158,11 @@ routine:
             Update docs/{{feature}}/intent.md, docs/{{feature}}/plan.md,
             docs/{{feature}}/design-questions.md, and architecture.md as needed.
 
-            If conflicts remain, document them in docs/{{feature}}/CONFLICTS.md.
+            If there are any unresolved conflicts or open questions that could not be
+            decided, create docs/{{feature}}/CONFLICTS.md listing them.
+            If there are NO unresolved conflicts, still create a minimal CONFLICTS.md
+            stating "No unresolved conflicts." so the artifact exists.
+
             Keep unresolved decisions explicit.
           requirements:
             - id: "R1"
@@ -161,18 +175,34 @@ routine:
               desc: "Mark resolved design questions clearly"
               priority: expected
             - id: "R4"
-              desc: "Capture unresolved conflicts in CONFLICTS.md"
+              desc: "Create CONFLICTS.md (even if empty, stating no conflicts)"
               priority: expected
           artifacts:
             - path: "docs/{{feature}}/CONFLICTS.md"
               required: false
               track_resolution: true
+          auto_verify:
+            items:
+              - id: "conflicts_exists"
+                cmd: "test -f docs/{{feature}}/CONFLICTS.md"
+                must: true
           verifier:
             rubric:
               - id: "feedback_addressed"
-                text: "Are [HUMAN] notes addressed or explicitly deferred?"
+                text: |
+                  R1 — A: every [HUMAN] annotation has been addressed (incorporated, or explicitly
+                  deferred with rationale). B: most [HUMAN] notes addressed but one or two are
+                  silently ignored without explanation.
               - id: "consistency"
-                text: "Are refined artifacts internally consistent?"
+                text: |
+                  R2 — A: cross-references between intent, plan, architecture, and design-questions
+                  are coherent (no contradictions). B: documents are individually fine but contain
+                  minor contradictions between them.
+              - id: "conflicts_file"
+                text: |
+                  R4 — A: CONFLICTS.md exists and either lists specific unresolved items or explicitly
+                  states there are none. B: file exists but is incomplete or vague.
+                  F: file does not exist.
           retry:
             max_attempts: 2
       transitions:
@@ -239,9 +269,19 @@ routine:
           verifier:
             rubric:
               - id: "plan_quality"
-                text: "Do step plans include purpose, contract, and verification?"
+                text: |
+                  R1 — A: each step-XX-plan.md has a clear purpose, concrete prerequisites,
+                  and names specific files/modules. B: files exist but purpose is generic or
+                  prerequisites are vague.
+                  R2 — A: each plan has explicit "Inputs", "Outputs", and "Error handling" sections
+                  with concrete types or file paths. B: contracts are mentioned but described in
+                  prose rather than structured sections.
               - id: "coverage"
-                text: "Do step plans cover the implementation plan end-to-end?"
+                text: |
+                  R3 — A: verification approach names specific commands, test patterns, or manual
+                  checks. B: verification says "test it" without specifics.
+                  R4 — A: each plan states which prior steps must complete first and why.
+                  B: ordering is implied by numbering but not stated.
           retry:
             max_attempts: 2
       transitions:
@@ -291,9 +331,16 @@ routine:
           verifier:
             rubric:
               - id: "atomicity"
-                text: "Are tasks atomic and verifiable?"
+                text: |
+                  R2 — A: every task changes ≤5 files and has a specific verification command or
+                  check listed. B: tasks are reasonably scoped but some bundle multiple concerns
+                  or lack a verification step.
               - id: "actionability"
-                text: "Are tasks concrete enough for an implementation agent?"
+                text: |
+                  R1 — A: step files exist and each contains a clear task description with specific
+                  file paths and expected changes. B: files exist but descriptions are abstract.
+                  R4 — A: each task references the step-plan or design doc it implements.
+                  B: tasks are self-contained but don't link back to planning context.
           retry:
             max_attempts: 2
       transitions:
@@ -338,9 +385,15 @@ routine:
           verifier:
             rubric:
               - id: "thoroughness"
-                text: "Does dry run identify realistic risks and assumptions?"
+                text: |
+                  R1 — A: simulation walks through each step in order and identifies at least one
+                  concrete assumption or risk per step. B: simulation covers steps but at a
+                  high level without step-specific analysis.
               - id: "gap_resolution"
-                text: "Are mitigations concrete enough to apply?"
+                text: |
+                  R2 — A: each identified gap has a specific remediation action (e.g. "add error
+                  handling in step 3 for missing file case"). B: gaps listed but remediations
+                  are generic ("handle edge cases").
       transitions:
         on_complete: "S-07"
 
@@ -388,11 +441,19 @@ routine:
           verifier:
             rubric:
               - id: "completeness"
-                text: "Does the plan fully address the original intent?"
+                text: |
+                  R1 — A: verification report explicitly maps each step file back to the plan
+                  and confirms alignment. B: report says things align but doesn't show the mapping.
               - id: "consistency"
-                text: "Are artifacts internally consistent?"
+                text: |
+                  R3 — A: report confirms no critical conflicts remain, or lists remaining ones
+                  with justification for why they are acceptable. B: conflicts mentioned but
+                  not explicitly resolved or justified.
               - id: "executability"
-                text: "Can an agent execute from produced step files?"
+                text: |
+                  Overall — A: an implementation agent could pick up the step files and execute
+                  them without needing to ask clarifying questions. B: mostly executable but
+                  some steps would need interpretation.
             submission_template:
               grade_scale: [A, B, C, D, F]
               require_reason_if_below: A
@@ -457,7 +518,10 @@ routine:
           verifier:
             rubric:
               - id: "summary_completeness"
-                text: "Does the summary capture intent, order, decisions, and risks?"
+                text: |
+                  R1 — A: summary has all five sections (intent satisfaction, step list,
+                  decisions, risks, caveats) with specific content in each. B: summary
+                  covers most sections but one or two are perfunctory.
               - id: "accuracy"
                 text: "Is summary accurate relative to generated artifacts?"
 
@@ -468,15 +532,81 @@ routine:
             - routines/{{feature}}/routine.yaml
             - docs/{{feature}}/routine-yaml-format.md
 
-            Use docs/plan-runner/routine-yaml-format.md as the source format guide.
-
             The routine must encode the generated steps so another run can execute them.
-            Include clear step/task contexts, requirements, artifacts, and verification hooks.
 
             After writing routine.yaml, validate it and fix errors until it passes:
             uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml
 
             If validation fails, use exact error output to correct the YAML structure.
+
+            === ROUTINE YAML FORMAT GUIDE ===
+
+            Top-level shape (either wrapped or unwrapped):
+
+            ```yaml
+            id: "my-routine"
+            name: "My Routine"
+            description: "..."
+            inputs: []
+            steps: []
+            ```
+
+            Required top-level fields: id (string), name (string), steps (array, >=1 step).
+            Optional: description, inputs (array of {name, required, default, description}).
+
+            Step shape — each step must have:
+            - id (string, e.g. "S-01")
+            - title (string)
+            - tasks (array, >=1 task)
+            Optional: step_context, type (standard|dry_run), gate, transitions.
+
+            Task shape — each task must have:
+            - id (string, e.g. "T-01")
+            - title (string)
+            - task_context (string) — REQUIRED, describes what the agent should do
+            Optional:
+            - requirements (array of {id, desc, priority: critical|expected|nice_to_have})
+            - artifacts (array of {path, required})
+            - auto_verify: {items: [{id, cmd, must}]}
+            - verifier: {rubric: [{id, text}], submission_template: {grade_scale, require_reason_if_below, require_remediation_if_below}}
+            - retry: {max_attempts: N}
+            - context_from (array of {artifact, as, required})
+
+            Example step with one task:
+
+            ```yaml
+            steps:
+              - id: "S-01"
+                title: "Setup"
+                step_context: "Initialize project files"
+                tasks:
+                  - id: "T-01"
+                    title: "Create base files"
+                    task_context: "Create the initial project structure"
+                    requirements:
+                      - id: "R1"
+                        desc: "Project files are created correctly"
+                        priority: critical
+                    auto_verify:
+                      items:
+                        - id: "files_exist"
+                          cmd: "test -f README.md"
+                          must: true
+                    verifier:
+                      rubric:
+                        - id: "quality"
+                          text: "Are files well-structured?"
+                    retry:
+                      max_attempts: 2
+            ```
+
+            Common validation failures:
+            - Missing task_context (REQUIRED on every task)
+            - Empty tasks list
+            - Wrong types (tasks as object instead of list)
+            - Unknown fields (schema_version, owner, tags, critical, verify are NOT valid)
+
+            === END FORMAT GUIDE ===
           requirements:
             - id: "R1"
               desc: "Create routines/{{feature}}/routine.yaml matching the routine schema"
@@ -503,6 +633,12 @@ routine:
           verifier:
             rubric:
               - id: "schema_compliance"
-                text: "Does routine.yaml conform to orchestrator routine schema?"
+                text: |
+                  R1/R3 — A: routine.yaml passes validation and each step has task_context,
+                  requirements with priorities, and auto_verify hooks. B: passes validation
+                  but some tasks have thin contexts or missing auto_verify.
               - id: "execution_mapping"
-                text: "Do routine steps map correctly to generated planning artifacts?"
+                text: |
+                  R1 — A: routine steps map 1:1 to the generated step files with matching
+                  requirement descriptions. B: mapping exists but some steps are combined
+                  or requirement wording diverges.

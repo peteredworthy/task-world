@@ -166,11 +166,25 @@ def back_merge(repo_path: Path, source_branch: str) -> str:
     return result.stdout.strip()
 
 
+def sync_branch_to_worktree(repo_path: Path, branch: str, worktree_path: Path) -> None:
+    """Update a branch ref to match the worktree HEAD.
+
+    Worktrees may operate with a detached HEAD, causing the named branch
+    to fall behind. This syncs the branch to the worktree's actual HEAD
+    so that merge operations use the correct commit.
+    """
+    wt_head = _run_git(["rev-parse", "HEAD"], cwd=worktree_path).stdout.strip()
+    branch_sha = _run_git(["rev-parse", branch], cwd=repo_path).stdout.strip()
+    if wt_head != branch_sha:
+        _run_git(["branch", "-f", branch, wt_head], cwd=repo_path)
+
+
 def merge_back(
     main_repo_path: Path,
     run_branch: str,
     source_branch: str,
     strategy: str = "squash",
+    worktree_path: Path | None = None,
 ) -> str:
     """Merge run branch back into source branch.
 
@@ -181,6 +195,7 @@ def merge_back(
         run_branch: The run's branch to merge from
         source_branch: The target branch to merge into
         strategy: "squash" or "merge"
+        worktree_path: If provided, sync the branch ref to the worktree HEAD first
 
     Returns:
         The resulting commit SHA
@@ -193,6 +208,10 @@ def merge_back(
         raise BranchNotFoundError(run_branch)
     if not _branch_exists(main_repo_path, source_branch):
         raise BranchNotFoundError(source_branch)
+
+    # Sync branch ref to worktree HEAD (worktrees may operate detached)
+    if worktree_path and worktree_path.exists():
+        sync_branch_to_worktree(main_repo_path, run_branch, worktree_path)
 
     # Checkout the source branch
     _run_git(["checkout", source_branch], cwd=main_repo_path)

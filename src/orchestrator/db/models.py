@@ -59,6 +59,7 @@ class RunModel(Base):
     total_tokens_write: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens_cache: Mapped[int] = mapped_column(Integer, default=0)
     total_duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    total_num_actions: Mapped[int] = mapped_column(Integer, default=0)
 
     # Relationships
     steps: Mapped[list["StepModel"]] = relationship(
@@ -148,6 +149,7 @@ class AttemptModel(Base):
     tokens_write: Mapped[int] = mapped_column(Integer, default=0)
     tokens_cache: Mapped[int] = mapped_column(Integer, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    num_actions: Mapped[int] = mapped_column(Integer, default=0)
     grade_snapshot: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     auto_verify_results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
@@ -163,6 +165,9 @@ class AttemptModel(Base):
     # Git tracking - commit SHAs for builder/verifier handoff
     start_commit: Mapped[str | None] = mapped_column(String, nullable=True)
     end_commit: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Structured action log (tool calls, text, metrics)
+    action_log_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # Relationships
     task: Mapped["TaskModel"] = relationship("TaskModel", back_populates="attempts")

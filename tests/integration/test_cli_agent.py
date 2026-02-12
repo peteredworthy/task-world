@@ -280,6 +280,7 @@ async def test_codex_creates_file(tmp_path: Path) -> None:
     """Codex CLI creates a file when asked."""
     agent = CLIAgent(
         command="codex",
+        model="gpt-5.2-codex",
         args=[
             "exec",
             "--dangerously-bypass-approvals-and-sandbox",

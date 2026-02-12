@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from orchestrator.agents.errors import (
     AgentCancelledError,
@@ -31,6 +32,9 @@ from orchestrator.agents.types import (
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType
+
+if TYPE_CHECKING:
+    from orchestrator.agents.parsers.base import StreamParser
 
 
 class _DefaultTimeProvider:
@@ -69,6 +73,7 @@ class CLIAgent:
         nudger_config: NudgerConfig | None = None,
         time_provider: TimeProvider | None = None,
         poll_interval: float = 5.0,
+        parser: StreamParser | None = None,
     ) -> None:
         self._command = command
         base_args = args or []
@@ -82,6 +87,7 @@ class CLIAgent:
         self._poll_interval = poll_interval
         self._cancelled = False
         self._process: asyncio.subprocess.Process | None = None
+        self._parser = parser
 
     @property
     def info(self) -> AgentInfo:
@@ -122,7 +128,8 @@ class CLIAgent:
             f"### Required Workflow\n"
             f"1. Implement each requirement listed above.\n"
             f"2. After completing each requirement, report it as 'done' "
-            f"using the requirement ID (e.g. R-01).\n"
+            f"using the requirement ID exactly as listed "
+            f"(for numeric IDs, R1/R-01/1 are all accepted).\n"
             f"3. Once ALL requirements are addressed, submit your work.\n"
             f"4. All CRITICAL requirements must be 'done' before submission succeeds.\n"
             f"   Valid statuses: done, blocked, not_applicable\n"
@@ -139,7 +146,7 @@ class CLIAgent:
                 f"- **orchestrator_update_checklist**(run_id, task_id, req_id, status, note?)\n"
                 f"  Mark a requirement as done/blocked/not_applicable.\n"
                 f"  Example: orchestrator_update_checklist('{context.run_id}', "
-                f"'{context.task_id}', 'R-01', 'done')\n"
+                f"'{context.task_id}', 'R1', 'done')\n"
                 f"- **orchestrator_request_clarification**(run_id, task_id, questions)\n"
                 f"  Request clarification from the human. Task will pause until answered.\n"
                 f"  Example: orchestrator_request_clarification('{context.run_id}', "
@@ -159,7 +166,8 @@ class CLIAgent:
                 f"  PATCH {base}/api/runs/{context.run_id}/tasks/{context.task_id}"
                 f"/checklist/{{req_id}}\n"
                 f'  Body: {{"status": "done"}}\n'
-                f'  Example: PATCH .../checklist/R-01 with body {{"status": "done"}}\n\n'
+                f'  Example: PATCH .../checklist/R1 with body {{"status": "done"}}\n'
+                f"  (For numeric IDs, R1/R-01/1 are accepted.)\n\n"
                 f"**Submit for verification (after all requirements addressed):**\n"
                 f"  POST {base}/api/runs/{context.run_id}/tasks/{context.task_id}/submit"
             )
@@ -210,7 +218,7 @@ class CLIAgent:
                 f"- **orchestrator_set_grade**(run_id, task_id, req_id, grade, grade_reason?)\n"
                 f"  Set a grade on a requirement.\n"
                 f"  Example: orchestrator_set_grade('{context.run_id}', "
-                f"'{context.task_id}', 'R-01', 'A', 'Well implemented')\n"
+                f"'{context.task_id}', 'R1', 'A', 'Well implemented')\n"
                 f"- **orchestrator_submit**(run_id, task_id)\n"
                 f"  Complete the verification after grading all requirements."
             )
@@ -273,6 +281,7 @@ class CLIAgent:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=context.working_dir,
+                limit=1024 * 1024,  # 1MB readline buffer for large JSON output
             )
 
             # Store PID for agent monitoring
@@ -313,6 +322,8 @@ class CLIAgent:
                     line = line_bytes.decode(errors="replace").rstrip()
                     output_lines.append(line)
                     batch_buffer.append(line)
+                    if self._parser is not None:
+                        self._parser.parse_line(line)
                     if len(batch_buffer) >= BATCH_SIZE and on_output:
                         await on_output(batch_buffer)
                         batch_buffer = []
@@ -350,6 +361,17 @@ class CLIAgent:
 
             success = self._process.returncode == 0
 
+            # Finalize parser to get structured action log
+            action_log = None
+            final_output_lines = output_lines
+            if self._parser is not None:
+                action_log = self._parser.finalize()
+                # Extract readable text from parsed entries so agent_output
+                # remains useful even though stdout is NDJSON
+                readable = self._parser.get_readable_text()
+                if readable.strip():
+                    final_output_lines = readable.split("\n")
+
             # If process completed successfully, submit for verification
             # This triggers the workflow to move from BUILDING to VERIFYING
             if success:
@@ -364,7 +386,8 @@ class CLIAgent:
                 ),
                 metrics=ExecutionMetrics(),
                 agent_metadata={"pid": agent_pid} if agent_pid else {},
-                output_lines=output_lines,
+                output_lines=final_output_lines,
+                action_log=action_log,
             )
 
         except AgentCancelledError:

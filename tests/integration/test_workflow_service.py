@@ -183,6 +183,26 @@ async def test_set_grade_not_found(service: WorkflowService) -> None:
         await service.set_grade("run-1", "task-1", "nonexistent-req", "A")
 
 
+async def test_flexible_numeric_req_id_formats(service: WorkflowService) -> None:
+    """Numeric checklist IDs should accept R1/R-01/1 style inputs."""
+    run = _make_simple_run()
+    await service.create_run(run)
+    await service.start_run("run-1")
+    await service.start_task("run-1", "task-1")
+
+    # Update using dashed format resolves to canonical checklist item R1.
+    item = await service.update_checklist_item("run-1", "task-1", "R-01", ChecklistStatus.DONE)
+    assert item.req_id == "R1"
+    assert item.status == ChecklistStatus.DONE
+
+    await service.submit_for_verification("run-1", "task-1")
+
+    # Grade using numeric-only format resolves to the same item.
+    graded = await service.set_grade("run-1", "task-1", "1", "A", "Flexible ID mapping works")
+    assert graded.req_id == "R1"
+    assert graded.grade == "A"
+
+
 async def test_multi_step_routine(service: WorkflowService) -> None:
     """Test with a multi-step routine created from YAML."""
     routine = load_routine_from_path(FIXTURES / "valid_complete.yaml")

@@ -38,6 +38,7 @@ from orchestrator.agents.openhands_common import (
     GetRequirementsExecutor,
     SubmitExecutor,
     UpdateChecklistExecutor,
+    ValidateRoutineExecutor,
     build_openhands_prompt,
     extract_metrics,
 )
@@ -161,6 +162,15 @@ if _SDK_AVAILABLE:
                 if result.stderr:
                     output = f"{output}\n{result.stderr}" if output else result.stderr
 
+                # Truncate large outputs to prevent context window overflow.
+                max_chars = 20000
+                if len(output) > max_chars:
+                    half = max_chars // 2
+                    output = (
+                        f"{output[:half]}\n\n... [truncated {len(output) - max_chars} chars] ...\n\n"
+                        f"{output[-half:]}"
+                    )
+
                 return DockerTerminalObservation(
                     content=[_OHTextContent(text=output or "(no output)")],  # pyright: ignore[reportPossiblyUnboundVariable,reportArgumentType]
                     exit_code=result.exit_code,
@@ -229,6 +239,14 @@ if _SDK_AVAILABLE:
     class DockerOrcSetGradeObservation(_OHObservation):  # type: ignore[misc]
         pass
 
+    class DockerOrcValidateRoutineAction(_OHAction):  # type: ignore[misc]
+        routine_path: str = Field(
+            description="Path to routine YAML file relative to workspace root."
+        )
+
+    class DockerOrcValidateRoutineObservation(_OHObservation):  # type: ignore[misc]
+        pass
+
     # --- Observation factories ---
 
     def _obs_get_req(text: str) -> DockerOrcGetReqObservation:  # type: ignore[type-arg]
@@ -242,6 +260,9 @@ if _SDK_AVAILABLE:
 
     def _obs_set_grade(text: str) -> DockerOrcSetGradeObservation:  # type: ignore[type-arg]
         return DockerOrcSetGradeObservation(content=[_OHTextContent(text=text)])  # type: ignore[call-arg]
+
+    def _obs_validate_routine(text: str) -> DockerOrcValidateRoutineObservation:  # type: ignore[type-arg]
+        return DockerOrcValidateRoutineObservation(content=[_OHTextContent(text=text)])  # type: ignore[call-arg]
 
     # --- ToolExecutor wrappers ---
 
@@ -268,6 +289,13 @@ if _SDK_AVAILABLE:
 
     class _DockerSetGradeExec(_OHToolExecutor):  # type: ignore[type-arg,misc]
         def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def __call__(self, action: Any, conversation: Any = None) -> Any:
+            return self._inner(action, conversation)
+
+    class _DockerValidateRoutineExec(_OHToolExecutor):  # type: ignore[type-arg,misc]
+        def __init__(self, inner: ValidateRoutineExecutor) -> None:
             self._inner = inner
 
         def __call__(self, action: Any, conversation: Any = None) -> Any:
@@ -366,6 +394,32 @@ if _SDK_AVAILABLE:
                 )
             ]
 
+    class DockerOrcValidateRoutineTool(
+        _OHToolDefinition[DockerOrcValidateRoutineAction, DockerOrcValidateRoutineObservation]  # type: ignore[type-arg]
+    ):
+        @classmethod
+        def create(cls, *args: Any, **kwargs: Any) -> list["DockerOrcValidateRoutineTool"]:
+            worktree_path: str | None = kwargs.get("worktree_path")
+            if not worktree_path:
+                return []
+            inner = ValidateRoutineExecutor(
+                worktree_path,
+                observation_factory=_obs_validate_routine,
+            )
+            return [
+                cls(
+                    description=(
+                        "Validate a routine YAML file against the orchestrator schema. "
+                        "Returns detailed error messages if invalid. "
+                        "Parameters: routine_path (string, path relative to workspace root, "
+                        "e.g. 'routines/my-feature/routine.yaml')."
+                    ),
+                    action_type=DockerOrcValidateRoutineAction,
+                    observation_type=DockerOrcValidateRoutineObservation,
+                    executor=_DockerValidateRoutineExec(inner),
+                )
+            ]
+
 
 # ---------------------------------------------------------------------------
 # SDK tool registration -- lazy, idempotent
@@ -389,6 +443,7 @@ def _register_sdk_tools() -> None:
     _oh_register_tool("DockerOrcUpdateChecklistTool", DockerOrcUpdateChecklistTool)  # pyright: ignore[reportPossiblyUnboundVariable]
     _oh_register_tool("DockerOrcSubmitTool", DockerOrcSubmitTool)  # pyright: ignore[reportPossiblyUnboundVariable]
     _oh_register_tool("DockerOrcSetGradeTool", DockerOrcSetGradeTool)  # pyright: ignore[reportPossiblyUnboundVariable]
+    _oh_register_tool("DockerOrcValidateRoutineTool", DockerOrcValidateRoutineTool)  # pyright: ignore[reportPossiblyUnboundVariable]
 
     _docker_tools_registered = True
 
@@ -439,7 +494,7 @@ class DockerOpenHandsAgent:
 
     def __init__(
         self,
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-5-mini",
         api_key: str | None = None,
         max_iterations: int = 100,
         server_image: str = "ghcr.io/openhands/agent-server:latest-python",
@@ -581,6 +636,10 @@ class DockerOpenHandsAgent:
                     name="DockerOrcSetGradeTool",
                     params={"registry_key": registry_key},
                 ),
+                _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
+                    name="DockerOrcValidateRoutineTool",
+                    params={"worktree_path": context.working_dir},
+                ),
             ]
 
             agent = _OHAgent(  # pyright: ignore[reportPossiblyUnboundVariable]
@@ -591,35 +650,9 @@ class DockerOpenHandsAgent:
             # Build prompt (with verifier flag if on_grade is provided)
             is_verifier = on_grade is not None
 
-            # If this is verifier mode and we have an end_commit, checkout that commit first
-            if is_verifier and context.end_commit:
-                _logger = logging.getLogger(__name__)
-                _logger.info(
-                    f"Verifier mode: checking out commit {context.end_commit} "
-                    f"in Docker container for run {context.run_id}"
-                )
-                try:
-                    # Checkout the specific commit in the Docker container
-                    checkout_result = docker_workspace.execute_command(
-                        f"git checkout {context.end_commit}",
-                        cwd="/workspace",
-                        timeout=30.0,
-                    )
-                    if checkout_result.exit_code != 0:
-                        error_msg = (
-                            f"Failed to checkout commit {context.end_commit}: "
-                            f"{checkout_result.stderr or checkout_result.stdout}"
-                        )
-                        _logger.error(error_msg)
-                        raise AgentExecutionError("openhands_docker", error_msg)
-                    _logger.info(f"Successfully checked out commit {context.end_commit}")
-                except Exception as exc:
-                    if isinstance(exc, AgentExecutionError):
-                        raise
-                    raise AgentExecutionError(
-                        "openhands_docker",
-                        f"Error checking out commit {context.end_commit}: {exc}",
-                    ) from exc
+            # NOTE: end_commit checkout is handled by the executor on the host
+            # worktree before this method is called.  Since Docker uses a bind
+            # mount of the host worktree, no in-container checkout is needed.
 
             full_prompt = build_openhands_prompt(context, is_verifier=is_verifier)
 
@@ -640,11 +673,26 @@ class DockerOpenHandsAgent:
             if self._cancelled:
                 raise AgentCancelledError("openhands_docker")
 
+            import time
+
+            start_time = time.monotonic()
             await asyncio.to_thread(conversation.run)  # pyright: ignore[reportUnknownMemberType]
+            elapsed_ms = int((time.monotonic() - start_time) * 1000)
 
-            metrics = extract_metrics(conversation)
+            metrics = extract_metrics(conversation, duration_ms=elapsed_ms)
 
-            return ExecutionResult(success=True, metrics=metrics)
+            # Parse OpenHands events into structured action log
+            action_log = None
+            try:
+                from orchestrator.agents.parsers.openhands_parser import OpenHandsEventParser
+
+                events_list = list(getattr(getattr(conversation, "state", None), "events", []))
+                if events_list:
+                    action_log = OpenHandsEventParser().parse_events(events_list)
+            except Exception:
+                pass  # Action log is best-effort
+
+            return ExecutionResult(success=True, metrics=metrics, action_log=action_log)
 
         except AgentCancelledError:
             raise

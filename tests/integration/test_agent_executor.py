@@ -238,6 +238,72 @@ async def test_executor_pauses_run_on_agent_execution_error(
         )
 
 
+async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
+    app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
+) -> None:
+    """Non-zero subprocess exit should pause the run instead of retry-looping."""
+    executor = AgentExecutor(
+        session_factory=session_factory,
+        spawn_agents=True,
+    )
+
+    async with session_factory() as session:
+        from orchestrator.db.event_store import EventStore
+        from orchestrator.db.repositories import RunRepository
+        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.state.factory import create_run_from_routine
+        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
+        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow.service import WorkflowService
+
+        repo = RunRepository(session)
+        event_store = EventStore(session)
+        emitter = PersistentEventEmitter(event_store)
+        service = WorkflowService(
+            session=session,
+            repo=repo,
+            event_store=event_store,
+            event_emitter=emitter,
+            auto_verify_runner=LocalAutoVerifyRunner(),
+        )
+
+        routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
+        routine = next(r for r in routines if r.config.id == "simple-routine")
+
+        run = create_run_from_routine(
+            routine=routine.config,
+            repo_name="test-project",
+            source_branch="main",
+            routine_source=RoutineSource.LOCAL,
+        )
+        run.routine_embedded = routine.config.model_dump(mode="json")
+        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_config = {
+            "command": "python3",
+            "args": ["-c", "import sys; sys.exit(1)"],
+        }
+
+        run = await service.create_run(run)
+        run_id = run.id
+        await executor.start_run_with_agent(run_id, service)
+        await session.commit()
+
+    for _ in range(80):
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            run = await repo.get(run_id)
+            if run.status == RunStatus.PAUSED:
+                break
+        await asyncio.sleep(0.05)
+    else:
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            run = await repo.get(run_id)
+        assert run.status == RunStatus.PAUSED, (
+            "Run should be PAUSED when subprocess exits non-zero to avoid retry loops"
+        )
+
+
 async def test_executor_pauses_when_agent_fails_to_complete_workflow(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:

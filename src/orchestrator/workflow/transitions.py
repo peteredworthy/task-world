@@ -219,6 +219,43 @@ def transition_after_verification(task: TaskState, now: datetime) -> TransitionR
             error=f"Cannot complete verification from {task.status.value}",
         )
 
+    # If a verifier has started grading (at least one grade exists), block
+    # premature submission when not all CRITICAL/EXPECTED items are graded.
+    # This prevents the task from transitioning to FAILED due to ungraded
+    # items when the verifier agent submits before finishing all grades.
+    # When NO grades exist at all (auto-complete path), skip this check.
+    has_any_grade = any(item.grade is not None for item in task.checklist)
+    if has_any_grade:
+        ungraded = [
+            item.req_id
+            for item in task.checklist
+            if item.grade is None and item.priority in (Priority.CRITICAL, Priority.EXPECTED)
+        ]
+        if ungraded:
+            return TransitionResult(
+                success=False,
+                new_status=task.status,
+                error=(
+                    f"Cannot complete verification: {len(ungraded)} requirement(s) "
+                    f"not yet graded ({', '.join(ungraded)}). "
+                    f"Grade all CRITICAL and EXPECTED requirements before submitting."
+                ),
+            )
+
+    # Auto-complete path: when no verifier rubric ran (no grades exist at all),
+    # auto-grade checklist items based on their self-reported status.
+    # Items marked "done" by the builder get grade "A"; items still "open" or
+    # "blocked" stay ungraded so evaluate_grades correctly fails them.
+    has_any_grade = any(item.grade is not None for item in task.checklist)
+    if not has_any_grade:
+        for item in task.checklist:
+            if item.status == ChecklistStatus.DONE:
+                item.grade = "A"
+                item.grade_reason = "Auto-graded (builder self-reported done, no verifier rubric)"
+            elif item.status == ChecklistStatus.NOT_APPLICABLE:
+                item.grade = "A"
+                item.grade_reason = "Marked not applicable by builder"
+
     grade_result = evaluate_grades(task.checklist)
 
     # Snapshot checklist grades into the current attempt
@@ -275,11 +312,17 @@ def is_step_complete(step: StepState) -> bool:
     return all(t.status in _TERMINAL_TASK_STATUSES for t in step.tasks)
 
 
+def step_has_failure(step: StepState) -> bool:
+    """Return True if any task in the step has FAILED status."""
+    return any(t.status == TaskStatus.FAILED for t in step.tasks)
+
+
 def check_step_progression(run: Run) -> bool:
     """Check and advance step progression after a task status change.
 
     Marks the current step as completed if all its tasks are terminal,
     then advances ``current_step_index`` past any already-completed steps.
+    Stops advancing if the completed step contains a failed task (fail-fast).
 
     Returns True if any step was newly marked completed.
     """
@@ -290,6 +333,9 @@ def check_step_progression(run: Run) -> bool:
             step.completed = True
             changed = True
         if step.completed and run.current_step_index < len(run.steps) - 1:
+            # Fail-fast: don't advance past a step with failures
+            if step_has_failure(step):
+                break
             run.current_step_index += 1
         else:
             break
@@ -302,14 +348,30 @@ def check_run_completion(run: Run, now: datetime) -> RunStatus | None:
     Returns the new RunStatus if a transition should occur, or None if
     the run should remain in its current status.
 
-    Only acts on ACTIVE runs where every step is completed.
+    Triggers on ACTIVE runs when either:
+    - All steps are completed (normal completion)
+    - A completed step contains a failed task (fail-fast)
     """
     if run.status != RunStatus.ACTIVE:
         return None
+
+    # Fail-fast: check if any completed step has a failed task
+    has_failure = False
+    for step in run.steps:
+        if step.completed and step_has_failure(step):
+            has_failure = True
+            break
+
+    if has_failure:
+        # A step completed with failures — fail the run immediately
+        run.status = RunStatus.FAILED
+        run.completed_at = now
+        return RunStatus.FAILED
+
     if not all(step.completed for step in run.steps):
         return None
 
-    # All steps done — determine final status
+    # All steps done with no failures
     all_tasks = [t for s in run.steps for t in s.tasks]
     has_failure = any(t.status == TaskStatus.FAILED for t in all_tasks)
 

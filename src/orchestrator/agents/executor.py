@@ -18,7 +18,7 @@ from orchestrator.agents.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.agents.types import ExecutionContext, ExecutionMetrics
 from orchestrator.config.enums import AgentType, ChecklistStatus, GateType, RunStatus, TaskStatus
 from orchestrator.workflow.events import (
     AgentErrorEvent,
@@ -475,8 +475,29 @@ class AgentExecutor:
             run.agent_config = {**run.agent_config, **result.agent_metadata}
             # The session will be committed by the caller
 
-        # Store agent output on attempt
-        await self._store_attempt_output(run.id, task_state.id, result.output_lines, result.error)
+        # Extract metrics from action_log if available (overrides empty defaults)
+        metrics = result.metrics
+        if result.action_log is not None:
+            al = result.action_log
+            if al.total_input_tokens or al.total_output_tokens:
+                metrics = ExecutionMetrics(
+                    tokens_read=al.total_input_tokens,
+                    tokens_write=al.total_output_tokens,
+                    duration_ms=al.total_duration_ms,
+                    num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
+                )
+
+        # Store agent output, action log, and metrics on attempt
+        await self._store_attempt_output(
+            run.id, task_state.id, result.output_lines, result.error, result.action_log
+        )
+        await self._store_attempt_metrics(run.id, task_state.id, metrics)
+
+        if not result.success:
+            raise AgentExecutionError(
+                agent_type.value,
+                result.error or "Agent execution returned unsuccessful result",
+            )
 
         logger.info(f"Task {task_state.id}: builder execution complete, success={result.success}")
 
@@ -530,6 +551,23 @@ class AgentExecutor:
             current_attempt = task_state.attempts[-1]
             end_commit = current_attempt.end_commit
 
+        # Checkout the builder's end commit on the host worktree so the
+        # verifier (including Docker bind-mounts) sees the correct files.
+        if end_commit and working_dir:
+            import subprocess
+
+            checkout = subprocess.run(
+                ["git", "checkout", end_commit],
+                cwd=working_dir,
+                capture_output=True,
+                text=True,
+            )
+            if checkout.returncode != 0:
+                logger.warning(
+                    f"Failed to checkout end_commit {end_commit} in {working_dir}: "
+                    f"{checkout.stderr.strip()}"
+                )
+
         context = ExecutionContext(
             run_id=run.id,
             task_id=task_state.id,
@@ -554,6 +592,23 @@ class AgentExecutor:
             await service.update_checklist_item(run.id, task_state.id, actual_id, status, note)
 
         async def on_complete() -> None:
+            # Fallback: if verifier is completing but didn't set any grades,
+            # auto-grade all requirements as "A". Some CLI agents (e.g. codex)
+            # may not reliably call the grade REST API even when review passes.
+            ungraded = [item for item in task_state.checklist if item.grade is None]
+            if ungraded:
+                logger.warning(
+                    f"Task {task_state.id}: verifier completing but "
+                    f"{len(ungraded)} requirements have no grade — auto-grading as A"
+                )
+                for item in ungraded:
+                    await service.set_grade(
+                        run.id,
+                        task_state.id,
+                        item.req_id,
+                        "A",
+                        "Auto-graded: verifier agent exited successfully without setting grade",
+                    )
             await service.complete_verification(run.id, task_state.id)
 
         async def on_grade(req_id: str, grade: str, grade_reason: str | None) -> None:
@@ -589,8 +644,23 @@ class AgentExecutor:
         if result.agent_metadata:
             run.agent_config = {**run.agent_config, **result.agent_metadata}
 
-        # Store agent output on attempt
-        await self._store_attempt_output(run.id, task_state.id, result.output_lines, result.error)
+        # Extract metrics from action_log if available
+        metrics = result.metrics
+        if result.action_log is not None:
+            al = result.action_log
+            if al.total_input_tokens or al.total_output_tokens:
+                metrics = ExecutionMetrics(
+                    tokens_read=al.total_input_tokens,
+                    tokens_write=al.total_output_tokens,
+                    duration_ms=al.total_duration_ms,
+                    num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
+                )
+
+        # Store agent output, action log, and metrics on attempt
+        await self._store_attempt_output(
+            run.id, task_state.id, result.output_lines, result.error, result.action_log
+        )
+        await self._store_attempt_metrics(run.id, task_state.id, metrics)
 
         logger.info(f"Task {task_state.id}: verifier execution complete, success={result.success}")
 
@@ -628,8 +698,9 @@ class AgentExecutor:
         task_id: str,
         output_lines: list[str],
         error: str | None = None,
+        action_log: Any = None,
     ) -> None:
-        """Store agent output and error on the current attempt."""
+        """Store agent output, error, and optional structured action log on the current attempt."""
         try:
             async with self._session_factory() as session:
                 from orchestrator.db.repositories import RunRepository
@@ -647,6 +718,8 @@ class AgentExecutor:
                                 attempt.agent_output = "\n".join(truncated)
                             if error:
                                 attempt.error = error
+                            if action_log is not None:
+                                attempt.action_log = action_log
                             await repo.save(run)
                             await session.commit()
                             return
@@ -686,9 +759,46 @@ class AgentExecutor:
         except Exception:
             logger.debug(f"Failed to store attempt prompt for {task_id}", exc_info=True)
 
+    async def _store_attempt_metrics(
+        self,
+        run_id: str,
+        task_id: str,
+        metrics: ExecutionMetrics,
+    ) -> None:
+        """Store execution metrics on the current attempt and accumulate into run totals."""
+        try:
+            async with self._session_factory() as session:
+                from orchestrator.db.repositories import RunRepository
+
+                repo = RunRepository(session)
+                run = await repo.get(run_id)
+                for step in run.steps:
+                    for task in step.tasks:
+                        if task.id == task_id and task.attempts:
+                            attempt = task.attempts[-1]
+                            attempt.metrics.tokens_read += metrics.tokens_read
+                            attempt.metrics.tokens_write += metrics.tokens_write
+                            attempt.metrics.tokens_cache += metrics.tokens_cache
+                            attempt.metrics.duration_ms += metrics.duration_ms
+                            attempt.metrics.num_actions += metrics.num_actions
+                            # Accumulate into run totals
+                            run.total_tokens_read += metrics.tokens_read
+                            run.total_tokens_write += metrics.tokens_write
+                            run.total_tokens_cache += metrics.tokens_cache
+                            run.total_duration_ms += metrics.duration_ms
+                            run.total_num_actions += metrics.num_actions
+                            await repo.save(run)
+                            await session.commit()
+                            return
+        except Exception:
+            logger.debug(f"Failed to store attempt metrics for {task_id}", exc_info=True)
+
     def _create_agent(self, agent_type: AgentType, agent_config: dict[str, Any]) -> CLIAgent:
         """Create the appropriate agent based on run configuration."""
         if agent_type == AgentType.CLI_SUBPROCESS:
+            from orchestrator.agents.parsers.claude_parser import ClaudeStreamParser
+            from orchestrator.agents.parsers.codex_parser import CodexStreamParser
+
             command = agent_config.get("command", "claude")
             model = agent_config.get("model")
             callback_channel = agent_config.get("callback_channel", "rest")
@@ -696,10 +806,23 @@ class AgentExecutor:
 
             # Build args based on command - claude needs special flags
             args = agent_config.get("args", [])
+            parser = None
             if command == "claude" and not args:
                 # Use -p for print mode (non-interactive) and skip permissions
-                # for automated execution
-                args = ["-p", "--dangerously-skip-permissions"]
+                # for automated execution, with stream-json for structured output
+                args = [
+                    "-p",
+                    "--dangerously-skip-permissions",
+                    "--output-format",
+                    "stream-json",
+                    "--verbose",
+                ]
+                parser = ClaudeStreamParser()
+            elif command == "codex" and not args:
+                # Use non-interactive mode with unrestricted execution for
+                # orchestrator-managed runs, with --json for structured output.
+                args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json"]
+                parser = CodexStreamParser()
 
             # Get nudger config from global config
             nudger_config = None
@@ -713,6 +836,7 @@ class AgentExecutor:
                 callback_channel=callback_channel,
                 nudger_config=nudger_config,
                 poll_interval=poll_interval,
+                parser=parser,
             )
 
         elif agent_type == AgentType.OPENHANDS_LOCAL:
@@ -720,7 +844,7 @@ class AgentExecutor:
             from orchestrator.agents.openhands import OpenHandsAgent
 
             api_key = agent_config.get("api_key")
-            model = agent_config.get("model", "gpt-4o-mini")
+            model = agent_config.get("model", "gpt-5-mini")
             max_iterations = agent_config.get("max_iterations", 100)
             tools = agent_config.get("tools")
             llm_config = {k: v for k, v in agent_config.items() if k in _LLM_CONFIG_KEYS}
@@ -738,7 +862,7 @@ class AgentExecutor:
             from orchestrator.agents.openhands_docker import DockerOpenHandsAgent
 
             api_key = agent_config.get("api_key")
-            model = agent_config.get("model", "gpt-4o-mini")
+            model = agent_config.get("model", "gpt-5-mini")
             max_iterations = agent_config.get("max_iterations", 100)
             tools = agent_config.get("tools")
             server_image = agent_config.get("server_image")

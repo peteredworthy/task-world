@@ -91,14 +91,12 @@ function StatusIcon({ status }: { status: string }) {
 
 function QuickActions({
   run,
-  onStart,
   onPause,
   onResume,
   onDelete,
   loading,
 }: {
   run: RunResponse;
-  onStart: (id: string) => void;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onDelete: (id: string) => void;
@@ -109,16 +107,6 @@ function QuickActions({
 
   return (
     <div className="flex items-center gap-1.5">
-      {run.status === 'draft' && (
-        <button
-          onClick={e => { e.stopPropagation(); onStart(run.id); }}
-          disabled={loading?.start}
-          className={btnBase + ' border-accent-purple/40 text-accent-purple hover:bg-accent-purple/15'}
-          aria-label="Start run"
-        >
-          {loading?.start ? 'Starting...' : 'Start'}
-        </button>
-      )}
       {run.status === 'active' && (
         <button
           onClick={e => { e.stopPropagation(); onPause(run.id); }}
@@ -139,9 +127,107 @@ function QuickActions({
           {loading?.resume ? 'Resuming...' : 'Resume'}
         </button>
       )}
-      {(run.status === 'draft' || run.status === 'completed' || run.status === 'failed') && (
+      {run.status === 'failed' && (
         <button
           onClick={e => { e.stopPropagation(); onDelete(run.id); }}
+          disabled={loading?.delete}
+          className={btnBase + ' border-status-failed/40 text-status-failed hover:bg-status-failed/15'}
+          aria-label="Delete run"
+        >
+          {loading?.delete ? 'Deleting...' : 'Delete'}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Expanded footer action buttons ---------- */
+
+function FooterActions({
+  run,
+  onStart,
+  onPause,
+  onResume,
+  onCancel,
+  onDelete,
+  loading,
+}: {
+  run: RunResponse;
+  onStart: (id: string) => void;
+  onPause: (id: string) => void;
+  onResume: (id: string) => void;
+  onCancel: (id: string) => void;
+  onDelete: (id: string) => void;
+  loading?: RunCardProps['loading'];
+}) {
+  const btnBase =
+    'px-3 py-1.5 text-[11px] font-semibold rounded border transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
+
+  return (
+    <div className="flex items-center gap-1.5">
+      {run.status === 'draft' && (
+        <>
+          <button
+            onClick={() => onStart(run.id)}
+            disabled={loading?.start}
+            className={btnBase + ' border-accent-purple/40 text-accent-purple hover:bg-accent-purple/15'}
+            aria-label="Start run"
+          >
+            {loading?.start ? 'Starting...' : 'Start'}
+          </button>
+          <button
+            onClick={() => onDelete(run.id)}
+            disabled={loading?.delete}
+            className={btnBase + ' border-status-failed/40 text-status-failed hover:bg-status-failed/15'}
+            aria-label="Delete run"
+          >
+            {loading?.delete ? 'Deleting...' : 'Delete'}
+          </button>
+        </>
+      )}
+      {run.status === 'active' && (
+        <>
+          <button
+            onClick={() => onPause(run.id)}
+            disabled={loading?.pause}
+            className={btnBase + ' border-status-paused/40 text-status-paused hover:bg-status-paused/15'}
+            aria-label="Pause run"
+          >
+            {loading?.pause ? 'Pausing...' : 'Pause'}
+          </button>
+          <button
+            onClick={() => onCancel(run.id)}
+            disabled={loading?.cancel}
+            className={btnBase + ' border-status-failed/40 text-status-failed hover:bg-status-failed/15'}
+            aria-label="Abort run"
+          >
+            {loading?.cancel ? 'Aborting...' : 'Abort Run'}
+          </button>
+        </>
+      )}
+      {run.status === 'paused' && (
+        <>
+          <button
+            onClick={() => onResume(run.id)}
+            disabled={loading?.resume}
+            className={btnBase + ' border-accent-purple/40 text-accent-purple hover:bg-accent-purple/15'}
+            aria-label="Resume run"
+          >
+            {loading?.resume ? 'Resuming...' : 'Resume'}
+          </button>
+          <button
+            onClick={() => onCancel(run.id)}
+            disabled={loading?.cancel}
+            className={btnBase + ' border-status-failed/40 text-status-failed hover:bg-status-failed/15'}
+            aria-label="Abort run"
+          >
+            {loading?.cancel ? 'Aborting...' : 'Abort Run'}
+          </button>
+        </>
+      )}
+      {(run.status === 'completed' || run.status === 'failed') && (
+        <button
+          onClick={() => onDelete(run.id)}
           disabled={loading?.delete}
           className={btnBase + ' border-status-failed/40 text-status-failed hover:bg-status-failed/15'}
           aria-label="Delete run"
@@ -313,7 +399,7 @@ function CollapsedRow(props: RunCardProps) {
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 cursor-pointer"
+      className="flex min-w-0 items-center gap-3 px-4 py-3 cursor-pointer"
       onClick={onToggle}
       role="button"
       tabIndex={0}
@@ -321,63 +407,69 @@ function CollapsedRow(props: RunCardProps) {
       aria-label={`Expand run ${routineName}`}
       onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
     >
-      {/* Status icon */}
-      <StatusIcon status={run.status} />
+      <div className="flex min-w-0 flex-1 items-center gap-3 overflow-hidden">
+        {/* Status icon */}
+        <StatusIcon status={run.status} />
 
-      {/* Status badge */}
-      <RunStatusBadge status={run.status} />
+        {/* Status badge */}
+        <RunStatusBadge status={run.status} />
 
-      {/* Run name */}
-      <span className="text-sm font-semibold text-text-primary truncate shrink-0">
-        {routineName}
-      </span>
+        {/* Run name */}
+        <span className="min-w-0 truncate text-sm font-semibold text-text-primary">
+          {routineName}
+        </span>
 
-      {/* Pending actions badge */}
-      <PendingActionsBadge count={pendingActionsCount} />
+        {/* Pending actions badge */}
+        <PendingActionsBadge count={pendingActionsCount} />
 
-      {/* Meta line */}
-      <div className="flex items-center gap-2 text-[11px] text-text-muted font-mono ml-1 min-w-0 overflow-hidden">
-        <span className="truncate" title={run.id}>{run.id.slice(0, 8)}</span>
-        {run.routine_id && (
-          <>
-            <span className="text-border-hover">|</span>
-            <span className="truncate">{run.routine_id}</span>
-          </>
-        )}
-        <span className="text-border-hover">|</span>
-        <span className="truncate" title={run.repo_name}>{run.repo_name}</span>
-        {run.agent_icon !== 'none' && (
-          <>
-            <span className="text-border-hover">|</span>
-            <span className="flex items-center gap-1.5">
-              <AgentIcon icon={run.agent_icon} className="h-3.5 w-3.5" />
-              <span className="truncate">{run.agent_type_display}</span>
-            </span>
-          </>
-        )}
+        {/* Meta line */}
+        <div className="ml-1 flex min-w-0 items-center gap-2 overflow-hidden font-mono text-[11px] text-text-muted">
+          <span className="truncate" title={run.id}>{run.id.slice(0, 8)}</span>
+          {run.routine_id && (
+            <>
+              <span className="text-border-hover">|</span>
+              <span className="truncate">{run.routine_id}</span>
+            </>
+          )}
+          <span className="text-border-hover">|</span>
+          <span className="truncate" title={run.repo_name}>{run.repo_name}</span>
+          {run.agent_icon !== 'none' && (
+            <>
+              <span className="text-border-hover">|</span>
+              <span className="flex items-center gap-1.5">
+                <AgentIcon icon={run.agent_icon} className="h-3.5 w-3.5" />
+                <span className="truncate">{run.agent_type_display}</span>
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Spacer */}
-      <div className="flex-1" />
+      <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
+        {/* Step badges */}
+        <div className="w-0 flex-1 overflow-x-auto scrollbar-dark">
+          <StepTimeline steps={run.steps} currentStepIndex={run.current_step_index} />
+        </div>
 
-      {/* Step badges */}
-      <StepTimeline steps={run.steps} currentStepIndex={run.current_step_index} />
+        {/* Duration */}
+        <DurationBadge ms={run.total_duration_ms} />
 
-      {/* Duration */}
-      <DurationBadge ms={run.total_duration_ms} />
+        {/* Quick actions */}
+        <div className="shrink-0">
+          <QuickActions
+            run={run}
+            onPause={props.onPause}
+            onResume={props.onResume}
+            onDelete={props.onDelete}
+            loading={loading}
+          />
+        </div>
 
-      {/* Quick actions */}
-      <QuickActions
-        run={run}
-        onStart={props.onStart}
-        onPause={props.onPause}
-        onResume={props.onResume}
-        onDelete={props.onDelete}
-        loading={loading}
-      />
-
-      {/* Chevron */}
-      <ChevronToggle expanded={false} />
+        {/* Chevron */}
+        <div className="shrink-0">
+          <ChevronToggle expanded={false} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -455,7 +547,6 @@ function ExpandedView(props: RunCardProps) {
         {/* Quick actions */}
         <QuickActions
           run={run}
-          onStart={props.onStart}
           onPause={props.onPause}
           onResume={props.onResume}
           onDelete={props.onDelete}
@@ -470,7 +561,7 @@ function ExpandedView(props: RunCardProps) {
       <div className="animate-slide-down overflow-hidden">
       {run.steps.length > 0 && (
         <div className="px-4 py-4">
-          <div className="flex gap-4 overflow-x-auto">
+          <div className="flex gap-4 overflow-x-auto scrollbar-dark">
             {run.steps.map((step, i) => (
               <StepColumn
                 key={step.id}
@@ -493,21 +584,15 @@ function ExpandedView(props: RunCardProps) {
         >
           Open Detailed View
         </Link>
-        {run.status === 'active' && (
-          <button
-            onClick={() => props.onCancel(run.id)}
-            disabled={loading?.cancel}
-            className={
-              'px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider rounded border ' +
-              'border-status-failed/50 text-status-failed bg-transparent ' +
-              'hover:bg-status-failed/10 transition-colors ' +
-              'disabled:opacity-50 disabled:cursor-not-allowed'
-            }
-            aria-label="Abort run"
-          >
-            {loading?.cancel ? 'Aborting...' : 'Abort Run'}
-          </button>
-        )}
+        <FooterActions
+          run={run}
+          onStart={props.onStart}
+          onPause={props.onPause}
+          onResume={props.onResume}
+          onCancel={props.onCancel}
+          onDelete={props.onDelete}
+          loading={loading}
+        />
       </div>
       </div>
     </div>

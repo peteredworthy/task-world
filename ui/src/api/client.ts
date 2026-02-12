@@ -236,6 +236,13 @@ export const api = {
     });
   },
 
+  mergeBack(runId: string, strategy?: string): Promise<{ merge_commit: string; strategy: string; message: string }> {
+    return fetchApi('/api/runs/' + runId + '/merge-back', {
+      method: 'POST',
+      body: strategy ? JSON.stringify({ strategy }) : undefined,
+    });
+  },
+
   // Repos API
   listRepos(): Promise<ReposListResponse> {
     return fetchApi('/api/repos');

@@ -543,6 +543,12 @@ def status_run(ctx: click.Context, run_id: str, url: str) -> None:
             )
             if total_tokens > 0:
                 click.echo(f"\nTokens used: {total_tokens:,}")
+                total_actions = result.get("total_num_actions", 0)
+                if total_actions > 0:
+                    click.echo(f"Tool calls: {total_actions:,}")
+                total_duration = result.get("total_duration_ms", 0)
+                if total_duration > 0:
+                    click.echo(f"Duration: {total_duration / 1000:.0f}s")
                 if result.get("estimated_cost_usd"):
                     click.echo(f"Estimated cost: ${result.get('estimated_cost_usd'):.4f}")
 

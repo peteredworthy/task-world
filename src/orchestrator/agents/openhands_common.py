@@ -152,15 +152,17 @@ class SubmitExecutor:
         self._make_obs = observation_factory
 
     def __call__(self, action: Any, conversation: Any = None) -> Any:
+        if self._make_obs is None:
+            raise RuntimeError("observation_factory not provided")
         coro = self._callback()
         future = asyncio.run_coroutine_threadsafe(  # pyright: ignore[reportUnknownVariableType]
             coro,  # pyright: ignore[reportArgumentType]
             self._loop,
         )
-        future.result(timeout=60)  # pyright: ignore[reportUnknownMemberType]
-
-        if self._make_obs is None:
-            raise RuntimeError("observation_factory not provided")
+        try:
+            future.result(timeout=60)  # pyright: ignore[reportUnknownMemberType]
+        except Exception as e:
+            return self._make_obs(f"ERROR submitting: {e}")
         return self._make_obs("Task submitted for verification.")
 
 
@@ -187,16 +189,81 @@ class SetGradeExecutor:
         if grade not in valid_grades:
             raise ValueError(f"Invalid grade '{grade}'. Valid values: {', '.join(valid_grades)}")
 
+        if self._make_obs is None:
+            raise RuntimeError("observation_factory not provided")
         coro = self._callback(req_id, grade, grade_reason)
         future = asyncio.run_coroutine_threadsafe(  # pyright: ignore[reportUnknownVariableType]
             coro,  # pyright: ignore[reportArgumentType]
             self._loop,
         )
-        future.result(timeout=60)  # pyright: ignore[reportUnknownMemberType]
+        try:
+            future.result(timeout=60)  # pyright: ignore[reportUnknownMemberType]
+        except Exception as e:
+            return self._make_obs(f"ERROR setting grade: {e}")
+        return self._make_obs(f"Set grade '{grade}' on requirement '{req_id}'.")
 
+
+class ValidateRoutineExecutor:
+    """Validates a routine YAML file on the host and returns errors.
+
+    Runs synchronously — no async callback needed.  The ``worktree_path``
+    is used to resolve relative file paths.
+    """
+
+    def __init__(
+        self,
+        worktree_path: str,
+        observation_factory: Any = None,
+    ) -> None:
+        self._worktree_path = worktree_path
+        self._make_obs = observation_factory
+
+    def __call__(self, action: Any, conversation: Any = None) -> Any:
         if self._make_obs is None:
             raise RuntimeError("observation_factory not provided")
-        return self._make_obs(f"Set grade '{grade}' on requirement '{req_id}'.")
+
+        routine_path: str = getattr(action, "routine_path", "")
+        if not routine_path:
+            return self._make_obs("ERROR: routine_path is required")
+
+        return self._make_obs(self.validate(routine_path))
+
+    def validate(self, routine_path: str) -> str:
+        """Validate a routine YAML and return a human-readable result."""
+        from pathlib import Path
+
+        import yaml
+
+        abs_path = Path(self._worktree_path) / routine_path
+        if not abs_path.exists():
+            return f"ERROR: File not found: {routine_path}"
+
+        try:
+            with open(abs_path) as f:
+                raw: Any = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            return f"YAML parse error: {e}"
+
+        if raw is None:
+            return "ERROR: File is empty"
+
+        # Unwrap optional `routine:` wrapper
+        if isinstance(raw, dict) and "routine" in raw and len(raw) == 1:  # pyright: ignore[reportUnknownArgumentType]
+            raw: Any = raw["routine"]  # pyright: ignore[reportUnknownVariableType]
+
+        try:
+            from orchestrator.config.models import RoutineConfig
+
+            RoutineConfig.model_validate(raw)
+        except Exception as e:
+            # Format pydantic errors into actionable feedback
+            error_str = str(e)
+            # Truncate very long error messages
+            if len(error_str) > 3000:
+                error_str = error_str[:3000] + "\n... (truncated)"
+            return f"VALIDATION FAILED:\n{error_str}"
+
+        return f"VALID: {routine_path} passes schema validation."
 
 
 # ---------------------------------------------------------------------------
@@ -204,12 +271,17 @@ class SetGradeExecutor:
 # ---------------------------------------------------------------------------
 
 
-def extract_metrics(conversation: Any) -> ExecutionMetrics:
-    """Extract token usage metrics from the conversation stats."""
+def extract_metrics(conversation: Any, duration_ms: int = 0) -> ExecutionMetrics:
+    """Extract token usage and action count metrics from the conversation.
+
+    Args:
+        conversation: The OpenHands conversation object after execution.
+        duration_ms: Wall-clock execution time in milliseconds (measured by caller).
+    """
     try:
         stats = conversation.conversation_stats
         if stats is None:
-            return ExecutionMetrics()
+            return ExecutionMetrics(duration_ms=duration_ms)
 
         usage_map = stats.usage_to_metrics
         total_read = 0
@@ -222,16 +294,33 @@ def extract_metrics(conversation: Any) -> ExecutionMetrics:
                 total_write += metrics.accumulated_token_usage.completion_tokens
                 total_cache += metrics.accumulated_token_usage.cache_read_tokens
 
+        # Try to count actions from conversation state
+        num_actions = 0
+        try:
+            state = getattr(conversation, "state", None)
+            if state is not None:
+                events = getattr(state, "events", None)
+                if events is not None:
+                    # Count Action-type events (tool calls)
+                    for event in events:
+                        cls_name = type(event).__name__
+                        if "Action" in cls_name and "Message" not in cls_name:
+                            num_actions += 1
+        except Exception:
+            pass  # Action counting is best-effort
+
         return ExecutionMetrics(
             tokens_read=total_read,
             tokens_write=total_write,
             tokens_cache=total_cache,
+            duration_ms=duration_ms,
+            num_actions=num_actions,
         )
     except Exception:
         logging.getLogger(__name__).warning(
             "Failed to extract metrics from conversation", exc_info=True
         )
-        return ExecutionMetrics()
+        return ExecutionMetrics(duration_ms=duration_ms)
 
 
 # ---------------------------------------------------------------------------

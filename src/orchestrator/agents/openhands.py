@@ -506,7 +506,18 @@ class OpenHandsAgent:
             # Extract metrics
             metrics = extract_metrics(conversation)
 
-            return ExecutionResult(success=True, metrics=metrics)
+            # Parse OpenHands events into structured action log
+            action_log = None
+            try:
+                from orchestrator.agents.parsers.openhands_parser import OpenHandsEventParser
+
+                events_list = list(getattr(getattr(conversation, "state", None), "events", []))
+                if events_list:
+                    action_log = OpenHandsEventParser().parse_events(events_list)
+            except Exception:
+                pass  # Action log is best-effort
+
+            return ExecutionResult(success=True, metrics=metrics, action_log=action_log)
 
         except AgentCancelledError:
             raise

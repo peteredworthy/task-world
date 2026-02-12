@@ -16,6 +16,64 @@ export interface GradeSnapshotItem {
   grade_reason: string | null;
 }
 
+// --- Structured Action Log types ---
+
+export type ActionEntryKind =
+  | 'system_init'
+  | 'assistant_text'
+  | 'thinking'
+  | 'tool_use'
+  | 'tool_result'
+  | 'result'
+  | 'error';
+
+export interface ToolUseDetail {
+  tool_use_id: string;
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  summary: string | null;
+}
+
+export interface ToolResultDetail {
+  tool_use_id: string;
+  output: string;
+  exit_code: number | null;
+  success: boolean;
+  output_length: number;
+}
+
+export interface TurnMetrics {
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cost_usd: number;
+}
+
+export interface ActionLogEntry {
+  sequence_num: number;
+  kind: ActionEntryKind;
+  timestamp: string | null;
+  text: string | null;
+  tool_use: ToolUseDetail | null;
+  tool_result: ToolResultDetail | null;
+  metrics: TurnMetrics | null;
+  raw_type: string | null;
+}
+
+export interface ActionLog {
+  entries: ActionLogEntry[];
+  session_id: string | null;
+  agent_model: string | null;
+  tools_available: string[];
+  total_turns: number;
+  total_cost_usd: number;
+  total_duration_ms: number;
+  total_input_tokens: number;
+  total_output_tokens: number;
+}
+
+// --- Attempt and Task types ---
+
 export interface AttemptSchema {
   id: string;
   attempt_num: number;
@@ -33,6 +91,7 @@ export interface AttemptSchema {
   agent_settings: Record<string, unknown>;
   error: string | null;
   has_output: boolean;
+  has_action_log: boolean;
 }
 
 export interface TaskDetailResponse {
@@ -84,4 +143,5 @@ export interface AgentLogsResponse {
   output: string | null;
   error: string | null;
   line_count: number;
+  action_log: ActionLog | null;
 }

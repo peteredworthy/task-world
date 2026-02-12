@@ -64,6 +64,7 @@ const defaultHandlers = {
   onStart: vi.fn(),
   onPause: vi.fn(),
   onResume: vi.fn(),
+  onCancel: vi.fn(),
   onDelete: vi.fn(),
   onToggle: vi.fn(),
 };
@@ -92,16 +93,22 @@ describe('RunCard', () => {
     expect(screen.getByText('active')).toBeInTheDocument();
   });
 
-  it('shows Start button for draft status', () => {
+  it('does not show Start button for draft status in collapsed bar', () => {
     const run = makeRun({ status: 'draft' });
     renderCard(run);
+    expect(screen.queryByText('Start')).not.toBeInTheDocument();
+  });
+
+  it('shows Start button for draft status in expanded footer', () => {
+    const run = makeRun({ status: 'draft' });
+    renderCard(run, { expanded: true });
     expect(screen.getByText('Start')).toBeInTheDocument();
   });
 
   it('calls onStart when Start button is clicked', async () => {
     const onStart = vi.fn();
     const run = makeRun({ status: 'draft', id: 'run-42' });
-    renderCard(run, { onStart });
+    renderCard(run, { onStart, expanded: true });
     await userEvent.click(screen.getByText('Start'));
     expect(onStart).toHaveBeenCalledWith('run-42');
   });
@@ -110,6 +117,18 @@ describe('RunCard', () => {
     const run = makeRun({ status: 'active' });
     renderCard(run);
     expect(screen.getByText('Pause')).toBeInTheDocument();
+  });
+
+  it('does not show Abort Run button for active status in collapsed bar', () => {
+    const run = makeRun({ status: 'active' });
+    renderCard(run);
+    expect(screen.queryByText('Abort Run')).not.toBeInTheDocument();
+  });
+
+  it('shows Abort Run button for active status in expanded footer', () => {
+    const run = makeRun({ status: 'active' });
+    renderCard(run, { expanded: true });
+    expect(screen.getByText('Abort Run')).toBeInTheDocument();
   });
 
   it('calls onPause when Pause button is clicked', async () => {
@@ -134,15 +153,53 @@ describe('RunCard', () => {
     expect(onResume).toHaveBeenCalledWith('run-42');
   });
 
-  it('shows Delete button for draft status', () => {
+  it('does not show Abort Run button for paused status in collapsed bar', () => {
+    const run = makeRun({ status: 'paused' });
+    renderCard(run);
+    expect(screen.queryByText('Abort Run')).not.toBeInTheDocument();
+  });
+
+  it('shows Abort Run button for paused status in expanded footer', () => {
+    const run = makeRun({ status: 'paused' });
+    renderCard(run, { expanded: true });
+    expect(screen.getByText('Abort Run')).toBeInTheDocument();
+  });
+
+  it('calls onCancel when Abort Run is clicked for paused status in expanded footer', async () => {
+    const onCancel = vi.fn();
+    const run = makeRun({ status: 'paused', id: 'run-42' });
+    renderCard(run, { onCancel, expanded: true });
+    await userEvent.click(screen.getByText('Abort Run'));
+    expect(onCancel).toHaveBeenCalledWith('run-42');
+  });
+
+  it('does not show Abort Run button for failed status', () => {
+    const run = makeRun({ status: 'failed' });
+    renderCard(run);
+    expect(screen.queryByText('Abort Run')).not.toBeInTheDocument();
+  });
+
+  it('does not show Delete button for draft status in collapsed bar', () => {
     const run = makeRun({ status: 'draft' });
     renderCard(run);
+    expect(screen.queryByText('Delete')).not.toBeInTheDocument();
+  });
+
+  it('shows Delete button for draft status in expanded footer', () => {
+    const run = makeRun({ status: 'draft' });
+    renderCard(run, { expanded: true });
     expect(screen.getByText('Delete')).toBeInTheDocument();
   });
 
-  it('shows Delete button for completed status', () => {
+  it('does not show Delete button for completed status in collapsed bar', () => {
     const run = makeRun({ status: 'completed' });
     renderCard(run);
+    expect(screen.queryByText('Delete')).not.toBeInTheDocument();
+  });
+
+  it('shows Delete button for completed status in expanded footer', () => {
+    const run = makeRun({ status: 'completed' });
+    renderCard(run, { expanded: true });
     expect(screen.getByText('Delete')).toBeInTheDocument();
   });
 
@@ -152,10 +209,10 @@ describe('RunCard', () => {
     expect(screen.getByText('Delete')).toBeInTheDocument();
   });
 
-  it('calls onDelete when Delete button is clicked', async () => {
+  it('calls onDelete when Delete button is clicked in expanded footer', async () => {
     const onDelete = vi.fn();
     const run = makeRun({ status: 'draft', id: 'run-42' });
-    renderCard(run, { onDelete });
+    renderCard(run, { onDelete, expanded: true });
     await userEvent.click(screen.getByText('Delete'));
     expect(onDelete).toHaveBeenCalledWith('run-42');
   });
@@ -199,7 +256,7 @@ describe('RunCard', () => {
     // Re-render expanded
     rerender(
       <MemoryRouter>
-        <RunCard run={run} routineName={run.routine_id!} expanded={true} onToggle={onToggle} onStart={defaultHandlers.onStart} onPause={defaultHandlers.onPause} onResume={defaultHandlers.onResume} onDelete={defaultHandlers.onDelete} />
+        <RunCard run={run} routineName={run.routine_id!} expanded={true} onToggle={onToggle} onStart={defaultHandlers.onStart} onPause={defaultHandlers.onPause} onResume={defaultHandlers.onResume} onCancel={defaultHandlers.onCancel} onDelete={defaultHandlers.onDelete} />
       </MemoryRouter>
     );
 
@@ -214,7 +271,7 @@ describe('RunCard', () => {
 
   it('shows "Starting..." when start loading state is true', () => {
     const run = makeRun({ status: 'draft' });
-    renderCard(run, { loading: { start: true } });
+    renderCard(run, { expanded: true, loading: { start: true } });
     expect(screen.getByText('Starting...')).toBeInTheDocument();
     expect(screen.queryByText('Start')).not.toBeInTheDocument();
   });
@@ -235,7 +292,7 @@ describe('RunCard', () => {
 
   it('shows "Deleting..." when delete loading state is true', () => {
     const run = makeRun({ status: 'draft' });
-    renderCard(run, { loading: { delete: true } });
+    renderCard(run, { expanded: true, loading: { delete: true } });
     expect(screen.getByText('Deleting...')).toBeInTheDocument();
     expect(screen.queryByText('Delete')).not.toBeInTheDocument();
   });

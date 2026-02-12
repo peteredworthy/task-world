@@ -29,6 +29,7 @@ class ExecutionMetrics(BaseModel):
     tokens_write: int = 0
     tokens_cache: int = 0
     duration_ms: int = 0
+    num_actions: int = 0
 
 
 class ExecutionResult(BaseModel):
@@ -39,6 +40,7 @@ class ExecutionResult(BaseModel):
     metrics: ExecutionMetrics = ExecutionMetrics()
     agent_metadata: dict[str, Any] = {}  # Runtime metadata like PID, container_id
     output_lines: list[str] = []
+    action_log: Any = None  # ActionLog | None — typed as Any to avoid circular import
 
 
 class ExecutionContext(BaseModel):

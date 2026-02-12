@@ -22,6 +22,7 @@ const TASK_EVENT_TYPES = new Set([
   'task_status_changed',
   'checklist_gate_evaluated',
   'grades_evaluated',
+  'agent_error',
 ]);
 
 /**
@@ -131,4 +132,37 @@ export function classifyTasks(
   }
 
   return { active, upcoming };
+}
+
+/** Extract the last agent error from events, if any. */
+export function getLastAgentError(events: ActivityEvent[]): {
+  errorMessage: string;
+  taskTitle: string | null;
+} | null {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.event_type === 'agent_error') {
+      // Also scan backwards through agent_output for the real error detail
+      // (the agent_error payload is often generic like "Process exited with code 1")
+      let detail = '';
+      for (let j = i - 1; j >= 0; j--) {
+        const prev = events[j];
+        if (prev.event_type !== 'agent_output') break;
+        const lines = prev.payload.lines as string[] | undefined;
+        if (lines) {
+          const errorLines = lines.filter(
+            l => l.startsWith('ERROR:') || l.includes('does not exist') || l.includes('Reconnecting... 5/5'),
+          );
+          if (errorLines.length > 0) {
+            detail = errorLines[errorLines.length - 1];
+            break;
+          }
+        }
+      }
+
+      const message = detail || (e.payload.error_message as string) || 'Unknown error';
+      return { errorMessage: message, taskTitle: e.task_title };
+    }
+  }
+  return null;
 }

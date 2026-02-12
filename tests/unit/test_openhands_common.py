@@ -5,6 +5,7 @@ and tool registration helpers.
 """
 
 import asyncio
+from typing import Any
 
 from orchestrator.agents.openhands_common import (
     DEFAULT_OPENHANDS_TOOLS,
@@ -227,6 +228,52 @@ def test_openhands_tool_imports_has_expected_keys() -> None:
     assert "browser" in OPENHANDS_TOOL_IMPORTS
     assert "glob" in OPENHANDS_TOOL_IMPORTS
     assert "grep" in OPENHANDS_TOOL_IMPORTS
+
+
+# --- ValidateRoutineExecutor ---
+
+
+def test_validate_routine_valid_yaml(tmp_path: Any) -> None:
+    """Valid routine YAML returns success message."""
+    from orchestrator.agents.openhands_common import ValidateRoutineExecutor
+
+    routine_dir = tmp_path / "routines" / "test"
+    routine_dir.mkdir(parents=True)
+    routine_file = routine_dir / "routine.yaml"
+    routine_file.write_text(
+        'id: "test"\nname: "Test"\nsteps:\n'
+        '  - id: "S-01"\n    title: "Step 1"\n    tasks:\n'
+        '      - id: "T-01"\n        title: "Task 1"\n'
+        '        task_context: "Do the thing"\n'
+    )
+
+    executor = ValidateRoutineExecutor(str(tmp_path), observation_factory=lambda text: text)
+    result = executor.validate("routines/test/routine.yaml")
+    assert "VALID" in result
+
+
+def test_validate_routine_invalid_yaml(tmp_path: Any) -> None:
+    """Invalid routine YAML returns validation errors."""
+    from orchestrator.agents.openhands_common import ValidateRoutineExecutor
+
+    routine_dir = tmp_path / "routines" / "test"
+    routine_dir.mkdir(parents=True)
+    routine_file = routine_dir / "routine.yaml"
+    routine_file.write_text('id: "test"\nschema_version: "1"\n')
+
+    executor = ValidateRoutineExecutor(str(tmp_path), observation_factory=lambda text: text)
+    result = executor.validate("routines/test/routine.yaml")
+    assert "VALIDATION FAILED" in result
+
+
+def test_validate_routine_missing_file(tmp_path: Any) -> None:
+    """Missing file returns error."""
+    from orchestrator.agents.openhands_common import ValidateRoutineExecutor
+
+    executor = ValidateRoutineExecutor(str(tmp_path), observation_factory=lambda text: text)
+    result = executor.validate("nonexistent.yaml")
+    assert "ERROR" in result
+    assert "not found" in result.lower()
 
 
 def test_default_openhands_tools() -> None:

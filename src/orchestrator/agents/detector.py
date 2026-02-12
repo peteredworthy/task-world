@@ -116,6 +116,17 @@ _USER_MANAGED_CONFIG: list[AgentConfigField] = [
 ]
 
 
+def _cli_config_for_command(command: str) -> list[AgentConfigField]:
+    """Return CLI config schema with command default pinned to the selected tool."""
+    config: list[AgentConfigField] = []
+    for field in _CLI_SUBPROCESS_CONFIG:
+        if field.name == "command":
+            config.append(field.model_copy(update={"default": command}))
+        else:
+            config.append(field.model_copy())
+    return config
+
+
 class ToolDetector:
     """Detects which agent backends are available.
 
@@ -244,6 +255,7 @@ class ToolDetector:
 
         for tool_name in ("claude", "codex"):
             path = shutil.which(tool_name)
+            config_schema = _cli_config_for_command(tool_name)
             if path is not None:
                 results.append(
                     AgentOption(
@@ -253,7 +265,7 @@ class ToolDetector:
                         description=f"Subprocess agent running the {tool_name} CLI tool. Sends prompts via stdin and reads outputs from stdout.",
                         available=True,
                         detail=f"Found at {path}",
-                        config_schema=_CLI_SUBPROCESS_CONFIG,
+                        config_schema=config_schema,
                     )
                 )
             else:
@@ -266,7 +278,7 @@ class ToolDetector:
                         available=False,
                         detail=f"{tool_name} not found in PATH",
                         install_hint=f"Install {tool_name} CLI tool",
-                        config_schema=_CLI_SUBPROCESS_CONFIG,
+                        config_schema=config_schema,
                     )
                 )
 

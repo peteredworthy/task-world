@@ -22,6 +22,57 @@ class GradeSnapshotItemSchema(BaseModel):
     grade_reason: str | None = None
 
 
+# --- Structured Action Log schemas ---
+
+
+class ToolUseDetailSchema(BaseModel):
+    tool_use_id: str = ""
+    tool_name: str = ""
+    arguments: dict[str, Any] = {}
+    summary: str | None = None
+
+
+class ToolResultDetailSchema(BaseModel):
+    tool_use_id: str = ""
+    output: str = ""
+    exit_code: int | None = None
+    success: bool = True
+    output_length: int = 0
+
+
+class TurnMetricsSchema(BaseModel):
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cost_usd: float = 0.0
+
+
+class ActionLogEntrySchema(BaseModel):
+    sequence_num: int = 0
+    kind: str
+    timestamp: datetime | None = None
+    text: str | None = None
+    tool_use: ToolUseDetailSchema | None = None
+    tool_result: ToolResultDetailSchema | None = None
+    metrics: TurnMetricsSchema | None = None
+    raw_type: str | None = None
+
+
+class ActionLogSchema(BaseModel):
+    entries: list[ActionLogEntrySchema] = []
+    session_id: str | None = None
+    agent_model: str | None = None
+    tools_available: list[str] = []
+    total_turns: int = 0
+    total_cost_usd: float = 0.0
+    total_duration_ms: int = 0
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+
+
+# --- Attempt and Task schemas ---
+
+
 class AttemptSchema(BaseModel):
     id: str
     attempt_num: int
@@ -41,6 +92,7 @@ class AttemptSchema(BaseModel):
     agent_settings: dict[str, Any] = {}
     error: str | None = None
     has_output: bool = False
+    has_action_log: bool = False
 
 
 class TaskDetailResponse(BaseModel):
@@ -96,6 +148,7 @@ class AgentLogsResponse(BaseModel):
     output: str | None = None
     error: str | None = None
     line_count: int = 0
+    action_log: ActionLogSchema | None = None
 
 
 class ApproveTaskRequest(BaseModel):

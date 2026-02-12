@@ -1,6 +1,7 @@
 """Async workflow service wiring WorkflowEngine to persistent storage."""
 
 import asyncio
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -48,7 +49,7 @@ from orchestrator.workflow.transitions import (
 )
 from orchestrator.workflow.completion import handle_run_completion
 from orchestrator.git.worktree import WorktreeManager
-from orchestrator.git.utils import get_head_commit
+from orchestrator.git.utils import commit_uncommitted_changes, get_head_commit
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 
 
@@ -462,6 +463,12 @@ class WorkflowService:
         task = state.get_task(run_id, task_id)
         if run.worktree_path and task.attempts:
             worktree_path = Path(run.worktree_path)
+            # Auto-commit any uncommitted changes left by the builder agent.
+            # Some CLI agents (e.g. codex) may not commit their work, and the
+            # verifier's git checkout of end_commit would destroy those changes.
+            commit_uncommitted_changes(
+                worktree_path, f"Auto-commit builder changes for task {task_id}"
+            )
             task.attempts[-1].end_commit = get_head_commit(worktree_path)
 
         # --- Auto-verify phase ---
@@ -720,7 +727,8 @@ class WorkflowService:
                 task.status.value, "update_checklist_item (task is terminal or in verification)"
             )
 
-        item = state.update_checklist_item(run_id, task_id, req_id, status, note)
+        resolved_req_id = self._resolve_req_id(run_id, task, req_id)
+        item = state.update_checklist_item(run_id, task_id, resolved_req_id, status, note)
         await self._repo.save(state.get_run(run_id))
         await self._session.commit()
         return item
@@ -743,10 +751,17 @@ class WorkflowService:
 
         from orchestrator.state.errors import ChecklistItemNotFoundError
 
-        # B5+B15: Only allow grading during VERIFYING phase
-        if task.status != TaskStatus.VERIFYING:
+        # B5+B15: Only allow grading during VERIFYING phase.
+        # Also tolerate terminal states (FAILED/COMPLETED) so that agents
+        # can finish recording grades even after complete_verification has
+        # already transitioned the task (e.g. parallel tool calls).
+        if task.status not in (
+            TaskStatus.VERIFYING,
+            TaskStatus.FAILED,
+            TaskStatus.COMPLETED,
+        ):
             raise InvalidTransitionError(
-                task.status.value, "set_grade (only allowed in VERIFYING status)"
+                task.status.value, "set_grade (only allowed in VERIFYING or terminal status)"
             )
 
         # B16: Validate grade against routine's configured grade_scale
@@ -760,8 +775,10 @@ class WorkflowService:
                         f"Invalid grade '{grade}'. Must be one of: {', '.join(grade_scale)}"
                     )
 
+        resolved_req_id = self._resolve_req_id(run_id, task, req_id)
+
         for item in task.checklist:
-            if item.req_id == req_id:
+            if item.req_id == resolved_req_id:
                 item.grade = grade
                 if grade_reason is not None:
                     item.grade_reason = grade_reason
@@ -784,6 +801,52 @@ class WorkflowService:
                 if task.id == task_id:
                     return task
         raise TaskNotFoundError(run.id, task_id)
+
+    @staticmethod
+    def _parse_numeric_req_id(value: str) -> int | None:
+        """Parse flexible numeric requirement IDs.
+
+        Accepts forms like ``1``, ``01``, ``R1``, ``r1``, ``R-01``, ``r_001``.
+        Returns the numeric portion as int, or None if the value is non-numeric.
+        """
+        match = re.fullmatch(r"(?i)r?[-_\s]*0*(\d+)", value.strip())
+        if match is None:
+            return None
+        return int(match.group(1))
+
+    def _resolve_req_id(self, run_id: str, task: TaskState, req_id: str) -> str:
+        """Resolve flexible req_id inputs to the canonical checklist req_id.
+
+        Resolution order:
+        1. Exact match.
+        2. Case-insensitive exact match (if unique).
+        3. Numeric normalization (e.g. R-01 -> R1, 1 -> R1) if unique.
+        """
+        from orchestrator.state.errors import ChecklistItemNotFoundError
+
+        # 1) Exact match
+        for item in task.checklist:
+            if item.req_id == req_id:
+                return item.req_id
+
+        # 2) Case-insensitive exact
+        lowered = req_id.lower()
+        case_matches = [item.req_id for item in task.checklist if item.req_id.lower() == lowered]
+        if len(case_matches) == 1:
+            return case_matches[0]
+
+        # 3) Numeric normalization
+        target_num = self._parse_numeric_req_id(req_id)
+        if target_num is not None:
+            numeric_matches = [
+                item.req_id
+                for item in task.checklist
+                if self._parse_numeric_req_id(item.req_id) == target_num
+            ]
+            if len(numeric_matches) == 1:
+                return numeric_matches[0]
+
+        raise ChecklistItemNotFoundError(run_id, task.id, req_id)
 
     def _find_step_for_task(self, run: Run, task_id: str) -> "StepState":
         """Find the step containing a task.

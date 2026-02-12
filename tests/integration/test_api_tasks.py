@@ -176,6 +176,31 @@ async def test_grade_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
+async def test_flexible_req_id_formats_in_api(client: AsyncClient) -> None:
+    """API should accept numeric req_id variants for checklist/grade endpoints."""
+    run_id, task_id = await _setup_active_run(client)
+
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+
+    # Numeric-only format should resolve to R1.
+    resp = await client.patch(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/1",
+        json={"status": "done"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["req_id"] == "R1"
+
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+
+    # Dashed format should resolve to R1.
+    resp = await client.put(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R-01/grade",
+        json={"grade": "A", "grade_reason": "Flexible ID accepted"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["req_id"] == "R1"
+
+
 async def test_run_not_found_for_task(client: AsyncClient) -> None:
     resp = await client.get("/api/runs/nonexistent/tasks/whatever")
     assert resp.status_code == 404

@@ -24,11 +24,19 @@
 import { useRoutines, useRepoRoutines } from '../hooks/useApi';
 import type { RoutineSummary, ProjectRoutineResponse } from '../types';
 
+export interface RoutineSelection {
+  routineId: string;
+  isProjectRoutine: boolean;
+  /** Full routine config for project routines (used as routine_embedded). */
+  config?: Record<string, unknown>;
+}
+
 interface RoutineSelectorProps {
   repoName: string | null;
   branch?: string;
   value: string;
   onChange: (routineId: string) => void;
+  onSelectionChange?: (selection: RoutineSelection | null) => void;
   className?: string;
   autoFocus?: boolean;
   required?: boolean;
@@ -39,6 +47,7 @@ interface GroupedRoutine {
   name: string;
   description: string | null;
   isTemplate: boolean;
+  config?: Record<string, unknown>;
 }
 
 export function RoutineSelector({
@@ -46,6 +55,7 @@ export function RoutineSelector({
   branch = 'main',
   value,
   onChange,
+  onSelectionChange,
   className = '',
   autoFocus = false,
   required = false,
@@ -93,7 +103,22 @@ export function RoutineSelector({
       autoFocus={autoFocus}
       required={required}
       value={value}
-      onChange={(e) => onChange(e.target.value)}
+      onChange={(e) => {
+        const id = e.target.value;
+        onChange(id);
+        if (onSelectionChange) {
+          if (!id) {
+            onSelectionChange(null);
+          } else {
+            const match = allRoutines.find(r => r.id === id);
+            onSelectionChange(match ? {
+              routineId: id,
+              isProjectRoutine: !match.isTemplate,
+              config: match.config,
+            } : null);
+          }
+        }
+      }}
       className={`w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 appearance-none cursor-pointer ${className}`}
     >
       <option value="">Select a routine...</option>
@@ -144,6 +169,7 @@ function groupRoutines(
       name: r.name,
       description: r.description,
       isTemplate: false,
+      config: r.config,
     })),
   };
 }

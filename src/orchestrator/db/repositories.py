@@ -25,6 +25,7 @@ from orchestrator.db.models import (
     TaskModel,
 )
 from orchestrator.state.errors import RunNotFoundError
+from orchestrator.agents.action_log import ActionLog
 from orchestrator.state.models import (
     Attempt,
     AttemptMetrics,
@@ -85,6 +86,14 @@ def _to_domain(model: RunModel) -> Run:
                     )
                     for item in snapshot_data
                 ]
+                # Deserialize action_log from JSON if present
+                action_log = None
+                if att_model.action_log_json:
+                    try:
+                        action_log = ActionLog.model_validate(att_model.action_log_json)
+                    except Exception:
+                        pass  # Gracefully handle invalid data
+
                 attempts.append(
                     Attempt(
                         id=att_model.id,
@@ -100,6 +109,7 @@ def _to_domain(model: RunModel) -> Run:
                             tokens_write=att_model.tokens_write,
                             tokens_cache=att_model.tokens_cache,
                             duration_ms=att_model.duration_ms,
+                            num_actions=att_model.num_actions,
                         ),
                         grade_snapshot=grade_snapshot,
                         auto_verify_results=att_model.auto_verify_results or [],
@@ -110,6 +120,7 @@ def _to_domain(model: RunModel) -> Run:
                         agent_settings=att_model.agent_settings or {},
                         agent_output=att_model.agent_output,
                         error=att_model.error,
+                        action_log=action_log,
                         start_commit=att_model.start_commit,
                         end_commit=att_model.end_commit,
                     )
@@ -212,6 +223,7 @@ def _to_domain(model: RunModel) -> Run:
         total_tokens_write=model.total_tokens_write,
         total_tokens_cache=model.total_tokens_cache,
         total_duration_ms=model.total_duration_ms,
+        total_num_actions=model.total_num_actions,
     )
 
 
@@ -229,6 +241,7 @@ def _to_model(run: Run) -> RunModel:
                     else None
                 )
                 auto_verify_json = att.auto_verify_results if att.auto_verify_results else None
+                action_log_json = att.action_log.model_dump(mode="json") if att.action_log else None
                 attempts.append(
                     AttemptModel(
                         id=att.id,
@@ -244,6 +257,7 @@ def _to_model(run: Run) -> RunModel:
                         tokens_write=att.metrics.tokens_write,
                         tokens_cache=att.metrics.tokens_cache,
                         duration_ms=att.metrics.duration_ms,
+                        num_actions=att.metrics.num_actions,
                         grade_snapshot=snapshot_json,
                         auto_verify_results=auto_verify_json,
                         agent_type=att.agent_type.value if att.agent_type else None,
@@ -251,6 +265,7 @@ def _to_model(run: Run) -> RunModel:
                         agent_settings=att.agent_settings if att.agent_settings else None,
                         agent_output=att.agent_output,
                         error=att.error,
+                        action_log_json=action_log_json,
                         start_commit=att.start_commit,
                         end_commit=att.end_commit,
                     )
@@ -327,6 +342,7 @@ def _to_model(run: Run) -> RunModel:
         total_tokens_write=run.total_tokens_write,
         total_tokens_cache=run.total_tokens_cache,
         total_duration_ms=run.total_duration_ms,
+        total_num_actions=run.total_num_actions,
     )
 
 

@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from orchestrator.api.deps import get_current_user, get_routine_dirs, get_workflow_service
 from orchestrator.api.schemas.tasks import (
+    ActionLogEntrySchema,
+    ActionLogSchema,
     AgentLogsResponse,
     ApproveTaskRequest,
     AttemptSchema,
@@ -17,6 +19,9 @@ from orchestrator.api.schemas.tasks import (
     RejectTaskRequest,
     SetGradeRequest,
     TaskDetailResponse,
+    ToolResultDetailSchema,
+    ToolUseDetailSchema,
+    TurnMetricsSchema,
     TransitionResponse,
     UpdateChecklistRequest,
 )
@@ -82,6 +87,7 @@ async def get_task(
                 agent_settings=att.agent_settings,
                 error=att.error,
                 has_output=bool(att.agent_output),
+                has_action_log=bool(att.action_log),
             )
             for att in task.attempts
         ],
@@ -338,6 +344,57 @@ async def get_attempt_logs(
         raise HTTPException(status_code=404, detail=f"Attempt {attempt_num} not found")
 
     output = attempt.agent_output
+
+    # Serialize structured action log if present
+    action_log_schema = None
+    if attempt.action_log:
+        al = attempt.action_log
+        action_log_schema = ActionLogSchema(
+            entries=[
+                ActionLogEntrySchema(
+                    sequence_num=e.sequence_num,
+                    kind=e.kind.value,
+                    timestamp=e.timestamp,
+                    text=e.text,
+                    tool_use=ToolUseDetailSchema(
+                        tool_use_id=e.tool_use.tool_use_id,
+                        tool_name=e.tool_use.tool_name,
+                        arguments=e.tool_use.arguments,
+                        summary=e.tool_use.summary,
+                    )
+                    if e.tool_use
+                    else None,
+                    tool_result=ToolResultDetailSchema(
+                        tool_use_id=e.tool_result.tool_use_id,
+                        output=e.tool_result.output,
+                        exit_code=e.tool_result.exit_code,
+                        success=e.tool_result.success,
+                        output_length=e.tool_result.output_length,
+                    )
+                    if e.tool_result
+                    else None,
+                    metrics=TurnMetricsSchema(
+                        input_tokens=e.metrics.input_tokens,
+                        output_tokens=e.metrics.output_tokens,
+                        cache_read_tokens=e.metrics.cache_read_tokens,
+                        cost_usd=e.metrics.cost_usd,
+                    )
+                    if e.metrics
+                    else None,
+                    raw_type=e.raw_type,
+                )
+                for e in al.entries
+            ],
+            session_id=al.session_id,
+            agent_model=al.agent_model,
+            tools_available=al.tools_available,
+            total_turns=al.total_turns,
+            total_cost_usd=al.total_cost_usd,
+            total_duration_ms=al.total_duration_ms,
+            total_input_tokens=al.total_input_tokens,
+            total_output_tokens=al.total_output_tokens,
+        )
+
     return AgentLogsResponse(
         run_id=run_id,
         task_id=task_id,
@@ -345,6 +402,7 @@ async def get_attempt_logs(
         output=output,
         error=attempt.error,
         line_count=len(output.split("\n")) if output else 0,
+        action_log=action_log_schema,
     )
 
 

@@ -164,7 +164,7 @@ def _run_to_response(run: Run) -> RunResponse:
         routine_path=run.routine_path,
         routine_commit=run.routine_commit,
         agent_type=run.agent_type.value if run.agent_type else None,
-        agent_type_display=get_agent_display_name(run.agent_type),
+        agent_type_display=get_agent_display_name(run.agent_type, run.agent_config),
         agent_icon=get_agent_icon(run.agent_type),
         agent_config=run.agent_config,
         worktree_enabled=run.worktree_enabled,
@@ -188,6 +188,7 @@ def _run_to_response(run: Run) -> RunResponse:
         total_tokens_write=run.total_tokens_write,
         total_tokens_cache=run.total_tokens_cache,
         total_duration_ms=run.total_duration_ms,
+        total_num_actions=run.total_num_actions,
         estimated_cost_usd=estimated_cost_usd,
         cost_disclaimer=cost_disclaimer,
     )
@@ -913,7 +914,10 @@ async def merge_back_endpoint(
 
     # merge_back operates on the main repo in the repos directory
     repo_path = config.paths.get_repos_path() / run.repo_name
-    sha = merge_back(repo_path, run_branch, run.source_branch, strategy=strategy)
+    worktree_path = Path(run.worktree_path) if run.worktree_path else None
+    sha = merge_back(
+        repo_path, run_branch, run.source_branch, strategy=strategy, worktree_path=worktree_path
+    )
 
     return MergeBackResponse(
         merge_commit=sha,

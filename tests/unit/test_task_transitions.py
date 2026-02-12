@@ -484,6 +484,71 @@ def test_step_progression_stays_on_last_step() -> None:
     assert run.current_step_index == 0  # Can't advance past the last step
 
 
+def test_step_progression_stops_on_failed_task() -> None:
+    """Fail-fast: don't advance past a step containing a failed task."""
+    run = Run(
+        id="run-1",
+        repo_name="proj-1",
+        source_branch="main",
+        status=RunStatus.ACTIVE,
+        current_step_index=0,
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S-01",
+                tasks=[
+                    TaskState(id="t1", config_id="T-01", status=TaskStatus.COMPLETED),
+                    TaskState(id="t2", config_id="T-02", status=TaskStatus.FAILED),
+                ],
+            ),
+            StepState(
+                id="step-2",
+                config_id="S-02",
+                tasks=[TaskState(id="t3", config_id="T-03", status=TaskStatus.PENDING)],
+            ),
+        ],
+    )
+    changed = check_step_progression(run)
+    assert changed is True
+    assert run.steps[0].completed is True
+    assert run.current_step_index == 0  # Stays on step 0, does NOT advance
+
+
+# --- check_run_completion ---
+
+
+def test_run_fails_fast_on_step_with_failure() -> None:
+    """Fail-fast: run transitions to FAILED when a completed step has a failed task,
+    even if later steps are incomplete."""
+    run = Run(
+        id="run-1",
+        repo_name="proj-1",
+        source_branch="main",
+        status=RunStatus.ACTIVE,
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S-01",
+                completed=True,
+                tasks=[
+                    TaskState(id="t1", config_id="T-01", status=TaskStatus.COMPLETED),
+                    TaskState(id="t2", config_id="T-02", status=TaskStatus.FAILED),
+                ],
+            ),
+            StepState(
+                id="step-2",
+                config_id="S-02",
+                completed=False,
+                tasks=[TaskState(id="t3", config_id="T-03", status=TaskStatus.PENDING)],
+            ),
+        ],
+    )
+    result = check_run_completion(run, NOW)
+    assert result == RunStatus.FAILED
+    assert run.status == RunStatus.FAILED
+    assert run.completed_at == NOW
+
+
 # --- check_run_completion ---
 
 
