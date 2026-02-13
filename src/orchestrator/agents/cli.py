@@ -11,6 +11,7 @@ the orchestrator.
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -23,6 +24,7 @@ from orchestrator.agents.errors import (
 from orchestrator.agents.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
 from orchestrator.agents.types import (
     AgentInfo,
+    AgentMetadataCallback,
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionMetrics,
@@ -34,7 +36,10 @@ from orchestrator.agents.types import (
 from orchestrator.config.enums import AgentType
 
 if TYPE_CHECKING:
+    from orchestrator.agents.monitor import AgentMonitor
     from orchestrator.agents.parsers.base import StreamParser
+
+logger = logging.getLogger(__name__)
 
 
 class _DefaultTimeProvider:
@@ -74,6 +79,8 @@ class CLIAgent:
         time_provider: TimeProvider | None = None,
         poll_interval: float = 5.0,
         parser: StreamParser | None = None,
+        agent_monitor: AgentMonitor | None = None,
+        run_id: str | None = None,
     ) -> None:
         self._command = command
         base_args = args or []
@@ -88,6 +95,8 @@ class CLIAgent:
         self._cancelled = False
         self._process: asyncio.subprocess.Process | None = None
         self._parser = parser
+        self._agent_monitor = agent_monitor
+        self._run_id = run_id
 
     @property
     def info(self) -> AgentInfo:
@@ -254,6 +263,7 @@ class CLIAgent:
         on_submit: SubmitCallback,
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
     ) -> ExecutionResult:
         """Execute the CLI tool with the given context."""
         path = shutil.which(self._command)
@@ -288,6 +298,13 @@ class CLIAgent:
             # This should be persisted to run.agent_config["pid"] by the caller
             # so that AgentMonitor can check process liveness
             agent_pid = self._process.pid
+
+            # Notify caller that subprocess was created so metadata can be persisted
+            if on_agent_metadata and agent_pid:
+                try:
+                    await on_agent_metadata({"pid": agent_pid})
+                except Exception as e:
+                    logger.warning(f"Failed to call on_agent_metadata callback: {e}")
 
             # Send prompt to stdin
             if self._process.stdin is not None:
@@ -336,8 +353,17 @@ class CLIAgent:
                         self._process.terminate()
                         if batch_buffer and on_output:
                             await on_output(batch_buffer)
-                        # TODO: Call AgentMonitor.on_agent_died() if the process was killed
-                        # due to being stuck. This requires passing AgentMonitor as a dependency.
+                        # Notify monitor that agent was killed due to being stuck
+                        if self._agent_monitor and self._run_id:
+                            try:
+                                await self._agent_monitor.on_agent_died(
+                                    run_id=self._run_id,
+                                    agent_type=AgentType.CLI_SUBPROCESS,
+                                    exit_code=None,
+                                    reason=f"agent_stuck_killed_after_{nudger.nudge_count}_nudges",
+                                )
+                            except Exception as e:
+                                logger.warning(f"Failed to notify monitor of stuck agent: {e}")
                         raise AgentExecutionError(
                             "cli_subprocess",
                             f"Agent stuck after {nudger.nudge_count} nudges, killed",
@@ -360,6 +386,18 @@ class CLIAgent:
             await self._process.wait()
 
             success = self._process.returncode == 0
+
+            # If process exited with non-zero code (failure), notify monitor
+            if not success and self._agent_monitor and self._run_id:
+                try:
+                    await self._agent_monitor.on_agent_died(
+                        run_id=self._run_id,
+                        agent_type=AgentType.CLI_SUBPROCESS,
+                        exit_code=self._process.returncode,
+                        reason="agent_exit_failure",
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to notify monitor of agent exit failure: {e}")
 
             # Finalize parser to get structured action log
             action_log = None
@@ -397,8 +435,18 @@ class CLIAgent:
         except AgentNotAvailableError:
             raise
         except Exception as exc:
-            # TODO: Check if process died unexpectedly and call AgentMonitor.on_agent_died()
-            # This would require passing AgentMonitor as a dependency to the agent.
+            # Check if process died unexpectedly and notify monitor
+            if self._process and self._agent_monitor and self._run_id:
+                try:
+                    exit_code = self._process.returncode
+                    await self._agent_monitor.on_agent_died(
+                        run_id=self._run_id,
+                        agent_type=AgentType.CLI_SUBPROCESS,
+                        exit_code=exit_code,
+                        reason="agent_execution_error",
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to notify monitor of agent execution error: {e}")
             raise AgentExecutionError("cli_subprocess", str(exc)) from exc
         finally:
             self._process = None

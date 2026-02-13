@@ -13,7 +13,7 @@ from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, TaskConfig
 from orchestrator.db.event_store import EventStore
 from orchestrator.db.repositories import RunRepository
-from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
+from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
 from orchestrator.workflow.auto_verify import (
@@ -37,6 +37,7 @@ from orchestrator.workflow.events import (
     BufferingEmitter,
     ClarificationRequested,
     ClarificationResponded,
+    TaskReverted,
     TaskStatusChanged,
 )
 from orchestrator.workflow.locks import LockManager
@@ -329,6 +330,7 @@ class WorkflowService:
         run_id: str,
         agent_type: AgentType | None = None,
         agent_config: dict[str, object] | None = None,
+        resume_strategy: str | None = None,
     ) -> Run:
         """Resume a run (PAUSED -> ACTIVE), optionally changing the agent.
 
@@ -336,12 +338,37 @@ class WorkflowService:
             run_id: The run ID
             agent_type: Optional new agent type to use
             agent_config: Optional new agent config to use
+            resume_strategy: "continue" (default) or "revert" to reset current phase
 
         Returns:
             The updated run
         """
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
+
+        # Apply revert strategy if requested
+        if resume_strategy == "revert":
+            for step in run.steps:
+                for task in step.tasks:
+                    if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                        reverted_from = task.status
+                        self._revert_task_to_phase_start(task, run, self._clock.now())
+                        buffer.emit(
+                            TaskReverted(
+                                timestamp=self._clock.now(),
+                                run_id=run_id,
+                                event_type="task_reverted",
+                                task_id=task.id,
+                                reverted_from_status=reverted_from,
+                            )
+                        )
+                        break  # Only revert the first active task
+                else:
+                    continue
+                break
+
+            # Update the run in the state manager after revert
+            state.update_run(run)
 
         # If agent is being changed (type or config), emit AgentChangedEvent and update run
         if agent_type is not None or agent_config is not None:
@@ -378,6 +405,88 @@ class WorkflowService:
         # Resume the run (PAUSED -> ACTIVE)
         engine.resume_run(run_id)
         return await self._persist(state, run_id, buffer)
+
+    def _revert_task_to_phase_start(
+        self,
+        task: TaskState,
+        run: Run,
+        now: datetime,
+    ) -> None:
+        """Revert a task to the clean state at the start of its current phase.
+
+        Closes the current attempt with outcome="reverted" and creates a fresh attempt.
+        Resets checklist state based on the current phase (BUILDING or VERIFYING).
+        """
+        # Close out current attempt with outcome="reverted"
+        if task.attempts:
+            attempt = task.attempts[-1]
+            attempt.completed_at = now
+            attempt.outcome = "reverted"
+
+        if task.status == TaskStatus.BUILDING:
+            # Reset checklist items to OPEN (clear builder progress)
+            for item in task.checklist:
+                item.status = ChecklistStatus.OPEN
+                item.note = None
+
+            # Create fresh attempt and set status to BUILDING
+            result = transition_to_building(task, now)
+            if not result.success:
+                raise ValueError(f"Failed to revert building task: {result.error}")
+
+            # Populate agent snapshot on new attempt
+            if task.attempts:
+                attempt = task.attempts[-1]
+                attempt.agent_type = run.agent_type
+                attempt.agent_model = run.agent_config.get("model")
+                attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+
+            # Checkout start_commit in worktree if available
+            if len(task.attempts) >= 2:
+                prev_attempt = task.attempts[-2]
+                if prev_attempt.start_commit and run.worktree_path:
+                    self._checkout_commit(run.worktree_path, prev_attempt.start_commit)
+
+        elif task.status == TaskStatus.VERIFYING:
+            # Clear grades and grade_reasons (keep checklist status from builder)
+            for item in task.checklist:
+                item.grade = None
+                item.grade_reason = None
+
+            # Create fresh attempt for verifier
+            new_attempt_num = task.current_attempt + 1
+            task.attempts.append(Attempt(attempt_num=new_attempt_num, started_at=now))
+            task.current_attempt = new_attempt_num
+
+            # Populate agent snapshot
+            if task.attempts:
+                attempt = task.attempts[-1]
+                attempt.agent_type = run.agent_type
+                attempt.agent_model = run.agent_config.get("model")
+                attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+
+            # Checkout end_commit from builder attempt if available
+            if len(task.attempts) >= 2:
+                builder_attempt = task.attempts[-2]
+                if builder_attempt.end_commit and run.worktree_path:
+                    self._checkout_commit(run.worktree_path, builder_attempt.end_commit)
+
+    def _checkout_commit(self, worktree_path: str, commit_sha: str) -> None:
+        """Checkout a git commit in the worktree. Logs warning on failure."""
+        import logging
+        import subprocess
+
+        checkout = subprocess.run(
+            ["git", "checkout", commit_sha],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+        )
+        if checkout.returncode != 0:
+            logging.getLogger(__name__).warning(
+                f"Failed to checkout commit {commit_sha} in {worktree_path}: "
+                f"{checkout.stderr.strip()}"
+            )
 
     async def transition_backward(
         self, run_id: str, target_step_index: int, reason: str | None = None

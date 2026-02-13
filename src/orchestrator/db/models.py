@@ -15,6 +15,7 @@ class RunModel(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     repo_name: Mapped[str] = mapped_column(String, nullable=False, index=True)
     status: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    pause_reason: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Routine reference
     routine_id: Mapped[str | None] = mapped_column(String, nullable=True)

@@ -1,17 +1,21 @@
 """Agent liveness monitoring and death handling."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import os
 import subprocess
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 
 from orchestrator.config.enums import AgentType, RunStatus
 from orchestrator.config.global_config import GlobalConfig
-from orchestrator.db.event_store import EventStore
-from orchestrator.db.repositories import RunRepository
 from orchestrator.state.models import Run
 from orchestrator.workflow.events import AgentDiedEvent, RunStatusChanged
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 logger = logging.getLogger(__name__)
 
@@ -72,19 +76,16 @@ class AgentMonitor:
 
     def __init__(
         self,
-        repository: RunRepository,
-        event_store: EventStore,
+        session_factory: async_sessionmaker[AsyncSession],
         global_config: GlobalConfig | None = None,
     ) -> None:
         """Initialize the agent monitor.
 
         Args:
-            repository: Run repository for loading and saving runs.
-            event_store: Event store for logging agent events.
+            session_factory: Async session factory for creating fresh DB sessions.
             global_config: Global configuration (used for timeouts, etc).
         """
-        self._repository = repository
-        self._event_store = event_store
+        self._session_factory = session_factory
         self._global_config = global_config or GlobalConfig()
 
     async def on_agent_died(
@@ -102,48 +103,59 @@ class AgentMonitor:
         The run is transitioned from ACTIVE to PAUSED so the user can resume
         with the same or a different agent.
 
+        Creates a fresh DB session to avoid stale-session issues.
+
         Args:
             run_id: The run whose agent died.
             agent_type: The type of agent that died.
             exit_code: Optional exit code if available.
             reason: Reason string (e.g., "agent_process_died", "agent_not_running_on_startup").
         """
-        run = await self._repository.get(run_id)
+        from orchestrator.db.event_store import EventStore
+        from orchestrator.db.repositories import RunRepository
 
-        # Only handle if the run is still ACTIVE
-        # (might have been manually paused/stopped in the meantime)
-        if run.status != RunStatus.ACTIVE:
-            logger.info(f"Run {run_id}: agent died but run is {run.status}, no action taken")
-            return
+        async with self._session_factory() as session:
+            repo = RunRepository(session)
+            event_store = EventStore(session)
 
-        # Log the agent death event
-        event = AgentDiedEvent(
-            timestamp=datetime.now(timezone.utc),
-            run_id=run_id,
-            event_type="agent_died",
-            agent_type=agent_type,
-            exit_code=exit_code,
-            reason=reason,
-        )
-        await self._event_store.append(event)
+            run = await repo.get(run_id)
 
-        # Transition run to PAUSED
-        old_status = run.status
-        run.status = RunStatus.PAUSED
-        run.updated_at = datetime.now(timezone.utc)
+            # Only handle if the run is still ACTIVE
+            # (might have been manually paused/stopped in the meantime)
+            if run.status != RunStatus.ACTIVE:
+                logger.info(f"Run {run_id}: agent died but run is {run.status}, no action taken")
+                return
 
-        # Log the status change event
-        status_event = RunStatusChanged(
-            timestamp=datetime.now(timezone.utc),
-            run_id=run_id,
-            event_type="run_status_changed",
-            old_status=old_status,
-            new_status=RunStatus.PAUSED,
-        )
-        await self._event_store.append(status_event)
+            # Log the agent death event
+            event = AgentDiedEvent(
+                timestamp=datetime.now(timezone.utc),
+                run_id=run_id,
+                event_type="agent_died",
+                agent_type=agent_type,
+                exit_code=exit_code,
+                reason=reason,
+            )
+            await event_store.append(event)
 
-        # Persist the state change
-        await self._repository.save(run)
+            # Transition run to PAUSED
+            old_status = run.status
+            run.status = RunStatus.PAUSED
+            run.pause_reason = reason
+            run.updated_at = datetime.now(timezone.utc)
+
+            # Log the status change event
+            status_event = RunStatusChanged(
+                timestamp=datetime.now(timezone.utc),
+                run_id=run_id,
+                event_type="run_status_changed",
+                old_status=old_status,
+                new_status=RunStatus.PAUSED,
+            )
+            await event_store.append(status_event)
+
+            # Persist the state change
+            await repo.save(run)
+            await session.commit()
 
         logger.warning(
             f"Run {run_id}: agent {agent_type.value} died (exit_code={exit_code}), "
@@ -220,19 +232,26 @@ class AgentMonitor:
         This is called on application startup to handle runs that were ACTIVE
         when the orchestrator was shut down.
 
+        Creates a fresh DB session to list runs. Each on_agent_died call
+        creates its own session internally.
+
         Returns:
             List of run IDs that were transitioned to PAUSED.
         """
+        from orchestrator.db.repositories import RunRepository
+
         paused_runs: list[str] = []
 
-        # Get all ACTIVE runs
-        active_runs = await self._repository.list_by_status(RunStatus.ACTIVE)
+        # Get all ACTIVE runs using a fresh session
+        async with self._session_factory() as session:
+            repo = RunRepository(session)
+            active_runs = await repo.list_by_status(RunStatus.ACTIVE)
 
         for run in active_runs:
             agent_alive = await self.check_agent_alive(run)
 
             if not agent_alive:
-                # Log event and transition to PAUSED
+                # on_agent_died creates its own session and commits
                 await self.on_agent_died(
                     run_id=run.id,
                     agent_type=run.agent_type or AgentType.CLI_SUBPROCESS,
@@ -242,7 +261,5 @@ class AgentMonitor:
                 logger.info(f"Run {run.id}: agent not running on startup, moved to PAUSED")
             else:
                 logger.info(f"Run {run.id}: agent still alive, no action needed")
-                # TODO: Re-attach monitoring for still-alive agents
-                # This would require storing monitor state and reconnecting to processes
 
         return paused_runs

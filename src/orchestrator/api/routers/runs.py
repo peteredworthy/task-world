@@ -153,10 +153,20 @@ def _run_to_response(run: Run) -> RunResponse:
 
     from orchestrator.api.schemas.runs import EnvFileSpecSchema
 
+    # Compute relative worktree path from CWD
+    worktree_relative_path: str | None = None
+    if run.worktree_path:
+        try:
+            worktree_relative_path = str(Path(run.worktree_path).relative_to(Path.cwd()))
+        except ValueError:
+            # worktree_path is not relative to cwd, use as-is
+            worktree_relative_path = run.worktree_path
+
     return RunResponse(
         id=run.id,
         repo_name=run.repo_name,
         status=run.status.value,
+        pause_reason=run.pause_reason,
         routine_id=run.routine_id,
         routine_sha=run.routine_sha,
         routine_source=run.routine_source.value if run.routine_source else None,
@@ -169,6 +179,7 @@ def _run_to_response(run: Run) -> RunResponse:
         agent_config=run.agent_config,
         worktree_enabled=run.worktree_enabled,
         worktree_path=run.worktree_path,
+        worktree_relative_path=worktree_relative_path,
         source_branch=run.source_branch,
         merge_strategy=run.merge_strategy,
         config=run.config,
@@ -377,8 +388,14 @@ async def resume_run(
     """
     agent_type = AgentType(request.agent_type) if request and request.agent_type else None
     agent_config = request.agent_config if request and request.agent_config else None
+    resume_strategy = request.resume_strategy if request else None
 
-    run = await service.resume_run(run_id, agent_type=agent_type, agent_config=agent_config)
+    run = await service.resume_run(
+        run_id,
+        agent_type=agent_type,
+        agent_config=agent_config,
+        resume_strategy=resume_strategy,
+    )
 
     # Spawn agent if this is a managed agent type
     if run.agent_type is not None:

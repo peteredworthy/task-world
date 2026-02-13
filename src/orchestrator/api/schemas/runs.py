@@ -78,6 +78,7 @@ class RunResponse(BaseModel):
     id: str
     repo_name: str
     status: str
+    pause_reason: str | None = None
     routine_id: str | None = None
     routine_sha: str | None = None
     routine_source: str | None = None
@@ -90,6 +91,7 @@ class RunResponse(BaseModel):
     agent_config: dict[str, Any] = {}
     worktree_enabled: bool = True
     worktree_path: str | None = None
+    worktree_relative_path: str | None = None
     source_branch: str | None = None
     merge_strategy: str | None = None
     config: dict[str, Any] = {}
@@ -144,6 +146,13 @@ class ResumeRunRequest(BaseModel):
 
     agent_type: str | None = None
     agent_config: dict[str, Any] | None = None
+    resume_strategy: str | None = None  # "continue" | "revert"
+
+    @model_validator(mode="after")
+    def validate_resume_strategy(self) -> "ResumeRunRequest":
+        if self.resume_strategy is not None and self.resume_strategy not in ("continue", "revert"):
+            raise ValueError("resume_strategy must be 'continue' or 'revert'")
+        return self
 
 
 class BranchStatusResponse(BaseModel):

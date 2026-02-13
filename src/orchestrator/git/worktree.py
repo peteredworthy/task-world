@@ -1,10 +1,14 @@
 """Git worktree management for run isolation."""
 
+import logging
 import subprocess
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from orchestrator.git.errors import GitCommandError, WorktreeExistsError, WorktreeNotFoundError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -202,5 +206,66 @@ class WorktreeManager:
                     except WorktreeNotFoundError:
                         # Worktree was already removed, skip
                         pass
+
+        return removed
+
+    def cleanup_expired(
+        self,
+        all_run_ids: set[str],
+        run_completed_at: dict[str, datetime],
+        retention: timedelta,
+        now: datetime | None = None,
+    ) -> int:
+        """Remove worktrees for runs that no longer exist or have expired.
+
+        A worktree is removed if:
+        - Its run ID is not found in all_run_ids (orphaned), or
+        - Its run has a completed_at timestamp older than the retention period.
+
+        Args:
+            all_run_ids: Set of all known run IDs in the database.
+            run_completed_at: Mapping of run_id → completed_at for terminal runs.
+            retention: How long to keep worktrees after run completion.
+            now: Current time (injectable for testing). Defaults to UTC now.
+
+        Returns:
+            Number of worktrees removed.
+        """
+        if now is None:
+            from datetime import timezone
+
+            now = datetime.now(timezone.utc)
+
+        cutoff = now - retention
+        removed = 0
+
+        for wt in self.list():
+            if not wt.branch.startswith("orchestrator/run-"):
+                continue
+
+            run_id = wt.branch.replace("orchestrator/run-", "")
+
+            # Orphaned: run doesn't exist in DB at all
+            if run_id not in all_run_ids:
+                logger.info(f"Removing orphaned worktree for unknown run {run_id}")
+                try:
+                    self.delete(run_id, force=True)
+                    removed += 1
+                except WorktreeNotFoundError:
+                    pass
+                continue
+
+            # Expired: run is terminal and older than retention period
+            completed = run_completed_at.get(run_id)
+            if completed is not None and completed < cutoff:
+                logger.info(
+                    f"Removing expired worktree for run {run_id} "
+                    f"(completed {completed.isoformat()})"
+                )
+                try:
+                    self.delete(run_id, force=True)
+                    removed += 1
+                except WorktreeNotFoundError:
+                    pass
 
         return removed

@@ -73,10 +73,31 @@ class AgentExecutor:
         self._global_config = global_config
         self._lock_manager = lock_manager
         self._submit_event_registry = submit_event_registry
-        self._agent_monitor = agent_monitor
         self._api_base_url = api_base_url
         self._spawn_agents = spawn_agents
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        # Agent monitor is lazy-initialized if not provided, to avoid circular import
+        self._agent_monitor = agent_monitor
+        self._lazy_agent_monitor_init = agent_monitor is None
+
+    async def _get_agent_monitor(self) -> AgentMonitor | None:
+        """Lazy-initialize agent monitor if not provided."""
+        if self._agent_monitor is not None:
+            return self._agent_monitor
+
+        if not self._lazy_agent_monitor_init:
+            return None
+
+        # Lazy init - create monitor instance with session_factory
+        try:
+            from orchestrator.agents.monitor import AgentMonitor
+
+            self._agent_monitor = AgentMonitor(self._session_factory, self._global_config)
+            self._lazy_agent_monitor_init = False
+            return self._agent_monitor
+        except Exception as e:
+            logger.warning(f"Failed to initialize agent monitor: {e}")
+            return None
 
     async def _create_service(self, session: AsyncSession) -> WorkflowService:
         """Create a WorkflowService for the given session."""
@@ -192,6 +213,57 @@ class AgentExecutor:
 
         return run
 
+    async def _monitor_agent_health(
+        self, run_id: str, agent_type: AgentType, check_interval: float = 30.0
+    ) -> None:
+        """Background task to periodically check if the agent is still alive.
+
+        If the agent is found to be dead, transitions the run to PAUSED.
+        """
+        monitor = await self._get_agent_monitor()
+        if not monitor:
+            logger.debug(f"Run {run_id}: agent health monitor not available, skipping checks")
+            return
+
+        try:
+            while True:
+                await asyncio.sleep(check_interval)
+
+                try:
+                    async with self._session_factory() as session:
+                        from orchestrator.db.repositories import RunRepository
+
+                        repo = RunRepository(session)
+                        run = await repo.get(run_id)
+
+                        # Check if run is still active
+                        if run.status != RunStatus.ACTIVE:
+                            logger.debug(
+                                f"Run {run_id}: run is {run.status}, stopping health monitor"
+                            )
+                            break
+
+                        # Check if agent is still alive
+                        agent_alive = await monitor.check_agent_alive(run)
+                        if not agent_alive:
+                            logger.warning(
+                                f"Run {run_id}: agent {agent_type.value} is no longer alive, "
+                                f"transitioning to PAUSED"
+                            )
+                            await monitor.on_agent_died(
+                                run_id=run_id,
+                                agent_type=agent_type,
+                                reason="agent_health_check_failed",
+                            )
+                            break
+                except Exception as e:
+                    logger.warning(f"Run {run_id}: agent health check failed: {e}")
+                    # Continue checking, don't break on transient errors
+        except asyncio.CancelledError:
+            logger.debug(f"Run {run_id}: agent health monitor cancelled")
+        except Exception as e:
+            logger.warning(f"Run {run_id}: unexpected error in agent health monitor: {e}")
+
     async def _run_agent_loop(
         self, run_id: str, agent_type: AgentType, agent_config: dict[str, Any]
     ) -> None:
@@ -200,6 +272,9 @@ class AgentExecutor:
         This runs in the background and processes tasks until the run is
         complete, paused, or failed.
         """
+        # Start a background health monitor for the agent
+        health_monitor_task = asyncio.create_task(self._monitor_agent_health(run_id, agent_type))
+
         try:
             while True:
                 # Create a new session for each iteration
@@ -304,6 +379,12 @@ class AgentExecutor:
             except Exception:
                 logger.exception(f"Run {run_id}: failed to pause run after outer error")
         finally:
+            # Cancel health monitor
+            health_monitor_task.cancel()
+            try:
+                await health_monitor_task
+            except asyncio.CancelledError:
+                pass
             self._running_tasks.pop(run_id, None)
             logger.info(f"Run {run_id}: agent loop ended")
 
@@ -404,8 +485,8 @@ class AgentExecutor:
         if task_state.status == TaskStatus.PENDING:
             await service.start_task(run.id, task_state.id)
 
-        # Create the agent
-        agent = self._create_agent(agent_type, agent_config)
+        # Create the agent (pass run_id for death detection)
+        agent = self._create_agent(agent_type, agent_config, run.id)
 
         # Build the context - worktree_path is required for agent execution
         if not run.worktree_path:
@@ -464,10 +545,19 @@ class AgentExecutor:
             await self._emit_log_event(event)
             line_offset += len(lines)
 
+        # Define agent metadata callback - persist PID/container_id immediately
+        async def on_agent_metadata(metadata: dict[str, Any]) -> None:
+            await self._persist_agent_metadata(run.id, metadata)
+
         # Execute the agent
         logger.info(f"Task {task_state.id}: starting builder agent")
         result = await agent.execute(
-            context, on_checklist_update, on_submit, on_output=on_output, on_grade=None
+            context,
+            on_checklist_update,
+            on_submit,
+            on_output=on_output,
+            on_grade=None,
+            on_agent_metadata=on_agent_metadata,
         )
 
         # Store agent metadata (PID, etc.) in run's agent_config
@@ -529,8 +619,8 @@ class AgentExecutor:
         # Has rubric - need to run verifier agent
         logger.info(f"Task {task_state.id}: running verifier agent for rubric evaluation")
 
-        # Create the agent for verification
-        agent = self._create_agent(agent_type, agent_config)
+        # Create the agent for verification (pass run_id for death detection)
+        agent = self._create_agent(agent_type, agent_config, run.id)
 
         # Build the verifier context - worktree_path is required
         if not run.worktree_path:
@@ -635,9 +725,18 @@ class AgentExecutor:
             await self._emit_log_event(event)
             line_offset += len(lines)
 
+        # Define agent metadata callback - persist PID/container_id immediately
+        async def on_agent_metadata(metadata: dict[str, Any]) -> None:
+            await self._persist_agent_metadata(run.id, metadata)
+
         # Execute the verifier agent
         result = await agent.execute(
-            context, on_checklist_update, on_complete, on_output=on_output, on_grade=on_grade
+            context,
+            on_checklist_update,
+            on_complete,
+            on_output=on_output,
+            on_grade=on_grade,
+            on_agent_metadata=on_agent_metadata,
         )
 
         # Store agent metadata
@@ -759,6 +858,35 @@ class AgentExecutor:
         except Exception:
             logger.debug(f"Failed to store attempt prompt for {task_id}", exc_info=True)
 
+    async def _persist_agent_metadata(
+        self,
+        run_id: str,
+        agent_metadata: dict[str, Any],
+    ) -> None:
+        """Persist agent metadata (PID, container_id, etc.) to run.agent_config immediately.
+
+        This should be called right after creating the agent process so that if the
+        orchestrator crashes or the agent dies, we can still check if it's alive
+        via AgentMonitor.check_agent_alive().
+        """
+        if not agent_metadata:
+            return
+
+        try:
+            async with self._session_factory() as session:
+                from orchestrator.db.repositories import RunRepository
+
+                repo = RunRepository(session)
+                run = await repo.get(run_id)
+                # Merge new metadata with existing config
+                run.agent_config = {**run.agent_config, **agent_metadata}
+                run.updated_at = datetime.now(timezone.utc)
+                await repo.save(run)
+                await session.commit()
+                logger.info(f"Run {run_id}: persisted agent metadata {list(agent_metadata.keys())}")
+        except Exception as e:
+            logger.warning(f"Failed to persist agent metadata for {run_id}: {e}")
+
     async def _store_attempt_metrics(
         self,
         run_id: str,
@@ -793,7 +921,9 @@ class AgentExecutor:
         except Exception:
             logger.debug(f"Failed to store attempt metrics for {task_id}", exc_info=True)
 
-    def _create_agent(self, agent_type: AgentType, agent_config: dict[str, Any]) -> CLIAgent:
+    def _create_agent(
+        self, agent_type: AgentType, agent_config: dict[str, Any], run_id: str | None = None
+    ) -> CLIAgent:
         """Create the appropriate agent based on run configuration."""
         if agent_type == AgentType.CLI_SUBPROCESS:
             from orchestrator.agents.parsers.claude_parser import ClaudeStreamParser
@@ -837,6 +967,8 @@ class AgentExecutor:
                 nudger_config=nudger_config,
                 poll_interval=poll_interval,
                 parser=parser,
+                agent_monitor=self._agent_monitor,
+                run_id=run_id,
             )
 
         elif agent_type == AgentType.OPENHANDS_LOCAL:

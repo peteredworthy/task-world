@@ -152,6 +152,7 @@ class Run(BaseModel):
     id: str = Field(default_factory=generate_id)
     repo_name: str
     status: RunStatus = RunStatus.DRAFT
+    pause_reason: str | None = None  # e.g., "agent_died", "manual_pause"
 
     # Routine reference
     routine_id: str | None = None

@@ -21,6 +21,9 @@ LogLineCallback = Callable[[list[str]], Awaitable[None]]
 GradeCallback = Callable[[str, str, str | None], Awaitable[None]]
 """(req_id, grade, grade_reason) -> None. run_id/task_id bound by caller."""
 
+AgentMetadataCallback = Callable[[dict[str, Any]], Awaitable[None]]
+"""Called when agent subprocess is created, with metadata like pid."""
+
 
 class ExecutionMetrics(BaseModel):
     """Metrics collected during agent execution."""

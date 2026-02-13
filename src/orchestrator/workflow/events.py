@@ -109,6 +109,14 @@ class AgentDiedEvent(WorkflowEvent):
 
 
 @dataclass
+class TaskReverted(WorkflowEvent):
+    """Emitted when a task is reverted to phase start during resume."""
+
+    task_id: str = ""
+    reverted_from_status: TaskStatus = TaskStatus.BUILDING
+
+
+@dataclass
 class AgentOutputEvent(WorkflowEvent):
     """Emitted when agent produces output lines."""
 

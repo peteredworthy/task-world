@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.agents.monitor import AgentMonitor
 from orchestrator.config.enums import AgentType, RunStatus
@@ -19,17 +20,13 @@ from orchestrator.state.models import Run
 
 
 @pytest.fixture
-async def db_setup() -> AsyncGenerator[tuple[RunRepository, EventStore], None]:
-    """Create in-memory database with repository and event store."""
+async def db_setup() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+    """Create in-memory database and return session factory."""
     engine = create_engine(":memory:")
     await init_db(engine)
     session_factory = create_session_factory(engine)
 
-    async with session_factory() as session:
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        yield repo, event_store
-        await session.commit()
+    yield session_factory
 
     await engine.dispose()
 
@@ -75,18 +72,21 @@ def _create_test_run(
 
 @pytest.mark.asyncio
 async def test_on_agent_died_transitions_run_to_paused(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """When an ACTIVE run's agent dies, on_agent_died transitions it to PAUSED."""
-    repo, event_store = db_setup
-    monitor = AgentMonitor(repo, event_store)
+    session_factory = db_setup
+    monitor = AgentMonitor(session_factory)
 
     # Create and save an ACTIVE run
-    run = _create_test_run(
-        run_id="run1", agent_type=AgentType.CLI_SUBPROCESS, agent_config={"pid": 12345}
-    )
-    run.status = RunStatus.ACTIVE
-    await repo.save(run)
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = _create_test_run(
+            run_id="run1", agent_type=AgentType.CLI_SUBPROCESS, agent_config={"pid": 12345}
+        )
+        run.status = RunStatus.ACTIVE
+        await repo.save(run)
+        await session.commit()
 
     # Call on_agent_died
     await monitor.on_agent_died(
@@ -96,34 +96,41 @@ async def test_on_agent_died_transitions_run_to_paused(
         reason="agent_process_died",
     )
 
-    # Verify run is now PAUSED
-    updated_run = await repo.get("run1")
-    assert updated_run.status == RunStatus.PAUSED
+    # Verify run is now PAUSED with pause_reason set
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        event_store = EventStore(session)
+        updated_run = await repo.get("run1")
+        assert updated_run.status == RunStatus.PAUSED
+        assert updated_run.pause_reason == "agent_process_died"
 
-    # Verify events were logged
-    events = await event_store.get_events_for_run("run1")
-    assert len(events) == 2
-    assert events[0]["type"] == "agent_died"
-    assert events[0]["payload"]["agent_type"] == "cli_subprocess"
-    assert events[0]["payload"]["exit_code"] == 1
-    assert events[0]["payload"]["reason"] == "agent_process_died"
-    assert events[1]["type"] == "run_status_changed"
-    assert events[1]["payload"]["old_status"] == "active"
-    assert events[1]["payload"]["new_status"] == "paused"
+        # Verify events were logged
+        events = await event_store.get_events_for_run("run1")
+        assert len(events) == 2
+        assert events[0]["type"] == "agent_died"
+        assert events[0]["payload"]["agent_type"] == "cli_subprocess"
+        assert events[0]["payload"]["exit_code"] == 1
+        assert events[0]["payload"]["reason"] == "agent_process_died"
+        assert events[1]["type"] == "run_status_changed"
+        assert events[1]["payload"]["old_status"] == "active"
+        assert events[1]["payload"]["new_status"] == "paused"
 
 
 @pytest.mark.asyncio
 async def test_on_agent_died_ignores_non_active_run(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """on_agent_died should do nothing if run is not ACTIVE."""
-    repo, event_store = db_setup
-    monitor = AgentMonitor(repo, event_store)
+    session_factory = db_setup
+    monitor = AgentMonitor(session_factory)
 
     # Create a COMPLETED run
-    run = _create_test_run(run_id="run2", agent_type=AgentType.CLI_SUBPROCESS)
-    run.status = RunStatus.COMPLETED
-    await repo.save(run)
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = _create_test_run(run_id="run2", agent_type=AgentType.CLI_SUBPROCESS)
+        run.status = RunStatus.COMPLETED
+        await repo.save(run)
+        await session.commit()
 
     # Call on_agent_died
     await monitor.on_agent_died(
@@ -133,12 +140,15 @@ async def test_on_agent_died_ignores_non_active_run(
     )
 
     # Verify run status unchanged
-    updated_run = await repo.get("run2")
-    assert updated_run.status == RunStatus.COMPLETED
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        event_store = EventStore(session)
+        updated_run = await repo.get("run2")
+        assert updated_run.status == RunStatus.COMPLETED
 
-    # Verify no events were logged
-    events = await event_store.get_events_for_run("run2")
-    assert len(events) == 0
+        # Verify no events were logged
+        events = await event_store.get_events_for_run("run2")
+        assert len(events) == 0
 
 
 # ---------- check_agent_alive tests ----------
@@ -146,11 +156,11 @@ async def test_on_agent_died_ignores_non_active_run(
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_cli_subprocess_with_valid_pid(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """CLI_SUBPROCESS agent with a valid PID should be considered alive."""
-    repo, event_store = db_setup
-    monitor = AgentMonitor(repo, event_store)
+    session_factory = db_setup
+    monitor = AgentMonitor(session_factory)
 
     # Use the current process PID (which is definitely alive)
     current_pid = os.getpid()
@@ -160,20 +170,19 @@ async def test_check_agent_alive_cli_subprocess_with_valid_pid(
         agent_config={"pid": current_pid},
     )
     run.status = RunStatus.ACTIVE
-    await repo.save(run)
 
-    # Check if agent is alive
+    # check_agent_alive doesn't need DB, works directly on the Run
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is True
 
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_cli_subprocess_with_dead_pid(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """CLI_SUBPROCESS agent with a dead PID should be considered dead."""
-    repo, event_store = db_setup
-    monitor = AgentMonitor(repo, event_store)
+    session_factory = db_setup
+    monitor = AgentMonitor(session_factory)
 
     # Use a PID that definitely doesn't exist
     fake_pid = 999999
@@ -183,20 +192,18 @@ async def test_check_agent_alive_cli_subprocess_with_dead_pid(
         agent_config={"pid": fake_pid},
     )
     run.status = RunStatus.ACTIVE
-    await repo.save(run)
 
-    # Check if agent is alive
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False
 
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_cli_subprocess_without_pid(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """CLI_SUBPROCESS agent without PID in config should be considered dead."""
-    repo, event_store = db_setup
-    monitor = AgentMonitor(repo, event_store)
+    session_factory = db_setup
+    monitor = AgentMonitor(session_factory)
 
     run = _create_test_run(
         run_id="run5",
@@ -204,20 +211,18 @@ async def test_check_agent_alive_cli_subprocess_without_pid(
         agent_config={},  # No PID
     )
     run.status = RunStatus.ACTIVE
-    await repo.save(run)
 
-    # Check if agent is alive
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False
 
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_openhands_local_always_false(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """OPENHANDS_LOCAL agent should always be considered dead (in-process agent)."""
-    repo, event_store = db_setup
-    monitor = AgentMonitor(repo, event_store)
+    session_factory = db_setup
+    monitor = AgentMonitor(session_factory)
 
     run = _create_test_run(
         run_id="run6",
@@ -225,23 +230,21 @@ async def test_check_agent_alive_openhands_local_always_false(
         agent_config={},
     )
     run.status = RunStatus.ACTIVE
-    await repo.save(run)
 
-    # Check if agent is alive
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False
 
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_user_managed_within_timeout(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """USER_MANAGED agent with recent activity should be considered alive."""
-    repo, event_store = db_setup
+    session_factory = db_setup
 
     # Configure custom timeout (10 minutes)
     config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentMonitor(repo, event_store, global_config=config)
+    monitor = AgentMonitor(session_factory, global_config=config)
 
     # Set last_activity_at to 5 minutes ago
     now = datetime.now(timezone.utc)
@@ -253,23 +256,21 @@ async def test_check_agent_alive_user_managed_within_timeout(
         agent_config={"last_activity_at": last_activity.isoformat()},
     )
     run.status = RunStatus.ACTIVE
-    await repo.save(run)
 
-    # Check if agent is alive
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is True
 
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_user_managed_beyond_timeout(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """USER_MANAGED agent with stale activity should be considered dead."""
-    repo, event_store = db_setup
+    session_factory = db_setup
 
     # Configure custom timeout (10 minutes)
     config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentMonitor(repo, event_store, global_config=config)
+    monitor = AgentMonitor(session_factory, global_config=config)
 
     # Set last_activity_at to 15 minutes ago (beyond timeout)
     now = datetime.now(timezone.utc)
@@ -281,20 +282,18 @@ async def test_check_agent_alive_user_managed_beyond_timeout(
         agent_config={"last_activity_at": last_activity.isoformat()},
     )
     run.status = RunStatus.ACTIVE
-    await repo.save(run)
 
-    # Check if agent is alive
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False
 
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_user_managed_without_last_activity(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """USER_MANAGED agent without last_activity_at should be considered dead."""
-    repo, event_store = db_setup
-    monitor = AgentMonitor(repo, event_store)
+    session_factory = db_setup
+    monitor = AgentMonitor(session_factory)
 
     run = _create_test_run(
         run_id="run9",
@@ -302,39 +301,35 @@ async def test_check_agent_alive_user_managed_without_last_activity(
         agent_config={},  # No last_activity_at
     )
     run.status = RunStatus.ACTIVE
-    await repo.save(run)
 
-    # Check if agent is alive
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False
 
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_with_no_agent_type(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """Run without agent_type should be considered dead."""
-    repo, event_store = db_setup
-    monitor = AgentMonitor(repo, event_store)
+    session_factory = db_setup
+    monitor = AgentMonitor(session_factory)
 
     run = _create_test_run(run_id="run10", agent_type=None)
     run.status = RunStatus.DRAFT
-    await repo.save(run)
 
-    # Check if agent is alive
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False
 
 
 @pytest.mark.asyncio
 async def test_check_agent_alive_user_managed_with_malformed_timestamp(
-    db_setup: tuple[RunRepository, EventStore],
+    db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
     """USER_MANAGED agent with malformed timestamp should be considered dead."""
-    repo, event_store = db_setup
+    session_factory = db_setup
 
     config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentMonitor(repo, event_store, global_config=config)
+    monitor = AgentMonitor(session_factory, global_config=config)
 
     run = _create_test_run(
         run_id="run11",
@@ -342,8 +337,6 @@ async def test_check_agent_alive_user_managed_with_malformed_timestamp(
         agent_config={"last_activity_at": "not-a-valid-timestamp"},
     )
     run.status = RunStatus.ACTIVE
-    await repo.save(run)
 
-    # Check if agent is alive
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False

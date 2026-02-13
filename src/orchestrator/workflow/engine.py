@@ -161,6 +161,7 @@ class WorkflowEngine:
 
         old_status = run.status
         run.status = RunStatus.PAUSED
+        run.pause_reason = "manual_pause"
         self._state.update_run(run)
 
         self._emitter.emit(
@@ -182,6 +183,7 @@ class WorkflowEngine:
 
         old_status = run.status
         run.status = RunStatus.ACTIVE
+        run.pause_reason = None  # Clear pause reason on resume
         self._state.update_run(run)
 
         self._emitter.emit(

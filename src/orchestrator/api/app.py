@@ -35,7 +35,6 @@ logger = logging.getLogger(__name__)
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
     from orchestrator.agents.monitor import AgentMonitor
-    from orchestrator.db.event_store import EventStore
     from orchestrator.db.repositories import RunRepository
 
     await init_db(app.state.engine)
@@ -44,39 +43,71 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     session_factory = app.state.session_factory
     global_config = app.state.global_config
 
-    # Create agent_monitor instance
-    async with session_factory() as session:
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        agent_monitor = AgentMonitor(repo, event_store, global_config)
+    # Create agent_monitor instance with session_factory (no bound session)
+    agent_monitor = AgentMonitor(session_factory, global_config)
+    app.state.agent_monitor = agent_monitor
 
-        # Store agent_monitor in app.state for later use
-        app.state.agent_monitor = agent_monitor
+    try:
+        # Check all ACTIVE runs and pause those with dead agents
+        # Each on_agent_died call creates its own session and commits
+        paused_runs = await agent_monitor.recover_active_runs_on_startup()
+        if paused_runs:
+            logger.info(f"Startup recovery: moved {len(paused_runs)} runs to PAUSED (dead agents)")
+        else:
+            logger.info("Startup recovery: no dead agents found")
+    except Exception as e:
+        # If recovery fails (e.g., during first startup with no tables),
+        # log but don't crash the application
+        logger.warning(f"Startup recovery failed: {e}")
 
+    # Clean up orphaned env file snapshots
+    if hasattr(app.state, "envfile_store"):
         try:
-            # Check all ACTIVE runs and pause those with dead agents
-            paused_runs = await agent_monitor.recover_active_runs_on_startup()
-            if paused_runs:
-                logger.info(
-                    f"Startup recovery: moved {len(paused_runs)} runs to PAUSED (dead agents)"
-                )
-            else:
-                logger.info("Startup recovery: no dead agents found")
-        except Exception as e:
-            # If recovery fails (e.g., during first startup with no tables),
-            # log but don't crash the application
-            logger.warning(f"Startup recovery failed: {e}")
-
-        # Clean up orphaned env file snapshots
-        if hasattr(app.state, "envfile_store"):
-            try:
+            async with session_factory() as session:
+                repo = RunRepository(session)
                 cleanup = EnvFileCleanup(app.state.envfile_store)
                 active_ids: set[str] = {run.id for run in await repo.list_all()}
                 removed = cleanup.cleanup_deleted_runs(active_ids)
                 if removed:
                     logger.info(f"Cleaned up {removed} orphaned env file snapshot(s)")
-            except Exception as e:
-                logger.warning(f"Env file cleanup failed: {e}")
+        except Exception as e:
+            logger.warning(f"Env file cleanup failed: {e}")
+
+    # Clean up expired worktrees
+    try:
+        from datetime import timedelta
+
+        from orchestrator.config.enums import RunStatus as _RS
+        from orchestrator.git.worktree import WorktreeManager
+
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            all_runs = await repo.list_all()
+
+        all_run_ids = {r.id for r in all_runs}
+        terminal = {_RS.COMPLETED, _RS.FAILED}
+        run_completed_at = {
+            r.id: r.completed_at
+            for r in all_runs
+            if r.status in terminal and r.completed_at is not None
+        }
+        retention = timedelta(days=global_config.paths.worktree_retention_days)
+
+        repos_dir = global_config.paths.get_repos_path()
+        worktrees_dir = global_config.paths.get_worktrees_path()
+
+        if repos_dir.is_dir():
+            total_removed = 0
+            for repo_dir in repos_dir.iterdir():
+                if repo_dir.is_dir() and (repo_dir / ".git").exists():
+                    wt_mgr = WorktreeManager(repo_dir, worktrees_dir)
+                    total_removed += wt_mgr.cleanup_expired(
+                        all_run_ids, run_completed_at, retention
+                    )
+            if total_removed:
+                logger.info(f"Cleaned up {total_removed} expired/orphaned worktree(s)")
+    except Exception as e:
+        logger.warning(f"Worktree cleanup failed: {e}")
 
     yield
     await app.state.engine.dispose()
@@ -193,11 +224,14 @@ def create_app(
     if spawn_agents is None:
         spawn_agents = db_path != ":memory:"
 
+    # Note: agent_monitor will be set in lifespan if available, but AgentExecutor
+    # can lazy-initialize it if needed. This avoids circular dependencies.
     app.state.agent_executor = AgentExecutor(
         session_factory=app.state.session_factory,
         global_config=global_cfg,
         lock_manager=app.state.lock_manager,
         submit_event_registry=app.state.submit_event_registry,
+        agent_monitor=getattr(app.state, "agent_monitor", None),
         spawn_agents=spawn_agents,
     )
 
@@ -208,7 +242,6 @@ def create_app(
     from orchestrator.api.routers.clarifications import router as clarifications_router
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.envfiles import router as envfiles_router
-    from orchestrator.api.routers.projects import router as projects_router
     from orchestrator.api.routers.repos import router as repos_router
     from orchestrator.api.routers.routines import router as routines_router
     from orchestrator.api.routers.runs import router as runs_router
@@ -219,7 +252,6 @@ def create_app(
     app.include_router(clarifications_router, dependencies=auth_deps)
     app.include_router(config_router, dependencies=auth_deps)
     app.include_router(envfiles_router, dependencies=auth_deps)
-    app.include_router(projects_router, dependencies=auth_deps)
     app.include_router(repos_router, dependencies=auth_deps)
     app.include_router(routines_router, dependencies=auth_deps)
     app.include_router(runs_router, dependencies=auth_deps)

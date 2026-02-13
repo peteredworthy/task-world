@@ -6,7 +6,7 @@ This file provides guidance to coding agents working with code in this repositor
 
 **Orchestrator** coordinates LLM-powered coding agents through structured workflows. It uses a **Routine/Run** model where git-versioned routine templates define multi-step tasks, and runs execute them with a user-selected agent (OpenHands, CLI subprocess, or external MCP). Each task goes through a builder/verifier cycle with fresh LLM context per phase.
 
-Design documentation lives in `docs/intent/`. Implementation follows the phased plan in the slice documents. Phases 1-4 are implemented; Phase 5+ is next.
+Design documentation lives in `docs/intent/`. Implementation follows the phased plan in the slice documents. Phases 1-8 are implemented.
 
 ## Run Execution Model (Worktrees + Agents)
 
@@ -152,7 +152,30 @@ User creates Run → Selects Agent → Start (create worktree, acquire lock)
 | `agents/errors.py` | AgentExecutionError, AgentNotAvailableError, AgentCancelledError, AgentTimeoutError | 5 |
 | `mcp/server.py` | OrchestratorMCPServer: MCP tools via FastMCP (SSE + stdio) | 5 |
 | `mcp/tools.py` | MCP tool definitions and ToolHandler | 5 |
-| `projects/worktree.py` | Git worktree creation/cleanup (not yet implemented) | 7 |
+| `git/worktree.py` | Git worktree creation/cleanup | 7 |
+| `git/branch_ops.py` | Branch operations (merge, back-merge, status) | 7 |
+| `git/project_init.py` | Project initialization via git | 7 |
+| `agents/action_log.py` | Structured agent activity log | 5 |
+| `agents/nudger.py` | Stuck agent nudging (timeout, nudge, kill) | 5 |
+| `agents/parsers/*.py` | Per-agent output stream parsers (Claude, Codex, OpenHands) | 5 |
+| `artifacts/registry.py` | Artifact tracking for generated files | — |
+| `repos/discovery.py` | Repository discovery and metadata | — |
+| `repos/models.py` | RepoInfo, BranchInfo models | — |
+| `metrics/cost.py` | Token counting and cost tracking | — |
+| `scaffolding/copier.py` | Project scaffolding via copier | — |
+| `envfiles/resolution.py` | Environment variable resolution | — |
+| `envfiles/cleanup.py` | Env file cleanup operations | — |
+| `workflow/auto_verify.py` | Automatic verification logic | 2 |
+| `workflow/clarifications.py` | Clarification workflow handling | — |
+| `workflow/completion.py` | Run completion logic | — |
+| `workflow/context_builder.py` | Build execution context for agents | — |
+| `workflow/dry_run.py` | Dry run execution | — |
+| `api/routers/repos.py` | Repository browser endpoints | — |
+| `api/routers/clarifications.py` | Clarification request endpoints | — |
+| `api/routers/config.py` | GET /api/config | — |
+| `api/routers/envfiles.py` | Environment file endpoints | — |
+| `cli/repos.py` | Repository CLI commands | — |
+| `cli/approve.py` | Human approval CLI commands | — |
 
 ### Entity Hierarchy
 
@@ -230,6 +253,10 @@ Store secrets in `.env` at project root (never committed -- protected by `.gitig
 
 ## Tech Stack
 
-- **Backend**: Python 3.11+, FastAPI, SQLAlchemy, Pydantic, GitPython, httpx, Click
-- **Frontend**: React 18+, TypeScript, Vite, TailwindCSS, TanStack Query
-- **Dev tools**: uv (package mgmt), pytest + pytest-asyncio, pyright, ruff
+- **Backend**: Python 3.12+, FastAPI, SQLAlchemy 2.0, Pydantic v2, GitPython, httpx, Click
+- **Frontend**: React 19, TypeScript, Vite 7, TailwindCSS 4, TanStack Query, React Router 7
+- **Dev tools**: uv (package mgmt), pytest + pytest-asyncio, pyright, ruff, Vitest
+
+## Documentation Maintenance
+
+When adding new modules, API routes, or CLI commands, update `docs/ARCHITECTURE.md` (directory map, API routes table) and the key modules table above in this file. Keep the directory map and route table in sync with the actual codebase.

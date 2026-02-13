@@ -69,6 +69,7 @@ class PathsConfig(BaseModel):
 
     repos_dir: str = "repos"
     worktrees_dir: str = "worktrees"
+    worktree_retention_days: int = 14
 
     def get_repos_path(self, base: Path | None = None) -> Path:
         """Get the resolved repos directory path.

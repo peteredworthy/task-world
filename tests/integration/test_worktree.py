@@ -3,6 +3,7 @@
 import subprocess
 import tempfile
 from collections.abc import Generator
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -469,3 +470,98 @@ def test_concurrent_worktrees_different_branches(git_repo: tuple[Path, Path]) ->
     assert "orchestrator/run-concurrent-1" in result.stdout
     assert "orchestrator/run-concurrent-2" in result.stdout
     assert "orchestrator/run-concurrent-3" in result.stdout
+
+
+# --- cleanup_expired tests ---
+
+
+def test_cleanup_expired_removes_orphaned(git_repo: tuple[Path, Path]) -> None:
+    """Test cleanup_expired removes worktrees whose run ID is not in the DB."""
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
+
+    wt_known = manager.create("known-run")
+    wt_orphan = manager.create("orphan-run")
+
+    all_run_ids = {"known-run"}
+    run_completed_at: dict[str, datetime] = {}
+
+    removed = manager.cleanup_expired(all_run_ids, run_completed_at, retention=timedelta(days=14))
+
+    assert removed == 1
+    assert wt_known.path.exists()
+    assert not wt_orphan.path.exists()
+
+
+def test_cleanup_expired_removes_old_completed(git_repo: tuple[Path, Path]) -> None:
+    """Test cleanup_expired removes worktrees for runs completed beyond retention."""
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
+
+    wt_old = manager.create("old-run")
+    wt_recent = manager.create("recent-run")
+    wt_active = manager.create("active-run")
+
+    now = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    all_run_ids = {"old-run", "recent-run", "active-run"}
+    run_completed_at = {
+        "old-run": datetime(2025, 2, 1, tzinfo=timezone.utc),  # 28 days ago
+        "recent-run": datetime(2025, 2, 20, tzinfo=timezone.utc),  # 9 days ago
+        # active-run has no completed_at (still running)
+    }
+
+    removed = manager.cleanup_expired(
+        all_run_ids, run_completed_at, retention=timedelta(days=14), now=now
+    )
+
+    assert removed == 1
+    assert not wt_old.path.exists()
+    assert wt_recent.path.exists()
+    assert wt_active.path.exists()
+
+
+def test_cleanup_expired_keeps_within_retention(git_repo: tuple[Path, Path]) -> None:
+    """Test cleanup_expired keeps completed worktrees within retention window."""
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
+
+    wt = manager.create("completed-run")
+
+    now = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    all_run_ids = {"completed-run"}
+    run_completed_at = {
+        "completed-run": datetime(2025, 2, 28, tzinfo=timezone.utc),  # 1 day ago
+    }
+
+    removed = manager.cleanup_expired(
+        all_run_ids, run_completed_at, retention=timedelta(days=14), now=now
+    )
+
+    assert removed == 0
+    assert wt.path.exists()
+
+
+def test_cleanup_expired_mixed_orphaned_and_expired(git_repo: tuple[Path, Path]) -> None:
+    """Test cleanup_expired handles both orphaned and expired worktrees together."""
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
+
+    wt_orphan = manager.create("orphan-run")
+    wt_expired = manager.create("expired-run")
+    wt_keep = manager.create("keep-run")
+
+    now = datetime(2025, 3, 1, tzinfo=timezone.utc)
+    all_run_ids = {"expired-run", "keep-run"}  # orphan-run not in DB
+    run_completed_at = {
+        "expired-run": datetime(2025, 1, 1, tzinfo=timezone.utc),  # 59 days ago
+        # keep-run has no completed_at (still active)
+    }
+
+    removed = manager.cleanup_expired(
+        all_run_ids, run_completed_at, retention=timedelta(days=14), now=now
+    )
+
+    assert removed == 2
+    assert not wt_orphan.path.exists()
+    assert not wt_expired.path.exists()
+    assert wt_keep.path.exists()
