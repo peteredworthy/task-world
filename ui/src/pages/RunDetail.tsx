@@ -102,7 +102,10 @@ function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | nu
 
 function RunDetailInner({ runId }: { runId: string }) {
   const { data: run, isLoading, error } = useRun(runId);
-  const { data: routine } = useRoutine(run?.routine_id);
+  // Skip standalone routine fetch when the routine is embedded in the run
+  const { data: routine } = useRoutine(
+    run?.routine_source === 'embedded' ? null : run?.routine_id
+  );
   const { data: activityData } = useActivityStream(runId);
   const { data: pendingActionsData } = usePendingActions(runId);
   const { status: wsStatus, reconnect: wsReconnect } = useWebSocketStatus();
@@ -151,7 +154,8 @@ function RunDetailInner({ runId }: { runId: string }) {
     );
   }
 
-  const routineName = routine?.name || run.routine_id || 'Run';
+  const embeddedName = (run.routine_embedded as Record<string, unknown> | null)?.name as string | undefined;
+  const routineName = routine?.name || embeddedName || run.routine_id || 'Run';
   const routineSteps: StepSummarySchema[] | undefined = routine?.steps;
   const events = activityData?.events ?? [];
 

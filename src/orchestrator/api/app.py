@@ -21,7 +21,7 @@ from orchestrator.api.auth import (
 )
 from orchestrator.api.errors import register_error_handlers
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config.enums import RoutineSource, RunStatus
 from orchestrator.config.global_config import GlobalConfig, load_global_config
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
 from orchestrator.envfiles.store import EnvFileStore
@@ -55,6 +55,35 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info(f"Startup recovery: moved {len(paused_runs)} runs to PAUSED (dead agents)")
         else:
             logger.info("Startup recovery: no dead agents found")
+
+        # Re-spawn executor loops for ACTIVE runs whose agents are still alive.
+        # After a server reload, the asyncio tasks that drive the agent loop are
+        # lost even though the agent subprocess may still be running. Without
+        # re-spawning, these runs are orphaned: the agent finishes but nobody
+        # handles the next phase (verification, next task, run completion).
+        if hasattr(app.state, "agent_executor"):
+            from orchestrator.config.enums import AgentType as _AT
+
+            executor = app.state.agent_executor
+            async with session_factory() as session:
+                from orchestrator.db.repositories import RunRepository as _RR
+
+                repo = _RR(session)
+                active_runs = await repo.list_by_status(RunStatus.ACTIVE)
+
+            for run in active_runs:
+                if run.agent_type and run.agent_type in (
+                    _AT.CLI_SUBPROCESS,
+                    _AT.OPENHANDS_LOCAL,
+                    _AT.OPENHANDS_DOCKER,
+                ):
+                    if not executor.is_running(run.id):
+                        spawned = executor.spawn_for_run(run.id, run.agent_type, run.agent_config)
+                        if spawned:
+                            logger.info(
+                                f"Startup recovery: re-spawned executor loop for "
+                                f"active run {run.id} ({run.agent_type.value})"
+                            )
     except Exception as e:
         # If recovery fails (e.g., during first startup with no tables),
         # log but don't crash the application
@@ -77,7 +106,6 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from datetime import timedelta
 
-        from orchestrator.config.enums import RunStatus as _RS
         from orchestrator.git.worktree import WorktreeManager
 
         async with session_factory() as session:
@@ -85,7 +113,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             all_runs = await repo.list_all()
 
         all_run_ids = {r.id for r in all_runs}
-        terminal = {_RS.COMPLETED, _RS.FAILED}
+        terminal = {RunStatus.COMPLETED, RunStatus.FAILED}
         run_completed_at = {
             r.id: r.completed_at
             for r in all_runs
@@ -232,6 +260,7 @@ def create_app(
         lock_manager=app.state.lock_manager,
         submit_event_registry=app.state.submit_event_registry,
         agent_monitor=getattr(app.state, "agent_monitor", None),
+        connection_manager=app.state.connection_manager,
         spawn_agents=spawn_agents,
     )
 

@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from orchestrator.agents.monitor import AgentMonitor
+    from orchestrator.api.websocket import ConnectionManager
     from orchestrator.config.global_config import GlobalConfig
     from orchestrator.state.models import Run, StepState, TaskState
     from orchestrator.workflow.locks import LockManager
@@ -65,6 +66,7 @@ class AgentExecutor:
         lock_manager: LockManager | None = None,
         submit_event_registry: SubmitEventRegistry | None = None,
         agent_monitor: AgentMonitor | None = None,
+        connection_manager: ConnectionManager | None = None,
         api_base_url: str = "http://localhost:8000",
         *,
         spawn_agents: bool = True,
@@ -73,6 +75,7 @@ class AgentExecutor:
         self._global_config = global_config
         self._lock_manager = lock_manager
         self._submit_event_registry = submit_event_registry
+        self._connection_manager = connection_manager
         self._api_base_url = api_base_url
         self._spawn_agents = spawn_agents
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
@@ -110,6 +113,21 @@ class AgentExecutor:
         repo = RunRepository(session)
         event_store = EventStore(session)
         emitter = PersistentEventEmitter(event_store)
+
+        # Wire events to WebSocket broadcast so the frontend receives real-time
+        # updates for agent-driven state changes (task completions, grade
+        # evaluations, step transitions, etc.).
+        if self._connection_manager is not None:
+            manager = self._connection_manager
+
+            def _on_event(event: WorkflowEvent) -> None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(manager.broadcast_event(event))
+                except RuntimeError:
+                    pass
+
+            emitter.add_listener(_on_event)
 
         return WorkflowService(
             session=session,
@@ -368,6 +386,29 @@ class AgentExecutor:
                             logger.exception(f"Run {run_id}: failed to pause run after error")
                         break
 
+        except asyncio.CancelledError:
+            # Server shutdown/reload cancels asyncio tasks. CancelledError is a
+            # BaseException (not Exception) in Python 3.9+, so it must be caught
+            # explicitly. Transition the run to PAUSED so startup recovery doesn't
+            # need to guess whether an orphaned agent is still healthy.
+            logger.warning(f"Run {run_id}: agent loop cancelled (server shutdown?), pausing run")
+            try:
+                async with self._session_factory() as session:
+                    service = await self._create_service(session)
+                    await service.pause_run(run_id)
+                    await session.commit()
+            except Exception:
+                # DB might be shutting down too — use monitor as fallback
+                try:
+                    monitor = await self._get_agent_monitor()
+                    if monitor:
+                        await monitor.on_agent_died(
+                            run_id=run_id,
+                            agent_type=agent_type,
+                            reason="agent_loop_cancelled",
+                        )
+                except Exception:
+                    logger.exception(f"Run {run_id}: failed to pause run after cancellation")
         except Exception as e:
             logger.exception(f"Run {run_id}: unexpected error in agent loop: {e}")
             # Try to pause the run if there's an outer exception
@@ -764,7 +805,7 @@ class AgentExecutor:
         logger.info(f"Task {task_state.id}: verifier execution complete, success={result.success}")
 
     async def _emit_log_event(self, event: WorkflowEvent) -> None:
-        """Persist a log event using a separate session to avoid transaction conflicts."""
+        """Persist a log event and broadcast via WebSocket."""
         try:
             async with self._session_factory() as session:
                 from orchestrator.db.event_store import EventStore
@@ -774,6 +815,13 @@ class AgentExecutor:
                 await session.commit()
         except Exception:
             logger.debug(f"Failed to persist log event: {event.event_type}", exc_info=True)
+
+        # Broadcast to WebSocket subscribers regardless of persistence success
+        if self._connection_manager is not None:
+            try:
+                await self._connection_manager.broadcast_event(event)
+            except Exception:
+                logger.debug(f"Failed to broadcast log event: {event.event_type}", exc_info=True)
 
     async def _emit_error_event(
         self, run_id: str, task_state: TaskState, error_type: str, message: str

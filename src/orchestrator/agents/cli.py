@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import shutil
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -285,12 +286,18 @@ class CLIAgent:
         )
 
         try:
+            # Build a clean environment for the child process.
+            # Remove CLAUDECODE so that nested `claude` invocations don't
+            # refuse to start with "cannot be launched inside another session".
+            child_env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=context.working_dir,
+                env=child_env,
                 limit=1024 * 1024,  # 1MB readline buffer for large JSON output
             )
 
