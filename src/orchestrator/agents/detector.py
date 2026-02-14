@@ -60,7 +60,7 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="server_image",
         field_type="string",
-        default="ghcr.io/openhands/agent-server:latest-python",
+        default="orchestrator/agent-server:patched",
         description="Docker image for the agent server",
     ),
     AgentConfigField(

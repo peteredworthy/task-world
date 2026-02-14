@@ -83,24 +83,46 @@ class SubmitEventRegistry:
             event.set()
 
 
-def find_task_config(routine_config: RoutineConfig, config_id: str) -> TaskConfig | None:
-    """Find a TaskConfig by config_id within a RoutineConfig. Pure function."""
+def find_task_config(
+    routine_config: RoutineConfig, config_id: str, step_config_id: str | None = None
+) -> TaskConfig | None:
+    """Find a TaskConfig by config_id within a RoutineConfig. Pure function.
+
+    Args:
+        routine_config: The routine configuration to search
+        config_id: The task config ID to find (e.g., "T-02")
+        step_config_id: Optional step config ID to limit search to a specific step
+
+    Returns:
+        The matching TaskConfig, or None if not found
+    """
     for step in routine_config.steps:
+        # If step_config_id is provided, only search within that step
+        if step_config_id is not None and step.id != step_config_id:
+            continue
         for task in step.tasks:
             if task.id == config_id:
                 return task
     return None
 
 
-def resolve_auto_verify_config(run: Run, task_config_id: str) -> AutoVerifyConfig | None:
+def resolve_auto_verify_config(
+    run: Run, task_config_id: str, step_config_id: str | None = None
+) -> AutoVerifyConfig | None:
     """Resolve the AutoVerifyConfig for a task from the run's routine_embedded.
 
-    Returns None if routine_embedded is not set or the task has no auto_verify items.
+    Args:
+        run: The run containing the routine configuration
+        task_config_id: The task config ID (e.g., "T-02")
+        step_config_id: Optional step config ID to limit search to a specific step
+
+    Returns:
+        The AutoVerifyConfig for the task, or None if not found or empty
     """
     if run.routine_embedded is None:
         return None
     routine_config = RoutineConfig.model_validate(run.routine_embedded)
-    task_config = find_task_config(routine_config, task_config_id)
+    task_config = find_task_config(routine_config, task_config_id, step_config_id)
     if task_config is None:
         return None
     if not task_config.auto_verify.items:
@@ -581,7 +603,17 @@ class WorkflowService:
             task.attempts[-1].end_commit = get_head_commit(worktree_path)
 
         # --- Auto-verify phase ---
-        auto_verify_config = resolve_auto_verify_config(run, task.config_id)
+        # Find which step contains this task to resolve config correctly
+        step_config_id = None
+        for step in run.steps:
+            for t in step.tasks:
+                if t.id == task_id:
+                    step_config_id = step.config_id
+                    break
+            if step_config_id is not None:
+                break
+
+        auto_verify_config = resolve_auto_verify_config(run, task.config_id, step_config_id)
 
         if auto_verify_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
@@ -876,7 +908,17 @@ class WorkflowService:
         # B16: Validate grade against routine's configured grade_scale
         if run.routine_embedded is not None:
             routine_config = RoutineConfig.model_validate(run.routine_embedded)
-            task_config = find_task_config(routine_config, task.config_id)
+            # Find which step contains this task to resolve config correctly
+            step_config_id = None
+            for step in run.steps:
+                for t in step.tasks:
+                    if t.id == task_id:
+                        step_config_id = step.config_id
+                        break
+                if step_config_id is not None:
+                    break
+
+            task_config = find_task_config(routine_config, task.config_id, step_config_id)
             if task_config is not None:
                 grade_scale = task_config.verifier.submission_template.grade_scale
                 if grade not in grade_scale:

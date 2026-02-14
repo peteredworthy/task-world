@@ -184,6 +184,75 @@ class TestFindTaskConfig:
         routine = RoutineConfig.model_validate(_embedded_routine_with_auto_verify([]))
         assert find_task_config(routine, "nonexistent") is None
 
+    def test_finds_correct_task_when_ids_reused_across_steps(self) -> None:
+        from orchestrator.config.models import RoutineConfig
+
+        # Create routine with two steps, each with a task "T-01" but different configs
+        routine_dict = {
+            "id": "multi-step-routine",
+            "name": "Multi-Step Test Routine",
+            "steps": [
+                {
+                    "id": "S-01",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "T-01",
+                            "title": "Task in Step 1",
+                            "task_context": "Do step 1 thing",
+                            "requirements": [{"id": "R1", "desc": "Step 1 requirement"}],
+                            "auto_verify": {
+                                "items": [{"id": "check-s1", "cmd": "echo step1", "must": True}],
+                                "tail_lines": 10,
+                            },
+                        }
+                    ],
+                },
+                {
+                    "id": "S-02",
+                    "title": "Step 2",
+                    "tasks": [
+                        {
+                            "id": "T-01",
+                            "title": "Task in Step 2",
+                            "task_context": "Do step 2 thing",
+                            "requirements": [{"id": "R1", "desc": "Step 2 requirement"}],
+                            "auto_verify": {
+                                "items": [{"id": "check-s2", "cmd": "echo step2", "must": True}],
+                                "tail_lines": 10,
+                            },
+                        }
+                    ],
+                },
+            ],
+        }
+        routine = RoutineConfig.model_validate(routine_dict)
+
+        # Find with step_config_id="S-01"
+        task_s1 = find_task_config(routine, "T-01", step_config_id="S-01")
+        assert task_s1 is not None
+        assert task_s1.id == "T-01"
+        assert task_s1.title == "Task in Step 1"
+        assert len(task_s1.auto_verify.items) == 1
+        assert task_s1.auto_verify.items[0].id == "check-s1"
+
+        # Find with step_config_id="S-02"
+        task_s2 = find_task_config(routine, "T-01", step_config_id="S-02")
+        assert task_s2 is not None
+        assert task_s2.id == "T-01"
+        assert task_s2.title == "Task in Step 2"
+        assert len(task_s2.auto_verify.items) == 1
+        assert task_s2.auto_verify.items[0].id == "check-s2"
+
+        # Verify they are different configs
+        assert task_s1.title != task_s2.title
+        assert task_s1.auto_verify.items[0].id != task_s2.auto_verify.items[0].id
+
+        # Without step_config_id, returns first match (S-01)
+        task_first = find_task_config(routine, "T-01")
+        assert task_first is not None
+        assert task_first.title == "Task in Step 1"
+
 
 class TestResolveAutoVerifyConfig:
     def test_returns_config_when_items_present(self) -> None:
@@ -217,6 +286,75 @@ class TestResolveAutoVerifyConfig:
         run = _make_run_with_auto_verify("/tmp", [{"id": "check1", "cmd": "echo ok"}])
         config = resolve_auto_verify_config(run, "nonexistent-task")
         assert config is None
+
+    def test_resolves_correct_config_with_duplicate_task_ids(self) -> None:
+        # Create Run with routine_embedded having two steps with "T-01" but different auto_verify
+        now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+        run = Run(
+            id="run-multi-step",
+            repo_name="test-repo",
+            worktree_path="/tmp",
+            status=RunStatus.DRAFT,
+            routine_id="multi-step-routine",
+            routine_source=RoutineSource.EMBEDDED,
+            routine_embedded={
+                "id": "multi-step-routine",
+                "name": "Multi-Step Test Routine",
+                "steps": [
+                    {
+                        "id": "S-01",
+                        "title": "Step 1",
+                        "tasks": [
+                            {
+                                "id": "T-01",
+                                "title": "Task in Step 1",
+                                "task_context": "Do step 1 thing",
+                                "requirements": [{"id": "R1", "desc": "Step 1 requirement"}],
+                                "auto_verify": {
+                                    "items": [
+                                        {"id": "check-s1", "cmd": "echo step1", "must": True}
+                                    ],
+                                    "tail_lines": 10,
+                                },
+                            }
+                        ],
+                    },
+                    {
+                        "id": "S-02",
+                        "title": "Step 2",
+                        "tasks": [
+                            {
+                                "id": "T-01",
+                                "title": "Task in Step 2",
+                                "task_context": "Do step 2 thing",
+                                "requirements": [{"id": "R1", "desc": "Step 2 requirement"}],
+                                "auto_verify": {
+                                    "items": [
+                                        {"id": "check-s2", "cmd": "echo step2", "must": True}
+                                    ],
+                                    "tail_lines": 10,
+                                },
+                            }
+                        ],
+                    },
+                ],
+            },
+            steps=[],
+            created_at=now,
+            updated_at=now,
+        )
+
+        # Resolve with step_config_id="S-01"
+        config_s1 = resolve_auto_verify_config(run, "T-01", step_config_id="S-01")
+        assert config_s1 is not None
+        assert len(config_s1.items) == 1
+        assert config_s1.items[0].id == "check-s1"
+
+        # Resolve with step_config_id="S-02"
+        config_s2 = resolve_auto_verify_config(run, "T-01", step_config_id="S-02")
+        assert config_s2 is not None
+        assert len(config_s2.items) == 1
+        assert config_s2.items[0].id == "check-s2"
 
 
 # --- Integration tests with real DB and subprocess ---

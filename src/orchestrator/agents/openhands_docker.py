@@ -497,7 +497,7 @@ class DockerOpenHandsAgent:
         model: str = "gpt-5-mini",
         api_key: str | None = None,
         max_iterations: int = 100,
-        server_image: str = "ghcr.io/openhands/agent-server:latest-python",
+        server_image: str = "orchestrator/agent-server:patched",
         docker_platform: str | None = None,
         tools: list[str] | None = None,
         llm_config: dict[str, Any] | None = None,

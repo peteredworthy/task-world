@@ -717,9 +717,21 @@ async def get_guidance(
 
         if routine_config is not None:
             # Find task config
+            # First, find which step contains this task to disambiguate config lookup
+            step_config_id: str | None = None
+            for step in run.steps:
+                for task in step.tasks:
+                    if task.id == current_task.id:
+                        step_config_id = step.config_id
+                        break
+                if step_config_id is not None:
+                    break
+
             task_config = None
             step_context: str | None = None
             for step in routine_config.steps:
+                if step_config_id is not None and step.id != step_config_id:
+                    continue
                 for task in step.tasks:
                     if task.id == current_task.config_id:
                         task_config = task

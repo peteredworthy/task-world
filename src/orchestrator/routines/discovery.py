@@ -102,11 +102,12 @@ def discover_routines(
                         continue
                     break  # Only load first matching routine file per directory
 
-    # Deduplicate by routine ID — later entries win (directory-based routines
-    # are scanned after flat files, so they take priority).
-    seen: dict[str, int] = {}
+    # Deduplicate by (routine ID, source) — within each source, later entries win
+    # (directory-based routines are scanned after flat files, so they take priority).
+    # But routines with same ID from different sources are both kept.
+    seen: dict[tuple[str, RoutineSource], int] = {}
     for i, r in enumerate(routines):
-        seen[r.config.id] = i
+        seen[(r.config.id, r.source)] = i
     routines = [routines[i] for i in sorted(seen.values())]
 
     return routines

@@ -1,17 +1,12 @@
 """Integration tests for branch operations using real git repos."""
 
 import subprocess
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
-from orchestrator.config.enums import Priority, RoutineSource, RunStatus, TaskStatus
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
 from orchestrator.git.branch_ops import back_merge, get_branch_status, merge_back
 from orchestrator.git.errors import BranchNotFoundError, MergeConflictError
-from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
-from orchestrator.workflow.service import WorkflowService
 
 
 def _git(args: list[str], cwd: Path) -> str:
@@ -269,109 +264,3 @@ class TestMergeBack:
     def test_branch_not_found(self, git_repo: Path) -> None:
         with pytest.raises(BranchNotFoundError, match="nonexistent"):
             merge_back(git_repo, "nonexistent", "main")
-
-
-@pytest.mark.skip(
-    reason="Worktree creation moved to API layer - needs update for new repo-based architecture"
-)
-class TestWorktreeCreationOnStart:
-    """Tests that starting a run creates a worktree when project is a git repo."""
-
-    async def test_start_run_creates_worktree(self, git_repo: Path) -> None:
-        """Starting a run with worktree_enabled creates worktree and sets source_branch."""
-        now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        run = Run(
-            id="run-wt-test",
-            repo_name=str(git_repo),
-            status=RunStatus.DRAFT,
-            routine_id="test-routine",
-            routine_source=RoutineSource.LOCAL,
-            worktree_enabled=True,
-            source_branch="main",
-            steps=[
-                StepState(
-                    id="step-1",
-                    config_id="S-01",
-                    tasks=[
-                        TaskState(
-                            id="task-1",
-                            config_id="T-01",
-                            status=TaskStatus.PENDING,
-                            checklist=[
-                                ChecklistItem(
-                                    req_id="R1",
-                                    desc="Do the thing",
-                                    priority=Priority.CRITICAL,
-                                )
-                            ],
-                        )
-                    ],
-                )
-            ],
-            created_at=now,
-            updated_at=now,
-        )
-
-        engine = create_engine(":memory:")
-        await init_db(engine)
-        factory = create_session_factory(engine)
-
-        async with factory() as session:
-            service = WorkflowService(session=session)
-            await service.create_run(run)
-            started = await service.start_run("run-wt-test")
-
-        await engine.dispose()
-
-        assert started.worktree_path is not None
-        assert Path(started.worktree_path).exists()
-        assert started.source_branch == "main"
-        assert started.status == RunStatus.ACTIVE
-
-    async def test_start_run_skips_worktree_for_non_git_dir(self) -> None:
-        """Starting a run with non-git project_id doesn't create worktree."""
-        now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-        run = Run(
-            id="run-no-git",
-            repo_name="not-a-real-path",
-            status=RunStatus.DRAFT,
-            routine_id="test-routine",
-            routine_source=RoutineSource.LOCAL,
-            worktree_enabled=True,
-            steps=[
-                StepState(
-                    id="step-1",
-                    config_id="S-01",
-                    tasks=[
-                        TaskState(
-                            id="task-1",
-                            config_id="T-01",
-                            status=TaskStatus.PENDING,
-                            checklist=[
-                                ChecklistItem(
-                                    req_id="R1",
-                                    desc="Do the thing",
-                                    priority=Priority.CRITICAL,
-                                )
-                            ],
-                        )
-                    ],
-                )
-            ],
-            created_at=now,
-            updated_at=now,
-        )
-
-        engine = create_engine(":memory:")
-        await init_db(engine)
-        factory = create_session_factory(engine)
-
-        async with factory() as session:
-            service = WorkflowService(session=session)
-            await service.create_run(run)
-            started = await service.start_run("run-no-git")
-
-        await engine.dispose()
-
-        assert started.worktree_path is None
-        assert started.status == RunStatus.ACTIVE
