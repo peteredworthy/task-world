@@ -579,6 +579,50 @@ class WorkflowService:
             )
         engine, state, buffer = self._build_engine(run)
 
+        # --- Pre-gate auto-verify: run auto-verify before the checklist gate ---
+        # If task-level auto-verify items all pass, auto-mark OPEN checklist
+        # items as DONE so the gate check succeeds. This prevents agents from
+        # needing to explicitly call on_checklist_update() when auto-verify
+        # already confirms the work was done.
+        task = state.get_task(run_id, task_id)
+        step_config_id_pre = None
+        for step in run.steps:
+            for t in step.tasks:
+                if t.id == task_id:
+                    step_config_id_pre = step.config_id
+                    break
+            if step_config_id_pre is not None:
+                break
+
+        pre_av_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
+        if (
+            pre_av_config is not None
+            and self._auto_verify_runner is not None
+            and any(item.status == ChecklistStatus.OPEN for item in task.checklist)
+        ):
+            project_path = _resolve_working_path(run)
+            if project_path is not None:
+                # Auto-commit any uncommitted changes before running auto-verify
+                if run.worktree_path:
+                    commit_uncommitted_changes(
+                        Path(run.worktree_path),
+                        f"Auto-commit builder changes for task {task_id}",
+                    )
+
+                pre_av_results = await run_auto_verify(
+                    pre_av_config,
+                    self._auto_verify_runner,
+                    project_path,
+                    variables=run.config,
+                )
+                all_must_passed_pre, _ = evaluate_auto_verify(pre_av_config, pre_av_results)
+
+                if all_must_passed_pre:
+                    # Auto-verify confirms work is done — mark OPEN checklist items as DONE
+                    for item in task.checklist:
+                        if item.status == ChecklistStatus.OPEN:
+                            item.status = ChecklistStatus.DONE
+
         try:
             result = engine.submit_for_verification(run_id, task_id)
         except GateBlockedError:

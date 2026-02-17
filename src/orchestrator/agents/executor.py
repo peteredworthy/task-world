@@ -26,6 +26,7 @@ from orchestrator.workflow.events import (
     ApprovalRequested,
     WorkflowEvent,
 )
+from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.workflow.prompts import generate_builder_prompt
 
 if TYPE_CHECKING:
@@ -355,6 +356,14 @@ class AgentExecutor:
                     try:
                         await self._execute_task(run, task_state, service, agent_type, agent_config)
                         await session.commit()
+                    except GateBlockedError as e:
+                        logger.warning(
+                            f"Run {run_id}: task {task_state.id} checklist gate blocked on submit: {e}. "
+                            f"Task stays in building — will retry on next iteration."
+                        )
+                        await session.commit()
+                        # Don't break — let the loop pick up the task again
+                        continue
                     except AgentCancelledError:
                         logger.info(f"Run {run_id}: agent cancelled")
                         break

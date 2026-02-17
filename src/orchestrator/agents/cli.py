@@ -22,6 +22,7 @@ from orchestrator.agents.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
+from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.agents.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
 from orchestrator.agents.types import (
     AgentInfo,
@@ -441,6 +442,8 @@ class CLIAgent:
             raise
         except AgentNotAvailableError:
             raise
+        except GateBlockedError:
+            raise  # Let executor handle as revision, not a crash
         except Exception as exc:
             # Check if process died unexpectedly and notify monitor
             if self._process and self._agent_monitor and self._run_id:

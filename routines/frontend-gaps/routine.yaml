@@ -1,0 +1,664 @@
+id: frontend-gaps
+name: Frontend Gaps Implementation
+description: >
+  Close all 21 identified frontend gaps in the orchestrator web UI.
+  Covers step approval, branch management, merge strategies, attempt metrics,
+  history page, routine detail, grade thresholds, env files, transitions,
+  and real-time dashboard updates.
+inputs:
+  - name: feature_name
+    required: false
+    default: frontend-gaps
+    description: Name of the feature being implemented
+steps:
+  - id: S-01
+    title: "Step-Level Approval UI (Gap 1)"
+    step_context: >
+      Build the step-level approval flow so users can approve individual steps
+      via a dedicated modal. This addresses Gap 1 (HIGH priority).
+    tasks:
+      - id: T-01
+        title: Add StepApprovalRequest Type
+        task_context: >
+          Add a StepApprovalRequest type to the frontend type system in
+          ui/src/types/index.ts or ui/src/types/steps.ts. Fields: approved_by
+          (string, required), comment (string, optional).
+        requirements:
+          - id: R1
+            desc: StepApprovalRequest type is defined and exported
+            priority: critical
+        auto_verify:
+          items:
+            - id: type_exists
+              cmd: "grep -r 'StepApprovalRequest' ui/src/types/"
+              must: true
+      - id: T-02
+        title: Add useApproveStep Mutation Hook
+        task_context: >
+          Create a TanStack Query mutation hook in ui/src/hooks/useApi.ts for
+          POST /api/runs/{id}/steps/{step_id}/approve. Invalidate run detail
+          and pending actions queries on success.
+        requirements:
+          - id: R2
+            desc: useApproveStep hook exported from hooks/useApi.ts
+            priority: critical
+        auto_verify:
+          items:
+            - id: hook_exists
+              cmd: "grep 'useApproveStep' ui/src/hooks/useApi.ts"
+              must: true
+      - id: T-03
+        title: Create StepApprovalModal Component
+        task_context: >
+          Build a modal component at ui/src/components/detail/StepApprovalModal.tsx
+          with form fields for approver name and optional comment. Props: runId,
+          stepId, isOpen, onClose. Handle errors: 404 → "Step not found or
+          already approved", 409 → "Step cannot be approved in current state",
+          500 → generic error, network → "Connection error".
+        requirements:
+          - id: R3
+            desc: StepApprovalModal component renders with form fields
+            priority: critical
+          - id: R4
+            desc: Error states handled for 404, 409, 500, and network errors
+            priority: expected
+        auto_verify:
+          items:
+            - id: component_exists
+              cmd: "test -f ui/src/components/detail/StepApprovalModal.tsx"
+              must: true
+        verifier:
+          rubric:
+            - id: modal_ux
+              text: Does the modal provide clear approval UX with error handling?
+        retry:
+          max_attempts: 2
+      - id: T-04
+        title: Wire StepApprovalModal into RunDetail Page
+        task_context: >
+          Update ui/src/pages/RunDetail.tsx to detect pending actions with
+          action_type === "step_approval" and render StepApprovalModal with the
+          correct step ID.
+        requirements:
+          - id: R5
+            desc: RunDetail page shows step approval modal for step_approval pending actions
+            priority: critical
+    gate:
+      type: auto_verify
+      auto_verify:
+        items:
+          - id: tsc_check
+            cmd: "cd ui && npx tsc --noEmit"
+            must: true
+
+  - id: S-02
+    title: "Branch Status + Back-Merge (Gaps 2, 3)"
+    step_context: >
+      Add branch status display and back-merge functionality to the run detail
+      page. Addresses Gaps 2 and 3 (HIGH priority).
+    tasks:
+      - id: T-05
+        title: Create BranchStatus Type
+        task_context: >
+          Define the BranchStatus interface in a new file ui/src/types/branches.ts.
+          Fields: behind_count, ahead_count, can_merge_cleanly, has_conflicts,
+          source_branch, run_branch.
+        requirements:
+          - id: R6
+            desc: BranchStatus type defined and exported
+            priority: critical
+        auto_verify:
+          items:
+            - id: type_file_exists
+              cmd: "test -f ui/src/types/branches.ts"
+              must: true
+      - id: T-06
+        title: Add useBranchStatus and useBackMerge Hooks
+        task_context: >
+          Add query and mutation hooks to ui/src/hooks/useApi.ts.
+          useBranchStatus: GET /api/runs/{runId}/branch-status.
+          useBackMerge: POST /api/runs/{runId}/back-merge.
+          Invalidate branchStatus query key on run_status_changed WebSocket events.
+        requirements:
+          - id: R7
+            desc: useBranchStatus and useBackMerge hooks exported
+            priority: critical
+      - id: T-07
+        title: Create BranchStatusPanel Component
+        task_context: >
+          Create ui/src/components/detail/BranchStatusPanel.tsx to display branch
+          info with conflict warnings. Props: runId. Show branch names,
+          ahead/behind counts, conflict warnings. Hide panel on 404, inline
+          error with retry on 500.
+        requirements:
+          - id: R8
+            desc: BranchStatusPanel displays branch info with error handling
+            priority: critical
+        auto_verify:
+          items:
+            - id: panel_exists
+              cmd: "test -f ui/src/components/detail/BranchStatusPanel.tsx"
+              must: true
+      - id: T-08
+        title: Create BackMergeDialog Component
+        task_context: >
+          Build confirmation dialog at ui/src/components/detail/BackMergeDialog.tsx.
+          Props: runId, isOpen, onClose. Handle errors: 409 → "Merge conflicts",
+          400 → "Not available in current state", 500 → generic error.
+        requirements:
+          - id: R9
+            desc: BackMergeDialog provides confirmation flow with error handling
+            priority: critical
+        auto_verify:
+          items:
+            - id: dialog_exists
+              cmd: "test -f ui/src/components/detail/BackMergeDialog.tsx"
+              must: true
+      - id: T-09
+        title: Wire BranchStatusPanel and BackMergeDialog into RunDetail
+        task_context: >
+          Mount both components on ui/src/pages/RunDetail.tsx. Add state for
+          back-merge dialog. Render BranchStatusPanel near top of detail view.
+          Show back-merge button only for ACTIVE/PAUSED runs.
+        requirements:
+          - id: R10
+            desc: Branch panel and back-merge dialog integrated into RunDetail
+            priority: critical
+          - id: R11
+            desc: Back-merge button only visible for ACTIVE/PAUSED runs
+            priority: expected
+    gate:
+      type: auto_verify
+      auto_verify:
+        items:
+          - id: tsc_check
+            cmd: "cd ui && npx tsc --noEmit"
+            must: true
+
+  - id: S-03
+    title: "Merge Strategy + Clarification Context + Gate Types (Gaps 4, 7, 8)"
+    step_context: >
+      Add merge strategy selection, clarification context display, and gate type
+      badges. Addresses Gaps 4, 7, and 8 (MEDIUM priority).
+    tasks:
+      - id: T-10
+        title: Create MergeStrategyPicker Component
+        task_context: >
+          Build a shared select component at ui/src/components/detail/MergeStrategyPicker.tsx.
+          Props: value (string), onChange (callback). Options: merge (default,
+          "Merge commit"), squash ("Squash and merge"), rebase ("Rebase and merge").
+          Use native select with TailwindCSS styling.
+        requirements:
+          - id: R12
+            desc: MergeStrategyPicker renders three strategy options
+            priority: critical
+        auto_verify:
+          items:
+            - id: picker_exists
+              cmd: "test -f ui/src/components/detail/MergeStrategyPicker.tsx"
+              must: true
+      - id: T-11
+        title: Add MergeStrategyPicker to BackMergeDialog and CreateRunModal
+        task_context: >
+          Wire the strategy picker into BackMergeDialog (add strategy state,
+          render picker above confirm button, pass strategy to mutation) and
+          CreateRunModal (add picker to advanced config section, include in
+          run creation payload).
+        requirements:
+          - id: R13
+            desc: Merge strategy selectable in BackMergeDialog and CreateRunModal
+            priority: critical
+      - id: T-12
+        title: Add Clarification Context to ClarificationModal
+        task_context: >
+          Update ui/src/components/detail/ClarificationModal.tsx to display the
+          context field from clarification questions. Render context above options
+          list with gray-50 background styling. Gracefully omit when null/empty.
+        requirements:
+          - id: R14
+            desc: ClarificationModal shows context when present
+            priority: expected
+      - id: T-13
+        title: Create GateTypeBadge Component
+        task_context: >
+          Build a color-coded badge at ui/src/components/GateTypeBadge.tsx.
+          Props: gateType (string). Color mapping: human_approval → blue,
+          grade_threshold → purple, checklist → green, unknown → gray.
+        requirements:
+          - id: R15
+            desc: GateTypeBadge renders with correct color mapping
+            priority: critical
+        auto_verify:
+          items:
+            - id: badge_exists
+              cmd: "test -f ui/src/components/GateTypeBadge.tsx"
+              must: true
+      - id: T-14
+        title: Add Gate Type to PendingActionsBadge
+        task_context: >
+          Update ui/src/components/dashboard/PendingActionsBadge.tsx to import
+          GateTypeBadge and render it for each action that has a gate_type field.
+        requirements:
+          - id: R16
+            desc: PendingActionsBadge shows gate type badges
+            priority: expected
+    gate:
+      type: auto_verify
+      auto_verify:
+        items:
+          - id: tsc_check
+            cmd: "cd ui && npx tsc --noEmit"
+            must: true
+
+  - id: S-04
+    title: "Attempt Cost + Auto-Verify Output + Step Progress Text (Gaps 5, 6, 9)"
+    step_context: >
+      Add per-attempt metrics, collapsible auto-verify output, and step progress
+      text on dashboard cards. Addresses Gaps 5, 6, and 9 (MEDIUM priority).
+    tasks:
+      - id: T-15
+        title: Create AttemptMetrics Component
+        task_context: >
+          Create ui/src/components/detail/AttemptMetrics.tsx to display
+          per-attempt token counts and estimated cost. Props: tokensRead
+          (number | null), tokensWrite (number | null), durationMs (number | null).
+          Show token counts, estimated cost, duration. Display "No usage data"
+          when all fields are null.
+        requirements:
+          - id: R17
+            desc: AttemptMetrics displays token counts and cost estimate
+            priority: critical
+        auto_verify:
+          items:
+            - id: metrics_exists
+              cmd: "test -f ui/src/components/detail/AttemptMetrics.tsx"
+              must: true
+      - id: T-16
+        title: Wire AttemptMetrics into AttemptHistory
+        task_context: >
+          Update ui/src/components/detail/AttemptHistory.tsx to import
+          AttemptMetrics and render it inline for each attempt using token
+          and duration fields from the attempt data.
+        requirements:
+          - id: R18
+            desc: AttemptHistory shows metrics per attempt
+            priority: critical
+      - id: T-17
+        title: Create AutoVerifyOutput Component
+        task_context: >
+          Build a collapsible code block at ui/src/components/detail/AutoVerifyOutput.tsx.
+          Props: stdout (string | null), stderr (string | null). Collapsed by
+          default, expandable toggle, max-height with scroll, separate
+          stdout/stderr sections.
+        requirements:
+          - id: R19
+            desc: AutoVerifyOutput is collapsible and shows stdout/stderr
+            priority: critical
+        auto_verify:
+          items:
+            - id: output_exists
+              cmd: "test -f ui/src/components/detail/AutoVerifyOutput.tsx"
+              must: true
+      - id: T-18
+        title: Embed AutoVerifyOutput in ActivityFeed
+        task_context: >
+          Update ui/src/components/detail/ActivityFeed.tsx to render
+          AutoVerifyOutput below event summary for auto-verify events.
+        requirements:
+          - id: R20
+            desc: ActivityFeed shows auto-verify output for relevant events
+            priority: critical
+      - id: T-19
+        title: Add Step Progress Text to RunCard
+        task_context: >
+          Update ui/src/components/dashboard/RunCard.tsx to show "Step X of Y"
+          text using current_step and total_steps from run data. Omit when
+          step count data is missing.
+        requirements:
+          - id: R21
+            desc: RunCard displays step progress text
+            priority: expected
+    gate:
+      type: auto_verify
+      auto_verify:
+        items:
+          - id: tsc_check
+            cmd: "cd ui && npx tsc --noEmit"
+            must: true
+
+  - id: S-05
+    title: "History Page + Live Guidance (Gaps 10, 11)"
+    step_context: >
+      Replace the history page stub with a functional page and wire live
+      guidance polling. Addresses Gaps 10 and 11 (MEDIUM priority).
+    tasks:
+      - id: T-20
+        title: Create GuidanceResponse Type
+        task_context: >
+          Define the GuidanceResponse interface in a new file
+          ui/src/types/guidance.ts. Fields: run_id, task_id, prompt, phase,
+          mcp_url, expected_actions (string array).
+        requirements:
+          - id: R22
+            desc: GuidanceResponse type defined and exported
+            priority: critical
+        auto_verify:
+          items:
+            - id: type_exists
+              cmd: "test -f ui/src/types/guidance.ts"
+              must: true
+      - id: T-21
+        title: Add useGuidance Hook
+        task_context: >
+          Add a query hook to ui/src/hooks/useApi.ts for
+          GET /api/runs/{runId}/guidance with 10s polling (refetchInterval:
+          10000). Only poll when the guidance panel is open (enabled parameter).
+        requirements:
+          - id: R23
+            desc: useGuidance hook exported with conditional polling
+            priority: critical
+      - id: T-22
+        title: Rewrite History Page
+        task_context: >
+          Replace the "Coming soon" stub in ui/src/pages/History.tsx with a
+          functional history page. Features: runs list using RunCard component,
+          outcome filter (All/Completed/Failed), date range filter, search,
+          cursor-based pagination. Empty state: "No runs found" with filter
+          reset suggestion.
+        requirements:
+          - id: R24
+            desc: History page shows runs with filters and pagination
+            priority: critical
+          - id: R25
+            desc: No "Coming soon" text remains in History page
+            priority: critical
+        auto_verify:
+          items:
+            - id: no_stub
+              cmd: "! grep -i 'coming soon' ui/src/pages/History.tsx"
+              must: true
+        verifier:
+          rubric:
+            - id: history_ux
+              text: Is the history page functional with filters and pagination?
+        retry:
+          max_attempts: 2
+      - id: T-23
+        title: Update AgentGuidancePanel with Live Guidance
+        task_context: >
+          Wire ui/src/components/guidance/AgentGuidancePanel.tsx to use the
+          useGuidance hook. Display prompt text, phase badge, and expected
+          actions list. Show "Waiting for agent..." when data is null,
+          "No active guidance" on 404. Only poll when panel is open.
+        requirements:
+          - id: R26
+            desc: AgentGuidancePanel shows live guidance data
+            priority: expected
+    gate:
+      type: auto_verify
+      auto_verify:
+        items:
+          - id: tsc_check
+            cmd: "cd ui && npx tsc --noEmit"
+            must: true
+
+  - id: S-06
+    title: "Routine Detail + Agents Flow + Revision Visualization (Gaps 12, 13, 14)"
+    step_context: >
+      Enrich routine detail view, add agent-to-run creation flow, and add
+      visual connectors to attempt history. Addresses Gaps 12-14 (LOW priority).
+    tasks:
+      - id: T-24
+        title: Enrich RoutineLibrary Detail View
+        task_context: >
+          Update ui/src/pages/RoutineLibrary.tsx to show gate types (using
+          GateTypeBadge), auto-verify commands as code snippets, and requirement
+          priorities with color coding. Gracefully omit sections when data is absent.
+        requirements:
+          - id: R27
+            desc: RoutineLibrary shows gate type, auto-verify, and priority info
+            priority: expected
+      - id: T-25
+        title: Add Create Run Flow from Agents Page
+        task_context: >
+          Add a "Create run" button per agent on ui/src/pages/Agents.tsx that
+          navigates to Dashboard with prefillAgentType state. Update or create
+          ui/src/context/CreateRunContext.tsx to accept prefillAgentType and
+          open the modal with pre-fill. Handle navigation state loss gracefully
+          (modal opens without pre-fill).
+        requirements:
+          - id: R28
+            desc: Agents page has Create Run button navigating to Dashboard
+            priority: expected
+          - id: R29
+            desc: CreateRunModal pre-fills agent type from navigation state
+            priority: nice
+      - id: T-26
+        title: Add Visual Connectors to AttemptHistory
+        task_context: >
+          Update ui/src/components/detail/AttemptHistory.tsx to show CSS-based
+          vertical flow lines between attempt entries. Status-based coloring:
+          green for success, red for failure, gray for pending. Use CSS
+          pseudo-elements or borders, no SVG.
+        requirements:
+          - id: R30
+            desc: AttemptHistory has visual connector styling between entries
+            priority: nice
+    gate:
+      type: auto_verify
+      auto_verify:
+        items:
+          - id: tsc_check
+            cmd: "cd ui && npx tsc --noEmit"
+            must: true
+
+  - id: S-07
+    title: "Grade Threshold + Blocked State + Elapsed Time (Gaps 15, 16, 17)"
+    step_context: >
+      Add grade threshold explanation, blocked-on-human badge variant, and
+      elapsed time display. Addresses Gaps 15-17 (LOW priority).
+    tasks:
+      - id: T-27
+        title: Create GradeThresholdExplainer Component
+        task_context: >
+          Create ui/src/components/detail/GradeThresholdExplainer.tsx to show
+          threshold calculation and critical failures. Props: averageScore
+          (number | null), threshold (number | null), criticalFailures
+          (array of {requirement, score}). Display score comparison, critical
+          items list, red-50 background.
+        requirements:
+          - id: R31
+            desc: GradeThresholdExplainer shows score comparison and failures
+            priority: critical
+        auto_verify:
+          items:
+            - id: explainer_exists
+              cmd: "test -f ui/src/components/detail/GradeThresholdExplainer.tsx"
+              must: true
+      - id: T-28
+        title: Wire GradeThresholdExplainer into ChecklistTable
+        task_context: >
+          Update ui/src/components/detail/ChecklistTable.tsx to conditionally
+          render GradeThresholdExplainer below the table when the verification
+          outcome is fail.
+        requirements:
+          - id: R32
+            desc: ChecklistTable shows explainer on verification failure
+            priority: expected
+      - id: T-29
+        title: Add Blocked-on-Human Variant to StatusBadge
+        task_context: >
+          Update ui/src/components/StatusBadge.tsx to add a variant for
+          blocked-on-human state (amber color, distinct icon/label). Update
+          ui/src/pages/RunDetail.tsx to determine this state when a run is
+          ACTIVE with pending human actions and pass it to StatusBadge.
+        requirements:
+          - id: R33
+            desc: StatusBadge renders blocked-on-human variant in amber
+            priority: critical
+      - id: T-30
+        title: Create ElapsedTimer Component
+        task_context: >
+          Create ui/src/components/detail/ElapsedTimer.tsx to show live
+          HH:MM:SS elapsed time. Props: startedAt (string | null), isActive
+          (boolean). Tick every second when active using useEffect + setInterval.
+          Stop when complete. Return null when startedAt is null.
+        requirements:
+          - id: R34
+            desc: ElapsedTimer ticks every second for active runs
+            priority: critical
+        auto_verify:
+          items:
+            - id: timer_exists
+              cmd: "test -f ui/src/components/detail/ElapsedTimer.tsx"
+              must: true
+      - id: T-31
+        title: Wire ElapsedTimer into MetricsBar
+        task_context: >
+          Update ui/src/components/detail/MetricsBar.tsx to import ElapsedTimer
+          and render it with startedAt and isActive flags. Omit when no
+          started_at data is available.
+        requirements:
+          - id: R35
+            desc: MetricsBar shows elapsed timer for active runs
+            priority: expected
+    gate:
+      type: auto_verify
+      auto_verify:
+        items:
+          - id: tsc_check
+            cmd: "cd ui && npx tsc --noEmit"
+            must: true
+
+  - id: S-08
+    title: "Validation + Env Files + Transitions + Dashboard WebSocket (Gaps 18-21)"
+    step_context: >
+      Add routine validation UI, env file management, non-linear transition
+      visualization, and real-time dashboard updates. Addresses Gaps 18-21
+      (LOW priority). This is the final step and should ideally follow all
+      previous steps for integration testing.
+    tasks:
+      - id: T-32
+        title: Create Routine Validation Types
+        task_context: >
+          Define validation API types in a new file ui/src/types/routines.ts.
+          Types: ValidateRoutineRequest ({ yaml_content: string }),
+          ValidateRoutineResponse ({ valid: boolean, errors: string[],
+          builder_feedback: string[] }).
+        requirements:
+          - id: R36
+            desc: Routine validation types defined and exported
+            priority: critical
+        auto_verify:
+          items:
+            - id: types_exist
+              cmd: "test -f ui/src/types/routines.ts"
+              must: true
+      - id: T-33
+        title: Create Env File Types
+        task_context: >
+          Define env file management types in a new file ui/src/types/envfiles.ts.
+          Types: EnvFileTemplate ({ id, name, description?, keys: string[] }),
+          EnvFileSnapshot ({ id, template_id, created_at, description? }),
+          RevertEnvFileRequest ({ snapshot_id: string }),
+          CopyBackRequest ({ source_run_id: string }).
+        requirements:
+          - id: R37
+            desc: Env file types defined and exported
+            priority: critical
+        auto_verify:
+          items:
+            - id: types_exist
+              cmd: "test -f ui/src/types/envfiles.ts"
+              must: true
+      - id: T-34
+        title: Add Validation and Env File Hooks
+        task_context: >
+          Add API hooks to ui/src/hooks/useApi.ts: useValidateRoutine (POST
+          /api/routines/validate), useEnvFiles (GET /api/runs/{runId}/env-files),
+          useEnvFileSnapshots (GET /api/runs/{runId}/env-files/snapshots),
+          useRevertEnvFile (POST /api/runs/{runId}/env-files/revert),
+          useCopyBackEnvFile (POST /api/runs/{runId}/env-files/copy-back).
+        requirements:
+          - id: R38
+            desc: All validation and env file hooks exported
+            priority: critical
+        auto_verify:
+          items:
+            - id: validate_hook
+              cmd: "grep 'useValidateRoutine' ui/src/hooks/useApi.ts"
+              must: true
+      - id: T-35
+        title: Add Validate Button to RoutineLibrary
+        task_context: >
+          Update ui/src/pages/RoutineLibrary.tsx to add a "Validate" button
+          that submits YAML content and shows inline results (success or errors
+          with line numbers and builder feedback). Handle 500 → "Validation
+          service unavailable".
+        requirements:
+          - id: R39
+            desc: RoutineLibrary has validate button with inline results
+            priority: expected
+      - id: T-36
+        title: Create EnvFileTemplates Component
+        task_context: >
+          Create ui/src/components/EnvFileTemplates.tsx for env file template
+          management. Display templates (name, description, keys), snapshots
+          per template, revert/copy-back buttons. Show metadata only (no values
+          for security). Show "No env files" empty state. Handle revert failures.
+        requirements:
+          - id: R40
+            desc: EnvFileTemplates component manages templates and snapshots
+            priority: expected
+        auto_verify:
+          items:
+            - id: component_exists
+              cmd: "test -f ui/src/components/EnvFileTemplates.tsx"
+              must: true
+      - id: T-37
+        title: Create EnvFileOverrides Component and Wire into CreateRunModal
+        task_context: >
+          Create ui/src/components/run/EnvFileOverrides.tsx with template
+          selector and input fields for overrides. Update
+          ui/src/components/run/CreateRunModal.tsx to import and render
+          EnvFileOverrides in the modal and include overrides in the run
+          creation payload.
+        requirements:
+          - id: R41
+            desc: EnvFileOverrides component provides per-run env overrides
+            priority: expected
+        auto_verify:
+          items:
+            - id: overrides_exists
+              cmd: "test -f ui/src/components/run/EnvFileOverrides.tsx"
+              must: true
+      - id: T-38
+        title: Add Non-Linear Transition Visualization to StepTimeline
+        task_context: >
+          Update ui/src/components/dashboard/StepTimeline.tsx to show backward
+          jumps in step progression using CSS-based annotations. Curved arrows
+          or highlights for backward jumps. Color-coded: gray for forward,
+          orange for backward. Handle linear-only transitions without annotations.
+        requirements:
+          - id: R42
+            desc: StepTimeline visualizes backward transitions
+            priority: nice
+      - id: T-39
+        title: Add Real-Time Dashboard Updates via WebSocket
+        task_context: >
+          Update ui/src/pages/Dashboard.tsx to establish a WebSocket connection
+          if endpoint is available. On run_status_changed events, invalidate
+          the ['runs'] query key. Graceful fallback: use 10s polling if WebSocket
+          is unavailable (refetchInterval: wsConnected ? false : 10000). Log
+          warning when endpoint is unavailable. Clean up connection on unmount.
+        requirements:
+          - id: R43
+            desc: Dashboard uses WebSocket for real-time updates with polling fallback
+            priority: expected
+    gate:
+      type: auto_verify
+      auto_verify:
+        items:
+          - id: tsc_check
+            cmd: "cd ui && npx tsc --noEmit"
+            must: true
