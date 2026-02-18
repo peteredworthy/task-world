@@ -3,8 +3,9 @@
 import asyncio
 import logging
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
@@ -536,16 +537,25 @@ async def stream_activity(
 
         try:
             while True:
-                # Use a fresh session per poll to avoid holding a long-lived
-                # connection that goes stale on server restart/reload.
-                async with session_factory() as session:
-                    store = EventStore(session)
-                    rows = await store.get_events_paginated(
-                        run_id,
-                        after=last_id,
-                        limit=100,
-                        event_type=event_type,
-                    )
+                # Shield the DB session from anyio cancel scopes (triggered on
+                # client disconnect by Starlette's StreamingResponse).  Without
+                # the shield, a CancelledError propagating through the session's
+                # __aexit__ leaves the connection in an invalid state, causing
+                # SQLAlchemy's pool to call terminate() while the cancel scope
+                # is still active – resulting in a noisy ERROR log and a
+                # connection leak.  The shield lets the session close cleanly;
+                # the pending cancellation is then delivered at the next
+                # unshielded checkpoint (yield / asyncio.sleep below).
+                rows: list[dict[str, Any]] = []
+                with anyio.CancelScope(shield=True):
+                    async with session_factory() as session:
+                        store = EventStore(session)
+                        rows = await store.get_events_paginated(
+                            run_id,
+                            after=last_id,
+                            limit=100,
+                            event_type=event_type,
+                        )
 
                 # Stream each event as SSE (outside the session context)
                 if rows:
