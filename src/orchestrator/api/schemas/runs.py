@@ -1,7 +1,7 @@
 """Run API schemas."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
 
@@ -177,6 +177,7 @@ class MergeBackRequest(BaseModel):
     """Request for merge-back operation."""
 
     strategy: str | None = None
+    dirty_action: Literal["stash", "commit"] | None = None
 
 
 class MergeBackResponse(BaseModel):

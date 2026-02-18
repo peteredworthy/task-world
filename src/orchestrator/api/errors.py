@@ -10,7 +10,7 @@ from orchestrator.agents.errors import (
 )
 from orchestrator.api.auth import AuthError
 from orchestrator.envfiles.errors import SnapshotNotFoundError
-from orchestrator.git.errors import BranchNotFoundError, MergeConflictError
+from orchestrator.git.errors import BranchNotFoundError, DirtyWorkingTreeError, MergeConflictError
 from orchestrator.repos.errors import RepoNotFoundError
 from orchestrator.routines.errors import RoutineNotFoundError, RoutineValidationError
 from orchestrator.state.errors import (
@@ -205,6 +205,19 @@ def register_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=404,
             content={"error": "branch_not_found", "branch": exc.branch},
+        )
+
+    @app.exception_handler(DirtyWorkingTreeError)
+    async def dirty_working_tree(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: DirtyWorkingTreeError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "dirty_working_tree",
+                "branch": exc.branch,
+                "dirty_files": exc.dirty_files,
+            },
         )
 
     @app.exception_handler(MergeConflictError)

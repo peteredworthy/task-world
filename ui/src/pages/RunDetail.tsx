@@ -115,6 +115,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
+  const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
@@ -278,11 +279,24 @@ function RunDetailInner({ runId }: { runId: string }) {
                 <button
                   onClick={() => {
                     setMutationError(null);
+                    setDirtyWorkingTree(null);
                     mergeBack.mutate(
                       { runId: run.id },
                       {
                         onSuccess: (data) => setMergeResult(data.message),
-                        onError: handleMutationError('merge back'),
+                        onError: (err: Error) => {
+                          if (err instanceof ApiError && err.body && typeof err.body === 'object') {
+                            const body = err.body as Record<string, unknown>;
+                            if (body.error === 'dirty_working_tree') {
+                              setDirtyWorkingTree({
+                                branch: body.branch as string,
+                                dirty_files: body.dirty_files as string[],
+                              });
+                              return;
+                            }
+                          }
+                          handleMutationError('merge back')(err);
+                        },
                       },
                     );
                   }}
@@ -314,6 +328,53 @@ function RunDetailInner({ runId }: { runId: string }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
+            </div>
+          )}
+
+          {/* Dirty working tree banner */}
+          {dirtyWorkingTree && (
+            <div className="mb-6 rounded-md bg-yellow-50 border border-yellow-300 p-4">
+              <div className="flex items-start gap-3">
+                <svg className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4.5c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                </svg>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-yellow-800">
+                    Cannot merge: the repo has {dirtyWorkingTree.dirty_files.length} uncommitted change{dirtyWorkingTree.dirty_files.length === 1 ? '' : 's'}
+                  </p>
+                  <p className="text-xs text-yellow-700 mt-1 font-mono truncate" title={dirtyWorkingTree.dirty_files.join(', ')}>
+                    {dirtyWorkingTree.dirty_files.slice(0, 5).join(', ')}
+                    {dirtyWorkingTree.dirty_files.length > 5 && ` and ${dirtyWorkingTree.dirty_files.length - 5} more`}
+                  </p>
+                  <p className="text-xs text-yellow-700 mt-2">
+                    Commit or stash the changes in <span className="font-mono font-medium">{dirtyWorkingTree.branch}</span>, then try again.
+                  </p>
+                  <div className="flex items-center gap-2 mt-3">
+                    <button
+                      onClick={() => {
+                        setDirtyWorkingTree(null);
+                        mergeBack.mutate(
+                          { runId: run.id, dirty_action: 'stash' },
+                          {
+                            onSuccess: (data) => setMergeResult(data.message),
+                            onError: handleMutationError('merge back'),
+                          },
+                        );
+                      }}
+                      disabled={mergeBack.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-yellow-800 bg-yellow-100 border border-yellow-300 rounded-md hover:bg-yellow-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {mergeBack.isPending ? 'Merging...' : 'Stash & Merge'}
+                    </button>
+                    <button
+                      onClick={() => setDirtyWorkingTree(null)}
+                      className="px-3 py-1.5 text-xs font-medium text-yellow-700 hover:text-yellow-800 transition-colors"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 

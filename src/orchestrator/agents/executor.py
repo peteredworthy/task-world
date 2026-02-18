@@ -407,17 +407,9 @@ class AgentExecutor:
                     await service.pause_run(run_id)
                     await session.commit()
             except Exception:
-                # DB might be shutting down too — use monitor as fallback
-                try:
-                    monitor = await self._get_agent_monitor()
-                    if monitor:
-                        await monitor.on_agent_died(
-                            run_id=run_id,
-                            agent_type=agent_type,
-                            reason="agent_loop_cancelled",
-                        )
-                except Exception:
-                    logger.exception(f"Run {run_id}: failed to pause run after cancellation")
+                # DB/engine might be shutting down too (connection already closed).
+                # Startup recovery will detect the orphaned run and pause it.
+                logger.debug(f"Run {run_id}: could not pause run during shutdown (expected)")
         except Exception as e:
             logger.exception(f"Run {run_id}: unexpected error in agent loop: {e}")
             # Try to pause the run if there's an outer exception
@@ -588,6 +580,15 @@ class AgentExecutor:
             await service.update_checklist_item(run.id, task_state.id, actual_id, status, note)
 
         async def on_submit() -> None:
+            # The builder agent may have already called submit via REST/MCP
+            # during execution.  Re-read the task to avoid a redundant call.
+            current_task = await service.get_task(run.id, task_state.id)
+            if current_task.status != TaskStatus.BUILDING:
+                logger.info(
+                    f"Task {task_state.id}: already transitioned to "
+                    f"{current_task.status.value}, skipping redundant submit"
+                )
+                return
             await service.submit_for_verification(run.id, task_state.id)
 
         # Define output streaming callback
@@ -744,10 +745,32 @@ class AgentExecutor:
             await service.update_checklist_item(run.id, task_state.id, actual_id, status, note)
 
         async def on_complete() -> None:
+            # The verifier agent may have already called complete-verification
+            # via REST/MCP during execution.  Re-read the run to avoid a
+            # redundant call that would fail if the run already transitioned
+            # to a terminal status (e.g. FAILED after max attempts).
+            current_run = await service.get_run(run.id)
+            if current_run.status != RunStatus.ACTIVE:
+                logger.info(
+                    f"Task {task_state.id}: run already {current_run.status.value}, "
+                    f"skipping redundant complete_verification"
+                )
+                return
+
+            # Also skip if the task is no longer in VERIFYING (already completed
+            # or moved back to BUILDING for a revision).
+            current_task = await service.get_task(run.id, task_state.id)
+            if current_task.status != TaskStatus.VERIFYING:
+                logger.info(
+                    f"Task {task_state.id}: already transitioned to "
+                    f"{current_task.status.value}, skipping redundant complete_verification"
+                )
+                return
+
             # Fallback: if verifier is completing but didn't set any grades,
             # auto-grade all requirements as "A". Some CLI agents (e.g. codex)
             # may not reliably call the grade REST API even when review passes.
-            ungraded = [item for item in task_state.checklist if item.grade is None]
+            ungraded = [item for item in current_task.checklist if item.grade is None]
             if ungraded:
                 logger.warning(
                     f"Task {task_state.id}: verifier completing but "

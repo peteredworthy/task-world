@@ -130,8 +130,8 @@ export function useDeleteRun() {
 export function useMergeBack() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ runId, strategy }: { runId: string; strategy?: string }) =>
-      api.mergeBack(runId, strategy),
+    mutationFn: ({ runId, strategy, dirty_action }: { runId: string; strategy?: string; dirty_action?: 'stash' | 'commit' }) =>
+      api.mergeBack(runId, { strategy, dirty_action }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['runs'] }),
   });
 }

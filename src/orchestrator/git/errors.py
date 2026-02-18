@@ -50,3 +50,10 @@ class MergeConflictError(BranchError):
         self.conflicting_files = conflicting_files or []
         files_str = ", ".join(self.conflicting_files) if self.conflicting_files else "unknown"
         super().__init__(f"Merge conflict merging {source} into {target}: {files_str}")
+
+
+class DirtyWorkingTreeError(BranchError):
+    def __init__(self, branch: str, dirty_files: list[str]) -> None:
+        self.branch = branch
+        self.dirty_files = dirty_files
+        super().__init__(f"Working tree has {len(dirty_files)} uncommitted change(s) on {branch}")

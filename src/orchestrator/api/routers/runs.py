@@ -8,7 +8,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.deps import (
     get_agent_executor,
@@ -17,6 +17,7 @@ from orchestrator.api.deps import (
     get_run_repository,
     get_routine_dirs,
     get_session,
+    get_session_factory,
     get_workflow_service,
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
@@ -495,7 +496,7 @@ async def get_activity(
 async def stream_activity(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    event_store: Annotated[EventStore, Depends(get_event_store)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
     since_id: int | None = Query(default=None, description="Resume from this event ID (exclusive)"),
     event_type: str | None = Query(default=None, description="Filter by event type"),
     once: bool = Query(
@@ -535,15 +536,18 @@ async def stream_activity(
 
         try:
             while True:
-                # Fetch new events since last_id
-                rows = await event_store.get_events_paginated(
-                    run_id,
-                    after=last_id,
-                    limit=100,
-                    event_type=event_type,
-                )
+                # Use a fresh session per poll to avoid holding a long-lived
+                # connection that goes stale on server restart/reload.
+                async with session_factory() as session:
+                    store = EventStore(session)
+                    rows = await store.get_events_paginated(
+                        run_id,
+                        after=last_id,
+                        limit=100,
+                        event_type=event_type,
+                    )
 
-                # Stream each event as SSE
+                # Stream each event as SSE (outside the session context)
                 if rows:
                     for row in rows:
                         payload = row["payload"]
@@ -939,13 +943,19 @@ async def merge_back_endpoint(
         )
 
     strategy = (request.strategy if request and request.strategy else None) or run.merge_strategy
+    dirty_action = request.dirty_action if request else None
     run_branch = f"orchestrator/run-{run.id}"
 
     # merge_back operates on the main repo in the repos directory
     repo_path = config.paths.get_repos_path() / run.repo_name
     worktree_path = Path(run.worktree_path) if run.worktree_path else None
     sha = merge_back(
-        repo_path, run_branch, run.source_branch, strategy=strategy, worktree_path=worktree_path
+        repo_path,
+        run_branch,
+        run.source_branch,
+        strategy=strategy,
+        worktree_path=worktree_path,
+        dirty_action=dirty_action,
     )
 
     return MergeBackResponse(

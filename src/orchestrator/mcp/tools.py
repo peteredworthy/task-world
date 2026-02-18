@@ -199,13 +199,25 @@ class ToolHandler:
         }
 
     async def _set_grade(self, args: dict[str, Any]) -> dict[str, Any]:
+        from orchestrator.workflow.errors import InvalidTransitionError
+
         run_id: str = args["run_id"]
         task_id: str = args["task_id"]
         req_id: str = args["req_id"]
         grade: str = args["grade"]
         grade_reason: str | None = args.get("grade_reason")
 
-        item = await self._service.set_grade(run_id, task_id, req_id, grade, grade_reason)
+        try:
+            item = await self._service.set_grade(run_id, task_id, req_id, grade, grade_reason)
+        except InvalidTransitionError as exc:
+            return {
+                "error": str(exc),
+                "hint": (
+                    "set_grade is only available during the VERIFYING phase. "
+                    "If you are the builder agent, finish your work and call "
+                    "orchestrator_submit first. Grading happens after submission."
+                ),
+            }
         return {
             "req_id": item.req_id,
             "grade": item.grade,

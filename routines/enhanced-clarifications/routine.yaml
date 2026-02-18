@@ -74,7 +74,7 @@ steps:
                 options=['a'])" && echo "validator OK"
               must: true
             - id: no_mypy_errors
-              cmd: "uv run mypy src/orchestrator/workflow/clarifications.py --no-error-summary 2>&1 | tail -1"
+              cmd: "uv run pyright src/orchestrator/workflow/clarifications.py --no-error-summary 2>&1 | tail -1"
               must: false
         retry:
           max_attempts: 2
@@ -259,7 +259,7 @@ steps:
         auto_verify:
           items:
             - id: mypy_service
-              cmd: "uv run mypy src/orchestrator/workflow/service.py --no-error-summary 2>&1 | tail -3"
+              cmd: "uv run pyright src/orchestrator/workflow/service.py --no-error-summary 2>&1 | tail -3"
               must: false
         retry:
           max_attempts: 2
@@ -311,7 +311,7 @@ steps:
         auto_verify:
           items:
             - id: mypy_prompts
-              cmd: "uv run mypy src/orchestrator/workflow/prompts.py --no-error-summary 2>&1 | tail -3"
+              cmd: "uv run pyright src/orchestrator/workflow/prompts.py --no-error-summary 2>&1 | tail -3"
               must: false
         retry:
           max_attempts: 2
@@ -524,7 +524,7 @@ steps:
         auto_verify:
           items:
             - id: mypy_websocket
-              cmd: "uv run mypy src/orchestrator/api/websocket.py --no-error-summary 2>&1 | tail -3"
+              cmd: "uv run pyright src/orchestrator/api/websocket.py --no-error-summary 2>&1 | tail -3"
               must: false
         retry:
           max_attempts: 2
