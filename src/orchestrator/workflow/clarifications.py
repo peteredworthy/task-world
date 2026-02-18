@@ -9,10 +9,10 @@ from pydantic import BaseModel, model_validator
 class ClarificationQuestion(BaseModel):
     """A question from the builder needing human input."""
 
-    id: str
-    question: str
-    context: str
-    options: list[str]  # Multi-choice options (2-4)
+    id: str = ""
+    question: str = ""
+    context: str = ""
+    options: list[str] = []  # Multi-choice options (2-4)
     question_type: Literal["single_select", "multi_select", "free_text", "number"] = "single_select"
     allow_other: bool = True
     required: bool = True
@@ -102,8 +102,13 @@ def format_clarification_artifact(
         lines.append("")
 
         if answer:
-            if answer.free_text:
+            if answer.skipped:
+                reason = answer.skip_reason or ""
+                lines.append(f"**Answer:** (skipped) {reason}".rstrip())
+            elif answer.free_text:
                 lines.append(f"**Answer:** (custom) {answer.free_text}")
+            elif answer.selected_options is not None:
+                lines.append(f"**Answer:** {', '.join(answer.selected_options)}")
             elif answer.selected_option:
                 lines.append(f"**Answer:** {answer.selected_option}")
             lines.append(f"**Answered by:** {answer.answered_by}")

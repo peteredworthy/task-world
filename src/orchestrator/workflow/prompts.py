@@ -18,6 +18,8 @@ class BuilderPrompt:
     previous_feedback: str | None = None
     step_context: str | None = None
     clarifications_path: str | None = None
+    clarification_line_range: tuple[str, int, int] | None = None
+    skipped_questions: list[str] | None = None
 
 
 @dataclass
@@ -49,6 +51,9 @@ def generate_builder_prompt(
     model: str | None = None,
     step_context: str | None = None,
     clarifications_path: str | None = None,
+    clarification_line_range: tuple[str, int, int] | None = None,
+    skipped_questions: list[str] | None = None,
+    skip_reason: str | None = None,
 ) -> BuilderPrompt:
     """Generate builder prompt with fresh context.
 
@@ -110,14 +115,32 @@ def generate_builder_prompt(
     if resolved_step_context is not None:
         user += f"## Step Context\n{resolved_step_context}\n\n"
 
+    clarification_text = ""
     if clarifications_path is not None:
-        user += (
+        clarification_text = (
             "## Clarifications\n\n"
             "Previous clarifications from the human are recorded in:\n"
             f"  {clarifications_path}\n\n"
             "Review this file for context on decisions made. If you need additional\n"
-            "clarification, use the request_clarification tool.\n\n"
+            "clarification, use the request_clarification tool."
         )
+        if clarification_line_range:
+            path, start, end = clarification_line_range
+            clarification_text += (
+                f"\n\nUser answers have been written to {path} (lines {start}–{end}). "
+                "Read that section for the answers."
+            )
+        if skipped_questions:
+            reason = skip_reason or "none given"
+            q_list = ", ".join(f'"{q}"' for q in skipped_questions)
+            clarification_text += (
+                f"\n\nThe user declined to answer: {q_list}. "
+                f"Reason: {reason}. Proceed with your best judgment."
+            )
+        clarification_text += "\n\n"
+
+    if clarification_text:
+        user += clarification_text
 
     user += f"## Task\n{task_context}\n\n## Requirements\n" + "\n".join(requirements)
 
@@ -135,6 +158,8 @@ def generate_builder_prompt(
         previous_feedback=previous_feedback,
         step_context=resolved_step_context,
         clarifications_path=clarifications_path,
+        clarification_line_range=clarification_line_range,
+        skipped_questions=skipped_questions,
     )
 
 

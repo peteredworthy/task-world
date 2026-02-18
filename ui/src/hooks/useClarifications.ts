@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { RespondToClarificationRequest } from '../types';
+import type { ClarificationHistoryItem, ClarificationHistoryResponse, RespondToClarificationRequest } from '../types';
 
 export function usePendingClarification(runId: string, taskId: string | undefined) {
   return useQuery({
@@ -22,5 +22,24 @@ export function useRespondToClarification(runId: string, taskId: string) {
       qc.invalidateQueries({ queryKey: ['run', runId] });
       qc.invalidateQueries({ queryKey: ['pending-actions', runId] });
     },
+  });
+}
+
+export function useClarificationHistory(
+  runId: string | undefined,
+  taskId: string | undefined,
+) {
+  return useQuery<ClarificationHistoryItem[]>({
+    queryKey: ['clarification-history', runId, taskId],
+    queryFn: async () => {
+      const response = await fetch(`/api/runs/${runId}/tasks/${taskId}/clarifications`);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch clarification history: ${response.status}`);
+      }
+      const data = (await response.json()) as ClarificationHistoryResponse;
+      return data.items;
+    },
+    enabled: !!runId && !!taskId,
+    staleTime: 30_000,
   });
 }

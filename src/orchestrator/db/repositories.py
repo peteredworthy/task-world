@@ -37,6 +37,7 @@ from orchestrator.state.models import (
     TaskState,
 )
 from orchestrator.workflow.clarifications import (
+    ClarificationAnswer,
     ClarificationQuestion,
     ClarificationRequest,
     ClarificationResponse,
@@ -495,6 +496,40 @@ class RunRepository:
             request_model.responded_at = response.responded_at
 
         await self._session.flush()
+
+    async def get_clarification_history(
+        self,
+        run_id: str,
+        task_id: str,
+    ) -> list[tuple[ClarificationRequest, ClarificationResponse | None]]:
+        """Return all clarification rounds for a task, ordered by creation time ascending.
+
+        Pending rounds have response=None.
+        """
+        result = await self._session.execute(
+            select(ClarificationRequestModel)
+            .where(
+                ClarificationRequestModel.run_id == run_id,
+                ClarificationRequestModel.task_id == task_id,
+            )
+            .order_by(ClarificationRequestModel.created_at.asc())
+            .options(selectinload(ClarificationRequestModel.response))
+        )
+        request_models = result.scalars().all()
+
+        history: list[tuple[ClarificationRequest, ClarificationResponse | None]] = []
+        for req_model in request_models:
+            request = self._clarification_request_from_model(req_model)
+            response: ClarificationResponse | None = None
+            if req_model.response is not None:
+                resp_model = req_model.response
+                response = ClarificationResponse(
+                    request_id=resp_model.request_id,
+                    answers=[ClarificationAnswer(**a) for a in resp_model.answers],
+                    responded_at=_ensure_utc(resp_model.responded_at),
+                )
+            history.append((request, response))
+        return history
 
     def _clarification_request_from_model(
         self, model: ClarificationRequestModel

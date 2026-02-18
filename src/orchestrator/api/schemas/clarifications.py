@@ -1,8 +1,9 @@
 """Clarification API schemas."""
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class ClarificationQuestionSchema(BaseModel):
@@ -11,7 +12,29 @@ class ClarificationQuestionSchema(BaseModel):
     id: str
     question: str
     context: str
-    options: list[str]
+    options: list[str] = []
+    question_type: Literal["single_select", "multi_select", "free_text", "number"] = "single_select"
+    allow_other: bool = True
+    required: bool = True
+    min: float | None = None
+    max: float | None = None
+    placeholder: str | None = None
+
+    @model_validator(mode="after")
+    def validate_options_for_type(self) -> "ClarificationQuestionSchema":
+        if self.question_type in ("single_select", "multi_select"):
+            if not self.options:
+                raise ValueError(
+                    f"'options' must be non-empty for question_type={self.question_type!r}"
+                )
+        else:  # free_text, number
+            if self.options:
+                raise ValueError(
+                    f"'options' must be empty for question_type={self.question_type!r}"
+                )
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("'min' must be <= 'max'")
+        return self
 
 
 class ClarificationAnswerSchema(BaseModel):
@@ -20,6 +43,9 @@ class ClarificationAnswerSchema(BaseModel):
     question_id: str
     selected_option: str | None = None
     free_text: str | None = None
+    selected_options: list[str] | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 class CreateClarificationRequest(BaseModel):
@@ -44,6 +70,21 @@ class RespondToClarificationRequest(BaseModel):
     """Request to submit answers to clarification questions."""
 
     answers: list[ClarificationAnswerSchema]
+    skipped: bool = False
+    skip_reason: str | None = None
+
+
+class ClarificationHistoryItem(BaseModel):
+    """A single clarification round (request + optional response)."""
+
+    request: ClarificationRequestResponse
+    response: RespondToClarificationRequest | None = None
+
+
+class ClarificationHistoryResponse(BaseModel):
+    """All clarification rounds for a task."""
+
+    items: list[ClarificationHistoryItem]
 
 
 class PendingActionSchema(BaseModel):

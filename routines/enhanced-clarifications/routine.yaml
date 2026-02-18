@@ -70,8 +70,8 @@ steps:
             - id: model_validator
               cmd: >
                 uv run python -c "from orchestrator.workflow.clarifications import
-                ClarificationQuestion; ClarificationQuestion(question_type='single_select',
-                options=['a'])" && echo "validator OK"
+                ClarificationQuestion; ClarificationQuestion(id='q1', question='Q?',
+                context='ctx', question_type='single_select', options=['a'])" && echo "validator OK"
               must: true
             - id: no_mypy_errors
               cmd: "uv run pyright src/orchestrator/workflow/clarifications.py --no-error-summary 2>&1 | tail -1"

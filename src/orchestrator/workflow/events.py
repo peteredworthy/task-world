@@ -1,7 +1,7 @@
 """Workflow event types for observability."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from orchestrator.config.enums import AgentType, RunStatus, TaskStatus
@@ -143,14 +143,47 @@ class ClarificationRequested(WorkflowEvent):
     task_id: str = ""
     request_id: str = ""
     question_count: int = 0
+    questions: list[dict[str, Any]] = field(default_factory=lambda: list[dict[str, Any]]())
+
+    def __init__(
+        self,
+        run_id: str,
+        task_id: str = "",
+        request_id: str = "",
+        question_count: int = 0,
+        questions: list[dict[str, Any]] | None = None,
+        timestamp: datetime | None = None,
+        event_type: str = "clarification_requested",
+    ) -> None:
+        self.timestamp = timestamp or datetime.now(timezone.utc)
+        self.run_id = run_id
+        self.event_type = event_type
+        self.task_id = task_id
+        self.request_id = request_id
+        self.question_count = question_count
+        self.questions = questions if questions is not None else list[dict[str, Any]]()
 
 
-@dataclass
+@dataclass(init=False)
 class ClarificationResponded(WorkflowEvent):
     """Emitted when human answers clarification questions."""
 
     task_id: str = ""
     request_id: str = ""
+
+    def __init__(
+        self,
+        run_id: str,
+        task_id: str = "",
+        request_id: str = "",
+        timestamp: datetime | None = None,
+        event_type: str = "clarification_responded",
+    ) -> None:
+        self.timestamp = timestamp or datetime.now(timezone.utc)
+        self.run_id = run_id
+        self.event_type = event_type
+        self.task_id = task_id
+        self.request_id = request_id
 
 
 @dataclass

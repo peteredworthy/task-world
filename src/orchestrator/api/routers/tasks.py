@@ -5,7 +5,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from orchestrator.api.deps import get_current_user, get_routine_dirs, get_workflow_service
+from orchestrator.api.deps import (
+    get_current_user,
+    get_routine_dirs,
+    get_run_repository,
+    get_workflow_service,
+)
 from orchestrator.api.schemas.tasks import (
     ActionLogEntrySchema,
     ActionLogSchema,
@@ -27,9 +32,15 @@ from orchestrator.api.schemas.tasks import (
 )
 from orchestrator.config.enums import ChecklistStatus, RoutineSource, TaskStatus
 from orchestrator.config.models import RoutineConfig
+from orchestrator.db.repositories import RunRepository
 from orchestrator.routines.discovery import discover_routines
 from orchestrator.routines.errors import RoutineNotFoundError
 from orchestrator.state.errors import TaskNotFoundError
+from orchestrator.workflow.clarifications import (
+    ClarificationRequest,
+    ClarificationResponse,
+    resolve_artifact_path,
+)
 from orchestrator.workflow.errors import InvalidTransitionError
 from orchestrator.workflow.prompts import generate_builder_prompt, generate_verifier_prompt
 from orchestrator.workflow.service import WorkflowService
@@ -242,12 +253,91 @@ Available MCP tools:
     )
 
 
+def _find_clarification_line_range(
+    clarifications_path: str, clarification_number: int
+) -> tuple[str, int, int] | None:
+    """Find the line range for a clarification section in the artifact file."""
+    path = Path(clarifications_path)
+    if not path.exists():
+        return None
+
+    lines = path.read_text().splitlines()
+    section_prefix = f"## Clarification {clarification_number} "
+    start_line: int | None = None
+
+    for idx, line in enumerate(lines, start=1):
+        if line.startswith(section_prefix):
+            start_line = idx
+            break
+
+    if start_line is None:
+        return None
+
+    end_line = len(lines)
+    for idx, line in enumerate(lines[start_line:], start=start_line + 1):
+        if line.startswith("## Clarification "):
+            end_line = idx - 1
+            break
+
+    return (clarifications_path, start_line, end_line)
+
+
+async def _get_builder_clarification_context(
+    repo: RunRepository,
+    run_id: str,
+    task_id: str,
+    routine_config: RoutineConfig,
+    run_config: dict[str, str],
+    worktree_path: str | None,
+) -> tuple[str | None, tuple[str, int, int] | None, list[str] | None, str | None]:
+    """Resolve clarification context for resumed builder prompts."""
+    clarifications_path: str | None = None
+    if routine_config.clarifications is not None:
+        relative = resolve_artifact_path(routine_config.clarifications.artifact_path, run_config)
+        clarifications_path = (
+            str(Path(worktree_path) / relative) if worktree_path is not None else relative
+        )
+
+    history = await repo.get_clarification_history(run_id, task_id)
+    latest_with_response: tuple[int, ClarificationRequest, ClarificationResponse] | None = None
+    for idx, pair in enumerate(history, start=1):
+        req, resp = pair
+        if resp is not None:
+            latest_with_response = (idx, req, resp)
+
+    if latest_with_response is None:
+        return clarifications_path, None, None, None
+
+    clarification_number, request, response = latest_with_response
+    skipped_ids = {answer.question_id for answer in response.answers if answer.skipped}
+    skipped_questions = (
+        [question.question for question in request.questions if question.id in skipped_ids]
+        if skipped_ids
+        else None
+    )
+
+    skip_reason: str | None = None
+    for answer in response.answers:
+        if answer.skipped and answer.skip_reason:
+            skip_reason = answer.skip_reason
+            break
+
+    clarification_line_range: tuple[str, int, int] | None = None
+    if clarifications_path is not None:
+        clarification_line_range = _find_clarification_line_range(
+            clarifications_path, clarification_number
+        )
+
+    return clarifications_path, clarification_line_range, skipped_questions, skip_reason
+
+
 @router.get("/{run_id}/tasks/{task_id}/prompt", response_model=PromptResponse)
 async def get_task_prompt(
     request: Request,
     run_id: str,
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    repo: Annotated[RunRepository, Depends(get_run_repository)],
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
 ) -> PromptResponse:
     """Get the appropriate prompt for a task based on its current status.
@@ -308,8 +398,28 @@ async def get_task_prompt(
     callback = _build_callback_instructions(request, run_id, task_id)
 
     if task_state.status == TaskStatus.BUILDING:
+        (
+            clarifications_path,
+            clarification_line_range,
+            skipped_questions,
+            skip_reason,
+        ) = await _get_builder_clarification_context(
+            repo=repo,
+            run_id=run_id,
+            task_id=task_id,
+            routine_config=routine_config,
+            run_config=run.config,
+            worktree_path=run.worktree_path,
+        )
         prompt = generate_builder_prompt(
-            task_config, task_state, run.config, step_context=step_context
+            task_config,
+            task_state,
+            run.config,
+            step_context=step_context,
+            clarifications_path=clarifications_path,
+            clarification_line_range=clarification_line_range,
+            skipped_questions=skipped_questions,
+            skip_reason=skip_reason,
         )
         return PromptResponse(
             system=prompt.system, user=prompt.user, phase="building", callback=callback

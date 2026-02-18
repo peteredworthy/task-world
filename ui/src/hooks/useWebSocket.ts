@@ -77,6 +77,19 @@ function createWebSocket(
       if (data.task_id) {
         qc.invalidateQueries({ queryKey: ['task', runId, data.task_id] });
       }
+    } else if (eventType === 'clarification_requested') {
+      qc.invalidateQueries({ queryKey: ['pending-actions', runId] });
+      if (data?.payload?.task_id) {
+        qc.invalidateQueries({
+          queryKey: ['pending-clarification', runId, data.payload.task_id],
+        });
+      }
+    } else if (eventType === 'clarification_responded') {
+      if (data?.payload?.task_id) {
+        qc.invalidateQueries({
+          queryKey: ['clarification-history', runId, data.payload.task_id],
+        });
+      }
     } else {
       qc.invalidateQueries({ queryKey: ['run', runId] });
     }

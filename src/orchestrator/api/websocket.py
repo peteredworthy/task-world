@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import WebSocket
+from orchestrator.workflow.events import ClarificationRequested, ClarificationResponded
 
 # Maximum updates per second per client (throttle interval in seconds)
 _THROTTLE_INTERVAL = 0.1  # 10 updates/sec
@@ -87,6 +88,27 @@ class ConnectionManager:
             logging.getLogger(__name__).debug(
                 "broadcast_event called with non-dataclass event: %s", type(event).__name__
             )
+            return
+
+        if isinstance(event, ClarificationRequested):
+            data = {
+                "event_type": "clarification_requested",
+                "run_id": event.run_id,
+                "task_id": event.task_id,
+                "request_id": event.request_id,
+                "question_count": event.question_count,
+            }
+            await self.broadcast_to_run(event.run_id, data)
+            return
+
+        if isinstance(event, ClarificationResponded):
+            data = {
+                "event_type": "clarification_responded",
+                "run_id": event.run_id,
+                "task_id": event.task_id,
+                "request_id": event.request_id,
+            }
+            await self.broadcast_to_run(event.run_id, data)
             return
 
         data: dict[str, Any] = dataclasses.asdict(event)
