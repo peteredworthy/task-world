@@ -3,7 +3,7 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useRespondToClarification } from '../../hooks/useClarifications';
 import { QuestionCard } from './QuestionCard';
 import { Spinner } from '../Spinner';
-import type { ClarificationRequest, ClarificationAnswer } from '../../types/clarifications';
+import type { ClarificationRequest, ClarificationAnswer, ClarificationQuestion } from '../../types/clarifications';
 
 interface ClarificationModalProps {
   open: boolean;
@@ -15,11 +15,30 @@ interface ClarificationModalProps {
 
 type AnswerMode = 'one-at-a-time' | 'all-at-once';
 
+interface QuestionAnswerState {
+  selectedOption: string | null;
+  selectedOptions: string[];
+  textValue: string;
+  otherText: string;
+  skipped: boolean;
+}
+
 interface AnswerState {
-  [questionId: string]: {
-    selectedOption: string | null;
-    freeText: string;
-  };
+  [questionId: string]: QuestionAnswerState;
+}
+
+function createInitialAnswers(questions: ClarificationQuestion[]): AnswerState {
+  const initial: AnswerState = {};
+  for (const q of questions) {
+    initial[q.id] = {
+      selectedOption: null,
+      selectedOptions: [],
+      textValue: '',
+      otherText: '',
+      skipped: false,
+    };
+  }
+  return initial;
 }
 
 export function ClarificationModal({
@@ -31,17 +50,21 @@ export function ClarificationModal({
 }: ClarificationModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const respondMutation = useRespondToClarification(runId, taskId);
+  const questions: ClarificationQuestion[] = clarificationRequest.questions.map((question) => ({
+    ...question,
+    question_type: question.question_type ?? 'single_select',
+    allow_other: question.allow_other ?? true,
+    required: question.required ?? true,
+    min: question.min ?? null,
+    max: question.max ?? null,
+    placeholder: question.placeholder ?? null,
+  }));
 
   const [mode, setMode] = useState<AnswerMode>('all-at-once');
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState<AnswerState>(() => {
-    // Initialize answer state for all questions
-    const initial: AnswerState = {};
-    for (const q of clarificationRequest.questions) {
-      initial[q.id] = { selectedOption: null, freeText: '' };
-    }
-    return initial;
-  });
+  const [answers, setAnswers] = useState<AnswerState>(() => createInitialAnswers(questions));
+  const [showSkip, setShowSkip] = useState(false);
+  const [skipReason, setSkipReason] = useState('');
 
   // Escape key to close
   useEffect(() => {
@@ -64,25 +87,87 @@ export function ClarificationModal({
 
   if (!open) return null;
 
-  const questions = clarificationRequest.questions;
   const currentQuestion = questions[currentQuestionIndex];
   const isOneAtATime = mode === 'one-at-a-time';
+  const questionById = new Map(questions.map((question) => [question.id, question]));
+
+  function isAnswerComplete(question: ClarificationQuestion, answer: QuestionAnswerState): boolean {
+    if (!question.required) return true;
+    if (question.question_type === 'single_select') {
+      return Boolean(answer.selectedOption) || answer.otherText.trim().length > 0;
+    }
+    if (question.question_type === 'multi_select') {
+      return answer.selectedOptions.length > 0 || answer.otherText.trim().length > 0;
+    }
+    if (question.question_type === 'free_text') {
+      return answer.textValue.trim().length > 0;
+    }
+    if (question.question_type === 'number') {
+      const value = Number.parseFloat(answer.textValue);
+      if (Number.isNaN(value)) return false;
+      if (question.min != null && value < question.min) return false;
+      if (question.max != null && value > question.max) return false;
+      return true;
+    }
+    return false;
+  }
+
+  function isQuestionAnswered(question: ClarificationQuestion, answer: QuestionAnswerState): boolean {
+    if (question.question_type === 'single_select') {
+      return Boolean(answer.selectedOption) || answer.otherText.trim().length > 0;
+    }
+    if (question.question_type === 'multi_select') {
+      return answer.selectedOptions.length > 0 || answer.otherText.trim().length > 0;
+    }
+    return answer.textValue.trim().length > 0;
+  }
+
+  function getCardFreeText(question: ClarificationQuestion, answer: QuestionAnswerState): string {
+    if (question.question_type === 'single_select' || question.question_type === 'multi_select') {
+      return answer.otherText;
+    }
+    return answer.textValue;
+  }
+
+  function buildAnswers(): ClarificationAnswer[] {
+    return questions.map((question) => {
+      const answer = answers[question.id];
+      if (question.question_type === 'single_select') {
+        return {
+          question_id: question.id,
+          selected_option: answer.selectedOption === 'Other' ? null : answer.selectedOption,
+          free_text: answer.selectedOption === 'Other' ? answer.otherText || null : null,
+        };
+      }
+      if (question.question_type === 'multi_select') {
+        const selectedOptions = answer.selectedOptions.filter((option) => option !== 'Other');
+        const includesOther = answer.selectedOptions.includes('Other');
+        return {
+          question_id: question.id,
+          selected_option: null,
+          selected_options: selectedOptions.length > 0 ? selectedOptions : undefined,
+          free_text: includesOther ? answer.otherText || null : null,
+        };
+      }
+      return {
+        question_id: question.id,
+        selected_option: null,
+        free_text: answer.textValue.trim().length > 0 ? answer.textValue : null,
+      };
+    });
+  }
 
   // Check if all questions are answered
-  const allAnswered = questions.every((q) => {
-    const answer = answers[q.id];
-    if (!answer.selectedOption) return false;
-    if (answer.selectedOption === 'Other' && !answer.freeText.trim()) return false;
-    return true;
-  });
+  const allAnswered = questions.every((question) => isAnswerComplete(question, answers[question.id]));
 
   // Check if current question is answered (for one-at-a-time mode)
-  const currentAnswered = currentQuestion ? (() => {
-    const answer = answers[currentQuestion.id];
-    if (!answer.selectedOption) return false;
-    if (answer.selectedOption === 'Other' && !answer.freeText.trim()) return false;
-    return true;
-  })() : false;
+  const currentAnswered = currentQuestion
+    ? isAnswerComplete(currentQuestion, answers[currentQuestion.id])
+    : false;
+
+  const canSkip =
+    questions.every((question) => !question.required) ||
+    questions.some((question) => question.required && isAnswerComplete(question, answers[question.id]));
 
   const canSubmit = allAnswered && !respondMutation.isPending;
   const canGoNext = isOneAtATime && currentAnswered && currentQuestionIndex < questions.length - 1;
@@ -92,29 +177,43 @@ export function ClarificationModal({
     setAnswers((prev) => ({
       ...prev,
       [questionId]: {
+        ...prev[questionId],
         selectedOption: option,
-        freeText: option === 'Other' ? prev[questionId].freeText : '',
+        otherText: option === 'Other' ? prev[questionId].otherText : '',
+      },
+    }));
+  }
+
+  function handleOptionsChange(questionId: string, values: string[]) {
+    setAnswers((prev) => ({
+      ...prev,
+      [questionId]: {
+        ...prev[questionId],
+        selectedOptions: values,
+        otherText: values.includes('Other') ? prev[questionId].otherText : '',
       },
     }));
   }
 
   function handleFreeTextChange(questionId: string, text: string) {
+    const question = questionById.get(questionId);
+    if (!question) return;
     setAnswers((prev) => ({
       ...prev,
       [questionId]: {
         ...prev[questionId],
-        freeText: text,
+        ...(question.question_type === 'single_select' || question.question_type === 'multi_select'
+          ? { otherText: text }
+          : { textValue: text }),
       },
     }));
   }
 
   function resetForm() {
-    const initial: AnswerState = {};
-    for (const q of clarificationRequest.questions) {
-      initial[q.id] = { selectedOption: null, freeText: '' };
-    }
-    setAnswers(initial);
+    setAnswers(createInitialAnswers(questions));
     setCurrentQuestionIndex(0);
+    setShowSkip(false);
+    setSkipReason('');
   }
 
   function handleClose() {
@@ -128,20 +227,30 @@ export function ClarificationModal({
     e.preventDefault();
     if (!canSubmit) return;
 
-    // Build answers array
-    const answersArray: ClarificationAnswer[] = questions.map((q) => {
-      const answer = answers[q.id];
-      return {
-        question_id: q.id,
-        selected_option: answer.selectedOption === 'Other' ? null : answer.selectedOption,
-        free_text: answer.selectedOption === 'Other' ? answer.freeText : null,
-      };
-    });
+    const answersArray = buildAnswers();
 
     try {
       await respondMutation.mutateAsync({
         requestId: clarificationRequest.id,
         data: { answers: answersArray },
+      });
+      resetForm();
+      onClose();
+    } catch {
+      // Error handled by mutation state
+    }
+  }
+
+  async function handleSkipSubmit() {
+    if (!canSkip || respondMutation.isPending) return;
+    try {
+      await respondMutation.mutateAsync({
+        requestId: clarificationRequest.id,
+        data: {
+          answers: buildAnswers(),
+          skipped: true,
+          skip_reason: skipReason.trim() || null,
+        },
       });
       resetForm();
       onClose();
@@ -267,8 +376,10 @@ export function ClarificationModal({
                 <QuestionCard
                   question={currentQuestion}
                   selectedOption={answers[currentQuestion.id].selectedOption}
-                  freeText={answers[currentQuestion.id].freeText}
+                  selectedOptions={answers[currentQuestion.id].selectedOptions}
+                  freeText={getCardFreeText(currentQuestion, answers[currentQuestion.id])}
                   onOptionChange={handleOptionChange}
+                  onOptionsChange={handleOptionsChange}
                   onFreeTextChange={handleFreeTextChange}
                   isAnswered={currentAnswered}
                 />
@@ -278,18 +389,17 @@ export function ClarificationModal({
               <div className="space-y-3">
                 {questions.map((question) => {
                   const answer = answers[question.id];
-                  const isAnswered =
-                    !!answer.selectedOption &&
-                    (answer.selectedOption !== 'Other' || !!answer.freeText.trim());
                   return (
                     <QuestionCard
                       key={question.id}
                       question={question}
                       selectedOption={answer.selectedOption}
-                      freeText={answer.freeText}
+                      selectedOptions={answer.selectedOptions}
+                      freeText={getCardFreeText(question, answer)}
                       onOptionChange={handleOptionChange}
+                      onOptionsChange={handleOptionsChange}
                       onFreeTextChange={handleFreeTextChange}
-                      isAnswered={isAnswered}
+                      isAnswered={isQuestionAnswered(question, answer)}
                     />
                   );
                 })}
@@ -303,15 +413,12 @@ export function ClarificationModal({
                   {questions.map((_, idx) => {
                     const q = questions[idx];
                     const answer = answers[q.id];
-                    const isAnswered =
-                      !!answer.selectedOption &&
-                      (answer.selectedOption !== 'Other' || !!answer.freeText.trim());
                     return (
                       <div
                         key={idx}
                         className={
                           'h-1 flex-1 rounded-full transition-colors ' +
-                          (isAnswered
+                          (isQuestionAnswered(q, answer)
                             ? 'bg-status-completed'
                             : idx === currentQuestionIndex
                             ? 'bg-accent-purple'
@@ -342,16 +449,58 @@ export function ClarificationModal({
               ) : (
                 <span>
                   {questions.filter((q) => {
-                    const a = answers[q.id];
-                    return a.selectedOption && (a.selectedOption !== 'Other' || a.freeText.trim());
+                    return isQuestionAnswered(q, answers[q.id]);
                   }).length} / {questions.length} answered
                 </span>
               )}
             </div>
-            <div className="flex gap-3">
+            <div className="flex flex-col items-end gap-3">
+              {canSkip && !showSkip && (
+                <button
+                  type="button"
+                  onClick={() => setShowSkip(true)}
+                  disabled={respondMutation.isPending}
+                  className="text-xs font-medium text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Skip remaining
+                </button>
+              )}
+              {showSkip && (
+                <div className="w-[280px] rounded-md border border-border bg-bg-card p-3 space-y-2">
+                  <textarea
+                    value={skipReason}
+                    onChange={(e) => setSkipReason(e.target.value)}
+                    placeholder="Reason for skipping (optional)"
+                    rows={2}
+                    className="w-full rounded-md border border-border bg-bg-elevated px-3 py-2 text-xs text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 resize-none"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSkip(false);
+                        setSkipReason('');
+                      }}
+                      disabled={respondMutation.isPending}
+                      className="px-2.5 py-1 text-xs font-medium text-text-secondary border border-border rounded-md hover:bg-bg-hover disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSkipSubmit}
+                      disabled={respondMutation.isPending}
+                      className="px-2.5 py-1 text-xs font-medium text-white bg-accent-purple rounded-md hover:bg-accent-purple/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Confirm skip
+                    </button>
+                  </div>
+                </div>
+              )}
+              <div className="flex gap-3">
               <button
                 type="button"
-                onClick={onClose}
+                onClick={handleClose}
                 disabled={respondMutation.isPending}
                 className="px-4 py-2 text-sm font-medium text-text-secondary bg-transparent border border-border-hover rounded-md hover:bg-bg-hover hover:text-text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
@@ -371,6 +520,7 @@ export function ClarificationModal({
                   <span>Submit Answers</span>
                 )}
               </button>
+              </div>
             </div>
           </div>
         </form>

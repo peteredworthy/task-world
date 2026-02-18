@@ -26,8 +26,12 @@ from orchestrator.workflow.clarifications import (
     ClarificationQuestion,
     ClarificationRequest,
     ClarificationResponse,
+    build_artifact_header,
+    format_clarification_artifact,
+    resolve_artifact_path,
 )
 from orchestrator.workflow.engine import Clock, WorkflowEngine
+from orchestrator.workflow.prompts import generate_builder_prompt
 from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import (
@@ -579,6 +583,50 @@ class WorkflowService:
             )
         engine, state, buffer = self._build_engine(run)
 
+        # --- Pre-gate auto-verify: run auto-verify before the checklist gate ---
+        # If task-level auto-verify items all pass, auto-mark OPEN checklist
+        # items as DONE so the gate check succeeds. This prevents agents from
+        # needing to explicitly call on_checklist_update() when auto-verify
+        # already confirms the work was done.
+        task = state.get_task(run_id, task_id)
+        step_config_id_pre = None
+        for step in run.steps:
+            for t in step.tasks:
+                if t.id == task_id:
+                    step_config_id_pre = step.config_id
+                    break
+            if step_config_id_pre is not None:
+                break
+
+        pre_av_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
+        if (
+            pre_av_config is not None
+            and self._auto_verify_runner is not None
+            and any(item.status == ChecklistStatus.OPEN for item in task.checklist)
+        ):
+            project_path = _resolve_working_path(run)
+            if project_path is not None:
+                # Auto-commit any uncommitted changes before running auto-verify
+                if run.worktree_path:
+                    commit_uncommitted_changes(
+                        Path(run.worktree_path),
+                        f"Auto-commit builder changes for task {task_id}",
+                    )
+
+                pre_av_results = await run_auto_verify(
+                    pre_av_config,
+                    self._auto_verify_runner,
+                    project_path,
+                    variables=run.config,
+                )
+                all_must_passed_pre, _ = evaluate_auto_verify(pre_av_config, pre_av_results)
+
+                if all_must_passed_pre:
+                    # Auto-verify confirms work is done — mark OPEN checklist items as DONE
+                    for item in task.checklist:
+                        if item.status == ChecklistStatus.OPEN:
+                            item.status = ChecklistStatus.DONE
+
         try:
             result = engine.submit_for_verification(run_id, task_id)
         except GateBlockedError:
@@ -1078,6 +1126,10 @@ class WorkflowService:
         Writes to artifact file, transitions task back to BUILDING.
         Emits ClarificationResponded event.
         """
+        from sqlalchemy import func, select as sa_select
+
+        from orchestrator.db.models import ClarificationRequestModel
+
         run = await self._repo.get(run_id)
         task = self._find_task(run, task_id)
 
@@ -1096,6 +1148,78 @@ class WorkflowService:
 
         # Save response
         await self._repo.save_clarification_response(response)
+
+        # --- Write clarification Q&A to artifact file ---
+        # Determine artifact path from routine config
+        artifact_path: Path | None = None
+        if run.routine_embedded is not None and run.worktree_path:
+            routine_config = RoutineConfig.model_validate(run.routine_embedded)
+            clarifications_config = routine_config.clarifications
+            if clarifications_config is not None:
+                raw_path = resolve_artifact_path(clarifications_config.artifact_path, run.config)
+                artifact_path = Path(run.worktree_path) / raw_path
+
+        clarification_line_range: tuple[str, int, int] | None = None
+        if artifact_path is not None:
+            # Determine step_id for the task
+            step_id = ""
+            for step in run.steps:
+                for t in step.tasks:
+                    if t.id == task_id:
+                        step_id = step.id
+                        break
+                if step_id:
+                    break
+
+            # Count prior clarification requests for clarification_number
+            count_result = await self._session.execute(
+                sa_select(func.count())
+                .select_from(ClarificationRequestModel)
+                .where(
+                    ClarificationRequestModel.run_id == run_id,
+                    ClarificationRequestModel.task_id == task_id,
+                )
+            )
+            clarification_number = count_result.scalar_one()
+
+            # Count current lines before appending
+            try:
+                with open(artifact_path, "r") as f:
+                    current_line_count = sum(1 for _ in f)
+            except FileNotFoundError:
+                current_line_count = 0
+
+            # Format the artifact section
+            text, _, section_line_count = format_clarification_artifact(
+                request, response, step_id, clarification_number
+            )
+
+            # Write to artifact file (create with header if new)
+            artifact_path.parent.mkdir(parents=True, exist_ok=True)
+            if current_line_count == 0:
+                header = build_artifact_header()
+                artifact_path.write_text(header)
+                current_line_count = header.count("\n") + (0 if header.endswith("\n") else 1)
+
+            with open(artifact_path, "a") as f:
+                f.write(text)
+                if not text.endswith("\n"):
+                    f.write("\n")
+
+            start_line = current_line_count + 1
+            end_line = current_line_count + section_line_count
+            clarification_line_range = (str(artifact_path), start_line, end_line)
+
+        # Determine skipped questions
+        skipped_question_texts: list[str] | None = None
+        skip_reason: str | None = None
+        skipped_ids = {a.question_id for a in answers if a.skipped}
+        if skipped_ids:
+            skipped_question_texts = [q.question for q in request.questions if q.id in skipped_ids]
+            for a in answers:
+                if a.skipped and a.skip_reason:
+                    skip_reason = a.skip_reason
+                    break
 
         # Transition back to building
         old_status = task.status
@@ -1118,6 +1242,35 @@ class WorkflowService:
 
         await self._session.commit()
 
+        # Build builder prompt with clarification context for downstream use
+        task_config_obj: TaskConfig | None = None
+        step_context_str: str | None = None
+        if run.routine_embedded is not None:
+            routine_config = RoutineConfig.model_validate(run.routine_embedded)
+            for step in routine_config.steps:
+                for tc in step.tasks:
+                    if tc.id == task.config_id:
+                        task_config_obj = tc
+                        step_context_str = step.step_context
+                        break
+                if task_config_obj is not None:
+                    break
+
+        if task_config_obj is not None:
+            clarifications_path: str | None = (
+                str(artifact_path) if artifact_path is not None else None
+            )
+            generate_builder_prompt(
+                task_config_obj,
+                task,
+                run.config,
+                step_context=step_context_str,
+                clarifications_path=clarifications_path,
+                clarification_line_range=clarification_line_range,
+                skipped_questions=skipped_question_texts,
+                skip_reason=skip_reason,
+            )
+
         return result
 
     async def get_pending_clarification(
@@ -1127,6 +1280,14 @@ class WorkflowService:
     ) -> ClarificationRequest | None:
         """Get pending clarification request for a task."""
         return await self._repo.get_pending_clarification(run_id, task_id)
+
+    async def get_clarification_history(
+        self,
+        run_id: str,
+        task_id: str,
+    ) -> list[tuple[ClarificationRequest, ClarificationResponse | None]]:
+        """Get all clarification rounds for a task in ascending creation order."""
+        return await self._repo.get_clarification_history(run_id, task_id)
 
     async def approve_task(
         self,

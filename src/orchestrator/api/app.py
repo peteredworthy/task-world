@@ -138,6 +138,27 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.warning(f"Worktree cleanup failed: {e}")
 
     yield
+
+    # Cancel all running agent background tasks before disposing the engine.
+    # Without this, background sessions try to rollback on a closed connection
+    # causing "OperationalError: no active connection" during shutdown.
+    if hasattr(app.state, "agent_executor"):
+        from asyncio import Task as _AsyncTask
+
+        from orchestrator.agents.executor import AgentExecutor
+
+        executor: AgentExecutor = app.state.agent_executor
+        pending_tasks: list[_AsyncTask[Any]] = []
+        for run_id in list(executor._running_tasks):  # pyright: ignore[reportPrivateUsage]
+            task = executor._running_tasks.pop(run_id, None)  # pyright: ignore[reportPrivateUsage]
+            if task and not task.done():
+                task.cancel()
+                pending_tasks.append(task)
+        if pending_tasks:
+            import asyncio
+
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
+
     await app.state.engine.dispose()
 
 

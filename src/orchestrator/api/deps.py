@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.auth import AuthConfig
 from orchestrator.api.websocket import ConnectionManager
@@ -21,6 +21,11 @@ from orchestrator.workflow.service import WorkflowService
 from orchestrator.agents.executor import AgentExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
+
+
+def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
+    """Get the session factory from app state."""
+    return request.app.state.session_factory  # type: ignore[no-any-return]
 
 
 async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:

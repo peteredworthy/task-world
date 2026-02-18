@@ -4,7 +4,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from orchestrator.git.errors import BranchNotFoundError, GitCommandError, MergeConflictError
+from orchestrator.git.errors import (
+    BranchNotFoundError,
+    DirtyWorkingTreeError,
+    GitCommandError,
+    MergeConflictError,
+)
 
 
 def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -179,12 +184,29 @@ def sync_branch_to_worktree(repo_path: Path, branch: str, worktree_path: Path) -
         _run_git(["branch", "-f", branch, wt_head], cwd=repo_path)
 
 
+def _get_dirty_files(repo_path: Path) -> list[str]:
+    """Get list of dirty (uncommitted) files in the working tree."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        # Each line starts with a 2-char status code + space + filename
+        return [line[3:] for line in result.stdout.strip().split("\n") if line.strip()]
+    except subprocess.CalledProcessError:
+        return []
+
+
 def merge_back(
     main_repo_path: Path,
     run_branch: str,
     source_branch: str,
     strategy: str = "squash",
     worktree_path: Path | None = None,
+    dirty_action: str | None = None,
 ) -> str:
     """Merge run branch back into source branch.
 
@@ -196,6 +218,8 @@ def merge_back(
         source_branch: The target branch to merge into
         strategy: "squash" or "merge"
         worktree_path: If provided, sync the branch ref to the worktree HEAD first
+        dirty_action: How to handle dirty working tree. None = raise error,
+            "stash" = stash changes, "commit" = auto-commit WIP.
 
     Returns:
         The resulting commit SHA
@@ -203,6 +227,7 @@ def merge_back(
     Raises:
         BranchNotFoundError: If either branch doesn't exist
         MergeConflictError: If merge has conflicts
+        DirtyWorkingTreeError: If working tree is dirty and dirty_action is None
     """
     if not _branch_exists(main_repo_path, run_branch):
         raise BranchNotFoundError(run_branch)
@@ -213,8 +238,37 @@ def merge_back(
     if worktree_path and worktree_path.exists():
         sync_branch_to_worktree(main_repo_path, run_branch, worktree_path)
 
+    # Check for dirty working tree before checkout
+    dirty_files = _get_dirty_files(main_repo_path)
+    stashed = False
+    if dirty_files:
+        if dirty_action is None:
+            # Detect current branch for the error
+            current = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=main_repo_path,
+                capture_output=True,
+                text=True,
+            )
+            current_branch = current.stdout.strip() if current.returncode == 0 else "unknown"
+            raise DirtyWorkingTreeError(current_branch, dirty_files)
+        elif dirty_action == "stash":
+            _run_git(["stash", "push", "-m", "merge-back auto-stash"], cwd=main_repo_path)
+            stashed = True
+        elif dirty_action == "commit":
+            _run_git(["add", "-A"], cwd=main_repo_path)
+            _run_git(
+                ["commit", "-m", "WIP: auto-commit before merge-back"],
+                cwd=main_repo_path,
+            )
+
     # Checkout the source branch
-    _run_git(["checkout", source_branch], cwd=main_repo_path)
+    try:
+        _run_git(["checkout", source_branch], cwd=main_repo_path)
+    except GitCommandError:
+        if stashed:
+            _run_git(["stash", "pop"], cwd=main_repo_path)
+        raise
 
     try:
         if strategy == "squash":
@@ -236,7 +290,13 @@ def merge_back(
             capture_output=True,
             text=True,
         )
+        if stashed:
+            _run_git(["stash", "pop"], cwd=main_repo_path)
         raise MergeConflictError(run_branch, source_branch, conflicting)
+
+    # Pop stash after successful merge
+    if stashed:
+        _run_git(["stash", "pop"], cwd=main_repo_path)
 
     # Return the commit SHA
     result = _run_git(["rev-parse", "HEAD"], cwd=main_repo_path)

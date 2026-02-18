@@ -3,12 +3,21 @@ export interface ClarificationQuestion {
   question: string;
   context: string;
   options: string[];
+  question_type: 'single_select' | 'multi_select' | 'free_text' | 'number';
+  allow_other: boolean;
+  required: boolean;
+  min?: number | null;
+  max?: number | null;
+  placeholder?: string | null;
 }
 
 export interface ClarificationAnswer {
   question_id: string;
   selected_option: string | null;
   free_text: string | null;
+  selected_options?: string[];
+  skipped?: boolean;
+  skip_reason?: string | null;
 }
 
 export interface ClarificationRequest {
@@ -23,6 +32,25 @@ export interface ClarificationRequest {
 
 export interface RespondToClarificationRequest {
   answers: ClarificationAnswer[];
+  skipped?: boolean;
+  skip_reason?: string | null;
+}
+
+export interface ClarificationResponse {
+  request_id?: string;
+  answers: ClarificationAnswer[];
+  responded_at?: string;
+  skipped?: boolean;
+  skip_reason?: string | null;
+}
+
+export interface ClarificationHistoryItem {
+  request: ClarificationRequest;
+  response: ClarificationResponse | null;
+}
+
+export interface ClarificationHistoryResponse {
+  items: ClarificationHistoryItem[];
 }
 
 export interface PendingAction {

@@ -12,3 +12,18 @@ export interface ActivityResponse {
   events: ActivityEvent[];
   has_more: boolean;
 }
+
+export interface ClarificationRequestedPayload {
+  event_type: 'clarification_requested';
+  run_id: string;
+  task_id: string;
+  request_id: string;
+  question_count: number;
+}
+
+export interface ClarificationRespondedPayload {
+  event_type: 'clarification_responded';
+  run_id: string;
+  task_id: string;
+  request_id: string;
+}

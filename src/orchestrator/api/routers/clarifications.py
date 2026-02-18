@@ -2,10 +2,14 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 
-from orchestrator.api.deps import get_workflow_service
+from orchestrator.api.deps import get_run_repository, get_workflow_service
 from orchestrator.api.schemas.clarifications import (
+    ClarificationAnswerSchema,
+    ClarificationHistoryItem,
+    ClarificationHistoryResponse,
     ClarificationQuestionSchema,
     ClarificationRequestResponse,
     CreateClarificationRequest,
@@ -13,6 +17,8 @@ from orchestrator.api.schemas.clarifications import (
     RespondToClarificationRequest,
 )
 from orchestrator.api.schemas.tasks import TransitionResponse
+from orchestrator.db.repositories import RunRepository
+from orchestrator.state.errors import TaskNotFoundError
 from orchestrator.workflow.clarifications import ClarificationAnswer, ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService
 
@@ -60,15 +66,24 @@ async def create_clarification(
     Returns:
         The created clarification request
     """
-    questions = [
-        ClarificationQuestion(
-            id=q.id,
-            question=q.question,
-            context=q.context,
-            options=q.options,
-        )
-        for q in request.questions
-    ]
+    try:
+        questions = [
+            ClarificationQuestion(
+                id=q.id,
+                question=q.question,
+                context=q.context,
+                options=q.options,
+                question_type=q.question_type,
+                allow_other=q.allow_other,
+                required=q.required,
+                min=q.min,
+                max=q.max,
+                placeholder=q.placeholder,
+            )
+            for q in request.questions
+        ]
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
     result = await service.request_clarification(run_id, task_id, questions)
     return ClarificationRequestResponse(
         id=result.id,
@@ -81,6 +96,12 @@ async def create_clarification(
                 question=q.question,
                 context=q.context,
                 options=q.options,
+                question_type=q.question_type,
+                allow_other=q.allow_other,
+                required=q.required,
+                min=q.min,
+                max=q.max,
+                placeholder=q.placeholder,
             )
             for q in result.questions
         ],
@@ -124,12 +145,96 @@ async def get_pending_clarification(
                 question=q.question,
                 context=q.context,
                 options=q.options,
+                question_type=q.question_type,
+                allow_other=q.allow_other,
+                required=q.required,
+                min=q.min,
+                max=q.max,
+                placeholder=q.placeholder,
             )
             for q in result.questions
         ],
         created_at=result.created_at,
         responded_at=result.responded_at,
     )
+
+
+@router.get(
+    "/{run_id}/tasks/{task_id}/clarifications",
+    response_model=ClarificationHistoryResponse,
+)
+async def get_clarification_history(
+    run_id: str,
+    task_id: str,
+    repo: Annotated[RunRepository, Depends(get_run_repository)],
+) -> ClarificationHistoryResponse:
+    """Get full clarification history for a task in ascending creation order.
+
+    Returns all clarification rounds (pending and answered).
+    Pending rounds appear with response=null.
+
+    Args:
+        run_id: The run ID
+        task_id: The task ID
+        repo: The run repository
+
+    Returns:
+        ClarificationHistoryResponse with items in ascending creation order
+
+    Raises:
+        404 if run_id or task_id not found
+    """
+    run = await repo.get(run_id)  # raises RunNotFoundError → 404
+    # Validate task_id belongs to this run
+    task_found = any(task.id == task_id for step in run.steps for task in step.tasks)
+    if not task_found:
+        raise TaskNotFoundError(run_id, task_id)
+
+    history = await repo.get_clarification_history(run_id, task_id)
+
+    items: list[ClarificationHistoryItem] = []
+    for req, resp in history:
+        request_schema = ClarificationRequestResponse(
+            id=req.id,
+            run_id=req.run_id,
+            task_id=req.task_id,
+            attempt_num=req.attempt_num,
+            questions=[
+                ClarificationQuestionSchema(
+                    id=q.id,
+                    question=q.question,
+                    context=q.context,
+                    options=q.options,
+                    question_type=q.question_type,
+                    allow_other=q.allow_other,
+                    required=q.required,
+                    min=q.min,
+                    max=q.max,
+                    placeholder=q.placeholder,
+                )
+                for q in req.questions
+            ],
+            created_at=req.created_at,
+            responded_at=req.responded_at,
+        )
+        response_schema: RespondToClarificationRequest | None = None
+        if resp is not None:
+            response_schema = RespondToClarificationRequest(
+                answers=[
+                    ClarificationAnswerSchema(
+                        question_id=a.question_id,
+                        selected_option=a.selected_option,
+                        free_text=a.free_text,
+                        selected_options=a.selected_options,
+                        skipped=a.skipped,
+                        skip_reason=a.skip_reason,
+                    )
+                    for a in resp.answers
+                ],
+            )
+        items.append(ClarificationHistoryItem(request=request_schema, response=response_schema))
+
+    return ClarificationHistoryResponse(items=items)
 
 
 @router.post(
@@ -162,6 +267,10 @@ async def respond_to_clarification(
     """
     from datetime import datetime, timezone
 
+    if not request.skipped:
+        # Guard: all required questions must have an answer
+        pass
+
     answers = [
         ClarificationAnswer(
             question_id=a.question_id,
@@ -169,6 +278,9 @@ async def respond_to_clarification(
             free_text=a.free_text,
             answered_by=user,
             answered_at=datetime.now(timezone.utc),
+            selected_options=a.selected_options,
+            skipped=a.skipped,
+            skip_reason=a.skip_reason,
         )
         for a in request.answers
     ]

@@ -53,6 +53,7 @@ packages = ["src/orchestrator"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["src"]
 addopts = "-n auto --dist loadfile --timeout=30"
 timeout = 30
 markers = [

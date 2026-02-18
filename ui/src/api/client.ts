@@ -236,10 +236,13 @@ export const api = {
     });
   },
 
-  mergeBack(runId: string, strategy?: string): Promise<{ merge_commit: string; strategy: string; message: string }> {
+  mergeBack(runId: string, options?: { strategy?: string; dirty_action?: 'stash' | 'commit' }): Promise<{ merge_commit: string; strategy: string; message: string }> {
+    const body: Record<string, string> = {};
+    if (options?.strategy) body.strategy = options.strategy;
+    if (options?.dirty_action) body.dirty_action = options.dirty_action;
     return fetchApi('/api/runs/' + runId + '/merge-back', {
       method: 'POST',
-      body: strategy ? JSON.stringify({ strategy }) : undefined,
+      body: Object.keys(body).length > 0 ? JSON.stringify(body) : undefined,
     });
   },
 

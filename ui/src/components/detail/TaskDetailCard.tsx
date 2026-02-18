@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { useTask, useTaskPrompt } from '../../hooks/useApi';
+import { useClarificationHistory } from '../../hooks/useClarifications';
 import { TaskStatusBadge } from '../StatusBadge';
 import { GradeBadge } from '../GradeBadge';
 import { Spinner } from '../Spinner';
 import { LogsViewer } from './LogsViewer';
 import { ChecklistTable } from './ChecklistTable';
+import { ClarificationHistoryCard } from './ClarificationHistoryCard';
 import { gradeColor } from '../../lib/status';
 import { formatDuration, formatTokens, formatRelativeTime } from '../../lib/format';
 import { outcomeColor, outcomeLabel } from '../../lib/outcome';
@@ -487,6 +489,10 @@ export function TaskDetailCard({
   const [expanded, setExpanded] = useState(false);
   const [attemptsOpen, setAttemptsOpen] = useState(false);
   const { data: detail, isLoading } = useTask(runId, expanded ? taskId : undefined);
+  const { data: clarificationHistory, error: historyError } = useClarificationHistory(
+    runId,
+    taskId,
+  );
 
   const attemptCount = attemptsSummary.length;
 
@@ -650,6 +656,48 @@ export function TaskDetailCard({
               </h4>
               <div className="space-y-1">
                 {events.map(ev => {
+                  if (ev.event_type === 'clarification_responded') {
+                    if (historyError) {
+                      return (
+                        <div key={ev.id} className="text-xs text-text-muted">
+                          Unable to load clarification history.
+                        </div>
+                      );
+                    }
+
+                    const requestId =
+                      typeof ev.payload.request_id === 'string'
+                        ? ev.payload.request_id
+                        : undefined;
+                    const matchingIndex = clarificationHistory?.findIndex(
+                      item => item.request.id === requestId,
+                    );
+
+                    if (matchingIndex !== undefined && matchingIndex >= 0) {
+                      const matchingItem = clarificationHistory?.[matchingIndex];
+                      if (!matchingItem) {
+                        return (
+                          <div key={ev.id} className="text-xs text-text-muted">
+                            Clarification response recorded
+                          </div>
+                        );
+                      }
+                      return (
+                        <ClarificationHistoryCard
+                          key={ev.id}
+                          item={matchingItem}
+                          roundNumber={matchingIndex + 1}
+                        />
+                      );
+                    }
+
+                    return (
+                      <div key={ev.id} className="text-xs text-text-muted">
+                        Clarification response recorded
+                      </div>
+                    );
+                  }
+
                   const isError = ev.event_type === 'agent_error';
                   return (
                     <div key={ev.id} className="flex items-center gap-2 text-xs">

@@ -26,11 +26,13 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     await app.state.engine.dispose()
 
 
-async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
+async def _setup_building_task(
+    client: AsyncClient, routine_id: str = "simple-routine"
+) -> tuple[str, str]:
     """Create a run, start it, and start building a task. Returns (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={"routine_id": routine_id, "repo_name": "proj-1", "branch": "main"},
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
@@ -277,3 +279,416 @@ async def test_create_clarification_invalid_task(client: AsyncClient) -> None:
     )
 
     assert resp.status_code == 404
+
+
+async def test_create_clarification_free_text_type(client: AsyncClient) -> None:
+    """Create a clarification with question_type='free_text'; assert stored question has correct type and no options."""
+    run_id, task_id = await _setup_building_task(client)
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Describe your requirements in detail",
+                    "context": "We need detailed requirements",
+                    "options": [],
+                    "question_type": "free_text",
+                }
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["questions"]) == 1
+    q = data["questions"][0]
+    assert q["question_type"] == "free_text"
+    assert q["options"] == []
+
+
+async def test_create_clarification_multi_select_empty_options_returns_422(
+    client: AsyncClient,
+) -> None:
+    """Create a clarification with question_type='multi_select' and empty options; assert 422 response."""
+    run_id, task_id = await _setup_building_task(client)
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Pick multiple",
+                    "context": "Context",
+                    "options": [],
+                    "question_type": "multi_select",
+                }
+            ]
+        },
+    )
+
+    assert resp.status_code == 422
+
+
+async def test_respond_with_selected_options(client: AsyncClient) -> None:
+    """Respond with selected_options=['A', 'B']; assert task transitions to BUILDING."""
+    run_id, task_id = await _setup_building_task(client)
+
+    # Create a multi_select clarification
+    create_resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Which frameworks do you want?",
+                    "context": "Select all that apply",
+                    "options": ["A", "B", "C"],
+                    "question_type": "multi_select",
+                }
+            ]
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["id"]
+
+    # Respond with selected_options
+    resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications/{request_id}/respond",
+        json={
+            "answers": [
+                {
+                    "question_id": "q1",
+                    "selected_options": ["A", "B"],
+                }
+            ]
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["new_status"] == "building"
+
+    # Verify task is back to building
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.status_code == 200
+    assert task_resp.json()["status"] == "building"
+
+
+async def test_respond_with_skipped_true(client: AsyncClient) -> None:
+    """Respond with skipped=True and skip_reason; assert task transitions back to BUILDING."""
+    run_id, task_id = await _setup_building_task(client)
+
+    # Create a clarification
+    create_resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Optional preference?",
+                    "context": "This can be skipped",
+                    "options": ["Yes", "No"],
+                    "required": False,
+                }
+            ]
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["id"]
+
+    # Respond with skipped=True
+    resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications/{request_id}/respond",
+        json={
+            "answers": [],
+            "skipped": True,
+            "skip_reason": "Not needed",
+        },
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["success"] is True
+    assert data["new_status"] == "building"
+
+    # Verify task is back to building
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.status_code == 200
+    assert task_resp.json()["status"] == "building"
+
+
+async def test_respond_with_skipped_true_includes_skip_message_in_builder_prompt(
+    client: AsyncClient,
+) -> None:
+    """Respond with skipped=True; task prompt includes declined-to-answer context."""
+    run_id, task_id = await _setup_building_task(client, routine_id="routine-with-clarifications")
+
+    create_resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Optional preference?",
+                    "context": "This can be skipped",
+                    "options": ["Yes", "No"],
+                    "required": False,
+                }
+            ]
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["id"]
+
+    resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications/{request_id}/respond",
+        json={
+            "answers": [
+                {
+                    "question_id": "q1",
+                    "skipped": True,
+                    "skip_reason": "Too vague",
+                }
+            ],
+            "skipped": True,
+            "skip_reason": "Too vague",
+        },
+    )
+    assert resp.status_code == 200
+
+    prompt_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
+    assert prompt_resp.status_code == 200
+    user_prompt = prompt_resp.json()["user"]
+    assert "declined to answer" in user_prompt
+    assert "Too vague" in user_prompt
+
+
+# --- GET .../clarifications history endpoint tests ---
+
+
+async def test_get_clarification_history_empty(client: AsyncClient) -> None:
+    """GET .../clarifications returns empty list when no rounds exist."""
+    run_id, task_id = await _setup_building_task(client)
+
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/clarifications")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {"items": []}
+
+
+async def test_get_clarification_history_with_completed_round(client: AsyncClient) -> None:
+    """Complete a clarification round; GET .../clarifications returns 1 item with non-null response."""
+    run_id, task_id = await _setup_building_task(client)
+
+    # Create a clarification
+    create_resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Which language?",
+                    "context": "Language choice",
+                    "options": ["TypeScript", "JavaScript"],
+                }
+            ]
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["id"]
+
+    # Respond to complete the round
+    resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications/{request_id}/respond",
+        json={
+            "answers": [
+                {
+                    "question_id": "q1",
+                    "selected_option": "TypeScript",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+    # Fetch history
+    history_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/clarifications")
+    assert history_resp.status_code == 200
+    data = history_resp.json()
+    assert len(data["items"]) == 1
+    item = data["items"][0]
+    assert item["request"]["id"] == request_id
+    assert item["response"] is not None
+    assert len(item["response"]["answers"]) == 1
+    assert item["response"]["answers"][0]["question_id"] == "q1"
+    assert item["response"]["answers"][0]["selected_option"] == "TypeScript"
+
+
+async def test_get_clarification_history_with_pending_round(client: AsyncClient) -> None:
+    """Submit a pending clarification; GET .../clarifications returns item with response=null."""
+    run_id, task_id = await _setup_building_task(client)
+
+    # Create a clarification but don't respond
+    create_resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Which CSS framework?",
+                    "context": "Styling choice",
+                    "options": ["Tailwind", "Bootstrap"],
+                }
+            ]
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["id"]
+
+    # Fetch history - pending item should appear with response=null
+    history_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/clarifications")
+    assert history_resp.status_code == 200
+    data = history_resp.json()
+    assert len(data["items"]) == 1
+    item = data["items"][0]
+    assert item["request"]["id"] == request_id
+    assert item["response"] is None
+
+
+async def test_get_clarification_history_nonexistent_run_returns_404(client: AsyncClient) -> None:
+    """GET .../clarifications with nonexistent run_id returns 404."""
+    resp = await client.get("/api/runs/nonexistent-run/tasks/some-task/clarifications")
+    assert resp.status_code == 404
+
+
+async def test_get_clarification_history_nonexistent_task_returns_404(
+    client: AsyncClient,
+) -> None:
+    """GET .../clarifications with nonexistent task_id returns 404."""
+    run_resp = await client.post(
+        "/api/runs",
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+    )
+    assert run_resp.status_code == 201
+    run_id = run_resp.json()["id"]
+
+    resp = await client.get(f"/api/runs/{run_id}/tasks/nonexistent-task/clarifications")
+    assert resp.status_code == 404
+
+
+async def test_get_clarification_history_multiple_rounds(client: AsyncClient) -> None:
+    """History returns multiple rounds in ascending creation order."""
+    run_id, task_id = await _setup_building_task(client)
+
+    # First round: create and complete
+    create1 = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "First question?",
+                    "context": "First context",
+                    "options": ["A", "B"],
+                }
+            ]
+        },
+    )
+    assert create1.status_code == 200
+    request1_id = create1.json()["id"]
+
+    resp1 = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications/{request1_id}/respond",
+        json={"answers": [{"question_id": "q1", "selected_option": "A"}]},
+    )
+    assert resp1.status_code == 200
+
+    # Start building again for second round
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+
+    # Second round: create but leave pending
+    create2 = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q2",
+                    "question": "Second question?",
+                    "context": "Second context",
+                    "options": ["X", "Y"],
+                }
+            ]
+        },
+    )
+    assert create2.status_code == 200
+    request2_id = create2.json()["id"]
+
+    # Fetch history
+    history_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/clarifications")
+    assert history_resp.status_code == 200
+    data = history_resp.json()
+    assert len(data["items"]) == 2
+
+    # First item should be the completed round
+    assert data["items"][0]["request"]["id"] == request1_id
+    assert data["items"][0]["response"] is not None
+
+    # Second item should be pending
+    assert data["items"][1]["request"]["id"] == request2_id
+    assert data["items"][1]["response"] is None
+
+
+async def test_get_clarification_history_skipped_answer_response(
+    client: AsyncClient,
+) -> None:
+    """Respond with individual answer skipped=True; GET history shows response with skipped answer."""
+    run_id, task_id = await _setup_building_task(client)
+
+    # Create a clarification
+    create_resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
+        json={
+            "questions": [
+                {
+                    "id": "q1",
+                    "question": "Optional question?",
+                    "context": "Can be skipped",
+                    "options": ["Yes", "No"],
+                    "required": False,
+                }
+            ]
+        },
+    )
+    assert create_resp.status_code == 200
+    request_id = create_resp.json()["id"]
+
+    # Respond with individual answer skipped
+    resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task_id}/clarifications/{request_id}/respond",
+        json={
+            "answers": [
+                {
+                    "question_id": "q1",
+                    "skipped": True,
+                    "skip_reason": "Not relevant",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    assert resp.json()["success"] is True
+
+    # History shows the skipped answer in the response
+    history_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/clarifications")
+    assert history_resp.status_code == 200
+    data = history_resp.json()
+    assert len(data["items"]) == 1
+    item = data["items"][0]
+    assert item["response"] is not None
+    assert item["response"]["answers"][0]["skipped"] is True
+    assert item["response"]["answers"][0]["skip_reason"] == "Not relevant"

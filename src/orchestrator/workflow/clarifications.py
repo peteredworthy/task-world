@@ -1,18 +1,40 @@
 """Clarification models and artifact generation (pure functions)."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class ClarificationQuestion(BaseModel):
     """A question from the builder needing human input."""
 
-    id: str
-    question: str
-    context: str
-    options: list[str]  # Multi-choice options (2-4)
+    id: str = ""
+    question: str = ""
+    context: str = ""
+    options: list[str] = []  # Multi-choice options (2-4)
+    question_type: Literal["single_select", "multi_select", "free_text", "number"] = "single_select"
+    allow_other: bool = True
+    required: bool = True
+    min: float | None = None
+    max: float | None = None
+    placeholder: str | None = None
+
+    @model_validator(mode="after")
+    def validate_options_for_type(self) -> "ClarificationQuestion":
+        if self.question_type in ("single_select", "multi_select"):
+            if not self.options:
+                raise ValueError(
+                    f"'options' must be non-empty for question_type={self.question_type!r}"
+                )
+        else:  # free_text, number
+            if self.options:
+                raise ValueError(
+                    f"'options' must be empty for question_type={self.question_type!r}"
+                )
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError("'min' must be <= 'max'")
+        return self
 
 
 class ClarificationAnswer(BaseModel):
@@ -23,6 +45,9 @@ class ClarificationAnswer(BaseModel):
     free_text: str | None = None
     answered_by: str
     answered_at: datetime
+    selected_options: list[str] | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 class ClarificationRequest(BaseModel):
@@ -50,10 +75,15 @@ def format_clarification_artifact(
     response: ClarificationResponse,
     step_id: str,
     clarification_number: int,
-) -> str:
+) -> tuple[str, int, int]:
     """Format clarification Q&A as markdown section for artifact file.
 
     Pure function - no I/O.
+
+    Returns:
+        A tuple of (text, start_line, line_count) where start_line is a
+        placeholder (0) to be replaced by the caller after reading the
+        current file length.
     """
     lines = [
         f"## Clarification {clarification_number} (Step {step_id}, Attempt {request.attempt_num})",
@@ -72,15 +102,22 @@ def format_clarification_artifact(
         lines.append("")
 
         if answer:
-            if answer.free_text:
+            if answer.skipped:
+                reason = answer.skip_reason or ""
+                lines.append(f"**Answer:** (skipped) {reason}".rstrip())
+            elif answer.free_text:
                 lines.append(f"**Answer:** (custom) {answer.free_text}")
+            elif answer.selected_options is not None:
+                lines.append(f"**Answer:** {', '.join(answer.selected_options)}")
             elif answer.selected_option:
                 lines.append(f"**Answer:** {answer.selected_option}")
             lines.append(f"**Answered by:** {answer.answered_by}")
             lines.append(f"**Answered at:** {answer.answered_at.isoformat()}")
         lines.append("")
 
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    line_count = text.count("\n") + (0 if text.endswith("\n") else 1)
+    return text, 0, line_count
 
 
 def build_artifact_header() -> str:

@@ -441,3 +441,135 @@ def test_verifier_prompt_clarifications_path_without_step_context() -> None:
     clarifications_pos = prompt.user.index("## Clarifications")
     req_pos = prompt.user.index("## Requirements to Verify")
     assert clarifications_pos < req_pos
+
+
+# --- clarification_line_range in builder prompt ---
+
+
+def test_builder_prompt_with_clarification_line_range() -> None:
+    """Prompt with clarification_line_range should include file path and line range."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        clarifications_path="/artifact.md",
+        clarification_line_range=("/artifact.md", 5, 12),
+    )
+
+    assert "lines 5\u201312" in prompt.user
+    assert "/artifact.md" in prompt.user
+    assert prompt.clarification_line_range == ("/artifact.md", 5, 12)
+
+
+def test_builder_prompt_line_range_requires_clarifications_path() -> None:
+    """clarification_line_range without clarifications_path does not add line-range text."""
+    config = _task_config()
+    state = _task_state()
+    # Without clarifications_path, the clarification block is not emitted at all
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        clarification_line_range=("/artifact.md", 5, 12),
+    )
+
+    assert "lines 5\u201312" not in prompt.user
+    assert "## Clarifications" not in prompt.user
+
+
+def test_builder_prompt_line_range_no_regression() -> None:
+    """Without new params, output matches baseline (no regression)."""
+    config = _task_config()
+    state = _task_state()
+    baseline_prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+    )
+    explicit_none_prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        clarification_line_range=None,
+        skipped_questions=None,
+        skip_reason=None,
+    )
+
+    assert explicit_none_prompt == baseline_prompt
+
+
+# --- skipped_questions / skip_reason in builder prompt ---
+
+
+def test_builder_prompt_with_skipped_questions() -> None:
+    """Prompt with skipped_questions should include declined-to-answer message with reason."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        clarifications_path="/artifact.md",
+        skipped_questions=["Question 1"],
+        skip_reason="Too vague",
+    )
+
+    assert "declined to answer" in prompt.user
+    assert "Too vague" in prompt.user
+    assert prompt.skipped_questions == ["Question 1"]
+
+
+def test_builder_prompt_skip_without_reason() -> None:
+    """skipped_questions without skip_reason uses 'none given' fallback."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        clarifications_path="/artifact.md",
+        skipped_questions=["Q1", "Q2"],
+    )
+
+    assert "declined to answer" in prompt.user
+    assert "none given" in prompt.user
+    assert '"Q1"' in prompt.user
+    assert '"Q2"' in prompt.user
+
+
+def test_builder_prompt_skip_requires_clarifications_path() -> None:
+    """skipped_questions without clarifications_path does not add skip text."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        skipped_questions=["Question 1"],
+        skip_reason="Too vague",
+    )
+
+    assert "declined to answer" not in prompt.user
+    assert "## Clarifications" not in prompt.user
+
+
+def test_builder_prompt_line_range_and_skip_combined() -> None:
+    """Both clarification_line_range and skipped_questions appear together."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        clarifications_path="/artifact.md",
+        clarification_line_range=("/artifact.md", 5, 12),
+        skipped_questions=["Question 1"],
+        skip_reason="Too vague",
+    )
+
+    assert "lines 5\u201312" in prompt.user
+    assert "/artifact.md" in prompt.user
+    assert "declined to answer" in prompt.user
+    assert "Too vague" in prompt.user
