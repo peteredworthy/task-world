@@ -167,6 +167,13 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/agent-cancelled', { method: 'POST' });
   },
 
+  transitionBack(runId: string, data: { target_step_index: number; reason?: string }): Promise<RunResponse> {
+    return fetchApi('/api/runs/' + runId + '/transition-back', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   getGuidance(runId: string): Promise<GuidanceResponse> {
     return fetchApi('/api/runs/' + runId + '/guidance');
   },
@@ -349,6 +356,10 @@ export function agentStarted(runId: string): Promise<void> {
 
 export function agentCancelled(runId: string): Promise<void> {
   return api.agentCancelled(runId);
+}
+
+export function transitionBack(runId: string, data: { target_step_index: number; reason?: string }): Promise<RunResponse> {
+  return api.transitionBack(runId, data);
 }
 
 export function getGuidance(runId: string): Promise<GuidanceResponse> {

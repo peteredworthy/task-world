@@ -157,6 +157,16 @@ export function useRecoverRun(runId: string) {
   });
 }
 
+export function useTransitionBack(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { target_step_index: number; reason?: string }) => api.transitionBack(runId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
 export function useDeleteRun() {
   const qc = useQueryClient();
   return useMutation({
