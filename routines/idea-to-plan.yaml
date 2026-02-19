@@ -105,14 +105,28 @@ routine:
 
           Example: [HUMAN] Add rollback notes for schema migrations.
 
+          Checklist outcome: mark R1 done when [HUMAN] notes exist, otherwise mark R1 blocked.
+
           Approve when feedback is complete.
         require_comment: true
       tasks:
         - id: "T-01"
           title: "Await Human Feedback"
           task_context: |
-            Wait for human feedback. Do not generate [HUMAN] notes.
-            Continue only after approval.
+            Verify human feedback annotations before proceeding.
+            Check these files for [HUMAN] annotations:
+            - docs/{{feature}}/intent.md
+            - docs/{{feature}}/plan.md
+            - docs/{{feature}}/design-questions.md
+            - docs/{{feature}}/architecture.md
+
+            If [HUMAN] annotations are found in the artifact files:
+            - Mark requirement R1 as done
+            - Submit this task for verification
+
+            If no [HUMAN] annotations are found:
+            - Mark requirement R1 as blocked with note: "Awaiting human review — no [HUMAN] annotations found in artifact files"
+            - Submit this task for verification
           requirements:
             - id: "R1"
               desc: "Human feedback is present and gate is approved"
