@@ -300,6 +300,24 @@ async def test_recover_run_conflict_when_completed(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
+async def test_recover_run_not_found_when_run_missing(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/runs/nonexistent/recover",
+        json={"target_task_id": "any-task-id"},
+    )
+    assert response.status_code == 404
+
+
+async def test_recover_run_not_found_when_target_task_missing(client: AsyncClient) -> None:
+    run_id, _task_id = await _drive_run_to_failed(client)
+
+    response = await client.post(
+        f"/api/runs/{run_id}/recover",
+        json={"target_task_id": "missing-task-id"},
+    )
+    assert response.status_code == 404
+
+
 async def test_resume_with_agent_change(client: AsyncClient) -> None:
     """Resume a paused run while changing the agent type and config."""
     created = await _create_run(client)

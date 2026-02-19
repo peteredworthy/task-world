@@ -59,8 +59,9 @@ from orchestrator.metrics.cost import estimate_cost
 from orchestrator.routines.discovery import discover_routines
 from orchestrator.routines.errors import RoutineNotFoundError
 from orchestrator.state.factory import create_run_from_routine
-from orchestrator.state.errors import StepNotFoundError
+from orchestrator.state.errors import RunNotFoundError, StepNotFoundError, TaskNotFoundError
 from orchestrator.state.models import HumanApproval, Run
+from orchestrator.workflow.errors import InvalidTransitionError
 from orchestrator.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -413,20 +414,25 @@ async def resume_run(
 @router.post("/{run_id}/recover", response_model=RecoverResponse)
 async def recover_run(
     run_id: str,
+    body: RecoverRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    request: RecoverRequest,
 ) -> RecoverResponse:
     """Recover a FAILED run by rewinding to a target task and pausing."""
-    agent_type = AgentType(request.agent_type) if request.agent_type else None
-    agent_config = request.agent_config if request.agent_config else None
-    return await service.recover_run(
-        run_id=run_id,
-        target_task_id=request.target_task_id,
-        additional_attempts=request.additional_attempts,
-        agent_type=agent_type,
-        agent_config=agent_config,
-        preserve_checklist=request.preserve_checklist,
-    )
+    agent_type = AgentType(body.agent_type) if body.agent_type else None
+    agent_config = body.agent_config if body.agent_config else None
+    try:
+        return await service.recover_run(
+            run_id=run_id,
+            target_task_id=body.target_task_id,
+            additional_attempts=body.additional_attempts,
+            agent_type=agent_type,
+            agent_config=agent_config,
+            preserve_checklist=body.preserve_checklist,
+        )
+    except (RunNotFoundError, TaskNotFoundError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InvalidTransitionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.delete("/{run_id}", status_code=204)
