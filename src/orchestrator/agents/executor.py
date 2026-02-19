@@ -531,6 +531,8 @@ class AgentExecutor:
                 agent_type.value, f"Task config not found: {task_state.config_id}"
             )
 
+        phase = "verifying" if task_state.status == TaskStatus.VERIFYING else "building"
+
         # Handle VERIFYING phase
         if task_state.status == TaskStatus.VERIFYING:
             await self._handle_verification(
@@ -544,7 +546,7 @@ class AgentExecutor:
             await service.start_task(run.id, task_state.id)
 
         # Create the agent (pass run_id for death detection)
-        agent = self._create_agent(agent_type, agent_config, run.id)
+        agent = self._create_agent(agent_type, agent_config, run.id, phase=phase)
 
         # Build the context - worktree_path is required for agent execution
         if not run.worktree_path:
@@ -703,9 +705,10 @@ class AgentExecutor:
 
         # Has rubric - need to run verifier agent
         logger.info(f"Task {task_state.id}: running verifier agent for rubric evaluation")
+        phase = "verifying" if task_state.status == TaskStatus.VERIFYING else "building"
 
         # Create the agent for verification (pass run_id for death detection)
-        agent = self._create_agent(agent_type, agent_config, run.id)
+        agent = self._create_agent(agent_type, agent_config, run.id, phase=phase)
 
         # Build the verifier context - worktree_path is required
         if not run.worktree_path:
@@ -1036,7 +1039,11 @@ class AgentExecutor:
             logger.debug(f"Failed to store attempt metrics for {task_id}", exc_info=True)
 
     def _create_agent(
-        self, agent_type: AgentType, agent_config: dict[str, Any], run_id: str | None = None
+        self,
+        agent_type: AgentType,
+        agent_config: dict[str, Any],
+        run_id: str | None = None,
+        phase: str = "building",
     ) -> CLIAgent:
         """Create the appropriate agent based on run configuration."""
         if agent_type == AgentType.CLI_SUBPROCESS:
@@ -1083,6 +1090,7 @@ class AgentExecutor:
                 parser=parser,
                 agent_monitor=self._agent_monitor,
                 run_id=run_id,
+                phase=phase,
             )
 
         elif agent_type == AgentType.OPENHANDS_LOCAL:

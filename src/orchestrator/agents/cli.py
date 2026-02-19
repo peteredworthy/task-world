@@ -76,6 +76,7 @@ class CLIAgent:
         args: list[str] | None = None,
         model: str | None = None,
         callback_channel: str = "rest",
+        phase: str = "building",
         stdin_mode: str = "close",
         nudger_config: NudgerConfig | None = None,
         time_provider: TimeProvider | None = None,
@@ -90,6 +91,7 @@ class CLIAgent:
             base_args = ["--model", model, *base_args]
         self._args = base_args
         self._callback_channel = callback_channel
+        self._phase = phase
         self._stdin_mode = stdin_mode
         self._nudger_config = nudger_config or NudgerConfig()
         self._time_provider = time_provider or _DefaultTimeProvider()
@@ -284,6 +286,7 @@ class CLIAgent:
             context.prompt,
             context,
             self._callback_channel,
+            self._phase,
         )
 
         try:
