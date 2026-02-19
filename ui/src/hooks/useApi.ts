@@ -1,8 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
-import type { CreateRunRequest, UpdateChecklistRequest, SetGradeRequest } from '../types';
+import { api, getConfig, validateRoutine } from '../api/client';
+import type { CreateRunRequest, RecoverRequest, SetGradeRequest, UpdateChecklistRequest } from '../types';
 
-export function useRuns(params?: { status?: string; repo_name?: string }) {
+export function useRuns(params?: { status?: string; repo_name?: string; limit?: number }) {
   return useQuery({
     queryKey: ['runs', params],
     queryFn: () => api.listRuns(params),
@@ -22,10 +22,59 @@ export function useRun(runId: string | undefined) {
   });
 }
 
+export function useBranchStatus(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['branchStatus', runId],
+    queryFn: () => api.getBranchStatus(runId!),
+    enabled: !!runId,
+    refetchInterval: 30_000,
+  });
+}
+
+export function useGuidance(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['guidance', runId],
+    queryFn: () => api.getGuidance(runId!),
+    enabled: !!runId,
+  });
+}
+
+export function useEnvFiles(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['envFiles', runId],
+    queryFn: () => api.getEnvFiles(runId!),
+    enabled: !!runId,
+  });
+}
+
+export function useEnvSnapshots(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['envSnapshots', runId],
+    queryFn: () => api.getEnvSnapshots(runId!),
+    enabled: !!runId,
+  });
+}
+
+export function useEnvDefaultTarget(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['envDefaultTarget', runId],
+    queryFn: () => api.getEnvDefaultTarget(runId!),
+    enabled: !!runId,
+  });
+}
+
 export function useRoutines() {
   return useQuery({
     queryKey: ['routines'],
     queryFn: () => api.listRoutines(),
+  });
+}
+
+export function useGlobalConfig() {
+  return useQuery({
+    queryKey: ['globalConfig'],
+    queryFn: getConfig,
+    staleTime: Infinity,
   });
 }
 
@@ -34,6 +83,12 @@ export function useRoutine(routineId: string | undefined | null) {
     queryKey: ['routine', routineId],
     queryFn: () => api.getRoutine(routineId!),
     enabled: !!routineId,
+  });
+}
+
+export function useValidateRoutine() {
+  return useMutation({
+    mutationFn: (yamlContent: string) => validateRoutine(yamlContent),
   });
 }
 
@@ -119,6 +174,78 @@ export function useCancelRun() {
   });
 }
 
+export function useAgentStarted(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.agentStarted(runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
+export function useAgentCancelled(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.agentCancelled(runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
+export function useRecoverRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: RecoverRequest) => api.recoverRun(runId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
+export function useTransitionBack(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { target_step_index: number; reason?: string }) => api.transitionBack(runId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
+export function useBackMerge(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.backMerge(runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+      qc.invalidateQueries({ queryKey: ['branchStatus', runId] });
+    },
+  });
+}
+
+export function useRevertEnvSnapshot(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (snapshotId: string) => api.revertEnvSnapshot(runId, snapshotId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['envFiles', runId] });
+      qc.invalidateQueries({ queryKey: ['envSnapshots', runId] });
+    },
+  });
+}
+
+export function useCopyBackEnvFiles(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (targetPath: string) => api.copyBackEnvFiles(runId, targetPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['envFiles', runId] });
+    },
+  });
+}
+
 export function useDeleteRun() {
   const qc = useQueryClient();
   return useMutation({
@@ -153,6 +280,17 @@ export function useSubmitTask() {
     mutationFn: ({ runId, taskId }: { runId: string; taskId: string }) =>
       api.submitTask(runId, taskId),
     onSuccess: (_data, { runId }) => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
+export function useApproveStep(runId: string, stepId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { approved_by: string; comment?: string }) =>
+      api.approveStep(runId, stepId, data),
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['run', runId] });
     },
   });

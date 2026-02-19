@@ -49,6 +49,12 @@ function renderCard(props: {
   );
 }
 
+async function expandTaskAndAttempts() {
+  const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
+  await userEvent.click(toggleBtn);
+  await userEvent.click(screen.getByRole('button', { name: /Attempts/i }));
+}
+
 describe('TaskDetailCard - Agent Display', () => {
   describe('attempt agent info rendering', () => {
     it('shows agent icon and type when attempt has agent_type', async () => {
@@ -93,9 +99,7 @@ describe('TaskDetailCard - Agent Display', () => {
 
       renderCard({ taskId: 'task-1' });
 
-      // Expand the card
-      const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
-      await userEvent.click(toggleBtn);
+      await expandTaskAndAttempts();
 
       // Wait for the attempt to be displayed
       await waitFor(() => {
@@ -147,9 +151,7 @@ describe('TaskDetailCard - Agent Display', () => {
 
       renderCard({ taskId: 'task-1' });
 
-      // Expand the card
-      const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
-      await userEvent.click(toggleBtn);
+      await expandTaskAndAttempts();
 
       // Wait for the attempt with model to be displayed
       await waitFor(() => {
@@ -199,9 +201,7 @@ describe('TaskDetailCard - Agent Display', () => {
 
       renderCard({ taskId: 'task-1' });
 
-      // Expand the card
-      const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
-      await userEvent.click(toggleBtn);
+      await expandTaskAndAttempts();
 
       // Wait for token count to be displayed (shown in agent info line as total tokens)
       await waitFor(() => {
@@ -251,9 +251,7 @@ describe('TaskDetailCard - Agent Display', () => {
 
       renderCard({ taskId: 'task-1' });
 
-      // Expand the card
-      const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
-      await userEvent.click(toggleBtn);
+      await expandTaskAndAttempts();
 
       // Wait for the attempt to be displayed
       await waitFor(() => {
@@ -344,9 +342,7 @@ describe('TaskDetailCard - Agent Display', () => {
         makeAttemptOutcome(3, 'pass'),
       ]});
 
-      // Expand the card
-      const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
-      await userEvent.click(toggleBtn);
+      await expandTaskAndAttempts();
 
       // Wait for all attempts to be displayed
       await waitFor(() => {
@@ -399,9 +395,7 @@ describe('TaskDetailCard - Agent Display', () => {
 
       renderCard({ taskId: 'task-1' });
 
-      // Expand the card
-      const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
-      await userEvent.click(toggleBtn);
+      await expandTaskAndAttempts();
 
       // Wait for the attempt with CLI icon to be displayed
       await waitFor(() => {
@@ -452,9 +446,7 @@ describe('TaskDetailCard - Agent Display', () => {
 
       renderCard({ taskId: 'task-1' });
 
-      // Expand the card
-      const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
-      await userEvent.click(toggleBtn);
+      await expandTaskAndAttempts();
 
       // Wait for the attempt with OpenHands icon to be displayed
       await waitFor(() => {

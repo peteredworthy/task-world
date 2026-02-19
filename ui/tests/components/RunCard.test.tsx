@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RunCard } from '../../src/components/dashboard/RunCard';
 import type { RunResponse, TaskSummary, StepSummary } from '../../src/types';
 
@@ -72,10 +73,15 @@ const defaultHandlers = {
 function renderCard(run: RunResponse, props: Partial<Parameters<typeof RunCard>[0]> = {}) {
   const routineName = props.routineName ?? run.routine_id ?? 'Unknown routine';
   const expanded = props.expanded ?? false;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
   return render(
-    <MemoryRouter>
-      <RunCard run={run} routineName={routineName} expanded={expanded} {...defaultHandlers} {...props} />
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <RunCard run={run} routineName={routineName} expanded={expanded} {...defaultHandlers} {...props} />
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 }
 
@@ -255,9 +261,11 @@ describe('RunCard', () => {
 
     // Re-render expanded
     rerender(
-      <MemoryRouter>
-        <RunCard run={run} routineName={run.routine_id!} expanded={true} onToggle={onToggle} onStart={defaultHandlers.onStart} onPause={defaultHandlers.onPause} onResume={defaultHandlers.onResume} onCancel={defaultHandlers.onCancel} onDelete={defaultHandlers.onDelete} />
-      </MemoryRouter>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
+        <MemoryRouter>
+          <RunCard run={run} routineName={run.routine_id!} expanded={true} onToggle={onToggle} onStart={defaultHandlers.onStart} onPause={defaultHandlers.onPause} onResume={defaultHandlers.onResume} onCancel={defaultHandlers.onCancel} onDelete={defaultHandlers.onDelete} />
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     // Step detail should be visible

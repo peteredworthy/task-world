@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
+import { useAgentCancelled } from '../../hooks/useApi';
 import { Spinner } from '../Spinner';
 
 interface WaitingIndicatorProps {
+  runId: string;
   startedAt: string | null;
-  onCancel?: () => void;
 }
 
-export function WaitingIndicator({ startedAt, onCancel }: WaitingIndicatorProps) {
+export function WaitingIndicator({ runId, startedAt }: WaitingIndicatorProps) {
   const [elapsed, setElapsed] = useState(0);
+  const agentCancelled = useAgentCancelled(runId);
 
   useEffect(() => {
     if (!startedAt) return;
@@ -34,14 +36,13 @@ export function WaitingIndicator({ startedAt, onCancel }: WaitingIndicatorProps)
         <span className="text-sm font-medium text-accent-purple">Waiting for agent to submit work...</span>
         <span className="text-xs text-text-muted ml-2">{display}</span>
       </div>
-      {onCancel && (
-        <button
-          onClick={onCancel}
-          className="text-xs text-status-failed hover:text-status-failed/80 font-medium"
-        >
-          Cancel
-        </button>
-      )}
+      <button
+        onClick={() => agentCancelled.mutate()}
+        disabled={agentCancelled.isPending}
+        className="text-xs text-status-failed hover:text-status-failed/80 font-medium disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        Cancel
+      </button>
     </div>
   );
 }

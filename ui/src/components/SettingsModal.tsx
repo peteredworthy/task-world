@@ -2,10 +2,12 @@ import { useRef, useEffect } from 'react';
 import { useSettings } from '../hooks/useSettings';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useSettingsModal } from '../hooks/useSettingsModal';
+import { useGlobalConfig } from '../hooks/useApi';
 
 export function SettingsModal() {
   const { isOpen, close } = useSettingsModal();
   const { settings, updateSettings } = useSettings();
+  const globalConfig = useGlobalConfig();
   const dialogRef = useRef<HTMLDivElement>(null);
 
   // Escape key to close
@@ -130,6 +132,53 @@ export function SettingsModal() {
                   </div>
                 </label>
               </div>
+            </div>
+
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary mb-3">
+                Server
+              </h3>
+              <p className="text-sm text-text-secondary mb-4">
+                Server-provided configuration values used by this UI.
+              </p>
+
+              {globalConfig.isLoading && (
+                <div className="p-3 border border-border rounded-lg text-sm text-text-muted">
+                  Loading server configuration...
+                </div>
+              )}
+
+              {globalConfig.isError && (
+                <div className="p-3 border border-status-failed/30 rounded-lg bg-status-failed/10">
+                  <p className="text-sm text-status-failed">
+                    Failed to load server configuration.
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-3 px-3 py-1.5 text-xs font-medium text-white bg-accent-purple rounded-md hover:bg-accent-purple/90 transition-colors"
+                    onClick={() => { void globalConfig.refetch(); }}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {globalConfig.data && (
+                <dl className="p-3 border border-border rounded-lg divide-y divide-border">
+                  <div className="py-2 first:pt-0">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">db_path</dt>
+                    <dd className="text-sm text-text-primary mt-1 break-all">{globalConfig.data.db_path}</dd>
+                  </div>
+                  <div className="py-2">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">active_agent_types</dt>
+                    <dd className="text-sm text-text-primary mt-1">{globalConfig.data.active_agent_types.join(', ') || 'None'}</dd>
+                  </div>
+                  <div className="py-2 last:pb-0">
+                    <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">max_recent_runs</dt>
+                    <dd className="text-sm text-text-primary mt-1">{globalConfig.data.max_recent_runs}</dd>
+                  </div>
+                </dl>
+              )}
             </div>
           </div>
 

@@ -26,6 +26,7 @@ from orchestrator.state.errors import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.errors import InvalidTransitionError
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -285,3 +286,116 @@ async def test_revision_cycle(service: WorkflowService) -> None:
     await service.set_grade("run-1", "task-1", "R1", "A")
     result = await service.complete_verification("run-1", "task-1")
     assert result.new_status == TaskStatus.COMPLETED
+
+
+def _make_failed_run_with_downstream() -> Run:
+    now = datetime(2025, 1, 15, 11, 0, 0, tzinfo=timezone.utc)
+    return Run(
+        id="run-recover-1",
+        repo_name="proj-1",
+        source_branch="main",
+        status=RunStatus.FAILED,
+        routine_id="recover-routine",
+        routine_source=RoutineSource.LOCAL,
+        current_step_index=0,
+        completed_at=now,
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S-01",
+                completed=True,
+                tasks=[
+                    TaskState(
+                        id="task-1",
+                        config_id="T-01",
+                        status=TaskStatus.FAILED,
+                        current_attempt=2,
+                        max_attempts=2,
+                        checklist=[
+                            ChecklistItem(
+                                req_id="R1",
+                                desc="Target task requirement",
+                                priority=Priority.CRITICAL,
+                                status=ChecklistStatus.DONE,
+                            )
+                        ],
+                    ),
+                    TaskState(
+                        id="task-2",
+                        config_id="T-02",
+                        status=TaskStatus.COMPLETED,
+                        current_attempt=1,
+                        max_attempts=2,
+                        checklist=[
+                            ChecklistItem(
+                                req_id="R2",
+                                desc="Downstream requirement",
+                                priority=Priority.EXPECTED,
+                                status=ChecklistStatus.DONE,
+                                note="kept note",
+                            )
+                        ],
+                    ),
+                ],
+            )
+        ],
+        created_at=now,
+        updated_at=now,
+    )
+
+
+@pytest.mark.parametrize("status", [RunStatus.ACTIVE, RunStatus.PAUSED, RunStatus.COMPLETED])
+async def test_recover_run_rejects_non_failed_statuses(
+    service: WorkflowService, status: RunStatus
+) -> None:
+    run = _make_simple_run()
+    run.id = f"run-non-failed-{status.value}"
+    run.status = status
+    await service.create_run(run)
+
+    with pytest.raises(InvalidTransitionError):
+        await service.recover_run(run.id, "task-1")
+
+
+async def test_recover_run_resets_target_and_downstream(service: WorkflowService) -> None:
+    run = _make_failed_run_with_downstream()
+    await service.create_run(run)
+
+    result = await service.recover_run("run-recover-1", "task-1", additional_attempts=1)
+    updated = await service.get_run("run-recover-1")
+
+    assert result.status == "paused"
+    assert result.pause_reason == "recovered"
+    assert updated.status == RunStatus.PAUSED
+    assert updated.pause_reason == "recovered"
+    assert updated.completed_at is None
+
+    target = updated.steps[0].tasks[0]
+    assert target.status == TaskStatus.BUILDING
+    assert target.max_attempts == 3
+    assert target.current_attempt == 1
+    assert len(target.attempts) == 1
+
+    downstream = updated.steps[0].tasks[1]
+    assert downstream.status == TaskStatus.PENDING
+    assert downstream.current_attempt == 0
+    assert downstream.attempts == []
+    assert downstream.checklist[0].status == ChecklistStatus.OPEN
+    assert downstream.checklist[0].note is None
+    assert updated.steps[0].completed is False
+
+
+async def test_recover_run_preserves_downstream_checklist_when_requested(
+    service: WorkflowService,
+) -> None:
+    run = _make_failed_run_with_downstream()
+    run.id = "run-recover-2"
+    await service.create_run(run)
+
+    await service.recover_run("run-recover-2", "task-1", preserve_checklist=True)
+    updated = await service.get_run("run-recover-2")
+    downstream = updated.steps[0].tasks[1]
+
+    assert downstream.status == TaskStatus.PENDING
+    assert downstream.checklist[0].status == ChecklistStatus.DONE
+    assert downstream.checklist[0].note == "kept note"

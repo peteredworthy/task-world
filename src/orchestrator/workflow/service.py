@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.api.schemas.runs import RecoverResponse
 from orchestrator.config.enums import AgentType, ChecklistStatus, GateType, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, TaskConfig
@@ -432,6 +433,128 @@ class WorkflowService:
         engine.resume_run(run_id)
         return await self._persist(state, run_id, buffer)
 
+    async def recover_run(
+        self,
+        run_id: str,
+        target_task_id: str,
+        additional_attempts: int = 1,
+        agent_type: AgentType | None = None,
+        agent_config: dict[str, object] | None = None,
+        preserve_checklist: bool = False,
+    ) -> RecoverResponse:
+        """Recover a FAILED run by rewinding to a target task and pausing.
+
+        Recovery semantics:
+        - Only FAILED runs can be recovered (all other statuses -> 409 conflict)
+        - Target task is moved to BUILDING with an extra attempt budget
+        - Downstream tasks are reset to PENDING with cleared attempts
+        - Downstream checklist items are reset to OPEN by default
+        - Run is transitioned to PAUSED with pause_reason="recovered"
+        """
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.FAILED:
+            raise InvalidTransitionError(run.status.value, RunStatus.PAUSED.value)
+
+        if additional_attempts < 0:
+            raise ValueError("additional_attempts must be >= 0")
+
+        ordered_tasks: list[tuple[int, StepState, TaskState]] = []
+        for step_index, step in enumerate(run.steps):
+            for task in step.tasks:
+                ordered_tasks.append((step_index, step, task))
+
+        target_idx = -1
+        target_step_index = -1
+        target_step: StepState | None = None
+        target_task: TaskState | None = None
+        for idx, (step_index, step, task) in enumerate(ordered_tasks):
+            if task.id == target_task_id:
+                target_idx = idx
+                target_step_index = step_index
+                target_step = step
+                target_task = task
+                break
+
+        if target_task is None or target_step is None:
+            raise TaskNotFoundError(run_id, target_task_id)
+
+        downstream = ordered_tasks[target_idx + 1 :]
+
+        # Capture restore point from DB-recorded builder end_commit before mutation.
+        restore_commit: str | None = None
+        for attempt in reversed(target_task.attempts):
+            if attempt.end_commit:
+                restore_commit = attempt.end_commit
+                break
+
+        now = self._clock.now()
+
+        # Reset target task to BUILDING with a fresh attempt and expanded budget.
+        target_task.max_attempts += additional_attempts
+        target_task.status = TaskStatus.BUILDING
+        target_task.pending_action_type = None
+        target_task.pending_clarification_id = None
+        next_attempt_num = len(target_task.attempts) + 1
+        target_task.current_attempt = next_attempt_num
+        target_task.attempts.append(Attempt(attempt_num=next_attempt_num, started_at=now))
+        if target_task.attempts:
+            active_attempt = target_task.attempts[-1]
+            active_attempt.agent_type = run.agent_type
+            active_attempt.agent_model = run.agent_config.get("model")
+            active_attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+
+        # Reset all downstream tasks.
+        for _, _, task in downstream:
+            task.status = TaskStatus.PENDING
+            task.pending_action_type = None
+            task.pending_clarification_id = None
+            task.current_attempt = 0
+            task.attempts = []
+            for item in task.checklist:
+                item.grade = None
+                item.grade_reason = None
+                if not preserve_checklist:
+                    item.status = ChecklistStatus.OPEN
+                    item.note = None
+
+        # Un-complete target step and all downstream steps.
+        affected_steps = [target_step, *[step for _, step, _ in downstream]]
+        seen_steps: set[str] = set()
+        for step in affected_steps:
+            if step.id in seen_steps:
+                continue
+            seen_steps.add(step.id)
+            step.completed = False
+
+        run.current_step_index = target_step_index
+        run.status = RunStatus.PAUSED
+        run.pause_reason = "recovered"
+        run.completed_at = None
+        run.updated_at = now
+
+        if agent_type is not None:
+            run.agent_type = agent_type
+        if agent_config is not None:
+            run.agent_config = agent_config
+
+        # Restore worktree to target task's end_commit (or source branch head fallback).
+        if run.worktree_path:
+            restored = False
+            if restore_commit:
+                restored = self._checkout_commit(run.worktree_path, restore_commit)
+            if not restored and run.source_branch:
+                self._checkout_commit(run.worktree_path, run.source_branch)
+
+        await self._repo.save(run)
+        await self._session.commit()
+
+        return RecoverResponse(
+            run_id=run.id,
+            status=run.status.value,
+            pause_reason=run.pause_reason,
+            current_step_index=run.current_step_index,
+        )
+
     def _revert_task_to_phase_start(
         self,
         task: TaskState,
@@ -497,8 +620,8 @@ class WorkflowService:
                 if builder_attempt.end_commit and run.worktree_path:
                     self._checkout_commit(run.worktree_path, builder_attempt.end_commit)
 
-    def _checkout_commit(self, worktree_path: str, commit_sha: str) -> None:
-        """Checkout a git commit in the worktree. Logs warning on failure."""
+    def _checkout_commit(self, worktree_path: str, commit_sha: str) -> bool:
+        """Checkout a git commit/ref in the worktree. Logs warning on failure."""
         import logging
         import subprocess
 
@@ -513,6 +636,8 @@ class WorkflowService:
                 f"Failed to checkout commit {commit_sha} in {worktree_path}: "
                 f"{checkout.stderr.strip()}"
             )
+            return False
+        return True
 
     async def transition_backward(
         self, run_id: str, target_step_index: int, reason: str | None = None

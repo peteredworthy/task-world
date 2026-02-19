@@ -207,6 +207,117 @@ async def test_resume_invalid_state(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
+async def _drive_run_to_failed(client: AsyncClient) -> tuple[str, str]:
+    """Create a run and fail it by exhausting 3 verification attempts."""
+    created = await _create_run(client)
+    run_id = created["id"]
+    task_id = created["steps"][0]["tasks"][0]["id"]
+
+    await client.post(f"/api/runs/{run_id}/start")
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+
+    for _ in range(3):
+        await client.patch(
+            f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
+            json={"status": "done"},
+        )
+        await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+        await client.put(
+            f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
+            json={"grade": "D", "grade_reason": "force failure"},
+        )
+        await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+
+    return run_id, task_id
+
+
+async def _drive_run_to_completed(client: AsyncClient) -> tuple[str, str]:
+    """Create a run and complete it successfully."""
+    created = await _create_run(client)
+    run_id = created["id"]
+    task_id = created["steps"][0]["tasks"][0]["id"]
+
+    await client.post(f"/api/runs/{run_id}/start")
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+    await client.patch(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
+        json={"status": "done"},
+    )
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    await client.put(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
+        json={"grade": "A"},
+    )
+    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    return run_id, task_id
+
+
+async def test_recover_run_success_from_failed(client: AsyncClient) -> None:
+    run_id, task_id = await _drive_run_to_failed(client)
+    run_before = await client.get(f"/api/runs/{run_id}")
+    assert run_before.status_code == 200
+    assert run_before.json()["status"] == "failed"
+
+    response = await client.post(
+        f"/api/runs/{run_id}/recover",
+        json={"target_task_id": task_id, "additional_attempts": 1},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_id"] == run_id
+    assert data["status"] == "paused"
+    assert data["pause_reason"] == "recovered"
+
+
+async def test_recover_run_conflict_when_active(client: AsyncClient) -> None:
+    created = await _create_run(client)
+    run_id = created["id"]
+    task_id = created["steps"][0]["tasks"][0]["id"]
+    await client.post(f"/api/runs/{run_id}/start")
+
+    response = await client.post(f"/api/runs/{run_id}/recover", json={"target_task_id": task_id})
+    assert response.status_code == 409
+
+
+async def test_recover_run_conflict_when_paused(client: AsyncClient) -> None:
+    created = await _create_run(client)
+    run_id = created["id"]
+    task_id = created["steps"][0]["tasks"][0]["id"]
+    await client.post(f"/api/runs/{run_id}/start")
+    await client.post(f"/api/runs/{run_id}/pause")
+
+    response = await client.post(f"/api/runs/{run_id}/recover", json={"target_task_id": task_id})
+    assert response.status_code == 409
+
+
+async def test_recover_run_conflict_when_completed(client: AsyncClient) -> None:
+    run_id, task_id = await _drive_run_to_completed(client)
+    run_before = await client.get(f"/api/runs/{run_id}")
+    assert run_before.status_code == 200
+    assert run_before.json()["status"] == "completed"
+
+    response = await client.post(f"/api/runs/{run_id}/recover", json={"target_task_id": task_id})
+    assert response.status_code == 409
+
+
+async def test_recover_run_not_found_when_run_missing(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/runs/nonexistent/recover",
+        json={"target_task_id": "any-task-id"},
+    )
+    assert response.status_code == 404
+
+
+async def test_recover_run_not_found_when_target_task_missing(client: AsyncClient) -> None:
+    run_id, _task_id = await _drive_run_to_failed(client)
+
+    response = await client.post(
+        f"/api/runs/{run_id}/recover",
+        json={"target_task_id": "missing-task-id"},
+    )
+    assert response.status_code == 404
+
+
 async def test_resume_with_agent_change(client: AsyncClient) -> None:
     """Resume a paused run while changing the agent type and config."""
     created = await _create_run(client)

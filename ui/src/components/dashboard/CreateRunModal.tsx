@@ -5,6 +5,7 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useCreateRunModal } from '../../hooks/useCreateRunModal';
 import { BranchSelector } from '../BranchSelector';
 import { RoutineSelector } from '../RoutineSelector';
+import { RoutineValidatorModal } from '../RoutineValidatorModal';
 import type { RoutineSelection } from '../RoutineSelector';
 import type { AgentOption } from '../../types/agents';
 
@@ -22,6 +23,7 @@ interface RoutineInput {
 
 interface FormState {
   selectedRoutine: string;
+  routineYaml: string;
   repoName: string;
   inputValues: Record<string, string>;
   targetBranch: string;
@@ -36,6 +38,7 @@ interface FormState {
 
 const INITIAL_FORM: FormState = {
   selectedRoutine: '',
+  routineYaml: '',
   repoName: '',
   inputValues: {},
   targetBranch: '',
@@ -90,6 +93,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
 
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [routineSelection, setRoutineSelection] = useState<RoutineSelection | null>(null);
+  const [routineValidatorOpen, setRoutineValidatorOpen] = useState(false);
 
   // For templates, fetch full routine detail to get input definitions
   const isTemplate = routineSelection && !routineSelection.isProjectRoutine;
@@ -335,10 +339,19 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
               {/* Routine Selection */}
               {form.repoName && (
                 <div>
-                  <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
-                    <span className="text-base leading-none">{'\u{1F4CB}'}</span>
-                    Routine
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary">
+                      <span className="text-base leading-none">{'\u{1F4CB}'}</span>
+                      Routine
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setRoutineValidatorOpen(true)}
+                      className="text-xs text-accent-purple hover:text-accent-purple/80 transition-colors"
+                    >
+                      Validate routine YAML
+                    </button>
+                  </div>
                   <RoutineSelector
                     repoName={form.repoName}
                     branch={form.targetBranch || 'main'}
@@ -346,6 +359,23 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                     onChange={routineId => setForm(prev => ({ ...prev, selectedRoutine: routineId, inputValues: {} }))}
                     onSelectionChange={setRoutineSelection}
                     required
+                  />
+                </div>
+              )}
+
+              {/* Routine YAML (prefilled from validator) */}
+              {form.repoName && (
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                    <span className="text-base leading-none">{'\u{1F4DD}'}</span>
+                    Routine YAML
+                  </label>
+                  <textarea
+                    rows={5}
+                    value={form.routineYaml}
+                    onChange={e => setForm(prev => ({ ...prev, routineYaml: e.target.value }))}
+                    placeholder="Optional. Use the routine validator to prefill this."
+                    className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm font-mono text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 resize-y"
                   />
                 </div>
               )}
@@ -585,6 +615,14 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
           </form>
         )}
       </div>
+      <RoutineValidatorModal
+        isOpen={routineValidatorOpen}
+        onClose={() => setRoutineValidatorOpen(false)}
+        onCreateRun={(yaml) => {
+          setForm(prev => ({ ...prev, routineYaml: yaml }));
+          setRoutineValidatorOpen(false);
+        }}
+      />
     </div>
   );
 }

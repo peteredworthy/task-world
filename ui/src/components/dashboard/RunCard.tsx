@@ -448,7 +448,7 @@ function CollapsedRow(props: RunCardProps) {
       <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
         {/* Step badges */}
         <div className="w-0 flex-1 overflow-x-auto scrollbar-dark">
-          <StepTimeline steps={run.steps} currentStepIndex={run.current_step_index} />
+          <StepTimeline runId={run.id} steps={run.steps} currentStepIndex={run.current_step_index} />
         </div>
 
         {/* Duration */}

@@ -3,14 +3,22 @@ import type {
   AgentLogsResponse,
   AgentOption,
   ApproveTaskRequest,
+  BranchStatusResponse,
   BranchCountResponse,
   BranchesListResponse,
   ChecklistItemSchema,
   ClarificationRequest,
   CreateRunRequest,
+  EnvDefaultTarget,
+  EnvFile,
+  EnvSnapshot,
+  GlobalConfig,
+  GuidanceResponse,
   PendingAction,
   ProjectRoutineResponse,
   ProjectRoutinesListResponse,
+  RecoverRequest,
+  RecoverResponse,
   PromptResponse,
   RejectTaskRequest,
   RepoResponse,
@@ -51,6 +59,30 @@ export class ApiError extends Error {
   }
 }
 
+export class RecoverTaskNotFoundError extends ApiError {
+  constructor(body: unknown) {
+    super(404, body);
+    this.name = 'RecoverTaskNotFoundError';
+  }
+}
+
+export class RecoverInvalidStateError extends ApiError {
+  constructor(body: unknown) {
+    super(409, body);
+    this.name = 'RecoverInvalidStateError';
+  }
+}
+
+export interface ValidationError {
+  line: number;
+  message: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+}
+
 function extractMessage(status: number, body: unknown): string {
   if (body && typeof body === 'object') {
     const b = body as Record<string, unknown>;
@@ -69,6 +101,28 @@ function extractMessage(status: number, body: unknown): string {
     }
   }
   return `API error ${status}`;
+}
+
+function parseValidationLine(rawError: string): number {
+  const lineMatch = rawError.match(/\bline\s+(\d+)\b/i);
+  if (lineMatch) {
+    return Number(lineMatch[1]);
+  }
+  return 0;
+}
+
+function normalizeValidationErrors(rawErrors: unknown): ValidationError[] {
+  if (!Array.isArray(rawErrors)) {
+    return [];
+  }
+
+  return rawErrors.map((entry) => {
+    const rawMessage = typeof entry === 'string' ? entry : String(entry);
+    return {
+      line: parseValidationLine(rawMessage),
+      message: rawMessage,
+    };
+  });
 }
 
 async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
@@ -103,11 +157,140 @@ async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function normalizeEnvFile(value: unknown): EnvFile | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const file = value as Record<string, unknown>;
+  const path =
+    typeof file.path === 'string'
+      ? file.path
+      : typeof file.file_path === 'string'
+        ? file.file_path
+        : '';
+  const key = typeof file.key === 'string' ? file.key : '';
+  const maskedValue =
+    typeof file.masked_value === 'string'
+      ? file.masked_value
+      : typeof file.value_masked === 'string'
+        ? file.value_masked
+        : '';
+
+  if (!path && !key) {
+    return null;
+  }
+
+  return {
+    path,
+    key,
+    masked_value: maskedValue,
+  };
+}
+
+function normalizeEnvFiles(value: unknown): EnvFile[] {
+  if (Array.isArray(value)) {
+    return value.map(normalizeEnvFile).filter((v): v is EnvFile => v !== null);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const obj = value as Record<string, unknown>;
+  const candidates = [obj.files, obj.env_files, obj.managed_files];
+  const list = candidates.find(Array.isArray);
+  if (!Array.isArray(list)) {
+    return [];
+  }
+
+  return list.map(normalizeEnvFile).filter((v): v is EnvFile => v !== null);
+}
+
+function normalizeEnvSnapshot(value: unknown): EnvSnapshot | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const snapshot = value as Record<string, unknown>;
+  const id =
+    typeof snapshot.id === 'string'
+      ? snapshot.id
+      : typeof snapshot.snapshot_id === 'string'
+        ? snapshot.snapshot_id
+        : '';
+  if (!id) {
+    return null;
+  }
+
+  const timestamp = typeof snapshot.timestamp === 'string' ? snapshot.timestamp : '';
+  const agent =
+    typeof snapshot.agent === 'string'
+      ? snapshot.agent
+      : typeof snapshot.type === 'string'
+        ? snapshot.type
+        : '';
+
+  let files: EnvFile[] = [];
+  if (Array.isArray(snapshot.files)) {
+    files = snapshot.files
+      .map((file): EnvFile | null => {
+        if (typeof file === 'string') {
+          return { path: file, key: '', masked_value: '' };
+        }
+        return normalizeEnvFile(file);
+      })
+      .filter((file): file is EnvFile => file !== null);
+  }
+
+  return {
+    id,
+    timestamp,
+    agent,
+    files,
+  };
+}
+
+function normalizeEnvSnapshots(value: unknown): EnvSnapshot[] {
+  if (Array.isArray(value)) {
+    return value.map(normalizeEnvSnapshot).filter((v): v is EnvSnapshot => v !== null);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const obj = value as Record<string, unknown>;
+  const snapshots = Array.isArray(obj.snapshots) ? obj.snapshots : [];
+  return snapshots.map(normalizeEnvSnapshot).filter((v): v is EnvSnapshot => v !== null);
+}
+
+function normalizeEnvDefaultTarget(value: unknown): EnvDefaultTarget {
+  if (!value || typeof value !== 'object') {
+    return { target_path: '' };
+  }
+
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.target_path === 'string') {
+    return { target_path: obj.target_path };
+  }
+  if (typeof obj.default_target === 'string') {
+    return { target_path: obj.default_target };
+  }
+
+  return { target_path: '' };
+}
+
 export const api = {
-  listRuns(params?: { status?: string; repo_name?: string }): Promise<RunListResponse> {
+  getConfig(): Promise<GlobalConfig> {
+    return fetchApi('/api/config');
+  },
+
+  listRuns(params?: { status?: string; repo_name?: string; limit?: number }): Promise<RunListResponse> {
     const sp = new URLSearchParams();
     if (params?.status) sp.set('status', params.status);
     if (params?.repo_name) sp.set('repo_name', params.repo_name);
+    if (params?.limit !== undefined) sp.set('limit', String(params.limit));
     const qs = sp.toString();
     return fetchApi('/api/runs' + (qs ? '?' + qs : ''));
   },
@@ -142,6 +325,52 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/cancel', { method: 'POST' });
   },
 
+  agentStarted(runId: string): Promise<void> {
+    return fetchApi('/api/runs/' + runId + '/agent-started', { method: 'POST' });
+  },
+
+  agentCancelled(runId: string): Promise<void> {
+    return fetchApi('/api/runs/' + runId + '/agent-cancelled', { method: 'POST' });
+  },
+
+  transitionBack(runId: string, data: { target_step_index: number; reason?: string }): Promise<RunResponse> {
+    return fetchApi('/api/runs/' + runId + '/transition-back', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  getGuidance(runId: string): Promise<GuidanceResponse> {
+    return fetchApi('/api/runs/' + runId + '/guidance');
+  },
+
+  getBranchStatus(runId: string): Promise<BranchStatusResponse> {
+    return fetchApi('/api/runs/' + runId + '/branch-status');
+  },
+
+  backMerge(runId: string): Promise<void> {
+    return fetchApi('/api/runs/' + runId + '/back-merge', { method: 'POST' });
+  },
+
+  async recoverRun(runId: string, data: RecoverRequest): Promise<RecoverResponse> {
+    try {
+      return await fetchApi('/api/runs/' + runId + '/recover', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 404) {
+          throw new RecoverTaskNotFoundError(error.body);
+        }
+        if (error.status === 409) {
+          throw new RecoverInvalidStateError(error.body);
+        }
+      }
+      throw error;
+    }
+  },
+
   deleteRun(runId: string): Promise<void> {
     return fetchApi('/api/runs/' + runId, { method: 'DELETE' });
   },
@@ -168,6 +397,18 @@ export const api = {
 
   getRoutine(routineId: string): Promise<RoutineDetail> {
     return fetchApi('/api/routines/' + routineId);
+  },
+
+  async validateRoutine(yamlContent: string): Promise<ValidationResult> {
+    const response = await fetchApi<{ valid: boolean; errors?: unknown }>('/api/routines/validate', {
+      method: 'POST',
+      body: JSON.stringify({ yaml_content: yamlContent }),
+    });
+
+    return {
+      valid: response.valid,
+      errors: normalizeValidationErrors(response.errors),
+    };
   },
 
   listAgents(): Promise<AgentOption[]> {
@@ -213,6 +454,44 @@ export const api = {
 
   getPendingClarification(runId: string, taskId: string): Promise<ClarificationRequest | null> {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/pending-clarification');
+  },
+
+  async getEnvFiles(runId: string): Promise<EnvFile[]> {
+    const response = await fetchApi<unknown>('/api/runs/' + runId + '/env-files');
+    return normalizeEnvFiles(response);
+  },
+
+  async getEnvSnapshots(runId: string): Promise<EnvSnapshot[]> {
+    const response = await fetchApi<unknown>('/api/runs/' + runId + '/env-files/snapshots');
+    return normalizeEnvSnapshots(response);
+  },
+
+  async getEnvDefaultTarget(runId: string): Promise<EnvDefaultTarget> {
+    const response = await fetchApi<unknown>('/api/runs/' + runId + '/env-files/default-target');
+    return normalizeEnvDefaultTarget(response);
+  },
+
+  async revertEnvSnapshot(runId: string, snapshotId: string): Promise<EnvSnapshot> {
+    const response = await fetchApi<unknown>('/api/runs/' + runId + '/env-files/revert', {
+      method: 'POST',
+      body: JSON.stringify({
+        snapshot_id: snapshotId,
+        revert_to: snapshotId,
+      }),
+    });
+
+    const normalized = normalizeEnvSnapshot(response);
+    return normalized ?? { id: snapshotId, timestamp: '', agent: '', files: [] };
+  },
+
+  copyBackEnvFiles(runId: string, targetPath: string): Promise<void> {
+    return fetchApi('/api/runs/' + runId + '/env-files/copy-back', {
+      method: 'POST',
+      body: JSON.stringify({
+        target_path: targetPath,
+        target_dir: targetPath,
+      }),
+    });
   },
 
   respondToClarification(runId: string, taskId: string, requestId: string, data: RespondToClarificationRequest): Promise<TransitionResponse> {
@@ -286,3 +565,63 @@ export const api = {
     return fetchApi('/api/repos/' + repoName + '/routines/' + routineId + '?branch=' + encodeURIComponent(branch));
   },
 };
+
+export function recoverRun(runId: string, data: RecoverRequest): Promise<RecoverResponse> {
+  return api.recoverRun(runId, data);
+}
+
+export function approveStep(runId: string, stepId: string, data: { approved_by: string; comment?: string }): Promise<unknown> {
+  return api.approveStep(runId, stepId, data);
+}
+
+export function agentStarted(runId: string): Promise<void> {
+  return api.agentStarted(runId);
+}
+
+export function agentCancelled(runId: string): Promise<void> {
+  return api.agentCancelled(runId);
+}
+
+export function transitionBack(runId: string, data: { target_step_index: number; reason?: string }): Promise<RunResponse> {
+  return api.transitionBack(runId, data);
+}
+
+export function getGuidance(runId: string): Promise<GuidanceResponse> {
+  return api.getGuidance(runId);
+}
+
+export function getBranchStatus(runId: string): Promise<BranchStatusResponse> {
+  return api.getBranchStatus(runId);
+}
+
+export function backMerge(runId: string): Promise<void> {
+  return api.backMerge(runId);
+}
+
+export function getEnvFiles(runId: string): Promise<EnvFile[]> {
+  return api.getEnvFiles(runId);
+}
+
+export function getEnvSnapshots(runId: string): Promise<EnvSnapshot[]> {
+  return api.getEnvSnapshots(runId);
+}
+
+export function getEnvDefaultTarget(runId: string): Promise<EnvDefaultTarget> {
+  return api.getEnvDefaultTarget(runId);
+}
+
+export function revertEnvSnapshot(runId: string, snapshotId: string): Promise<EnvSnapshot> {
+  return api.revertEnvSnapshot(runId, snapshotId);
+}
+
+export function copyBackEnvFiles(runId: string, targetPath: string): Promise<void> {
+  return api.copyBackEnvFiles(runId, targetPath);
+}
+
+export function getConfig(): Promise<GlobalConfig> {
+  return api.getConfig();
+}
+
+export function validateRoutine(yamlContent: string): Promise<ValidationResult> {
+  return api.validateRoutine(yamlContent);
+}
