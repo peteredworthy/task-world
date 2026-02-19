@@ -9,11 +9,27 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from mcp.server import FastMCP
 
 from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS, ToolHandler
 from orchestrator.workflow.service import WorkflowService
+
+BUILDER_TOOLS = {
+    "orchestrator_get_requirements",
+    "orchestrator_update_checklist",
+    "orchestrator_submit",
+    "orchestrator_request_clarification",
+    "orchestrator_list_repos",
+    "orchestrator_list_branches",
+}
+
+VERIFIER_TOOLS = {
+    "orchestrator_get_requirements",
+    "orchestrator_set_grade",
+    "orchestrator_submit",
+}
 
 
 class OrchestratorMCPServer:
@@ -28,6 +44,7 @@ class OrchestratorMCPServer:
         service: WorkflowService | None = None,
         handler: ToolHandler | None = None,
         repos_dir: Path | None = None,
+        phase: Literal["building", "verifying"] = "building",
     ) -> None:
         if handler is not None:
             self._handler = handler
@@ -35,6 +52,11 @@ class OrchestratorMCPServer:
             self._handler = ToolHandler(service, repos_dir=repos_dir)
         else:
             raise ValueError("Either service or handler must be provided")
+        if phase not in ("building", "verifying"):
+            raise ValueError("phase must be one of: building, verifying")
+
+        self.phase: Literal["building", "verifying"] = phase
+        self._allowed_tools = BUILDER_TOOLS if self.phase == "building" else VERIFIER_TOOLS
         self._repos_dir = repos_dir
         self._mcp = FastMCP(
             name="orchestrator",
@@ -118,35 +140,40 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
-        self._mcp.add_tool(
-            orchestrator_get_requirements,
-            name="orchestrator_get_requirements",
-            description="Get the list of requirements (checklist items) for a task.",
-        )
-        self._mcp.add_tool(
-            orchestrator_update_checklist,
-            name="orchestrator_update_checklist",
-            description="Mark a requirement as done, not applicable, or blocked.",
-        )
-        self._mcp.add_tool(
-            orchestrator_submit,
-            name="orchestrator_submit",
-            description="Submit the task for verification after completing requirements.",
-        )
-        self._mcp.add_tool(
-            orchestrator_set_grade,
-            name="orchestrator_set_grade",
-            description="Set a grade for a requirement (used by verifier).",
-        )
-        self._mcp.add_tool(
-            orchestrator_request_clarification,
-            name="orchestrator_request_clarification",
-            description=(
-                "Request clarification from the human. "
-                "The task will pause until the human answers. "
-                "Answers will be appended to the clarifications artifact file."
-            ),
-        )
+        if "orchestrator_get_requirements" in self._allowed_tools:
+            self._mcp.add_tool(
+                orchestrator_get_requirements,
+                name="orchestrator_get_requirements",
+                description="Get the list of requirements (checklist items) for a task.",
+            )
+        if "orchestrator_update_checklist" in self._allowed_tools:
+            self._mcp.add_tool(
+                orchestrator_update_checklist,
+                name="orchestrator_update_checklist",
+                description="Mark a requirement as done, not applicable, or blocked.",
+            )
+        if "orchestrator_submit" in self._allowed_tools:
+            self._mcp.add_tool(
+                orchestrator_submit,
+                name="orchestrator_submit",
+                description="Submit the task for verification after completing requirements.",
+            )
+        if "orchestrator_set_grade" in self._allowed_tools:
+            self._mcp.add_tool(
+                orchestrator_set_grade,
+                name="orchestrator_set_grade",
+                description="Set a grade for a requirement (used by verifier).",
+            )
+        if "orchestrator_request_clarification" in self._allowed_tools:
+            self._mcp.add_tool(
+                orchestrator_request_clarification,
+                name="orchestrator_request_clarification",
+                description=(
+                    "Request clarification from the human. "
+                    "The task will pause until the human answers. "
+                    "Answers will be appended to the clarifications artifact file."
+                ),
+            )
 
         async def orchestrator_list_repos() -> str:
             """List available repositories in the repos directory."""
@@ -171,16 +198,18 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
-        self._mcp.add_tool(
-            orchestrator_list_repos,
-            name="orchestrator_list_repos",
-            description="List available repositories in the repos directory.",
-        )
-        self._mcp.add_tool(
-            orchestrator_list_branches,
-            name="orchestrator_list_branches",
-            description="List branches in a repository with optional glob pattern filter.",
-        )
+        if "orchestrator_list_repos" in self._allowed_tools:
+            self._mcp.add_tool(
+                orchestrator_list_repos,
+                name="orchestrator_list_repos",
+                description="List available repositories in the repos directory.",
+            )
+        if "orchestrator_list_branches" in self._allowed_tools:
+            self._mcp.add_tool(
+                orchestrator_list_branches,
+                name="orchestrator_list_branches",
+                description="List branches in a repository with optional glob pattern filter.",
+            )
 
     @property
     def mcp(self) -> FastMCP:
@@ -214,4 +243,4 @@ class OrchestratorMCPServer:
 
     def tool_names(self) -> list[str]:
         """Return list of registered tool names."""
-        return [t["name"] for t in ORCHESTRATOR_TOOLS]
+        return [t["name"] for t in ORCHESTRATOR_TOOLS if t["name"] in self._allowed_tools]
