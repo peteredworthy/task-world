@@ -439,7 +439,7 @@ function RunDetailInner({ runId }: { runId: string }) {
             </div>
           )}
 
-          {run.status === 'failed' && <RecoveryPanel run={run} />}
+          {run.status === 'failed' && <RecoveryPanel run={run} /> /* FAILED runs only */}
 
           {/* Agent error banner — shown when run paused/failed due to agent error */}
           {agentError && (
