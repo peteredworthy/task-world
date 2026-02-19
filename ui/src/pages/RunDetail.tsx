@@ -16,6 +16,7 @@ import { MetricsBar } from '../components/detail/MetricsBar';
 import { ActivityFeed } from '../components/detail/ActivityFeed';
 import { UpcomingPlan } from '../components/detail/UpcomingPlan';
 import { RecoveryPanel } from '../components/detail/RecoveryPanel';
+import { StepApprovalBanner } from '../components/detail/StepApprovalBanner';
 import { classifyTasks, getLastAgentError } from '../lib/activity';
 import { formatRelativeTime } from '../lib/format';
 import { AgentIcon } from '../components/AgentIcon';
@@ -109,6 +110,8 @@ function RunDetailInner({ runId }: { runId: string }) {
   );
   const { data: activityData } = useActivityStream(runId);
   const { data: pendingActionsData } = usePendingActions(runId);
+  const taskPendingActions = pendingActionsData?.pendingActions ?? [];
+  const pendingActionsCount = pendingActionsData?.badgeCount ?? 0;
   const { status: wsStatus, reconnect: wsReconnect } = useWebSocketStatus();
   const pauseRun = usePauseRun();
   const cancelRun = useCancelRun();
@@ -130,13 +133,13 @@ function RunDetailInner({ runId }: { runId: string }) {
 
   // Auto-open modal when a pending action appears (but not when the user dismisses it)
   useEffect(() => {
-    if (!pendingActionsData || pendingActionsData.length === 0) {
+    if (taskPendingActions.length === 0) {
       return;
     }
     if (!selectedPendingActionRef.current) {
-      setSelectedPendingAction(pendingActionsData[0]);
+      setSelectedPendingAction(taskPendingActions[0]);
     }
-  }, [pendingActionsData]);
+  }, [taskPendingActions]);
 
   if (isLoading) {
     return (
@@ -402,7 +405,7 @@ function RunDetailInner({ runId }: { runId: string }) {
           )}
 
           {/* Pending actions banner */}
-          {pendingActionsData && pendingActionsData.length > 0 && (
+          {pendingActionsCount > 0 && (
             <div className="mb-6 rounded-md bg-yellow-50 border border-yellow-300 px-4 py-3 flex items-start gap-3">
               <svg className="h-5 w-5 text-yellow-600 shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
@@ -410,17 +413,19 @@ function RunDetailInner({ runId }: { runId: string }) {
               <div className="flex-1">
                 <p className="text-sm font-medium text-yellow-800">Action required</p>
                 <p className="text-xs text-yellow-700 mt-0.5">
-                  {pendingActionsData.length === 1
+                  {pendingActionsCount === 1
                     ? 'This run needs your input to continue.'
-                    : `${pendingActionsData.length} tasks need your input to continue.`}
+                    : `${pendingActionsCount} actions need your input to continue.`}
                 </p>
               </div>
-              <button
-                onClick={() => setSelectedPendingAction(pendingActionsData[0])}
-                className="px-3 py-1.5 text-xs font-medium text-yellow-800 bg-yellow-100 border border-yellow-300 rounded-md hover:bg-yellow-200 transition-colors"
-              >
-                Review
-              </button>
+              {taskPendingActions.length > 0 && (
+                <button
+                  onClick={() => setSelectedPendingAction(taskPendingActions[0])}
+                  className="px-3 py-1.5 text-xs font-medium text-yellow-800 bg-yellow-100 border border-yellow-300 rounded-md hover:bg-yellow-200 transition-colors"
+                >
+                  Review
+                </button>
+              )}
             </div>
           )}
 
@@ -487,6 +492,15 @@ function RunDetailInner({ runId }: { runId: string }) {
               </span>
             </div>
             <StepProgressBar run={run} routineSteps={routineSteps} />
+          </div>
+
+          {/* Per-step approval gates */}
+          <div className="mb-2">
+            {run.steps.map((step) => (
+              <div key={step.id} id={`step-${step.id}`}>
+                <StepApprovalBanner runId={run.id} step={step} />
+              </div>
+            ))}
           </div>
 
           {/* Activity Feed */}
