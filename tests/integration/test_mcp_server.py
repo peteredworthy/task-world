@@ -42,26 +42,26 @@ def test_server_creation(server: OrchestratorMCPServer) -> None:
 
 
 def test_tool_names(server: OrchestratorMCPServer) -> None:
-    """Server registers all 7 tools."""
+    """Default server (builder phase) registers only builder tools."""
     names = server.tool_names()
-    assert len(names) == 7
+    assert len(names) == 6
     assert "orchestrator_get_requirements" in names
     assert "orchestrator_update_checklist" in names
     assert "orchestrator_submit" in names
-    assert "orchestrator_set_grade" in names
     assert "orchestrator_request_clarification" in names
     assert "orchestrator_list_repos" in names
     assert "orchestrator_list_branches" in names
+    assert "orchestrator_set_grade" not in names
 
 
 async def test_server_lists_tools(server: OrchestratorMCPServer) -> None:
-    """Server's FastMCP instance lists the registered tools."""
+    """Default server (builder phase) only lists builder tools."""
     tools = await server.mcp.list_tools()
     tool_names = [t.name for t in tools]
     assert "orchestrator_get_requirements" in tool_names
     assert "orchestrator_update_checklist" in tool_names
     assert "orchestrator_submit" in tool_names
-    assert "orchestrator_set_grade" in tool_names
+    assert "orchestrator_set_grade" not in tool_names
 
 
 async def test_server_call_tool(server: OrchestratorMCPServer, service: WorkflowService) -> None:
@@ -198,8 +198,10 @@ async def test_full_workflow_through_mcp_server(
     assert data["success"] is True
     assert data["new_status"] == "verifying"
 
-    # 5. Grade R1
-    raw = await call(
+    # 5. Grade R1 via verifier-phase MCP server
+    verifier_server = OrchestratorMCPServer(service, phase="verifying")
+    verify_call = verifier_server.mcp.call_tool
+    raw = await verify_call(
         "orchestrator_set_grade",
         {"run_id": "run-1", "task_id": "task-1", "req_id": "R1", "grade": "A"},
     )
@@ -207,7 +209,7 @@ async def test_full_workflow_through_mcp_server(
     assert data["grade"] == "A"
 
     # 6. Grade R2
-    raw = await call(
+    raw = await verify_call(
         "orchestrator_set_grade",
         {"run_id": "run-1", "task_id": "task-1", "req_id": "R2", "grade": "A"},
     )
