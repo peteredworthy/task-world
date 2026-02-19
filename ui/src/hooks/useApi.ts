@@ -39,6 +39,30 @@ export function useGuidance(runId: string | undefined) {
   });
 }
 
+export function useEnvFiles(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['envFiles', runId],
+    queryFn: () => api.getEnvFiles(runId!),
+    enabled: !!runId,
+  });
+}
+
+export function useEnvSnapshots(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['envSnapshots', runId],
+    queryFn: () => api.getEnvSnapshots(runId!),
+    enabled: !!runId,
+  });
+}
+
+export function useEnvDefaultTarget(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['envDefaultTarget', runId],
+    queryFn: () => api.getEnvDefaultTarget(runId!),
+    enabled: !!runId,
+  });
+}
+
 export function useRoutines() {
   return useQuery({
     queryKey: ['routines'],
@@ -183,6 +207,27 @@ export function useBackMerge(runId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['run', runId] });
       qc.invalidateQueries({ queryKey: ['branchStatus', runId] });
+    },
+  });
+}
+
+export function useRevertEnvSnapshot(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (snapshotId: string) => api.revertEnvSnapshot(runId, snapshotId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['envFiles', runId] });
+      qc.invalidateQueries({ queryKey: ['envSnapshots', runId] });
+    },
+  });
+}
+
+export function useCopyBackEnvFiles(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (targetPath: string) => api.copyBackEnvFiles(runId, targetPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['envFiles', runId] });
     },
   });
 }
