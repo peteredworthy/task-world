@@ -23,6 +23,7 @@ interface RoutineInput {
 
 interface FormState {
   selectedRoutine: string;
+  routineYaml: string;
   repoName: string;
   inputValues: Record<string, string>;
   targetBranch: string;
@@ -37,6 +38,7 @@ interface FormState {
 
 const INITIAL_FORM: FormState = {
   selectedRoutine: '',
+  routineYaml: '',
   repoName: '',
   inputValues: {},
   targetBranch: '',
@@ -347,7 +349,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                       onClick={() => setRoutineValidatorOpen(true)}
                       className="text-xs text-accent-purple hover:text-accent-purple/80 transition-colors"
                     >
-                      Validate YAML
+                      Validate routine YAML
                     </button>
                   </div>
                   <RoutineSelector
@@ -357,6 +359,23 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                     onChange={routineId => setForm(prev => ({ ...prev, selectedRoutine: routineId, inputValues: {} }))}
                     onSelectionChange={setRoutineSelection}
                     required
+                  />
+                </div>
+              )}
+
+              {/* Routine YAML (prefilled from validator) */}
+              {form.repoName && (
+                <div>
+                  <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                    <span className="text-base leading-none">{'\u{1F4DD}'}</span>
+                    Routine YAML
+                  </label>
+                  <textarea
+                    rows={5}
+                    value={form.routineYaml}
+                    onChange={e => setForm(prev => ({ ...prev, routineYaml: e.target.value }))}
+                    placeholder="Optional. Use the routine validator to prefill this."
+                    className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm font-mono text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 resize-y"
                   />
                 </div>
               )}
@@ -599,6 +618,10 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
       <RoutineValidatorModal
         isOpen={routineValidatorOpen}
         onClose={() => setRoutineValidatorOpen(false)}
+        onCreateRun={(yaml) => {
+          setForm(prev => ({ ...prev, routineYaml: yaml }));
+          setRoutineValidatorOpen(false);
+        }}
       />
     </div>
   );
