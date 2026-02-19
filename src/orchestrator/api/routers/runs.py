@@ -35,6 +35,8 @@ from orchestrator.api.schemas.runs import (
     GuidanceResponse,
     MergeBackRequest,
     MergeBackResponse,
+    RecoverRequest,
+    RecoverResponse,
     ResumeRunRequest,
     RunListResponse,
     RunResponse,
@@ -406,6 +408,25 @@ async def resume_run(
             logger.info(f"API: Spawned {run.agent_type.value} agent for resumed run {run_id}")
 
     return _run_to_response(run)
+
+
+@router.post("/{run_id}/recover", response_model=RecoverResponse)
+async def recover_run(
+    run_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    request: RecoverRequest,
+) -> RecoverResponse:
+    """Recover a FAILED run by rewinding to a target task and pausing."""
+    agent_type = AgentType(request.agent_type) if request.agent_type else None
+    agent_config = request.agent_config if request.agent_config else None
+    return await service.recover_run(
+        run_id=run_id,
+        target_task_id=request.target_task_id,
+        additional_attempts=request.additional_attempts,
+        agent_type=agent_type,
+        agent_config=agent_config,
+        preserve_checklist=request.preserve_checklist,
+    )
 
 
 @router.delete("/{run_id}", status_code=204)
