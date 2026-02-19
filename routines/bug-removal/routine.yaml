@@ -1,0 +1,1725 @@
+id: "bug-removal"
+name: "Bug and Gap Removal"
+description: |
+  Fix 10 identified bugs and UI gaps in priority order: backend agent lifecycle issues first
+  (they block autonomous operation), then the recovery API (critical for non-technical users),
+  then MCP phase filtering (reduces wasted tool calls), and finally all frontend-only gaps
+  ordered by severity. Each step is independently deployable and verified before the next begins.
+
+  Milestone 1: Backend Agent Reliability (Steps 1-4)
+  Milestone 2: MCP Phase Filtering + High-Severity UI (Steps 5-6)
+  Milestone 3: Medium-Severity UI Gaps (Steps 7-9)
+  Milestone 4: Low-Severity UI Gaps (Steps 10-12)
+
+steps:
+  - id: "S-01"
+    title: "Fix GateBlockedError Handling (Backend)"
+    step_context: |
+      Fix AGENT-DEATH-HUMAN-GATE bug. GateBlockedError raised by on_submit() currently falls
+      through to the generic except Exception handler in cli.py, causing it to be wrapped as
+      AgentExecutionError and triggering on_agent_died. After this fix, a gate-blocked submit
+      causes the executor to keep the task in BUILDING state and retry with feedback.
+      This step is a prerequisite for Step 2 (human gate prompt rewrite).
+    tasks:
+      - id: "T-01"
+        title: "Add GateBlockedError re-raise in cli.py"
+        task_context: |
+          Import GateBlockedError from workflow/errors.py and add an explicit re-raise before
+          the generic except Exception block in cli.py's execute() method so it propagates to
+          executor.py.
+
+          Steps:
+          1. Open src/orchestrator/agents/cli.py and locate the execute() method
+          2. Add the import at the top of the file:
+             from orchestrator.workflow.errors import GateBlockedError
+          3. Inside execute(), add except GateBlockedError: raise BEFORE the generic
+             except Exception block
+          4. Verify only cli.py is changed in this task
+
+          Verification:
+          - grep -n "GateBlockedError" src/orchestrator/agents/cli.py shows both import and re-raise
+          - uv run ruff check src/orchestrator/agents/cli.py exits 0
+          - uv run pyright src/orchestrator/agents/cli.py exits 0
+        requirements:
+          - id: "R1"
+            desc: "GateBlockedError is imported in cli.py from orchestrator.workflow.errors"
+            priority: critical
+          - id: "R2"
+            desc: "GateBlockedError is explicitly re-raised (not wrapped as AgentExecutionError)"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "gate_blocked_imported"
+              cmd: "grep -n 'GateBlockedError' src/orchestrator/agents/cli.py | grep -q 'import'"
+              must: true
+            - id: "gate_blocked_reraised"
+              cmd: "grep -n 'except GateBlockedError' src/orchestrator/agents/cli.py | grep -q 'raise'"
+              must: true
+        verifier:
+          rubric:
+            - id: "correctness"
+              text: |
+                R1/R2 — A: GateBlockedError is imported and re-raised explicitly before the generic
+                except Exception block in cli.py's execute(). B: import or re-raise is present but
+                placement is incorrect (e.g., after generic handler).
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Catch GateBlockedError in executor.py"
+        task_context: |
+          In executor.py's _execute_task, catch GateBlockedError from await agent.execute(...),
+          log a warning, and return without calling on_agent_died or on_error. This leaves the
+          task in BUILDING state so the executor loop retries automatically.
+
+          Steps:
+          1. Open src/orchestrator/agents/executor.py and locate _execute_task
+          2. Add the import: from orchestrator.workflow.errors import GateBlockedError
+          3. In _execute_task, add the catch BEFORE the generic exception handler:
+             except GateBlockedError:
+                 logger.warning("Agent submit blocked by gate — task remains BUILDING, will retry")
+                 return
+          4. Verify the task is NOT transitioned or marked failed — simply return
+
+          Verification:
+          - grep -n "GateBlockedError" src/orchestrator/agents/executor.py shows import and catch
+          - uv run ruff check src/orchestrator/agents/executor.py exits 0
+          - uv run pyright src/orchestrator/agents/executor.py exits 0
+        requirements:
+          - id: "R1"
+            desc: "GateBlockedError is caught in executor.py _execute_task without calling on_agent_died"
+            priority: critical
+          - id: "R2"
+            desc: "Task remains in BUILDING state after gate-blocked submit"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "gate_blocked_caught"
+              cmd: "grep -n 'GateBlockedError' src/orchestrator/agents/executor.py | grep -q 'except'"
+              must: true
+        verifier:
+          rubric:
+            - id: "correctness"
+              text: |
+                R1/R2 — A: GateBlockedError is caught in _execute_task, returns without calling
+                on_agent_died, and the task status remains BUILDING. B: error is caught but
+                on_agent_died may still be called in some code path.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Write unit tests for GateBlockedError handling"
+        task_context: |
+          Write unit tests that verify cli.py re-raises GateBlockedError (not wrapping it) and
+          that executor.py's _execute_task returns without calling on_agent_died when a
+          gate-blocked error occurs.
+
+          Steps:
+          1. Create or extend tests/unit/agents/test_gate_blocked.py
+          2. Test 1 — cli.py re-raise: mock on_submit to raise GateBlockedError; call execute();
+             assert GateBlockedError propagates (not wrapped as AgentExecutionError)
+          3. Test 2 — executor.py no on_agent_died: mock agent that raises GateBlockedError;
+             call _execute_task; assert on_agent_died was NOT called and task is BUILDING
+          4. Run: pytest tests/ -k "gate_blocked" -v and confirm both tests pass
+
+          Verification:
+          - pytest tests/ -k "gate_blocked" -v exits 0 with both tests PASSED
+          - Test file exists at tests/unit/agents/test_gate_blocked.py
+        requirements:
+          - id: "R1"
+            desc: "Unit test for cli.py GateBlockedError propagation exists and passes"
+            priority: critical
+          - id: "R2"
+            desc: "Unit test for executor.py retry-without-death behavior exists and passes"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "test_file_exists"
+              cmd: "test -f tests/unit/agents/test_gate_blocked.py"
+              must: true
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/ -k 'gate_blocked' -q 2>&1 | grep -q 'passed'"
+              must: true
+        verifier:
+          rubric:
+            - id: "test_coverage"
+              text: |
+                R1/R2 — A: both tests exist and pass; cli.py re-raise test and executor.py
+                no-death test are clearly separate and independently verifiable.
+                B: only one test present or both test the same behavior.
+        retry:
+          max_attempts: 2
+
+  - id: "S-02"
+    title: "Rewrite Human Gate Task Prompts (Routine)"
+    step_context: |
+      Fix AGENT-DEATH-HUMAN-GATE bug (part 2). Replace no-op wait instructions in idea-to-plan.yaml
+      human gate tasks (S-02 and S-08) with actionable prompts that direct the CLI agent to verify
+      human feedback annotations in artifact files, mark the checklist requirement done or blocked,
+      and submit. Prerequisite: Step 1 must be deployed first.
+    tasks:
+      - id: "T-01"
+        title: "Update S-02 T-01 human gate prompt in idea-to-plan.yaml"
+        task_context: |
+          Replace the current no-op Await Human Feedback task context in S-02 T-01 with an
+          actionable verification prompt. The new prompt must instruct the agent to check artifact
+          files for [HUMAN] annotations, mark R1 as done if confirmed, or mark blocked if absent.
+
+          Steps:
+          1. Open routines/idea-to-plan.yaml and locate the S-02 T-01 task definition
+          2. Replace the task_context with actionable instructions:
+             - Check docs/{{feature}}/intent.md, plan.md, design-questions.md, architecture.md
+               for [HUMAN] annotations
+             - If annotations found: mark R1 done and submit
+             - If no annotations found: mark R1 blocked with note "Awaiting human review —
+               no [HUMAN] annotations found in artifact files" and submit
+          3. Preserve task IDs, step structure, requirement IDs, and {{feature}} template variable
+          4. Validate YAML after change: python -c "import yaml; yaml.safe_load(open('routines/idea-to-plan.yaml'))"
+
+          Verification:
+          - python -c "import yaml; yaml.safe_load(open('routines/idea-to-plan.yaml'))" exits 0
+          - grep -A 20 "S-02" routines/idea-to-plan.yaml | grep -c "done" returns at least 1
+          - grep -A 20 "S-02" routines/idea-to-plan.yaml | grep -c "blocked" returns at least 1
+        requirements:
+          - id: "R1"
+            desc: "S-02 T-01 task_context contains actionable file-check and mark-done/blocked instructions"
+            priority: critical
+          - id: "R2"
+            desc: "YAML remains syntactically valid after changes"
+            priority: critical
+          - id: "R3"
+            desc: "{{feature}} template variable is preserved verbatim"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "yaml_valid"
+              cmd: "python -c \"import yaml; yaml.safe_load(open('routines/idea-to-plan.yaml'))\""
+              must: true
+        verifier:
+          rubric:
+            - id: "actionability"
+              text: |
+                R1 — A: new prompt contains specific file paths with {{feature}} template variable,
+                explicit mark-done and mark-blocked branches with notes, and submit instruction.
+                B: prompt is improved but missing one of the three elements.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Update S-08 human gate prompt in idea-to-plan.yaml"
+        task_context: |
+          Apply the same actionable prompt pattern to the S-08 final review gate task. S-08 is
+          the final plan review human gate; its prompt should follow the same structure as S-02.
+
+          Steps:
+          1. In routines/idea-to-plan.yaml, locate the S-08 task definition
+          2. Replace the S-08 task prompt with actionable verification pattern:
+             - Check docs/{{feature}}/intent.md, plan.md, architecture.md for [HUMAN] annotations
+             - If [HUMAN] annotations present: mark R1 done and submit
+             - If no annotations: mark R1 blocked with note "Awaiting final human review —
+               no [HUMAN] annotations found" and submit
+          3. Preserve the rest of the S-08 task definition unchanged
+          4. Validate YAML: python -c "import yaml; yaml.safe_load(open('routines/idea-to-plan.yaml'))"
+
+          Verification:
+          - python -c "import yaml; yaml.safe_load(open('routines/idea-to-plan.yaml'))" exits 0
+          - grep -A 20 "S-08" routines/idea-to-plan.yaml | grep -c "done" returns at least 1
+          - grep -A 20 "S-08" routines/idea-to-plan.yaml | grep -c "blocked" returns at least 1
+        requirements:
+          - id: "R1"
+            desc: "S-08 task_context contains actionable [HUMAN] annotation check with mark-done/blocked branches"
+            priority: critical
+          - id: "R2"
+            desc: "YAML remains syntactically valid after S-08 changes"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "yaml_valid"
+              cmd: "python -c \"import yaml; yaml.safe_load(open('routines/idea-to-plan.yaml'))\""
+              must: true
+        verifier:
+          rubric:
+            - id: "actionability"
+              text: |
+                R1 — A: S-08 prompt contains artifact paths with {{feature}} template variable,
+                mark-done and mark-blocked branches, and submit instruction.
+                B: prompt improved but missing one element.
+        retry:
+          max_attempts: 2
+
+  - id: "S-03"
+    title: "Implement Failed-Run Recovery API"
+    step_context: |
+      Fix FAILED-RUN-RECOVERY bug (backend). Add POST /api/runs/{id}/recover endpoint that lets
+      a user roll a FAILED run back to a chosen task and resume from that point. FAILED is currently
+      a terminal state with no outbound transitions. This step adds the endpoint, service method,
+      schemas, and integration tests. COMPLETED run recovery is explicitly out of scope (deferred).
+    tasks:
+      - id: "T-01"
+        title: "Add RecoverRequest and RecoverResponse schemas"
+        task_context: |
+          Add the Pydantic request and response schemas for the recovery endpoint to
+          src/orchestrator/api/schemas/runs.py.
+
+          Steps:
+          1. Open src/orchestrator/api/schemas/runs.py
+          2. Add RecoverRequest schema with fields:
+             - target_task_id: str
+             - additional_attempts: int = 1
+             - agent_type: str | None = None
+             - agent_config: dict | None = None
+             - preserve_checklist: bool = False
+          3. Add RecoverResponse schema with fields:
+             - run_id: str
+             - status: str
+             - pause_reason: str | None
+             - current_step_index: int | None
+          4. Run uv run pyright src/orchestrator/api/schemas/runs.py to confirm no type errors
+
+          Verification:
+          - python -c "from orchestrator.api.schemas.runs import RecoverRequest, RecoverResponse; print('OK')" exits 0
+          - uv run pyright src/orchestrator/api/schemas/runs.py exits 0
+          - uv run ruff check src/orchestrator/api/schemas/runs.py exits 0
+        requirements:
+          - id: "R1"
+            desc: "RecoverRequest is importable with all documented fields (target_task_id, preserve_checklist, etc.)"
+            priority: critical
+          - id: "R2"
+            desc: "RecoverResponse is importable with run_id, status, pause_reason fields"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "schemas_importable"
+              cmd: "uv run python -c \"from orchestrator.api.schemas.runs import RecoverRequest, RecoverResponse; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "schema_completeness"
+              text: |
+                R1/R2 — A: both schemas are present with all required fields; types are correct
+                (str, int, bool, None-able); pyright passes. B: schemas exist but field types
+                are wrong or optional fields are missing.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Implement WorkflowService.recover_run()"
+        task_context: |
+          Add recover_run() async method to WorkflowService implementing the recovery logic:
+          validate FAILED status, reset target task, reset downstream tasks, restore worktree,
+          transition run.
+
+          Steps:
+          1. Open src/orchestrator/workflow/service.py
+          2. Add async recover_run() method with parameters:
+             run_id, target_task_id, additional_attempts=1, agent_type=None,
+             agent_config=None, preserve_checklist=False
+          3. Implement the 8-step logic:
+             1. Load run; assert FAILED status (raise ConflictError otherwise — 409 for ALL non-FAILED)
+             2. Validate target_task_id belongs to this run
+             3. Identify target task and all downstream tasks in execution order
+             4. Reset target task: status → BUILDING, bump max_attempts
+             5. Reset downstream tasks: status → PENDING, clear attempt records
+             6. Reset downstream checklist items to open (unless preserve_checklist=True)
+             7. Un-complete affected steps (completed → False)
+             8. Restore worktree: git checkout {end_commit} (fall back to source_branch HEAD if absent)
+             9. Transition run: FAILED → PAUSED, pause_reason="recovered"
+          4. Use DB-recorded end_commit (not user-supplied refs) for security
+          5. Return RecoverResponse with updated run state
+
+          Verification:
+          - uv run pyright src/orchestrator/workflow/service.py exits 0
+          - uv run ruff check src/orchestrator/workflow/service.py exits 0
+        requirements:
+          - id: "R1"
+            desc: "WorkflowService.recover_run() exists and is async"
+            priority: critical
+          - id: "R2"
+            desc: "Run transitions from FAILED to PAUSED with pause_reason='recovered'"
+            priority: critical
+          - id: "R3"
+            desc: "Returns 409 for ALL non-FAILED statuses (ACTIVE, PAUSED, COMPLETED)"
+            priority: critical
+          - id: "R4"
+            desc: "preserve_checklist flag supported (default: reset to open)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "service_type_check"
+              cmd: "uv run pyright src/orchestrator/workflow/service.py 2>&1 | grep -c 'error' | awk '{exit ($1 > 0)}'"
+              must: true
+        verifier:
+          rubric:
+            - id: "logic_correctness"
+              text: |
+                R1/R2/R3 — A: all 8 steps implemented; status transitions correct; COMPLETED and
+                ACTIVE runs return 409; preserve_checklist flag works. B: core logic works but
+                one edge case (preserve_checklist or COMPLETED 409) is missing.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Add POST /api/runs/{id}/recover route"
+        task_context: |
+          Wire the WorkflowService.recover_run() method to a new FastAPI route in
+          src/orchestrator/api/routers/runs.py.
+
+          Steps:
+          1. Open src/orchestrator/api/routers/runs.py
+          2. Add the recovery route:
+             @router.post("/{run_id}/recover", response_model=RecoverResponse)
+             async def recover_run(run_id: str, body: RecoverRequest, service: WorkflowService = Depends(...))
+          3. Handle exceptions: NotFoundError → 404, ConflictError → 409
+          4. Import RecoverRequest, RecoverResponse from the schemas module
+
+          Verification:
+          - uv run pyright src/orchestrator/api/routers/runs.py exits 0
+          - uv run ruff check src/orchestrator/api/routers/runs.py exits 0
+          - python -c "from orchestrator.api.routers.runs import router; routes = [r.path for r in router.routes]; assert any('recover' in r for r in routes)" exits 0
+        requirements:
+          - id: "R1"
+            desc: "POST /api/runs/{run_id}/recover route exists and is registered"
+            priority: critical
+          - id: "R2"
+            desc: "Route returns 404 when run or task_id not found"
+            priority: expected
+          - id: "R3"
+            desc: "Route returns 409 when run is not FAILED"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "route_registered"
+              cmd: "uv run python -c \"from orchestrator.api.routers.runs import router; routes = [r.path for r in router.routes]; assert any('recover' in r for r in routes)\""
+              must: true
+        verifier:
+          rubric:
+            - id: "endpoint_correctness"
+              text: |
+                R1/R2/R3 — A: route is registered, accepts RecoverRequest body, delegates to
+                service, and returns correct HTTP codes (200/404/409). B: route exists but error
+                handling is incomplete or response model is wrong.
+        retry:
+          max_attempts: 2
+
+      - id: "T-04"
+        title: "Write integration tests for recovery endpoint"
+        task_context: |
+          Write integration tests covering the happy path, 409 conflict case, and
+          preserve_checklist flag behavior.
+
+          Steps:
+          1. Create tests/integration/test_api_runs_recover.py
+          2. Test 1 — happy path: create FAILED run; POST to /api/runs/{id}/recover with
+             valid target_task_id; assert run is PAUSED with pause_reason="recovered",
+             target task is BUILDING, downstream tasks are PENDING, checklist is open
+          3. Test 2 — preserve_checklist: same setup but POST with preserve_checklist=true;
+             assert checklist items are NOT reset
+          4. Test 3 — non-FAILED status: create ACTIVE run; POST to recover; assert 409
+          5. Test 4 — invalid task_id: POST with task_id from a different run; assert 404
+          6. Run: pytest tests/integration/ -k "recover" -v
+
+          Verification:
+          - pytest tests/integration/ -k "recover" -v exits 0 with all tests PASSED
+          - Test file exists at tests/integration/test_api_runs_recover.py
+        requirements:
+          - id: "R1"
+            desc: "Integration test for happy path recovery passes"
+            priority: critical
+          - id: "R2"
+            desc: "Integration test for 409 conflict case passes"
+            priority: critical
+          - id: "R3"
+            desc: "Integration test for preserve_checklist=true passes"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "test_file_exists"
+              cmd: "test -f tests/integration/test_api_runs_recover.py"
+              must: true
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/integration/ -k 'recover' -q 2>&1 | grep -q 'passed'"
+              must: true
+        verifier:
+          rubric:
+            - id: "test_coverage"
+              text: |
+                R1/R2/R3 — A: all 4 tests present (happy path, preserve_checklist, non-FAILED 409,
+                invalid task_id 404) and all pass. B: happy path and 409 test present and pass
+                but preserve_checklist or invalid task_id test is missing.
+        retry:
+          max_attempts: 2
+
+  - id: "S-04"
+    title: "Add Recovery UI"
+    step_context: |
+      Fix FAILED-RUN-RECOVERY bug (frontend). Surface the POST /api/runs/{id}/recover endpoint
+      (added in Step 3) in the frontend by adding a RecoveryPanel component to the RunDetail page.
+      Prerequisite: Step 3 (recovery API) must be deployed first.
+    tasks:
+      - id: "T-01"
+        title: "Add RecoverRequest and RecoverResponse TypeScript types"
+        task_context: |
+          Add the TypeScript types for the recovery API request and response to the frontend
+          types directory.
+
+          Steps:
+          1. Open or create ui/src/types/recovery.ts (or add to existing runs.ts types file)
+          2. Add RecoverRequest interface with fields:
+             - target_task_id: string
+             - additional_attempts?: number
+             - agent_type?: string
+             - agent_config?: Record<string, unknown>
+             - preserve_checklist?: boolean
+          3. Add RecoverResponse interface with fields:
+             - run_id: string
+             - status: string
+             - pause_reason: string | null
+             - current_step_index: number | null
+          4. Export types from the types index if one exists
+          5. Run npx tsc --noEmit to confirm no type errors
+
+          Verification:
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "RecoverRequest and RecoverResponse are importable from ui/src/types/"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "ts_compiles"
+              cmd: "cd ui && npx tsc --noEmit 2>&1 | head -20"
+              must: false
+        verifier:
+          rubric:
+            - id: "type_completeness"
+              text: |
+                R1 — A: both types are exported from the types directory with correct field names
+                and TypeScript types matching the backend schema. B: types exist but field names
+                diverge from backend or optional fields are missing.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add recoverRun client function and useRecoverRun hook"
+        task_context: |
+          Add the API client function and TanStack Query mutation hook for the recovery endpoint.
+
+          Steps:
+          1. Open ui/src/api/client.ts
+          2. Add recoverRun(runId, data) client function calling POST /api/runs/{runId}/recover
+          3. Handle 404 (task not found) and 409 (not FAILED) error status codes distinctly
+          4. Open ui/src/hooks/useApi.ts
+          5. Add useRecoverRun(runId) mutation hook that invalidates ['run', runId] on success
+          6. Run npx tsc --noEmit to confirm no type errors
+
+          Verification:
+          - grep -n "recoverRun" ui/src/api/client.ts shows the export
+          - grep -n "useRecoverRun" ui/src/hooks/useApi.ts shows the export
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "recoverRun is exported from ui/src/api/client.ts"
+            priority: critical
+          - id: "R2"
+            desc: "useRecoverRun is exported from ui/src/hooks/useApi.ts and invalidates run query on success"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "client_fn_exists"
+              cmd: "grep -n 'recoverRun' ui/src/api/client.ts | grep -q 'export'"
+              must: true
+            - id: "hook_exists"
+              cmd: "grep -n 'useRecoverRun' ui/src/hooks/useApi.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "api_wiring"
+              text: |
+                R1/R2 — A: client function calls correct endpoint, handles error codes, and
+                hook invalidates the right query key on success. B: function and hook exist
+                but query invalidation or error handling is incomplete.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Create RecoveryPanel component"
+        task_context: |
+          Create the RecoveryPanel component that renders a step/task timeline with rollback
+          target selection and a confirmation dialog with preserve_checklist toggle.
+
+          Steps:
+          1. Create ui/src/components/detail/RecoveryPanel.tsx
+          2. Component receives the run object (including steps/tasks) as a prop
+          3. Render a timeline of steps and tasks, each showing last status and end_commit
+          4. Clicking a task sets it as selectedTaskId and opens a confirmation dialog
+          5. Confirmation dialog shows:
+             - Which task was selected
+             - Warning: "This will reset all downstream tasks to PENDING"
+             - Checkbox for preserve_checklist (default unchecked)
+             - Confirm and Cancel buttons
+          6. On confirm, call useRecoverRun with {target_task_id, preserve_checklist}
+          7. On success, show success toast; on error, display error and keep dialog open
+          8. Run npx tsc --noEmit to confirm no type errors
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - File exists: ui/src/components/detail/RecoveryPanel.tsx
+        requirements:
+          - id: "R1"
+            desc: "RecoveryPanel.tsx exists at ui/src/components/detail/RecoveryPanel.tsx"
+            priority: critical
+          - id: "R2"
+            desc: "Timeline renders steps and tasks with last status"
+            priority: expected
+          - id: "R3"
+            desc: "Confirmation dialog includes preserve_checklist toggle"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "panel_exists"
+              cmd: "test -f ui/src/components/detail/RecoveryPanel.tsx"
+              must: true
+        verifier:
+          rubric:
+            - id: "component_completeness"
+              text: |
+                R1/R2/R3 — A: component exists, renders timeline, opens dialog on task click,
+                dialog has preserve_checklist toggle, calls useRecoverRun on confirm.
+                B: component exists but dialog or preserve_checklist toggle is missing.
+        retry:
+          max_attempts: 2
+
+      - id: "T-04"
+        title: "Mount RecoveryPanel in RunDetail and write Vitest test"
+        task_context: |
+          Update RunDetail.tsx to conditionally mount RecoveryPanel for FAILED runs, and write
+          a Vitest test that renders the panel with a mock FAILED run.
+
+          Steps:
+          1. Open ui/src/pages/RunDetail.tsx
+          2. Import RecoveryPanel from ../components/detail/RecoveryPanel
+          3. Add conditional render: {run.status === 'FAILED' && <RecoveryPanel run={run} />}
+          4. Write Vitest test in ui/src/components/detail/__tests__/RecoveryPanel.test.tsx:
+             - test('renders task timeline for FAILED run', ...) — checks end_commit shown
+             - test('opens confirmation dialog on task click', ...) — checks dialog content
+          5. Run npx vitest run and confirm all tests pass
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - npx vitest run exits 0 (all tests pass including RecoveryPanel test)
+        requirements:
+          - id: "R1"
+            desc: "RunDetail renders RecoveryPanel when run status is FAILED"
+            priority: critical
+          - id: "R2"
+            desc: "RunDetail does NOT render RecoveryPanel for ACTIVE, PAUSED, or COMPLETED runs"
+            priority: expected
+          - id: "R3"
+            desc: "Vitest test for RecoveryPanel passes"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "run_detail_updated"
+              cmd: "grep -n 'RecoveryPanel' ui/src/pages/RunDetail.tsx | grep -q 'FAILED'"
+              must: true
+        verifier:
+          rubric:
+            - id: "integration"
+              text: |
+                R1/R2/R3 — A: RecoveryPanel mounts only for FAILED runs in RunDetail; Vitest
+                tests exist and pass for both render and dialog cases. B: panel mounts for FAILED
+                runs but guard condition is missing or Vitest test is absent.
+        retry:
+          max_attempts: 2
+
+  - id: "S-05"
+    title: "Phase-Aware MCP Tool Filtering"
+    step_context: |
+      Fix MCP-TOOLS-NO-PHASE-FILTERING bug. Currently all MCP tools are registered
+      unconditionally; builder agents that discover orchestrator_set_grade waste a tool call.
+      After this fix, builder connections see only builder tools and verifier connections see
+      only verifier tools. This step is independent of Steps 1-4.
+    tasks:
+      - id: "T-01"
+        title: "Add phase parameter to MCP server and filter _register_tools()"
+        task_context: |
+          Add phase: Literal["building", "verifying"] with default "building" to the MCP
+          server's __init__ and update _register_tools() to conditionally register tools.
+
+          Steps:
+          1. Open src/orchestrator/mcp/server.py
+          2. Define BUILDER_TOOLS set: orchestrator_get_requirements, orchestrator_update_checklist,
+             orchestrator_submit, orchestrator_request_clarification, orchestrator_list_repos,
+             orchestrator_list_branches
+          3. Define VERIFIER_TOOLS set: orchestrator_get_requirements, orchestrator_set_grade,
+             orchestrator_submit
+          4. Add phase parameter to __init__ with default "building":
+             def __init__(self, ..., phase: Literal["building", "verifying"] = "building"):
+          5. Add validation: raise ValueError if phase not in ("building", "verifying")
+          6. Update _register_tools() to filter by self.phase
+          7. Read src/orchestrator/mcp/server.py first to understand existing tool registration
+
+          Verification:
+          - uv run pyright src/orchestrator/mcp/server.py exits 0
+          - uv run ruff check src/orchestrator/mcp/server.py exits 0
+
+          Note: existing callers that omit phase will default to "building" (safe behavior).
+          The tools.py soft-error workaround must remain as a safety net.
+        requirements:
+          - id: "R1"
+            desc: "MCP server accepts phase parameter at construction time with 'building' as default"
+            priority: critical
+          - id: "R2"
+            desc: "ValueError raised when phase is an explicitly invalid string"
+            priority: expected
+          - id: "R3"
+            desc: "Builder phase: orchestrator_set_grade is NOT registered"
+            priority: critical
+          - id: "R4"
+            desc: "Verifier phase: orchestrator_update_checklist is NOT registered"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "server_type_check"
+              cmd: "uv run pyright src/orchestrator/mcp/server.py 2>&1 | grep -c 'error' | awk '{exit ($1 > 0)}'"
+              must: true
+        verifier:
+          rubric:
+            - id: "filtering_correctness"
+              text: |
+                R1/R2/R3/R4 — A: phase parameter accepted with correct default; ValueError raised
+                for invalid phases; builder excludes set_grade; verifier excludes update_checklist.
+                B: filtering works but ValueError or default-phase case is missing.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Pass phase parameter from executor.py when spawning agents"
+        task_context: |
+          Update executor.py to determine the current task phase and pass it when constructing
+          the MCP server. BUILDING status maps to "building", VERIFYING to "verifying".
+
+          Steps:
+          1. Open src/orchestrator/agents/executor.py
+          2. Locate where the MCP server (or agent session) is constructed for each task
+          3. Derive phase from task's current status:
+             if task_status == TaskStatus.VERIFYING: phase = "verifying"
+             else: phase = "building"
+          4. Pass phase when constructing MCP server: OrchestratorMCPServer(..., phase=phase)
+          5. Confirm the phase is passed in all code paths that construct the server
+
+          Verification:
+          - uv run pyright src/orchestrator/agents/executor.py exits 0
+          - uv run ruff check src/orchestrator/agents/executor.py exits 0
+        requirements:
+          - id: "R1"
+            desc: "Builder agents receive phase 'building' at construction time"
+            priority: critical
+          - id: "R2"
+            desc: "Verifier agents receive phase 'verifying' at construction time"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "executor_type_check"
+              cmd: "uv run pyright src/orchestrator/agents/executor.py 2>&1 | grep -c 'error' | awk '{exit ($1 > 0)}'"
+              must: true
+        verifier:
+          rubric:
+            - id: "phase_propagation"
+              text: |
+                R1/R2 — A: executor derives phase from task status and passes it to MCP server
+                in all agent construction paths; VERIFYING → "verifying", all others → "building".
+                B: phase is passed in the main path but missing in a secondary code path.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Write unit tests for phase-aware tool filtering"
+        task_context: |
+          Write unit tests that verify the builder tool list excludes orchestrator_set_grade,
+          the verifier tool list excludes orchestrator_update_checklist, and ValueError is raised
+          for an invalid phase.
+
+          Steps:
+          1. Create tests/unit/mcp/test_phase_filtering.py
+          2. Test 1 — builder: construct with phase="building"; assert orchestrator_set_grade NOT present
+          3. Test 2 — verifier: construct with phase="verifying"; assert orchestrator_update_checklist NOT present
+          4. Test 3 — invalid phase: construct with phase="unknown"; assert ValueError raised
+          5. Test 4 — default phase: construct with no phase; assert no exception and builder tool set
+          6. Run: pytest tests/ -k "mcp or phase_filter" -v
+
+          Verification:
+          - pytest tests/ -k "mcp or phase_filter" -v exits 0 with all 4 tests PASSED
+          - Test file exists at tests/unit/mcp/test_phase_filtering.py
+        requirements:
+          - id: "R1"
+            desc: "Four unit tests exist in tests/unit/mcp/test_phase_filtering.py, all passing"
+            priority: critical
+          - id: "R2"
+            desc: "Builder tool list explicitly tested to exclude orchestrator_set_grade"
+            priority: critical
+          - id: "R3"
+            desc: "Verifier tool list explicitly tested to exclude orchestrator_update_checklist"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "test_file_exists"
+              cmd: "test -f tests/unit/mcp/test_phase_filtering.py"
+              must: true
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/ -k 'mcp or phase_filter' -q 2>&1 | grep -q 'passed'"
+              must: true
+        verifier:
+          rubric:
+            - id: "test_coverage"
+              text: |
+                R1/R2/R3 — A: all 4 tests present and pass (builder, verifier, invalid phase,
+                default). B: 3 of 4 tests present; missing one edge case.
+        retry:
+          max_attempts: 2
+
+  - id: "S-06"
+    title: "Wire Step-Level Human Approval UI"
+    step_context: |
+      Fix UI-STEP-APPROVAL gap. The backend endpoint POST /api/runs/{id}/steps/{step_id}/approve
+      exists and is tested, but the frontend has no client function, mutation hook, or UI component
+      to call it. This step adds StepApprovalBanner, useApproveStep, and updates usePendingActions.
+      This step is independent of Steps 1-5.
+    tasks:
+      - id: "T-01"
+        title: "Add approveStep client function and useApproveStep hook"
+        task_context: |
+          Add the API client function and TanStack Query mutation hook for the step approval endpoint.
+
+          Steps:
+          1. Open ui/src/api/client.ts
+          2. Add approveStep(runId, stepId, data) client function calling
+             POST /api/runs/{runId}/steps/{stepId}/approve
+          3. Open ui/src/hooks/useApi.ts
+          4. Add useApproveStep(runId, stepId) mutation hook that invalidates ['run', runId] on success
+          5. Read existing client.ts to confirm API object pattern before adding
+
+          Verification:
+          - grep -n "approveStep" ui/src/api/client.ts shows the export
+          - grep -n "useApproveStep" ui/src/hooks/useApi.ts shows the export
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "approveStep exported from ui/src/api/client.ts"
+            priority: critical
+          - id: "R2"
+            desc: "useApproveStep exported from ui/src/hooks/useApi.ts"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "client_fn_exists"
+              cmd: "grep -n 'approveStep' ui/src/api/client.ts | grep -q 'export'"
+              must: true
+            - id: "hook_exists"
+              cmd: "grep -n 'useApproveStep' ui/src/hooks/useApi.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "api_wiring"
+              text: |
+                R1/R2 — A: client function calls correct endpoint with approved_by and comment
+                fields; hook invalidates run query on success. B: function and hook exist but
+                data shape or query key is wrong.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Create StepApprovalBanner component"
+        task_context: |
+          Create the StepApprovalBanner component that renders when a step has
+          has_approval_gate && approval_status === 'pending'. Reference ApprovalModal.tsx for patterns.
+
+          Steps:
+          1. Create ui/src/components/detail/StepApprovalBanner.tsx
+          2. Component receives runId: string and step: StepSummary as props
+          3. Return null when !step.has_approval_gate || step.approval_status !== 'pending'
+          4. Render:
+             - approved_by text input (required)
+             - Optional comment textarea
+             - Submit button that calls useApproveStep
+             - Error toast on API error (404 → "Step not found or already approved",
+               409 → "Step cannot be approved in its current state")
+          5. Reference: ui/src/components/detail/ApprovalModal.tsx for patterns
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - File exists: ui/src/components/detail/StepApprovalBanner.tsx
+        requirements:
+          - id: "R1"
+            desc: "StepApprovalBanner.tsx exists at ui/src/components/detail/StepApprovalBanner.tsx"
+            priority: critical
+          - id: "R2"
+            desc: "Banner renders for steps with has_approval_gate=true, approval_status='pending'"
+            priority: critical
+          - id: "R3"
+            desc: "Banner renders nothing for steps without a pending gate"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "banner_exists"
+              cmd: "test -f ui/src/components/detail/StepApprovalBanner.tsx"
+              must: true
+        verifier:
+          rubric:
+            - id: "component_correctness"
+              text: |
+                R1/R2/R3 — A: component exists, shows form for pending gates, shows nothing
+                for non-pending, calls useApproveStep correctly. B: component exists but
+                guard condition or error handling is missing.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Update usePendingActions and RunDetail, write Vitest test"
+        task_context: |
+          Update usePendingActions to include pending step approval gates in its count, mount
+          StepApprovalBanner in RunDetail, and write a Vitest test.
+
+          Steps:
+          1. Open ui/src/hooks/usePendingActions.ts
+          2. Add logic to count steps with has_approval_gate && approval_status === 'pending'
+          3. Include pendingApprovalGates.length in the badge count and action list
+          4. Open ui/src/pages/RunDetail.tsx
+          5. Import StepApprovalBanner
+          6. In the step list render, mount banner for each step:
+             <StepApprovalBanner runId={run.id} step={step} />
+          7. Write Vitest test in ui/src/components/detail/__tests__/StepApprovalBanner.test.tsx:
+             - test renders banner for pending approval gate
+             - test renders nothing when no pending gate
+          8. Run npx vitest run and confirm all tests pass
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - npx vitest run exits 0 (all tests pass including banner tests)
+        requirements:
+          - id: "R1"
+            desc: "usePendingActions badge count includes pending step approval gates"
+            priority: expected
+          - id: "R2"
+            desc: "RunDetail renders StepApprovalBanner per step with a pending gate"
+            priority: critical
+          - id: "R3"
+            desc: "Vitest test for StepApprovalBanner passes (both render and no-render cases)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "run_detail_updated"
+              cmd: "grep -n 'StepApprovalBanner' ui/src/pages/RunDetail.tsx | grep -q 'import\\|component'"
+              must: true
+        verifier:
+          rubric:
+            - id: "integration_and_tests"
+              text: |
+                R1/R2/R3 — A: pending actions count includes step gates; RunDetail renders
+                banner per step; Vitest tests pass for both cases. B: RunDetail renders banner
+                but pending actions count is not updated or tests are missing.
+        retry:
+          max_attempts: 2
+
+  - id: "S-07"
+    title: "Wire AgentGuidancePanel Lifecycle Hooks"
+    step_context: |
+      Fix UI-AGENT-GUIDANCE-PANEL gap. AgentGuidancePanel currently assembles guidance from
+      multiple disconnected hooks and hardcoded values; lifecycle events are never sent to the
+      backend. After this step, the panel uses the aggregate guidance endpoint as its single data
+      source, and user interactions (start/cancel) correctly update run state on the server.
+      This step is independent of Steps 1-6.
+    tasks:
+      - id: "T-01"
+        title: "Add GuidanceResponse type and client functions"
+        task_context: |
+          Add the GuidanceResponse TypeScript type and three client functions (agentStarted,
+          agentCancelled, getGuidance) to the frontend.
+
+          Steps:
+          1. Add GuidanceResponse type to ui/src/types/ (create types/guidance.ts or extend existing):
+             - task_id: string, prompt: string, phase: string, mcp_url: string, expected_actions: string[]
+          2. Open ui/src/api/client.ts and add:
+             - agentStarted(runId): POST /api/runs/{runId}/agent-started
+             - agentCancelled(runId): POST /api/runs/{runId}/agent-cancelled
+             - getGuidance(runId): GET /api/runs/{runId}/guidance returning GuidanceResponse
+
+          Backend endpoint references:
+          - src/orchestrator/api/routers/runs.py:791 (agent-started)
+          - src/orchestrator/api/routers/runs.py:818 (agent-cancelled)
+          - src/orchestrator/api/routers/runs.py:677 (guidance)
+
+          Verification:
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "GuidanceResponse type exported from ui/src/types/"
+            priority: critical
+          - id: "R2"
+            desc: "agentStarted, agentCancelled, getGuidance exported from ui/src/api/client.ts"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "client_fns_exist"
+              cmd: "grep -n 'agentStarted\\|agentCancelled\\|getGuidance' ui/src/api/client.ts | grep -qc 'export'"
+              must: false
+        verifier:
+          rubric:
+            - id: "type_and_client"
+              text: |
+                R1/R2 — A: GuidanceResponse type has all 5 fields; all 3 client functions call
+                correct endpoints and handle errors. B: types and functions present but field
+                names or endpoint paths differ from backend.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add useGuidance, useAgentStarted, useAgentCancelled hooks"
+        task_context: |
+          Add the TanStack Query hooks: useGuidance (query hook), useAgentStarted and
+          useAgentCancelled (mutation hooks with run query invalidation).
+
+          Steps:
+          1. Open ui/src/hooks/useApi.ts
+          2. Add useGuidance(runId) query hook with queryKey ['guidance', runId]
+          3. Add useAgentStarted(runId) mutation hook that invalidates ['run', runId] on success
+          4. Add useAgentCancelled(runId) mutation hook (same pattern as useAgentStarted)
+
+          Verification:
+          - grep -n "useGuidance|useAgentStarted|useAgentCancelled" ui/src/hooks/useApi.ts shows all three
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "useGuidance, useAgentStarted, useAgentCancelled exported from ui/src/hooks/useApi.ts"
+            priority: critical
+          - id: "R2"
+            desc: "useAgentStarted and useAgentCancelled invalidate ['run', runId] on success"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "hooks_exist"
+              cmd: "grep -n 'useGuidance' ui/src/hooks/useApi.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "hook_correctness"
+              text: |
+                R1/R2 — A: all 3 hooks exported; useGuidance uses correct query key; mutations
+                invalidate run query on success. B: hooks exist but query key or invalidation
+                is wrong.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Update AgentGuidancePanel and WaitingIndicator, write Vitest test"
+        task_context: |
+          Replace useTaskPrompt() and hardcoded MCP URL in AgentGuidancePanel with useGuidance(runId).
+          Wire start/cancel buttons. Write Vitest test.
+
+          Steps:
+          1. Open ui/src/components/guidance/AgentGuidancePanel.tsx
+          2. Replace useTaskPrompt() with useGuidance(runId):
+             const { data: guidance, isLoading } = useGuidance(runId);
+          3. Use guidance.prompt for task prompt display
+          4. Use guidance.mcp_url for MCP URL display
+          5. Wire "I've started my agent" button to useAgentStarted(runId).mutate()
+          6. Wire cancel to useAgentCancelled(runId).mutate()
+          7. Handle guidance 404 case: show "No active task guidance available"
+          8. Update ui/src/components/WaitingIndicator.tsx cancel path to call useAgentCancelled
+          9. Remove useTaskPrompt usage and hardcoded MCP URL (no dead code)
+          10. Write Vitest test in ui/src/components/guidance/__tests__/AgentGuidancePanel.test.tsx
+          11. Run npx vitest run and confirm all tests pass
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - npx vitest run exits 0 (including AgentGuidancePanel test)
+        requirements:
+          - id: "R1"
+            desc: "AgentGuidancePanel uses useGuidance instead of useTaskPrompt and hardcoded MCP URL"
+            priority: critical
+          - id: "R2"
+            desc: "Start and cancel buttons call correct lifecycle API endpoints"
+            priority: critical
+          - id: "R3"
+            desc: "Vitest test for AgentGuidancePanel passes"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "no_hardcoded_mcp"
+              cmd: "grep -n 'hardcoded\\|useTaskPrompt' ui/src/components/guidance/AgentGuidancePanel.tsx | wc -l | awk '{exit ($1 > 0)}'"
+              must: false
+        verifier:
+          rubric:
+            - id: "panel_update"
+              text: |
+                R1/R2/R3 — A: panel uses useGuidance as single data source; start/cancel call
+                correct APIs; useTaskPrompt and hardcoded URL removed; Vitest test passes.
+                B: panel uses useGuidance but old code left as dead code or lifecycle calls missing.
+        retry:
+          max_attempts: 2
+
+  - id: "S-08"
+    title: "Add Backward Step Transition UI"
+    step_context: |
+      Fix UI-BACKWARD-TRANSITIONS gap. Backend POST /api/runs/{id}/transition-back is fully
+      implemented and tested. This step adds the client function, mutation hook, and "Revert to
+      this step" UI to each completed step in the StepTimeline, with a confirmation dialog.
+      Critical pre-condition: StepTimeline.tsx may not exist; search for the step renderer in
+      RunDetail.tsx first and adapt accordingly. This step is independent of Steps 1-7.
+    tasks:
+      - id: "T-01"
+        title: "Add transitionBack client function and useTransitionBack hook"
+        task_context: |
+          Add the API client function for POST /api/runs/{id}/transition-back and the TanStack
+          Query mutation hook.
+
+          Steps:
+          1. Open ui/src/api/client.ts
+          2. Add transitionBack(runId, data) function with data: {target_step_index: number, reason?: string}
+             calling POST /api/runs/{runId}/transition-back
+          3. Open ui/src/hooks/useApi.ts
+          4. Add useTransitionBack(runId) mutation hook that invalidates ['run', runId] on success
+
+          Backend endpoint: src/orchestrator/api/routers/runs.py:837
+
+          Verification:
+          - grep -n "transitionBack" ui/src/api/client.ts shows the export
+          - grep -n "useTransitionBack" ui/src/hooks/useApi.ts shows the export
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "transitionBack exported from ui/src/api/client.ts"
+            priority: critical
+          - id: "R2"
+            desc: "useTransitionBack exported from ui/src/hooks/useApi.ts"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "client_fn_exists"
+              cmd: "grep -n 'transitionBack' ui/src/api/client.ts | grep -q 'export'"
+              must: true
+            - id: "hook_exists"
+              cmd: "grep -n 'useTransitionBack' ui/src/hooks/useApi.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "api_wiring"
+              text: |
+                R1/R2 — A: function calls correct endpoint with target_step_index and optional
+                reason; hook invalidates run query on success. B: function or hook exists but
+                parameter shape or query invalidation is wrong.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Update StepTimeline with revert action and write Vitest test"
+        task_context: |
+          Update StepTimeline.tsx to show "Revert to this step" on completed steps preceding
+          the current active step. Add confirmation dialog with optional reason field.
+
+          Critical pre-condition: Before starting, search for StepTimeline.tsx. If it does not
+          exist, search RunDetail.tsx for step renderer (look for run.steps.map or StepProgressBar).
+          Choose one of: (a) create StepTimeline.tsx from scratch with full props interface, or
+          (b) implement revert UI inline in the existing renderer. Document your choice.
+
+          Steps:
+          1. Locate or create StepTimeline.tsx
+          2. Add local state: selectedStepIndex and reason
+          3. For each step that is COMPLETED AND precedes current active step, add "Revert to this step" button
+          4. "Revert to this step" must NOT appear on the current active step or steps after it
+          5. Add confirmation dialog (modal) that opens when selectedStepIndex !== null:
+             - Title: "Revert to this step?"
+             - Warning: "This will reset all tasks from step X onward to PENDING"
+             - Optional reason textarea
+             - Confirm calls useTransitionBack.mutate({target_step_index, reason})
+             - Cancel clears selection
+          6. Handle API errors: toast for 400 (Invalid step), 409 (Run must be ACTIVE or PAUSED)
+          7. Write Vitest test:
+             - test shows revert action on completed steps before current
+             - test opens confirmation dialog on revert click
+          8. Run npx vitest run and confirm all tests pass
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - npx vitest run exits 0 (including StepTimeline revert tests)
+        requirements:
+          - id: "R1"
+            desc: "'Revert to this step' action appears on completed steps preceding the current step"
+            priority: critical
+          - id: "R2"
+            desc: "Confirmation dialog with optional reason renders on click"
+            priority: critical
+          - id: "R3"
+            desc: "Vitest test for StepTimeline revert action passes"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "revert_text_present"
+              cmd: "grep -rn 'Revert to this step' ui/src/ | grep -qv test"
+              must: true
+        verifier:
+          rubric:
+            - id: "ui_correctness"
+              text: |
+                R1/R2/R3 — A: revert action shown on correct steps only; dialog has reason
+                textarea; useTransitionBack called on confirm; Vitest tests pass.
+                B: revert action shown but shown on wrong steps (e.g., current step) or
+                dialog missing reason textarea.
+        retry:
+          max_attempts: 2
+
+  - id: "S-09"
+    title: "Branch Status Panel and Back-Merge"
+    step_context: |
+      Fix UI-BRANCH-STATUS gap. Backend endpoints GET /api/runs/{id}/branch-status and
+      POST /api/runs/{id}/back-merge exist and are tested. This step adds client functions,
+      hooks, BranchStatusResponse type, and BranchStatusPanel component to RunDetail.
+      This step is independent of Steps 1-8.
+    tasks:
+      - id: "T-01"
+        title: "Add BranchStatusResponse type and client functions"
+        task_context: |
+          Add the BranchStatusResponse TypeScript type and two client functions (getBranchStatus,
+          backMerge) to the frontend.
+
+          Steps:
+          1. Add BranchStatusResponse type to ui/src/types/ (create types/branches.ts or extend):
+             - behind_count: number, ahead_count: number, can_merge_cleanly: boolean,
+               has_conflicts: boolean, source_branch: string, run_branch: string
+          2. Open ui/src/api/client.ts and add:
+             - getBranchStatus(runId): GET /api/runs/{runId}/branch-status
+             - backMerge(runId): POST /api/runs/{runId}/back-merge
+
+          Verification:
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "BranchStatusResponse type exported from ui/src/types/"
+            priority: critical
+          - id: "R2"
+            desc: "getBranchStatus and backMerge exported from ui/src/api/client.ts"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "client_fns_exist"
+              cmd: "grep -n 'getBranchStatus\\|backMerge' ui/src/api/client.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "type_and_client"
+              text: |
+                R1/R2 — A: BranchStatusResponse has all 6 fields; both functions call correct
+                endpoints and handle errors. B: types and functions exist but field names diverge
+                from backend schema.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add useBranchStatus and useBackMerge hooks"
+        task_context: |
+          Add TanStack Query hooks: useBranchStatus with 30-second refetchInterval, and
+          useBackMerge mutation that invalidates run and branch status queries on success.
+
+          Steps:
+          1. Open ui/src/hooks/useApi.ts
+          2. Add useBranchStatus(runId) query hook with:
+             - queryKey: ['branchStatus', runId]
+             - refetchInterval: 30_000 (30 seconds)
+          3. Add useBackMerge(runId) mutation hook that on success invalidates:
+             - ['run', runId]
+             - ['branchStatus', runId]
+
+          Verification:
+          - grep -n "useBranchStatus|useBackMerge" ui/src/hooks/useApi.ts shows both exports
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "useBranchStatus exported with 30s polling interval (refetchInterval: 30_000)"
+            priority: critical
+          - id: "R2"
+            desc: "useBackMerge exported and invalidates both run and branchStatus queries on success"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "hooks_exist"
+              cmd: "grep -n 'useBranchStatus' ui/src/hooks/useApi.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "hook_correctness"
+              text: |
+                R1/R2 — A: useBranchStatus has 30s refetchInterval; useBackMerge invalidates
+                both query keys. B: hooks exist but polling interval is wrong or only one
+                query key is invalidated.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Create BranchStatusPanel and mount in RunDetail, write Vitest test"
+        task_context: |
+          Create BranchStatusPanel component and mount it in RunDetail for ACTIVE/PAUSED runs
+          with a worktree. Write a Vitest test.
+
+          Steps:
+          1. Create ui/src/components/detail/BranchStatusPanel.tsx:
+             - Props: { runId: string }
+             - Show: source_branch, run_branch, behind_count, ahead_count
+             - Show conflict warning when has_conflicts || !can_merge_cleanly
+             - "Pull upstream changes" button (disabled when has_conflicts or isPending)
+             - Retry button on error state
+          2. Open ui/src/pages/RunDetail.tsx
+          3. Import BranchStatusPanel and mount:
+             {['ACTIVE', 'PAUSED'].includes(run.status) && run.worktree_path && <BranchStatusPanel runId={run.id} />}
+          4. Write Vitest test in ui/src/components/detail/__tests__/BranchStatusPanel.test.tsx:
+             - test renders ahead/behind counts
+             - test shows conflict warning when has_conflicts is true
+          5. Run npx vitest run and confirm all tests pass
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - npx vitest run exits 0 (including BranchStatusPanel tests)
+          - File exists: ui/src/components/detail/BranchStatusPanel.tsx
+        requirements:
+          - id: "R1"
+            desc: "BranchStatusPanel.tsx exists at ui/src/components/detail/BranchStatusPanel.tsx"
+            priority: critical
+          - id: "R2"
+            desc: "Panel shows ahead/behind counts and conflict warning when applicable"
+            priority: critical
+          - id: "R3"
+            desc: "Panel hidden for COMPLETED/FAILED runs or runs without worktree_path"
+            priority: critical
+          - id: "R4"
+            desc: "Vitest test for BranchStatusPanel passes"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "panel_exists"
+              cmd: "test -f ui/src/components/detail/BranchStatusPanel.tsx"
+              must: true
+        verifier:
+          rubric:
+            - id: "component_correctness"
+              text: |
+                R1/R2/R3/R4 — A: panel exists, shows all branch data, has conflict warning,
+                pull button disabled when conflicts, hidden for non-ACTIVE/PAUSED or no worktree,
+                Vitest tests pass. B: panel exists but guard condition or conflict warning missing.
+        retry:
+          max_attempts: 2
+
+  - id: "S-10"
+    title: "Env File Management UI"
+    step_context: |
+      Fix UI-ENV-FILE-MANAGEMENT gap. Backend env file endpoints exist and are tested. This step
+      adds EnvFilesPanel to RunDetail with current env file listing (masked values), snapshot
+      history, revert and copy-back actions. Security constraint: env values must never appear
+      unmasked in component state, logs, or rendered output. This step is independent of Steps 1-9.
+    tasks:
+      - id: "T-01"
+        title: "Add env file TypeScript types and client functions"
+        task_context: |
+          Add EnvFile, EnvSnapshot, EnvDefaultTarget types and all five env file client functions
+          to the frontend.
+
+          Steps:
+          1. Add types to ui/src/types/ (create types/envFiles.ts or extend existing):
+             - EnvFile: { path: string, masked_value: string, key: string }
+             - EnvSnapshot: { id: string, timestamp: string, agent: string, files: EnvFile[] }
+             - EnvDefaultTarget: { target_path: string }
+          2. Open ui/src/api/client.ts and add five functions:
+             - getEnvFiles(runId): GET /api/runs/{runId}/env-files
+             - getEnvSnapshots(runId): GET /api/runs/{runId}/env-snapshots
+             - getEnvDefaultTarget(runId): GET /api/runs/{runId}/env-default-target
+             - revertEnvSnapshot(runId, snapshotId): POST /api/runs/{runId}/env-snapshots/{snapshotId}/revert
+             - copyBackEnvFiles(runId, targetPath): POST /api/runs/{runId}/env-copy-back
+
+          Security: Do not display unmasked env values. Always show masked_value only.
+
+          Verification:
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "EnvFile, EnvSnapshot, EnvDefaultTarget types exported from ui/src/types/"
+            priority: critical
+          - id: "R2"
+            desc: "All five client functions exported from ui/src/api/client.ts"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "client_fns_exist"
+              cmd: "grep -c 'export.*getEnvFiles\\|export.*getEnvSnapshots\\|export.*revertEnvSnapshot' ui/src/api/client.ts | awk '{exit ($1 < 3)}'"
+              must: true
+        verifier:
+          rubric:
+            - id: "types_and_client"
+              text: |
+                R1/R2 — A: all 3 types defined correctly; all 5 client functions present with
+                correct endpoints; masked_value used (not raw values). B: types and functions
+                present but some endpoint paths or parameter shapes are wrong.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add five env file hooks to useApi.ts"
+        task_context: |
+          Add three query hooks (useEnvFiles, useEnvSnapshots, useEnvDefaultTarget) and two
+          mutation hooks (useRevertEnvSnapshot, useCopyBackEnvFiles) to useApi.ts.
+
+          Steps:
+          1. Open ui/src/hooks/useApi.ts
+          2. Add useEnvFiles(runId) query hook with queryKey ['envFiles', runId]
+          3. Add useEnvSnapshots(runId) query hook with queryKey ['envSnapshots', runId]
+          4. Add useEnvDefaultTarget(runId) query hook with queryKey ['envDefaultTarget', runId]
+          5. Add useRevertEnvSnapshot(runId) mutation hook that on success invalidates:
+             ['envFiles', runId] and ['envSnapshots', runId]
+          6. Add useCopyBackEnvFiles(runId) mutation hook that on success invalidates:
+             ['envFiles', runId]
+
+          Verification:
+          - grep -n for all five hook names in useApi.ts shows exports
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "All five env file hooks exported from ui/src/hooks/useApi.ts"
+            priority: critical
+          - id: "R2"
+            desc: "Mutation hooks invalidate correct query keys on success"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "hooks_exist"
+              cmd: "grep -c 'export.*useEnvFiles\\|export.*useEnvSnapshots\\|export.*useRevertEnvSnapshot' ui/src/hooks/useApi.ts | awk '{exit ($1 < 3)}'"
+              must: true
+        verifier:
+          rubric:
+            - id: "hook_coverage"
+              text: |
+                R1/R2 — A: all 5 hooks exported; query keys correct; mutation hooks invalidate
+                correct related queries. B: all 5 present but one mutation's invalidation is
+                missing or uses wrong query key.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Create EnvFilesPanel, mount in RunDetail, write Vitest test"
+        task_context: |
+          Create the EnvFilesPanel component with current files list, snapshot history table,
+          and action buttons. Mount in RunDetail when run.env_file_specs is non-empty.
+
+          Steps:
+          1. Create ui/src/components/detail/EnvFilesPanel.tsx:
+             - Props: { runId: string }
+             - Current Env Files section: list each file path and masked_value
+             - Snapshot History table: timestamp, agent, Revert and Copy Back action buttons
+             - Revert: opens ConfirmationDialog before calling useRevertEnvSnapshot
+             - Copy Back: shows path input dialog before calling useCopyBackEnvFiles
+             - Security: show masked_value only, never raw values
+          2. Open ui/src/pages/RunDetail.tsx
+          3. Mount: {run.env_file_specs && run.env_file_specs.length > 0 && <EnvFilesPanel runId={run.id} />}
+          4. Write Vitest test in ui/src/components/detail/__tests__/EnvFilesPanel.test.tsx:
+             - test renders snapshot table with revert button
+          5. Run npx vitest run and confirm all tests pass
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - npx vitest run exits 0 (including EnvFilesPanel test)
+          - File exists: ui/src/components/detail/EnvFilesPanel.tsx
+        requirements:
+          - id: "R1"
+            desc: "EnvFilesPanel.tsx exists at ui/src/components/detail/EnvFilesPanel.tsx"
+            priority: critical
+          - id: "R2"
+            desc: "Panel shows masked values only (never raw env values)"
+            priority: critical
+          - id: "R3"
+            desc: "Panel hidden when run.env_file_specs is empty or null"
+            priority: critical
+          - id: "R4"
+            desc: "Vitest test for EnvFilesPanel passes"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "panel_exists"
+              cmd: "test -f ui/src/components/detail/EnvFilesPanel.tsx"
+              must: true
+        verifier:
+          rubric:
+            - id: "component_correctness"
+              text: |
+                R1/R2/R3/R4 — A: panel exists, shows masked values, snapshot table with actions,
+                revert/copy-back use confirmation dialogs, hidden when no env_file_specs, test passes.
+                B: panel exists but one of masked_values, guard condition, or confirmation dialog missing.
+        retry:
+          max_attempts: 2
+
+  - id: "S-11"
+    title: "Surface Server GlobalConfig in Settings Panel"
+    step_context: |
+      Fix UI-GLOBAL-CONFIG gap. Backend GET /api/config endpoint exists but frontend has no
+      client function, type, hook, or UI for it. Run list currently uses a hardcoded constant
+      for max_recent_runs. After this step, settings panel shows server-derived config and run
+      list uses server-provided max_recent_runs. This step is independent of Steps 1-10.
+    tasks:
+      - id: "T-01"
+        title: "Add GlobalConfig type and getConfig client function"
+        task_context: |
+          Add the GlobalConfig TypeScript type and getConfig() client function.
+
+          Steps:
+          1. Add GlobalConfig type to ui/src/types/ (create types/config.ts or extend existing):
+             - db_path: string, active_agent_types: string[], max_recent_runs: number
+             - Add any other fields present in the backend GET /api/config response
+          2. Open ui/src/api/client.ts and add:
+             getConfig(): GET /api/config returning GlobalConfig
+          3. Read backend src/orchestrator/api/routers/config.py to confirm actual response shape
+
+          Verification:
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "GlobalConfig type exported from ui/src/types/"
+            priority: critical
+          - id: "R2"
+            desc: "getConfig exported from ui/src/api/client.ts"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "client_fn_exists"
+              cmd: "grep -n 'getConfig' ui/src/api/client.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "type_and_client"
+              text: |
+                R1/R2 — A: GlobalConfig type matches backend response schema; getConfig calls
+                /api/config and returns typed result. B: type or function exists but field names
+                diverge from backend or endpoint path is wrong.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add useGlobalConfig hook"
+        task_context: |
+          Add the useGlobalConfig query hook with a long staleTime to avoid redundant fetches
+          (configuration rarely changes).
+
+          Steps:
+          1. Open ui/src/hooks/useApi.ts
+          2. Add useGlobalConfig() query hook with:
+             - queryKey: ['globalConfig']
+             - queryFn: getConfig
+             - staleTime: Infinity (or at minimum 300_000 for 5 minutes)
+          3. Note: Vitest tests must create a fresh QueryClient per test to avoid staleTime leakage
+
+          Verification:
+          - grep -n "useGlobalConfig" ui/src/hooks/useApi.ts shows the export
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "useGlobalConfig exported from ui/src/hooks/useApi.ts"
+            priority: critical
+          - id: "R2"
+            desc: "Query uses staleTime of Infinity or at least 5 minutes (300_000 ms)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "hook_exists"
+              cmd: "grep -n 'useGlobalConfig' ui/src/hooks/useApi.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "hook_correctness"
+              text: |
+                R1/R2 — A: useGlobalConfig exported with long staleTime (Infinity or >=5min).
+                B: hook exported but staleTime is less than 5 minutes or not set.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Update settings panel and run list, write Vitest test"
+        task_context: |
+          Update the settings panel component to include a "Server" section using useGlobalConfig,
+          update the run list to use max_recent_runs from server config, and write Vitest test.
+
+          Steps:
+          1. Locate the settings panel component (search ui/src/ for settings-related components)
+          2. Add "Server" section to settings panel using useGlobalConfig:
+             - Show db_path, active_agent_types (joined), max_recent_runs
+             - Show error state with retry button when getConfig fails
+             - Show loading state while fetching
+          3. Locate the run list component and replace hardcoded max_recent_runs with:
+             useGlobalConfig().data?.max_recent_runs ?? <reasonable_fallback>
+          4. Write Vitest test for settings panel Server section:
+             - test renders db_path and active_agent_types from mock config
+          5. Create fresh QueryClient per test to avoid staleTime state leakage
+          6. Run npx vitest run and confirm all tests pass
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - npx vitest run exits 0 (including settings panel test)
+        requirements:
+          - id: "R1"
+            desc: "Settings panel shows Server section with db_path, active_agent_types, max_recent_runs"
+            priority: critical
+          - id: "R2"
+            desc: "Run list uses max_recent_runs from useGlobalConfig (not hardcoded)"
+            priority: expected
+          - id: "R3"
+            desc: "Vitest test for settings panel Server section passes"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "settings_panel_updated"
+              cmd: "grep -rn 'useGlobalConfig\\|GlobalConfig' ui/src/ | grep -v 'test\\|spec\\|.d.ts' | grep -q 'Server\\|db_path'"
+              must: false
+        verifier:
+          rubric:
+            - id: "ui_integration"
+              text: |
+                R1/R2/R3 — A: settings panel shows all 3 config fields with error/loading states;
+                run list uses server max_recent_runs; Vitest test passes. B: settings panel shows
+                config but missing error state or run list still uses hardcoded constant.
+        retry:
+          max_attempts: 2
+
+  - id: "S-12"
+    title: "Routine YAML Validation UI"
+    step_context: |
+      Fix UI-ROUTINE-VALIDATION gap. Backend POST /api/routines/validate endpoint exists but
+      frontend has no client function, hook, or UI for it. This step adds a validator modal
+      accessible from RoutineSelector or CreateRunModal (no new route). On valid result, shows
+      "Create run from this routine" shortcut. This step is independent of Steps 1-11.
+    tasks:
+      - id: "T-01"
+        title: "Add validateRoutine client function and useValidateRoutine hook"
+        task_context: |
+          Add the API client function for POST /api/routines/validate and the TanStack Query
+          mutation hook.
+
+          Steps:
+          1. Open ui/src/api/client.ts
+          2. Add ValidationError interface: { line: number, message: string }
+          3. Add ValidationResult interface: { valid: boolean, errors: ValidationError[] }
+          4. Add validateRoutine(yamlContent): POST /api/routines/validate with
+             body { yaml_content: yamlContent }
+          5. Open ui/src/hooks/useApi.ts
+          6. Add useValidateRoutine() mutation hook:
+             mutationFn: (yamlContent: string) => validateRoutine(yamlContent)
+          7. Verify the exact backend endpoint path by reading src/orchestrator/api/routers/
+
+          Verification:
+          - grep -n "validateRoutine" ui/src/api/client.ts shows the export
+          - grep -n "useValidateRoutine" ui/src/hooks/useApi.ts shows the export
+          - npx tsc --noEmit exits 0
+        requirements:
+          - id: "R1"
+            desc: "validateRoutine exported from ui/src/api/client.ts"
+            priority: critical
+          - id: "R2"
+            desc: "useValidateRoutine exported from ui/src/hooks/useApi.ts"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "client_fn_exists"
+              cmd: "grep -n 'validateRoutine' ui/src/api/client.ts | grep -q 'export'"
+              must: true
+            - id: "hook_exists"
+              cmd: "grep -n 'useValidateRoutine' ui/src/hooks/useApi.ts | grep -q 'export'"
+              must: true
+        verifier:
+          rubric:
+            - id: "api_wiring"
+              text: |
+                R1/R2 — A: client function calls correct endpoint with yaml_content body;
+                ValidationError and ValidationResult types defined; hook uses correct mutationFn.
+                B: function and hook exist but type shapes or endpoint path is wrong.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Create RoutineValidatorModal component"
+        task_context: |
+          Create a routine validator modal with YAML textarea, Validate button, inline error
+          list with line numbers, and "Create run from this routine" shortcut on valid result.
+
+          Steps:
+          1. Create ui/src/components/RoutineValidatorModal.tsx (or routine/ subdirectory):
+             - Props: { isOpen: boolean, onClose: () => void, onCreateRun?: (yaml: string) => void }
+             - YAML textarea with placeholder "Paste your routine YAML here..."
+             - Validate button (disabled while validating; shows "Validating..." text)
+             - On invalid result: show error list with "Line {n}: {message}" for each error
+             - On valid result: show green "Valid routine YAML" + "Create run from this routine" button
+             - On API error: show "Validation service error. Please try again."
+          2. Modal approach only — no new routes
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - File exists: ui/src/components/RoutineValidatorModal.tsx (or equivalent)
+        requirements:
+          - id: "R1"
+            desc: "RoutineValidatorModal exists with textarea, Validate button, and inline error list"
+            priority: critical
+          - id: "R2"
+            desc: "Error list shows line numbers for each error"
+            priority: critical
+          - id: "R3"
+            desc: "'Create run from this routine' button appears only when valid === true"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "modal_exists"
+              cmd: "find ui/src -name 'RoutineValidatorModal.tsx' | grep -q '.'"
+              must: true
+        verifier:
+          rubric:
+            - id: "component_completeness"
+              text: |
+                R1/R2/R3 — A: modal has all elements (textarea, validate button, error list with
+                line numbers, success shortcut); API error handled gracefully.
+                B: modal exists but error list lacks line numbers or success shortcut is always shown.
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Wire validator modal into CreateRunModal, write Vitest test"
+        task_context: |
+          Update CreateRunModal.tsx (or RoutineSelector) to expose a trigger that opens
+          RoutineValidatorModal. Write Vitest tests for the validator.
+
+          Steps:
+          1. Open ui/src/components/CreateRunModal.tsx (search codebase if path is different)
+          2. Add validatorOpen state and "Validate routine YAML" button/link
+          3. Render RoutineValidatorModal with isOpen, onClose, and onCreateRun props
+          4. onCreateRun pre-fills the routine YAML field in CreateRunModal and closes the validator
+          5. Write Vitest test in ui/src/components/__tests__/RoutineValidatorModal.test.tsx:
+             - test shows error list with line numbers on invalid result
+             - test shows "Create run from this routine" shortcut on valid result
+          6. Run npx vitest run and confirm all tests pass
+
+          Verification:
+          - npx tsc --noEmit exits 0
+          - npx vitest run exits 0 (including RoutineValidatorModal tests)
+        requirements:
+          - id: "R1"
+            desc: "CreateRunModal (or RoutineSelector) exposes trigger to open validator modal"
+            priority: critical
+          - id: "R2"
+            desc: "Validator is accessible without navigating away from run creation flow"
+            priority: critical
+          - id: "R3"
+            desc: "Vitest tests for RoutineValidatorModal pass (error list and success shortcut)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "modal_wired"
+              cmd: "grep -rn 'RoutineValidatorModal' ui/src/components/ | grep -v test | grep -q 'import\\|component'"
+              must: true
+        verifier:
+          rubric:
+            - id: "integration_and_tests"
+              text: |
+                R1/R2/R3 — A: modal trigger exists in CreateRunModal; validator accessible without
+                new route; onCreateRun pre-fills form; Vitest tests pass for both error and valid cases.
+                B: modal trigger exists but onCreateRun wiring or Vitest tests are missing.
+        retry:
+          max_attempts: 2
