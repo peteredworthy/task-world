@@ -1,25 +1,32 @@
-import { useTaskPrompt } from '../../hooks/useApi';
-import { getAuthToken } from '../../api/client';
+import { ApiError, getAuthToken } from '../../api/client';
+import { useAgentStarted, useGuidance } from '../../hooks/useApi';
 import { PromptCopyBox } from './PromptCopyBox';
 import { WaitingIndicator } from './WaitingIndicator';
 import { Spinner } from '../Spinner';
-import type { RunResponse, TaskSummary } from '../../types';
+import type { RunResponse } from '../../types';
 
 interface AgentGuidancePanelProps {
   run: RunResponse;
-  task: TaskSummary;
-  onCancel?: () => void;
 }
 
-export function AgentGuidancePanel({ run, task, onCancel }: AgentGuidancePanelProps) {
-  const { data: prompt, isLoading } = useTaskPrompt(run.id, task.id);
+export function AgentGuidancePanel({ run }: AgentGuidancePanelProps) {
+  const { data: guidance, isLoading, error } = useGuidance(run.id);
+  const agentStarted = useAgentStarted(run.id);
   const token = getAuthToken();
-  const mcpUrl = window.location.origin + '/mcp/sse';
+  const isNotFound = error instanceof ApiError && error.status === 404;
 
   if (isLoading) {
     return (
       <div className="flex justify-center py-4">
         <Spinner className="h-4 w-4" />
+      </div>
+    );
+  }
+
+  if (isNotFound) {
+    return (
+      <div className="bg-status-paused/10 border border-status-paused/30 rounded-lg p-4">
+        <p className="text-sm text-text-secondary">No active task guidance available</p>
       </div>
     );
   }
@@ -34,17 +41,16 @@ export function AgentGuidancePanel({ run, task, onCancel }: AgentGuidancePanelPr
         </p>
       </div>
 
-      {prompt && (
+      {guidance && (
         <>
-          <PromptCopyBox label="System Prompt" content={prompt.system} />
-          <PromptCopyBox label="User Prompt" content={prompt.user} />
+          <PromptCopyBox label="Task Prompt" content={guidance.prompt} />
         </>
       )}
 
       <div>
         <span className="text-xs font-semibold text-text-muted uppercase tracking-wide">MCP SSE Endpoint</span>
         <div className="mt-1 bg-bg-elevated rounded px-3 py-2 text-sm font-mono text-text-secondary break-all">
-          {mcpUrl}
+          {guidance?.mcp_url ?? 'Not available'}
         </div>
       </div>
 
@@ -60,7 +66,17 @@ export function AgentGuidancePanel({ run, task, onCancel }: AgentGuidancePanelPr
         </div>
       )}
 
-      <WaitingIndicator startedAt={run.started_at} onCancel={onCancel} />
+      <div className="flex items-center justify-end">
+        <button
+          onClick={() => agentStarted.mutate()}
+          disabled={agentStarted.isPending}
+          className="px-3 py-1.5 text-xs font-medium rounded-md bg-status-active/15 text-status-active border border-status-active/30 hover:bg-status-active/25 disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          I've started my agent
+        </button>
+      </div>
+
+      <WaitingIndicator runId={run.id} startedAt={run.started_at} />
     </div>
   );
 }

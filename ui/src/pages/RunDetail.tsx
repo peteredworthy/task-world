@@ -466,14 +466,7 @@ function RunDetailInner({ runId }: { runId: string }) {
           {/* Agent guidance panel for user_managed */}
           {activeTask && (
             <div className="mb-6">
-              <AgentGuidancePanel
-                run={run}
-                task={activeTask}
-                onCancel={() => {
-                  setMutationError(null);
-                  pauseRun.mutate(run.id, { onError: handleMutationError('pause') });
-                }}
-              />
+              <AgentGuidancePanel run={run} />
             </div>
           )}
 
