@@ -73,6 +73,16 @@ export class RecoverInvalidStateError extends ApiError {
   }
 }
 
+export interface ValidationError {
+  line: number;
+  message: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: ValidationError[];
+}
+
 function extractMessage(status: number, body: unknown): string {
   if (body && typeof body === 'object') {
     const b = body as Record<string, unknown>;
@@ -91,6 +101,28 @@ function extractMessage(status: number, body: unknown): string {
     }
   }
   return `API error ${status}`;
+}
+
+function parseValidationLine(rawError: string): number {
+  const lineMatch = rawError.match(/\bline\s+(\d+)\b/i);
+  if (lineMatch) {
+    return Number(lineMatch[1]);
+  }
+  return 0;
+}
+
+function normalizeValidationErrors(rawErrors: unknown): ValidationError[] {
+  if (!Array.isArray(rawErrors)) {
+    return [];
+  }
+
+  return rawErrors.map((entry) => {
+    const rawMessage = typeof entry === 'string' ? entry : String(entry);
+    return {
+      line: parseValidationLine(rawMessage),
+      message: rawMessage,
+    };
+  });
 }
 
 async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
@@ -367,6 +399,18 @@ export const api = {
     return fetchApi('/api/routines/' + routineId);
   },
 
+  async validateRoutine(yamlContent: string): Promise<ValidationResult> {
+    const response = await fetchApi<{ valid: boolean; errors?: unknown }>('/api/routines/validate', {
+      method: 'POST',
+      body: JSON.stringify({ yaml_content: yamlContent }),
+    });
+
+    return {
+      valid: response.valid,
+      errors: normalizeValidationErrors(response.errors),
+    };
+  },
+
   listAgents(): Promise<AgentOption[]> {
     return fetchApi('/api/agents');
   },
@@ -576,4 +620,8 @@ export function copyBackEnvFiles(runId: string, targetPath: string): Promise<voi
 
 export function getConfig(): Promise<GlobalConfig> {
   return api.getConfig();
+}
+
+export function validateRoutine(yamlContent: string): Promise<ValidationResult> {
+  return api.validateRoutine(yamlContent);
 }

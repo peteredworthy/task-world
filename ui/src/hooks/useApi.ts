@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, getConfig } from '../api/client';
+import { api, getConfig, validateRoutine } from '../api/client';
 import type { CreateRunRequest, RecoverRequest, SetGradeRequest, UpdateChecklistRequest } from '../types';
 
 export function useRuns(params?: { status?: string; repo_name?: string; limit?: number }) {
@@ -83,6 +83,12 @@ export function useRoutine(routineId: string | undefined | null) {
     queryKey: ['routine', routineId],
     queryFn: () => api.getRoutine(routineId!),
     enabled: !!routineId,
+  });
+}
+
+export function useValidateRoutine() {
+  return useMutation({
+    mutationFn: (yamlContent: string) => validateRoutine(yamlContent),
   });
 }
 
