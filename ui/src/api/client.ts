@@ -11,6 +11,8 @@ import type {
   PendingAction,
   ProjectRoutineResponse,
   ProjectRoutinesListResponse,
+  RecoverRequest,
+  RecoverResponse,
   PromptResponse,
   RejectTaskRequest,
   RepoResponse,
@@ -48,6 +50,20 @@ export class ApiError extends Error {
     this.name = 'ApiError';
     this.status = status;
     this.body = body;
+  }
+}
+
+export class RecoverTaskNotFoundError extends ApiError {
+  constructor(body: unknown) {
+    super(404, body);
+    this.name = 'RecoverTaskNotFoundError';
+  }
+}
+
+export class RecoverInvalidStateError extends ApiError {
+  constructor(body: unknown) {
+    super(409, body);
+    this.name = 'RecoverInvalidStateError';
   }
 }
 
@@ -140,6 +156,25 @@ export const api = {
 
   cancelRun(runId: string): Promise<RunResponse> {
     return fetchApi('/api/runs/' + runId + '/cancel', { method: 'POST' });
+  },
+
+  async recoverRun(runId: string, data: RecoverRequest): Promise<RecoverResponse> {
+    try {
+      return await fetchApi('/api/runs/' + runId + '/recover', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      });
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 404) {
+          throw new RecoverTaskNotFoundError(error.body);
+        }
+        if (error.status === 409) {
+          throw new RecoverInvalidStateError(error.body);
+        }
+      }
+      throw error;
+    }
   },
 
   deleteRun(runId: string): Promise<void> {

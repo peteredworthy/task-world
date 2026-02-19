@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { CreateRunRequest, UpdateChecklistRequest, SetGradeRequest } from '../types';
+import type { CreateRunRequest, RecoverRequest, SetGradeRequest, UpdateChecklistRequest } from '../types';
 
 export function useRuns(params?: { status?: string; repo_name?: string }) {
   return useQuery({
@@ -116,6 +116,16 @@ export function useCancelRun() {
   return useMutation({
     mutationFn: (runId: string) => api.cancelRun(runId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['runs'] }),
+  });
+}
+
+export function useRecoverRun(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: RecoverRequest) => api.recoverRun(runId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
   });
 }
 
