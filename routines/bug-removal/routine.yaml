@@ -346,7 +346,7 @@ steps:
         auto_verify:
           items:
             - id: "service_type_check"
-              cmd: "uv run pyright src/orchestrator/workflow/service.py 2>&1 | grep -c 'error' | awk '{exit ($1 > 0)}'"
+              cmd: "uv run pyright src/orchestrator/workflow/service.py"
               must: true
         verifier:
           rubric:
@@ -681,7 +681,7 @@ steps:
         auto_verify:
           items:
             - id: "server_type_check"
-              cmd: "uv run pyright src/orchestrator/mcp/server.py 2>&1 | grep -c 'error' | awk '{exit ($1 > 0)}'"
+              cmd: "uv run pyright src/orchestrator/mcp/server.py"
               must: true
         verifier:
           rubric:
@@ -721,7 +721,7 @@ steps:
         auto_verify:
           items:
             - id: "executor_type_check"
-              cmd: "uv run pyright src/orchestrator/agents/executor.py 2>&1 | grep -c 'error' | awk '{exit ($1 > 0)}'"
+              cmd: "uv run pyright src/orchestrator/agents/executor.py"
               must: true
         verifier:
           rubric:

@@ -1,0 +1,1 @@
+When the run view is expanded those that took more than 1 attempt are showing building for all but the last attempt and the last attempt shows "passed". Those that only took one attempt show completed. Instead of building for attempts that failed validation let's use "Needs revision" and for the "passed" attempts change it to "Accepted".
