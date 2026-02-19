@@ -5,6 +5,7 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useCreateRunModal } from '../../hooks/useCreateRunModal';
 import { BranchSelector } from '../BranchSelector';
 import { RoutineSelector } from '../RoutineSelector';
+import { RoutineValidatorModal } from '../RoutineValidatorModal';
 import type { RoutineSelection } from '../RoutineSelector';
 import type { AgentOption } from '../../types/agents';
 
@@ -90,6 +91,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
 
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [routineSelection, setRoutineSelection] = useState<RoutineSelection | null>(null);
+  const [routineValidatorOpen, setRoutineValidatorOpen] = useState(false);
 
   // For templates, fetch full routine detail to get input definitions
   const isTemplate = routineSelection && !routineSelection.isProjectRoutine;
@@ -335,10 +337,19 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
               {/* Routine Selection */}
               {form.repoName && (
                 <div>
-                  <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
-                    <span className="text-base leading-none">{'\u{1F4CB}'}</span>
-                    Routine
-                  </label>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary">
+                      <span className="text-base leading-none">{'\u{1F4CB}'}</span>
+                      Routine
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setRoutineValidatorOpen(true)}
+                      className="text-xs text-accent-purple hover:text-accent-purple/80 transition-colors"
+                    >
+                      Validate YAML
+                    </button>
+                  </div>
                   <RoutineSelector
                     repoName={form.repoName}
                     branch={form.targetBranch || 'main'}
@@ -585,6 +596,10 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
           </form>
         )}
       </div>
+      <RoutineValidatorModal
+        isOpen={routineValidatorOpen}
+        onClose={() => setRoutineValidatorOpen(false)}
+      />
     </div>
   );
 }
