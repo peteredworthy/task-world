@@ -18,6 +18,7 @@ import { UpcomingPlan } from '../components/detail/UpcomingPlan';
 import { RecoveryPanel } from '../components/detail/RecoveryPanel';
 import { StepApprovalBanner } from '../components/detail/StepApprovalBanner';
 import { BranchStatusPanel } from '../components/detail/BranchStatusPanel';
+import { EnvFilesPanel } from '../components/detail/EnvFilesPanel';
 import { classifyTasks, getLastAgentError } from '../lib/activity';
 import { formatRelativeTime } from '../lib/format';
 import { AgentIcon } from '../components/AgentIcon';
@@ -449,6 +450,10 @@ function RunDetailInner({ runId }: { runId: string }) {
 
           {['active', 'paused'].includes(run.status) && run.worktree_path && (
             <BranchStatusPanel runId={run.id} />
+          )}
+
+          {run.env_file_specs && run.env_file_specs.length > 0 && (
+            <EnvFilesPanel runId={run.id} />
           )}
 
           {/* Agent error banner — shown when run paused/failed due to agent error */}
