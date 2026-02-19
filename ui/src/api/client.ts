@@ -9,6 +9,9 @@ import type {
   ChecklistItemSchema,
   ClarificationRequest,
   CreateRunRequest,
+  EnvDefaultTarget,
+  EnvFile,
+  EnvSnapshot,
   GuidanceResponse,
   PendingAction,
   ProjectRoutineResponse,
@@ -279,6 +282,31 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/pending-clarification');
   },
 
+  getEnvFiles(runId: string): Promise<EnvFile[]> {
+    return fetchApi('/api/runs/' + runId + '/env-files');
+  },
+
+  getEnvSnapshots(runId: string): Promise<EnvSnapshot[]> {
+    return fetchApi('/api/runs/' + runId + '/env-snapshots');
+  },
+
+  getEnvDefaultTarget(runId: string): Promise<EnvDefaultTarget> {
+    return fetchApi('/api/runs/' + runId + '/env-default-target');
+  },
+
+  revertEnvSnapshot(runId: string, snapshotId: string): Promise<EnvSnapshot> {
+    return fetchApi('/api/runs/' + runId + '/env-snapshots/' + snapshotId + '/revert', {
+      method: 'POST',
+    });
+  },
+
+  copyBackEnvFiles(runId: string, targetPath: string): Promise<void> {
+    return fetchApi('/api/runs/' + runId + '/env-copy-back', {
+      method: 'POST',
+      body: JSON.stringify({ target_path: targetPath }),
+    });
+  },
+
   respondToClarification(runId: string, taskId: string, requestId: string, data: RespondToClarificationRequest): Promise<TransitionResponse> {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/clarifications/' + requestId + '/respond', {
       method: 'POST',
@@ -381,4 +409,24 @@ export function getBranchStatus(runId: string): Promise<BranchStatusResponse> {
 
 export function backMerge(runId: string): Promise<void> {
   return api.backMerge(runId);
+}
+
+export function getEnvFiles(runId: string): Promise<EnvFile[]> {
+  return api.getEnvFiles(runId);
+}
+
+export function getEnvSnapshots(runId: string): Promise<EnvSnapshot[]> {
+  return api.getEnvSnapshots(runId);
+}
+
+export function getEnvDefaultTarget(runId: string): Promise<EnvDefaultTarget> {
+  return api.getEnvDefaultTarget(runId);
+}
+
+export function revertEnvSnapshot(runId: string, snapshotId: string): Promise<EnvSnapshot> {
+  return api.revertEnvSnapshot(runId, snapshotId);
+}
+
+export function copyBackEnvFiles(runId: string, targetPath: string): Promise<void> {
+  return api.copyBackEnvFiles(runId, targetPath);
 }
