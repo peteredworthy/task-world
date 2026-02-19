@@ -3,6 +3,7 @@ import type {
   AgentLogsResponse,
   AgentOption,
   ApproveTaskRequest,
+  BranchStatusResponse,
   BranchCountResponse,
   BranchesListResponse,
   ChecklistItemSchema,
@@ -176,6 +177,14 @@ export const api = {
 
   getGuidance(runId: string): Promise<GuidanceResponse> {
     return fetchApi('/api/runs/' + runId + '/guidance');
+  },
+
+  getBranchStatus(runId: string): Promise<BranchStatusResponse> {
+    return fetchApi('/api/runs/' + runId + '/branch-status');
+  },
+
+  backMerge(runId: string): Promise<void> {
+    return fetchApi('/api/runs/' + runId + '/back-merge', { method: 'POST' });
   },
 
   async recoverRun(runId: string, data: RecoverRequest): Promise<RecoverResponse> {
@@ -364,4 +373,12 @@ export function transitionBack(runId: string, data: { target_step_index: number;
 
 export function getGuidance(runId: string): Promise<GuidanceResponse> {
   return api.getGuidance(runId);
+}
+
+export function getBranchStatus(runId: string): Promise<BranchStatusResponse> {
+  return api.getBranchStatus(runId);
+}
+
+export function backMerge(runId: string): Promise<void> {
+  return api.backMerge(runId);
 }

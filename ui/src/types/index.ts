@@ -8,3 +8,4 @@ export type * from './clarifications';
 export type * from './repos';
 export type * from './recovery';
 export type * from './guidance';
+export type * from './branches';
