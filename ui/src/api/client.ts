@@ -325,3 +325,7 @@ export const api = {
 export function recoverRun(runId: string, data: RecoverRequest): Promise<RecoverResponse> {
   return api.recoverRun(runId, data);
 }
+
+export function approveStep(runId: string, stepId: string, data: { approved_by: string; comment?: string }): Promise<unknown> {
+  return api.approveStep(runId, stepId, data);
+}
