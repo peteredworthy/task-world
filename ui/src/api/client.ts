@@ -12,6 +12,7 @@ import type {
   EnvDefaultTarget,
   EnvFile,
   EnvSnapshot,
+  GlobalConfig,
   GuidanceResponse,
   PendingAction,
   ProjectRoutineResponse,
@@ -249,6 +250,10 @@ function normalizeEnvDefaultTarget(value: unknown): EnvDefaultTarget {
 }
 
 export const api = {
+  getConfig(): Promise<GlobalConfig> {
+    return fetchApi('/api/config');
+  },
+
   listRuns(params?: { status?: string; repo_name?: string }): Promise<RunListResponse> {
     const sp = new URLSearchParams();
     if (params?.status) sp.set('status', params.status);
@@ -566,4 +571,8 @@ export function revertEnvSnapshot(runId: string, snapshotId: string): Promise<En
 
 export function copyBackEnvFiles(runId: string, targetPath: string): Promise<void> {
   return api.copyBackEnvFiles(runId, targetPath);
+}
+
+export function getConfig(): Promise<GlobalConfig> {
+  return api.getConfig();
 }
