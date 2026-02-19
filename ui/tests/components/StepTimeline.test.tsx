@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StepTimeline } from '../../src/components/dashboard/StepTimeline';
 import type { StepSummary, TaskSummary } from '../../src/types';
 
@@ -18,15 +19,29 @@ function makeStep(overrides: Partial<StepSummary> & { id: string; config_id: str
   return {
     title: '',
     completed: false,
+    has_approval_gate: false,
+    approval_status: null,
     tasks: [],
     ...overrides,
   };
 }
 
+function renderTimeline(steps: StepSummary[], currentStepIndex: number) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <StepTimeline runId="run-1" steps={steps} currentStepIndex={currentStepIndex} />
+    </QueryClientProvider>,
+  );
+}
+
 describe('StepTimeline', () => {
   it('renders nothing when steps is empty', () => {
     cleanup();
-    const { container } = render(<StepTimeline steps={[]} currentStepIndex={0} />);
+    const { container } = renderTimeline([], 0);
     expect(container.firstChild).toBeNull();
   });
 
@@ -37,7 +52,7 @@ describe('StepTimeline', () => {
       makeStep({ id: 's2', config_id: 'cfg2', tasks: [] }),
       makeStep({ id: 's3', config_id: 'cfg3', tasks: [] }),
     ];
-    render(<StepTimeline steps={steps} currentStepIndex={0} />);
+    renderTimeline(steps, 0);
     const badges = screen.getAllByRole('img');
     expect(badges).toHaveLength(3);
   });
@@ -47,7 +62,7 @@ describe('StepTimeline', () => {
     const steps: StepSummary[] = [
       makeStep({ id: 's1', config_id: 'cfg1', tasks: [] }),
     ];
-    render(<StepTimeline steps={steps} currentStepIndex={0} />);
+    renderTimeline(steps, 0);
     const badge = screen.getByRole('img');
     expect(badge).toHaveAttribute('tabindex', '0');
   });
@@ -64,7 +79,7 @@ describe('StepTimeline', () => {
         ],
       }),
     ];
-    render(<StepTimeline steps={steps} currentStepIndex={0} />);
+    renderTimeline(steps, 0);
     const badge = screen.getByRole('img');
     expect(badge).toHaveAttribute('aria-label', 'Step 1: 1/2 tasks, active');
   });
@@ -81,7 +96,7 @@ describe('StepTimeline', () => {
         ],
       }),
     ];
-    render(<StepTimeline steps={steps} currentStepIndex={1} />);
+    renderTimeline(steps, 1);
     const badge = screen.getByRole('img');
     expect(badge.className).toContain('bg-accent-purple');
   });
@@ -97,7 +112,7 @@ describe('StepTimeline', () => {
         ],
       }),
     ];
-    render(<StepTimeline steps={steps} currentStepIndex={0} />);
+    renderTimeline(steps, 0);
     const badge = screen.getByRole('img');
     expect(badge.className).toContain('bg-status-active');
   });
@@ -113,7 +128,7 @@ describe('StepTimeline', () => {
         ],
       }),
     ];
-    render(<StepTimeline steps={steps} currentStepIndex={1} />);
+    renderTimeline(steps, 1);
     const badge = screen.getByRole('img');
     expect(badge.className).toContain('bg-status-failed');
   });
@@ -129,7 +144,7 @@ describe('StepTimeline', () => {
         ],
       }),
     ];
-    render(<StepTimeline steps={steps} currentStepIndex={1} />);
+    renderTimeline(steps, 1);
     const badge = screen.getByRole('img');
     expect(badge.className).toContain('bg-transparent');
   });
@@ -147,7 +162,7 @@ describe('StepTimeline', () => {
         ],
       }),
     ];
-    render(<StepTimeline steps={steps} currentStepIndex={0} />);
+    renderTimeline(steps, 0);
     const badge = screen.getByRole('img');
     expect(badge).toHaveAttribute('aria-label', 'Step 1: 2/3 tasks, active');
   });
