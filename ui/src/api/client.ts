@@ -321,3 +321,7 @@ export const api = {
     return fetchApi('/api/repos/' + repoName + '/routines/' + routineId + '?branch=' + encodeURIComponent(branch));
   },
 };
+
+export function recoverRun(runId: string, data: RecoverRequest): Promise<RecoverResponse> {
+  return api.recoverRun(runId, data);
+}
