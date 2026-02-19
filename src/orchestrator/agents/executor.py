@@ -632,14 +632,18 @@ class AgentExecutor:
 
         # Execute the agent
         logger.info(f"Task {task_state.id}: starting builder agent")
-        result = await agent.execute(
-            context,
-            on_checklist_update,
-            on_submit,
-            on_output=on_output,
-            on_grade=None,
-            on_agent_metadata=on_agent_metadata,
-        )
+        try:
+            result = await agent.execute(
+                context,
+                on_checklist_update,
+                on_submit,
+                on_output=on_output,
+                on_grade=None,
+                on_agent_metadata=on_agent_metadata,
+            )
+        except GateBlockedError:
+            logger.warning("Agent submit blocked by gate - task remains BUILDING, will retry")
+            return
 
         # Store agent metadata (PID, etc.) in run's agent_config
         if result.agent_metadata:
