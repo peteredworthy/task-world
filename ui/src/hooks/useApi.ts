@@ -22,6 +22,14 @@ export function useRun(runId: string | undefined) {
   });
 }
 
+export function useGuidance(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['guidance', runId],
+    queryFn: () => api.getGuidance(runId!),
+    enabled: !!runId,
+  });
+}
+
 export function useRoutines() {
   return useQuery({
     queryKey: ['routines'],
@@ -116,6 +124,26 @@ export function useCancelRun() {
   return useMutation({
     mutationFn: (runId: string) => api.cancelRun(runId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['runs'] }),
+  });
+}
+
+export function useAgentStarted(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.agentStarted(runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
+export function useAgentCancelled(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.agentCancelled(runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
   });
 }
 
