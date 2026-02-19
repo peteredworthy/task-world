@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { api, getConfig } from '../api/client';
 import type { CreateRunRequest, RecoverRequest, SetGradeRequest, UpdateChecklistRequest } from '../types';
 
 export function useRuns(params?: { status?: string; repo_name?: string }) {
@@ -67,6 +67,14 @@ export function useRoutines() {
   return useQuery({
     queryKey: ['routines'],
     queryFn: () => api.listRoutines(),
+  });
+}
+
+export function useGlobalConfig() {
+  return useQuery({
+    queryKey: ['globalConfig'],
+    queryFn: getConfig,
+    staleTime: Infinity,
   });
 }
 
