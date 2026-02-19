@@ -360,13 +360,10 @@ class AgentExecutor:
                     except GateBlockedError as e:
                         logger.warning(
                             f"Run {run_id}: task {task_state.id} checklist gate blocked on submit: {e}. "
-                            f"Agent ran but could not satisfy the gate — stopping loop."
+                            f"Agent ran but could not satisfy the gate — pausing run."
                         )
+                        await service.pause_run(run_id)
                         await session.commit()
-                        # Break: the agent already ran and couldn't satisfy the gate.
-                        # Looping again immediately would just repeat the same failure.
-                        # The loop will be re-spawned when the user takes corrective action
-                        # (e.g. approving a step gate or responding to a clarification).
                         break
                     except AgentCancelledError:
                         logger.info(f"Run {run_id}: agent cancelled")
@@ -391,6 +388,7 @@ class AgentExecutor:
                         break
                     except Exception as e:
                         logger.exception(f"Run {run_id}: unexpected error: {e}")
+                        await self._emit_error_event(run_id, task_state, type(e).__name__, str(e))
                         # Pause the run on unexpected errors so the issue can be investigated
                         try:
                             await service.pause_run(run_id)
