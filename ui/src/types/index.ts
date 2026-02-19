@@ -6,3 +6,4 @@ export type * from './agents';
 export type * from './activity';
 export type * from './clarifications';
 export type * from './repos';
+export type * from './recovery';

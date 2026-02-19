@@ -1,0 +1,14 @@
+export interface RecoverRequest {
+  target_task_id: string;
+  additional_attempts?: number;
+  agent_type?: string;
+  agent_config?: Record<string, unknown>;
+  preserve_checklist?: boolean;
+}
+
+export interface RecoverResponse {
+  run_id: string;
+  status: string;
+  pause_reason: string | null;
+  current_step_index: number | null;
+}
