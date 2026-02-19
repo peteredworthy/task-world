@@ -168,6 +168,17 @@ export function useSubmitTask() {
   });
 }
 
+export function useApproveStep(runId: string, stepId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { approved_by: string; comment?: string }) =>
+      api.approveStep(runId, stepId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
 export function useUpdateChecklist() {
   const qc = useQueryClient();
   return useMutation({
