@@ -15,6 +15,7 @@ import { Spinner } from '../components/Spinner';
 import { MetricsBar } from '../components/detail/MetricsBar';
 import { ActivityFeed } from '../components/detail/ActivityFeed';
 import { UpcomingPlan } from '../components/detail/UpcomingPlan';
+import { RecoveryPanel } from '../components/detail/RecoveryPanel';
 import { classifyTasks, getLastAgentError } from '../lib/activity';
 import { formatRelativeTime } from '../lib/format';
 import { AgentIcon } from '../components/AgentIcon';
@@ -437,6 +438,8 @@ function RunDetailInner({ runId }: { runId: string }) {
               </div>
             </div>
           )}
+
+          {run.status === 'failed' && <RecoveryPanel run={run} />}
 
           {/* Agent error banner — shown when run paused/failed due to agent error */}
           {agentError && (
