@@ -237,7 +237,13 @@ class ToolHandler:
                 id=str(uuid.uuid4()),
                 question=q["question"],
                 context=q["context"],
-                options=q["options"],
+                options=q.get("options", []),
+                question_type=q.get("question_type", "single_select"),
+                allow_other=q.get("allow_other", True),
+                required=q.get("required", True),
+                min=q.get("min"),
+                max=q.get("max"),
+                placeholder=q.get("placeholder"),
             )
             for q in questions_data
         ]
@@ -255,6 +261,12 @@ class ToolHandler:
                     "question": q.question,
                     "context": q.context,
                     "options": q.options,
+                    "question_type": q.question_type,
+                    "allow_other": q.allow_other,
+                    "required": q.required,
+                    "min": q.min,
+                    "max": q.max,
+                    "placeholder": q.placeholder,
                 }
                 for q in request.questions
             ],

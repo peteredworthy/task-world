@@ -2,7 +2,7 @@ routine:
   id: "idea-to-plan"
   name: "Idea to Implementation Plan"
   description: |
-    Transform an initial idea into a structured, executable plan through a 9-stage
+    Transform an initial idea into a structured, executable plan through an 8-stage
     workflow with human review gates. Produces step files and a validated routine
     YAML ready for execution.
 
@@ -18,6 +18,9 @@ routine:
     - name: "codebase_context"
       required: false
       description: "Brief description of existing codebase architecture"
+
+  clarifications:
+    artifact_path: "docs/{{feature}}/clarifications.md"
 
   steps:
     - id: "S-01"
@@ -40,8 +43,7 @@ routine:
             Create these files in docs/{{feature}}/:
             1. intent.md
             2. plan.md
-            3. design-questions.md
-            4. architecture.md
+            3. architecture.md
 
             Follow:
             - docs/plan-runner/idea_to_plan_stripped.md (Stage 1 checklist)
@@ -57,9 +59,6 @@ routine:
               desc: "Create plan.md with iterative milestones and implementation order"
               priority: critical
             - id: "R3"
-              desc: "Create design-questions.md with prioritized unknowns and options"
-              priority: critical
-            - id: "R4"
               desc: "Create architecture.md with integration and testing strategy"
               priority: expected
           artifacts:
@@ -67,15 +66,12 @@ routine:
               required: true
             - path: "docs/{{feature}}/plan.md"
               required: true
-            - path: "docs/{{feature}}/design-questions.md"
-              required: true
-              track_resolution: true
             - path: "docs/{{feature}}/architecture.md"
               required: false
           auto_verify:
             items:
               - id: "files_exist"
-                cmd: "test -f docs/{{feature}}/intent.md && test -f docs/{{feature}}/plan.md && test -f docs/{{feature}}/design-questions.md"
+                cmd: "test -f docs/{{feature}}/intent.md && test -f docs/{{feature}}/plan.md"
                 must: true
           verifier:
             rubric:
@@ -87,137 +83,98 @@ routine:
                   but they are vague or unmeasurable (e.g. "game works well").
                   R2 (plan.md) — A: milestones are ordered with explicit dependencies, each milestone has
                   a concrete deliverable. B: milestones listed but ordering rationale or deliverables are unclear.
-                  R3 (design-questions.md) — A: questions are ranked by impact, each has ≥2 concrete options
-                  with trade-offs. B: questions listed but not prioritized or options are generic.
-                  R4 (architecture.md) — A: names specific files/modules to create, testing approach references
+                  R3 (architecture.md) — A: names specific files/modules to create, testing approach references
                   concrete tools or patterns. B: describes architecture in general terms without file-level specifics.
               - id: "completeness"
-                text: "Are all four required files present with non-trivial content (not just headings)?"
+                text: "Are all required files present with non-trivial content (not just headings)?"
           retry:
             max_attempts: 2
 
     - id: "S-02"
-      title: "Human Review"
+      title: "Requirements Gathering"
       step_context: |
-        Stage 2 from docs/plan-runner/idea_to_plan_stripped.md.
-        Human-only review gate.
-      gate:
-        type: human_approval
-        approval_prompt: |
-          Review the generated plan artifacts:
-          - docs/{{feature}}/intent.md
-          - docs/{{feature}}/plan.md
-          - docs/{{feature}}/design-questions.md
-          - docs/{{feature}}/architecture.md
-
-          Add feedback by inserting [HUMAN] notes inline.
-          Do not remove existing content.
-
-          Example: [HUMAN] Add rollback notes for schema migrations.
-
-          Approve when feedback is complete.
-        require_comment: true
+        Stage 2: Identify all open design questions through dialogue with the human,
+        then update all planning documents to be fully consistent with the answers.
       tasks:
         - id: "T-01"
-          title: "Await Human Feedback"
-          task_context: |
-            Wait for human feedback. Do not generate [HUMAN] notes.
-            Continue only after approval.
-          requirements:
-            - id: "R1"
-              desc: "Human feedback is present and gate is approved"
-              priority: critical
-
-    - id: "S-03"
-      title: "Plan Refinement"
-      step_context: |
-        Stage 3 from docs/plan-runner/idea_to_plan_stripped.md.
-        Integrate human feedback and resolve conflicts.
-      tasks:
-        - id: "T-01"
-          title: "Refine Based on Feedback"
+          title: "Gather Requirements and Update Docs"
           context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "intent"
+              required: true
             - artifact: "docs/{{feature}}/plan.md"
               as: "plan"
-              required: true
-            - artifact: "docs/{{feature}}/design-questions.md"
-              as: "questions"
               required: true
             - artifact: "docs/{{feature}}/architecture.md"
               as: "architecture"
               required: false
           task_context: |
-            Integrate all [HUMAN] annotations from planning artifacts.
+            Review the planning artifacts and gather all open design questions from the human.
+
+            INTENT:
+            {{context.intent}}
 
             PLAN:
             {{context.plan}}
 
-            DESIGN QUESTIONS:
-            {{context.questions}}
+            ARCHITECTURE:
+            {{context.architecture}}
 
-            Update docs/{{feature}}/intent.md, docs/{{feature}}/plan.md,
-            docs/{{feature}}/design-questions.md, and architecture.md as needed.
+            ## If no clarifications file exists yet (first run):
+            1. Read the planning documents above carefully.
+            2. Identify every open design question or decision that cannot be answered
+               without human input (technology choices, business priorities, constraints, etc.).
+            3. If there are open questions: call orchestrator_request_clarification with all
+               questions. Use appropriate question types (single_select, multi_select, free_text,
+               or number). Then stop — do NOT mark requirements done yet.
+            4. If there are genuinely no open questions: note this explicitly, update all
+               documents for consistency, mark R1 and R2 done, and submit.
 
-            If there are any unresolved conflicts or open questions that could not be
-            decided, create docs/{{feature}}/CONFLICTS.md listing them.
-            If there are NO unresolved conflicts, still create a minimal CONFLICTS.md
-            stating "No unresolved conflicts." so the artifact exists.
-
-            Keep unresolved decisions explicit.
+            ## If clarifications file exists (subsequent run):
+            1. Read docs/{{feature}}/clarifications.md to review answers received.
+            2. Decide if the answers are complete enough to proceed:
+               - If more questions are needed: call orchestrator_request_clarification with
+                 the new questions, then stop.
+               - If satisfied with all answers: continue to step 3.
+            3. Update docs/{{feature}}/intent.md, plan.md, and architecture.md to reflect
+               all decisions made in the Q&A. Ensure they are mutually consistent —
+               no contradictions between intent, plan, and architecture.
+            4. Mark R1 and R2 as done and submit.
           requirements:
             - id: "R1"
-              desc: "Address all [HUMAN] feedback notes"
+              desc: "All open design questions have been resolved with human input"
               priority: critical
             - id: "R2"
-              desc: "Update plan artifacts to a consistent state"
+              desc: "intent.md, plan.md, and architecture.md are updated and mutually consistent"
               priority: critical
-            - id: "R3"
-              desc: "Mark resolved design questions clearly"
-              priority: expected
-            - id: "R4"
-              desc: "Create CONFLICTS.md (even if empty, stating no conflicts)"
-              priority: expected
           artifacts:
-            - path: "docs/{{feature}}/CONFLICTS.md"
+            - path: "docs/{{feature}}/clarifications.md"
               required: false
-              track_resolution: true
-          auto_verify:
-            items:
-              - id: "conflicts_exists"
-                cmd: "test -f docs/{{feature}}/CONFLICTS.md"
-                must: true
           verifier:
             rubric:
-              - id: "feedback_addressed"
+              - id: "questions_resolved"
                 text: |
-                  R1 — A: every [HUMAN] annotation has been addressed (incorporated, or explicitly
-                  deferred with rationale). B: most [HUMAN] notes addressed but one or two are
-                  silently ignored without explanation.
-              - id: "consistency"
+                  R1 — A: clarifications.md exists and shows at least one answered question round;
+                  OR the agent has documented that no open questions exist. All questions in the
+                  clarifications log have answers. B: clarifications file exists but some questions
+                  are unanswered or the agent skipped asking questions that are clearly open.
+              - id: "document_consistency"
                 text: |
-                  R2 — A: cross-references between intent, plan, architecture, and design-questions
-                  are coherent (no contradictions). B: documents are individually fine but contain
-                  minor contradictions between them.
-              - id: "conflicts_file"
+                  R2 — A: intent.md, plan.md, and architecture.md are cross-consistent —
+                  the intent is reflected in the plan milestones, the architecture supports
+                  the plan, and no document contradicts another. B: documents are individually
+                  reasonable but contain minor inconsistencies or one is not updated to match
+                  the Q&A answers. F: major contradictions between documents.
+              - id: "feedback_incorporated"
                 text: |
-                  R4 — A: CONFLICTS.md exists and either lists specific unresolved items or explicitly
-                  states there are none. B: file exists but is incomplete or vague.
-                  F: file does not exist.
+                  R2 — A: every answer from the clarifications Q&A is visibly reflected in
+                  the planning documents (decisions are incorporated, not just noted).
+                  B: most answers are incorporated but one or two are noted without being
+                  fully integrated into the plan or architecture.
           retry:
-            max_attempts: 2
-      transitions:
-        on_complete: "S-04"
-        on_condition:
-          - condition: "has_unresolved_conflicts"
-            target: "S-02"
-            max_iterations: 3
-            message: "Unresolved conflicts detected; return to human review"
-          - condition: "has_open_questions"
-            target: "S-02"
-            max_iterations: 3
-            message: "Open critical questions remain"
+            max_attempts: 3
 
-    - id: "S-04"
+    - id: "S-03"
       title: "Step Planning"
       step_context: |
         Stage 4 from docs/plan-runner/idea_to_plan_stripped.md.
@@ -285,14 +242,14 @@ routine:
           retry:
             max_attempts: 2
       transitions:
-        on_complete: "S-05"
+        on_complete: "S-04"
         on_condition:
           - condition: "has_unresolved_conflicts"
             target: "S-02"
             max_iterations: 2
             message: "Conflicts discovered during step planning"
 
-    - id: "S-05"
+    - id: "S-04"
       title: "Task Breakdown"
       step_context: |
         Stage 5 from docs/plan-runner/idea_to_plan_stripped.md.
@@ -344,20 +301,20 @@ routine:
           retry:
             max_attempts: 2
       transitions:
-        on_complete: "S-06"
+        on_complete: "S-05"
         on_condition:
           - condition: "has_unresolved_conflicts"
             target: "S-02"
             max_iterations: 2
 
-    - id: "S-06"
+    - id: "S-05"
       title: "Dry Run"
       type: dry_run
       step_context: |
         Stage 6 from docs/plan-runner/idea_to_plan_stripped.md.
         Simulate execution and identify gaps.
       dry_run:
-        target_steps: ["S-09"]
+        target_steps: ["S-08"]
         context_limit: 4000
         report_path: "docs/{{feature}}/dry-run-notes.md"
       tasks:
@@ -395,9 +352,9 @@ routine:
                   handling in step 3 for missing file case"). B: gaps listed but remediations
                   are generic ("handle edge cases").
       transitions:
-        on_complete: "S-07"
+        on_complete: "S-06"
 
-    - id: "S-07"
+    - id: "S-06"
       title: "Final Check"
       step_context: |
         Stage 7 from docs/plan-runner/idea_to_plan_stripped.md.
@@ -447,8 +404,9 @@ routine:
               - id: "consistency"
                 text: |
                   R3 — A: report confirms no critical conflicts remain, or lists remaining ones
-                  with justification for why they are acceptable. B: conflicts mentioned but
-                  not explicitly resolved or justified.
+                  with justification for why they are acceptable. Any conflicts should have been
+                  resolved via the Q&A in S-02. B: conflicts mentioned but not explicitly resolved
+                  or justified.
               - id: "executability"
                 text: |
                   Overall — A: an implementation agent could pick up the step files and execute
@@ -465,8 +423,14 @@ routine:
                 must: true
           retry:
             max_attempts: 2
+      transitions:
+        on_condition:
+          - condition: "has_unresolved_conflicts"
+            target: "S-02"
+            max_iterations: 2
+            message: "Unresolved conflicts detected; return to requirements gathering"
 
-    - id: "S-08"
+    - id: "S-07"
       title: "Final Plan Review"
       step_context: |
         Stage 8 from docs/plan-runner/idea_to_plan_stripped.md.
@@ -485,13 +449,16 @@ routine:
       tasks:
         - id: "T-01"
           title: "Human Final Approval"
-          task_context: "Human reviews complete planning artifacts before final packaging."
+          task_context: |
+            You are running because the human has already approved the step gate above.
+            Your only job is to acknowledge the approval and hand off to the next stage.
+            Mark R1 as done, then submit immediately — do not make any other changes.
           requirements:
             - id: "R1"
-              desc: "Human approves final planning artifacts"
+              desc: "Human approval received — mark done and submit"
               priority: critical
 
-    - id: "S-09"
+    - id: "S-08"
       title: "Execution Ready"
       step_context: |
         Stage 9 from docs/plan-runner/idea_to_plan_stripped.md.
@@ -528,9 +495,8 @@ routine:
         - id: "T-02"
           title: "Create and Validate Routine YAML"
           task_context: |
-            Create execution routine files for this feature:
+            Create the execution routine file for this feature:
             - routines/{{feature}}/routine.yaml
-            - docs/{{feature}}/routine-yaml-format.md
 
             The routine must encode the generated steps so another run can execute them.
 
@@ -612,15 +578,10 @@ routine:
               desc: "Create routines/{{feature}}/routine.yaml matching the routine schema"
               priority: critical
             - id: "R2"
-              desc: "Create docs/{{feature}}/routine-yaml-format.md for future edits"
-              priority: expected
-            - id: "R3"
               desc: "Routine YAML passes CLI validation"
               priority: critical
           artifacts:
             - path: "routines/{{feature}}/routine.yaml"
-              required: true
-            - path: "docs/{{feature}}/routine-yaml-format.md"
               required: true
           auto_verify:
             items:
@@ -634,7 +595,7 @@ routine:
             rubric:
               - id: "schema_compliance"
                 text: |
-                  R1/R3 — A: routine.yaml passes validation and each step has task_context,
+                  R1/R2 — A: routine.yaml passes validation and each step has task_context,
                   requirements with priorities, and auto_verify hooks. B: passes validation
                   but some tasks have thin contexts or missing auto_verify.
               - id: "execution_mapping"

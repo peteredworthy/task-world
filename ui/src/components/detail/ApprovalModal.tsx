@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import { useApproveTask, useRejectTask } from '../../hooks/useApproval';
+import { useApproveTask, useApproveStep, useRejectTask } from '../../hooks/useApproval';
 import { Spinner } from '../Spinner';
 import type { PendingAction } from '../../types/clarifications';
 
@@ -18,7 +18,9 @@ export function ApprovalModal({
   runId,
 }: ApprovalModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
-  const approveMutation = useApproveTask(runId, pendingAction.task_id);
+  const approveTaskMutation = useApproveTask(runId, pendingAction.task_id);
+  const approveStepMutation = useApproveStep(runId, pendingAction.step_id);
+  const approveMutation = pendingAction.is_gate_approval ? approveStepMutation : approveTaskMutation;
   const rejectMutation = useRejectTask(runId, pendingAction.task_id);
 
   const [comment, setComment] = useState('');
@@ -277,6 +279,7 @@ export function ApprovalModal({
           >
             Cancel
           </button>
+          {!pendingAction.is_gate_approval && (
           <button
             type="button"
             onClick={handleReject}
@@ -303,6 +306,7 @@ export function ApprovalModal({
               </>
             )}
           </button>
+          )}
           <button
             type="button"
             onClick={handleApprove}

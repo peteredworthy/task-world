@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack } from '../hooks/useApi';
 import { useActivityStream } from '../hooks/useActivityStream';
@@ -117,6 +117,8 @@ function RunDetailInner({ runId }: { runId: string }) {
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
+  const selectedPendingActionRef = useRef<PendingAction | null>(null);
+  selectedPendingActionRef.current = selectedPendingAction;
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
     const detail = err instanceof ApiError
@@ -125,16 +127,15 @@ function RunDetailInner({ runId }: { runId: string }) {
     setMutationError(`Failed to ${action} run: ${detail}`);
   }, []);
 
-  // Auto-open modal when a pending action appears
+  // Auto-open modal when a pending action appears (but not when the user dismisses it)
   useEffect(() => {
     if (!pendingActionsData || pendingActionsData.length === 0) {
       return;
     }
-    // Only auto-open if no modal is currently open
-    if (!selectedPendingAction) {
+    if (!selectedPendingActionRef.current) {
       setSelectedPendingAction(pendingActionsData[0]);
     }
-  }, [pendingActionsData, selectedPendingAction]);
+  }, [pendingActionsData]);
 
   if (isLoading) {
     return (

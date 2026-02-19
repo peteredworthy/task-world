@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
@@ -359,11 +360,14 @@ class AgentExecutor:
                     except GateBlockedError as e:
                         logger.warning(
                             f"Run {run_id}: task {task_state.id} checklist gate blocked on submit: {e}. "
-                            f"Task stays in building — will retry on next iteration."
+                            f"Agent ran but could not satisfy the gate — stopping loop."
                         )
                         await session.commit()
-                        # Don't break — let the loop pick up the task again
-                        continue
+                        # Break: the agent already ran and couldn't satisfy the gate.
+                        # Looping again immediately would just repeat the same failure.
+                        # The loop will be re-spawned when the user takes corrective action
+                        # (e.g. approving a step gate or responding to a clarification).
+                        break
                     except AgentCancelledError:
                         logger.info(f"Run {run_id}: agent cancelled")
                         break
@@ -549,8 +553,22 @@ class AgentExecutor:
                 message="Cannot run agent without worktree_path set on run",
             )
         working_dir = run.worktree_path
+        # Resolve clarifications artifact path if configured
+        from orchestrator.workflow.clarifications import resolve_artifact_path as _resolve_path
+
+        clarifications_path: str | None = None
+        if routine_config.clarifications is not None and run.worktree_path:
+            raw_clar_path = _resolve_path(routine_config.clarifications.artifact_path, run.config)
+            clar_artifact = Path(run.worktree_path) / raw_clar_path
+            if clar_artifact.exists():
+                clarifications_path = str(clar_artifact)
+
         prompt = generate_builder_prompt(
-            task_config, task_state, run.config, step_context=step_context
+            task_config,
+            task_state,
+            run.config,
+            step_context=step_context,
+            clarifications_path=clarifications_path,
         )
         # Include both ID and description so agent can use the ID for callbacks
         requirements = [f"{item.req_id}: {item.desc}" for item in task_state.checklist]

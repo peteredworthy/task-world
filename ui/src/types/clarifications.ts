@@ -60,6 +60,7 @@ export interface PendingAction {
   clarification_request: ClarificationRequest | null;
   summary_artifact: string | null;
   approval_prompt: string | null;
+  is_gate_approval: boolean;
 }
 
 export interface ApproveTaskRequest {

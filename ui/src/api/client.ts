@@ -229,6 +229,13 @@ export const api = {
     });
   },
 
+  approveStep(runId: string, stepId: string, data: { approved_by: string; comment?: string }): Promise<unknown> {
+    return fetchApi('/api/runs/' + runId + '/steps/' + stepId + '/approve', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
   rejectTask(runId: string, taskId: string, data: RejectTaskRequest): Promise<TransitionResponse> {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/reject', {
       method: 'POST',

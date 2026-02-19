@@ -96,3 +96,4 @@ class PendingActionSchema(BaseModel):
     clarification_request: ClarificationRequestResponse | None = None
     summary_artifact: str | None = None
     approval_prompt: str | None = None
+    is_gate_approval: bool = False

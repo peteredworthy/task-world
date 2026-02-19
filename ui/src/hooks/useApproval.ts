@@ -25,3 +25,15 @@ export function useRejectTask(runId: string, taskId: string) {
     },
   });
 }
+
+export function useApproveStep(runId: string, stepId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { comment?: string }) =>
+      api.approveStep(runId, stepId, { approved_by: 'user', ...data }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+      qc.invalidateQueries({ queryKey: ['pending-actions', runId] });
+    },
+  });
+}

@@ -5,7 +5,10 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
 
-from orchestrator.api.deps import get_run_repository, get_workflow_service
+import logging
+
+from orchestrator.agents.executor import AgentExecutor
+from orchestrator.api.deps import get_agent_executor, get_run_repository, get_workflow_service
 from orchestrator.api.schemas.clarifications import (
     ClarificationAnswerSchema,
     ClarificationHistoryItem,
@@ -17,10 +20,13 @@ from orchestrator.api.schemas.clarifications import (
     RespondToClarificationRequest,
 )
 from orchestrator.api.schemas.tasks import TransitionResponse
+from orchestrator.config.enums import RunStatus
 from orchestrator.db.repositories import RunRepository
 from orchestrator.state.errors import TaskNotFoundError
 from orchestrator.workflow.clarifications import ClarificationAnswer, ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/runs", tags=["clarifications"])
 
@@ -248,6 +254,8 @@ async def respond_to_clarification(
     request: RespondToClarificationRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     user: Annotated[str, Depends(get_current_user)],
+    repo: Annotated[RunRepository, Depends(get_run_repository)],
+    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
 ) -> TransitionResponse:
     """Human submits answers to clarification questions.
 
@@ -285,6 +293,18 @@ async def respond_to_clarification(
         for a in request.answers
     ]
     result = await service.respond_to_clarification(run_id, task_id, request_id, answers, user)
+    # Re-spawn agent so it can continue after clarification answers
+    run = await repo.get(run_id)
+    if (
+        run.status == RunStatus.ACTIVE
+        and run.agent_type is not None
+        and not executor.is_running(run_id)
+    ):
+        spawned = executor.spawn_for_run(run_id, run.agent_type, run.agent_config)
+        if spawned:
+            logger.info(
+                f"API: Re-spawned {run.agent_type.value} agent after clarification response for run {run_id}"
+            )
     return TransitionResponse(
         success=result.success,
         new_status=result.new_status.value,
@@ -317,6 +337,9 @@ async def get_pending_actions(
             task_id=action["task_id"],
             step_id=action["step_id"],
             action_type=action["action_type"],
+            approval_prompt=action.get("approval_prompt"),
+            summary_artifact=action.get("summary_artifact"),
+            is_gate_approval=action.get("is_gate_approval", False),
         )
 
         # Add clarification request if present
