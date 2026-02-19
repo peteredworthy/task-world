@@ -438,7 +438,11 @@ routine:
       tasks:
         - id: "T-01"
           title: "Human Final Approval"
-          task_context: "Human reviews complete planning artifacts before final packaging."
+          task_context: |
+            Verify final human review annotations before routine packaging; mark R1 done if found, blocked if absent.
+            Check docs/{{feature}}/intent.md, docs/{{feature}}/plan.md, and docs/{{feature}}/architecture.md for [HUMAN] annotations.
+            If [HUMAN] annotations are present: mark requirement R1 done and submit this task for verification.
+            If no [HUMAN] annotations are found: mark requirement R1 blocked with note "Awaiting final human review — no [HUMAN] annotations found" and submit this task for verification.
           requirements:
             - id: "R1"
               desc: "Human approves final planning artifacts"
