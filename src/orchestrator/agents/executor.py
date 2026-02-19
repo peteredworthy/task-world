@@ -531,7 +531,7 @@ class AgentExecutor:
                 agent_type.value, f"Task config not found: {task_state.config_id}"
             )
 
-        phase = "verifying" if task_state.status == TaskStatus.VERIFYING else "building"
+        phase = self._phase_for_task_status(task_state.status)
 
         # Handle VERIFYING phase
         if task_state.status == TaskStatus.VERIFYING:
@@ -705,7 +705,7 @@ class AgentExecutor:
 
         # Has rubric - need to run verifier agent
         logger.info(f"Task {task_state.id}: running verifier agent for rubric evaluation")
-        phase = "verifying" if task_state.status == TaskStatus.VERIFYING else "building"
+        phase = self._phase_for_task_status(task_state.status)
 
         # Create the agent for verification (pass run_id for death detection)
         agent = self._create_agent(agent_type, agent_config, run.id, phase=phase)
@@ -1037,6 +1037,11 @@ class AgentExecutor:
                             return
         except Exception:
             logger.debug(f"Failed to store attempt metrics for {task_id}", exc_info=True)
+
+    @staticmethod
+    def _phase_for_task_status(task_status: TaskStatus) -> str:
+        """Map workflow task status to MCP phase."""
+        return "verifying" if task_status == TaskStatus.VERIFYING else "building"
 
     def _create_agent(
         self,
