@@ -124,6 +124,130 @@ async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function normalizeEnvFile(value: unknown): EnvFile | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const file = value as Record<string, unknown>;
+  const path =
+    typeof file.path === 'string'
+      ? file.path
+      : typeof file.file_path === 'string'
+        ? file.file_path
+        : '';
+  const key = typeof file.key === 'string' ? file.key : '';
+  const maskedValue =
+    typeof file.masked_value === 'string'
+      ? file.masked_value
+      : typeof file.value_masked === 'string'
+        ? file.value_masked
+        : '';
+
+  if (!path && !key) {
+    return null;
+  }
+
+  return {
+    path,
+    key,
+    masked_value: maskedValue,
+  };
+}
+
+function normalizeEnvFiles(value: unknown): EnvFile[] {
+  if (Array.isArray(value)) {
+    return value.map(normalizeEnvFile).filter((v): v is EnvFile => v !== null);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const obj = value as Record<string, unknown>;
+  const candidates = [obj.files, obj.env_files, obj.managed_files];
+  const list = candidates.find(Array.isArray);
+  if (!Array.isArray(list)) {
+    return [];
+  }
+
+  return list.map(normalizeEnvFile).filter((v): v is EnvFile => v !== null);
+}
+
+function normalizeEnvSnapshot(value: unknown): EnvSnapshot | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const snapshot = value as Record<string, unknown>;
+  const id =
+    typeof snapshot.id === 'string'
+      ? snapshot.id
+      : typeof snapshot.snapshot_id === 'string'
+        ? snapshot.snapshot_id
+        : '';
+  if (!id) {
+    return null;
+  }
+
+  const timestamp = typeof snapshot.timestamp === 'string' ? snapshot.timestamp : '';
+  const agent =
+    typeof snapshot.agent === 'string'
+      ? snapshot.agent
+      : typeof snapshot.type === 'string'
+        ? snapshot.type
+        : '';
+
+  let files: EnvFile[] = [];
+  if (Array.isArray(snapshot.files)) {
+    files = snapshot.files
+      .map((file): EnvFile | null => {
+        if (typeof file === 'string') {
+          return { path: file, key: '', masked_value: '' };
+        }
+        return normalizeEnvFile(file);
+      })
+      .filter((file): file is EnvFile => file !== null);
+  }
+
+  return {
+    id,
+    timestamp,
+    agent,
+    files,
+  };
+}
+
+function normalizeEnvSnapshots(value: unknown): EnvSnapshot[] {
+  if (Array.isArray(value)) {
+    return value.map(normalizeEnvSnapshot).filter((v): v is EnvSnapshot => v !== null);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+
+  const obj = value as Record<string, unknown>;
+  const snapshots = Array.isArray(obj.snapshots) ? obj.snapshots : [];
+  return snapshots.map(normalizeEnvSnapshot).filter((v): v is EnvSnapshot => v !== null);
+}
+
+function normalizeEnvDefaultTarget(value: unknown): EnvDefaultTarget {
+  if (!value || typeof value !== 'object') {
+    return { target_path: '' };
+  }
+
+  const obj = value as Record<string, unknown>;
+  if (typeof obj.target_path === 'string') {
+    return { target_path: obj.target_path };
+  }
+  if (typeof obj.default_target === 'string') {
+    return { target_path: obj.default_target };
+  }
+
+  return { target_path: '' };
+}
+
 export const api = {
   listRuns(params?: { status?: string; repo_name?: string }): Promise<RunListResponse> {
     const sp = new URLSearchParams();
@@ -282,28 +406,41 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/pending-clarification');
   },
 
-  getEnvFiles(runId: string): Promise<EnvFile[]> {
-    return fetchApi('/api/runs/' + runId + '/env-files');
+  async getEnvFiles(runId: string): Promise<EnvFile[]> {
+    const response = await fetchApi<unknown>('/api/runs/' + runId + '/env-files');
+    return normalizeEnvFiles(response);
   },
 
-  getEnvSnapshots(runId: string): Promise<EnvSnapshot[]> {
-    return fetchApi('/api/runs/' + runId + '/env-snapshots');
+  async getEnvSnapshots(runId: string): Promise<EnvSnapshot[]> {
+    const response = await fetchApi<unknown>('/api/runs/' + runId + '/env-files/snapshots');
+    return normalizeEnvSnapshots(response);
   },
 
-  getEnvDefaultTarget(runId: string): Promise<EnvDefaultTarget> {
-    return fetchApi('/api/runs/' + runId + '/env-default-target');
+  async getEnvDefaultTarget(runId: string): Promise<EnvDefaultTarget> {
+    const response = await fetchApi<unknown>('/api/runs/' + runId + '/env-files/default-target');
+    return normalizeEnvDefaultTarget(response);
   },
 
-  revertEnvSnapshot(runId: string, snapshotId: string): Promise<EnvSnapshot> {
-    return fetchApi('/api/runs/' + runId + '/env-snapshots/' + snapshotId + '/revert', {
+  async revertEnvSnapshot(runId: string, snapshotId: string): Promise<EnvSnapshot> {
+    const response = await fetchApi<unknown>('/api/runs/' + runId + '/env-files/revert', {
       method: 'POST',
+      body: JSON.stringify({
+        snapshot_id: snapshotId,
+        revert_to: snapshotId,
+      }),
     });
+
+    const normalized = normalizeEnvSnapshot(response);
+    return normalized ?? { id: snapshotId, timestamp: '', agent: '', files: [] };
   },
 
   copyBackEnvFiles(runId: string, targetPath: string): Promise<void> {
-    return fetchApi('/api/runs/' + runId + '/env-copy-back', {
+    return fetchApi('/api/runs/' + runId + '/env-files/copy-back', {
       method: 'POST',
-      body: JSON.stringify({ target_path: targetPath }),
+      body: JSON.stringify({
+        target_path: targetPath,
+        target_dir: targetPath,
+      }),
     });
   },
 
