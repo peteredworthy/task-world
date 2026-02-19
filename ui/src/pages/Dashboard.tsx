@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useRuns, useRoutines, useStartRun, usePauseRun, useCancelRun, useDeleteRun } from '../hooks/useApi';
+import { useRuns, useRoutines, useStartRun, usePauseRun, useCancelRun, useDeleteRun, useGlobalConfig } from '../hooks/useApi';
 import { RunCard } from '../components/dashboard/RunCard';
 import { RunFilters } from '../components/dashboard/RunFilters';
 import { recencyToMs } from '../lib/recency';
@@ -15,6 +15,7 @@ import { InspectorPanel } from '../components/detail/InspectorPanel';
 import type { TaskSummary, RunResponse } from '../types';
 
 export function Dashboard() {
+  const maxRecentRuns = useGlobalConfig().data?.max_recent_runs ?? 50;
   const [statusFilter, setStatusFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
   const [recencyFilter, setRecencyFilter] = useState('');
@@ -67,7 +68,7 @@ export function Dashboard() {
   }, [mutationError]);
 
   const { data, isLoading, error, dataUpdatedAt } = useRuns(
-    statusFilter ? { status: statusFilter } : undefined
+    statusFilter ? { status: statusFilter, limit: maxRecentRuns } : { limit: maxRecentRuns }
   );
   const { data: routinesData } = useRoutines();
   const routineNames = new Map(routinesData?.routines?.map(r => [r.id, r.name]) ?? []);

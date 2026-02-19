@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, getConfig } from '../api/client';
 import type { CreateRunRequest, RecoverRequest, SetGradeRequest, UpdateChecklistRequest } from '../types';
 
-export function useRuns(params?: { status?: string; repo_name?: string }) {
+export function useRuns(params?: { status?: string; repo_name?: string; limit?: number }) {
   return useQuery({
     queryKey: ['runs', params],
     queryFn: () => api.listRuns(params),

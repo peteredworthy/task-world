@@ -254,10 +254,11 @@ export const api = {
     return fetchApi('/api/config');
   },
 
-  listRuns(params?: { status?: string; repo_name?: string }): Promise<RunListResponse> {
+  listRuns(params?: { status?: string; repo_name?: string; limit?: number }): Promise<RunListResponse> {
     const sp = new URLSearchParams();
     if (params?.status) sp.set('status', params.status);
     if (params?.repo_name) sp.set('repo_name', params.repo_name);
+    if (params?.limit !== undefined) sp.set('limit', String(params.limit));
     const qs = sp.toString();
     return fetchApi('/api/runs' + (qs ? '?' + qs : ''));
   },
