@@ -442,7 +442,7 @@ class CLIAgent:
             raise
         except AgentNotAvailableError:
             raise
-        except GateBlockedError:
+        except GateBlockedError:  # re-raise for executor retry path
             raise  # Let executor handle as revision, not a crash
         except Exception as exc:
             # Check if process died unexpectedly and notify monitor
