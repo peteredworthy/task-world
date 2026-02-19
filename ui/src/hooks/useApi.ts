@@ -22,6 +22,15 @@ export function useRun(runId: string | undefined) {
   });
 }
 
+export function useBranchStatus(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['branchStatus', runId],
+    queryFn: () => api.getBranchStatus(runId!),
+    enabled: !!runId,
+    refetchInterval: 30_000,
+  });
+}
+
 export function useGuidance(runId: string | undefined) {
   return useQuery({
     queryKey: ['guidance', runId],
@@ -163,6 +172,17 @@ export function useTransitionBack(runId: string) {
     mutationFn: (data: { target_step_index: number; reason?: string }) => api.transitionBack(runId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
+export function useBackMerge(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.backMerge(runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+      qc.invalidateQueries({ queryKey: ['branchStatus', runId] });
     },
   });
 }
