@@ -8,6 +8,7 @@ import type {
   ChecklistItemSchema,
   ClarificationRequest,
   CreateRunRequest,
+  GuidanceResponse,
   PendingAction,
   ProjectRoutineResponse,
   ProjectRoutinesListResponse,
@@ -156,6 +157,18 @@ export const api = {
 
   cancelRun(runId: string): Promise<RunResponse> {
     return fetchApi('/api/runs/' + runId + '/cancel', { method: 'POST' });
+  },
+
+  agentStarted(runId: string): Promise<void> {
+    return fetchApi('/api/runs/' + runId + '/agent-started', { method: 'POST' });
+  },
+
+  agentCancelled(runId: string): Promise<void> {
+    return fetchApi('/api/runs/' + runId + '/agent-cancelled', { method: 'POST' });
+  },
+
+  getGuidance(runId: string): Promise<GuidanceResponse> {
+    return fetchApi('/api/runs/' + runId + '/guidance');
   },
 
   async recoverRun(runId: string, data: RecoverRequest): Promise<RecoverResponse> {
@@ -328,4 +341,16 @@ export function recoverRun(runId: string, data: RecoverRequest): Promise<Recover
 
 export function approveStep(runId: string, stepId: string, data: { approved_by: string; comment?: string }): Promise<unknown> {
   return api.approveStep(runId, stepId, data);
+}
+
+export function agentStarted(runId: string): Promise<void> {
+  return api.agentStarted(runId);
+}
+
+export function agentCancelled(runId: string): Promise<void> {
+  return api.agentCancelled(runId);
+}
+
+export function getGuidance(runId: string): Promise<GuidanceResponse> {
+  return api.getGuidance(runId);
 }
