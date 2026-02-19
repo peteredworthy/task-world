@@ -155,6 +155,25 @@ class ResumeRunRequest(BaseModel):
         return self
 
 
+class RecoverRequest(BaseModel):
+    """Request to recover a failed run to a target task."""
+
+    target_task_id: str
+    additional_attempts: int = 1
+    agent_type: str | None = None
+    agent_config: dict[str, Any] | None = None
+    preserve_checklist: bool = False
+
+
+class RecoverResponse(BaseModel):
+    """Response for run recovery."""
+
+    run_id: str
+    status: str
+    pause_reason: str | None = None
+    current_step_index: int | None = None
+
+
 class BranchStatusResponse(BaseModel):
     """Response for branch status check."""
 
