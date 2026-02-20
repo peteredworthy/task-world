@@ -91,8 +91,9 @@ export function Dashboard() {
     if (statusFilter === 'needs_input') {
       filtered = filtered.filter(r =>
         r.steps.some(step =>
-          step.tasks.some(task => task.pending_action_type !== null)
-        )
+          step.tasks.some(task => task.pending_action_type !== null) ||
+          (step.has_approval_gate && step.approval_status === 'pending')
+        ),
       );
     }
 

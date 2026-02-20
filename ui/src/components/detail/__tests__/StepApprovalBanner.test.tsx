@@ -19,14 +19,14 @@ function makeStep(overrides: Partial<StepSummary> = {}): StepSummary {
   };
 }
 
-function renderBanner(step: StepSummary) {
+function renderBanner(step: StepSummary, isCurrentStep = true) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <StepApprovalBanner runId="run-1" step={step} />
+      <StepApprovalBanner runId="run-1" step={step} isCurrentStep={isCurrentStep} />
     </QueryClientProvider>,
   );
 }
@@ -44,6 +44,11 @@ describe('StepApprovalBanner', () => {
       makeStep({ has_approval_gate: false, approval_status: null }),
     );
 
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('renders nothing for non-current step', () => {
+    const { container } = renderBanner(makeStep(), false);
     expect(container).toBeEmptyDOMElement();
   });
 });

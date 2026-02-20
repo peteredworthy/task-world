@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useState, useCallback, useEffect } from 'react';
+import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack } from '../hooks/useApi';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { usePendingActions } from '../hooks/usePendingActions';
@@ -105,6 +105,7 @@ function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | nu
 }
 
 function RunDetailInner({ runId }: { runId: string }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: run, isLoading, error } = useRun(runId);
   // Skip standalone routine fetch when the routine is embedded in the run
   const { data: routine } = useRoutine(
@@ -114,6 +115,14 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { data: pendingActionsData } = usePendingActions(runId);
   const taskPendingActions = pendingActionsData?.pendingActions ?? [];
   const pendingActionsCount = pendingActionsData?.badgeCount ?? 0;
+  const pendingClarificationAction =
+    taskPendingActions.find(
+      (action) => action.action_type === 'clarification' && action.clarification_request,
+    ) ?? null;
+  const primaryPendingAction =
+    pendingClarificationAction ??
+    taskPendingActions[0] ??
+    null;
   const { status: wsStatus, reconnect: wsReconnect } = useWebSocketStatus();
   const pauseRun = usePauseRun();
   const cancelRun = useCancelRun();
@@ -130,6 +139,38 @@ function RunDetailInner({ runId }: { runId: string }) {
       : 'Something went wrong';
     setMutationError(`Failed to ${action} run: ${detail}`);
   }, []);
+
+  useEffect(() => {
+    if (taskPendingActions.length === 0 || selectedPendingAction) return;
+
+    const action = searchParams.get('action');
+    const taskId = searchParams.get('task_id');
+    if (!action) return;
+
+    let match: PendingAction | undefined;
+    if (action === 'clarification') {
+      match = taskPendingActions.find(
+        (pendingAction) =>
+          pendingAction.action_type === 'clarification' &&
+          (!!pendingAction.clarification_request) &&
+          (!taskId || pendingAction.task_id === taskId),
+      );
+    } else if (action === 'approval') {
+      match = taskPendingActions.find(
+        (pendingAction) =>
+          pendingAction.action_type === 'approval' &&
+          (!taskId || pendingAction.task_id === taskId),
+      );
+    }
+
+    if (match) {
+      setSelectedPendingAction(match);
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('task_id');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams, selectedPendingAction, taskPendingActions]);
 
   if (isLoading) {
     return (
@@ -162,7 +203,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { stuck: isStuck, failedTask: stuckTaskName } = isRunStuck(run);
 
   // Check for agent errors (e.g. run paused because agent crashed)
-  const agentError = (run.status === 'paused' || run.status === 'failed')
+  const agentError = (run.status === 'paused' || run.status === 'failed') && !pendingClarificationAction
     ? getLastAgentError(events)
     : null;
 
@@ -407,10 +448,10 @@ function RunDetailInner({ runId }: { runId: string }) {
               </div>
               {taskPendingActions.length > 0 && (
                 <button
-                  onClick={() => setSelectedPendingAction(taskPendingActions[0])}
+                  onClick={() => setSelectedPendingAction(primaryPendingAction)}
                   className="px-3 py-1.5 text-xs font-medium text-text-primary bg-bg-surface border border-border rounded-md hover:bg-bg-elevated hover:border-border-strong transition-colors shrink-0"
                 >
-                  Review →
+                  {pendingClarificationAction ? 'Answer Questions →' : 'Review →'}
                 </button>
               )}
             </div>
@@ -484,9 +525,9 @@ function RunDetailInner({ runId }: { runId: string }) {
 
           {/* Per-step approval gates */}
           <div className="mb-2">
-            {run.steps.map((step) => (
+            {run.steps.map((step, index) => (
               <div key={step.id} id={`step-${step.id}`}>
-                <StepApprovalBanner runId={run.id} step={step} />
+                <StepApprovalBanner runId={run.id} step={step} isCurrentStep={index === run.current_step_index} />
               </div>
             ))}
           </div>

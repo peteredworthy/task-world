@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { RunResponse, StepSummary, TaskSummary } from '../../types';
 import { formatRelativeTime, formatDuration } from '../../lib/format';
 import { outcomeColor, outcomeLabel } from '../../lib/outcome';
@@ -8,7 +8,6 @@ import { RunStatusBadge } from '../StatusBadge';
 import { StepTimeline } from './StepTimeline';
 import { CompactGradeRow } from '../CompactGradeRow';
 import { AgentIcon } from '../AgentIcon';
-import { PendingActionsBadge } from './PendingActionsBadge';
 import { useTransitionBack } from '../../hooks/useApi';
 
 interface RunCardProps {
@@ -348,10 +347,12 @@ function RevertStepModal({
 /* ---------- Task card for expanded view ---------- */
 
 function TaskCard({
+  runId,
   task,
   onClick,
   onRevertStep,
 }: {
+  runId: string;
   task: TaskSummary;
   onClick?: () => void;
   onRevertStep?: () => void;
@@ -497,6 +498,17 @@ function TaskCard({
           {task.status === 'recovering' ? 'Recovering\u2026' : task.status}
         </div>
       )}
+      {task.pending_action_type === 'clarification' && (
+        <div className="mt-1.5">
+          <Link
+            to={`/runs/${runId}?action=clarification&task_id=${task.id}`}
+            onClick={(event) => event.stopPropagation()}
+            className="inline-flex items-center rounded border border-status-paused/40 bg-status-paused/10 px-2 py-0.5 text-[10px] font-semibold text-status-paused hover:bg-status-paused/20 transition-colors"
+          >
+            Answer Questions
+          </Link>
+        </div>
+      )}
 
       {/* Three-dot action menu — bottom-right, only for revertable tasks */}
       {onRevertStep && (
@@ -598,6 +610,7 @@ function StepColumn({ step, index, isCurrent, runId, onTaskClick }: { step: Step
         {step.tasks.map(task => (
           <TaskCard
             key={task.id}
+            runId={runId}
             task={task}
             onClick={onTaskClick ? () => onTaskClick(runId, task) : undefined}
             onRevertStep={canRevert ? () => setRevertModalOpen(true) : undefined}
@@ -622,11 +635,22 @@ function StepColumn({ step, index, isCurrent, runId, onTaskClick }: { step: Step
 
 function CollapsedRow(props: RunCardProps) {
   const { run, routineName, onToggle, loading } = props;
+  const navigate = useNavigate();
 
-  // Count tasks with pending actions
+  // Count pending human actions (task-level + step-gate approvals)
   const pendingActionsCount = run.steps
     .flatMap(step => step.tasks)
     .filter(task => task.pending_action_type !== null).length;
+  const currentStep = run.steps[run.current_step_index];
+  const hasCurrentStepApprovalPending =
+    !!currentStep &&
+    currentStep.has_approval_gate &&
+    currentStep.approval_status === 'pending';
+  const totalPendingActions = pendingActionsCount + (hasCurrentStepApprovalPending ? 1 : 0);
+  const clarificationTaskId = currentStep?.tasks.find(
+    (task) => task.pending_action_type === 'clarification',
+  )?.id;
+  const approvalTaskId = hasCurrentStepApprovalPending ? currentStep?.tasks[0]?.id : undefined;
 
   return (
     <div
@@ -649,9 +673,6 @@ function CollapsedRow(props: RunCardProps) {
         <span className="min-w-0 truncate text-sm font-semibold text-text-primary">
           {routineName}
         </span>
-
-        {/* Pending actions badge */}
-        <PendingActionsBadge count={pendingActionsCount} />
 
         {/* Meta line */}
         <div className="ml-1 flex min-w-0 items-center gap-2 overflow-hidden font-mono text-[11px] text-text-muted">
@@ -679,7 +700,21 @@ function CollapsedRow(props: RunCardProps) {
       <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-2">
         {/* Step badges */}
         <div className="w-0 flex-1 overflow-x-auto scrollbar-dark">
-          <StepTimeline runId={run.id} steps={run.steps} currentStepIndex={run.current_step_index} />
+          <StepTimeline
+            runId={run.id}
+            steps={run.steps}
+            currentStepIndex={run.current_step_index}
+            pendingCount={totalPendingActions}
+            onPendingClick={() => {
+              navigate(
+                clarificationTaskId
+                  ? `/runs/${run.id}?action=clarification&task_id=${clarificationTaskId}`
+                  : approvalTaskId
+                    ? `/runs/${run.id}?action=approval&task_id=${approvalTaskId}`
+                  : `/runs/${run.id}`,
+              );
+            }}
+          />
         </div>
 
         {/* Duration */}
@@ -710,10 +745,15 @@ function CollapsedRow(props: RunCardProps) {
 function ExpandedView(props: RunCardProps) {
   const { run, routineName, onToggle, onTaskClick, loading } = props;
 
-  // Count tasks with pending actions
-  const pendingActionsCount = run.steps
-    .flatMap(step => step.tasks)
-    .filter(task => task.pending_action_type !== null).length;
+  const currentStep = run.steps[run.current_step_index];
+  const clarificationTaskId = currentStep?.tasks.find(
+    (task) => task.pending_action_type === 'clarification',
+  )?.id;
+  const hasCurrentStepApprovalPending =
+    !!currentStep &&
+    currentStep.has_approval_gate &&
+    currentStep.approval_status === 'pending';
+  const approvalTaskId = hasCurrentStepApprovalPending ? currentStep?.tasks[0]?.id : undefined;
 
   return (
     <div>
@@ -737,9 +777,6 @@ function ExpandedView(props: RunCardProps) {
         <span className="text-sm font-semibold text-text-primary truncate shrink-0">
           {routineName}
         </span>
-
-        {/* Pending actions badge */}
-        <PendingActionsBadge count={pendingActionsCount} />
 
         {/* Extended meta */}
         <div className="flex items-center gap-2 text-[11px] text-text-muted font-mono ml-1 min-w-0 overflow-hidden">
@@ -809,12 +846,30 @@ function ExpandedView(props: RunCardProps) {
 
       {/* Footer */}
       <div className="flex items-center justify-between px-4 py-3 border-t border-border">
-        <Link
-          to={'/runs/' + run.id}
-          className="text-[11px] font-semibold text-accent-purple hover:text-accent-purple/80 transition-colors"
-        >
-          Open Detailed View
-        </Link>
+        <div className="flex items-center gap-3">
+          <Link
+            to={'/runs/' + run.id}
+            className="text-[11px] font-semibold text-accent-purple hover:text-accent-purple/80 transition-colors"
+          >
+            Open Detailed View
+          </Link>
+          {clarificationTaskId && (
+            <Link
+              to={`/runs/${run.id}?action=clarification&task_id=${clarificationTaskId}`}
+              className="text-[11px] font-semibold text-status-paused hover:text-status-paused/80 transition-colors"
+            >
+              Answer Questions
+            </Link>
+          )}
+          {!clarificationTaskId && approvalTaskId && (
+            <Link
+              to={`/runs/${run.id}?action=approval&task_id=${approvalTaskId}`}
+              className="text-[11px] font-semibold text-status-paused hover:text-status-paused/80 transition-colors"
+            >
+              Review Approval
+            </Link>
+          )}
+        </div>
         <FooterActions
           run={run}
           onStart={props.onStart}

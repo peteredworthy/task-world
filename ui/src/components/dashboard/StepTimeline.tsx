@@ -9,9 +9,18 @@ interface StepTimelineProps {
   steps: StepSummary[];
   currentStepIndex: number;
   showRevert?: boolean;
+  pendingCount?: number;
+  onPendingClick?: () => void;
 }
 
-export function StepTimeline({ runId, steps, currentStepIndex, showRevert = false }: StepTimelineProps) {
+export function StepTimeline({
+  runId,
+  steps,
+  currentStepIndex,
+  showRevert = false,
+  pendingCount = 0,
+  onPendingClick,
+}: StepTimelineProps) {
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null);
   const [reason, setReason] = useState('');
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -71,12 +80,13 @@ export function StepTimeline({ runId, steps, currentStepIndex, showRevert = fals
           const completed = step.tasks.filter(t => t.status === 'completed').length;
           const state = getStepState(step, i === currentStepIndex);
           const canRevert = showRevert && step.completed && i < currentStepIndex;
+          const showPending = pendingCount > 0 && i === currentStepIndex;
 
           return (
             <div key={step.id} className="flex items-center gap-1">
               <div
                 className={
-                  'flex items-center justify-center rounded font-mono text-[10px] font-bold leading-none ' +
+                  'relative flex items-center justify-center rounded font-mono text-[10px] font-bold leading-none ' +
                   'w-7 h-[22px] ' +
                   stepBadgeClasses(state)
                 }
@@ -86,6 +96,30 @@ export function StepTimeline({ runId, steps, currentStepIndex, showRevert = fals
                 title={`Step ${i + 1}: ${completed}/${total} tasks`}
               >
                 S{i + 1}
+                {showPending && (
+                  onPendingClick ? (
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onPendingClick();
+                      }}
+                      className="absolute top-0.5 right-0.5 inline-flex min-w-3.5 h-3.5 items-center justify-center rounded-full bg-status-paused text-[8px] font-bold text-bg-primary px-0.5 hover:bg-status-paused/80 transition-colors"
+                      aria-label={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'} - open now`}
+                      title={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
+                    >
+                      {pendingCount}
+                    </button>
+                  ) : (
+                    <span
+                      className="absolute top-0.5 right-0.5 inline-flex min-w-3.5 h-3.5 items-center justify-center rounded-full bg-status-paused text-[8px] font-bold text-bg-primary px-0.5"
+                      aria-label={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
+                      title={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
+                    >
+                      {pendingCount}
+                    </span>
+                  )
+                )}
               </div>
               {canRevert && (
                 <button

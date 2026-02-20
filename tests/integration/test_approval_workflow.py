@@ -259,3 +259,41 @@ async def test_reject_without_reason(
 
     assert result.success is True
     assert result.new_status == TaskStatus.BUILDING
+
+
+async def test_get_pending_actions_excludes_future_steps(
+    service: WorkflowService,
+) -> None:
+    """Pending actions should only be returned for the current actionable step."""
+    run = _make_run_with_pending_approval()
+    run.steps.append(
+        StepState(
+            id="step-2",
+            config_id="S-02",
+            tasks=[
+                TaskState(
+                    id="task-2",
+                    config_id="T-01",
+                    status=TaskStatus.PENDING_USER_ACTION,
+                    pending_action_type="approval",
+                    checklist=[
+                        ChecklistItem(
+                            req_id="R1",
+                            desc="Future step approval",
+                            priority=Priority.CRITICAL,
+                        )
+                    ],
+                    max_attempts=3,
+                    current_attempt=0,
+                )
+            ],
+        )
+    )
+    run.current_step_index = 0
+    await service.create_run(run)
+
+    actions = await service.get_pending_actions("run-1")
+
+    assert len(actions) == 1
+    assert actions[0]["step_id"] == "step-1"
+    assert actions[0]["task_id"] == "task-1"

@@ -1528,50 +1528,54 @@ class WorkflowService:
         run = await self._repo.get(run_id)
 
         actions: list[dict[str, Any]] = []
+        current_step_index = run.current_step_index
+
+        # Be resilient to stale indices by skipping completed steps.
+        while current_step_index < len(run.steps) and run.steps[current_step_index].completed:
+            current_step_index += 1
+        if current_step_index >= len(run.steps):
+            return actions
+        current_step = run.steps[current_step_index]
 
         # Check step-level human_approval gates for the current step
         if run.routine_embedded is not None:
             routine_config = RoutineConfig.model_validate(run.routine_embedded)
-            current_step_index = run.current_step_index
-            if current_step_index < len(run.steps):
-                current_step = run.steps[current_step_index]
-                if current_step.human_approval is None:
-                    for step_config in routine_config.steps:
-                        if step_config.id == current_step.config_id:
-                            if (
-                                step_config.gate is not None
-                                and step_config.gate.type == GateType.HUMAN_APPROVAL
-                            ):
-                                task_id = current_step.tasks[0].id if current_step.tasks else ""
-                                actions.append(
-                                    {
-                                        "task_id": task_id,
-                                        "step_id": current_step.id,
-                                        "action_type": "approval",
-                                        "approval_prompt": step_config.gate.approval_prompt,
-                                        "summary_artifact": step_config.gate.summary_artifact,
-                                        "is_gate_approval": True,
-                                    }
-                                )
-                            break
+            if current_step.human_approval is None:
+                for step_config in routine_config.steps:
+                    if step_config.id == current_step.config_id:
+                        if (
+                            step_config.gate is not None
+                            and step_config.gate.type == GateType.HUMAN_APPROVAL
+                        ):
+                            task_id = current_step.tasks[0].id if current_step.tasks else ""
+                            actions.append(
+                                {
+                                    "task_id": task_id,
+                                    "step_id": current_step.id,
+                                    "action_type": "approval",
+                                    "approval_prompt": step_config.gate.approval_prompt,
+                                    "summary_artifact": step_config.gate.summary_artifact,
+                                    "is_gate_approval": True,
+                                }
+                            )
+                        break
 
-        # Check task-level PENDING_USER_ACTION
-        for step in run.steps:
-            for task in step.tasks:
-                if task.status == TaskStatus.PENDING_USER_ACTION:
-                    action: dict[str, Any] = {
-                        "task_id": task.id,
-                        "step_id": step.id,
-                        "action_type": task.pending_action_type,
-                        "is_gate_approval": False,
-                    }
+        # Check task-level PENDING_USER_ACTION in the current step only.
+        for task in current_step.tasks:
+            if task.status == TaskStatus.PENDING_USER_ACTION:
+                action: dict[str, Any] = {
+                    "task_id": task.id,
+                    "step_id": current_step.id,
+                    "action_type": task.pending_action_type,
+                    "is_gate_approval": False,
+                }
 
-                    if task.pending_action_type == "clarification":
-                        clarification = await self._repo.get_pending_clarification(run_id, task.id)
-                        if clarification:
-                            action["clarification_request"] = clarification.model_dump(mode="json")
+                if task.pending_action_type == "clarification":
+                    clarification = await self._repo.get_pending_clarification(run_id, task.id)
+                    if clarification:
+                        action["clarification_request"] = clarification.model_dump(mode="json")
 
-                    actions.append(action)
+                actions.append(action)
 
         return actions
 

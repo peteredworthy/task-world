@@ -460,6 +460,11 @@ class AgentExecutor:
     def _find_next_task(self, run: Run) -> tuple[TaskState | None, bool]:
         """Find the next task to execute.
 
+        Looks for tasks in the current actionable step only.
+        The executor must never start tasks from future steps while an earlier
+        step is still active (for example, waiting on human clarification).
+        It may skip over already-completed steps if current_step_index lags.
+
         Looks for tasks in PENDING, BUILDING, or VERIFYING status.
         VERIFYING tasks need to be completed (via complete_verification)
         before the loop can move on.
@@ -469,17 +474,31 @@ class AgentExecutor:
             step has an unsatisfied human_approval gate, returns (None, True).
             If no tasks remain, returns (None, False).
         """
-        for step in run.steps:
-            for task in step.tasks:
-                if task.status in (
-                    TaskStatus.PENDING,
-                    TaskStatus.BUILDING,
-                    TaskStatus.VERIFYING,
-                    TaskStatus.RECOVERING,
-                ):
-                    if not self._is_step_gate_satisfied(run, step):
-                        return (None, True)
-                    return (task, False)
+        step_index = run.current_step_index
+
+        # Be resilient to stale indices by skipping already-completed steps.
+        while step_index < len(run.steps) and run.steps[step_index].completed:
+            step_index += 1
+
+        if step_index >= len(run.steps):
+            return (None, False)
+
+        step = run.steps[step_index]
+
+        # If the step is waiting on human input, do not move to future steps.
+        if any(task.status == TaskStatus.PENDING_USER_ACTION for task in step.tasks):
+            return (None, False)
+
+        for task in step.tasks:
+            if task.status in (
+                TaskStatus.PENDING,
+                TaskStatus.BUILDING,
+                TaskStatus.VERIFYING,
+                TaskStatus.RECOVERING,
+            ):
+                if not self._is_step_gate_satisfied(run, step):
+                    return (None, True)
+                return (task, False)
         return (None, False)
 
     async def _execute_task(

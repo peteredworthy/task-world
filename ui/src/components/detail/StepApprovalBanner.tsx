@@ -7,9 +7,10 @@ import { Spinner } from '../Spinner';
 interface StepApprovalBannerProps {
   runId: string;
   step: StepSummary;
+  isCurrentStep: boolean;
 }
 
-export function StepApprovalBanner({ runId, step }: StepApprovalBannerProps) {
+export function StepApprovalBanner({ runId, step, isCurrentStep }: StepApprovalBannerProps) {
   const [approvedBy, setApprovedBy] = useState('');
   const [comment, setComment] = useState('');
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -21,7 +22,7 @@ export function StepApprovalBanner({ runId, step }: StepApprovalBannerProps) {
     return () => window.clearTimeout(timeoutId);
   }, [errorToast]);
 
-  if (!step.has_approval_gate || step.approval_status !== 'pending') {
+  if (!isCurrentStep || !step.has_approval_gate || step.approval_status !== 'pending') {
     return null;
   }
 

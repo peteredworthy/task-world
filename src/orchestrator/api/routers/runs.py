@@ -665,6 +665,33 @@ async def approve_step(
     if step is None:
         raise StepNotFoundError(step_id)
 
+    # Only the current actionable step can be approved.
+    actionable_index = run.current_step_index
+    while actionable_index < len(run.steps) and run.steps[actionable_index].completed:
+        actionable_index += 1
+    if actionable_index >= len(run.steps) or run.steps[actionable_index].id != step_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Can only approve the current step gate",
+        )
+
+    # Validate that this step actually has a HUMAN_APPROVAL gate.
+    has_human_gate = False
+    if run.routine_embedded is not None:
+        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        for step_config in routine_config.steps:
+            if step_config.id == step.config_id:
+                has_human_gate = (
+                    step_config.gate is not None
+                    and step_config.gate.type == GateType.HUMAN_APPROVAL
+                )
+                break
+    if not has_human_gate:
+        raise HTTPException(
+            status_code=409,
+            detail="Step does not have a pending human approval gate",
+        )
+
     # Create approval record
     from datetime import datetime, timezone
 

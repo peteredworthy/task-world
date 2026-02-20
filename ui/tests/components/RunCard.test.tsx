@@ -474,6 +474,56 @@ describe('RunCard', () => {
     });
   });
 
+  it('shows approval CTA in expanded view when current step is awaiting gate approval', () => {
+    const run = makeRun({
+      status: 'active',
+      steps: [
+        makeStep({
+          id: 's1',
+          config_id: 'final-review',
+          has_approval_gate: true,
+          approval_status: 'pending',
+          tasks: [
+            makeTask({
+              id: 't-approval',
+              config_id: 'approval-task',
+              status: 'pending',
+              pending_action_type: null,
+            }),
+          ],
+        }),
+      ],
+    });
+
+    renderCard(run, { expanded: true });
+    expect(screen.getByText('Review Approval')).toBeInTheDocument();
+  });
+
+  it('shows pending badge in collapsed view for step approval gate even without task-level pending action', () => {
+    const run = makeRun({
+      status: 'active',
+      steps: [
+        makeStep({
+          id: 's1',
+          config_id: 'final-review',
+          has_approval_gate: true,
+          approval_status: 'pending',
+          tasks: [
+            makeTask({
+              id: 't-approval',
+              config_id: 'approval-task',
+              status: 'pending',
+              pending_action_type: null,
+            }),
+          ],
+        }),
+      ],
+    });
+
+    renderCard(run, { expanded: false });
+    expect(screen.getByRole('button', { name: /1 pending action - open now/i })).toBeInTheDocument();
+  });
+
   describe('task action menu', () => {
     it('shows always-visible task actions button for revertable tasks and toggles menu', async () => {
       const run = makeRun({

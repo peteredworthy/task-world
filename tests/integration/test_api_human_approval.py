@@ -278,6 +278,36 @@ async def test_approve_step_multiple_times(
 
 
 @pytest.mark.asyncio
+async def test_approve_future_step_rejected(
+    client: AsyncClient,
+    routine_with_human_gate: RoutineConfig,
+) -> None:
+    """Approving a non-current step should fail with 409."""
+    create_response = await client.post(
+        "/api/runs",
+        json={
+            "repo_name": "test-project",
+            "branch": "main",
+            "routine_embedded": routine_with_human_gate.model_dump(mode="json"),
+        },
+    )
+    assert create_response.status_code == 201
+    run_data = create_response.json()
+    run_id = run_data["id"]
+    future_step_id = run_data["steps"][1]["id"]  # S-02 while current is S-01
+
+    response = await client.post(
+        f"/api/runs/{run_id}/steps/{future_step_id}/approve",
+        json={
+            "approved_by": "user@example.com",
+            "comment": "Trying to approve future step",
+        },
+    )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_approve_step_audit_trail(
     client: AsyncClient,
     routine_with_human_gate: RoutineConfig,
@@ -650,3 +680,60 @@ async def test_step_without_gate_not_blocked(
         assert blocked is False
         assert task is not None
         assert task.config_id == "T-01"
+
+
+@pytest.mark.asyncio
+async def test_executor_does_not_start_future_step_when_current_waiting_for_user_action(
+    app: FastAPI,
+) -> None:
+    """Executor must not select future-step tasks while current step is blocked on clarification."""
+    routine = RoutineConfig(
+        id="clarification-block-test",
+        name="Clarification Block Test",
+        description="Test",
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Current Step",
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Current Task",
+                        task_context="Needs clarification",
+                        requirements=[RequirementConfig(id="R1", desc="Do something")],
+                    )
+                ],
+            ),
+            StepConfig(
+                id="S-02",
+                title="Future Step",
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Future Task",
+                        task_context="Should not start yet",
+                        requirements=[RequirementConfig(id="R1", desc="Do next thing")],
+                    )
+                ],
+            ),
+        ],
+    )
+
+    from orchestrator.state.factory import create_run_from_routine
+
+    run = create_run_from_routine(
+        routine=routine,
+        repo_name="test-project",
+        source_branch="main",
+        routine_source=RoutineSource.EMBEDDED,
+    )
+    run.current_step_index = 0
+    run.steps[0].tasks[0].status = TaskStatus.PENDING_USER_ACTION
+    run.steps[1].tasks[0].status = TaskStatus.PENDING
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    executor = AgentExecutor(session_factory=session_factory, spawn_agents=False)
+    task, blocked = executor._find_next_task(run)
+
+    assert task is None
+    assert blocked is False

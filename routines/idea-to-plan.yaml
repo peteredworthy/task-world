@@ -398,7 +398,7 @@ routine:
               priority: expected
             - id: "R3"
               desc: "No unresolved critical conflicts remain"
-              priority: critical
+              priority: expected
           verifier:
             rubric:
               - id: "completeness"
