@@ -80,6 +80,11 @@ class WorktreeManager:
         except subprocess.CalledProcessError as e:
             raise GitCommandError(" ".join(cmd), e.returncode, e.stderr) from e
 
+        # Symlink .venv from main repo to avoid duplicating the virtual environment
+        main_venv = self._repo / ".venv"
+        if main_venv.exists():
+            (worktree_path / ".venv").symlink_to(main_venv.resolve())
+
         # Get commit SHA
         cmd = ["git", "rev-parse", "HEAD"]
         try:
