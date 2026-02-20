@@ -1,8 +1,6 @@
-import { useEffect, useState } from 'react';
 import { useActivity } from './useApi';
 import { useActivitySSE } from './useActivitySSE';
 import { useSettings } from './useSettings';
-import type { ActivityEvent } from '../types/activity';
 
 /**
  * Unified hook for streaming activity events.
@@ -16,20 +14,12 @@ export function useActivityStream(runId: string | undefined) {
   const pollingQuery = useActivity(runId);
 
   // SSE mode (new real-time behavior)
-  const [, setSseEvents] = useState<ActivityEvent[]>([]);
   const sseConnection = useActivitySSE(runId, {
     enabled: useSSE && !!runId,
     onEvent: () => {
       // Events are also accumulated in the hook's state, but we use onEvent for side effects if needed
     },
   });
-
-  // Merge SSE events with any initial events (if we need to seed from polling)
-  useEffect(() => {
-    if (useSSE && sseConnection.events.length > 0) {
-      setSseEvents(sseConnection.events);
-    }
-  }, [useSSE, sseConnection.events]);
 
   // Return unified interface
   if (useSSE) {

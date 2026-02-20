@@ -11,10 +11,6 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function makeGrade(grade: string | null, priority: 'critical' | 'expected' | 'nice' = 'expected'): GradeSummaryItem {
-  return { grade, priority };
-}
-
 function makeAttemptOutcome(attempt_num: number, outcome: string | null = null): AttemptOutcome {
   return { attempt_num, outcome };
 }
@@ -52,7 +48,16 @@ function renderCard(props: {
 async function expandTaskAndAttempts() {
   const toggleBtn = screen.getByRole('button', { name: /Toggle details for task/ });
   await userEvent.click(toggleBtn);
-  await userEvent.click(screen.getByRole('button', { name: /Attempts/i }));
+
+  // New UI: attempts are always listed and each attempt is its own accordion row.
+  // Backward-compatible fallback: if an Attempts section button exists, click it first.
+  const attemptsButton = screen.queryByRole('button', { name: /Attempts/i });
+  if (attemptsButton) {
+    await userEvent.click(attemptsButton);
+  }
+
+  const attemptOneButton = screen.getByRole('button', { name: /Attempt #1/i });
+  await userEvent.click(attemptOneButton);
 }
 
 describe('TaskDetailCard - Agent Display', () => {
@@ -353,8 +358,8 @@ describe('TaskDetailCard - Agent Display', () => {
     });
   });
 
-  describe('agent icon rendering', () => {
-    it('renders emoji icon for CLI agent', async () => {
+  describe('agent label rendering', () => {
+    it('uses CLI command name when present', async () => {
       const mockTaskDetail: TaskDetail = {
         id: 'task-1',
         run_id: 'run-1',
@@ -381,7 +386,7 @@ describe('TaskDetailCard - Agent Display', () => {
             verifier_comment: null,
             metrics: {},
             auto_verify_results: null,
-            agent_settings: {},
+            agent_settings: { command: 'codex' },
           },
         ],
       };
@@ -397,15 +402,13 @@ describe('TaskDetailCard - Agent Display', () => {
 
       await expandTaskAndAttempts();
 
-      // Wait for the attempt with CLI icon to be displayed
       await waitFor(() => {
-        const icon = screen.getByRole('img', { name: 'Cli Subprocess' });
-        expect(icon).toBeInTheDocument();
-        expect(icon.textContent).toBe('▶');
+        expect(screen.getByText('Agent:')).toBeInTheDocument();
+        expect(screen.getByText('codex')).toBeInTheDocument();
       });
     });
 
-    it('renders emoji icon for OpenHands agent', async () => {
+    it('falls back to formatted agent type when command is unavailable', async () => {
       const mockTaskDetail: TaskDetail = {
         id: 'task-1',
         run_id: 'run-1',
@@ -448,11 +451,8 @@ describe('TaskDetailCard - Agent Display', () => {
 
       await expandTaskAndAttempts();
 
-      // Wait for the attempt with OpenHands icon to be displayed
       await waitFor(() => {
-        const icon = screen.getByRole('img', { name: 'Openhands Local' });
-        expect(icon).toBeInTheDocument();
-        expect(icon.textContent).toBe('🖐');
+        expect(screen.getByText('Openhands Local')).toBeInTheDocument();
       });
     });
   });

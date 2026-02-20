@@ -1,12 +1,17 @@
 """API router for repository management."""
 
+import asyncio
+import shutil
 from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.api.deps import get_repos_path
+from orchestrator.api.deps import get_repos_path, get_session
 from orchestrator.api.schemas.repos import (
+    AddRepoRequest,
     BranchCountResponse,
     BranchesListResponse,
     BranchResponse,
@@ -14,7 +19,9 @@ from orchestrator.api.schemas.repos import (
     ProjectRoutinesListResponse,
     RepoResponse,
     ReposListResponse,
+    RepoStatsResponse,
 )
+from orchestrator.db.models import RunModel
 from orchestrator.repos import branch_count, get_repo, list_branches, list_repos
 from orchestrator.routines.discovery import discover_routines_in_repo, get_routine_from_repo
 
@@ -40,6 +47,91 @@ async def list_repositories(
             for r in repos
         ]
     )
+
+
+@router.post("", response_model=RepoResponse, status_code=201)
+async def add_repository(
+    body: AddRepoRequest,
+    repos_path: Annotated[Path, Depends(get_repos_path)],
+) -> RepoResponse:
+    """Add a repository by cloning a URL or symlinking a local path."""
+    if body.url:
+        # Infer name from URL: last path segment, strip .git suffix
+        url = body.url.rstrip("/")
+        name = url.split("/")[-1]
+        if name.endswith(".git"):
+            name = name[:-4]
+
+        dest = repos_path / name
+        if dest.exists():
+            raise HTTPException(status_code=409, detail="Repository already exists")
+
+        proc = await asyncio.create_subprocess_exec(
+            "git",
+            "clone",
+            body.url,
+            str(dest),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr_bytes = await proc.communicate()
+        if proc.returncode != 0:
+            stderr = stderr_bytes.decode(errors="replace").strip()
+            raise HTTPException(status_code=422, detail=f"Failed to clone: {stderr}")
+
+        repo = get_repo(repos_path, name)
+        return RepoResponse(
+            name=repo.name,
+            path=str(repo.path),
+            default_branch=repo.default_branch,
+        )
+
+    # body.path is set (validated by schema)
+    path_obj = Path(body.path).resolve()  # type: ignore[arg-type]
+    if not path_obj.exists() or not (path_obj / ".git").exists():
+        raise HTTPException(status_code=422, detail="Not a valid git repository")
+
+    name = path_obj.name
+
+    # If already inside repos_path, just return it
+    try:
+        path_obj.relative_to(repos_path)
+        repo = get_repo(repos_path, name)
+        return RepoResponse(
+            name=repo.name,
+            path=str(repo.path),
+            default_branch=repo.default_branch,
+        )
+    except ValueError:
+        pass  # Not inside repos_path, continue to symlink
+
+    dest = repos_path / name
+    if dest.exists():
+        raise HTTPException(status_code=409, detail="Already exists")
+
+    dest.symlink_to(path_obj)
+    repo = get_repo(repos_path, name)
+    return RepoResponse(
+        name=repo.name,
+        path=str(repo.path),
+        default_branch=repo.default_branch,
+    )
+
+
+@router.delete("/{name}", status_code=204)
+async def remove_repository(
+    name: str,
+    repos_path: Annotated[Path, Depends(get_repos_path)],
+) -> None:
+    """Remove a repository from the repos directory."""
+    entry = repos_path / name
+    if not entry.exists() and not entry.is_symlink():
+        raise HTTPException(status_code=404, detail="Repository not found")
+
+    if entry.is_symlink():
+        entry.unlink()
+    else:
+        shutil.rmtree(entry)
 
 
 @router.get("/{name}", response_model=RepoResponse)
@@ -107,6 +199,26 @@ async def count_repository_branches(
     repo = get_repo(repos_path, name)
     count = branch_count(repo.path, pattern=pattern, include_remote=include_remote)
     return BranchCountResponse(count=count, pattern=pattern)
+
+
+@router.get("/{name}/stats", response_model=RepoStatsResponse)
+async def get_repository_stats(
+    name: str,
+    repos_path: Annotated[Path, Depends(get_repos_path)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RepoStatsResponse:
+    """Get statistics for a specific repository.
+
+    Returns the number of runs associated with this repository.
+    """
+    # Validate that the repo exists
+    get_repo(repos_path, name)
+
+    result = await session.execute(
+        select(func.count()).select_from(RunModel).where(RunModel.repo_name == name)
+    )
+    run_count = result.scalar_one()
+    return RepoStatsResponse(run_count=run_count)
 
 
 @router.get("/{name}/routines", response_model=ProjectRoutinesListResponse)

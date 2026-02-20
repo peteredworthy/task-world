@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTask, useTaskPrompt } from '../../hooks/useApi';
 import { useClarificationHistory } from '../../hooks/useClarifications';
 import { TaskStatusBadge } from '../StatusBadge';
@@ -10,7 +10,13 @@ import { ClarificationHistoryCard } from './ClarificationHistoryCard';
 import { gradeColor } from '../../lib/status';
 import { formatDuration, formatTokens, formatRelativeTime } from '../../lib/format';
 import { outcomeColor, outcomeLabel } from '../../lib/outcome';
-import { PRIORITY_ORDER, PRIORITY_LABELS, getMetric } from './sharedUtils';
+import {
+  PRIORITY_ORDER,
+  PRIORITY_LABELS,
+  getMetric,
+  COLLAPSIBLE_BORDER_CLASS,
+  COLLAPSIBLE_DIVIDER_CLASS,
+} from './sharedUtils';
 import type { ActivityEvent, GradeSummaryItem, AttemptOutcome } from '../../types';
 import type { TaskStatus, AttemptSchema, ChecklistItemSchema, GradeSnapshotItem } from '../../types';
 
@@ -53,12 +59,12 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
 }
 
 function StatusIcon({ status }: { status: string }) {
-  if (status === 'building' || status === 'verifying') {
+  if (status === 'building' || status === 'verifying' || status === 'recovering') {
     return (
       <span
         className={
           'inline-block h-2.5 w-2.5 rounded-full shrink-0 animate-pulse-dot ' +
-          (status === 'building' ? 'bg-status-active' : 'bg-accent-purple')
+          (status === 'building' ? 'bg-status-active' : status === 'recovering' ? 'bg-amber-500' : 'bg-accent-purple')
         }
       />
     );
@@ -99,22 +105,6 @@ function CompactGradeBadges({ grades }: { grades: GradeSummaryItem[] }) {
   );
 }
 
-/** Get agent icon based on agent type */
-function getAgentIcon(agentType: string | null): string {
-  switch (agentType) {
-    case 'cli_subprocess':
-      return '▶';
-    case 'openhands_local':
-      return '🖐';
-    case 'openhands_docker':
-      return '🐳';
-    case 'user_managed':
-      return '👤';
-    default:
-      return '⚙';
-  }
-}
-
 /** Format agent type for display */
 function formatAgentType(agentType: string | null): string {
   if (!agentType) return 'Unknown';
@@ -122,6 +112,81 @@ function formatAgentType(agentType: string | null): string {
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+
+function getAgentDisplayName(att: AttemptSchema): string {
+  if (att.agent_type === 'cli_subprocess') {
+    const command = att.agent_settings?.command;
+    if (typeof command === 'string' && command.trim().length > 0) {
+      return command.trim();
+    }
+  }
+  return formatAgentType(att.agent_type);
+}
+
+function DisclosureHeader({
+  label,
+  open,
+  onToggle,
+  meta,
+  connected = false,
+  actions,
+  borderClass = COLLAPSIBLE_BORDER_CLASS,
+}: {
+  label: string;
+  open: boolean;
+  onToggle: () => void;
+  meta?: string;
+  connected?: boolean;
+  actions?: ReactNode;
+  borderClass?: string;
+}) {
+  const baseClass = connected
+    ? `group w-full cursor-pointer border ${borderClass} bg-bg-card/60 px-2.5 py-1.5 text-left hover:bg-bg-hover/40 hover:border-border-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/40 ` + (open ? 'rounded-t-md rounded-b-none border-b-0' : 'rounded-md')
+    : `group w-full cursor-pointer rounded-md border ${borderClass} bg-bg-card/60 px-2.5 py-1.5 text-left hover:bg-bg-hover/40 hover:border-border-hover transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-cyan/40`;
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      aria-expanded={open}
+      className={baseClass}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">
+          {label}
+        </span>
+        {meta && (
+          <span className="text-[10px] text-text-muted">{meta}</span>
+        )}
+        {actions && (
+          <div
+            className="ml-auto"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
+            {actions}
+          </div>
+        )}
+        <svg
+          className={'h-3.5 w-3.5 text-text-muted shrink-0 transition-transform ' + (actions ? 'ml-2 ' : 'ml-auto ') + (open ? 'rotate-90' : '')}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      </div>
+    </div>
+  );
 }
 
 /** Render a collapsible monospace prompt block. */
@@ -193,8 +258,8 @@ function FailureSummary({
 /** Display auto-verify check results. */
 function AutoVerifyResults({ results }: { results: Record<string, unknown>[] }) {
   return (
-    <div>
-      <h5 className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1">
+    <div className="rounded-md border border-border bg-bg-card/40 p-2">
+      <h5 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
         Auto-Verify Checks
       </h5>
       <div className="space-y-1">
@@ -208,17 +273,17 @@ function AutoVerifyResults({ results }: { results: Record<string, unknown>[] }) 
           return (
             <div key={itemId} className={'rounded border px-2 py-1.5 text-xs ' + (passed ? 'bg-bg-card border-border' : 'bg-status-failed/5 border-status-failed/20')}>
               <div className="flex items-center gap-2">
-                <span className={passed ? 'text-status-completed' : 'text-status-failed'}>
-                  {passed ? '\u2713' : '\u2717'}
+                <span className="font-medium text-text-primary truncate">{itemId}</span>
+                <span className={'ml-auto inline-flex min-w-12 items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ' + (passed ? 'bg-status-completed/15 text-status-completed' : 'bg-status-failed/15 text-status-failed')}>
+                  {passed ? 'Pass' : 'Fail'}
                 </span>
-                <span className="font-medium text-text-primary">{itemId}</span>
-                {cmd && <code className="text-text-muted text-[10px] truncate ml-auto">{cmd}</code>}
               </div>
+              {cmd && <code className="text-text-muted text-[10px] block mt-0.5 truncate">{cmd}</code>}
               {!passed && exitCode !== undefined && (
-                <div className="text-[10px] text-text-muted mt-0.5 ml-5">exit code {exitCode}</div>
+                <div className="text-[10px] text-text-muted mt-0.5">exit code {exitCode}</div>
               )}
               {!passed && output && (
-                <pre className="text-[10px] text-text-muted mt-1 ml-5 whitespace-pre-wrap max-h-24 overflow-y-auto font-mono">{output}</pre>
+                <pre className="text-[10px] text-text-muted mt-1 whitespace-pre-wrap max-h-24 overflow-y-auto font-mono">{output}</pre>
               )}
             </div>
           );
@@ -267,27 +332,29 @@ function AttemptGrades({
         const withGrade = items.filter(i => i.grade);
 
         return (
-          <div key={priority}>
+          <div key={priority} className="rounded-md border border-border bg-bg-card/40 p-2">
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-[10px] font-semibold text-text-muted uppercase tracking-wide">
+              <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">
                 {label}
               </span>
               <span className="text-[10px] text-text-muted">
                 ({withGrade.length}/{items.length})
               </span>
             </div>
-            <div className="space-y-0.5">
+            <div className="space-y-1">
               {items.map(item => (
                 <div key={item.req_id} className="rounded bg-bg-card border border-border px-2 py-1.5">
                   <div className="flex items-center gap-2">
                     <span className="flex-1 text-xs text-text-secondary truncate">
                       {item.desc}
                     </span>
-                    {item.grade ? (
-                      <GradeBadge grade={item.grade} />
-                    ) : (
-                      <span className="text-text-muted text-[10px]">--</span>
-                    )}
+                    <div className="w-10 shrink-0 flex justify-end">
+                      {item.grade ? (
+                        <GradeBadge grade={item.grade} />
+                      ) : (
+                        <span className="text-text-muted text-[10px]">--</span>
+                      )}
+                    </div>
                   </div>
                   {item.grade_reason && (
                     <p className="text-[11px] text-text-muted mt-1 pl-0.5">
@@ -309,18 +376,25 @@ function AttemptCard({
   att,
   checklist,
   isLatest,
+  taskStatus,
   runId,
   taskId,
 }: {
   att: AttemptSchema;
   checklist: ChecklistItemSchema[];
   isLatest: boolean;
+  taskStatus: string;
   runId: string;
   taskId: string;
 }) {
+  const [open, setOpen] = useState(false);
   const [promptsOpen, setPromptsOpen] = useState(false);
-  // Lazy-load the builder prompt from the API (only if no inline prompt and user opens section)
-  const needsApiPrompt = promptsOpen && !att.builder_prompt;
+  const [agentLogOpen, setAgentLogOpen] = useState(false);
+  const [agentLogViewMode, setAgentLogViewMode] = useState<'structured' | 'raw'>('structured');
+  const [agentLogCapabilities, setAgentLogCapabilities] = useState({ hasStructured: false, hasRaw: false });
+  // Lazy-load the live prompt from the API only for the active attempt in a promptable state
+  const isPromptable = taskStatus === 'building' || taskStatus === 'verifying';
+  const needsApiPrompt = promptsOpen && isLatest && isPromptable && (!att.builder_prompt || !att.verifier_prompt);
   const { data: apiPrompt, isLoading: promptLoading } = useTaskPrompt(
     runId,
     needsApiPrompt ? taskId : undefined,
@@ -330,143 +404,202 @@ function AttemptCard({
   const tokensRead = getMetric(att.metrics, 'tokens_read');
   const tokensWrite = getMetric(att.metrics, 'tokens_write');
   const totalTokens = tokensRead + tokensWrite;
+  const hasAgentLogs = att.has_output || att.has_action_log;
+  const hasPrompts = Boolean(att.builder_prompt || att.verifier_prompt || att.outcome);
+  const canSwitchAgentLogView = agentLogCapabilities.hasStructured && agentLogCapabilities.hasRaw;
+  const hasBodyContent = Boolean(
+    att.error
+    || (att.outcome && att.outcome !== 'passed' && att.grade_snapshot.length > 0)
+    || att.grade_snapshot.length > 0
+    || (att.auto_verify_results && att.auto_verify_results.length > 0)
+    || att.verifier_comment
+    || hasAgentLogs
+    || hasPrompts,
+  );
 
   return (
     <div
       className={
-        'rounded-md border p-3 space-y-3 ' +
-        (isLatest ? 'bg-bg-elevated border-border-hover' : 'bg-bg-card border-border')
+        'rounded-md border overflow-hidden ' +
+        (isLatest ? `bg-bg-elevated ${COLLAPSIBLE_BORDER_CLASS}` : `bg-bg-card ${COLLAPSIBLE_BORDER_CLASS}`)
       }
     >
-      {/* Header: attempt number + outcome */}
-      <div>
-        <div className="flex items-center justify-between mb-1">
-          <span className="text-xs font-semibold text-text-primary">
-            Attempt #{att.attempt_num}
-          </span>
-          {att.outcome && (
-            <span className={'text-xs font-medium uppercase ' + outcomeColor(att.outcome)}>
-              {outcomeLabel(att.outcome)}
-            </span>
-          )}
-        </div>
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="w-full text-left px-3 py-2.5 hover:bg-bg-hover/30 transition-colors"
+      >
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-text-primary">
+                Attempt #{att.attempt_num}
+              </span>
+              {att.outcome && (
+                <span className={'text-[10px] font-semibold uppercase rounded px-1.5 py-0.5 bg-bg-card border border-border ' + outcomeColor(att.outcome)}>
+                  {outcomeLabel(att.outcome)}
+                </span>
+              )}
+            </div>
 
-        {/* Agent info line */}
-        {att.agent_type && (
-          <div className="flex items-center gap-1.5 text-xs text-text-secondary mb-1.5">
-            <span className="text-sm" role="img" aria-label={formatAgentType(att.agent_type)}>
-              {getAgentIcon(att.agent_type)}
-            </span>
-            <span>{formatAgentType(att.agent_type)}</span>
-            {att.agent_model && (
-              <>
-                <span className="text-text-muted">·</span>
-                <span className="text-text-muted">{att.agent_model}</span>
-              </>
+            {att.agent_type && (
+              <div className="flex items-center gap-1.5 text-xs text-text-secondary mb-1.5">
+                <span>Agent:</span>
+                <span className="font-medium text-text-primary">{getAgentDisplayName(att)}</span>
+                {att.agent_model && (
+                  <>
+                    <span className="text-text-muted">·</span>
+                    <span className="text-text-muted">{att.agent_model}</span>
+                  </>
+                )}
+                {totalTokens > 0 && (
+                  <>
+                    <span className="text-text-muted">·</span>
+                    <span className="text-text-muted">{formatTokens(totalTokens)} tokens</span>
+                  </>
+                )}
+              </div>
             )}
-            {totalTokens > 0 && (
-              <>
-                <span className="text-text-muted">·</span>
-                <span className="text-text-muted">{formatTokens(totalTokens)} tokens</span>
-              </>
-            )}
+
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-text-muted">
+              {durationMs > 0 && <span>{formatDuration(durationMs)}</span>}
+              {tokensRead > 0 && <span>{formatTokens(tokensRead)} read</span>}
+              {tokensWrite > 0 && <span>{formatTokens(tokensWrite)} write</span>}
+            </div>
           </div>
-        )}
-
-        {/* Metrics line */}
-        <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-text-muted">
-          {durationMs > 0 && <span>{formatDuration(durationMs)}</span>}
-          {tokensRead > 0 && <span>{formatTokens(tokensRead)} read</span>}
-          {tokensWrite > 0 && <span>{formatTokens(tokensWrite)} write</span>}
-        </div>
-      </div>
-
-      {/* Error banner */}
-      {att.error && (
-        <div className="rounded bg-status-failed/10 border border-status-failed/30 px-2.5 py-2">
-          <span className="text-[10px] font-semibold text-status-failed uppercase block mb-1">
-            Error
-          </span>
-          <p className="text-xs text-status-failed whitespace-pre-wrap">{att.error}</p>
-        </div>
-      )}
-
-      {/* Failure summary — show when outcome is not passed and there are ungraded/failing items */}
-      {att.outcome && att.outcome !== 'passed' && att.grade_snapshot.length > 0 && (
-        <FailureSummary snapshot={att.grade_snapshot} checklist={checklist} />
-      )}
-
-      {/* Grades for this attempt */}
-      {att.grade_snapshot.length > 0 && (
-        <AttemptGrades snapshot={att.grade_snapshot} checklist={checklist} />
-      )}
-
-      {/* Auto-verify results */}
-      {att.auto_verify_results && att.auto_verify_results.length > 0 && (
-        <AutoVerifyResults results={att.auto_verify_results} />
-      )}
-
-      {/* Verifier feedback */}
-      {att.verifier_comment && (
-        <div className="rounded bg-bg-card border border-border px-2.5 py-2">
-          <span className="text-[10px] font-semibold text-text-muted uppercase block mb-1">
-            Verifier Feedback
-          </span>
-          <p className="text-xs text-text-secondary whitespace-pre-wrap">
-            {att.verifier_comment}
-          </p>
-        </div>
-      )}
-
-      {/* Agent Logs / Conversation */}
-      {(att.has_output || att.has_action_log) && (
-        <div>
-          <h5 className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1">
-            Agent Log
-          </h5>
-          <LogsViewer runId={runId} taskId={taskId} attemptNum={att.attempt_num} />
-        </div>
-      )}
-
-      {/* Prompts (collapsible) */}
-      {(att.builder_prompt || att.verifier_prompt || att.outcome) && (
-        <div>
-          <button
-            onClick={() => setPromptsOpen(!promptsOpen)}
-            className="flex items-center gap-1.5 text-[11px] font-semibold text-text-muted uppercase tracking-wide hover:text-text-primary transition-colors"
+          <svg
+            className={'h-4 w-4 text-text-muted shrink-0 mt-0.5 transition-transform ' + (open ? 'rotate-90' : '')}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
           >
-            <svg
-              className={'h-3 w-3 transition-transform ' + (promptsOpen ? 'rotate-90' : '')}
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-            </svg>
-            Prompts
-          </button>
-          {promptsOpen && (
-            <div className="mt-2 space-y-3">
-              {promptLoading && (
-                <div className="flex justify-center py-3">
-                  <Spinner className="h-4 w-4" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </button>
+
+      {open && hasBodyContent && (
+        <div className={`border-t ${COLLAPSIBLE_DIVIDER_CLASS} p-3 space-y-3`}>
+          {/* Error banner */}
+          {att.error && (
+            <div className="rounded bg-status-failed/10 border border-status-failed/30 px-2.5 py-2">
+              <span className="text-[10px] font-semibold text-status-failed uppercase block mb-1">
+                Error
+              </span>
+              <p className="text-xs text-status-failed whitespace-pre-wrap">{att.error}</p>
+            </div>
+          )}
+
+          {/* Failure summary — show when outcome is not passed and there are ungraded/failing items */}
+          {att.outcome && att.outcome !== 'passed' && att.grade_snapshot.length > 0 && (
+            <FailureSummary snapshot={att.grade_snapshot} checklist={checklist} />
+          )}
+
+          {/* Grades for this attempt */}
+          {att.grade_snapshot.length > 0 && (
+            <AttemptGrades snapshot={att.grade_snapshot} checklist={checklist} />
+          )}
+
+          {/* Auto-verify results */}
+          {att.auto_verify_results && att.auto_verify_results.length > 0 && (
+            <AutoVerifyResults results={att.auto_verify_results} />
+          )}
+
+          {/* Verifier feedback */}
+          {att.verifier_comment && (
+            <div className="rounded bg-bg-card border border-border-hover px-2.5 py-2">
+              <span className="text-[10px] font-semibold text-text-muted uppercase block mb-1">
+                Verifier Feedback
+              </span>
+              <p className="text-xs text-text-secondary whitespace-pre-wrap">
+                {att.verifier_comment}
+              </p>
+            </div>
+          )}
+
+          {/* Agent Logs / Conversation */}
+          {hasAgentLogs && (
+            <div>
+              <DisclosureHeader
+                label="Agent Log"
+                open={agentLogOpen}
+                onToggle={() => setAgentLogOpen(!agentLogOpen)}
+                connected
+                borderClass={COLLAPSIBLE_BORDER_CLASS}
+                actions={canSwitchAgentLogView ? (
+                  <div className="relative grid grid-cols-2 w-40 rounded-md border border-border bg-bg-card p-0.5">
+                    <span
+                      className={
+                        'pointer-events-none absolute top-0.5 bottom-0.5 left-0.5 w-[calc(50%-2px)] rounded bg-bg-hover transition-transform duration-200 ease-out ' +
+                        (agentLogViewMode === 'raw' ? 'translate-x-full' : 'translate-x-0')
+                      }
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setAgentLogViewMode('structured')}
+                      className={'relative z-10 px-2 py-0.5 text-[10px] rounded transition-colors ' + (agentLogViewMode === 'structured' ? 'text-text-primary font-semibold' : 'text-text-muted hover:text-text-secondary')}
+                    >
+                      Structured
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setAgentLogViewMode('raw')}
+                      className={'relative z-10 px-2 py-0.5 text-[10px] rounded transition-colors ' + (agentLogViewMode === 'raw' ? 'text-text-primary font-semibold' : 'text-text-muted hover:text-text-secondary')}
+                    >
+                      Raw
+                    </button>
+                  </div>
+                ) : undefined}
+              />
+              {agentLogOpen && (
+                <div className={`border-x border-b ${COLLAPSIBLE_BORDER_CLASS} rounded-b-md`}>
+                  <LogsViewer
+                    runId={runId}
+                    taskId={taskId}
+                    attemptNum={att.attempt_num}
+                    viewMode={agentLogViewMode}
+                    onViewModeChange={setAgentLogViewMode}
+                    onCapabilitiesChange={setAgentLogCapabilities}
+                  />
                 </div>
               )}
-              {att.builder_prompt && (
-                <PromptBlock label="Builder Prompt" text={att.builder_prompt} />
-              )}
-              {!att.builder_prompt && apiPrompt && (
-                <>
-                  <PromptBlock label="Builder System Prompt" text={apiPrompt.system} />
-                  <PromptBlock label="Builder User Prompt" text={apiPrompt.user} />
-                </>
-              )}
-              {att.verifier_prompt && (
-                <PromptBlock label="Verifier Prompt" text={att.verifier_prompt} />
-              )}
-              {!att.builder_prompt && !apiPrompt && !promptLoading && (
-                <p className="text-xs text-text-muted italic">No prompts available</p>
+            </div>
+          )}
+
+          {/* Prompts (collapsible) */}
+          {hasPrompts && (
+            <div>
+              <DisclosureHeader
+                label="Prompts"
+                open={promptsOpen}
+                onToggle={() => setPromptsOpen(!promptsOpen)}
+                connected
+                borderClass={COLLAPSIBLE_BORDER_CLASS}
+              />
+              {promptsOpen && (
+                <div className={`border-x border-b ${COLLAPSIBLE_BORDER_CLASS} rounded-b-md p-2.5 space-y-3`}>
+                  {promptLoading && (
+                    <div className="flex justify-center py-3">
+                      <Spinner className="h-4 w-4" />
+                    </div>
+                  )}
+                  {/* Builder prompt: stored, or live API when phase is building */}
+                  {att.builder_prompt ? (
+                    <PromptBlock label="Builder Prompt" text={att.builder_prompt} />
+                  ) : apiPrompt?.phase === 'building' ? (
+                    <PromptBlock label="Builder Prompt" text={apiPrompt.system + '\n\n' + apiPrompt.user} />
+                  ) : null}
+                  {/* Verifier prompt: stored, or live API when phase is verifying */}
+                  {att.verifier_prompt ? (
+                    <PromptBlock label="Verifier Prompt" text={att.verifier_prompt} />
+                  ) : apiPrompt?.phase === 'verifying' ? (
+                    <PromptBlock label="Verifier Prompt" text={apiPrompt.system + '\n\n' + apiPrompt.user} />
+                  ) : null}
+                  {!att.builder_prompt && !att.verifier_prompt && !apiPrompt && !promptLoading && (
+                    <p className="text-xs text-text-muted italic">No prompts available</p>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -487,7 +620,6 @@ export function TaskDetailCard({
   runId,
 }: TaskDetailCardProps) {
   const [expanded, setExpanded] = useState(false);
-  const [attemptsOpen, setAttemptsOpen] = useState(false);
   const { data: detail, isLoading } = useTask(runId, expanded ? taskId : undefined);
   const { data: clarificationHistory, error: historyError } = useClarificationHistory(
     runId,
@@ -497,7 +629,7 @@ export function TaskDetailCard({
   const attemptCount = attemptsSummary.length;
 
   return (
-    <div className="rounded-lg border border-border bg-bg-card overflow-hidden transition-colors">
+    <div className={`rounded-lg border ${COLLAPSIBLE_BORDER_CLASS} bg-bg-card overflow-hidden transition-colors`}>
       {/* Collapsed bar */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -536,20 +668,20 @@ export function TaskDetailCard({
 
           {/* Chevron */}
           <svg
-            className={'h-4 w-4 text-text-muted shrink-0 transition-transform ' + (expanded ? 'rotate-180' : '')}
+            className={'h-4 w-4 text-text-muted shrink-0 transition-transform ' + (expanded ? 'rotate-90' : '')}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
             strokeWidth={2}
           >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
         </div>
       </button>
 
       {/* Expanded detail */}
       {expanded && (
-        <div className="border-t border-border px-3 py-4 space-y-5 animate-slide-down">
+        <div className={`border-t ${COLLAPSIBLE_DIVIDER_CLASS} px-3 py-4 space-y-5 animate-slide-down`}>
           {isLoading ? (
             <div className="flex justify-center py-6">
               <Spinner className="h-5 w-5" />
@@ -559,10 +691,24 @@ export function TaskDetailCard({
               {/* Requirements Checklist — always visible when expanded */}
               {detail.checklist.length > 0 && (
                 <div>
-                  <h4 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+                  <h4 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide mb-2">
                     Requirements
                   </h4>
                   <ChecklistTable items={detail.checklist} />
+                </div>
+              )}
+
+              {/* Recovery banner — shown when task is in RECOVERING state */}
+              {status === 'recovering' && (
+                <div className="rounded-lg border-2 border-amber-400/40 bg-amber-500/10 px-3 py-2.5">
+                  <h4 className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-1">
+                    Recovery agent diagnosing issue\u2026
+                  </h4>
+                  {detail.attempts.length > 0 && detail.attempts[detail.attempts.length - 1].verifier_comment && (
+                    <p className="text-sm text-text-secondary">
+                      {detail.attempts[detail.attempts.length - 1].verifier_comment}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -602,49 +748,24 @@ export function TaskDetailCard({
                 </div>
               )}
 
-              {/* Attempt History — collapsible, default collapsed */}
-              <div>
-                <button
-                  onClick={() => setAttemptsOpen(!attemptsOpen)}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-text-muted uppercase tracking-wide hover:text-text-primary transition-colors"
-                >
-                  <svg
-                    className={'h-3 w-3 transition-transform ' + (attemptsOpen ? 'rotate-90' : '')}
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                    strokeWidth={2}
-                  >
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                  </svg>
-                  Attempts
-                  {detail.attempts.length > 0 && (
-                    <span className="text-[10px] text-text-muted font-normal normal-case">
-                      ({detail.attempts.length})
-                    </span>
-                  )}
-                </button>
-                {attemptsOpen && (
-                  <div className="mt-2">
-                    {detail.attempts.length === 0 ? (
-                      <p className="text-xs text-text-muted italic">No attempts yet</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {detail.attempts.map((att, i) => (
-                          <AttemptCard
-                            key={att.id}
-                            att={att}
-                            checklist={detail.checklist}
-                            isLatest={i === detail.attempts.length - 1}
-                            runId={runId}
-                            taskId={taskId}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+              {/* Attempt History */}
+              {detail.attempts.length === 0 ? (
+                <p className="text-xs text-text-muted italic">No attempts yet</p>
+              ) : (
+                <div className="space-y-2">
+                  {detail.attempts.map((att, i) => (
+                    <AttemptCard
+                      key={att.id}
+                      att={att}
+                      checklist={detail.checklist}
+                      isLatest={i === detail.attempts.length - 1}
+                      taskStatus={status}
+                      runId={runId}
+                      taskId={taskId}
+                    />
+                  ))}
+                </div>
+              )}
             </>
           ) : null}
 

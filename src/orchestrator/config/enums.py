@@ -16,6 +16,7 @@ class TaskStatus(str, Enum):
     BUILDING = "building"
     PENDING_USER_ACTION = "pending_user_action"
     VERIFYING = "verifying"
+    RECOVERING = "recovering"
     COMPLETED = "completed"
     FAILED = "failed"
 

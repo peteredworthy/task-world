@@ -35,6 +35,17 @@ class VerifierPrompt:
     clarifications_path: str | None = None
 
 
+@dataclass
+class RecoveryPrompt:
+    """Generated prompt for the recovery phase."""
+
+    system: str
+    user: str
+    failure_context: str
+    task_title: str
+    task_description: str
+
+
 def get_task_context(task_config: TaskConfig, model: str | None = None) -> str:
     """Get task context, applying model overrides if present."""
     if model and task_config.model_overrides:
@@ -242,4 +253,80 @@ def generate_verifier_prompt(
         submission_instructions=submission_instructions,
         step_context=step_context,
         clarifications_path=clarifications_path,
+    )
+
+
+def generate_recovery_prompt(
+    task_config: TaskConfig,
+    task_state: TaskState,
+    failure_context: str,
+    run_config: dict[str, str],
+) -> RecoveryPrompt:
+    """Generate recovery prompt for diagnosing task failures.
+
+    The recovery agent is spawned when validation scripts crash or max attempts
+    are exhausted. It can ask the user clarifying questions or decide on an
+    outcome (retry, skip, or abandon).
+
+    Args:
+        task_config: The task configuration.
+        task_state: The current task state (in RECOVERING status).
+        failure_context: Crash logs or max-attempts message describing the failure.
+        run_config: Variable substitution config from the run.
+
+    Returns:
+        A RecoveryPrompt with system and user sections for the recovery agent.
+    """
+    task_context = task_config.task_context
+    for key, value in run_config.items():
+        task_context = task_context.replace(f"{{{{{key}}}}}", str(value))
+
+    system = (
+        "You are a recovery agent working within an orchestrated workflow.\n\n"
+        "## Your Role\n"
+        "A task has entered a failure state that requires diagnosis. "
+        "Your job is to understand why the task failed and decide the best course of action.\n\n"
+        "## Available MCP Tools\n"
+        "- `request_clarification`: Ask the user questions to gather more information "
+        "about the failure or the expected behavior.\n"
+        "- `complete_recovery`: Finalize the recovery with one of these outcomes:\n"
+        "  - `retry` - The task should be retried (e.g., after fixing a configuration issue)\n"
+        "  - `skip` - The task should be skipped (e.g., it is not critical)\n"
+        "  - `abandon` - The task should be permanently failed (e.g., it is fundamentally broken)\n\n"
+        "## Goal\n"
+        "1. Analyze the failure context below to understand the root cause.\n"
+        "2. If you need more information, use `request_clarification` to ask the user.\n"
+        "3. Once you have enough information, call `complete_recovery` with the appropriate "
+        "outcome and a notes field explaining your reasoning."
+    )
+
+    # Build attempt summary
+    attempt_count = len(task_state.attempts)
+    last_verifier_comment: str | None = None
+    for attempt in reversed(task_state.attempts):
+        if attempt.verifier_comment:
+            last_verifier_comment = attempt.verifier_comment
+            break
+
+    user = f"## Task\n**{task_config.title}**\n\n{task_context}\n\n"
+    user += f"## Failure Context\n{failure_context}\n\n"
+    user += f"## Attempt Summary\n- Total attempts: {attempt_count}\n"
+    user += f"- Max attempts configured: {task_state.max_attempts}\n"
+    if last_verifier_comment:
+        user += f"- Last verifier feedback: {last_verifier_comment}\n"
+    user += (
+        "\n## Instructions\n"
+        "Analyze the failure above and call `complete_recovery` with one of:\n"
+        "- outcome='retry' — if the issue can be fixed and the task should be re-attempted\n"
+        "- outcome='skip' — if the task is non-critical and can be safely skipped\n"
+        "- outcome='abandon' — if the task is fundamentally broken and should fail permanently\n\n"
+        "Include a `notes` field with your reasoning."
+    )
+
+    return RecoveryPrompt(
+        system=system,
+        user=user,
+        failure_context=failure_context,
+        task_title=task_config.title,
+        task_description=task_context,
     )

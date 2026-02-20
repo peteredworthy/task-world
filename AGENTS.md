@@ -188,6 +188,14 @@ Project → Run → Routine (git-versioned) → Step → Task → Attempt (token
 - **Run**: DRAFT → ACTIVE ↔ PAUSED → COMPLETED/FAILED
 - **Task**: PENDING → BUILDING → VERIFYING → COMPLETED/FAILED
 
+## UI/UX Constraints
+
+**No inline confirm/cancel in tight spaces.** Never place confirm/cancel button pairs directly inside a list item, table row, card header, or any compact UI element. These belong in a proper modal dialog with a title, description of consequences, and clearly labelled buttons. Cramming action confirmation into the same visual space as the content being acted on destroys usability and is never acceptable.
+
+**Action menus via three-dot (⋯) button.** When a compact item (task card, list row, etc.) needs contextual actions, use a ⋯ button in the corner that opens a small dropdown menu. The menu items then trigger a proper modal for any destructive or irreversible action.
+
+**Modals for destructive actions.** Any action that deletes, resets, or irreversibly modifies data must open a full overlay modal — centred on screen, dark backdrop, clear title, description of what will happen, optional reason/note field if useful, and Cancel + confirm buttons in the footer.
+
 ## Non-Negotiable Design Constraints
 
 **No mocking in tests.** Never use `patch`, `MagicMock`, or monkeypatching. Use real objects with dependency injection -- real git repos, real SQLite (in-memory), real files.

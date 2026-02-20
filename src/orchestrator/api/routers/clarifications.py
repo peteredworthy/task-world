@@ -293,13 +293,14 @@ async def respond_to_clarification(
         for a in request.answers
     ]
     result = await service.respond_to_clarification(run_id, task_id, request_id, answers, user)
-    # Re-spawn agent so it can continue after clarification answers
+    # Re-fetch run after clarification response to get up-to-date status
     run = await repo.get(run_id)
-    if (
-        run.status == RunStatus.ACTIVE
-        and run.agent_type is not None
-        and not executor.is_running(run_id)
-    ):
+    # If the run is paused, resume it before spawning the agent
+    if run.status == RunStatus.PAUSED:
+        run = await service.resume_run(run_id)
+        logger.info(f"API: Resumed paused run {run_id} after clarification response")
+    # Always re-spawn agent after a clarification response (run should now be ACTIVE)
+    if run.agent_type is not None and not executor.is_running(run_id):
         spawned = executor.spawn_for_run(run_id, run.agent_type, run.agent_config)
         if spawned:
             logger.info(

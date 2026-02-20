@@ -1,7 +1,7 @@
 """Task API endpoints."""
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -46,6 +46,41 @@ from orchestrator.workflow.prompts import generate_builder_prompt, generate_veri
 from orchestrator.workflow.service import WorkflowService
 
 router = APIRouter(prefix="/api/runs", tags=["tasks"])
+
+
+def _looks_like_ndjson_agent_stream(output: str) -> bool:
+    """Heuristic for legacy raw CLI streams that should be reparsed."""
+    if '"type":"item.completed"' in output:
+        return True
+    if '"type":"thread.started"' in output:
+        return True
+    if '"type":"message.created"' in output:
+        return True
+    return False
+
+
+def _parse_action_log_from_raw(output: str, agent_settings: dict[str, Any]) -> Any | None:
+    """Best-effort parser for raw agent stream output."""
+    command = str(agent_settings.get("command", "")).strip().lower()
+    parser: Any | None = None
+
+    if command == "codex":
+        from orchestrator.agents.parsers.codex_parser import CodexStreamParser
+
+        parser = CodexStreamParser()
+    elif command == "claude":
+        from orchestrator.agents.parsers.claude_parser import ClaudeStreamParser
+
+        parser = ClaudeStreamParser()
+    else:
+        return None
+
+    for line in output.splitlines():
+        parser.parse_line(line)
+    parsed = parser.finalize()
+    if not parsed.entries:
+        return None
+    return parsed
 
 
 @router.get("/{run_id}/tasks/{task_id}", response_model=TaskDetailResponse)
@@ -466,11 +501,22 @@ async def get_attempt_logs(
         raise HTTPException(status_code=404, detail=f"Attempt {attempt_num} not found")
 
     output = attempt.agent_output
+    action_log = attempt.action_log
+    # Backfill structured logs from raw NDJSON for older attempts that were
+    # captured before robust parser coverage for newer event formats.
+    if output and _looks_like_ndjson_agent_stream(output):
+        should_reparse = action_log is None or len(action_log.entries) <= 2
+        if should_reparse:
+            parsed = _parse_action_log_from_raw(output, attempt.agent_settings)
+            if parsed is not None and (
+                action_log is None or len(parsed.entries) > len(action_log.entries)
+            ):
+                action_log = parsed
 
     # Serialize structured action log if present
     action_log_schema = None
-    if attempt.action_log:
-        al = attempt.action_log
+    if action_log:
+        al = action_log
         action_log_schema = ActionLogSchema(
             entries=[
                 ActionLogEntrySchema(

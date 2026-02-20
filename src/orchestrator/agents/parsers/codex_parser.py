@@ -63,6 +63,8 @@ class CodexStreamParser:
             self._handle_thread_started(event)
         elif event_type == "message.created":
             self._handle_message_created(event)
+        elif event_type == "item.completed":
+            self._handle_item_completed(event)
         elif event_type == "tool_call":
             self._handle_tool_call(event)
         elif event_type == "tool_output":
@@ -138,6 +140,87 @@ class CodexStreamParser:
         )
         if text and text.strip():
             self._readable_parts.append(text)
+
+    def _handle_item_completed(self, event: dict[str, Any]) -> None:
+        """Handle Codex item.completed events (modern stream format)."""
+        item_raw = event.get("item")
+        if not isinstance(item_raw, dict):
+            return
+
+        item = cast(dict[str, Any], item_raw)
+        item_type = str(item.get("type", ""))
+
+        if item_type in ("agent_message", "message"):
+            text = str(item.get("text", "")).strip()
+            if not text:
+                return
+            self._entries.append(
+                ActionLogEntry(
+                    sequence_num=self._next_seq(),
+                    kind=ActionEntryKind.ASSISTANT_TEXT,
+                    timestamp=datetime.now(timezone.utc),
+                    text=text,
+                    raw_type="item.completed",
+                )
+            )
+            self._readable_parts.append(text)
+            return
+
+        if item_type == "reasoning":
+            text = str(item.get("text", "")).strip()
+            if not text:
+                return
+            self._entries.append(
+                ActionLogEntry(
+                    sequence_num=self._next_seq(),
+                    kind=ActionEntryKind.THINKING,
+                    timestamp=datetime.now(timezone.utc),
+                    text=text,
+                    raw_type="item.completed",
+                )
+            )
+            return
+
+        if item_type in ("command_execution", "tool_call", "tool_use"):
+            tool_use_id = str(item.get("id") or event.get("id") or "")
+            command = str(item.get("command", "")).strip()
+            status = str(item.get("status", "")).strip().lower()
+            success = status in ("completed", "ok", "success", "succeeded")
+
+            self._entries.append(
+                ActionLogEntry(
+                    sequence_num=self._next_seq(),
+                    kind=ActionEntryKind.TOOL_USE,
+                    timestamp=datetime.now(timezone.utc),
+                    tool_use=ToolUseDetail(
+                        tool_use_id=tool_use_id,
+                        tool_name="bash",
+                        arguments={"command": command} if command else {},
+                        summary=f"bash: {command}" if command else "command execution",
+                    ),
+                    raw_type="item.completed",
+                )
+            )
+
+            output = str(item.get("aggregated_output") or item.get("output") or "")
+            if output:
+                exit_code_raw = item.get("exit_code")
+                exit_code = exit_code_raw if isinstance(exit_code_raw, int) else None
+                self._entries.append(
+                    ActionLogEntry(
+                        sequence_num=self._next_seq(),
+                        kind=ActionEntryKind.TOOL_RESULT,
+                        timestamp=datetime.now(timezone.utc),
+                        tool_result=ToolResultDetail(
+                            tool_use_id=tool_use_id,
+                            output=output,
+                            exit_code=exit_code,
+                            success=success if exit_code is None else exit_code == 0,
+                            output_length=len(output),
+                        ),
+                        raw_type="item.completed",
+                    )
+                )
 
     def _handle_tool_call(self, event: dict[str, Any]) -> None:
         tool_name = event.get("name", event.get("function", {}).get("name", ""))

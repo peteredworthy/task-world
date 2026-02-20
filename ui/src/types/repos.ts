@@ -41,3 +41,7 @@ export interface ProjectRoutinesListResponse {
   branch: string;
   commit: string;
 }
+
+export interface RepoStatsResponse {
+  run_count: number;
+}

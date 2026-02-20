@@ -20,3 +20,13 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: ui-lint
+        name: ui-lint
+        entry: npm --prefix ui run lint
+        language: system
+        pass_filenames: false
+      - id: ui-typecheck
+        name: ui-typecheck
+        entry: npm --prefix ui run typecheck
+        language: system
+        pass_filenames: false

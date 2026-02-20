@@ -1,3 +1,5 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import type { RunResponse, StepSummary, TaskSummary } from '../../types';
 import { formatRelativeTime, formatDuration } from '../../lib/format';
@@ -7,6 +9,7 @@ import { StepTimeline } from './StepTimeline';
 import { CompactGradeRow } from '../CompactGradeRow';
 import { AgentIcon } from '../AgentIcon';
 import { PendingActionsBadge } from './PendingActionsBadge';
+import { useTransitionBack } from '../../hooks/useApi';
 
 interface RunCardProps {
   run: RunResponse;
@@ -267,20 +270,174 @@ function ChevronToggle({ expanded }: { expanded: boolean }) {
   );
 }
 
+/* ---------- Revert step modal ---------- */
+
+function RevertStepModal({
+  stepNumber,
+  stepTitle,
+  onConfirm,
+  onClose,
+  isPending,
+}: {
+  stepNumber: number;
+  stepTitle: string;
+  onConfirm: (reason: string) => void;
+  onClose: () => void;
+  isPending: boolean;
+}) {
+  const [reason, setReason] = useState('');
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="revert-modal-title"
+        className="mx-4 w-full max-w-md rounded-xl border border-border bg-bg-card shadow-2xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="px-6 pt-6 pb-4">
+          <h3 id="revert-modal-title" className="text-base font-semibold text-text-primary">
+            Revert to Step {stepNumber}: {stepTitle}?
+          </h3>
+          <p className="mt-2 text-sm text-text-secondary">
+            All tasks in this step and every step after it will be reset to{' '}
+            <span className="font-medium text-text-primary">pending</span>. The agents will
+            rebuild from this point. This cannot be undone.
+          </p>
+          <div className="mt-4">
+            <label htmlFor="revert-reason" className="mb-1.5 block text-xs font-medium text-text-secondary">
+              Reason <span className="text-text-muted">(optional)</span>
+            </label>
+            <textarea
+              id="revert-reason"
+              rows={3}
+              value={reason}
+              onChange={e => setReason(e.target.value)}
+              placeholder="Why are you reverting this step?"
+              className="w-full resize-none rounded-md border border-border bg-bg-elevated px-3 py-2 text-sm text-text-primary placeholder-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50"
+            />
+          </div>
+        </div>
+        <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isPending}
+            className="rounded-md bg-bg-elevated px-4 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-hover disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={() => onConfirm(reason)}
+            disabled={isPending}
+            className="rounded-md bg-status-paused/15 border border-status-paused/40 px-4 py-2 text-sm font-medium text-status-paused transition-colors hover:bg-status-paused/25 disabled:opacity-50"
+          >
+            {isPending ? 'Reverting…' : 'Revert step'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- Task card for expanded view ---------- */
 
-function TaskCard({ task, onClick }: { task: TaskSummary; onClick?: () => void }) {
+function TaskCard({
+  task,
+  onClick,
+  onRevertStep,
+}: {
+  task: TaskSummary;
+  onClick?: () => void;
+  onRevertStep?: () => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuAnchorRef = useRef<HTMLDivElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const menuPanelRef = useRef<HTMLDivElement>(null);
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; origin: string } | null>(null);
+
+  const updateMenuPosition = useCallback(() => {
+    if (!menuOpen || !menuButtonRef.current) return;
+
+    const triggerRect = menuButtonRef.current.getBoundingClientRect();
+    const menuRect = menuPanelRef.current?.getBoundingClientRect();
+    const menuWidth = menuRect?.width ?? 160;
+    const menuHeight = menuRect?.height ?? 36;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const gap = 6;
+    const margin = 8;
+
+    const spaceAbove = triggerRect.top - margin;
+    const spaceBelow = viewportHeight - triggerRect.bottom - margin;
+    const openAbove = spaceAbove >= menuHeight + gap || spaceAbove > spaceBelow;
+
+    let top = openAbove
+      ? triggerRect.top - menuHeight - gap
+      : triggerRect.bottom + gap;
+    let left = triggerRect.right - menuWidth;
+
+    top = Math.max(margin, Math.min(top, viewportHeight - menuHeight - margin));
+    left = Math.max(margin, Math.min(left, viewportWidth - menuWidth - margin));
+
+    setMenuPosition({
+      top,
+      left,
+      origin: openAbove ? 'bottom right' : 'top right',
+    });
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleOutside(e: MouseEvent) {
+      const targetNode = e.target as Node;
+      const clickedAnchor = menuAnchorRef.current?.contains(targetNode);
+      const clickedPanel = menuPanelRef.current?.contains(targetNode);
+      if (!clickedAnchor && !clickedPanel) {
+        setMenuOpen(false);
+      }
+    }
+    function handleEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('mousedown', handleOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const frame = requestAnimationFrame(updateMenuPosition);
+    window.addEventListener('resize', updateMenuPosition);
+    window.addEventListener('scroll', updateMenuPosition, true);
+    return () => {
+      cancelAnimationFrame(frame);
+      window.removeEventListener('resize', updateMenuPosition);
+      window.removeEventListener('scroll', updateMenuPosition, true);
+    };
+  }, [menuOpen, updateMenuPosition]);
+
   let bgClass = 'bg-bg-elevated/60 text-text-muted';
   if (task.status === 'completed') bgClass = 'bg-status-completed/10 text-status-completed';
   else if (task.status === 'building') bgClass = 'bg-status-active/10 text-status-active';
   else if (task.status === 'verifying') bgClass = 'bg-accent-purple/10 text-accent-purple';
+  else if (task.status === 'recovering') bgClass = 'bg-amber-500/10 text-amber-600';
   else if (task.status === 'failed') bgClass = 'bg-status-failed/10 text-status-failed';
   else if (task.pending_action_type) bgClass = 'bg-yellow-100/60 text-yellow-800';
 
   return (
     <div
       className={
-        'rounded px-2 py-1.5 text-[11px] font-medium ' + bgClass +
+        'relative rounded px-2 py-1.5 text-[11px] font-medium ' + bgClass +
         (onClick ? ' cursor-pointer hover:ring-1 hover:ring-accent-purple/40 transition-shadow' : '')
       }
       onClick={onClick ? e => { e.stopPropagation(); onClick(); } : undefined}
@@ -310,21 +467,76 @@ function TaskCard({ task, onClick }: { task: TaskSummary; onClick?: () => void }
       )}
       {task.attempts_summary.length > 1 ? (
         <div className="mt-1 space-y-0.5">
-          {task.attempts_summary.map(att => (
-            <div key={att.attempt_num} className="flex items-center gap-1.5 text-[10px]">
-              <span className="text-text-muted font-mono">#{att.attempt_num}</span>
-              {att.outcome ? (
-                <span className={'font-medium ' + outcomeColor(att.outcome)}>
-                  {outcomeLabel(att.outcome)}
+          {task.attempts_summary.map(att => {
+            let displayLabel: string | null = null;
+            let displayColor: string = '';
+
+            if (att.outcome) {
+              displayLabel = outcomeLabel(att.outcome);
+              displayColor = outcomeColor(att.outcome);
+            } else if (att.attempt_num < task.current_attempt) {
+              displayLabel = 'Needs revision';
+              displayColor = outcomeColor('revision_needed');
+            } else {
+              displayLabel = 'Building...';
+              displayColor = 'text-status-active animate-pulse-dot';
+            }
+
+            return (
+              <div key={att.attempt_num} className="flex items-center gap-1.5 text-[10px]">
+                <span className="text-text-muted font-mono">#{att.attempt_num}</span>
+                <span className={'font-medium ' + displayColor}>
+                  {displayLabel}
                 </span>
-              ) : (
-                <span className="text-status-active animate-pulse-dot">Building...</span>
-              )}
-            </div>
-          ))}
+              </div>
+            );
+          })}
         </div>
       ) : (
-        <div className="text-[10px] text-text-muted mt-0.5 capitalize">{task.status}</div>
+        <div className="text-[10px] text-text-muted mt-0.5 capitalize">
+          {task.status === 'recovering' ? 'Recovering\u2026' : task.status}
+        </div>
+      )}
+
+      {/* Three-dot action menu — bottom-right, only for revertable tasks */}
+      {onRevertStep && (
+        <div
+          ref={menuAnchorRef}
+          className="absolute bottom-1.5 right-1.5"
+          onClick={e => e.stopPropagation()}
+        >
+          <button
+            ref={menuButtonRef}
+            type="button"
+            aria-label="Task actions"
+            onClick={() => setMenuOpen(m => !m)}
+            className="flex items-center justify-center h-5 w-5 rounded bg-black/10 text-text-muted/85 hover:bg-black/20 hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent-purple/50 transition-colors"
+          >
+            <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24">
+              <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
+            </svg>
+          </button>
+          {menuOpen && createPortal(
+            <div
+              ref={menuPanelRef}
+              style={{
+                top: menuPosition?.top ?? 8,
+                left: menuPosition?.left ?? 8,
+                transformOrigin: menuPosition?.origin ?? 'top right',
+              }}
+              className="fixed z-[80] min-w-[160px] rounded-md border border-border bg-bg-card shadow-lg py-1"
+            >
+              <button
+                type="button"
+                onClick={() => { setMenuOpen(false); onRevertStep(); }}
+                className="w-full text-left px-3 py-1.5 text-[12px] text-text-primary hover:bg-bg-elevated transition-colors"
+              >
+                Revert to this step
+              </button>
+            </div>,
+            document.body
+          )}
+        </div>
       )}
     </div>
   );
@@ -337,6 +549,9 @@ function StepColumn({ step, index, isCurrent, runId, onTaskClick }: { step: Step
   const total = step.tasks.length;
   const pct = total > 0 ? Math.round((completed / total) * 100) : 0;
   const hasFailed = step.tasks.some(t => t.status === 'failed');
+  const canRevert = step.completed;
+  const [revertModalOpen, setRevertModalOpen] = useState(false);
+  const transitionBack = useTransitionBack(runId);
 
   let badgeClass = 'bg-transparent border border-border-hover text-text-muted';
   if (hasFailed) badgeClass = 'bg-status-failed text-white';
@@ -348,8 +563,13 @@ function StepColumn({ step, index, isCurrent, runId, onTaskClick }: { step: Step
   else if (step.completed) barColor = 'bg-accent-purple';
   else if (isCurrent) barColor = 'bg-status-active';
 
+  async function handleRevert(reason: string) {
+    await transitionBack.mutateAsync({ target_step_index: index, reason: reason.trim() || undefined });
+    setRevertModalOpen(false);
+  }
+
   return (
-    <div className="flex-1 min-w-[140px] max-w-[240px]">
+    <div className="group flex-1 min-w-[140px] max-w-[240px]">
       {/* Step header */}
       <div className="flex items-center gap-2 mb-2">
         <div
@@ -380,9 +600,20 @@ function StepColumn({ step, index, isCurrent, runId, onTaskClick }: { step: Step
             key={task.id}
             task={task}
             onClick={onTaskClick ? () => onTaskClick(runId, task) : undefined}
+            onRevertStep={canRevert ? () => setRevertModalOpen(true) : undefined}
           />
         ))}
       </div>
+
+      {revertModalOpen && (
+        <RevertStepModal
+          stepNumber={index + 1}
+          stepTitle={step.title || step.config_id}
+          onConfirm={handleRevert}
+          onClose={() => setRevertModalOpen(false)}
+          isPending={transitionBack.isPending}
+        />
+      )}
     </div>
   );
 }

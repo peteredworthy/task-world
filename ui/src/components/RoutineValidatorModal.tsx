@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useValidateRoutine } from '../hooks/useApi';
 import type { ValidationResult } from '../api/client';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -23,24 +23,23 @@ export function RoutineValidatorModal({ isOpen, onClose, onCreateRun }: RoutineV
   const [result, setResult] = useState<ValidationResult | null>(null);
   const [serviceError, setServiceError] = useState('');
 
+  const closeModal = useCallback(() => {
+    setYamlContent('');
+    setResult(null);
+    setServiceError('');
+    onClose();
+  }, [onClose]);
+
   useFocusTrap(dialogRef, isOpen);
 
   useEffect(() => {
     if (!isOpen) return;
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') closeModal();
     }
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
-
-  useEffect(() => {
-    if (!isOpen) {
-      setYamlContent('');
-      setResult(null);
-      setServiceError('');
-    }
-  }, [isOpen]);
+  }, [isOpen, closeModal]);
 
   if (!isOpen) return null;
 
@@ -58,14 +57,14 @@ export function RoutineValidatorModal({ isOpen, onClose, onCreateRun }: RoutineV
   function handleCreateRunClick() {
     if (result?.valid) {
       onCreateRun?.(yamlContent);
-      onClose();
+      closeModal();
     }
   }
 
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80"
-      onClick={onClose}
+      onClick={closeModal}
     >
       <div
         ref={dialogRef}
@@ -86,7 +85,7 @@ export function RoutineValidatorModal({ isOpen, onClose, onCreateRun }: RoutineV
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeModal}
             className="text-text-muted hover:text-text-primary transition-colors p-1 -mr-1 -mt-0.5 rounded-md hover:bg-bg-hover"
             aria-label="Close"
           >
@@ -137,7 +136,7 @@ export function RoutineValidatorModal({ isOpen, onClose, onCreateRun }: RoutineV
         <div className="px-6 pb-5 pt-1 flex items-center justify-end gap-2">
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeModal}
             className="px-3 py-2 text-sm rounded-md border border-border text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors"
           >
             Close

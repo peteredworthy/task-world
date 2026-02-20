@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { render, fireEvent, cleanup } from '@testing-library/react';
+import { render, cleanup } from '@testing-library/react';
 import { ErrorBoundary } from '../../src/components/ErrorBoundary';
 
 afterEach(cleanup);

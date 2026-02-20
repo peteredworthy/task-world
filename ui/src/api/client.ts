@@ -23,6 +23,7 @@ import type {
   RejectTaskRequest,
   RepoResponse,
   ReposListResponse,
+  RepoStatsResponse,
   RespondToClarificationRequest,
   RoutineDetail,
   RoutineListResponse,
@@ -563,6 +564,29 @@ export const api = {
 
   getRepoRoutine(repoName: string, routineId: string, branch: string): Promise<ProjectRoutineResponse> {
     return fetchApi('/api/repos/' + repoName + '/routines/' + routineId + '?branch=' + encodeURIComponent(branch));
+  },
+
+  getRepoBranches(repoName: string, params?: { pattern?: string; include_remote?: boolean }): Promise<BranchesListResponse> {
+    const sp = new URLSearchParams();
+    if (params?.pattern) sp.set('pattern', params.pattern);
+    if (params?.include_remote !== undefined) sp.set('include_remote', String(params.include_remote));
+    const qs = sp.toString();
+    return fetchApi('/api/repos/' + repoName + '/branches' + (qs ? '?' + qs : ''));
+  },
+
+  getRepoStats(repoName: string): Promise<RepoStatsResponse> {
+    return fetchApi('/api/repos/' + repoName + '/stats');
+  },
+
+  addRepo(body: { url?: string; path?: string }): Promise<RepoResponse> {
+    return fetchApi('/api/repos', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  },
+
+  removeRepo(name: string): Promise<void> {
+    return fetchApi('/api/repos/' + name, { method: 'DELETE' });
   },
 };
 

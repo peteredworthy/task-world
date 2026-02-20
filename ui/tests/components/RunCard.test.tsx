@@ -473,4 +473,79 @@ describe('RunCard', () => {
       expect(onToggle).not.toHaveBeenCalled();
     });
   });
+
+  describe('task action menu', () => {
+    it('shows always-visible task actions button for revertable tasks and toggles menu', async () => {
+      const run = makeRun({
+        id: 'run-menu',
+        status: 'active',
+        current_step_index: 1,
+        steps: [
+          makeStep({
+            id: 's1',
+            config_id: 'step-one',
+            title: 'Step one',
+            completed: true,
+            tasks: [
+              makeTask({ id: 't1', config_id: 'task-one', status: 'completed', title: 'Completed task' }),
+            ],
+          }),
+          makeStep({
+            id: 's2',
+            config_id: 'step-two',
+            title: 'Step two',
+            completed: false,
+            tasks: [
+              makeTask({ id: 't2', config_id: 'task-two', status: 'building', title: 'Current task' }),
+            ],
+          }),
+        ],
+      });
+
+      renderCard(run, { expanded: true });
+
+      const actionButtons = screen.getAllByRole('button', { name: 'Task actions' });
+      expect(actionButtons).toHaveLength(1);
+
+      await userEvent.click(actionButtons[0]);
+      expect(screen.getByRole('button', { name: 'Revert to this step' })).toBeInTheDocument();
+
+      await userEvent.keyboard('{Escape}');
+      expect(screen.queryByRole('button', { name: 'Revert to this step' })).not.toBeInTheDocument();
+    });
+
+    it('shows task actions for a completed current (final) step', () => {
+      const run = makeRun({
+        id: 'run-final-step',
+        status: 'completed',
+        current_step_index: 1,
+        steps: [
+          makeStep({
+            id: 's1',
+            config_id: 'step-one',
+            title: 'Step one',
+            completed: true,
+            tasks: [
+              makeTask({ id: 't1', config_id: 'task-one', status: 'completed', title: 'Completed task 1' }),
+            ],
+          }),
+          makeStep({
+            id: 's2',
+            config_id: 'step-two',
+            title: 'Step two',
+            completed: true,
+            tasks: [
+              makeTask({ id: 't2', config_id: 'task-two', status: 'completed', title: 'Completed final task' }),
+            ],
+          }),
+        ],
+      });
+
+      renderCard(run, { expanded: true });
+
+      // One action button per completed step, including current/final completed step.
+      const actionButtons = screen.getAllByRole('button', { name: 'Task actions' });
+      expect(actionButtons).toHaveLength(2);
+    });
+  });
 });

@@ -1,9 +1,11 @@
+import { useState, type ReactNode } from 'react';
 import { TaskStatusBadge } from '../StatusBadge';
 import { formatRelativeTime } from '../../lib/format';
 import { groupEventsByTask } from '../../lib/activity';
 import { TaskDetailCard } from './TaskDetailCard';
-import type { ActivityEvent, TaskSummary, RunResponse } from '../../types';
-import type { ActiveTask, ActivityGroup, TaskEventGroup, MilestoneEvent } from '../../lib/activity';
+import { COLLAPSIBLE_BORDER_CLASS, COLLAPSIBLE_DIVIDER_CLASS } from './sharedUtils';
+import type { ActivityEvent, TaskSummary, RunResponse, StepSummary } from '../../types';
+import type { ActiveTask, ActivityGroup, TaskEventGroup } from '../../lib/activity';
 
 interface ActivityFeedProps {
   events: ActivityEvent[];
@@ -47,24 +49,6 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
 
 function statusFromPayload(payload: Record<string, unknown>): string | null {
   return (payload.new_status as string) ?? null;
-}
-
-function MilestoneRow({ item }: { item: MilestoneEvent }) {
-  const { event } = item;
-  const label = eventLabel(event.event_type, event.payload);
-
-  return (
-    <div className="flex items-center gap-3 py-2">
-      <div className="flex-1 h-px bg-border" />
-      <span className="text-[11px] font-semibold text-text-muted uppercase tracking-wide whitespace-nowrap">
-        {label}
-      </span>
-      <span className="text-[10px] text-text-muted whitespace-nowrap">
-        {formatRelativeTime(event.timestamp)}
-      </span>
-      <div className="flex-1 h-px bg-border" />
-    </div>
-  );
 }
 
 function TaskGroupCard({
@@ -265,6 +249,79 @@ function ActiveTaskCard({
   );
 }
 
+/**
+ * Determine if a step should be expanded by default.
+ * Expanded when: any task is failed, OR any task is NOT completed and NOT failed.
+ */
+function defaultStepExpanded(step: StepSummary): boolean {
+  // If any task is failed → keep expanded
+  if (step.tasks.some(t => t.status === 'failed')) return true;
+  // If all tasks are completed or failed → collapse
+  if (step.tasks.every(t => t.status === 'completed' || t.status === 'failed')) return false;
+  // Otherwise (has active/pending tasks) → expand
+  return true;
+}
+
+function StepSection({
+  step,
+  stepNumber,
+  children,
+}: {
+  step: StepSummary;
+  stepNumber: number;
+  children: ReactNode;
+}) {
+  const [expanded, setExpanded] = useState(() => defaultStepExpanded(step));
+
+  const totalTasks = step.tasks.length;
+  const doneTasks = step.tasks.filter(t => t.status === 'completed' || t.status === 'failed').length;
+
+  return (
+    <div className={`rounded-lg border ${COLLAPSIBLE_BORDER_CLASS} bg-bg-elevated overflow-hidden`}>
+      {/* Header — always visible, clickable */}
+      <button
+        id={`step-${step.id}`}
+        onClick={() => setExpanded(e => !e)}
+        className="w-full text-left px-3 py-2.5 flex items-center gap-2.5 hover:bg-bg-hover transition-colors"
+        aria-expanded={expanded}
+      >
+        {/* Step number circle */}
+        <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-accent-purple/20 text-accent-purple text-[11px] font-bold shrink-0">
+          {stepNumber}
+        </span>
+
+        {/* Step title */}
+        <span className="text-sm font-semibold text-text-primary truncate flex-1 min-w-0">
+          {step.title || step.config_id}
+        </span>
+
+        {/* Task progress badge */}
+        <span className="text-[11px] font-mono text-text-muted shrink-0 bg-bg-card border border-border rounded px-1.5 py-0.5">
+          {doneTasks} / {totalTasks} tasks
+        </span>
+
+        {/* Chevron */}
+        <svg
+          className={'h-4 w-4 text-text-muted shrink-0 transition-transform ' + (expanded ? 'rotate-90' : '')}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+          strokeWidth={2}
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+        </svg>
+      </button>
+
+      {/* Body — collapsible */}
+      {expanded && (
+        <div className={`border-t ${COLLAPSIBLE_DIVIDER_CLASS} px-3 py-3 space-y-2`}>
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId, run }: ActivityFeedProps) {
   const groups: ActivityGroup[] = groupEventsByTask(events);
 
@@ -284,12 +341,80 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
   }
 
   // When run is provided and onSelectTask is NOT provided, use expandable TaskDetailCards
+  // grouped by step sections.
   const useExpandableCards = !!run && !onSelectTask;
 
-  // Look up task data from run for expandable cards
-  const allTasks = run ? run.steps.flatMap(s => s.tasks) : [];
+  // Look up step data from run
   const allSteps = run ? run.steps : [];
 
+  // --- Step-sectioned rendering (when run is provided) ---
+  if (useExpandableCards) {
+    // Build a map from task_id → event group for quick lookup
+    const groupByTaskId = new Map<string, TaskEventGroup>();
+    for (const g of groups) {
+      if (g.kind === 'task') groupByTaskId.set(g.task_id, g);
+    }
+    // Also index statusOnlyTasks by task_id
+    const statusOnlyByTaskId = new Map(statusOnlyTasks.map(t => [t.task_id, t]));
+
+    return (
+      <div className="space-y-3" role="feed" aria-label="Activity log">
+        {allSteps.map((step, stepIdx) => {
+          // Collect task cards for this step (only tasks that have activity or a status)
+          const stepTaskCards: ReactNode[] = [];
+          for (const taskSummary of step.tasks) {
+            const taskId = taskSummary.id;
+            const taskTitle = taskSummary.title || taskSummary.config_id;
+            const stepTitle = step.title || step.config_id;
+            const eventGroup = groupByTaskId.get(taskId);
+            const statusOnly = statusOnlyByTaskId.get(taskId);
+
+            if (eventGroup) {
+              stepTaskCards.push(
+                <TaskDetailCard
+                  key={taskId}
+                  taskId={taskId}
+                  taskTitle={taskTitle}
+                  stepTitle={stepTitle}
+                  status={taskSummary.status}
+                  events={eventGroup.events}
+                  gradeSummary={taskSummary.grade_summary}
+                  attemptsSummary={taskSummary.attempts_summary}
+                  runId={run!.id}
+                />,
+              );
+            } else if (statusOnly || taskSummary.status !== 'pending') {
+              // Show the card even if no events, if status is non-pending or it appeared in activeTasks
+              stepTaskCards.push(
+                <TaskDetailCard
+                  key={taskId}
+                  taskId={taskId}
+                  taskTitle={taskTitle}
+                  stepTitle={stepTitle}
+                  status={taskSummary.status}
+                  events={[]}
+                  gradeSummary={taskSummary.grade_summary}
+                  attemptsSummary={taskSummary.attempts_summary}
+                  runId={run!.id}
+                />,
+              );
+            }
+          }
+
+          // Skip steps with no visible task cards
+          if (stepTaskCards.length === 0) return null;
+
+          return (
+            <StepSection key={step.id} step={step} stepNumber={stepIdx + 1}>
+              {stepTaskCards}
+            </StepSection>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // --- Flat rendering (no run prop) ---
   // Track which step IDs have been anchored so we only add the id to the first task per step
   const anchoredStepIds = new Set<string>();
 
@@ -313,28 +438,6 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
 
         const anchorId = getStepAnchorId(group.task_id);
 
-        if (useExpandableCards) {
-          const taskData = allTasks.find(t => t.id === group.task_id);
-          // Find step title from run data
-          const step = allSteps.find(s => s.tasks.some(t => t.id === group.task_id));
-          const stepTitle = step?.title || step?.config_id || group.step_title;
-
-          return (
-            <div key={group.task_id + '-' + i} id={anchorId}>
-              <TaskDetailCard
-                taskId={group.task_id}
-                taskTitle={group.task_title}
-                stepTitle={stepTitle}
-                status={taskData?.status ?? 'pending'}
-                events={group.events}
-                gradeSummary={taskData?.grade_summary ?? []}
-                attemptsSummary={taskData?.attempts_summary ?? []}
-                runId={run!.id}
-              />
-            </div>
-          );
-        }
-
         return (
           <div key={group.task_id + '-' + i} id={anchorId}>
             <TaskGroupCard
@@ -347,27 +450,6 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
       })}
       {statusOnlyTasks.map(task => {
         const anchorId = getStepAnchorId(task.task_id);
-
-        if (useExpandableCards) {
-          const taskData = allTasks.find(t => t.id === task.task_id);
-          const step = allSteps.find(s => s.tasks.some(t => t.id === task.task_id));
-          const stepTitle = step?.title || step?.config_id || task.step_title;
-
-          return (
-            <div key={task.task_id} id={anchorId}>
-              <TaskDetailCard
-                taskId={task.task_id}
-                taskTitle={task.task_title}
-                stepTitle={stepTitle}
-                status={taskData?.status ?? task.status}
-                events={[]}
-                gradeSummary={taskData?.grade_summary ?? []}
-                attemptsSummary={taskData?.attempts_summary ?? []}
-                runId={run!.id}
-              />
-            </div>
-          );
-        }
 
         return (
           <div key={task.task_id} id={anchorId}>

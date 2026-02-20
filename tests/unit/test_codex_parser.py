@@ -193,6 +193,72 @@ def test_turn_failed():
     assert log.entries[0].kind == ActionEntryKind.ERROR
 
 
+def test_item_completed_agent_message():
+    parser = CodexStreamParser()
+    parser.parse_line(
+        _make_line(
+            {
+                "type": "item.completed",
+                "item": {"id": "item_1", "type": "agent_message", "text": "Review complete."},
+            }
+        )
+    )
+    log = parser.finalize()
+
+    assert len(log.entries) == 1
+    assert log.entries[0].kind == ActionEntryKind.ASSISTANT_TEXT
+    assert log.entries[0].text == "Review complete."
+    assert "Review complete." in parser.get_readable_text()
+
+
+def test_item_completed_reasoning():
+    parser = CodexStreamParser()
+    parser.parse_line(
+        _make_line(
+            {
+                "type": "item.completed",
+                "item": {"id": "item_2", "type": "reasoning", "text": "Checking files..."},
+            }
+        )
+    )
+    log = parser.finalize()
+
+    assert len(log.entries) == 1
+    assert log.entries[0].kind == ActionEntryKind.THINKING
+    assert log.entries[0].text == "Checking files..."
+
+
+def test_item_completed_command_execution():
+    parser = CodexStreamParser()
+    parser.parse_line(
+        _make_line(
+            {
+                "type": "item.completed",
+                "item": {
+                    "id": "item_3",
+                    "type": "command_execution",
+                    "command": "/bin/zsh -lc 'rg -n foo src'",
+                    "status": "completed",
+                    "exit_code": 0,
+                    "aggregated_output": "src/example.py:42:foo",
+                },
+            }
+        )
+    )
+    log = parser.finalize()
+
+    assert len(log.entries) == 2
+    assert log.entries[0].kind == ActionEntryKind.TOOL_USE
+    assert log.entries[0].tool_use is not None
+    assert log.entries[0].tool_use.tool_name == "bash"
+    assert log.entries[0].tool_use.tool_use_id == "item_3"
+    assert log.entries[1].kind == ActionEntryKind.TOOL_RESULT
+    assert log.entries[1].tool_result is not None
+    assert log.entries[1].tool_result.tool_use_id == "item_3"
+    assert log.entries[1].tool_result.exit_code == 0
+    assert log.entries[1].tool_result.success is True
+
+
 def test_full_conversation():
     parser = CodexStreamParser()
 

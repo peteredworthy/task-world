@@ -4,6 +4,13 @@ import { getAuthToken } from '../api/client';
 import { normalizeBaseUrl } from '../lib/url';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'failed';
+type RunEventMessage = {
+  event_type?: string;
+  task_id?: string;
+  payload?: {
+    task_id?: string;
+  };
+};
 
 const MAX_RECONNECT_ATTEMPTS = 10;
 
@@ -59,7 +66,7 @@ function createWebSocket(
     }
   };
 
-  function processEvent(data: any) {
+  function processEvent(data: RunEventMessage) {
     const eventType = data.event_type;
 
     // Always invalidate the activity feed on any event
@@ -127,14 +134,11 @@ export function useRunWebSocket(runId: string | undefined) {
     runId ? 'connecting' : 'disconnected'
   );
 
-  // Track runId changes to reset status during render
-  const [prevRunId, setPrevRunId] = useState(runId);
-  if (runId !== prevRunId) {
-    setPrevRunId(runId);
-    setStatus(runId ? 'connecting' : 'disconnected');
-  }
-
   const [reconnectTrigger, setReconnectTrigger] = useState(0);
+
+  useEffect(() => {
+    setStatus(runId ? 'connecting' : 'disconnected');
+  }, [runId]);
 
   useEffect(() => {
     if (!runId) return;

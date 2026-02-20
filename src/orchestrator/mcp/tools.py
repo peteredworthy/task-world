@@ -85,6 +85,27 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
             "required": ["run_id", "task_id", "req_id", "grade"],
         },
     },
+    {
+        "name": "orchestrator_complete_recovery",
+        "description": "Complete recovery for a task that entered a failure state. Choose an outcome: retry (re-attempt the task), skip (mark as completed/skipped), or abandon (mark as permanently failed).",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "The run ID"},
+                "task_id": {"type": "string", "description": "The task ID"},
+                "outcome": {
+                    "type": "string",
+                    "description": "Recovery outcome: retry, skip, or abandon",
+                    "enum": ["retry", "skip", "abandon"],
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Explanation of the recovery decision",
+                },
+            },
+            "required": ["run_id", "task_id", "outcome", "notes"],
+        },
+    },
     CLARIFICATION_TOOL,
     {
         "name": "orchestrator_list_repos",
@@ -146,6 +167,8 @@ class ToolHandler:
             return await self._submit(arguments)
         elif tool_name == "orchestrator_set_grade":
             return await self._set_grade(arguments)
+        elif tool_name == "orchestrator_complete_recovery":
+            return await self._complete_recovery(arguments)
         elif tool_name == "orchestrator_request_clarification":
             return await self._request_clarification(arguments)
         elif tool_name == "orchestrator_list_repos":
@@ -222,6 +245,31 @@ class ToolHandler:
             "req_id": item.req_id,
             "grade": item.grade,
             "grade_reason": item.grade_reason,
+        }
+
+    async def _complete_recovery(self, args: dict[str, Any]) -> dict[str, Any]:
+        run_id: str = args["run_id"]
+        task_id: str = args["task_id"]
+        outcome: str = args["outcome"]
+        notes: str = args["notes"]
+
+        if outcome not in ("retry", "skip", "abandon"):
+            raise ValueError(
+                f"Invalid recovery outcome '{outcome}'. Must be one of: retry, skip, abandon"
+            )
+
+        if outcome == "retry":
+            result = await self._service.complete_recovery_retry(run_id, task_id, notes)
+        elif outcome == "skip":
+            result = await self._service.complete_recovery_skip(run_id, task_id, notes)
+        else:
+            result = await self._service.complete_recovery_abandon(run_id, task_id, notes)
+
+        return {
+            "success": result.success,
+            "new_status": result.new_status.value,
+            "outcome": outcome,
+            "notes": notes,
         }
 
     async def _request_clarification(self, args: dict[str, Any]) -> dict[str, Any]:

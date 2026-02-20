@@ -94,6 +94,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
   const [routineSelection, setRoutineSelection] = useState<RoutineSelection | null>(null);
   const [routineValidatorOpen, setRoutineValidatorOpen] = useState(false);
+  const wasOpenRef = useRef(false);
 
   // For templates, fetch full routine detail to get input definitions
   const isTemplate = routineSelection && !routineSelection.isProjectRoutine;
@@ -135,17 +136,20 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
     setForm(prev => ({ ...prev, inputValues: defaults }));
   }, [routineInputs]);
 
-  // Reset form when modal opens (detect open transition via state)
-  if (open && !form.prevOpen) {
-    setForm({
-      ...INITIAL_FORM,
-      prevOpen: true,
-      selectedRoutine: preSelectedRoutine ?? ''
-    });
-    setRoutineSelection(null);
-  } else if (!open && form.prevOpen) {
-    setForm(prev => ({ ...prev, prevOpen: false }));
-  }
+  // Reset form on open transition.
+  useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      setForm({
+        ...INITIAL_FORM,
+        prevOpen: true,
+        selectedRoutine: preSelectedRoutine ?? '',
+      });
+      setRoutineSelection(null);
+    } else if (!open && wasOpenRef.current) {
+      setForm(prev => ({ ...prev, prevOpen: false }));
+    }
+    wasOpenRef.current = open;
+  }, [open, preSelectedRoutine]);
 
   // Escape key to close
   useEffect(() => {

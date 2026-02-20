@@ -90,7 +90,13 @@ def list_branches(
 
     # Get local branches
     result = subprocess.run(
-        ["git", "for-each-ref", "--format=%(refname:short) %(objectname:short)", "refs/heads/"],
+        [
+            "git",
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short) %(objectname:short)",
+            "refs/heads/",
+        ],
         cwd=repo_path,
         capture_output=True,
         text=True,
@@ -110,6 +116,7 @@ def list_branches(
             [
                 "git",
                 "for-each-ref",
+                "--sort=-committerdate",
                 "--format=%(refname:short) %(objectname:short)",
                 "refs/remotes/",
             ],
@@ -132,9 +139,6 @@ def list_branches(
     # Apply pattern filter
     if pattern:
         branches = [b for b in branches if fnmatch.fnmatch(b.name, pattern)]
-
-    # Sort by name
-    branches = sorted(branches, key=lambda b: b.name)
 
     # Apply limit
     if limit > 0:

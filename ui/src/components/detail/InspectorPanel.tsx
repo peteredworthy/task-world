@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useTask, useTaskPrompt } from '../../hooks/useApi';
 import { TaskStatusBadge } from '../StatusBadge';
 import { Spinner } from '../Spinner';
-import { AttemptTimeline, ChecklistGrades } from './shared';
+import { AttemptTimeline } from './shared';
 import type { TaskSummary } from '../../types';
 
 interface InspectorPanelProps {
@@ -14,10 +14,14 @@ interface InspectorPanelProps {
 export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
   const [showDebug, setShowDebug] = useState(false);
   const { data: detail, isLoading } = useTask(runId, task.id);
-  const { data: promptData, isLoading: promptLoading } = useTaskPrompt(
+  const isPromptable = task.status === 'building' || task.status === 'verifying';
+  const { data: promptData, isLoading: promptLoading, error: promptError } = useTaskPrompt(
     runId,
-    showDebug ? task.id : undefined
+    showDebug && isPromptable ? task.id : undefined
   );
+  const latestAttempt = detail?.attempts[detail.attempts.length - 1];
+  const storedBuilderPrompt = latestAttempt?.builder_prompt ?? null;
+  const storedVerifierPrompt = latestAttempt?.verifier_prompt ?? null;
 
   return (
     <div
@@ -65,18 +69,8 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
               <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
                 Attempt History
               </h3>
-              <AttemptTimeline attempts={detail.attempts} />
+              <AttemptTimeline attempts={detail.attempts} checklist={detail.checklist} />
             </div>
-
-            {/* Checklist & Grades */}
-            {detail.checklist.length > 0 && (
-              <div>
-                <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
-                  Requirements & Grades
-                </h3>
-                <ChecklistGrades checklist={detail.checklist} />
-              </div>
-            )}
           </>
         ) : null}
 
@@ -166,9 +160,54 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
                     Copy Full Prompt
                   </button>
                 </>
+              ) : storedBuilderPrompt || storedVerifierPrompt ? (
+                <>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold text-text-muted uppercase">Source:</span>
+                    <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary">
+                      stored attempt prompt
+                    </span>
+                  </div>
+
+                  {storedBuilderPrompt && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-semibold text-text-muted uppercase">Builder Prompt</span>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(storedBuilderPrompt)}
+                          className="text-[10px] text-text-muted hover:text-text-primary transition-colors"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <pre className="text-[11px] text-text-secondary bg-bg-card border border-border rounded-md p-2 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
+                        {storedBuilderPrompt}
+                      </pre>
+                    </div>
+                  )}
+
+                  {storedVerifierPrompt && (
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[10px] font-semibold text-text-muted uppercase">Verifier Prompt</span>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(storedVerifierPrompt)}
+                          className="text-[10px] text-text-muted hover:text-text-primary transition-colors"
+                        >
+                          Copy
+                        </button>
+                      </div>
+                      <pre className="text-[11px] text-text-secondary bg-bg-card border border-border rounded-md p-2 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
+                        {storedVerifierPrompt}
+                      </pre>
+                    </div>
+                  )}
+                </>
               ) : (
                 <p className="text-xs text-text-muted italic text-center py-2">
-                  No prompt available for this task
+                  {promptError
+                    ? 'Prompt unavailable from API for this task state.'
+                    : 'No prompt available for this task'}
                 </p>
               )}
 

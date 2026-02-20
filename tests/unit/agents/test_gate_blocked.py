@@ -61,7 +61,11 @@ class _TestExecutor(AgentExecutor):
         self._agent = agent
 
     def _create_agent(
-        self, agent_type: AgentType, agent_config: dict[str, Any], run_id: str | None = None
+        self,
+        agent_type: AgentType,
+        agent_config: dict[str, Any],
+        run_id: str | None = None,
+        phase: str = "building",
     ) -> _GateBlockedAgent:  # noqa: ARG002,E501
         return self._agent
 

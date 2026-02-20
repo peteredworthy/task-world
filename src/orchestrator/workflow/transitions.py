@@ -32,6 +32,13 @@ VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.BUILDING,
         TaskStatus.PENDING_USER_ACTION,
         TaskStatus.FAILED,
+        TaskStatus.RECOVERING,
+    },
+    TaskStatus.RECOVERING: {
+        TaskStatus.BUILDING,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.PENDING_USER_ACTION,
     },
     TaskStatus.COMPLETED: set(),
     TaskStatus.FAILED: set(),
@@ -50,7 +57,7 @@ class TransitionResult:
 
 
 def transition_to_building(task: TaskState, now: datetime) -> TransitionResult:
-    """Start building (from PENDING, VERIFYING for revision, or PENDING_USER_ACTION).
+    """Start building (from PENDING, VERIFYING for revision, RECOVERING, or PENDING_USER_ACTION).
 
     Creates a new Attempt and sets status to BUILDING.
     """
@@ -58,6 +65,7 @@ def transition_to_building(task: TaskState, now: datetime) -> TransitionResult:
         TaskStatus.PENDING,
         TaskStatus.VERIFYING,
         TaskStatus.PENDING_USER_ACTION,
+        TaskStatus.RECOVERING,
     ):
         return TransitionResult(
             success=False,
@@ -91,6 +99,25 @@ def transition_to_verifying(task: TaskState) -> TransitionResult:
 
     task.status = TaskStatus.VERIFYING
     return TransitionResult(success=True, new_status=TaskStatus.VERIFYING, gate_result=gate_result)
+
+
+def transition_to_recovering(task: TaskState, failure_reason: str) -> TransitionResult:
+    """Transition to RECOVERING state for recovery agent intervention.
+
+    Valid from: VERIFYING (when validation scripts crash or max attempts exceeded).
+    Stores the failure reason in the current attempt's verifier_comment.
+    """
+    if task.status != TaskStatus.VERIFYING:
+        return TransitionResult(
+            success=False,
+            new_status=task.status,
+            error=f"Cannot recover from {task.status.value}",
+        )
+
+    task.status = TaskStatus.RECOVERING
+    if task.attempts:
+        task.attempts[-1].verifier_comment = failure_reason
+    return TransitionResult(success=True, new_status=TaskStatus.RECOVERING)
 
 
 def transition_to_pending_clarification(

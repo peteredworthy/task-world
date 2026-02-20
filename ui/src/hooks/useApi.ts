@@ -127,6 +127,7 @@ export function useTaskPrompt(runId: string, taskId: string | undefined) {
     queryKey: ['task-prompt', runId, taskId],
     queryFn: () => api.getTaskPrompt(runId, taskId!),
     enabled: !!taskId,
+    retry: false,
   });
 }
 
@@ -378,5 +379,21 @@ export function useRepoRoutines(repoName: string | undefined, branch: string | u
     queryKey: ['repo-routines', repoName, branch],
     queryFn: () => api.listRepoRoutines(repoName!, branch!),
     enabled: !!repoName && !!branch,
+  });
+}
+
+export function useRepoBranches(repoName: string | undefined, params?: { pattern?: string; include_remote?: boolean }) {
+  return useQuery({
+    queryKey: ['repo-branches', repoName, params],
+    queryFn: () => api.getRepoBranches(repoName!, params),
+    enabled: !!repoName,
+  });
+}
+
+export function useRepoStats(repoName: string | undefined) {
+  return useQuery({
+    queryKey: ['repo-stats', repoName],
+    queryFn: () => api.getRepoStats(repoName!),
+    enabled: !!repoName,
   });
 }

@@ -35,37 +35,39 @@ function ToolCallPair({ entry, result }: { entry: ActionLogEntry; result?: Actio
   const [expanded, setExpanded] = useState(false);
   const tu = entry.tool_use!;
   const tr = result?.tool_result;
+  const statusLabel = tr ? (tr.success ? 'Success' : 'Failed') : null;
 
   return (
-    <div className="rounded border border-border bg-bg-card overflow-hidden">
+    <div className="rounded border border-border-hover bg-bg-card overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
+        aria-expanded={expanded}
         className="w-full text-left px-2.5 py-1.5 flex items-center gap-2 hover:bg-bg-hover transition-colors"
       >
         <ToolIcon name={tu.tool_name} />
         <span className="text-xs text-text-secondary font-mono truncate flex-1">
           {tu.summary || tu.tool_name}
         </span>
-        {tr && (
-          <span className={`text-[10px] font-medium ${tr.success ? 'text-status-completed' : 'text-status-failed'}`}>
-            {tr.success ? '\u2713' : '\u2717'}
+        {statusLabel && (
+          <span className={`inline-flex min-w-14 items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${tr?.success ? 'bg-status-completed/15 text-status-completed' : 'bg-status-failed/15 text-status-failed'}`}>
+            {statusLabel}
           </span>
         )}
         <svg
-          className={`h-3 w-3 text-text-muted shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          className={`h-3 w-3 text-text-muted shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
           strokeWidth={2}
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
       </button>
       {expanded && (
-        <div className="border-t border-border">
+        <div className="border-t border-border-hover">
           {/* Arguments */}
           {Object.keys(tu.arguments).length > 0 && (
-            <div className="px-2.5 py-2 border-b border-border">
+            <div className="px-2.5 py-2 border-b border-border-hover">
               <span className="text-[10px] font-semibold text-text-muted uppercase block mb-1">Arguments</span>
               <pre className="text-[11px] text-text-secondary font-mono whitespace-pre-wrap max-h-40 overflow-y-auto">
                 {JSON.stringify(tu.arguments, null, 2)}
@@ -169,26 +171,27 @@ function ThinkingBlock({ text }: { text: string }) {
   const preview = text.length > 100 ? text.slice(0, 100) + '...' : text;
 
   return (
-    <div className="rounded border border-border bg-bg-card/50 overflow-hidden">
+    <div className="rounded border border-border-hover bg-bg-card/50 overflow-hidden">
       <button
         onClick={() => setOpen(!open)}
+        aria-expanded={open}
         className="w-full text-left px-2.5 py-1.5 flex items-center gap-2 hover:bg-bg-hover transition-colors"
       >
         <span className="text-[10px] text-text-muted italic flex-1 truncate">
           {open ? 'Thinking...' : preview}
         </span>
         <svg
-          className={`h-3 w-3 text-text-muted shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`h-3 w-3 text-text-muted shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
           fill="none"
           viewBox="0 0 24 24"
           stroke="currentColor"
           strokeWidth={2}
         >
-          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
       </button>
       {open && (
-        <div className="border-t border-border px-2.5 py-2">
+        <div className="border-t border-border-hover px-2.5 py-2">
           <p className="text-xs text-text-muted whitespace-pre-wrap">{text}</p>
         </div>
       )}
@@ -223,8 +226,12 @@ export function StructuredLogsViewer({ actionLog }: StructuredLogsViewerProps) {
       )}
 
       {/* Entries */}
-      {displayEntries.map(entry => (
-        <EntryRenderer key={entry.sequence_num} entry={entry} resultMap={resultMap} />
+      {displayEntries.map((entry, index) => (
+        <EntryRenderer
+          key={`${entry.sequence_num}-${entry.kind}-${index}`}
+          entry={entry}
+          resultMap={resultMap}
+        />
       ))}
     </div>
   );

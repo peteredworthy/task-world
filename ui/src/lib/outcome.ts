@@ -6,8 +6,8 @@ export function outcomeColor(outcome: string | null): string {
 }
 
 export function outcomeLabel(outcome: string): string {
-  if (outcome === 'passed') return 'Passed';
-  if (outcome === 'revision_needed') return 'Revision';
+  if (outcome === 'passed') return 'Accepted';
+  if (outcome === 'revision_needed') return 'Needs revision';
   if (outcome === 'failed') return 'Failed';
   return outcome;
 }

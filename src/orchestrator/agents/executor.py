@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from orchestrator.agents.action_log import ActionLog
 from orchestrator.agents.cli import CLIAgent
 from orchestrator.agents.errors import (
     AgentCancelledError,
@@ -470,7 +471,12 @@ class AgentExecutor:
         """
         for step in run.steps:
             for task in step.tasks:
-                if task.status in (TaskStatus.PENDING, TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                if task.status in (
+                    TaskStatus.PENDING,
+                    TaskStatus.BUILDING,
+                    TaskStatus.VERIFYING,
+                    TaskStatus.RECOVERING,
+                ):
                     if not self._is_step_gate_satisfied(run, step):
                         return (None, True)
                     return (task, False)
@@ -536,6 +542,11 @@ class AgentExecutor:
             await self._handle_verification(
                 run, task_state, task_config, service, agent_type, agent_config
             )
+            return
+
+        # Handle RECOVERING phase - use stored recovery prompt
+        if task_state.status == TaskStatus.RECOVERING:
+            await self._handle_recovery(run, task_state, service, agent_type, agent_config)
             return
 
         # Handle PENDING/BUILDING phase
@@ -871,6 +882,116 @@ class AgentExecutor:
 
         logger.info(f"Task {task_state.id}: verifier execution complete, success={result.success}")
 
+    async def _handle_recovery(
+        self,
+        run: Run,
+        task_state: TaskState,
+        service: WorkflowService,
+        agent_type: AgentType,
+        agent_config: dict[str, Any],
+    ) -> None:
+        """Handle the RECOVERING phase for a task.
+
+        Uses the stored recovery prompt from the latest attempt's builder_prompt
+        field (set by trigger_recovery) and spawns an agent to diagnose the failure.
+        The recovery agent calls MCP tools (complete_recovery, request_clarification)
+        to drive resolution.
+        """
+        # The recovery prompt is stored in the latest attempt's builder_prompt
+        recovery_prompt: str | None = None
+        if task_state.attempts:
+            recovery_prompt = task_state.attempts[-1].builder_prompt
+
+        if not recovery_prompt:
+            raise AgentExecutionError(
+                agent_type.value,
+                "No recovery prompt found on latest attempt for RECOVERING task",
+            )
+
+        # Create the agent for recovery phase (uses "building" MCP tools)
+        agent = self._create_agent(agent_type, agent_config, run.id, phase="building")
+
+        # Build the context - worktree_path is required for agent execution
+        if not run.worktree_path:
+            raise AgentExecutionError(
+                agent_type=agent_type.value,
+                message="Cannot run agent without worktree_path set on run",
+            )
+
+        context = ExecutionContext(
+            run_id=run.id,
+            task_id=task_state.id,
+            working_dir=run.worktree_path,
+            prompt=recovery_prompt,
+            requirements=[],
+            api_base_url=self._api_base_url,
+        )
+
+        # Define callbacks - recovery agent uses complete_recovery via MCP/REST
+        async def on_checklist_update(
+            req_id: str, status: ChecklistStatus, note: str | None
+        ) -> None:
+            pass  # Recovery agent does not update checklist directly
+
+        async def on_submit() -> None:
+            pass  # Recovery agent uses complete_recovery, not submit
+
+        # Define output streaming callback
+        line_offset = 0
+
+        async def on_output(lines: list[str]) -> None:
+            nonlocal line_offset
+            event = AgentOutputEvent(
+                timestamp=datetime.now(timezone.utc),
+                run_id=run.id,
+                event_type="agent_output",
+                task_id=task_state.id,
+                attempt_num=task_state.current_attempt,
+                lines=lines,
+                line_offset=line_offset,
+            )
+            await self._emit_log_event(event)
+            line_offset += len(lines)
+
+        # Define agent metadata callback
+        async def on_agent_metadata(metadata: dict[str, Any]) -> None:
+            await self._persist_agent_metadata(run.id, metadata)
+
+        # Execute the recovery agent
+        logger.info(f"Task {task_state.id}: starting recovery agent")
+        result = await agent.execute(
+            context,
+            on_checklist_update,
+            on_submit,
+            on_output=on_output,
+            on_grade=None,
+            on_agent_metadata=on_agent_metadata,
+        )
+
+        # Store agent metadata
+        if result.agent_metadata:
+            run.agent_config = {**run.agent_config, **result.agent_metadata}
+
+        # Extract metrics from action_log if available
+        metrics = result.metrics
+        if result.action_log is not None:
+            al = result.action_log
+            if al.total_input_tokens or al.total_output_tokens:
+                metrics = ExecutionMetrics(
+                    tokens_read=al.total_input_tokens,
+                    tokens_write=al.total_output_tokens,
+                    duration_ms=al.total_duration_ms,
+                    num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
+                )
+
+        # Store agent output, action log, and metrics on attempt
+        await self._store_attempt_output(
+            run.id, task_state.id, result.output_lines, result.error, result.action_log
+        )
+        await self._store_attempt_metrics(run.id, task_state.id, metrics)
+
+        logger.info(f"Task {task_state.id}: recovery execution complete, success={result.success}")
+
     async def _emit_log_event(self, event: WorkflowEvent) -> None:
         """Persist a log event and broadcast via WebSocket."""
         try:
@@ -927,18 +1048,53 @@ class AgentExecutor:
                         if task.id == task_id and task.attempts:
                             attempt = task.attempts[-1]
                             if output_lines:
-                                # Truncate to last 10000 lines
-                                truncated = output_lines[-10000:]
-                                attempt.agent_output = "\n".join(truncated)
+                                # Append phase output (builder + verifier) and keep tail.
+                                new_text = "\n".join(output_lines)
+                                if attempt.agent_output:
+                                    combined = f"{attempt.agent_output}\n{new_text}"
+                                    attempt.agent_output = "\n".join(combined.splitlines()[-10000:])
+                                else:
+                                    attempt.agent_output = "\n".join(output_lines[-10000:])
                             if error:
                                 attempt.error = error
                             if action_log is not None:
-                                attempt.action_log = action_log
+                                if attempt.action_log is None:
+                                    attempt.action_log = action_log
+                                else:
+                                    attempt.action_log = self._merge_action_logs(
+                                        attempt.action_log, action_log
+                                    )
                             await repo.save(run)
                             await session.commit()
                             return
         except Exception:
             logger.debug(f"Failed to store attempt output for {task_id}", exc_info=True)
+
+    def _merge_action_logs(self, first: ActionLog, second: ActionLog) -> ActionLog:
+        """Merge builder + verifier action logs for a single attempt."""
+        merged = first.model_copy(deep=True)
+        seq_offset = merged.entries[-1].sequence_num if merged.entries else 0
+
+        for idx, entry in enumerate(second.entries, start=1):
+            adjusted = entry.model_copy(deep=True)
+            adjusted.sequence_num = seq_offset + idx
+            merged.entries.append(adjusted)
+
+        if not merged.session_id:
+            merged.session_id = second.session_id
+        if not merged.agent_model:
+            merged.agent_model = second.agent_model
+        if second.tools_available:
+            merged.tools_available = list(
+                dict.fromkeys(merged.tools_available + second.tools_available)
+            )
+
+        merged.total_turns += second.total_turns
+        merged.total_cost_usd += second.total_cost_usd
+        merged.total_duration_ms += second.total_duration_ms
+        merged.total_input_tokens += second.total_input_tokens
+        merged.total_output_tokens += second.total_output_tokens
+        return merged
 
     async def _store_attempt_prompt(
         self,
@@ -1039,7 +1195,9 @@ class AgentExecutor:
     @staticmethod
     def _phase_for_task_status(task_status: TaskStatus) -> str:
         """Map workflow task status to MCP phase."""
-        return "verifying" if task_status == TaskStatus.VERIFYING else "building"
+        if task_status == TaskStatus.VERIFYING:
+            return "verifying"
+        return "building"
 
     def _create_agent(
         self,

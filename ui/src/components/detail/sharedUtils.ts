@@ -10,3 +10,7 @@ export const PRIORITY_LABELS: Record<string, string> = {
   expected: 'Expected',
   nice: 'Optional',
 };
+
+// Shared visual token for collapsible containers/headers so outlines stay uniform.
+export const COLLAPSIBLE_BORDER_CLASS = 'border-border-hover';
+export const COLLAPSIBLE_DIVIDER_CLASS = 'border-border-hover';

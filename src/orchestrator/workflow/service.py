@@ -20,6 +20,7 @@ from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
 from orchestrator.workflow.auto_verify import (
     AutoVerifyRunner,
     evaluate_auto_verify,
+    has_crashes,
     run_auto_verify,
 )
 from orchestrator.workflow.clarifications import (
@@ -32,7 +33,7 @@ from orchestrator.workflow.clarifications import (
     resolve_artifact_path,
 )
 from orchestrator.workflow.engine import Clock, WorkflowEngine
-from orchestrator.workflow.prompts import generate_builder_prompt
+from orchestrator.workflow.prompts import generate_builder_prompt, generate_recovery_prompt
 from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import (
@@ -42,6 +43,7 @@ from orchestrator.workflow.events import (
     BufferingEmitter,
     ClarificationRequested,
     ClarificationResponded,
+    RunStatusChanged,
     TaskReverted,
     TaskStatusChanged,
 )
@@ -52,6 +54,7 @@ from orchestrator.workflow.transitions import (
     transition_from_clarification,
     transition_to_building,
     transition_to_pending_clarification,
+    transition_to_recovering,
 )
 from orchestrator.workflow.completion import handle_run_completion
 from orchestrator.git.worktree import WorktreeManager
@@ -819,6 +822,29 @@ class WorkflowService:
                     )
                 )
 
+                # --- Recovery triggers ---
+                # 1) Crash detection: if any verification script crashed,
+                #    trigger recovery instead of normal retry/fail flow.
+                if has_crashes(av_results):
+                    crash_lines: list[str] = []
+                    for av in av_results:
+                        if av.crashed:
+                            crash_lines.append(
+                                f"- [{av.item_id}] command `{av.cmd}` CRASHED\n"
+                                f"  Error: {av.crash_error or '(unknown)'}"
+                            )
+                    crash_detail = "Validation script(s) crashed during auto-verify:\n" + "\n".join(
+                        crash_lines
+                    )
+                    await self._persist(state, run_id, buffer)
+                    self._notify_submit(task_id)
+                    await self.trigger_recovery(run_id, task_id, crash_detail)
+                    return TransitionResult(
+                        success=True,
+                        new_status=TaskStatus.RECOVERING,
+                        error="Auto-verify script crashed; recovery triggered",
+                    )
+
                 if not all_must_passed:
                     # Store actionable feedback on the completed attempt so the
                     # next builder prompt can include concrete remediation details.
@@ -843,28 +869,24 @@ class WorkflowService:
                     run_obj = state.get_run(run_id)
                     old_status = task.status
 
+                    # 2) Max attempts exceeded: trigger recovery instead of failing
                     if task.current_attempt >= task.max_attempts:
-                        # Max attempts exceeded: fail the task
-                        task.status = TaskStatus.FAILED
-                        if task.attempts:
-                            task.attempts[-1].outcome = "failed"
-                        buffer.emit(
-                            TaskStatusChanged(
-                                timestamp=self._clock.now(),
-                                run_id=run_id,
-                                event_type="task_status_changed",
-                                task_id=task_id,
-                                old_status=old_status,
-                                new_status=TaskStatus.FAILED,
-                            )
+                        max_attempts_msg = (
+                            f"All {task.max_attempts} revision attempts exhausted. "
+                            f"Auto-verify still failing on: "
+                            f"{', '.join(failing_must_ids)}."
                         )
-                        state.update_run(run_obj)
+                        if task.attempts and task.attempts[-1].verifier_comment:
+                            max_attempts_msg += (
+                                f"\n\nLast failure details:\n{task.attempts[-1].verifier_comment}"
+                            )
                         await self._persist(state, run_id, buffer)
                         self._notify_submit(task_id)
+                        await self.trigger_recovery(run_id, task_id, max_attempts_msg)
                         return TransitionResult(
                             success=True,
-                            new_status=TaskStatus.FAILED,
-                            error=f"Auto-verify failed after max attempts ({task.max_attempts})",
+                            new_status=TaskStatus.RECOVERING,
+                            error=f"Max attempts ({task.max_attempts}) exhausted; recovery triggered",
                         )
 
                     rev_result = transition_to_building(task, self._clock.now())
@@ -1552,6 +1574,258 @@ class WorkflowService:
                     actions.append(action)
 
         return actions
+
+    # --- Recovery methods ---
+
+    async def trigger_recovery(self, run_id: str, task_id: str, failure_context: str) -> None:
+        """Trigger recovery for a task that has crashed or exhausted attempts.
+
+        Transitions the task to RECOVERING, generates a recovery prompt,
+        pauses the run, and persists the state.
+
+        Args:
+            run_id: The run ID.
+            task_id: The task ID (must be in VERIFYING state).
+            failure_context: Description of the failure (crash logs or max-attempts message).
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        run = await self._repo.get(run_id)
+        task = self._find_task(run, task_id)
+
+        # Transition to RECOVERING
+        old_status = task.status
+        result = transition_to_recovering(task, failure_context)
+        if not result.success:
+            raise InvalidTransitionError(old_status.value, TaskStatus.RECOVERING.value)
+
+        # Generate recovery prompt and store it in the attempt
+        task_config = self._find_task_config_for_task(run, task)
+        if task_config is not None and task.attempts:
+            recovery_prompt = generate_recovery_prompt(
+                task_config, task, failure_context, run.config
+            )
+            task.attempts[
+                -1
+            ].builder_prompt = (
+                f"[RECOVERY PROMPT]\n\n{recovery_prompt.system}\n\n{recovery_prompt.user}"
+            )
+
+        # Pause the run
+        if run.status == RunStatus.ACTIVE:
+            run.status = RunStatus.PAUSED
+            run.pause_reason = "recovery_triggered"
+
+        run.updated_at = self._clock.now()
+        await self._repo.save(run)
+
+        # Emit events
+        await self._event_emitter.emit(
+            TaskStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="task_status_changed",
+                task_id=task_id,
+                old_status=old_status,
+                new_status=TaskStatus.RECOVERING,
+            )
+        )
+        await self._event_emitter.emit(
+            RunStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="run_status_changed",
+                old_status=RunStatus.ACTIVE,
+                new_status=RunStatus.PAUSED,
+            )
+        )
+
+        await self._session.commit()
+        logger.info(
+            f"Recovery triggered for task {task_id} in run {run_id}: {failure_context[:100]}"
+        )
+
+    async def complete_recovery_retry(
+        self, run_id: str, task_id: str, notes: str
+    ) -> TransitionResult:
+        """Complete recovery by retrying the task.
+
+        Creates a new attempt and transitions back to BUILDING. Resumes the run.
+
+        Args:
+            run_id: The run ID.
+            task_id: The task ID (must be in RECOVERING state).
+            notes: Recovery agent notes explaining the retry decision.
+
+        Returns:
+            TransitionResult with new_status=BUILDING.
+        """
+        run = await self._repo.get(run_id)
+        task = self._find_task(run, task_id)
+
+        if task.status != TaskStatus.RECOVERING:
+            raise InvalidTransitionError(task.status.value, TaskStatus.BUILDING.value)
+
+        # Store notes in current attempt
+        if task.attempts:
+            task.attempts[-1].verifier_comment = notes
+
+        # Transition to BUILDING (creates new attempt)
+        old_status = task.status
+        result = transition_to_building(task, self._clock.now())
+        if not result.success:
+            raise InvalidTransitionError(old_status.value, TaskStatus.BUILDING.value)
+
+        # Populate agent snapshot on the new attempt
+        if task.attempts:
+            attempt = task.attempts[-1]
+            attempt.agent_type = run.agent_type
+            attempt.agent_model = run.agent_config.get("model")
+            attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+
+        # Resume the run if paused
+        if run.status == RunStatus.PAUSED:
+            run.status = RunStatus.ACTIVE
+            run.pause_reason = None
+
+        run.updated_at = self._clock.now()
+        await self._repo.save(run)
+
+        # Emit events
+        await self._event_emitter.emit(
+            TaskStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="task_status_changed",
+                task_id=task_id,
+                old_status=old_status,
+                new_status=TaskStatus.BUILDING,
+            )
+        )
+
+        await self._session.commit()
+        return result
+
+    async def complete_recovery_skip(
+        self, run_id: str, task_id: str, notes: str
+    ) -> TransitionResult:
+        """Complete recovery by skipping the task.
+
+        Marks the task as COMPLETED with outcome 'skipped'. Resumes the run
+        and advances to the next pending task.
+
+        Args:
+            run_id: The run ID.
+            task_id: The task ID (must be in RECOVERING state).
+            notes: Recovery agent notes explaining the skip decision.
+
+        Returns:
+            TransitionResult with new_status=COMPLETED.
+        """
+        run = await self._repo.get(run_id)
+        task = self._find_task(run, task_id)
+
+        if task.status != TaskStatus.RECOVERING:
+            raise InvalidTransitionError(task.status.value, TaskStatus.COMPLETED.value)
+
+        old_status = task.status
+        task.status = TaskStatus.COMPLETED
+        if task.attempts:
+            task.attempts[-1].outcome = "skipped"
+            task.attempts[-1].verifier_comment = notes
+            task.attempts[-1].completed_at = self._clock.now()
+
+        # Resume the run if paused
+        if run.status == RunStatus.PAUSED:
+            run.status = RunStatus.ACTIVE
+            run.pause_reason = None
+
+        # Check step progression to advance to next task
+        from orchestrator.workflow.transitions import check_step_progression, check_run_completion
+
+        check_step_progression(run)
+        check_run_completion(run, self._clock.now())
+
+        run.updated_at = self._clock.now()
+        await self._repo.save(run)
+
+        # Emit events
+        await self._event_emitter.emit(
+            TaskStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="task_status_changed",
+                task_id=task_id,
+                old_status=old_status,
+                new_status=TaskStatus.COMPLETED,
+            )
+        )
+
+        await self._session.commit()
+        return TransitionResult(success=True, new_status=TaskStatus.COMPLETED)
+
+    async def complete_recovery_abandon(
+        self, run_id: str, task_id: str, notes: str
+    ) -> TransitionResult:
+        """Complete recovery by abandoning (failing) the task.
+
+        Marks the task as FAILED with outcome 'failed'.
+
+        Args:
+            run_id: The run ID.
+            task_id: The task ID (must be in RECOVERING state).
+            notes: Recovery agent notes explaining the abandon decision.
+
+        Returns:
+            TransitionResult with new_status=FAILED.
+        """
+        run = await self._repo.get(run_id)
+        task = self._find_task(run, task_id)
+
+        if task.status != TaskStatus.RECOVERING:
+            raise InvalidTransitionError(task.status.value, TaskStatus.FAILED.value)
+
+        old_status = task.status
+        task.status = TaskStatus.FAILED
+        if task.attempts:
+            task.attempts[-1].outcome = "failed"
+            task.attempts[-1].verifier_comment = notes
+            task.attempts[-1].completed_at = self._clock.now()
+
+        run.updated_at = self._clock.now()
+        await self._repo.save(run)
+
+        # Emit events
+        await self._event_emitter.emit(
+            TaskStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="task_status_changed",
+                task_id=task_id,
+                old_status=old_status,
+                new_status=TaskStatus.FAILED,
+            )
+        )
+
+        await self._session.commit()
+        return TransitionResult(success=True, new_status=TaskStatus.FAILED)
+
+    def _find_task_config_for_task(self, run: Run, task: TaskState) -> TaskConfig | None:
+        """Find the TaskConfig for a task from the run's routine_embedded.
+
+        Args:
+            run: The run containing the routine configuration.
+            task: The task state to find config for.
+
+        Returns:
+            The TaskConfig, or None if not found.
+        """
+        if run.routine_embedded is None:
+            return None
+        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        return find_task_config(routine_config, task.config_id)
 
     # --- Submit notification bridge ---
 

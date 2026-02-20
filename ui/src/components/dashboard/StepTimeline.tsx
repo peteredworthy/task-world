@@ -8,9 +8,10 @@ interface StepTimelineProps {
   runId: string;
   steps: StepSummary[];
   currentStepIndex: number;
+  showRevert?: boolean;
 }
 
-export function StepTimeline({ runId, steps, currentStepIndex }: StepTimelineProps) {
+export function StepTimeline({ runId, steps, currentStepIndex, showRevert = false }: StepTimelineProps) {
   const [selectedStepIndex, setSelectedStepIndex] = useState<number | null>(null);
   const [reason, setReason] = useState('');
   const [errorToast, setErrorToast] = useState<string | null>(null);
@@ -69,7 +70,7 @@ export function StepTimeline({ runId, steps, currentStepIndex }: StepTimelinePro
           const total = step.tasks.length;
           const completed = step.tasks.filter(t => t.status === 'completed').length;
           const state = getStepState(step, i === currentStepIndex);
-          const canRevert = step.completed && i < currentStepIndex;
+          const canRevert = showRevert && step.completed && i < currentStepIndex;
 
           return (
             <div key={step.id} className="flex items-center gap-1">

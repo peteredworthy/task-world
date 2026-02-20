@@ -230,10 +230,12 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
     # All agent-facing tools should be mentioned in the prompt
     # Exclude:
     # - orchestrator_set_grade: verifier-only
+    # - orchestrator_complete_recovery: recovery-agent-only
     # - orchestrator_list_repos: informational, not workflow-related
     # - orchestrator_list_branches: informational, not workflow-related
     excluded_tools = {
         "orchestrator_set_grade",
+        "orchestrator_complete_recovery",
         "orchestrator_list_repos",
         "orchestrator_list_branches",
     }

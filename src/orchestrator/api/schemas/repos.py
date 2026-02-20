@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class RepoResponse(BaseModel):
@@ -61,3 +61,24 @@ class ProjectRoutinesListResponse(BaseModel):
     routines: list[ProjectRoutineResponse]
     branch: str
     commit: str
+
+
+class RepoStatsResponse(BaseModel):
+    """Response schema for repository statistics."""
+
+    run_count: int
+
+
+class AddRepoRequest(BaseModel):
+    """Request schema for adding a repository."""
+
+    url: str | None = None  # git clone URL (https/ssh)
+    path: str | None = None  # filesystem path to existing git repo
+
+    @model_validator(mode="after")
+    def check_url_or_path(self) -> "AddRepoRequest":
+        if not self.url and not self.path:
+            raise ValueError("Either url or path must be provided")
+        if self.url and self.path:
+            raise ValueError("Provide either url or path, not both")
+        return self
