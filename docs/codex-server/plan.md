@@ -1,5 +1,15 @@
 # Plan: codex-server
 
+## Contract Source of Truth
+
+> **Normative reference:** [`context/contract-matrix.md`](context/contract-matrix.md)
+>
+> All integration decisions (auth, callbacks, tool scope, compatibility, release gate) are locked in
+> the contract matrix. The sections below summarise those decisions for planning purposes only.
+> In the event of any discrepancy between this document and `context/contract-matrix.md`, the
+> contract matrix takes precedence. Deviations require a new clarification entry in
+> `docs/codex-server/clarifications.md` **before** implementation may proceed.
+
 ## Overview
 
 Implement Codex-Server in iterative milestones that de-risk unknowns first: transport/tooling research, domain model updates, agent runtime implementation, orchestrator wiring, and verification hardening. The plan keeps the system runnable after each step and mirrors proven OpenHands patterns where possible.
@@ -71,19 +81,49 @@ Implement Codex-Server in iterative milestones that de-risk unknowns first: tran
 
 ## Key Decisions
 
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Agent topology | Two dedicated managed agent types (`codex_server`, `codex_server_remote`) | Mirrors OpenHands local/docker split and keeps config/detection explicit. |
-| Integration baseline | Reuse OpenHands-style contract boundaries (prompt builder, callback bridge, action normalization) | Reduces risk and preserves behavior consistency across managed agents. |
-| Baseline server contract | Codex app server at `https://developers.openai.com/codex/app-server/` | Human-selected authoritative v1 integration target. |
-| Remote auth model | Static API key bearer token (`Authorization: Bearer <token>`) | Matches selected Codex app server auth path and simplifies v1 secret handling. |
-| Callback channel policy | Support REST and MCP equally in v1 | Human requirement for channel parity across sessions. |
-| Experimental tool scope | Callback tools only (`update_checklist`, `grade`, `submit`, `request_clarification`) | Keeps v1 safety boundary narrow while satisfying workflow contract. |
-| Compatibility target | Latest documented Codex app server only | Provides explicit support envelope for detection, docs, and CI. |
-| Rollout/release gate | Block release until both `codex_server` and `codex_server_remote` are production-ready | Removes ambiguity and prevents partial backend rollout. |
+> Decisions in this table are derived from and governed by the binding contract in
+> [`context/contract-matrix.md`](context/contract-matrix.md). The contract matrix is the normative
+> record; this table is a convenience summary only.
+
+| Decision | Choice | Contract Section |
+|----------|--------|-----------------|
+| Agent topology | Two dedicated managed agent types (`codex_server`, `codex_server_remote`) | §1 Interface Contract |
+| Integration baseline | Reuse OpenHands-style contract boundaries (prompt builder, callback bridge, action normalization) | §1 Interface Contract |
+| Baseline server contract | Codex app server at `https://developers.openai.com/codex/app-server/` | §1 Interface Contract |
+| Remote auth model | Static API key bearer token (`Authorization: Bearer <token>`) | §2 Authentication Contract |
+| Callback channel policy | Support REST and MCP equally in v1 | §3 Callback Channel Contract |
+| Experimental tool scope | Callback tools only (`update_checklist`, `grade`, `submit`, `request_clarification`) | §4 Tool Allow-List Contract |
+| Compatibility target | Latest documented Codex app server only | §5 Compatibility Policy Contract |
+| Rollout/release gate | Block release until both `codex_server` and `codex_server_remote` are production-ready | §6 Release Gate Contract |
+
+## Contract Constraints and Mismatch Handling
+
+The following constraints are binding on all implementation work in this plan. Each constraint
+maps to a non-go condition in [`context/contract-matrix.md`](context/contract-matrix.md).
+
+| Constraint | Non-Go Condition | Contract Section |
+|-----------|-----------------|-----------------|
+| All transport/payload/session-lifecycle behaviour must conform to the Codex app server spec | Any deviation without a recorded change-request in `clarifications.md` blocks release | §1 |
+| `codex_server_remote` must inject `Authorization: Bearer <token>` from a configured secret; token must not appear in logs | Shipping without bearer-token injection or logging the raw token blocks release | §2 |
+| Both REST and MCP callback channels must be supported and tested equally | Either channel absent, broken, or untested blocks release | §3 |
+| v1 tool allow-list is exactly: `update_checklist`, `grade`, `submit`, `request_clarification` | Enabling any out-of-scope tool (shell, file-edit, repo-browse) blocks release | §4 |
+| Detector must report the supported version and warn on mismatch (no silent failure) | Silently accepting an undocumented or outdated server version blocks release | §5 |
+| Release is a single atomic delivery of both variants; no partial launch | Releasing with one variant failing or absent blocks release | §6 |
+
+**Mismatch handling procedure:** If an implementation choice conflicts with any contract constraint
+listed above, the implementor must:
+
+1. **Stop** — do not implement the conflicting behaviour.
+2. **Record** — add a new clarification entry in `docs/codex-server/clarifications.md` describing
+   the conflict and proposed resolution.
+3. **Update** — once a new clarification decision is reached, update `context/contract-matrix.md`
+   before resuming implementation.
+4. **Re-verify** — re-run all affected checklist items with the verifier after the matrix update.
 
 ## References
 
+- **`docs/codex-server/context/contract-matrix.md`** ← normative contract source of truth
+- `docs/codex-server/clarifications.md`
 - `docs/plan-runner/idea_to_plan_stripped.md`
 - `docs/plan-runner/idea_to_plan_detailed.md`
 - `docs/planner/templates/intent.md`

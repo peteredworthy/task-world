@@ -1,5 +1,15 @@
 # Architecture: codex-server
 
+## Contract Source of Truth
+
+> **Normative reference:** [`context/contract-matrix.md`](context/contract-matrix.md)
+>
+> All binding integration decisions (auth, callbacks, tool scope, compatibility, release gate) are
+> locked in the contract matrix. Architectural decisions below must remain consistent with it.
+> In the event of any discrepancy between this document and `context/contract-matrix.md`, the
+> contract matrix takes precedence. Deviations require a new clarification entry in
+> `docs/codex-server/clarifications.md` **before** implementation may proceed.
+
 ## Current State
 
 The orchestrator currently supports managed agents through `AgentExecutor` for:
@@ -43,17 +53,22 @@ OpenHands establishes the closest reference architecture: explicit tool registra
 
 ## Technology Choices
 
-| Area | Choice | Rationale |
-|------|--------|-----------|
+> Choices marked **[Contract §N]** are binding decisions governed by
+> [`context/contract-matrix.md`](context/contract-matrix.md). They must not be changed without
+> updating the contract matrix first.
+
+| Area | Choice | Rationale / Contract |
+|------|--------|---------------------|
 | Transport abstraction | Shared adapter module for local and remote Codex server clients | Avoid duplicate protocol handling and keep behavior consistent. |
 | Tool integration | Experimental tool features wrapped behind orchestrator-owned adapter API | Contains vendor churn and preserves stable internal contracts. |
-| Callback interface | Reuse existing REST/MCP orchestrator callback contract with equal v1 support for both channels | Meets explicit human requirement while minimizing API changes. |
+| Callback interface | Reuse existing REST/MCP orchestrator callback contract with equal v1 support for both channels | **[Contract §3]** — REST and MCP must be supported equally; neither is optional. |
 | Observability | Reuse `ActionLog` schema + parser-normalizer pattern | Keeps UI and analytics compatibility with current event consumers. |
 | Failure model | Map transport/tool/auth errors to explicit `Agent*Error` types | Aligns with existing error handling in API/workflow layers. |
-| Baseline interface | Codex app server docs (`https://developers.openai.com/codex/app-server/`) | Human-selected authoritative integration target for local and remote variants. |
-| Remote auth | Static API key via `Authorization: Bearer <token>` | Matches selected Codex app server authentication path for v1. |
-| Compatibility policy | Latest documented Codex app server only | Defines explicit support boundary for detection and validation. |
-| Release gate | Block release until both `codex_server` and `codex_server_remote` are production-ready | Ensures parity and avoids partial launch. |
+| Baseline interface | Codex app server docs (`https://developers.openai.com/codex/app-server/`) | **[Contract §1]** — authoritative integration target for local and remote variants. |
+| Remote auth | Static API key via `Authorization: Bearer <token>` | **[Contract §2]** — bearer token from configured secret; token must not appear in logs. |
+| Compatibility policy | Latest documented Codex app server only | **[Contract §5]** — explicit support boundary; detector must warn on version mismatch. |
+| Release gate | Block release until both `codex_server` and `codex_server_remote` are production-ready | **[Contract §6]** — atomic delivery; no partial launch permitted. |
+| v1 tool allow-list | `update_checklist`, `grade`, `submit`, `request_clarification` only | **[Contract §4]** — all other tools (shell, file-edit, repo-browse) are release blockers if enabled. |
 
 ## Testing Strategy
 
@@ -87,11 +102,32 @@ OpenHands establishes the closest reference architecture: explicit tool registra
 - Reuse existing metrics collection pipeline; avoid heavy per-event transformations.
 - Ensure monitor/executor health checks for new agent types are lightweight and non-blocking.
 
-## Resolved Clarifications (Stage 2)
+## Contract Constraints
 
-- Baseline interface is Codex app server documentation: `https://developers.openai.com/codex/app-server/`.
-- Remote auth for `codex_server_remote` is static API key bearer auth via `Authorization: Bearer <token>`.
-- Callback channels must support REST and MCP equally in v1.
-- Experimental tool scope in v1 is limited to orchestrator callback tools (`update_checklist`, `grade`, `submit`, `request_clarification`).
-- Compatibility target is the latest documented Codex app server only.
-- Release is gated until both `codex_server` and `codex_server_remote` are production-ready.
+The following constraints are binding on all architectural and implementation work. Each maps to a
+non-go condition in [`context/contract-matrix.md`](context/contract-matrix.md), which is the
+normative source of truth.
+
+| Constraint | Non-Go Condition | Contract § |
+|-----------|-----------------|-----------|
+| All transport/payload/session-lifecycle behaviour must conform to the Codex app server spec at `https://developers.openai.com/codex/app-server/` | Any deviation without a recorded change-request in `clarifications.md` blocks release | §1 |
+| `codex_server_remote` must inject `Authorization: Bearer <token>` from a configured secret; local variant (`codex_server`) requires no bearer auth | Shipping without bearer-token injection or logging the raw token blocks release | §2 |
+| Both REST and MCP callback channels must be supported and tested equally in v1 | Either channel absent, broken, or untested blocks release | §3 |
+| v1 tool allow-list is exactly four tools: `update_checklist`, `grade`, `submit`, `request_clarification`; `codex_server_common` must reject/warn on any invocation outside this list | Enabling shell, file-editing, repo-browsing, or any other Codex experimental tool blocks release | §4 |
+| `ToolDetector` must report the supported server version and emit a clear warning (not silent failure) on version mismatch | Silently accepting an undocumented or outdated server version blocks release | §5 |
+| Release is a single atomic delivery of both variants; no per-variant feature flags | Releasing with one variant failing or absent blocks release | §6 |
+
+## Mismatch Handling
+
+If any implementation choice is found to conflict with a constraint above, the implementor must:
+
+1. **Stop** — do not implement the conflicting behaviour.
+2. **Record** — add a new entry in `docs/codex-server/clarifications.md` describing the conflict
+   and the proposed resolution.
+3. **Update** — once a new clarification decision is reached, update `context/contract-matrix.md`
+   before resuming implementation.
+4. **Re-verify** — re-run all affected checklist items with the verifier after the matrix is
+   updated.
+
+This procedure applies equally to ambiguities discovered during integration testing, CI failures
+related to contract constraints, and any vendor-driven changes to the Codex app server interface.

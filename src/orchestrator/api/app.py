@@ -43,8 +43,13 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     session_factory = app.state.session_factory
     global_config = app.state.global_config
 
-    # Create agent_monitor instance with session_factory (no bound session)
-    agent_monitor = AgentMonitor(session_factory, global_config)
+    # Create agent_monitor instance with session_factory (no bound session).
+    # Pass the shared lock_manager so on_agent_died can release orphaned locks.
+    agent_monitor = AgentMonitor(
+        session_factory,
+        global_config,
+        lock_manager=getattr(app.state, "lock_manager", None),
+    )
     app.state.agent_monitor = agent_monitor
 
     try:

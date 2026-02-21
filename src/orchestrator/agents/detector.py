@@ -115,6 +115,54 @@ _USER_MANAGED_CONFIG: list[AgentConfigField] = [
     ),
 ]
 
+_CODEX_SERVER_CONFIG: list[AgentConfigField] = [
+    AgentConfigField(
+        name="endpoint",
+        field_type="string",
+        default="http://localhost:9000",
+        description="Codex app server endpoint URL (stdio transport via local process)",
+    ),
+    AgentConfigField(
+        name="model",
+        field_type="string",
+        description="Model to use for Codex agent sessions",
+    ),
+    AgentConfigField(
+        name="callback_channel",
+        field_type="select",
+        default="rest",
+        description="How the Codex server calls back to the orchestrator",
+        options=["rest", "mcp"],
+    ),
+]
+
+_CODEX_SERVER_REMOTE_CONFIG: list[AgentConfigField] = [
+    AgentConfigField(
+        name="endpoint",
+        field_type="string",
+        required=True,
+        description="Remote Codex app server endpoint URL (e.g. https://api.example.com)",
+    ),
+    AgentConfigField(
+        name="api_key",
+        field_type="secret",
+        required=True,
+        description="Bearer token for authentication (Authorization: Bearer <token>). Never logged or exposed in API responses.",
+    ),
+    AgentConfigField(
+        name="model",
+        field_type="string",
+        description="Model to use for Codex agent sessions",
+    ),
+    AgentConfigField(
+        name="callback_channel",
+        field_type="select",
+        default="rest",
+        description="How the Codex server calls back to the orchestrator",
+        options=["rest", "mcp"],
+    ),
+]
+
 
 def _cli_config_for_command(command: str) -> list[AgentConfigField]:
     """Return CLI config schema with command default pinned to the selected tool."""
@@ -142,6 +190,8 @@ class ToolDetector:
         results.append(self._detect_openhands_local())
         results.append(await self._detect_openhands_docker())
         results.extend(self._detect_cli_tools())
+        results.append(self._detect_codex_server())
+        results.append(self._detect_codex_server_remote())
         results.append(self._detect_user_managed())
         return results
 
@@ -283,6 +333,66 @@ class ToolDetector:
                 )
 
         return results
+
+    def _detect_codex_server(self) -> AgentOption:
+        """Check if codex binary is available for running a local app-server process.
+
+        Availability requires the codex CLI to be installed; the detector checks
+        PATH only — it does not start or probe the server process at detection time.
+        """
+        path = shutil.which("codex")
+        if path is not None:
+            return AgentOption(
+                agent_type=AgentType.CODEX_SERVER,
+                name="Codex Server",
+                title="Codex Server (local)",
+                description=(
+                    "Managed local Codex app server. Launches `codex app-server` as a "
+                    "local process using stdio transport (JSON-RPC over JSONL). Supports "
+                    "experimental dynamic tools for orchestrator callbacks."
+                ),
+                available=True,
+                detail=f"codex binary found at {path}",
+                config_schema=_CODEX_SERVER_CONFIG,
+            )
+        return AgentOption(
+            agent_type=AgentType.CODEX_SERVER,
+            name="Codex Server",
+            title="Codex Server (local)",
+            description=(
+                "Managed local Codex app server. Launches `codex app-server` as a "
+                "local process using stdio transport (JSON-RPC over JSONL). Supports "
+                "experimental dynamic tools for orchestrator callbacks."
+            ),
+            available=False,
+            detail="codex binary not found in PATH",
+            install_hint=(
+                "Install the Codex CLI: npm install -g @openai/codex  "
+                "(or follow the instructions at https://openai.com/codex)"
+            ),
+            config_schema=_CODEX_SERVER_CONFIG,
+        )
+
+    def _detect_codex_server_remote(self) -> AgentOption:
+        """Codex Server Remote connects to an existing remote HTTP endpoint.
+
+        Always reported as available because no local binary is required.
+        The caller must supply `endpoint` and `api_key` in the agent config
+        before starting a run.
+        """
+        return AgentOption(
+            agent_type=AgentType.CODEX_SERVER_REMOTE,
+            name="Codex Server Remote",
+            title="Codex Server Remote",
+            description=(
+                "Remote Codex app server accessible via HTTP. Authenticates using a "
+                "static bearer API key (Authorization: Bearer <token>). Configure "
+                "`endpoint` and `api_key` before starting a run."
+            ),
+            available=True,
+            detail="Always available; requires endpoint and api_key configuration",
+            config_schema=_CODEX_SERVER_REMOTE_CONFIG,
+        )
 
     def _detect_user_managed(self) -> AgentOption:
         """User Managed is always available for external agent connections."""

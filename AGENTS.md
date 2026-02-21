@@ -142,11 +142,14 @@ User creates Run → Selects Agent → Start (create worktree, acquire lock)
 | `api/routers/tasks.py` | Task operations, checklist updates, grade submission | 4 |
 | `agents/interface.py` | Agent Protocol (execute, cancel, info) | 5 |
 | `agents/types.py` | ExecutionContext, ExecutionResult, AgentOption, AgentConfigField | 5 |
-| `agents/detector.py` | ToolDetector: detect available agents, config schemas | 5 |
+| `agents/detector.py` | ToolDetector: detect available agents (including Codex Server variants), config schemas; exposes all options via `GET /api/agents` | 5 |
 | `agents/openhands_common.py` | Shared OpenHands code: executors, CallbackRegistry, prompt building | 5 |
 | `agents/openhands.py` | OpenHands Local agent (in-process via SDK LocalConversation) | 5 |
 | `agents/openhands_docker.py` | OpenHands Docker agent (ephemeral container via DockerWorkspace) | 5 |
 | `agents/cli.py` | CLIAgent: subprocess with nudger, REST/MCP callback channels | 5 |
+| `agents/codex_server_common.py` | Shared helpers for Codex Server agents: prompt assembly, tool allow-list enforcement (update_checklist/grade/submit/request_clarification only), output normalization | 5 |
+| `agents/codex_server.py` | CodexServerAgent: local managed-process variant — launches `codex app-server` via stdio/loopback, no bearer auth required | 5 |
+| `agents/codex_server_remote.py` | CodexServerRemoteAgent: remote bearer-authenticated HTTPS variant — connects to a pre-existing `codex app-server` instance; token resolved from constructor arg → env var → `OPENAI_API_KEY` | 5 |
 | `agents/user_managed.py` | UserManagedAgent: waits for external submit via REST/MCP | 5 |
 | `agents/nudger.py` | Nudger for stuck CLI agents (timeout, nudge, kill) | 5 |
 | `agents/errors.py` | AgentExecutionError, AgentNotAvailableError, AgentCancelledError, AgentTimeoutError | 5 |
@@ -264,6 +267,23 @@ Store secrets in `.env` at project root (never committed -- protected by `.gitig
 - **Backend**: Python 3.12+, FastAPI, SQLAlchemy 2.0, Pydantic v2, GitPython, httpx, Click
 - **Frontend**: React 19, TypeScript, Vite 7, TailwindCSS 4, TanStack Query, React Router 7
 - **Dev tools**: uv (package mgmt), pytest + pytest-asyncio, pyright, ruff, Vitest
+
+## Production Release Gate
+
+**BLOCKED until both Codex Server variants are production-ready.**
+
+The following conditions MUST all be satisfied before either Codex Server variant is enabled in production:
+
+| Condition | Variant | Status |
+|-----------|---------|--------|
+| Runtime payload-drift tests pass (R-01) | Both | Required |
+| Remote timeout/retry behaviour validated (R-02) | Remote | Required |
+| REST and MCP callback parity confirmed (R-03) | Both | Required |
+| Tool allow-list enforcement tested end-to-end (R-04) | Both | Required |
+| Token leakage audit complete in error paths (R-05) | Remote | Required |
+| Codex CLI version compatibility detection verified (R-06) | Local | Required |
+
+Neither `codex_server` (local) nor `codex_server_remote` may be promoted to a production-enabled default agent until **all** rows above are marked resolved and the corresponding integration tests are merged to `main`. Static-analysis gates alone (ruff, pyright, pre-commit) are not sufficient — runtime risk items R-01 through R-05 are blocking. Track progress in `docs/codex-server/context/open-risks.md`.
 
 ## Documentation Maintenance
 

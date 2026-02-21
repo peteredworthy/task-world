@@ -226,6 +226,8 @@ def get_agent_display_name(
         AgentType.OPENHANDS_DOCKER: "OpenHands Docker",
         AgentType.CLI_SUBPROCESS: "Claude CLI",
         AgentType.USER_MANAGED: "External Agent",
+        AgentType.CODEX_SERVER: "Codex Server",
+        AgentType.CODEX_SERVER_REMOTE: "Codex Server Remote",
     }
     display_name = display_map.get(agent_type, "Unknown Agent")
     if agent_type == AgentType.CLI_SUBPROCESS:
@@ -252,6 +254,8 @@ def get_agent_icon(agent_type: AgentType | None) -> str:
         AgentType.OPENHANDS_DOCKER: "docker",
         AgentType.CLI_SUBPROCESS: "cli",
         AgentType.USER_MANAGED: "external",
+        AgentType.CODEX_SERVER: "codex",
+        AgentType.CODEX_SERVER_REMOTE: "codex",
     }
 
     return icon_map.get(agent_type, "unknown")

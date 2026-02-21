@@ -9,13 +9,15 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from orchestrator.config.enums import AgentType, RunStatus
+from orchestrator.config.enums import AgentType, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.state.models import Run
 from orchestrator.workflow.events import AgentDiedEvent, RunStatusChanged
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    from orchestrator.workflow.locks import LockManager
 
 logger = logging.getLogger(__name__)
 
@@ -78,15 +80,20 @@ class AgentMonitor:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         global_config: GlobalConfig | None = None,
+        lock_manager: LockManager | None = None,
     ) -> None:
         """Initialize the agent monitor.
 
         Args:
             session_factory: Async session factory for creating fresh DB sessions.
             global_config: Global configuration (used for timeouts, etc).
+            lock_manager: Optional lock manager. When provided, on_agent_died
+                releases any task locks held by the dead agent to prevent
+                orphaned locks that could block future task execution.
         """
         self._session_factory = session_factory
         self._global_config = global_config or GlobalConfig()
+        self._lock_manager = lock_manager
 
     async def on_agent_died(
         self,
@@ -125,6 +132,23 @@ class AgentMonitor:
             if run.status != RunStatus.ACTIVE:
                 logger.info(f"Run {run_id}: agent died but run is {run.status}, no action taken")
                 return
+
+            # Release any task locks held by the dead agent.
+            # When an agent dies mid-task, the lock it acquired on BUILDING or
+            # VERIFYING tasks remains held in-memory. Releasing them here prevents
+            # orphaned locks and ensures the next agent that picks up the run can
+            # acquire locks without stale state blocking it.
+            if self._lock_manager is not None:
+                for step in run.steps:
+                    for task in step.tasks:
+                        if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                            released = self._lock_manager.release(task.id, "default")
+                            if released:
+                                logger.debug(
+                                    f"Run {run_id}: released orphaned lock on task "
+                                    f"{task.id} (status={task.status.value}) after "
+                                    f"agent {agent_type.value} death"
+                                )
 
             # Log the agent death event
             event = AgentDiedEvent(
@@ -197,6 +221,47 @@ class AgentMonitor:
         elif run.agent_type == AgentType.OPENHANDS_LOCAL:
             # In-process agent — if server restarted, agent is gone
             return False
+
+        elif run.agent_type == AgentType.CODEX_SERVER:
+            # Local variant: check if the server process PID is still alive.
+            # The PID is stored by the agent via the on_agent_metadata callback.
+            pid = run.agent_config.get("pid")
+            if pid is None:
+                return False
+            return _is_process_alive(int(pid))
+
+        elif run.agent_type == AgentType.CODEX_SERVER_REMOTE:
+            # Remote variant: session-based liveness using session_id + timestamp.
+            # If no session_id is stored the agent never started a session — dead.
+            session_id = run.agent_config.get("session_id")
+            if not session_id:
+                return False
+
+            # If a session_id exists but no creation timestamp is available we
+            # cannot determine age — assume the session is still alive so we
+            # don't unnecessarily discard in-progress remote work.
+            session_created_str = run.agent_config.get("session_created_at")
+            if session_created_str is None:
+                return True
+
+            # Parse the creation timestamp and compare against the configured
+            # session timeout.
+            try:
+                if isinstance(session_created_str, str):
+                    session_created = datetime.fromisoformat(
+                        session_created_str.replace("Z", "+00:00")
+                    )
+                elif isinstance(session_created_str, datetime):
+                    session_created = session_created_str
+                else:
+                    return False
+            except (ValueError, AttributeError):
+                return False
+
+            timeout_minutes = self._global_config.agents.codex_session_timeout_minutes
+            timeout = timedelta(minutes=timeout_minutes)
+            now = datetime.now(timezone.utc)
+            return now - session_created < timeout
 
         elif run.agent_type == AgentType.USER_MANAGED:
             # Check if last activity was within timeout
