@@ -26,7 +26,7 @@ function renderTimeline(steps: StepSummary[], currentStepIndex: number) {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <StepTimeline runId="run-1" steps={steps} currentStepIndex={currentStepIndex} />
+      <StepTimeline runId="run-1" steps={steps} currentStepIndex={currentStepIndex} showRevert />
     </QueryClientProvider>,
   );
 }

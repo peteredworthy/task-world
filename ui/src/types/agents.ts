@@ -9,6 +9,14 @@ export interface AgentConfigField {
   options: string[] | null;
 }
 
+export interface AgentQuota {
+  balance_usd: number | null;
+  balance_pct: number | null;
+  max_balance_usd: number | null;
+  label: string;
+  supports_quota: boolean;
+}
+
 export interface AgentOption {
   agent_type: AgentType;
   name: string;
@@ -18,4 +26,5 @@ export interface AgentOption {
   detail: string;
   install_hint: string;
   config_schema: AgentConfigField[];
+  quota: AgentQuota | null;
 }

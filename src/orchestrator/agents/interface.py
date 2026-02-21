@@ -2,9 +2,11 @@
 
 from typing import Protocol, runtime_checkable
 
+from orchestrator.agents.quota import QuotaFetcher
 from orchestrator.agents.types import (
     AgentInfo,
     AgentMetadataCallback,
+    AgentQuota,
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionResult,
@@ -32,3 +34,6 @@ class Agent(Protocol):
     ) -> ExecutionResult: ...
 
     async def cancel(self) -> None: ...
+
+    def get_quota(self, fetcher: QuotaFetcher | None = None) -> AgentQuota | None:
+        return None

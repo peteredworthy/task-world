@@ -1,4 +1,6 @@
 import { Link, useLocation } from 'react-router-dom';
+import { useAgents } from "../hooks/useApi";
+import { AgentQuotaBadge } from "./AgentQuotaBadge";
 
 const navItems = [
   { icon: '▣', label: 'Dashboard', path: '/' },
@@ -10,6 +12,8 @@ const navItems = [
 
 export function Sidebar() {
   const location = useLocation();
+  const { data: agents, isLoading: agentsLoading, error: agentsError } = useAgents();
+  const quotaAgents = (agents ?? []).filter(a => a.available && a.quota !== null);
 
   return (
     <aside className="hidden md:flex w-[220px] bg-bg-primary border-r border-border flex-col shrink-0">
@@ -45,6 +49,26 @@ export function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Agent Quotas */}
+      {agentsLoading && (
+        <div className="px-4 pb-4">
+          <div className="h-3 w-24 rounded bg-bg-hover animate-pulse mb-2" />
+          <div className="h-4 w-full rounded bg-bg-hover animate-pulse mb-1.5" />
+          <div className="h-4 w-full rounded bg-bg-hover animate-pulse" />
+        </div>
+      )}
+      {!agentsLoading && !agentsError && quotaAgents.length > 0 && (
+        <div className="px-4 pb-4">
+          <div className="text-text-muted text-[11px] uppercase tracking-wide mb-2">Agent Quotas</div>
+          {quotaAgents.map((agent) => (
+            <div key={agent.agent_type} className="flex items-center justify-between mb-1.5">
+              <span className="text-text-secondary text-[12px] truncate mr-2">{agent.name}</span>
+              <AgentQuotaBadge quota={agent.quota!} />
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Footer */}
       <div className="border-t border-border px-2 pt-3 pb-3">

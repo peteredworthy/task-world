@@ -29,7 +29,7 @@ def detect_agents(ctx: click.Context) -> None:
             result = [
                 {
                     "name": option.name,
-                    "agent_type": option.agent_type.value,
+                    "agent_type": option.agent_type,
                     "available": option.available,
                     "detail": option.detail,
                     "install_hint": option.install_hint,
@@ -42,7 +42,7 @@ def detect_agents(ctx: click.Context) -> None:
             for option in agent_options:
                 status = "✓" if option.available else "✗"
                 click.echo(f"\n  {status} {option.name}")
-                click.echo(f"    Type: {option.agent_type.value}")
+                click.echo(f"    Type: {option.agent_type}")
                 click.echo(f"    Status: {option.detail}")
                 if not option.available and option.install_hint:
                     click.echo(f"    Install: {option.install_hint}")

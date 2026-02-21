@@ -81,10 +81,25 @@ class AgentConfigField(BaseModel):
     options: list[str] | None = None  # for "select" type
 
 
+class AgentQuota(BaseModel):
+    """Quota/balance information for an agent."""
+
+    balance_usd: float | None = None
+    balance_pct: float | None = None
+    max_balance_usd: float | None = None
+    label: str = ""
+    supports_quota: bool = True
+
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**data)
+        if self.balance_usd is None and self.balance_pct is None:
+            raise ValueError("At least one of balance_usd or balance_pct must be set")
+
+
 class AgentOption(BaseModel):
     """An available agent option returned by the detector."""
 
-    agent_type: AgentType
+    agent_type: str
     name: str
     title: str = ""
     description: str = ""
@@ -92,3 +107,4 @@ class AgentOption(BaseModel):
     detail: str = ""
     install_hint: str = ""
     config_schema: list[AgentConfigField] = []
+    quota: AgentQuota | None = None

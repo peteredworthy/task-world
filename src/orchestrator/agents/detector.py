@@ -2,9 +2,22 @@
 
 import asyncio
 import shutil
+import time
+from dataclasses import dataclass, field
+from typing import Any
 
-from orchestrator.agents.types import AgentConfigField, AgentOption
+from orchestrator.agents.types import AgentConfigField, AgentOption, AgentQuota
 from orchestrator.config.enums import AgentType
+
+
+@dataclass
+class _QuotaCacheEntry:
+    """Cache entry for agent quota information."""
+
+    quota: AgentQuota | None
+    cached_at: float = field(default_factory=time.monotonic)
+    is_active: bool = False
+
 
 # --- Config schemas for each agent type ---
 
@@ -167,11 +180,11 @@ _CODEX_SERVER_REMOTE_CONFIG: list[AgentConfigField] = [
 def _cli_config_for_command(command: str) -> list[AgentConfigField]:
     """Return CLI config schema with command default pinned to the selected tool."""
     config: list[AgentConfigField] = []
-    for field in _CLI_SUBPROCESS_CONFIG:
-        if field.name == "command":
-            config.append(field.model_copy(update={"default": command}))
+    for cfg_field in _CLI_SUBPROCESS_CONFIG:
+        if cfg_field.name == "command":
+            config.append(cfg_field.model_copy(update={"default": command}))
         else:
-            config.append(field.model_copy())
+            config.append(cfg_field.model_copy())
     return config
 
 
@@ -182,18 +195,79 @@ class ToolDetector:
     OpenHands Docker detection checks DockerWorkspace importable + docker CLI + daemon.
     CLI tools are detected via shutil.which().
     User Managed is always available.
+
+    Optional *agents* may be passed to enable quota fetching. Each entry must
+    have a ``name`` attribute matching an ``AgentOption.name`` value and a
+    ``get_quota()`` method matching the Agent protocol. Agents without
+    ``get_quota()`` (or when no agents are provided) silently yield
+    ``quota=None``.
     """
 
+    def __init__(self, agents: list[Any] | None = None) -> None:
+        self._quota_cache: dict[str, _QuotaCacheEntry] = {}
+        self._agents: dict[str, Any] = {}
+        if agents:
+            for agent in agents:
+                if hasattr(agent, "name") and hasattr(agent, "get_quota"):
+                    self._agents[str(agent.name)] = agent
+
+    def _quota_cache_valid(self, entry: _QuotaCacheEntry) -> bool:
+        """Return True if the cache entry is still fresh.
+
+        TTL is 60s for active agents, 300s for inactive ones.
+        """
+        ttl = 60.0 if entry.is_active else 300.0
+        return (time.monotonic() - entry.cached_at) < ttl
+
+    async def _fetch_quota_for_option(self, option: AgentOption) -> AgentQuota | None:
+        """Fetch quota for one agent option, consulting the cache first.
+
+        Returns ``None`` immediately for unavailable options or when no
+        matching agent with ``get_quota()`` is registered.  Calls
+        ``agent.get_quota()`` in a thread with a 3-second timeout; any
+        exception (including ``asyncio.TimeoutError``) is swallowed and
+        results in ``None``.
+        """
+        if not option.available:
+            return None
+
+        agent = self._agents.get(option.name)
+        if agent is None:
+            return None
+
+        cache_key = option.name
+        cached = self._quota_cache.get(cache_key)
+        if cached is not None and self._quota_cache_valid(cached):
+            return cached.quota
+
+        try:
+            quota: AgentQuota | None = await asyncio.wait_for(
+                asyncio.to_thread(agent.get_quota),
+                timeout=3.0,
+            )
+        except Exception:
+            quota = None
+
+        self._quota_cache[cache_key] = _QuotaCacheEntry(
+            quota=quota,
+            is_active=True,
+        )
+        return quota
+
     async def detect_all(self) -> list[AgentOption]:
-        """Detect all available agent backends."""
-        results: list[AgentOption] = []
-        results.append(self._detect_openhands_local())
-        results.append(await self._detect_openhands_docker())
-        results.extend(self._detect_cli_tools())
-        results.append(self._detect_codex_server())
-        results.append(self._detect_codex_server_remote())
-        results.append(self._detect_user_managed())
-        return results
+        """Detect all available agent backends and attach cached quota info."""
+        options: list[AgentOption] = []
+        options.append(self._detect_openhands_local())
+        options.append(await self._detect_openhands_docker())
+        options.extend(self._detect_cli_tools())
+        options.append(self._detect_codex_server())
+        options.append(self._detect_codex_server_remote())
+        options.append(self._detect_user_managed())
+
+        quotas: list[AgentQuota | None] = list(
+            await asyncio.gather(*[self._fetch_quota_for_option(opt) for opt in options])
+        )
+        return [opt.model_copy(update={"quota": quota}) for opt, quota in zip(options, quotas)]
 
     def _detect_openhands_local(self) -> AgentOption:
         """Check if the openhands-ai SDK is importable (no server needed)."""

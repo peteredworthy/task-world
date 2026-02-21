@@ -65,9 +65,11 @@ from orchestrator.agents.errors import (
     AgentNotAvailableError,
     AgentTimeoutError,
 )
+from orchestrator.agents.quota import HttpQuotaFetcher, QuotaFetcher
 from orchestrator.agents.types import (
     AgentInfo,
     AgentMetadataCallback,
+    AgentQuota,
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionResult,
@@ -379,6 +381,35 @@ class CodexServerRemoteAgent:
             name="Codex Server Remote",
             version=None,
         )
+
+    def get_quota(self, fetcher: QuotaFetcher | None = None) -> AgentQuota | None:
+        """Fetch the OpenAI credit balance for the resolved API token.
+
+        Uses the injected fetcher if provided; otherwise constructs an
+        HttpQuotaFetcher.  All exceptions are swallowed and result in None.
+        The api_key is never logged at any log level.
+
+        Returns:
+            AgentQuota with balance_usd, max_balance_usd, and label when the
+            key is present and the fetch succeeds; None otherwise.
+        """
+        api_key = self._token
+        if not api_key:
+            return None
+        try:
+            quota_fetcher: QuotaFetcher = fetcher if fetcher is not None else HttpQuotaFetcher()
+            data = quota_fetcher.fetch_openai_credits(api_key)
+            total_granted: float = data["total_granted"]
+            total_used: float = data["total_used"]
+            balance_usd = total_granted - total_used
+            return AgentQuota(
+                balance_usd=balance_usd,
+                max_balance_usd=total_granted,
+                balance_pct=None,
+                label="OpenAI credit balance",
+            )
+        except Exception:
+            return None
 
     async def execute(
         self,
