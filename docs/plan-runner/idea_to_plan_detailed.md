@@ -17,7 +17,7 @@ The purpose of this process is to take an initial idea or prompt and transform i
 - **Functionality over description**: Plans define what the system can do now and what it will be able to do after, not just actions taken.
 - **Progressive usability**: Each step must provide a minimum viable functionality (verifiable via CLI, API, or script).
 - **Contract-first**: Each step defines a functional contract, including end-to-end verification methods.
-- **Structured verification**: Small tasks use automated checks; steps use functionality checklists and end-to-end testing.
+- **Structured verification**: Small tasks use automated checks; steps use functionality checklists and end-to-end testing. Verification must prove behavior, not just presence — a check that passes when the implementation is a stub is not a verification, it is a false gate. See `docs/plan-runner/step-files.md §4` for guidance on distinguishing presence checks from behavioral checks.
 - **Runnable system**: After every task, the system and its tests must remain runnable, with `uv run pre-commit run --all-files` passing cleanly.
 
 ---

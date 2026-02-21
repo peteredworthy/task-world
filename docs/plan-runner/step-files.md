@@ -135,3 +135,73 @@ Each task must follow a consistent structure to provide the AI with clear, unamb
   - Commands in `command` must be directly executable.
   - Acceptance criteria must be objective, verifiable, and unambiguous.
 
+---
+
+## 4. Writing Verification That Catches Real Failures
+
+The most common failure mode in step files is **verifying presence instead of behavior**. A task that requires "implement X" passes its verification by creating files and helper functions, while leaving the core I/O path as a stub — and the tests are written to assert the stub behavior rather than requiring it to be replaced.
+
+### The Presence Trap
+
+A verification command is a **presence check** if it confirms that something exists or compiles, but cannot distinguish a working implementation from a typed-but-empty placeholder. Examples:
+
+```bash
+# BAD — presence check only
+test -f src/orchestrator/agents/codex_server.py   # exists, but execute() is a stub
+uv run pyright src/orchestrator/agents/codex_server.py  # type-checks, but execute() raises immediately
+uv run pytest tests/unit -k 'codex_server and callbacks'  # passes if _route_tool_call() works,
+                                                           # even if execute() never calls it
+```
+
+These commands would all pass even if `execute()` were:
+```python
+raise AgentNotAvailableError("transport not yet implemented")
+```
+
+### The Silent Zero-Test Pass
+
+A pytest `-k` filter that matches **zero tests** exits with code 0, silently satisfying an auto-verify check. Always confirm that the filter expression you write actually matches tests that exist. A filter like:
+
+```bash
+uv run pytest tests/integration -k 'agent and (builder or verifier) and (rest or mcp)' -v
+```
+
+passes vacuously if no such tests have been written yet. Use explicit file paths rather than broad `-k` expressions when the test files are known:
+
+```bash
+# BETTER — explicit file, known to exist
+uv run pytest tests/integration/test_codex_server_callbacks.py -v
+```
+
+Or add `--collect-only` as a dry-run check during planning to confirm the filter finds tests.
+
+### Write Behavioral Verification
+
+A behavioral check cannot pass unless the feature actually works end-to-end. Ask: **"Could this check pass if the core I/O was missing?"** If yes, it is a presence check and must be strengthened.
+
+| Task requires | Weak (presence) | Strong (behavior) |
+|---|---|---|
+| Implement `execute()` that POSTs to a server | `test -f agent.py` | Start a fake HTTP server; call `execute()`; assert it POSTs and invokes the callback |
+| Agent routes callbacks correctly | Test that `_route_tool_call()` dispatches | Call `execute()` with a fake server returning a tool event; assert the callback fires |
+| Lifecycle start/pause/resume works | `GET /api/runs/{id}` returns 200 | Start run; pause it; resume it; assert status transitions in sequence |
+| Tests cover error paths | `uv run pytest -k error` passes | Assert that specific exception types are raised for specific failure inputs |
+
+### When True End-to-End Tests Are Impractical
+
+Sometimes the real I/O requires an external service (e.g., a live Codex server). In that case:
+
+1. **Use a fake/in-process server** in tests (e.g., `httpx` mock transport, an in-process ASGI app, or a minimal TCP stub). This is the preferred approach.
+2. **If the transport is genuinely unimplemented**, make the verification explicitly state that: mark the requirement as blocked with a note, rather than writing a test that asserts the stub behavior and passes as if that were success.
+3. **Never write a test that asserts `raises AgentNotAvailableError`** as the sole proof that an execute path works. That test proves the path is broken, not that it works.
+
+### Checklist for Final Verification Steps
+
+Before adding a verification item to **Final Verification (Proof of Completion)**, ask:
+
+- [ ] Would this check fail if the implementation was a stub that immediately raises?
+- [ ] Does it exercise the actual I/O path (HTTP call, file write, DB insert, callback invocation)?
+- [ ] If it uses a pytest `-k` filter, have I confirmed it matches at least one test?
+- [ ] Does passing this check prove the feature is usable, not just present?
+
+If any answer is "no", the check is a presence check. Either strengthen it or add a complementary behavioral check alongside it.
+
