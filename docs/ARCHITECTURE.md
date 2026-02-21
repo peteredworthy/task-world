@@ -49,11 +49,14 @@ task-world/
 │   │   ├── interface.py       # Agent protocol definition
 │   │   ├── types.py           # ExecutionContext, ExecutionResult, AgentOption
 │   │   ├── executor.py        # Agent lifecycle management
-│   │   ├── detector.py        # Detects available agent tools
+│   │   ├── detector.py        # Detects available agent tools; exposes all options (incl. Codex Server variants) via GET /api/agents
 │   │   ├── cli.py             # CLI subprocess agent with nudger
 │   │   ├── openhands.py       # OpenHands Local agent (in-process)
 │   │   ├── openhands_docker.py # OpenHands Docker agent (container)
 │   │   ├── openhands_common.py # Shared OpenHands utilities
+│   │   ├── codex_server_common.py # Shared helpers for Codex Server agents: prompt assembly, tool allow-list, output normalization
+│   │   ├── codex_server.py    # CodexServerAgent: local managed-process variant (stdio/loopback, no bearer auth)
+│   │   ├── codex_server_remote.py # CodexServerRemoteAgent: remote bearer-authenticated HTTPS variant
 │   │   ├── user_managed.py    # External/manual agent
 │   │   ├── monitor.py         # Dead agent detection/recovery
 │   │   ├── nudger.py          # Stuck agent nudging (timeout, nudge, kill)
@@ -240,7 +243,7 @@ Each task goes through:
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/config` | Global configuration |
-| GET | `/api/agents` | List available agent backends |
+| GET | `/api/agents` | List available agent backends as `AgentOption[]`; includes OpenHands (local/Docker), CLI (claude/codex), Codex Server (local), Codex Server Remote, and User Managed |
 
 ### Routines
 
@@ -370,6 +373,25 @@ orchestrator serve --reload
 ### Documentation Maintenance
 
 When adding new modules, API routes, or CLI commands, update this file and `AGENTS.md` to reflect the changes. The directory map above and the API routes table should stay in sync with the codebase.
+
+---
+
+## Production Release Gate — Codex Server Variants
+
+> **BLOCKED** — neither `codex_server` (local) nor `codex_server_remote` may be enabled in production until all conditions below are resolved.
+
+Both Codex Server agent variants (`codex_server.py` and `codex_server_remote.py`) are present in the codebase and exposed through `GET /api/agents`. They are **not production-ready**. The following runtime risk items from `docs/codex-server/context/open-risks.md` remain open and are blocking:
+
+| Risk ID | Description | Blocking Variant |
+|---------|-------------|-----------------|
+| R-01 | Payload drift — Codex API response shape may change without notice | Both |
+| R-02 | Remote timeout/retry behaviour under network partition not validated | Remote |
+| R-03 | REST and MCP callback parity not fully confirmed across both variants | Both |
+| R-04 | Tool allow-list enforcement not tested end-to-end (only unit-level) | Both |
+| R-05 | Bearer token leakage risk in error paths not audited | Remote |
+| R-06 | Codex CLI version compatibility detection may fail silently | Local |
+
+**Promotion criteria:** All six risk items must be resolved, associated integration tests merged to `main`, and a follow-up release-readiness document signed off before either variant is enabled as a production default. Static checks (ruff, pyright, pre-commit) passing is a necessary but not sufficient condition.
 
 ---
 

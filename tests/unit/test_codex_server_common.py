@@ -1,0 +1,312 @@
+"""Unit tests for codex_server_common: allow-list, prompt assembly, normalization."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from orchestrator.agents.codex_server_common import (
+    CODEX_SERVER_TOOL_ALLOWLIST,
+    build_codex_server_prompt,
+    enforce_tool_allowlist,
+    is_allowed_tool,
+    normalize_codex_metrics,
+    normalize_codex_output_lines,
+)
+from orchestrator.agents.types import ExecutionContext
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _ctx(
+    prompt: str = "Do the work.",
+    requirements: list[str] | None = None,
+    api_base_url: str | None = None,
+) -> ExecutionContext:
+    return ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp/work",
+        prompt=prompt,
+        requirements=requirements or ["Req A", "Req B"],
+        api_base_url=api_base_url,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Allow-list content
+# ---------------------------------------------------------------------------
+
+
+def test_tool_allowlist_contains_exactly_four_tools() -> None:
+    """v1 allow-list has exactly the four sanctioned tools."""
+    assert CODEX_SERVER_TOOL_ALLOWLIST == frozenset(
+        {"update_checklist", "grade", "submit", "request_clarification"}
+    )
+
+
+# ---------------------------------------------------------------------------
+# is_allowed_tool
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tool", ["update_checklist", "grade", "submit", "request_clarification"])
+def test_is_allowed_tool_true_for_allowed(tool: str) -> None:
+    assert is_allowed_tool(tool) is True
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        "bash",
+        "read_file",
+        "write_file",
+        "execute_command",
+        "delete_file",
+        "arbitrary_tool",
+        "",
+        "UPDATE_CHECKLIST",  # case-sensitive
+        "GRADE",
+    ],
+)
+def test_is_allowed_tool_false_for_disallowed(tool: str) -> None:
+    assert is_allowed_tool(tool) is False
+
+
+# ---------------------------------------------------------------------------
+# enforce_tool_allowlist
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("tool", ["update_checklist", "grade", "submit", "request_clarification"])
+def test_enforce_tool_allowlist_passes_for_allowed(tool: str) -> None:
+    """enforce_tool_allowlist does not raise for allowed tools."""
+    enforce_tool_allowlist(tool)  # must not raise
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        "bash",
+        "read_file",
+        "write_file",
+        "delete_file",
+        "shell",
+        "",
+        "SUBMIT",
+    ],
+)
+def test_enforce_tool_allowlist_raises_for_disallowed(tool: str) -> None:
+    """enforce_tool_allowlist raises ValueError for any disallowed tool."""
+    with pytest.raises(ValueError, match="not on the Codex server v1 allow-list"):
+        enforce_tool_allowlist(tool)
+
+
+def test_enforce_tool_allowlist_error_message_includes_tool_name() -> None:
+    tool = "some_disallowed_tool"
+    with pytest.raises(ValueError, match=tool):
+        enforce_tool_allowlist(tool)
+
+
+def test_enforce_tool_allowlist_error_message_includes_allowed_list() -> None:
+    with pytest.raises(ValueError, match="update_checklist"):
+        enforce_tool_allowlist("not_allowed")
+
+
+# ---------------------------------------------------------------------------
+# build_codex_server_prompt — builder phase
+# ---------------------------------------------------------------------------
+
+
+def test_builder_prompt_contains_task_prompt() -> None:
+    ctx = _ctx(prompt="Implement feature X.")
+    result = build_codex_server_prompt(ctx, is_verifier=False)
+    assert "Implement feature X." in result
+
+
+def test_builder_prompt_contains_requirements() -> None:
+    ctx = _ctx(requirements=["Req-1: do this", "Req-2: do that"])
+    result = build_codex_server_prompt(ctx, is_verifier=False)
+    assert "Req-1: do this" in result
+    assert "Req-2: do that" in result
+
+
+def test_builder_prompt_contains_update_checklist_tool() -> None:
+    result = build_codex_server_prompt(_ctx(), is_verifier=False)
+    assert "update_checklist" in result
+
+
+def test_builder_prompt_contains_submit_tool() -> None:
+    result = build_codex_server_prompt(_ctx(), is_verifier=False)
+    assert "submit" in result
+
+
+def test_builder_prompt_contains_request_clarification_tool() -> None:
+    result = build_codex_server_prompt(_ctx(), is_verifier=False)
+    assert "request_clarification" in result
+
+
+def test_builder_prompt_does_not_contain_grade_tool_section() -> None:
+    """Builder prompt should not include grading instructions."""
+    result = build_codex_server_prompt(_ctx(), is_verifier=False)
+    # The verifier-only "grade" tool instructions should not appear in builder
+    assert "Grade EVERY requirement" not in result
+    assert "grade_reason" not in result
+
+
+# ---------------------------------------------------------------------------
+# build_codex_server_prompt — verifier phase
+# ---------------------------------------------------------------------------
+
+
+def test_verifier_prompt_contains_task_prompt() -> None:
+    ctx = _ctx(prompt="Verify the implementation.")
+    result = build_codex_server_prompt(ctx, is_verifier=True)
+    assert "Verify the implementation." in result
+
+
+def test_verifier_prompt_contains_requirements() -> None:
+    ctx = _ctx(requirements=["R-01: check this", "R-02: check that"])
+    result = build_codex_server_prompt(ctx, is_verifier=True)
+    assert "R-01: check this" in result
+    assert "R-02: check that" in result
+
+
+def test_verifier_prompt_contains_grade_tool() -> None:
+    result = build_codex_server_prompt(_ctx(), is_verifier=True)
+    assert "grade" in result
+
+
+def test_verifier_prompt_contains_submit_tool() -> None:
+    result = build_codex_server_prompt(_ctx(), is_verifier=True)
+    assert "submit" in result
+
+
+def test_verifier_prompt_contains_update_checklist_tool() -> None:
+    result = build_codex_server_prompt(_ctx(), is_verifier=True)
+    assert "update_checklist" in result
+
+
+def test_verifier_prompt_contains_request_clarification_tool() -> None:
+    result = build_codex_server_prompt(_ctx(), is_verifier=True)
+    assert "request_clarification" in result
+
+
+def test_verifier_prompt_contains_grading_workflow() -> None:
+    """Verifier prompt explicitly mentions reviewing and grading."""
+    result = build_codex_server_prompt(_ctx(), is_verifier=True)
+    assert "Verifier" in result or "VERIFY" in result or "grade" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# build_codex_server_prompt — api_base_url hint
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_includes_api_base_url_hint() -> None:
+    ctx = _ctx(api_base_url="http://localhost:8000")
+    result = build_codex_server_prompt(ctx, is_verifier=False)
+    assert "http://localhost:8000" in result
+
+
+def test_prompt_no_url_hint_when_missing() -> None:
+    ctx = _ctx(api_base_url=None)
+    result = build_codex_server_prompt(ctx, is_verifier=False)
+    assert "localhost:8000" not in result
+
+
+# ---------------------------------------------------------------------------
+# normalize_codex_output_lines
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_string_items_pass_through() -> None:
+    lines = normalize_codex_output_lines(["hello", "world"])
+    assert lines == ["hello", "world"]
+
+
+def test_normalize_empty_list_returns_empty() -> None:
+    assert normalize_codex_output_lines([]) == []
+
+
+def test_normalize_dict_with_text_key() -> None:
+    lines = normalize_codex_output_lines([{"text": "some content"}])
+    assert lines == ["some content"]
+
+
+def test_normalize_dict_with_content_key() -> None:
+    lines = normalize_codex_output_lines([{"content": "body text"}])
+    assert lines == ["body text"]
+
+
+def test_normalize_dict_with_message_key() -> None:
+    lines = normalize_codex_output_lines([{"message": "a message"}])
+    assert lines == ["a message"]
+
+
+def test_normalize_dict_with_output_key() -> None:
+    lines = normalize_codex_output_lines([{"output": "raw output"}])
+    assert lines == ["raw output"]
+
+
+def test_normalize_dict_priority_text_over_content() -> None:
+    """'text' key is preferred over 'content'."""
+    lines = normalize_codex_output_lines([{"text": "text val", "content": "content val"}])
+    assert lines == ["text val"]
+
+
+def test_normalize_dict_without_known_keys_json_serialized() -> None:
+    item = {"unknown_key": "some_value", "another": 42}
+    lines = normalize_codex_output_lines([item])
+    assert len(lines) == 1
+    parsed = json.loads(lines[0])
+    assert parsed == item
+
+
+def test_normalize_non_string_non_dict_converted_with_str() -> None:
+    lines = normalize_codex_output_lines([42, 3.14, True, None])
+    assert lines == ["42", "3.14", "True", "None"]
+
+
+def test_normalize_mixed_types() -> None:
+    raw = [
+        "plain string",
+        {"text": "dict with text"},
+        {"content": "dict with content"},
+        99,
+    ]
+    lines = normalize_codex_output_lines(raw)
+    assert lines == ["plain string", "dict with text", "dict with content", "99"]
+
+
+# ---------------------------------------------------------------------------
+# normalize_codex_metrics
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_metrics_defaults() -> None:
+    metrics = normalize_codex_metrics()
+    assert metrics.tokens_read == 0
+    assert metrics.tokens_write == 0
+    assert metrics.tokens_cache == 0
+    assert metrics.duration_ms == 0
+    assert metrics.num_actions == 0
+
+
+def test_normalize_metrics_values_round_trip() -> None:
+    metrics = normalize_codex_metrics(
+        duration_ms=1234,
+        tokens_read=500,
+        tokens_write=200,
+        tokens_cache=100,
+        num_actions=7,
+    )
+    assert metrics.duration_ms == 1234
+    assert metrics.tokens_read == 500
+    assert metrics.tokens_write == 200
+    assert metrics.tokens_cache == 100
+    assert metrics.num_actions == 7

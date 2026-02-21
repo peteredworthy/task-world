@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.agents.monitor import AgentMonitor
-from orchestrator.config.enums import AgentType, RunStatus
+from orchestrator.config.enums import AgentType, RunStatus, TaskStatus
 from orchestrator.config.global_config import AgentsConfig, GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
@@ -17,6 +17,7 @@ from orchestrator.db.event_store import EventStore
 from orchestrator.db.repositories import RunRepository
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
+from orchestrator.workflow.locks import InMemoryLockManager
 
 
 @pytest.fixture
@@ -340,3 +341,158 @@ async def test_check_agent_alive_user_managed_with_malformed_timestamp(
 
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False
+
+
+# ---------- lock cleanup tests ----------
+
+
+@pytest.mark.asyncio
+async def test_on_agent_died_releases_building_task_lock_codex_server(
+    db_setup: async_sessionmaker[AsyncSession],
+) -> None:
+    """on_agent_died releases the lock on a BUILDING task for CODEX_SERVER."""
+    session_factory = db_setup
+    lock_manager = InMemoryLockManager()
+    monitor = AgentMonitor(session_factory, lock_manager=lock_manager)
+
+    # Create and save an ACTIVE run with a task that will be put into BUILDING
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = _create_test_run(
+            run_id="run-lock-cs",
+            agent_type=AgentType.CODEX_SERVER,
+            agent_config={"pid": 999999},
+        )
+        run.status = RunStatus.ACTIVE
+        # Simulate the task being in BUILDING state (agent started it)
+        task_state = run.steps[0].tasks[0]
+        task_state.status = TaskStatus.BUILDING
+        await repo.save(run)
+        await session.commit()
+
+    # Pre-acquire the lock as the agent would have done
+    now = datetime.now(timezone.utc)
+    acquired = lock_manager.acquire(task_state.id, "default", now)
+    assert acquired is True
+    assert lock_manager.is_locked(task_state.id, now) is True
+
+    # Agent dies → monitor should release the lock
+    await monitor.on_agent_died(
+        run_id="run-lock-cs",
+        agent_type=AgentType.CODEX_SERVER,
+        reason="local_codex_process_not_alive",
+    )
+
+    # Lock must be released — no orphan
+    assert lock_manager.is_locked(task_state.id, datetime.now(timezone.utc)) is False
+
+
+@pytest.mark.asyncio
+async def test_on_agent_died_releases_building_task_lock_codex_server_remote(
+    db_setup: async_sessionmaker[AsyncSession],
+) -> None:
+    """on_agent_died releases the lock on a BUILDING task for CODEX_SERVER_REMOTE."""
+    session_factory = db_setup
+    lock_manager = InMemoryLockManager()
+    monitor = AgentMonitor(session_factory, lock_manager=lock_manager)
+
+    old_ts = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = _create_test_run(
+            run_id="run-lock-csr",
+            agent_type=AgentType.CODEX_SERVER_REMOTE,
+            agent_config={"session_id": "sess-old", "session_created_at": old_ts},
+        )
+        run.status = RunStatus.ACTIVE
+        task_state = run.steps[0].tasks[0]
+        task_state.status = TaskStatus.BUILDING
+        await repo.save(run)
+        await session.commit()
+
+    now = datetime.now(timezone.utc)
+    lock_manager.acquire(task_state.id, "default", now)
+    assert lock_manager.is_locked(task_state.id, now) is True
+
+    await monitor.on_agent_died(
+        run_id="run-lock-csr",
+        agent_type=AgentType.CODEX_SERVER_REMOTE,
+        reason="remote_codex_session_expired",
+    )
+
+    assert lock_manager.is_locked(task_state.id, datetime.now(timezone.utc)) is False
+
+
+@pytest.mark.asyncio
+async def test_on_agent_died_without_lock_manager_does_not_error(
+    db_setup: async_sessionmaker[AsyncSession],
+) -> None:
+    """on_agent_died works correctly when no lock_manager is provided."""
+    session_factory = db_setup
+    # No lock_manager passed — should be a no-op for lock cleanup
+    monitor = AgentMonitor(session_factory)
+
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = _create_test_run(
+            run_id="run-nolock",
+            agent_type=AgentType.CODEX_SERVER,
+            agent_config={"pid": 999999},
+        )
+        run.status = RunStatus.ACTIVE
+        task_state = run.steps[0].tasks[0]
+        task_state.status = TaskStatus.BUILDING
+        await repo.save(run)
+        await session.commit()
+
+    # Should not raise even without a lock_manager
+    await monitor.on_agent_died(
+        run_id="run-nolock",
+        agent_type=AgentType.CODEX_SERVER,
+        reason="local_codex_process_not_alive",
+    )
+
+    # Run should still be paused
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        updated = await repo.get("run-nolock")
+        assert updated.status == RunStatus.PAUSED
+
+
+@pytest.mark.asyncio
+async def test_on_agent_died_does_not_release_completed_task_lock(
+    db_setup: async_sessionmaker[AsyncSession],
+) -> None:
+    """on_agent_died only releases locks for BUILDING/VERIFYING tasks, not COMPLETED."""
+    session_factory = db_setup
+    lock_manager = InMemoryLockManager()
+    monitor = AgentMonitor(session_factory, lock_manager=lock_manager)
+
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = _create_test_run(
+            run_id="run-completed",
+            agent_type=AgentType.CODEX_SERVER,
+            agent_config={"pid": 999999},
+        )
+        run.status = RunStatus.ACTIVE
+        # Task is already COMPLETED — no lock should be held or released
+        task_state = run.steps[0].tasks[0]
+        task_state.status = TaskStatus.COMPLETED
+        await repo.save(run)
+        await session.commit()
+
+    task_id = task_state.id
+    # Acquire a lock on some OTHER resource to confirm release is not called incorrectly
+    now = datetime.now(timezone.utc)
+    lock_manager.acquire(task_id, "other-agent", now)
+    assert lock_manager.is_locked(task_id, now) is True
+
+    await monitor.on_agent_died(
+        run_id="run-completed",
+        agent_type=AgentType.CODEX_SERVER,
+        reason="local_codex_process_not_alive",
+    )
+
+    # Lock held by "other-agent" should be untouched (monitor only releases "default")
+    assert lock_manager.is_locked(task_id, datetime.now(timezone.utc)) is True
