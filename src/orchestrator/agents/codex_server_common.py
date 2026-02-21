@@ -15,12 +15,17 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from orchestrator.agents.types import (
+    ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionMetrics,
+    ExecutionResult,
+    GradeCallback,
+    SubmitCallback,
 )
+from orchestrator.config.enums import ChecklistStatus
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +185,140 @@ def normalize_codex_metrics(
         duration_ms=duration_ms,
         num_actions=num_actions,
     )
+
+
+# ---------------------------------------------------------------------------
+# Session payload assembly
+# ---------------------------------------------------------------------------
+
+
+def create_session_payload(prompt: str, model: str | None) -> dict[str, Any]:
+    """Build the JSON payload for POST /sessions.
+
+    Args:
+        prompt: The full prompt string for the Codex server session.
+        model: Optional model name to forward to the server.
+
+    Returns:
+        A dict suitable for JSON-encoding as the POST /sessions request body.
+    """
+    payload: dict[str, Any] = {"prompt": prompt}
+    if model:
+        payload["model"] = model
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# Event extraction
+# ---------------------------------------------------------------------------
+
+
+def extract_events(events_payload: Any) -> list[dict[str, Any]]:
+    """Extract the event list from a GET /sessions/{id}/events response payload.
+
+    The Codex server may return events as either a top-level JSON array or as
+    a dict with an ``"events"`` key.  This function normalises both formats.
+
+    Args:
+        events_payload: Parsed JSON from the events endpoint response.
+
+    Returns:
+        List of event dicts.  Empty list if no events are present.
+    """
+    return cast(
+        "list[dict[str, Any]]",
+        events_payload if isinstance(events_payload, list) else events_payload.get("events", []),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Execution result construction
+# ---------------------------------------------------------------------------
+
+
+def build_execution_result(output_lines: list[str], duration_ms: int) -> ExecutionResult:
+    """Build an ``ExecutionResult`` from collected output lines and elapsed time.
+
+    Args:
+        output_lines: Text lines collected from ``output`` events.
+        duration_ms: Wall-clock duration of the session in milliseconds.
+
+    Returns:
+        Populated ``ExecutionResult`` with ``success=True``.
+    """
+    return ExecutionResult(
+        success=True,
+        metrics=normalize_codex_metrics(duration_ms=duration_ms),
+        output_lines=output_lines,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared tool-call routing
+# ---------------------------------------------------------------------------
+
+
+async def route_tool_call(
+    tool_name: str,
+    args: dict[str, Any],
+    on_checklist_update: ChecklistUpdateCallback,
+    on_submit: SubmitCallback,
+    on_grade: GradeCallback | None = None,
+    *,
+    agent_label: str = "CodexServer",
+) -> None:
+    """Route an allow-listed callback tool call to the appropriate callback.
+
+    Enforces the v1 allow-list (``CODEX_SERVER_TOOL_ALLOWLIST``) before
+    dispatching.  Disallowed tool names raise ``ValueError`` via
+    ``enforce_tool_allowlist``.
+
+    Tool routing:
+    - ``update_checklist`` → ``on_checklist_update(req_id, status, note)``
+    - ``submit``           → ``on_submit()``
+    - ``grade``            → ``on_grade(req_id, grade, grade_reason)`` (verifier only)
+    - ``request_clarification`` → logged; no callback in v1
+
+    Args:
+        tool_name: Name of the callback tool the Codex session invoked.
+        args: Tool argument dict from the Codex server event payload.
+        on_checklist_update: Bound checklist-update callback.
+        on_submit: Bound submit callback.
+        on_grade: Bound grade callback (``None`` in builder phase).
+        agent_label: Label used in log messages (e.g. ``"CodexServerAgent"``).
+
+    Raises:
+        ValueError: If ``tool_name`` is not on the v1 allow-list.
+    """
+    enforce_tool_allowlist(tool_name)
+
+    if tool_name == "update_checklist":
+        req_id: str = str(args.get("req_id", ""))
+        raw_status: str = str(args.get("status", "done"))
+        note: str | None = args.get("note")
+        status = ChecklistStatus(raw_status)
+        await on_checklist_update(req_id, status, note)
+
+    elif tool_name == "submit":
+        await on_submit()
+
+    elif tool_name == "grade":
+        if on_grade is not None:
+            req_id = str(args.get("req_id", ""))
+            grade: str = str(args.get("grade", ""))
+            grade_reason: str | None = args.get("grade_reason")
+            await on_grade(req_id, grade, grade_reason)
+        else:
+            logger.warning("%s: 'grade' tool called in builder phase — ignoring", agent_label)
+
+    elif tool_name == "request_clarification":
+        question: str = str(args.get("question", ""))
+        logger.info("%s: request_clarification received — question=%r", agent_label, question)
+
+
+# ---------------------------------------------------------------------------
+# Output normalization (kept below for backwards compatibility)
+# ---------------------------------------------------------------------------
 
 
 def normalize_codex_output_lines(raw_output: list[Any]) -> list[str]:

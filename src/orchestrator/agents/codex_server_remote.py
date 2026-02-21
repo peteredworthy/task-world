@@ -42,9 +42,12 @@ import httpx
 from orchestrator.agents.codex_server_common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     build_codex_server_prompt,
-    enforce_tool_allowlist,
+    build_execution_result,
+    create_session_payload,
+    extract_events,
     normalize_codex_metrics,
     normalize_codex_output_lines,
+    route_tool_call,
 )
 from orchestrator.agents.errors import (
     AgentCancelledError,
@@ -64,7 +67,7 @@ from orchestrator.agents.types import (
     LogLineCallback,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.config.enums import AgentType
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +248,7 @@ class CodexServerRemoteAgent:
         timeout: float = 300.0,
         *,
         _environ: dict[str, str] | None = None,
+        _http_client: httpx.AsyncClient | None = None,
     ) -> None:
         # --- Config validation ---
         if not base_url or not base_url.startswith(("http://", "https://")):
@@ -297,6 +301,9 @@ class CodexServerRemoteAgent:
         self._timeout = timeout
         self._cancelled = False
         self._session_task: asyncio.Task[Any] | None = None
+        # For testing only: inject a fake client to intercept HTTP calls without
+        # a real Codex server.
+        self._http_client = _http_client
 
     # ------------------------------------------------------------------
     # Agent protocol
@@ -366,36 +373,100 @@ class CodexServerRemoteAgent:
                 self._base_url,
             )
 
-            # Build the phase-aware prompt (used by the session layer below).
             _full_prompt = build_codex_server_prompt(context, is_verifier=is_verifier)
 
-            # --- Session lifecycle placeholder ---
-            # A complete implementation would:
-            #   1. POST /sessions to open a new session with full_prompt, model,
-            #      and Authorization: Bearer <token> header; record session_id.
-            #   2. Stream or poll session events over HTTPS.
-            #   3. For each callback-tool event:
-            #      a. Call enforce_tool_allowlist(tool_name) — reject if not
-            #         in TOOL_ALLOWLIST.
-            #      b. Route to on_checklist_update / on_submit / on_grade /
-            #         request-clarification handler as appropriate.
-            #   4. Collect all output text into output_lines.
-            #   5. Retry on transient HTTP errors up to self._retry times.
-            #   6. Apply self._timeout to each HTTP request.
-            #   7. Return when session reaches a terminal state or
-            #      self._cancelled is set.
-            #
-            # Until the HTTPS transport layer is implemented, raise
-            # AgentNotAvailableError so callers receive a clear, actionable
-            # error rather than a silent no-op.
-            raise AgentNotAvailableError(
-                AgentType.CODEX_SERVER_REMOTE.value,
-                "Codex remote server HTTPS transport not yet implemented. "
-                "The agent protocol surface (info/execute/cancel) is complete; "
-                "the session I/O layer will be added in a subsequent step.",
+            # Bearer authentication header — injected on every request.
+            auth_headers = {"Authorization": f"Bearer {self._token}"}
+
+            # Use the injected test client or create a real one with the
+            # configured timeout.  The real client is closed in the finally block.
+            injected_client = self._http_client is not None
+            client: httpx.AsyncClient = self._http_client or httpx.AsyncClient(
+                timeout=self._timeout
             )
 
-        except (AgentCancelledError, AgentNotAvailableError):
+            output_lines: list[str] = []
+
+            try:
+                # --- Session creation: POST {base_url}/sessions ---
+                payload = create_session_payload(_full_prompt, self._model)
+                session_response = await self._request_with_retry(
+                    client,
+                    "post",
+                    f"{self._base_url}/sessions",
+                    json=payload,
+                    headers=auth_headers,
+                )
+
+                data: dict[str, Any] = session_response.json()
+                session_id: str | None = data.get("session_id") or data.get("id")
+
+                logger.debug(
+                    "CodexServerRemoteAgent: session created — session_id=%s",
+                    session_id,
+                )
+
+                if on_agent_metadata is not None:
+                    await on_agent_metadata({"session_id": session_id})
+
+                # --- Event polling loop ---
+                # Poll GET {base_url}/sessions/{session_id}/events until a
+                # terminal event is received or cancellation is requested.
+                terminal = False
+                while not self._cancelled and not terminal:
+                    events_response = await self._request_with_retry(
+                        client,
+                        "get",
+                        f"{self._base_url}/sessions/{session_id}/events",
+                        headers=auth_headers,
+                    )
+
+                    events = extract_events(events_response.json())
+
+                    for event in events:
+                        event_type = str(event.get("type", ""))
+
+                        if event_type == "tool_call":
+                            tool_name = str(event.get("tool_name", ""))
+                            tool_args: dict[str, Any] = event.get("args") or {}
+                            try:
+                                await route_tool_call(
+                                    tool_name,
+                                    tool_args,
+                                    on_checklist_update,
+                                    on_submit,
+                                    on_grade=on_grade,
+                                    agent_label="CodexServerRemoteAgent",
+                                )
+                            except ValueError:
+                                # Disallowed tool — already logged by
+                                # enforce_tool_allowlist inside route_tool_call.
+                                pass
+
+                        elif event_type == "output":
+                            text = str(event.get("text", ""))
+                            output_lines.append(text)
+                            if on_output is not None:
+                                await on_output([text])
+
+                        elif event_type in ("complete", "error", "cancelled"):
+                            terminal = True
+                            break
+
+                    # Yield to allow asyncio cancellation to be processed.
+                    await asyncio.sleep(0)
+
+                if self._cancelled:
+                    raise AgentCancelledError(AgentType.CODEX_SERVER_REMOTE.value)
+
+            finally:
+                if not injected_client:
+                    await client.aclose()
+
+            duration_ms = int(time.monotonic() * 1000) - start_ms
+            return build_execution_result(output_lines, duration_ms)
+
+        except (AgentCancelledError, AgentNotAvailableError, AgentTimeoutError):
             raise
         except asyncio.CancelledError:
             # asyncio task cancellation is mapped to AgentCancelledError so
@@ -495,6 +566,78 @@ class CodexServerRemoteAgent:
             num_actions=num_actions,
         )
 
+    async def _request_with_retry(
+        self,
+        client: httpx.AsyncClient,
+        method: str,
+        url: str,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Execute an HTTP request with retry logic for transient errors.
+
+        Retries up to ``self._retry`` times on transient failures (5xx HTTP
+        errors and connection errors).  Client errors (4xx) are not retried
+        and are re-raised immediately after calling ``raise_for_status()``.
+
+        Args:
+            client: The ``httpx.AsyncClient`` to use for the request.
+            method: HTTP method string (``"get"``, ``"post"``, etc.).
+            url: The full request URL.
+            **kwargs: Additional keyword arguments forwarded to the httpx
+                client method (e.g. ``json=``, ``headers=``).
+
+        Returns:
+            The successful ``httpx.Response``.
+
+        Raises:
+            httpx.HTTPStatusError: On a non-retryable HTTP error response.
+            httpx.ConnectError: If the endpoint is unreachable after all
+                retries are exhausted.
+            httpx.TimeoutException: If the request times out.
+        """
+        attempts = 0
+        max_attempts = self._retry + 1
+        last_exc: Exception | None = None
+
+        while attempts < max_attempts:
+            try:
+                response: httpx.Response = await getattr(client, method)(url, **kwargs)
+                response.raise_for_status()
+                return response
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code >= 500:
+                    # Transient server error — retry.
+                    last_exc = exc
+                    attempts += 1
+                    if attempts < max_attempts:
+                        logger.debug(
+                            "CodexServerRemoteAgent: HTTP %d on %s — retrying (%d/%d)",
+                            exc.response.status_code,
+                            url,
+                            attempts,
+                            self._retry,
+                        )
+                        await asyncio.sleep(0)
+                    continue
+                # 4xx client error — do not retry.
+                raise
+            except httpx.ConnectError as exc:
+                last_exc = exc
+                attempts += 1
+                if attempts < max_attempts:
+                    logger.debug(
+                        "CodexServerRemoteAgent: connection error on %s — retrying (%d/%d)",
+                        url,
+                        attempts,
+                        self._retry,
+                    )
+                    await asyncio.sleep(0)
+                continue
+
+        # All attempts exhausted — re-raise the last exception.
+        assert last_exc is not None
+        raise last_exc
+
     async def _route_tool_call(
         self,
         tool_name: str,
@@ -505,15 +648,9 @@ class CodexServerRemoteAgent:
     ) -> None:
         """Route an allow-listed callback tool call to the appropriate callback.
 
-        Enforces the v1 allow-list (``TOOL_ALLOWLIST``) before dispatching.
-        Disallowed tool names raise ``ValueError`` (via
-        ``enforce_tool_allowlist``).
-
-        Tool routing:
-        - ``update_checklist`` → ``on_checklist_update(req_id, status, note)``
-        - ``submit``           → ``on_submit()``
-        - ``grade``            → ``on_grade(req_id, grade, grade_reason)`` (verifier only)
-        - ``request_clarification`` → logged; no callback in v1
+        Delegates to the shared ``route_tool_call`` helper in
+        ``codex_server_common``.  Disallowed tool names raise ``ValueError``
+        (via ``enforce_tool_allowlist``).
 
         Args:
             tool_name: Name of the callback tool the Codex session invoked.
@@ -525,32 +662,11 @@ class CodexServerRemoteAgent:
         Raises:
             ValueError: If ``tool_name`` is not on the v1 allow-list.
         """
-        # Raises ValueError for disallowed tools.
-        enforce_tool_allowlist(tool_name)
-
-        if tool_name == "update_checklist":
-            req_id: str = str(args.get("req_id", ""))
-            raw_status: str = str(args.get("status", "done"))
-            note: str | None = args.get("note")
-            status = ChecklistStatus(raw_status)
-            await on_checklist_update(req_id, status, note)
-
-        elif tool_name == "submit":
-            await on_submit()
-
-        elif tool_name == "grade":
-            if on_grade is not None:
-                req_id = str(args.get("req_id", ""))
-                grade: str = str(args.get("grade", ""))
-                grade_reason: str | None = args.get("grade_reason")
-                await on_grade(req_id, grade, grade_reason)
-            else:
-                logger.warning(
-                    "CodexServerRemoteAgent: 'grade' tool called in builder phase — ignoring"
-                )
-
-        elif tool_name == "request_clarification":
-            question: str = str(args.get("question", ""))
-            logger.info(
-                "CodexServerRemoteAgent: request_clarification received — question=%r", question
-            )
+        await route_tool_call(
+            tool_name,
+            args,
+            on_checklist_update,
+            on_submit,
+            on_grade=on_grade,
+            agent_label="CodexServerRemoteAgent",
+        )

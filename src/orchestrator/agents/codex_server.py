@@ -22,18 +22,25 @@ import asyncio
 import logging
 import time
 from typing import Any
+from urllib.parse import urlparse
+
+import httpx
 
 from orchestrator.agents.codex_server_common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     build_codex_server_prompt,
-    enforce_tool_allowlist,
+    build_execution_result,
+    create_session_payload,
+    extract_events,
     normalize_codex_metrics,
     normalize_codex_output_lines,
+    route_tool_call,
 )
 from orchestrator.agents.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
+    AgentTimeoutError,
 )
 from orchestrator.agents.types import (
     AgentInfo,
@@ -45,9 +52,75 @@ from orchestrator.agents.types import (
     LogLineCallback,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.config.enums import AgentType
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+
+def _is_loopback_endpoint(endpoint: str) -> bool:
+    """Return True if *endpoint* points to a loopback address (localhost/127.0.0.1)."""
+    try:
+        host = urlparse(endpoint).hostname or ""
+    except Exception:
+        return False
+    return host in ("localhost", "127.0.0.1", "::1")
+
+
+async def _ensure_codex_server(endpoint: str) -> int | None:
+    """Ensure a local ``codex app-server`` process is running.
+
+    Checks whether the endpoint is already accepting connections.  If not,
+    spawns ``codex app-server`` as a subprocess and returns its PID.  Returns
+    ``None`` if the server is already running or if spawning fails.
+
+    Args:
+        endpoint: Loopback endpoint URL of the Codex server.
+
+    Returns:
+        PID of the newly spawned process, or ``None`` if already running or
+        spawn failed.
+    """
+    parsed = urlparse(endpoint)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or 9000
+
+    # Quick reachability check — if the server already listens, skip spawning.
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=0.5,
+        )
+        writer.close()
+        await writer.wait_closed()
+        logger.debug("CodexServerAgent: server already running at %s", endpoint)
+        return None
+    except (OSError, asyncio.TimeoutError):
+        pass  # Not reachable — attempt to spawn.
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "codex",
+            "app-server",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        logger.info("CodexServerAgent: spawned codex app-server — pid=%d", proc.pid)
+        return proc.pid
+    except FileNotFoundError:
+        raise AgentNotAvailableError(
+            AgentType.CODEX_SERVER.value,
+            "codex executable not found; install Codex CLI to use this agent",
+        )
+    except Exception as exc:
+        raise AgentNotAvailableError(
+            AgentType.CODEX_SERVER.value,
+            "Failed to spawn codex app-server process",
+        ) from exc
 
 
 class CodexServerAgent:
@@ -83,6 +156,8 @@ class CodexServerAgent:
         model: str | None = None,
         callback_channel: str = "rest",
         api_key: str | None = None,
+        *,
+        _http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._endpoint = endpoint
         self._model = model
@@ -90,6 +165,9 @@ class CodexServerAgent:
         self._api_key = api_key  # Unused for local; kept for interface parity.
         self._cancelled = False
         self._session_task: asyncio.Task[Any] | None = None
+        # For testing only: inject a fake client to intercept HTTP calls without
+        # starting a real Codex process.
+        self._http_client = _http_client
 
     # ------------------------------------------------------------------
     # Agent protocol
@@ -157,36 +235,115 @@ class CodexServerAgent:
                 "verifier" if is_verifier else "builder",
                 self._endpoint,
             )
-            # Build the phase-aware prompt (used by the session layer below).
+            # Build the phase-aware prompt.
             _full_prompt = build_codex_server_prompt(context, is_verifier=is_verifier)
 
-            # --- Session lifecycle placeholder ---
-            # A complete implementation would:
-            #   1. Ensure the local `codex app-server` process is running
-            #      (spawn if needed; track PID via on_agent_metadata).
-            #   2. POST /sessions to open a new session with full_prompt and
-            #      model; record session_id.
-            #   3. Stream or poll session events.
-            #   4. For each callback-tool event:
-            #      a. Call enforce_tool_allowlist(tool_name) — reject if not
-            #         in TOOL_ALLOWLIST.
-            #      b. Route to on_checklist_update / on_submit / on_grade /
-            #         request-clarification handler as appropriate.
-            #   5. Collect all output text into output_lines.
-            #   6. Return when the session reaches a terminal state or
-            #      self._cancelled is set.
-            #
-            # Until the HTTP transport layer is implemented, raise
-            # AgentNotAvailableError so callers receive a clear, actionable
-            # error rather than a silent no-op.
-            raise AgentNotAvailableError(
-                AgentType.CODEX_SERVER.value,
-                "Codex server HTTP transport not yet implemented. "
-                "The agent protocol surface (info/execute/cancel) is complete; "
-                "the session I/O layer will be added in a subsequent step.",
-            )
+            # Determine which HTTP client to use.
+            # When _http_client is injected (tests), use it directly.
+            # Otherwise create a default client (and close it when done).
+            injected_client = self._http_client is not None
+            client: httpx.AsyncClient = self._http_client or httpx.AsyncClient()
 
-        except (AgentCancelledError, AgentNotAvailableError):
+            output_lines: list[str] = []
+
+            try:
+                # --- Process spawning ---
+                # Only spawn a local process when using a real client (not a test
+                # injection) and the endpoint is a loopback address.
+                if not injected_client and _is_loopback_endpoint(self._endpoint):
+                    pid = await _ensure_codex_server(self._endpoint)
+                    if pid is not None and on_agent_metadata is not None:
+                        await on_agent_metadata({"pid": pid})
+
+                # --- Session creation: POST {endpoint}/sessions ---
+                payload = create_session_payload(_full_prompt, self._model)
+
+                try:
+                    response = await client.post(
+                        f"{self._endpoint}/sessions",
+                        json=payload,
+                    )
+                    response.raise_for_status()
+                except httpx.ConnectError as exc:
+                    raise AgentNotAvailableError(
+                        AgentType.CODEX_SERVER.value,
+                        "Local Codex server is unreachable",
+                    ) from exc
+
+                data: dict[str, Any] = response.json()
+                session_id: str | None = data.get("session_id") or data.get("id")
+
+                logger.debug(
+                    "CodexServerAgent: session created — session_id=%s",
+                    session_id,
+                )
+
+                # --- Event polling loop ---
+                # Poll GET {endpoint}/sessions/{session_id}/events until a
+                # terminal event is received or cancellation is requested.
+                terminal = False
+                while not self._cancelled and not terminal:
+                    try:
+                        events_resp = await client.get(
+                            f"{self._endpoint}/sessions/{session_id}/events",
+                        )
+                        events_resp.raise_for_status()
+                    except httpx.ConnectError as exc:
+                        raise AgentNotAvailableError(
+                            AgentType.CODEX_SERVER.value,
+                            "Local Codex server is unreachable",
+                        ) from exc
+                    except httpx.TimeoutException as exc:
+                        raise AgentTimeoutError(
+                            AgentType.CODEX_SERVER.value,
+                            "Timed out waiting for session events",
+                        ) from exc
+
+                    events_payload: Any = events_resp.json()
+                    events = extract_events(events_payload)
+
+                    for event in events:
+                        event_type = str(event.get("type", ""))
+
+                        if event_type == "tool_call":
+                            tool_name = str(event.get("tool_name", ""))
+                            tool_args: dict[str, Any] = event.get("args") or {}
+                            try:
+                                await self._route_tool_call(
+                                    tool_name,
+                                    tool_args,
+                                    on_checklist_update,
+                                    on_submit,
+                                    on_grade=on_grade,
+                                )
+                            except ValueError:
+                                # Disallowed tool — already logged by enforce_tool_allowlist.
+                                pass
+
+                        elif event_type == "output":
+                            text = str(event.get("text", ""))
+                            output_lines.append(text)
+                            if on_output is not None:
+                                await on_output([text])
+
+                        elif event_type in ("complete", "error", "cancelled"):
+                            terminal = True
+                            break
+
+                    # Yield to allow asyncio cancellation to be processed.
+                    await asyncio.sleep(0)
+
+                if self._cancelled:
+                    raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+
+            finally:
+                if not injected_client:
+                    await client.aclose()
+
+            duration_ms = int(time.monotonic() * 1000) - start_ms
+            return build_execution_result(output_lines, duration_ms)
+
+        except (AgentCancelledError, AgentNotAvailableError, AgentTimeoutError):
             raise
         except asyncio.CancelledError:
             # asyncio task cancellation is mapped to AgentCancelledError so
@@ -269,14 +426,9 @@ class CodexServerAgent:
     ) -> None:
         """Route an allow-listed callback tool call to the appropriate callback.
 
-        Enforces the v1 allow-list (``TOOL_ALLOWLIST``) before dispatching.
-        Disallowed tool names raise ``ValueError`` (via ``enforce_tool_allowlist``).
-
-        Tool routing:
-        - ``update_checklist`` → ``on_checklist_update(req_id, status, note)``
-        - ``submit``           → ``on_submit()``
-        - ``grade``            → ``on_grade(req_id, grade, grade_reason)`` (verifier only)
-        - ``request_clarification`` → logged; no callback in v1
+        Delegates to the shared ``route_tool_call`` helper in
+        ``codex_server_common``.  Disallowed tool names raise ``ValueError``
+        (via ``enforce_tool_allowlist``).
 
         Args:
             tool_name: Name of the callback tool the Codex session invoked.
@@ -288,28 +440,11 @@ class CodexServerAgent:
         Raises:
             ValueError: If ``tool_name`` is not on the v1 allow-list.
         """
-        # Raises ValueError for disallowed tools — logged by enforce_tool_allowlist.
-        enforce_tool_allowlist(tool_name)
-
-        if tool_name == "update_checklist":
-            req_id: str = str(args.get("req_id", ""))
-            raw_status: str = str(args.get("status", "done"))
-            note: str | None = args.get("note")
-            status = ChecklistStatus(raw_status)
-            await on_checklist_update(req_id, status, note)
-
-        elif tool_name == "submit":
-            await on_submit()
-
-        elif tool_name == "grade":
-            if on_grade is not None:
-                req_id = str(args.get("req_id", ""))
-                grade: str = str(args.get("grade", ""))
-                grade_reason: str | None = args.get("grade_reason")
-                await on_grade(req_id, grade, grade_reason)
-            else:
-                logger.warning("CodexServerAgent: 'grade' tool called in builder phase — ignoring")
-
-        elif tool_name == "request_clarification":
-            question: str = str(args.get("question", ""))
-            logger.info("CodexServerAgent: request_clarification received — question=%r", question)
+        await route_tool_call(
+            tool_name,
+            args,
+            on_checklist_update,
+            on_submit,
+            on_grade=on_grade,
+            agent_label="CodexServerAgent",
+        )
