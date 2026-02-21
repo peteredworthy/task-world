@@ -1,21 +1,21 @@
-"""Tests for CodexServerRemoteAgent event streaming/polling transport.
+"""Tests for CodexServerRemoteAgent JSON-RPC WebSocket transport.
 
-Exercises the execute() event loop using injected fake HTTP transports.
+Exercises the execute() notification loop using injected fake transports.
 No real Codex server is started — dependency injection only (no mocking).
 
 Remote-specific contract (over local transport tests):
-- Every request carries "Authorization: Bearer <token>".
-- ConnectError → AgentNotAvailableError.
-- HTTP 401 → AgentExecutionError whose message does NOT contain the token.
+- Bearer token must NOT appear in any error message (risk R-05).
+- WebSocket handshake failure → AgentExecutionError (token-safe message).
+- Unreachable endpoint → AgentNotAvailableError.
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 from typing import Any
 
-import httpx
 import pytest
+import websockets.exceptions
 
 from orchestrator.agents.codex_server_remote import CodexServerRemoteAgent
 from orchestrator.agents.errors import AgentExecutionError, AgentNotAvailableError
@@ -36,65 +36,65 @@ _TOKEN = "sk-test-bearer-secret"  # pragma: allowlist secret
 # ---------------------------------------------------------------------------
 
 
-class _CapturingRemoteTransport(httpx.AsyncBaseTransport):
-    """Fake httpx transport that captures full requests and returns scripted responses.
+class _FakeWebSocketTransport:
+    """Real fake transport implementing ``JsonRpcTransport`` for test injection.
 
-    Routes:
-    - POST /sessions → {"session_id": "fake-session-001"}
-    - GET /sessions/{id}/events → configured events list
-
-    Stores captured httpx.Request objects for post-call assertion.
+    Constructed with a list of messages to return from recv() in order.
+    No mocking — this is a real object using asyncio queues.
     """
 
-    def __init__(
-        self,
-        events: list[dict[str, Any]],
-        session_id: str = "fake-session-001",
-    ) -> None:
-        self._events = events
-        self._session_id = session_id
-        self.captured_requests: list[httpx.Request] = []
+    def __init__(self, recv_sequence: list[dict[str, Any]]) -> None:
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        for msg in recv_sequence:
+            self._queue.put_nowait(msg)
+        self.sent: list[dict[str, Any]] = []
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        self.captured_requests.append(request)
-        path = request.url.path
+    async def send(self, message: dict[str, Any]) -> None:
+        self.sent.append(message)
 
-        if request.method == "POST" and path.endswith("/sessions"):
-            return httpx.Response(
-                200,
-                content=json.dumps({"session_id": self._session_id}).encode(),
-                headers={"content-type": "application/json"},
-                request=request,
-            )
+    async def recv(self) -> dict[str, Any]:
+        return await self._queue.get()
 
-        if request.method == "GET" and "/events" in path:
-            return httpx.Response(
-                200,
-                content=json.dumps(self._events).encode(),
-                headers={"content-type": "application/json"},
-                request=request,
-            )
-
-        return httpx.Response(404, content=b"not found", request=request)
+    async def close(self) -> None:
+        pass
 
 
-class _UnauthorizedTransport(httpx.AsyncBaseTransport):
-    """Transport that always returns HTTP 401 to simulate a bad/expired bearer token."""
+class _FailingWebSocketTransport:
+    """Fake transport whose first send() raises OSError (simulates unreachable server)."""
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            401,
-            content=b'{"error": "Unauthorized"}',
-            headers={"content-type": "application/json"},
-            request=request,
-        )
+    async def send(self, message: dict[str, Any]) -> None:
+        raise OSError("Connection refused")
+
+    async def recv(self) -> dict[str, Any]:
+        raise OSError("Not connected")
+
+    async def close(self) -> None:
+        pass
 
 
-class _ConnectErrorTransport(httpx.AsyncBaseTransport):
-    """Transport that always raises httpx.ConnectError to simulate an unreachable server."""
+class _AuthErrorWebSocketTransport:
+    """Fake transport whose first send() raises an auth-flavored handshake error.
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("Connection refused")
+    In the real WebSocket flow, auth errors happen as InvalidHandshake during
+    the connection upgrade, not during send().  This fake raises InvalidHandshake
+    on the first send() to simulate an auth failure reaching the operation loop.
+
+    Used to verify that error messages do not leak the bearer token.
+    """
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+
+    async def send(self, message: dict[str, Any]) -> None:
+        # Simulate an auth error that contains the token — the agent
+        # must sanitise this before surfacing it.
+        raise websockets.exceptions.InvalidHandshake(f"401 Unauthorized: token={self._token!r}")
+
+    async def recv(self) -> dict[str, Any]:
+        raise OSError("Not connected")
+
+    async def close(self) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -120,91 +120,117 @@ async def _noop_submit() -> None:
     pass
 
 
+def _initialize_response(req_id: int = 1) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {"userAgent": "test/1.0.0"},
+    }
+
+
+def _thread_start_response(req_id: int = 2) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {
+            "thread": {
+                "id": "thr_remote001",
+                "preview": "",
+                "modelProvider": "openai",
+                "createdAt": 0,
+            }
+        },
+    }
+
+
+def _turn_start_response(req_id: int = 3) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {
+            "turn": {
+                "id": "turn_remote001",
+                "status": "inProgress",
+                "items": [],
+                "error": None,
+            }
+        },
+    }
+
+
+def _turn_completed(status: str = "completed") -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "method": "turn/completed",
+        "params": {
+            "turn": {
+                "id": "turn_remote001",
+                "status": status,
+                "items": [],
+                "error": None,
+            }
+        },
+    }
+
+
+def _tool_call_request(
+    tool_name: str,
+    args: dict[str, Any],
+    req_id: int = 10,
+) -> dict[str, Any]:
+    """item/tool/call server request (has both ``method`` and ``id``)."""
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "item/tool/call",
+        "params": {"tool": tool_name, "arguments": args},
+    }
+
+
+def _agent_message_delta(text: str) -> dict[str, Any]:
+    """item/agentMessage/delta notification (``params.delta`` is a plain string)."""
+    return {
+        "jsonrpc": "2.0",
+        "method": "item/agentMessage/delta",
+        "params": {"delta": text},
+    }
+
+
 def _make_agent(
-    events: list[dict[str, Any]],
+    notifications: list[dict[str, Any]],
     token: str = _TOKEN,
-    session_id: str = "fake-session-001",
-) -> tuple[CodexServerRemoteAgent, _CapturingRemoteTransport]:
-    """Return (agent, transport) with injected capturing transport."""
-    transport = _CapturingRemoteTransport(events, session_id=session_id)
-    client = httpx.AsyncClient(transport=transport)
+) -> tuple[CodexServerRemoteAgent, _FakeWebSocketTransport]:
+    """Return (agent, transport) with injected fake transport."""
+    recv_sequence: list[dict[str, Any]] = [
+        _initialize_response(req_id=1),
+        _thread_start_response(req_id=2),
+        _turn_start_response(req_id=3),
+        *notifications,
+    ]
+    transport = _FakeWebSocketTransport(recv_sequence)
     agent = CodexServerRemoteAgent(
         base_url=_BASE_URL,
         api_key=token,
         _environ={},
-        _http_client=client,
+        _transport=transport,
     )
     return agent, transport
 
 
 # ---------------------------------------------------------------------------
-# 1. Bearer auth header sent on every request
-# ---------------------------------------------------------------------------
-
-
-async def test_remote_execute_sends_bearer_auth_header() -> None:
-    """POST /sessions carries Authorization: Bearer <token>.
-
-    This is the primary contract difference between local and remote:
-    every outgoing request must include the bearer token in the
-    Authorization header.
-    """
-    events: list[dict[str, Any]] = [{"type": "complete", "status": "completed"}]
-    agent, transport = _make_agent(events, token=_TOKEN)
-
-    await agent.execute(
-        context=_ctx(),
-        on_checklist_update=_noop_checklist,
-        on_submit=_noop_submit,
-    )
-
-    session_posts = [
-        r
-        for r in transport.captured_requests
-        if r.method == "POST" and r.url.path.endswith("/sessions")
-    ]
-    assert session_posts, "No POST /sessions request was made"
-
-    auth_header = session_posts[0].headers.get("authorization", "")
-    assert auth_header == f"Bearer {_TOKEN}", f"Expected 'Bearer {_TOKEN}', got {auth_header!r}"
-
-
-async def test_remote_execute_sends_bearer_auth_on_events_request() -> None:
-    """GET /sessions/{id}/events also carries Authorization: Bearer <token>."""
-    events: list[dict[str, Any]] = [{"type": "complete", "status": "completed"}]
-    agent, transport = _make_agent(events, token=_TOKEN)
-
-    await agent.execute(
-        context=_ctx(),
-        on_checklist_update=_noop_checklist,
-        on_submit=_noop_submit,
-    )
-
-    events_gets = [
-        r for r in transport.captured_requests if r.method == "GET" and "/events" in r.url.path
-    ]
-    assert events_gets, "No GET /events request was made"
-
-    auth_header = events_gets[0].headers.get("authorization", "")
-    assert auth_header == f"Bearer {_TOKEN}"
-
-
-# ---------------------------------------------------------------------------
-# 2. update_checklist tool-call routing
+# 1. update_checklist tool-call routing
 # ---------------------------------------------------------------------------
 
 
 async def test_remote_execute_routes_update_checklist_tool_call() -> None:
-    """Fake server returns a tool_call event for update_checklist; on_checklist_update fires."""
-    events: list[dict[str, Any]] = [
-        {
-            "type": "tool_call",
-            "tool_name": "update_checklist",
-            "args": {"req_id": "R-01", "status": "done", "note": "requirement met"},
-        },
-        {"type": "complete", "status": "completed"},
+    """item/tool/call for update_checklist fires on_checklist_update."""
+    notifications = [
+        _tool_call_request(
+            "update_checklist", {"req_id": "R-01", "status": "done", "note": "requirement met"}
+        ),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     received: list[tuple[str, ChecklistStatus, str | None]] = []
 
     async def capture(req_id: str, status: ChecklistStatus, note: str | None) -> None:
@@ -224,17 +250,17 @@ async def test_remote_execute_routes_update_checklist_tool_call() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 3. submit tool-call routing
+# 2. submit tool-call routing
 # ---------------------------------------------------------------------------
 
 
 async def test_remote_execute_routes_submit_tool_call() -> None:
-    """Fake server returns a tool_call event for submit; on_submit fires."""
-    events: list[dict[str, Any]] = [
-        {"type": "tool_call", "tool_name": "submit", "args": {}},
-        {"type": "complete", "status": "completed"},
+    """item/tool/call for submit fires on_submit."""
+    notifications = [
+        _tool_call_request("submit", {}),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     submitted: list[bool] = []
 
     async def capture_submit() -> None:
@@ -250,17 +276,17 @@ async def test_remote_execute_routes_submit_tool_call() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. ExecutionResult on terminal event
+# 3. ExecutionResult on terminal event
 # ---------------------------------------------------------------------------
 
 
 async def test_remote_execute_returns_result_on_terminal_event() -> None:
-    """execute() returns an ExecutionResult when the server sends a terminal event."""
-    events: list[dict[str, Any]] = [
-        {"type": "output", "text": "work done"},
-        {"type": "complete", "status": "completed"},
+    """execute() returns an ExecutionResult when the server sends turn/completed."""
+    notifications = [
+        _agent_message_delta("work done"),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
 
     result = await agent.execute(
         context=_ctx(),
@@ -274,19 +300,18 @@ async def test_remote_execute_returns_result_on_terminal_event() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 5. ConnectError → AgentNotAvailableError
+# 4. Unreachable server → AgentNotAvailableError
 # ---------------------------------------------------------------------------
 
 
 async def test_remote_execute_raises_agent_not_available_on_connect_error() -> None:
-    """When the remote server is unreachable, execute() raises AgentNotAvailableError."""
-    transport = _ConnectErrorTransport()
-    client = httpx.AsyncClient(transport=transport)
+    """When the transport raises OSError, execute() raises AgentNotAvailableError."""
+    transport = _FailingWebSocketTransport()
     agent = CodexServerRemoteAgent(
         base_url=_BASE_URL,
         api_key=_TOKEN,
         _environ={},
-        _http_client=client,
+        _transport=transport,
     )
 
     with pytest.raises(AgentNotAvailableError):
@@ -298,19 +323,18 @@ async def test_remote_execute_raises_agent_not_available_on_connect_error() -> N
 
 
 # ---------------------------------------------------------------------------
-# 6. HTTP 401 → AgentExecutionError
+# 5. Auth failure → AgentExecutionError (not AgentNotAvailableError)
 # ---------------------------------------------------------------------------
 
 
-async def test_remote_execute_raises_agent_execution_error_on_401() -> None:
-    """When the server returns HTTP 401, execute() raises AgentExecutionError."""
-    transport = _UnauthorizedTransport()
-    client = httpx.AsyncClient(transport=transport)
+async def test_remote_execute_raises_agent_execution_error_on_auth_failure() -> None:
+    """When the transport raises an auth error, execute() raises AgentExecutionError."""
+    transport = _AuthErrorWebSocketTransport(token=_TOKEN)
     agent = CodexServerRemoteAgent(
         base_url=_BASE_URL,
         api_key=_TOKEN,
         _environ={},
-        _http_client=client,
+        _transport=transport,
     )
 
     with pytest.raises(AgentExecutionError):
@@ -322,27 +346,26 @@ async def test_remote_execute_raises_agent_execution_error_on_401() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. Bearer token NOT in error message on 401 (risk R-05: token leakage)
+# 6. Bearer token NOT in error message on auth failure (risk R-05)
 # ---------------------------------------------------------------------------
 
 
-async def test_remote_execute_bearer_token_not_in_error_message_on_401() -> None:
-    """The AgentExecutionError raised on 401 must not expose the raw token value.
+async def test_remote_execute_bearer_token_not_in_error_message_on_auth_failure() -> None:
+    """The AgentExecutionError raised on auth failure must not expose the raw token.
 
     Token leakage risk R-05: if the bearer token were included in the error
     message, it could appear in logs, tracebacks, or API responses.
     """
     secret_token = "sk-super-secret-token-do-not-leak"  # pragma: allowlist secret
-    transport = _UnauthorizedTransport()
-    client = httpx.AsyncClient(transport=transport)
+    transport = _AuthErrorWebSocketTransport(token=secret_token)
     agent = CodexServerRemoteAgent(
         base_url=_BASE_URL,
         api_key=secret_token,
         _environ={},
-        _http_client=client,
+        _transport=transport,
     )
 
-    with pytest.raises(AgentExecutionError) as exc_info:
+    with pytest.raises((AgentExecutionError, AgentNotAvailableError)) as exc_info:
         await agent.execute(
             context=_ctx(),
             on_checklist_update=_noop_checklist,

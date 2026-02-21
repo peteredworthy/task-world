@@ -1445,13 +1445,11 @@ class AgentExecutor:
         elif agent_type == AgentType.CODEX_SERVER:
             from orchestrator.agents.codex_server import CodexServerAgent
 
-            endpoint = agent_config.get("endpoint", "http://localhost:9000")
             model = agent_config.get("model")
             callback_channel = agent_config.get("callback_channel", "rest")
             api_key = agent_config.get("api_key")
 
             return CodexServerAgent(  # type: ignore[return-value]
-                endpoint=endpoint,
                 model=model,
                 callback_channel=callback_channel,
                 api_key=api_key,
@@ -1466,8 +1464,6 @@ class AgentExecutor:
             callback_channel = agent_config.get("callback_channel", "rest")
             api_key = agent_config.get("api_key")
             token_env_var = agent_config.get("token_env_var", "CODEX_SERVER_API_KEY")
-            retry = agent_config.get("retry", 3)
-            timeout = agent_config.get("timeout", 300.0)
 
             return CodexServerRemoteAgent(  # type: ignore[return-value]
                 base_url=base_url,
@@ -1476,8 +1472,6 @@ class AgentExecutor:
                 callback_channel=callback_channel,
                 api_key=api_key,
                 token_env_var=token_env_var,
-                retry=retry,
-                timeout=timeout,
             )
 
         else:

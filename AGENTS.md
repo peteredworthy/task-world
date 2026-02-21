@@ -258,6 +258,12 @@ Key test fixtures: `tmp_dir` (temp directory), `fixed_time` (deterministic datet
 
 Store secrets in `.env` at project root (never committed -- protected by `.gitignore`). See `.env.example` for the template.
 
+### WARNING: Do Not Touch ~/.codex/auth.json
+
+**DO NOT write an API key into `~/.codex/auth.json`.** This file is managed by the Codex Desktop app and the Codex CLI. Writing an API key there breaks the ChatGPT subscription auth that `gpt-5.3-codex` requires — the Desktop app will not automatically recover it, and you will lose access to the model entirely.
+
+If you need to supply credentials to a `codex app-server` subprocess, use the `OPENAI_API_KEY` environment variable or the `account/login/start` JSON-RPC method. Never touch `~/.codex/auth.json` directly.
+
 | Variable | Purpose | Required |
 |----------|---------|----------|
 | `OPENAI_API_KEY` | LLM provider key used by OpenHands agent | For Phase 5 agent tests |

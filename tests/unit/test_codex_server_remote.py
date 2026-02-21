@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 
-import httpx
 import pytest
+import websockets.exceptions
 
 from orchestrator.agents.codex_server_remote import (
     DEFAULT_TOKEN_ENV_VAR,
@@ -44,8 +44,6 @@ def _make_agent(
     callback_channel: str = "rest",
     api_key: str | None = _VALID_KEY,
     token_env_var: str = DEFAULT_TOKEN_ENV_VAR,
-    retry: int = 3,
-    timeout: float = 300.0,
     environ: dict[str, str] | None = None,
 ) -> CodexServerRemoteAgent:
     return CodexServerRemoteAgent(
@@ -55,8 +53,6 @@ def _make_agent(
         callback_channel=callback_channel,
         api_key=api_key,
         token_env_var=token_env_var,
-        retry=retry,
-        timeout=timeout,
         _environ=environ or {},
     )
 
@@ -153,9 +149,6 @@ def test_resolve_token_custom_token_env_var_name() -> None:
 
 def test_resolve_token_uses_os_environ_by_default() -> None:
     """When environ=None, resolve_remote_token reads os.environ (not empty dict)."""
-
-    # We can only confirm this doesn't crash and returns based on actual env.
-    # We don't inject a key to avoid side effects; just verify the return type.
     result = resolve_remote_token(api_key="explicit-key", token_env_var=DEFAULT_TOKEN_ENV_VAR)
     assert result == "explicit-key"  # api_key always wins regardless of env
 
@@ -226,28 +219,10 @@ def test_construction_stores_session_id() -> None:
     assert agent._session_id == "sess-abc"
 
 
-def test_construction_stores_retry() -> None:
-    """retry parameter is stored on the agent."""
-    agent = _make_agent(retry=5, api_key=_VALID_KEY)
-    assert agent._retry == 5
-
-
-def test_construction_stores_timeout() -> None:
-    """timeout parameter is stored on the agent."""
-    agent = _make_agent(timeout=120.0, api_key=_VALID_KEY)
-    assert agent._timeout == 120.0
-
-
 def test_construction_mcp_callback_channel_accepted() -> None:
     """'mcp' callback_channel is a valid configuration."""
     agent = _make_agent(callback_channel="mcp", api_key=_VALID_KEY)
     assert agent._callback_channel == "mcp"
-
-
-def test_construction_zero_retry_accepted() -> None:
-    """retry=0 means no retries and is a valid configuration."""
-    agent = _make_agent(retry=0, api_key=_VALID_KEY)
-    assert agent._retry == 0
 
 
 # ===========================================================================
@@ -296,26 +271,6 @@ def test_construction_raises_for_invalid_callback_channel() -> None:
     with pytest.raises(AgentConfigError) as exc_info:
         _make_agent(callback_channel="websocket", api_key=_VALID_KEY)
     assert "callback_channel" in exc_info.value.message
-
-
-def test_construction_raises_for_negative_retry() -> None:
-    """Negative retry value raises AgentConfigError."""
-    with pytest.raises(AgentConfigError) as exc_info:
-        _make_agent(retry=-1, api_key=_VALID_KEY)
-    assert "retry" in exc_info.value.message
-
-
-def test_construction_raises_for_zero_timeout() -> None:
-    """timeout=0 raises AgentConfigError."""
-    with pytest.raises(AgentConfigError) as exc_info:
-        _make_agent(timeout=0, api_key=_VALID_KEY)
-    assert "timeout" in exc_info.value.message
-
-
-def test_construction_raises_for_negative_timeout() -> None:
-    """Negative timeout raises AgentConfigError."""
-    with pytest.raises(AgentConfigError):
-        _make_agent(timeout=-5.0, api_key=_VALID_KEY)
 
 
 def test_construction_config_error_is_not_agent_execution_error() -> None:
@@ -381,8 +336,8 @@ async def test_execute_raises_agent_cancelled_error_when_already_cancelled() -> 
     assert exc_info.value.agent_type == AgentType.CODEX_SERVER_REMOTE.value
 
 
-async def test_execute_raises_agent_not_available_transport_not_implemented() -> None:
-    """execute() raises AgentNotAvailableError until HTTPS transport is wired up."""
+async def test_execute_raises_agent_not_available_when_endpoint_unreachable() -> None:
+    """execute() raises AgentNotAvailableError when the WebSocket endpoint is unreachable."""
     agent = _make_agent()
     with pytest.raises(AgentNotAvailableError) as exc_info:
         await agent.execute(
@@ -852,15 +807,12 @@ async def test_bearer_auth_token_safe_in_execution_error_message() -> None:
 # map_transport_error — pure function tests (no I/O required)
 # ===========================================================================
 
-#: Shared request used to construct httpx.HTTPStatusError instances.
-_DUMMY_REQUEST = httpx.Request("POST", "https://codex.example.com/sessions")
-
 _AGENT_TYPE = AgentType.CODEX_SERVER_REMOTE.value
 
 
 def test_map_transport_error_timeout_returns_agent_timeout_error() -> None:
-    """httpx.TimeoutException → AgentTimeoutError."""
-    exc = httpx.TimeoutException("read timed out")
+    """asyncio.TimeoutError → AgentTimeoutError."""
+    exc = asyncio.TimeoutError()
     result = map_transport_error(exc, _AGENT_TYPE, duration_ms=5000)
     assert isinstance(result, AgentTimeoutError)
     assert result.agent_type == _AGENT_TYPE
@@ -868,102 +820,49 @@ def test_map_transport_error_timeout_returns_agent_timeout_error() -> None:
 
 def test_map_transport_error_timeout_message_contains_duration() -> None:
     """AgentTimeoutError message includes the elapsed time."""
-    exc = httpx.TimeoutException("connect timed out")
+    exc = asyncio.TimeoutError()
     result = map_transport_error(exc, _AGENT_TYPE, duration_ms=3200)
     assert "3200" in result.message
 
 
-def test_map_transport_error_connect_error_returns_agent_not_available_error() -> None:
-    """httpx.ConnectError → AgentNotAvailableError (endpoint unreachable)."""
-    exc = httpx.ConnectError("connection refused")
+def test_map_transport_error_oserror_returns_agent_not_available_error() -> None:
+    """OSError (connection refused, DNS failure) → AgentNotAvailableError."""
+    exc = OSError("connection refused")
     result = map_transport_error(exc, _AGENT_TYPE, duration_ms=100)
     assert isinstance(result, AgentNotAvailableError)
     assert result.agent_type == _AGENT_TYPE
 
 
-def test_map_transport_error_connect_error_message_indicates_unreachable() -> None:
+def test_map_transport_error_oserror_message_indicates_unreachable() -> None:
     """AgentNotAvailableError message communicates endpoint unreachability."""
-    exc = httpx.ConnectError("connection refused")
+    exc = OSError("connection refused")
     result = map_transport_error(exc, _AGENT_TYPE, duration_ms=50)
     assert isinstance(result, AgentNotAvailableError)
     assert "unreachable" in result.reason.lower()
 
 
-def test_map_transport_error_http_401_returns_agent_execution_error() -> None:
-    """httpx.HTTPStatusError with 401 → AgentExecutionError (explicit auth failure)."""
-    response = httpx.Response(401, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError("401 Unauthorized", request=_DUMMY_REQUEST, response=response)
+def test_map_transport_error_connection_closed_returns_agent_not_available_error() -> None:
+    """websockets.ConnectionClosed → AgentNotAvailableError."""
+    exc = websockets.exceptions.ConnectionClosed(None, None)
+    result = map_transport_error(exc, _AGENT_TYPE, duration_ms=200)
+    assert isinstance(result, AgentNotAvailableError)
+    assert result.agent_type == _AGENT_TYPE
+
+
+def test_map_transport_error_invalid_handshake_returns_agent_execution_error() -> None:
+    """websockets.InvalidHandshake (includes 401/403) → AgentExecutionError."""
+    exc = websockets.exceptions.InvalidHandshake("401 Unauthorized")
     result = map_transport_error(exc, _AGENT_TYPE, duration_ms=200)
     assert isinstance(result, AgentExecutionError)
     assert result.agent_type == _AGENT_TYPE
 
 
-def test_map_transport_error_http_401_message_is_token_safe() -> None:
-    """AgentExecutionError for 401 must not contain the bearer token value."""
-    secret = "sk-bearer-secret-401"  # pragma: allowlist secret
-    response = httpx.Response(401, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError("401 Unauthorized", request=_DUMMY_REQUEST, response=response)
+def test_map_transport_error_invalid_handshake_message_is_token_safe() -> None:
+    """AgentExecutionError for handshake failure must not contain the bearer token."""
+    secret = "sk-bearer-secret-handshake"  # pragma: allowlist secret
+    exc = websockets.exceptions.InvalidHandshake(f"401 Unauthorized: token={secret!r}")
     result = map_transport_error(exc, _AGENT_TYPE, duration_ms=200)
     assert secret not in result.message
-
-
-def test_map_transport_error_http_401_message_mentions_401() -> None:
-    """AgentExecutionError for 401 message includes '401' for diagnostics."""
-    response = httpx.Response(401, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError("401 Unauthorized", request=_DUMMY_REQUEST, response=response)
-    result = map_transport_error(exc, _AGENT_TYPE, duration_ms=200)
-    assert isinstance(result, AgentExecutionError)
-    assert "401" in result.message
-
-
-def test_map_transport_error_http_403_returns_agent_execution_error() -> None:
-    """httpx.HTTPStatusError with 403 → AgentExecutionError (explicit permission failure)."""
-    response = httpx.Response(403, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError("403 Forbidden", request=_DUMMY_REQUEST, response=response)
-    result = map_transport_error(exc, _AGENT_TYPE, duration_ms=150)
-    assert isinstance(result, AgentExecutionError)
-    assert result.agent_type == _AGENT_TYPE
-
-
-def test_map_transport_error_http_403_message_is_token_safe() -> None:
-    """AgentExecutionError for 403 must not contain the bearer token value."""
-    secret = "sk-bearer-secret-403"  # pragma: allowlist secret
-    response = httpx.Response(403, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError("403 Forbidden", request=_DUMMY_REQUEST, response=response)
-    result = map_transport_error(exc, _AGENT_TYPE, duration_ms=150)
-    assert secret not in result.message
-
-
-def test_map_transport_error_http_403_message_mentions_403() -> None:
-    """AgentExecutionError for 403 message includes '403' for diagnostics."""
-    response = httpx.Response(403, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError("403 Forbidden", request=_DUMMY_REQUEST, response=response)
-    result = map_transport_error(exc, _AGENT_TYPE, duration_ms=150)
-    assert isinstance(result, AgentExecutionError)
-    assert "403" in result.message
-
-
-def test_map_transport_error_http_500_returns_agent_execution_error() -> None:
-    """httpx.HTTPStatusError with non-401/403 status → AgentExecutionError with status code."""
-    response = httpx.Response(500, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError(
-        "500 Internal Server Error", request=_DUMMY_REQUEST, response=response
-    )
-    result = map_transport_error(exc, _AGENT_TYPE, duration_ms=1000)
-    assert isinstance(result, AgentExecutionError)
-    assert "500" in result.message
-
-
-def test_map_transport_error_http_500_message_excludes_response_body() -> None:
-    """AgentExecutionError for HTTP errors must not include the response body."""
-    sensitive_body = "internal error: token=sk-leaked-key"  # pragma: allowlist secret
-    response = httpx.Response(500, text=sensitive_body, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError(
-        "500 Internal Server Error", request=_DUMMY_REQUEST, response=response
-    )
-    result = map_transport_error(exc, _AGENT_TYPE, duration_ms=1000)
-    assert sensitive_body not in result.message
-    assert "sk-leaked-key" not in result.message  # pragma: allowlist secret
 
 
 def test_map_transport_error_generic_exception_returns_agent_execution_error() -> None:
@@ -984,7 +883,7 @@ def test_map_transport_error_generic_exception_message_excludes_raw_text() -> No
 
 def test_map_transport_error_agent_type_propagated() -> None:
     """The agent_type string is correctly propagated to the resulting error."""
-    exc = httpx.ConnectError("refused")
+    exc = OSError("refused")
     result = map_transport_error(exc, "custom_agent_type", duration_ms=0)
     assert result.agent_type == "custom_agent_type"
 
@@ -994,16 +893,16 @@ def test_map_transport_error_agent_type_propagated() -> None:
 # ===========================================================================
 
 
-class _HttpxFailingRemoteAgent(CodexServerRemoteAgent):
-    """Subclass that simulates specific httpx transport failures in execute()."""
+class _WebSocketFailingRemoteAgent(CodexServerRemoteAgent):
+    """Subclass that simulates specific WebSocket transport failures in execute()."""
 
-    def __init__(self, httpx_exc: Exception) -> None:
+    def __init__(self, ws_exc: Exception) -> None:
         super().__init__(
             base_url=_VALID_URL,
             api_key=_VALID_KEY,
             _environ={},
         )
-        self._httpx_exc = httpx_exc
+        self._ws_exc = ws_exc
 
     async def execute(  # type: ignore[override]
         self,
@@ -1021,22 +920,22 @@ class _HttpxFailingRemoteAgent(CodexServerRemoteAgent):
 
         start_ms = int(time.monotonic() * 1000)
         try:
-            raise self._httpx_exc
+            raise self._ws_exc
         except (AgentCancelledError, AgentNotAvailableError):
             raise
         except asyncio.CancelledError:
             raise AgentCancelledError(AgentType.CODEX_SERVER_REMOTE.value)
-        except httpx.TimeoutException as exc:
+        except OSError as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             raise map_transport_error(
                 exc, AgentType.CODEX_SERVER_REMOTE.value, duration_ms
             ) from exc
-        except httpx.ConnectError as exc:
+        except websockets.exceptions.ConnectionClosed as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             raise map_transport_error(
                 exc, AgentType.CODEX_SERVER_REMOTE.value, duration_ms
             ) from exc
-        except httpx.HTTPStatusError as exc:
+        except websockets.exceptions.InvalidHandshake as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             raise map_transport_error(
                 exc, AgentType.CODEX_SERVER_REMOTE.value, duration_ms
@@ -1048,21 +947,9 @@ class _HttpxFailingRemoteAgent(CodexServerRemoteAgent):
             ) from exc
 
 
-async def test_execute_timeout_maps_to_agent_timeout_error() -> None:
-    """Timeout during transport raises AgentTimeoutError (not bare TimeoutException)."""
-    agent = _HttpxFailingRemoteAgent(httpx.TimeoutException("read timeout"))
-    with pytest.raises(AgentTimeoutError) as exc_info:
-        await agent.execute(
-            context=_ctx(),
-            on_checklist_update=_noop_checklist,
-            on_submit=_noop_submit,
-        )
-    assert exc_info.value.agent_type == AgentType.CODEX_SERVER_REMOTE.value
-
-
-async def test_execute_connect_error_maps_to_agent_not_available_error() -> None:
-    """Unreachable endpoint raises AgentNotAvailableError."""
-    agent = _HttpxFailingRemoteAgent(httpx.ConnectError("connection refused"))
+async def test_execute_oserror_maps_to_agent_not_available_error() -> None:
+    """OSError during transport raises AgentNotAvailableError."""
+    agent = _WebSocketFailingRemoteAgent(OSError("connection refused"))
     with pytest.raises(AgentNotAvailableError) as exc_info:
         await agent.execute(
             context=_ctx(),
@@ -1072,11 +959,22 @@ async def test_execute_connect_error_maps_to_agent_not_available_error() -> None
     assert exc_info.value.agent_type == AgentType.CODEX_SERVER_REMOTE.value
 
 
-async def test_execute_http_401_maps_to_agent_execution_error() -> None:
-    """401 response raises AgentExecutionError (explicit auth failure, token-safe)."""
-    response = httpx.Response(401, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError("401", request=_DUMMY_REQUEST, response=response)
-    agent = _HttpxFailingRemoteAgent(exc)
+async def test_execute_connection_closed_maps_to_agent_not_available_error() -> None:
+    """ConnectionClosed raises AgentNotAvailableError."""
+    agent = _WebSocketFailingRemoteAgent(websockets.exceptions.ConnectionClosed(None, None))
+    with pytest.raises(AgentNotAvailableError) as exc_info:
+        await agent.execute(
+            context=_ctx(),
+            on_checklist_update=_noop_checklist,
+            on_submit=_noop_submit,
+        )
+    assert exc_info.value.agent_type == AgentType.CODEX_SERVER_REMOTE.value
+
+
+async def test_execute_invalid_handshake_maps_to_agent_execution_error() -> None:
+    """InvalidHandshake (auth failure) raises AgentExecutionError (token-safe)."""
+    exc = websockets.exceptions.InvalidHandshake("401 Unauthorized")
+    agent = _WebSocketFailingRemoteAgent(exc)
     with pytest.raises(AgentExecutionError) as exc_info:
         await agent.execute(
             context=_ctx(),
@@ -1084,38 +982,15 @@ async def test_execute_http_401_maps_to_agent_execution_error() -> None:
             on_submit=_noop_submit,
         )
     assert exc_info.value.agent_type == AgentType.CODEX_SERVER_REMOTE.value
-    assert "401" in exc_info.value.message
     # Must not contain the actual bearer token value.
     assert _VALID_KEY not in exc_info.value.message
 
 
-async def test_execute_http_403_maps_to_agent_execution_error() -> None:
-    """403 response raises AgentExecutionError (explicit permission failure, token-safe)."""
-    response = httpx.Response(403, request=_DUMMY_REQUEST)
-    exc = httpx.HTTPStatusError("403", request=_DUMMY_REQUEST, response=response)
-    agent = _HttpxFailingRemoteAgent(exc)
-    with pytest.raises(AgentExecutionError) as exc_info:
-        await agent.execute(
-            context=_ctx(),
-            on_checklist_update=_noop_checklist,
-            on_submit=_noop_submit,
-        )
-    assert exc_info.value.agent_type == AgentType.CODEX_SERVER_REMOTE.value
-    assert "403" in exc_info.value.message
-    # Must not contain the actual bearer token value.
-    assert _VALID_KEY not in exc_info.value.message
-
-
-async def test_execute_http_401_error_does_not_leak_token() -> None:
-    """AgentExecutionError raised for 401 must not include bearer token in message."""
-    secret = "sk-secret-bearer-401"  # pragma: allowlist secret
-    agent = _HttpxFailingRemoteAgent(
-        httpx.HTTPStatusError(
-            "401",
-            request=_DUMMY_REQUEST,
-            response=httpx.Response(401, request=_DUMMY_REQUEST),
-        )
-    )
+async def test_execute_invalid_handshake_error_does_not_leak_token() -> None:
+    """AgentExecutionError raised for handshake failure must not include bearer token."""
+    secret = "sk-secret-bearer-handshake"  # pragma: allowlist secret
+    exc = websockets.exceptions.InvalidHandshake(f"401 token={secret!r}")
+    agent = _WebSocketFailingRemoteAgent(exc)
     agent._token = secret
     with pytest.raises(AgentExecutionError) as exc_info:
         await agent.execute(
@@ -1126,29 +1001,21 @@ async def test_execute_http_401_error_does_not_leak_token() -> None:
     assert secret not in exc_info.value.message
 
 
-async def test_execute_http_403_error_does_not_leak_token() -> None:
-    """AgentExecutionError raised for 403 must not include bearer token in message."""
-    secret = "sk-secret-bearer-403"  # pragma: allowlist secret
-    agent = _HttpxFailingRemoteAgent(
-        httpx.HTTPStatusError(
-            "403",
-            request=_DUMMY_REQUEST,
-            response=httpx.Response(403, request=_DUMMY_REQUEST),
-        )
-    )
-    agent._token = secret
-    with pytest.raises(AgentExecutionError) as exc_info:
+async def test_execute_timeout_maps_to_agent_timeout_error() -> None:
+    """asyncio.TimeoutError during transport raises AgentTimeoutError."""
+    agent = _WebSocketFailingRemoteAgent(asyncio.TimeoutError())
+    with pytest.raises(AgentTimeoutError) as exc_info:
         await agent.execute(
             context=_ctx(),
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert secret not in exc_info.value.message
+    assert exc_info.value.agent_type == AgentType.CODEX_SERVER_REMOTE.value
 
 
 async def test_execute_schema_mismatch_maps_to_agent_execution_error() -> None:
     """Schema/validation errors (ValueError) are mapped to AgentExecutionError."""
-    agent = _HttpxFailingRemoteAgent(ValueError("unexpected field 'token_extra'"))
+    agent = _WebSocketFailingRemoteAgent(ValueError("unexpected field 'token_extra'"))
     with pytest.raises(AgentExecutionError) as exc_info:
         await agent.execute(
             context=_ctx(),

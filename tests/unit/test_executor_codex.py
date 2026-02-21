@@ -46,26 +46,6 @@ def test_executor_codex_create_agent_codex_server_returns_correct_type() -> None
     assert isinstance(agent, CodexServerAgent)
 
 
-def test_executor_codex_create_agent_codex_server_default_endpoint() -> None:
-    """CodexServerAgent uses default endpoint when none supplied in config."""
-    executor = _make_executor()
-    agent = executor._create_agent(AgentType.CODEX_SERVER, {})
-    assert isinstance(agent, CodexServerAgent)
-    # Default endpoint is http://localhost:9000
-    assert agent._endpoint == "http://localhost:9000"
-
-
-def test_executor_codex_create_agent_codex_server_custom_endpoint() -> None:
-    """Custom endpoint in agent_config is forwarded to CodexServerAgent."""
-    executor = _make_executor()
-    agent = executor._create_agent(
-        AgentType.CODEX_SERVER,
-        {"endpoint": "http://my-codex:8888"},
-    )
-    assert isinstance(agent, CodexServerAgent)
-    assert agent._endpoint == "http://my-codex:8888"
-
-
 def test_executor_codex_create_agent_codex_server_model_forwarded() -> None:
     """model in agent_config is forwarded to CodexServerAgent."""
     executor = _make_executor()
@@ -216,28 +196,6 @@ def test_executor_codex_create_agent_codex_server_remote_api_key_forwarded() -> 
     assert agent._token == "bearer-token-value"
 
 
-def test_executor_codex_create_agent_codex_server_remote_retry_forwarded() -> None:
-    """retry in agent_config is forwarded to CodexServerRemoteAgent."""
-    executor = _make_executor()
-    agent = executor._create_agent(
-        AgentType.CODEX_SERVER_REMOTE,
-        _remote_config(retry=5),
-    )
-    assert isinstance(agent, CodexServerRemoteAgent)
-    assert agent._retry == 5
-
-
-def test_executor_codex_create_agent_codex_server_remote_timeout_forwarded() -> None:
-    """timeout in agent_config is forwarded to CodexServerRemoteAgent."""
-    executor = _make_executor()
-    agent = executor._create_agent(
-        AgentType.CODEX_SERVER_REMOTE,
-        _remote_config(timeout=120.0),
-    )
-    assert isinstance(agent, CodexServerRemoteAgent)
-    assert agent._timeout == 120.0
-
-
 def test_executor_codex_create_agent_codex_server_remote_token_env_var_forwarded() -> None:
     """token_env_var in agent_config is forwarded to CodexServerRemoteAgent."""
     executor = _make_executor()
@@ -247,22 +205,6 @@ def test_executor_codex_create_agent_codex_server_remote_token_env_var_forwarded
     )
     assert isinstance(agent, CodexServerRemoteAgent)
     assert agent._token_env_var == "MY_CUSTOM_TOKEN"
-
-
-def test_executor_codex_create_agent_codex_server_remote_default_retry() -> None:
-    """retry defaults to 3 when not present in agent_config."""
-    executor = _make_executor()
-    agent = executor._create_agent(AgentType.CODEX_SERVER_REMOTE, _remote_config())
-    assert isinstance(agent, CodexServerRemoteAgent)
-    assert agent._retry == 3
-
-
-def test_executor_codex_create_agent_codex_server_remote_default_timeout() -> None:
-    """timeout defaults to 300.0 when not present in agent_config."""
-    executor = _make_executor()
-    agent = executor._create_agent(AgentType.CODEX_SERVER_REMOTE, _remote_config())
-    assert isinstance(agent, CodexServerRemoteAgent)
-    assert agent._timeout == 300.0
 
 
 def test_executor_codex_create_agent_codex_server_remote_agent_type_is_remote() -> None:

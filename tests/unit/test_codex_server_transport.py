@@ -1,15 +1,22 @@
-"""Tests for CodexServerAgent event streaming/polling transport implementation.
+"""Tests for CodexServerAgent JSON-RPC stdio transport implementation.
 
-Exercises the execute() event loop using an injected fake HTTP transport.
+Exercises the execute() notification loop using an injected fake transport.
 No real Codex process is started — dependency injection only (no mocking).
+
+The fake transport implements the real JSON-RPC 2.0 protocol shape documented
+in docs/codex-server-transport/api-contract.md:
+  - Responses carry an ``id`` matching the outgoing request.
+  - Notifications carry a ``method`` but no ``id``.
+  - Tool calls arrive as ``item/tool/call`` server requests (have both ``method`` and ``id``).
+  - Agent text arrives as ``item/agentMessage/delta`` notifications (``params.delta`` string).
+  - Terminal state is signalled by ``turn/completed``.
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 from typing import Any
 
-import httpx
 import pytest
 
 from orchestrator.agents.codex_server import CodexServerAgent
@@ -23,47 +30,43 @@ from orchestrator.config.enums import ChecklistStatus
 # ---------------------------------------------------------------------------
 
 
-class _FakeCodexTransport(httpx.AsyncBaseTransport):
-    """Real fake httpx transport that simulates the Codex app server HTTP API.
+class _FakeStdioTransport:
+    """Real fake transport implementing ``JsonRpcTransport`` for test injection.
 
-    Routes:
-    - POST /sessions → returns session_id
-    - GET /sessions/{id}/events → returns the configured event list
+    Constructed with a list of messages to return in order from ``recv()``.
+    Outgoing ``send()`` calls are recorded in ``sent`` for assertion.
 
-    Uses dependency injection only; no mocking.
+    No mocking — this is a real object using asyncio queues.
     """
 
-    def __init__(
-        self,
-        events: list[dict[str, Any]],
-        session_id: str = "fake-session-001",
-    ) -> None:
-        self._events = events
-        self._session_id = session_id
-        self.requests_made: list[str] = []
+    def __init__(self, recv_sequence: list[dict[str, Any]]) -> None:
+        self._queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        for msg in recv_sequence:
+            self._queue.put_nowait(msg)
+        self.sent: list[dict[str, Any]] = []
+        self.closed = False
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        method = request.method
-        self.requests_made.append(f"{method} {path}")
+    async def send(self, message: dict[str, Any]) -> None:
+        self.sent.append(message)
 
-        if method == "POST" and path.endswith("/sessions"):
-            return httpx.Response(
-                200,
-                content=json.dumps({"session_id": self._session_id}).encode(),
-                headers={"content-type": "application/json"},
-                request=request,
-            )
+    async def recv(self) -> dict[str, Any]:
+        return await self._queue.get()
 
-        if method == "GET" and "/events" in path:
-            return httpx.Response(
-                200,
-                content=json.dumps(self._events).encode(),
-                headers={"content-type": "application/json"},
-                request=request,
-            )
+    async def close(self) -> None:
+        self.closed = True
 
-        return httpx.Response(404, content=b"not found", request=request)
+
+class _FailingStdioTransport:
+    """Fake transport whose first send() raises OSError (simulates spawn failure)."""
+
+    async def send(self, message: dict[str, Any]) -> None:
+        raise OSError("codex app-server process failed to start")
+
+    async def recv(self) -> dict[str, Any]:
+        raise OSError("not connected")
+
+    async def close(self) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -93,26 +96,115 @@ async def _noop_grade(req_id: str, grade: str, reason: str | None) -> None:
     pass
 
 
+def _initialize_response(req_id: int = 1) -> dict[str, Any]:
+    """Standard initialize response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {"userAgent": "test/1.0.0"},
+    }
+
+
+def _thread_start_response(req_id: int = 2) -> dict[str, Any]:
+    """Standard thread/start response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {
+            "thread": {
+                "id": "thr_test001",
+                "preview": "",
+                "modelProvider": "openai",
+                "createdAt": 0,
+            }
+        },
+    }
+
+
+def _turn_start_response(req_id: int = 3) -> dict[str, Any]:
+    """Standard turn/start response."""
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {
+            "turn": {
+                "id": "turn_test001",
+                "status": "inProgress",
+                "items": [],
+                "error": None,
+            }
+        },
+    }
+
+
+def _turn_completed(status: str = "completed") -> dict[str, Any]:
+    """turn/completed notification."""
+    return {
+        "jsonrpc": "2.0",
+        "method": "turn/completed",
+        "params": {
+            "turn": {
+                "id": "turn_test001",
+                "status": status,
+                "items": [],
+                "error": None,
+            }
+        },
+    }
+
+
+def _tool_call_request(
+    tool_name: str,
+    args: dict[str, Any],
+    req_id: int = 10,
+) -> dict[str, Any]:
+    """item/tool/call server request (has both ``method`` and ``id``)."""
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "method": "item/tool/call",
+        "params": {"tool": tool_name, "arguments": args},
+    }
+
+
+def _agent_message_delta(text: str, item_id: str = "item_msg_001") -> dict[str, Any]:
+    """item/agentMessage/delta notification (``params.delta`` is a plain string)."""
+    return {
+        "jsonrpc": "2.0",
+        "method": "item/agentMessage/delta",
+        "params": {"delta": text},
+    }
+
+
 def _make_agent(
-    events: list[dict[str, Any]],
-    session_id: str = "fake-session-001",
-) -> tuple[CodexServerAgent, _FakeCodexTransport]:
-    """Create an agent with a fake transport returning the given events."""
-    transport = _FakeCodexTransport(events, session_id=session_id)
-    client = httpx.AsyncClient(transport=transport)
-    agent = CodexServerAgent(_http_client=client)
+    notifications: list[dict[str, Any]],
+) -> tuple[CodexServerAgent, _FakeStdioTransport]:
+    """Return (agent, transport) with an injected fake transport.
+
+    The recv_sequence contains: initialize response, thread/start response,
+    turn/start response, then the provided notifications.  The agent is
+    constructed with ``api_key=None`` so no account/login/start step is
+    attempted.
+    """
+    recv_sequence: list[dict[str, Any]] = [
+        _initialize_response(req_id=1),
+        _thread_start_response(req_id=2),
+        _turn_start_response(req_id=3),
+        *notifications,
+    ]
+    transport = _FakeStdioTransport(recv_sequence)
+    agent = CodexServerAgent(api_key=None, _transport=transport, _environ={})
     return agent, transport
 
 
 # ---------------------------------------------------------------------------
-# Requirement 1: execute() streams or polls events and routes tool-call events
+# 1. Protocol handshake: thread/start and turn/start are sent
 # ---------------------------------------------------------------------------
 
 
-async def test_execute_polls_session_events_endpoint() -> None:
-    """execute() makes a GET request to the events endpoint after session creation."""
-    events: list[dict[str, Any]] = [{"type": "complete", "status": "completed"}]
-    agent, transport = _make_agent(events)
+async def test_execute_sends_thread_start_request() -> None:
+    """execute() sends a thread/start JSON-RPC request to the transport."""
+    agent, transport = _make_agent([_turn_completed()])
 
     await agent.execute(
         context=_ctx(),
@@ -120,22 +212,41 @@ async def test_execute_polls_session_events_endpoint() -> None:
         on_submit=_noop_submit,
     )
 
-    # Must have POSTed /sessions and then GETted /sessions/{id}/events
-    assert any("POST" in req and "/sessions" in req for req in transport.requests_made)
-    assert any("GET" in req and "/events" in req for req in transport.requests_made)
+    methods = [msg.get("method") for msg in transport.sent]
+    assert "thread/start" in methods
+
+
+async def test_execute_sends_turn_start_with_prompt() -> None:
+    """execute() sends a turn/start request whose input contains the prompt."""
+    agent, transport = _make_agent([_turn_completed()])
+
+    await agent.execute(
+        context=_ctx(),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    turn_starts = [m for m in transport.sent if m.get("method") == "turn/start"]
+    assert turn_starts, "No turn/start message was sent"
+    input_items = turn_starts[0].get("params", {}).get("input", [])
+    text_items = [item["text"] for item in input_items if item.get("type") == "text"]
+    assert any("Test the transport." in t for t in text_items)
+
+
+# ---------------------------------------------------------------------------
+# 2. Tool-call routing
+# ---------------------------------------------------------------------------
 
 
 async def test_execute_routes_tool_call_update_checklist_to_callback() -> None:
-    """A tool_call event for update_checklist fires the checklist callback."""
-    events: list[dict[str, Any]] = [
-        {
-            "type": "tool_call",
-            "tool_name": "update_checklist",
-            "args": {"req_id": "R-01", "status": "done", "note": "completed"},
-        },
-        {"type": "complete", "status": "completed"},
+    """An item/tool/call for update_checklist fires the checklist callback."""
+    notifications = [
+        _tool_call_request(
+            "update_checklist", {"req_id": "R-01", "status": "done", "note": "completed"}
+        ),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     received: list[tuple[str, ChecklistStatus, str | None]] = []
 
     async def capture_checklist(req_id: str, status: ChecklistStatus, note: str | None) -> None:
@@ -152,12 +263,12 @@ async def test_execute_routes_tool_call_update_checklist_to_callback() -> None:
 
 
 async def test_execute_routes_tool_call_submit_to_callback() -> None:
-    """A tool_call event for submit fires the submit callback."""
-    events: list[dict[str, Any]] = [
-        {"type": "tool_call", "tool_name": "submit", "args": {}},
-        {"type": "complete", "status": "completed"},
+    """An item/tool/call for submit fires the submit callback."""
+    notifications = [
+        _tool_call_request("submit", {}),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     submitted: list[bool] = []
 
     async def capture_submit() -> None:
@@ -173,16 +284,12 @@ async def test_execute_routes_tool_call_submit_to_callback() -> None:
 
 
 async def test_execute_routes_tool_call_grade_to_callback_in_verifier_phase() -> None:
-    """A tool_call event for grade fires the grade callback in verifier phase."""
-    events: list[dict[str, Any]] = [
-        {
-            "type": "tool_call",
-            "tool_name": "grade",
-            "args": {"req_id": "R-01", "grade": "A", "grade_reason": "Excellent"},
-        },
-        {"type": "complete", "status": "completed"},
+    """An item/tool/call for grade fires the grade callback in verifier phase."""
+    notifications = [
+        _tool_call_request("grade", {"req_id": "R-01", "grade": "A", "grade_reason": "Excellent"}),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     grades: list[tuple[str, str, str | None]] = []
 
     async def capture_grade(req_id: str, grade: str, reason: str | None) -> None:
@@ -199,19 +306,18 @@ async def test_execute_routes_tool_call_grade_to_callback_in_verifier_phase() ->
 
 
 async def test_execute_silently_drops_disallowed_tool_call_events() -> None:
-    """Disallowed tool_call events are silently dropped; execution continues."""
-    events: list[dict[str, Any]] = [
-        {"type": "tool_call", "tool_name": "bash", "args": {"command": "echo hi"}},
-        {"type": "tool_call", "tool_name": "submit", "args": {}},
-        {"type": "complete", "status": "completed"},
+    """Disallowed item/tool/call events respond with failure; execution continues."""
+    notifications = [
+        _tool_call_request("bash", {"command": "echo hi"}, 10),
+        _tool_call_request("submit", {}, 11),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     submitted: list[bool] = []
 
     async def capture_submit() -> None:
         submitted.append(True)
 
-    # Should not raise despite disallowed tool; submit still fires
     await agent.execute(
         context=_ctx(),
         on_checklist_update=_noop_checklist,
@@ -221,22 +327,16 @@ async def test_execute_silently_drops_disallowed_tool_call_events() -> None:
     assert submitted == [True]
 
 
-# ---------------------------------------------------------------------------
-# Requirement 2: tool-call event from fake server fires the matching callback
-# ---------------------------------------------------------------------------
-
-
 async def test_execute_tool_call_event_fires_matching_callback() -> None:
-    """A tool-call event received from the fake server causes the matching callback to fire."""
-    events: list[dict[str, Any]] = [
-        {
-            "type": "tool_call",
-            "tool_name": "update_checklist",
-            "args": {"req_id": "R-02", "status": "blocked", "note": "needs clarification"},
-        },
-        {"type": "complete", "status": "completed"},
+    """A tool-call server request from the fake transport causes the matching callback to fire."""
+    notifications = [
+        _tool_call_request(
+            "update_checklist",
+            {"req_id": "R-02", "status": "blocked", "note": "needs clarification"},
+        ),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     received: list[tuple[str, ChecklistStatus, str | None]] = []
 
     async def capture(req_id: str, status: ChecklistStatus, note: str | None) -> None:
@@ -253,22 +353,14 @@ async def test_execute_tool_call_event_fires_matching_callback() -> None:
 
 
 async def test_execute_multiple_tool_call_events_fire_in_order() -> None:
-    """Multiple tool_call events from the fake server fire callbacks in event order."""
-    events: list[dict[str, Any]] = [
-        {
-            "type": "tool_call",
-            "tool_name": "update_checklist",
-            "args": {"req_id": "R-01", "status": "done"},
-        },
-        {
-            "type": "tool_call",
-            "tool_name": "update_checklist",
-            "args": {"req_id": "R-02", "status": "done"},
-        },
-        {"type": "tool_call", "tool_name": "submit", "args": {}},
-        {"type": "complete", "status": "completed"},
+    """Multiple tool-call server requests fire callbacks in arrival order."""
+    notifications = [
+        _tool_call_request("update_checklist", {"req_id": "R-01", "status": "done"}, 10),
+        _tool_call_request("update_checklist", {"req_id": "R-02", "status": "done"}, 11),
+        _tool_call_request("submit", {}, 12),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     checklist_calls: list[str] = []
     submitted: list[bool] = []
 
@@ -289,18 +381,18 @@ async def test_execute_multiple_tool_call_events_fire_in_order() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Requirement 3: ExecutionResult with output_lines from output events
+# 3. Output lines from agent message delta events
 # ---------------------------------------------------------------------------
 
 
 async def test_execute_output_event_populates_output_lines() -> None:
-    """An output event appends text to ExecutionResult.output_lines."""
-    events: list[dict[str, Any]] = [
-        {"type": "output", "text": "Step 1 complete"},
-        {"type": "output", "text": "Step 2 complete"},
-        {"type": "complete", "status": "completed"},
+    """item/agentMessage/delta notifications populate ExecutionResult.output_lines."""
+    notifications = [
+        _agent_message_delta("Step 1 complete", "m1"),
+        _agent_message_delta("Step 2 complete", "m2"),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
 
     result = await agent.execute(
         context=_ctx(),
@@ -313,12 +405,12 @@ async def test_execute_output_event_populates_output_lines() -> None:
 
 
 async def test_execute_output_event_invokes_on_output_callback() -> None:
-    """An output event also calls on_output with the text lines."""
-    events: list[dict[str, Any]] = [
-        {"type": "output", "text": "Hello from agent"},
-        {"type": "complete", "status": "completed"},
+    """item/agentMessage/delta also calls on_output with the text."""
+    notifications = [
+        _agent_message_delta("Hello from agent"),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     output_received: list[list[str]] = []
 
     async def capture_output(lines: list[str]) -> None:
@@ -335,13 +427,13 @@ async def test_execute_output_event_invokes_on_output_callback() -> None:
 
 
 async def test_execute_returns_execution_result_with_output_lines() -> None:
-    """execute() returns ExecutionResult with output_lines populated from output events."""
-    events: list[dict[str, Any]] = [
-        {"type": "output", "text": "line one"},
-        {"type": "output", "text": "line two"},
-        {"type": "complete", "status": "completed"},
+    """execute() returns ExecutionResult with output_lines from agent message deltas."""
+    notifications = [
+        _agent_message_delta("line one"),
+        _agent_message_delta("line two"),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
 
     result = await agent.execute(
         context=_ctx(),
@@ -355,12 +447,12 @@ async def test_execute_returns_execution_result_with_output_lines() -> None:
 
 
 async def test_execute_returns_execution_result_with_empty_output_when_no_output_events() -> None:
-    """ExecutionResult.output_lines is empty when there are no output events."""
-    events: list[dict[str, Any]] = [
-        {"type": "tool_call", "tool_name": "submit", "args": {}},
-        {"type": "complete", "status": "completed"},
+    """ExecutionResult.output_lines is empty when there are no agent message deltas."""
+    notifications = [
+        _tool_call_request("submit", {}),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
 
     result = await agent.execute(
         context=_ctx(),
@@ -373,14 +465,15 @@ async def test_execute_returns_execution_result_with_empty_output_when_no_output
     assert result.output_lines == []
 
 
-async def test_execute_breaks_loop_on_terminal_complete_event() -> None:
-    """execute() stops processing events after a terminal 'complete' event."""
-    events: list[dict[str, Any]] = [
-        {"type": "output", "text": "before terminal"},
-        {"type": "complete", "status": "completed"},
-        {"type": "output", "text": "after terminal — must not appear"},
+async def test_execute_breaks_loop_on_turn_completed() -> None:
+    """execute() stops processing after turn/completed; subsequent notifications are ignored."""
+    notifications = [
+        _agent_message_delta("before terminal"),
+        _turn_completed(),
+        # These must not appear:
+        _agent_message_delta("after terminal — must not appear"),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
 
     result = await agent.execute(
         context=_ctx(),
@@ -393,19 +486,15 @@ async def test_execute_breaks_loop_on_terminal_complete_event() -> None:
 
 
 async def test_execute_mixed_events_produces_correct_output_and_callbacks() -> None:
-    """Mixed tool_call and output events are all processed correctly."""
-    events: list[dict[str, Any]] = [
-        {"type": "output", "text": "starting work"},
-        {
-            "type": "tool_call",
-            "tool_name": "update_checklist",
-            "args": {"req_id": "R-01", "status": "done"},
-        },
-        {"type": "output", "text": "work complete"},
-        {"type": "tool_call", "tool_name": "submit", "args": {}},
-        {"type": "complete", "status": "completed"},
+    """Mixed tool-call and output notifications are all processed correctly."""
+    notifications = [
+        _agent_message_delta("starting work"),
+        _tool_call_request("update_checklist", {"req_id": "R-01", "status": "done"}, 10),
+        _agent_message_delta("work complete"),
+        _tool_call_request("submit", {}, 11),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     checklist_calls: list[str] = []
     submitted: list[bool] = []
 
@@ -427,32 +516,13 @@ async def test_execute_mixed_events_produces_correct_output_and_callbacks() -> N
 
 
 # ---------------------------------------------------------------------------
-# Required: test_execute_posts_to_sessions_endpoint
+# 4. Handshake messages
 # ---------------------------------------------------------------------------
 
 
-class _CapturingCodexTransport(_FakeCodexTransport):
-    """Fake transport that also stores full httpx.Request objects for inspection."""
-
-    def __init__(
-        self,
-        events: list[dict[str, Any]],
-        session_id: str = "fake-session-001",
-    ) -> None:
-        super().__init__(events, session_id)
-        self.captured_requests: list[httpx.Request] = []
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        self.captured_requests.append(request)
-        return await super().handle_async_request(request)
-
-
 async def test_execute_posts_to_sessions_endpoint() -> None:
-    """execute() POSTs to /sessions with correct Content-Type header and non-empty body."""
-    events: list[dict[str, Any]] = [{"type": "complete", "status": "completed"}]
-    transport = _CapturingCodexTransport(events)
-    client = httpx.AsyncClient(transport=transport)
-    agent = CodexServerAgent(_http_client=client)
+    """execute() sends a thread/start message with a non-empty userMessage in turn/start."""
+    agent, transport = _make_agent([_turn_completed()])
 
     await agent.execute(
         context=_ctx(),
@@ -460,35 +530,23 @@ async def test_execute_posts_to_sessions_endpoint() -> None:
         on_submit=_noop_submit,
     )
 
-    session_posts = [
-        r
-        for r in transport.captured_requests
-        if r.method == "POST" and r.url.path.endswith("/sessions")
-    ]
-    assert session_posts, "No POST /sessions request was made"
-
-    post_req = session_posts[0]
-    content_type = post_req.headers.get("content-type", "")
-    assert "application/json" in content_type, f"Expected application/json, got {content_type!r}"
-    assert len(post_req.content) > 0, "POST /sessions body was empty"
-
-
-# ---------------------------------------------------------------------------
-# Required: test_execute_routes_update_checklist_tool_call
-# ---------------------------------------------------------------------------
+    # thread/start must be sent with cwd and approvalPolicy
+    thread_starts = [m for m in transport.sent if m.get("method") == "thread/start"]
+    assert thread_starts, "No thread/start message was sent"
+    params = thread_starts[0].get("params", {})
+    assert params.get("approvalPolicy") == "never"
+    assert params.get("cwd") == "/tmp/transport-test"
 
 
 async def test_execute_routes_update_checklist_tool_call() -> None:
-    """Fake server returns an update_checklist tool-call event; on_checklist_update is invoked."""
-    events: list[dict[str, Any]] = [
-        {
-            "type": "tool_call",
-            "tool_name": "update_checklist",
-            "args": {"req_id": "R-01", "status": "done", "note": "requirement met"},
-        },
-        {"type": "complete", "status": "completed"},
+    """Fake transport returns an update_checklist item/tool/call; on_checklist_update is invoked."""
+    notifications = [
+        _tool_call_request(
+            "update_checklist", {"req_id": "R-01", "status": "done", "note": "requirement met"}
+        ),
+        _turn_completed(),
     ]
-    agent, _ = _make_agent(events)
+    agent, _ = _make_agent(notifications)
     received: list[tuple[str, ChecklistStatus, str | None]] = []
 
     async def capture(req_id: str, status: ChecklistStatus, note: str | None) -> None:
@@ -508,22 +566,14 @@ async def test_execute_routes_update_checklist_tool_call() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Required: test_execute_raises_agent_not_available_on_connect_error
+# 5. Error paths
 # ---------------------------------------------------------------------------
 
 
-class _ConnectErrorTransport(httpx.AsyncBaseTransport):
-    """Transport that always raises httpx.ConnectError to simulate an unreachable server."""
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("Connection refused")
-
-
-async def test_execute_raises_agent_not_available_on_connect_error() -> None:
-    """When the Codex server is unreachable, execute() raises AgentNotAvailableError."""
-    transport = _ConnectErrorTransport()
-    client = httpx.AsyncClient(transport=transport)
-    agent = CodexServerAgent(_http_client=client)
+async def test_execute_raises_agent_not_available_on_transport_failure() -> None:
+    """When the transport raises OSError on send, execute() raises AgentNotAvailableError."""
+    transport = _FailingStdioTransport()
+    agent = CodexServerAgent(api_key=None, _transport=transport, _environ={})
 
     with pytest.raises(AgentNotAvailableError):
         await agent.execute(

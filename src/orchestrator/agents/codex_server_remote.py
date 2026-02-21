@@ -1,11 +1,19 @@
 """Codex Server agent — remote bearer-authenticated variant.
 
 Implements ``CodexServerRemoteAgent`` which connects to a pre-existing remote
-``codex app-server`` instance over HTTPS using a bearer token for
+``codex app-server`` instance over WebSocket with a bearer token for
 authentication.  Shared helpers for prompt assembly, tool allow-list
 enforcement, and output normalization are imported from
 ``codex_server_common`` — the same module used by the local variant
 (``codex_server``).
+
+Protocol summary (see docs/codex-server-transport/api-contract.md §5):
+  - Remote variant connects via WebSocket (``wss://`` or ``ws://``).
+  - Bearer token is sent in the WebSocket upgrade ``Authorization`` header.
+  - No ``account/login/start`` step (auth is in the handshake).
+  - ``initialize`` handshake is required before any other request.
+  - Otherwise identical JSON-RPC protocol: ``initialize`` → ``thread/start``
+    → ``turn/start`` → notification stream → ``turn/completed``.
 
 ## Token resolution (deterministic precedence)
 
@@ -19,32 +27,32 @@ Tokens are resolved in the following order at *construction* time:
 
 If none of the above yields a non-empty string, ``AgentConfigError`` is
 raised immediately — no network I/O is performed.
-
-## Integration contract
-
-Integration contract reference: docs/codex-server/context/contract-matrix.md
-  - §2: Remote variant uses bearer-authenticated HTTPS transport.
-  - §4: Tool allow-list strictly enforced — only allow-listed tools are
-        passed to the Codex session.
-  - §3: Both REST and MCP callback channels are supported.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
 from typing import Any
 
-import httpx
+import websockets
+import websockets.exceptions
 
 from orchestrator.agents.codex_server_common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
+    JsonRpcTransport,
     build_codex_server_prompt,
+    build_dynamic_tool_call_response,
+    build_dynamic_tool_specs,
     build_execution_result,
-    create_session_payload,
-    extract_events,
+    build_jsonrpc_request,
+    extract_agent_message_delta,
+    extract_dynamic_tool_call,
+    extract_tool_call_from_notification,
+    is_terminal_notification,
     normalize_codex_metrics,
     normalize_codex_output_lines,
     route_tool_call,
@@ -133,60 +141,51 @@ def map_transport_error(
     agent_type: str,
     duration_ms: int,
 ) -> AgentError:
-    """Map transport-layer exceptions to typed orchestrator agent errors.
+    """Map WebSocket/transport exceptions to typed orchestrator agent errors.
 
-    Converts httpx exceptions and other transport failures to the appropriate
-    orchestrator error type with redacted diagnostics.  Raw exception text,
-    bearer tokens, and URLs with embedded credentials are never included in
-    the returned error's message.
+    Converts WebSocket and OS-level exceptions to the appropriate orchestrator
+    error type with redacted diagnostics.  Raw exception text, bearer tokens,
+    and credentials are never included in the returned error's message.
 
     Mapping:
-    - ``httpx.TimeoutException``          → ``AgentTimeoutError``
-    - ``httpx.ConnectError``              → ``AgentNotAvailableError`` (endpoint unreachable)
-    - ``httpx.HTTPStatusError`` 401       → ``AgentExecutionError`` (token-safe message)
-    - ``httpx.HTTPStatusError`` 403       → ``AgentExecutionError`` (token-safe message)
-    - ``httpx.HTTPStatusError`` other     → ``AgentExecutionError`` (status code only)
-    - Any other ``Exception``             → ``AgentExecutionError`` (generic, secret-safe)
+    - ``OSError`` (connection refused, DNS fail)  → ``AgentNotAvailableError``
+    - ``websockets.exceptions.InvalidHandshake``  → ``AgentExecutionError``
+      (includes 401/403 — no token in message)
+    - ``websockets.exceptions.ConnectionClosed``  → ``AgentNotAvailableError``
+    - ``asyncio.TimeoutError``                    → ``AgentTimeoutError``
+    - Any other ``Exception``                     → ``AgentExecutionError``
 
     Args:
         exc: The exception to map.
         agent_type: Agent type string for the error constructor.
-        duration_ms: Elapsed time in milliseconds for inclusion in the message.
+        duration_ms: Elapsed time in milliseconds.
 
     Returns:
         A typed ``AgentError`` subclass ready to raise.
     """
-    if isinstance(exc, httpx.TimeoutException):
+    if isinstance(exc, asyncio.TimeoutError):
         return AgentTimeoutError(
             agent_type,
-            f"HTTP request timed out after {duration_ms}ms",
+            f"WebSocket connection timed out after {duration_ms}ms",
         )
 
-    if isinstance(exc, httpx.ConnectError):
+    if isinstance(exc, OSError):
         return AgentNotAvailableError(
             agent_type,
             "Remote endpoint is unreachable",
         )
 
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        if status == 401:
-            # 401 Unauthorized — bearer token is invalid or expired.
-            # Do NOT include the token value or raw response body in the message.
-            return AgentExecutionError(
-                agent_type,
-                "401 Unauthorized: bearer token is invalid or expired",
-            )
-        if status == 403:
-            # 403 Forbidden — token is valid but lacks required permissions.
-            return AgentExecutionError(
-                agent_type,
-                "403 Forbidden: bearer token lacks required permissions",
-            )
-        # Other HTTP error — include status code only (no response body).
+    if isinstance(exc, websockets.exceptions.ConnectionClosed):
+        return AgentNotAvailableError(
+            agent_type,
+            "WebSocket connection was closed unexpectedly",
+        )
+
+    if isinstance(exc, websockets.exceptions.InvalidHandshake):
+        # Includes HTTP 401/403 during WebSocket upgrade — never log the token.
         return AgentExecutionError(
             agent_type,
-            f"HTTP {status} error from remote server after {duration_ms}ms",
+            "WebSocket handshake failed; check bearer token and endpoint URL",
         )
 
     # Generic fallback — secret-safe, no raw exception text.
@@ -194,6 +193,82 @@ def map_transport_error(
         agent_type,
         f"Session failed after {duration_ms}ms",
     )
+
+
+# ---------------------------------------------------------------------------
+# WebSocket transport
+# ---------------------------------------------------------------------------
+
+
+class RealWebSocketTransport:
+    """JSON-RPC 2.0 transport backed by a WebSocket connection.
+
+    Connects to a remote ``codex app-server`` via WebSocket with optional
+    bearer authentication in the upgrade headers.
+
+    Args:
+        ws_url: WebSocket URL (``ws://`` or ``wss://``).
+        token: Optional bearer token included in the ``Authorization`` header
+            on the WebSocket upgrade request.
+    """
+
+    def __init__(self, ws_url: str, token: str | None = None) -> None:
+        self._ws_url = ws_url
+        self._token = token
+        self._ws: Any = None
+
+    async def connect(self) -> None:
+        """Establish the WebSocket connection."""
+        headers: dict[str, str] = {}
+        if self._token:
+            headers["Authorization"] = f"Bearer {self._token}"
+        self._ws = await websockets.connect(self._ws_url, additional_headers=headers)
+
+    async def send(self, message: dict[str, Any]) -> None:
+        """Send one JSON-RPC message as a WebSocket text frame."""
+        if self._ws is None:
+            raise OSError("WebSocket transport is not connected")
+        await self._ws.send(json.dumps(message))
+
+    async def recv(self) -> dict[str, Any]:
+        """Receive and parse the next WebSocket text frame as a JSON-RPC message.
+
+        Raises:
+            EOFError: If the WebSocket is closed.
+            json.JSONDecodeError: If the frame is not valid JSON.
+        """
+        if self._ws is None:
+            raise OSError("WebSocket transport is not connected")
+        raw = await self._ws.recv()
+        return json.loads(raw)  # type: ignore[arg-type]
+
+    async def close(self) -> None:
+        """Close the WebSocket connection."""
+        if self._ws is not None:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+
+# ---------------------------------------------------------------------------
+# URL normalization helper
+# ---------------------------------------------------------------------------
+
+
+def _normalize_to_ws_url(url: str) -> str:
+    """Convert an http/https URL to ws/wss for WebSocket connection.
+
+    ``https://`` → ``wss://``
+    ``http://``  → ``ws://``
+    ``ws://`` / ``wss://`` → unchanged
+    """
+    if url.startswith("https://"):
+        return "wss://" + url[len("https://") :]
+    if url.startswith("http://"):
+        return "ws://" + url[len("http://") :]
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -209,28 +284,30 @@ class CodexServerRemoteAgent:
     ``api_key`` → ``token_env_var`` env var → ``OPENAI_API_KEY`` env var.
 
     Raises ``AgentConfigError`` immediately if:
-    - ``base_url`` is missing or not a valid HTTP/HTTPS URL.
+    - ``base_url`` is missing or not a valid URL.
     - No token can be resolved from any source in the precedence chain.
 
     Per the integration contract (contract-matrix.md):
-    - Remote variant uses bearer-authenticated HTTPS transport.
+    - Remote variant uses bearer-authenticated WebSocket transport.
     - Tool allow-list is strictly enforced at the adapter layer.
     - Both REST and MCP callback channels are supported.
 
     Configuration:
-        base_url: HTTPS base URL of the remote Codex server.  Must begin
-            with ``http://`` or ``https://``.
+        base_url: URL of the remote Codex server.  Accepts ``http://``,
+            ``https://``, ``ws://``, or ``wss://``.  HTTP/HTTPS URLs are
+            normalized to WebSocket equivalents internally.
         model: Model name forwarded to the Codex server session.  Optional.
-        session_id: Optional pre-existing session ID to resume.
+        session_id: Optional pre-existing thread ID to resume.
         callback_channel: ``"rest"`` or ``"mcp"`` — determines how the
             prompt instructs the Codex agent to call back.
         api_key: Explicit bearer token.  Takes precedence over env vars.
         token_env_var: Name of the environment variable to check when
             ``api_key`` is not provided.  Defaults to
             ``CODEX_SERVER_API_KEY``.
-        retry: Maximum number of HTTP request retries on transient failure.
-            Defaults to ``3``.
-        timeout: HTTP request timeout in seconds.  Defaults to ``300.0``.
+
+    Test injection:
+        _transport: Inject a fake ``JsonRpcTransport`` to replace the real
+            WebSocket transport.  When set, no WebSocket connection is made.
     """
 
     #: v1 tool allow-list surfaced as a class attribute for inspection/testing.
@@ -244,35 +321,21 @@ class CodexServerRemoteAgent:
         callback_channel: str = "rest",
         api_key: str | None = None,
         token_env_var: str = DEFAULT_TOKEN_ENV_VAR,
-        retry: int = 3,
-        timeout: float = 300.0,
         *,
         _environ: dict[str, str] | None = None,
-        _http_client: httpx.AsyncClient | None = None,
+        _transport: JsonRpcTransport | None = None,
     ) -> None:
         # --- Config validation ---
-        if not base_url or not base_url.startswith(("http://", "https://")):
+        if not base_url or not base_url.startswith(("http://", "https://", "ws://", "wss://")):
             raise AgentConfigError(
                 AgentType.CODEX_SERVER_REMOTE.value,
-                f"base_url must be a valid HTTP or HTTPS URL, got: {base_url!r}",
+                f"base_url must be a valid HTTP, HTTPS, ws, or wss URL, got: {base_url!r}",
             )
 
         if callback_channel not in ("rest", "mcp"):
             raise AgentConfigError(
                 AgentType.CODEX_SERVER_REMOTE.value,
                 f"callback_channel must be 'rest' or 'mcp', got: {callback_channel!r}",
-            )
-
-        if retry < 0:
-            raise AgentConfigError(
-                AgentType.CODEX_SERVER_REMOTE.value,
-                f"retry must be a non-negative integer, got: {retry!r}",
-            )
-
-        if timeout <= 0:
-            raise AgentConfigError(
-                AgentType.CODEX_SERVER_REMOTE.value,
-                f"timeout must be a positive number, got: {timeout!r}",
             )
 
         # --- Token resolution ---
@@ -292,18 +355,17 @@ class CodexServerRemoteAgent:
             )
 
         self._base_url = base_url.rstrip("/")
+        self._ws_url = _normalize_to_ws_url(self._base_url)
         self._model = model
         self._session_id = session_id
         self._callback_channel = callback_channel
         self._token = resolved
         self._token_env_var = token_env_var
-        self._retry = retry
-        self._timeout = timeout
         self._cancelled = False
-        self._session_task: asyncio.Task[Any] | None = None
-        # For testing only: inject a fake client to intercept HTTP calls without
-        # a real Codex server.
-        self._http_client = _http_client
+        self._active_thread_id: str | None = None
+        self._session_task: asyncio.Task[object] | None = None
+        # For testing: inject a fake transport to replace real WebSocket.
+        self._transport = _transport
 
     # ------------------------------------------------------------------
     # Agent protocol
@@ -329,11 +391,9 @@ class CodexServerRemoteAgent:
     ) -> ExecutionResult:
         """Execute a task via a remote bearer-authenticated Codex server session.
 
-        Assembles the phase-aware prompt using ``build_codex_server_prompt``,
-        then delegates to the remote Codex server session lifecycle over HTTPS
-        with a bearer token in the ``Authorization`` header.  Callback tool
-        invocations received from the Codex server are routed to the
-        appropriate orchestrator callbacks after allow-list enforcement.
+        Connects via WebSocket (bearer token in the upgrade header), sends
+        ``thread/start`` → ``turn/start``, then reads notifications until
+        ``turn/completed``.
 
         Args:
             context: Execution context (run/task IDs, prompt, requirements,
@@ -345,8 +405,7 @@ class CodexServerRemoteAgent:
             on_output: Optional callback for streaming output lines.
             on_grade: Optional callback invoked when the Codex session calls
                 ``grade`` (verifier phase only).
-            on_agent_metadata: Optional callback for runtime metadata (e.g.
-                session ID).
+            on_agent_metadata: Optional callback for runtime metadata.
 
         Returns:
             ``ExecutionResult`` describing success, metrics, and output lines.
@@ -356,186 +415,229 @@ class CodexServerRemoteAgent:
                 execution.
             AgentNotAvailableError: If the remote Codex server cannot be
                 contacted.
-            AgentExecutionError: For any other session-level failure.
+            AgentExecutionError: For session-level failures.
         """
         if self._cancelled:
             raise AgentCancelledError(AgentType.CODEX_SERVER_REMOTE.value)
 
         start_ms = int(time.monotonic() * 1000)
         is_verifier = on_grade is not None
+        full_prompt = build_codex_server_prompt(context, is_verifier=is_verifier)
+
+        transport: JsonRpcTransport | None = self._transport
+        connected = False
 
         try:
+            if transport is None:
+                ws_transport = RealWebSocketTransport(self._ws_url, self._token)
+                try:
+                    await ws_transport.connect()
+                except OSError as exc:
+                    raise AgentNotAvailableError(
+                        AgentType.CODEX_SERVER_REMOTE.value,
+                        "Remote endpoint is unreachable",
+                    ) from exc
+                except websockets.exceptions.InvalidHandshake as exc:
+                    # Never include the token in the error message (risk R-05).
+                    raise AgentExecutionError(
+                        AgentType.CODEX_SERVER_REMOTE.value,
+                        "WebSocket handshake failed; check bearer token and endpoint URL",
+                    ) from exc
+                transport = ws_transport
+                connected = True
+
             logger.debug(
-                "CodexServerRemoteAgent: starting session — run=%s task=%s phase=%s base_url=%s",
+                "CodexServerRemoteAgent: starting session — run=%s task=%s phase=%s",
                 context.run_id,
                 context.task_id,
                 "verifier" if is_verifier else "builder",
-                self._base_url,
-            )
-
-            _full_prompt = build_codex_server_prompt(context, is_verifier=is_verifier)
-
-            # Bearer authentication header — injected on every request.
-            auth_headers = {"Authorization": f"Bearer {self._token}"}
-
-            # Use the injected test client or create a real one with the
-            # configured timeout.  The real client is closed in the finally block.
-            injected_client = self._http_client is not None
-            client: httpx.AsyncClient = self._http_client or httpx.AsyncClient(
-                timeout=self._timeout
             )
 
             output_lines: list[str] = []
+            notification_buffer: list[dict[str, Any]] = []
+            next_id = 1
 
-            try:
-                # --- Session creation: POST {base_url}/sessions ---
-                payload = create_session_payload(_full_prompt, self._model)
-                session_response = await self._request_with_retry(
-                    client,
-                    "post",
-                    f"{self._base_url}/sessions",
-                    json=payload,
-                    headers=auth_headers,
+            async def _send_and_wait(method: str, params: dict[str, Any]) -> dict[str, Any]:
+                nonlocal next_id
+                req_id = next_id
+                next_id += 1
+                await transport.send(build_jsonrpc_request(req_id, method, params))
+                while True:
+                    msg = await transport.recv()
+                    if msg.get("id") == req_id:
+                        return msg
+                    if "method" in msg and "id" not in msg:
+                        notification_buffer.append(msg)
+
+            # --- Step 0: Initialize (required JSON-RPC handshake) ---
+            # experimentalApi enables dynamicTools in thread/start.
+            await _send_and_wait(
+                "initialize",
+                {
+                    "clientInfo": {"name": "orchestrator", "version": "1.0.0"},
+                    "capabilities": {"experimentalApi": True},
+                },
+            )
+
+            # --- Step 1: Create or resume thread ---
+            model = self._model
+            thread_params: dict[str, Any] = {
+                "cwd": context.working_dir,
+                "approvalPolicy": "never",
+                "dynamicTools": build_dynamic_tool_specs(),
+            }
+            if model:
+                thread_params["model"] = model
+
+            if self._session_id:
+                # Resume an existing thread.
+                thread_resp = await _send_and_wait("thread/resume", {"threadId": self._session_id})
+            else:
+                thread_resp = await _send_and_wait("thread/start", thread_params)
+
+            if "error" in thread_resp:
+                raise AgentExecutionError(
+                    AgentType.CODEX_SERVER_REMOTE.value,
+                    "thread/start failed",
                 )
 
-                data: dict[str, Any] = session_response.json()
-                session_id: str | None = data.get("session_id") or data.get("id")
+            thread_id: str = thread_resp["result"]["thread"]["id"]
+            self._active_thread_id = thread_id
 
-                logger.debug(
-                    "CodexServerRemoteAgent: session created — session_id=%s",
-                    session_id,
+            if on_agent_metadata is not None:
+                await on_agent_metadata({"thread_id": thread_id})
+
+            logger.debug("CodexServerRemoteAgent: thread ready — thread_id=%s", thread_id)
+
+            # --- Step 2: Start turn ---
+            turn_params: dict[str, Any] = {
+                "threadId": thread_id,
+                "input": [{"type": "text", "text": full_prompt}],
+                "cwd": context.working_dir,
+                "approvalPolicy": "never",
+                "effort": "medium",
+            }
+            if model:
+                turn_params["model"] = model
+
+            turn_resp = await _send_and_wait("turn/start", turn_params)
+            if "error" in turn_resp:
+                raise AgentExecutionError(
+                    AgentType.CODEX_SERVER_REMOTE.value,
+                    "turn/start failed",
                 )
 
-                if on_agent_metadata is not None:
-                    await on_agent_metadata({"session_id": session_id})
+            # --- Step 3: Process notification stream ---
+            done = False
 
-                # --- Event polling loop ---
-                # Poll GET {base_url}/sessions/{session_id}/events until a
-                # terminal event is received or cancellation is requested.
-                terminal = False
-                while not self._cancelled and not terminal:
-                    events_response = await self._request_with_retry(
-                        client,
-                        "get",
-                        f"{self._base_url}/sessions/{session_id}/events",
-                        headers=auth_headers,
+            async def _dispatch_tool_call(tool_msg: dict[str, Any]) -> None:
+                """Respond to an ``item/tool/call`` server request and fire callbacks."""
+                tool_result = extract_dynamic_tool_call(tool_msg)
+                if tool_result is None:
+                    return
+                req_id, tool_name, tool_args = tool_result
+                try:
+                    await route_tool_call(
+                        tool_name,
+                        tool_args,
+                        on_checklist_update,
+                        on_submit,
+                        on_grade=on_grade,
+                        agent_label="CodexServerRemoteAgent",
                     )
+                    await transport.send(build_dynamic_tool_call_response(req_id, success=True))
+                except ValueError:
+                    # Disallowed tool — respond with failure to unblock the server.
+                    await transport.send(build_dynamic_tool_call_response(req_id, success=False))
 
-                    events = extract_events(events_response.json())
+            async def _process_msg(msg: dict[str, Any]) -> bool:
+                """Process one message; return True if it is a terminal notification."""
+                # Dynamic tool call request from the server (has id AND method).
+                if msg.get("method") == "item/tool/call" and "id" in msg:
+                    await _dispatch_tool_call(msg)
+                    return False
+                # Skip stray response messages (no method field).
+                if "id" in msg and "method" not in msg:
+                    return False
+                return await self._handle_notification(
+                    msg, output_lines, on_output, on_checklist_update, on_submit, on_grade
+                )
 
-                    for event in events:
-                        event_type = str(event.get("type", ""))
-
-                        if event_type == "tool_call":
-                            tool_name = str(event.get("tool_name", ""))
-                            tool_args: dict[str, Any] = event.get("args") or {}
-                            try:
-                                await route_tool_call(
-                                    tool_name,
-                                    tool_args,
-                                    on_checklist_update,
-                                    on_submit,
-                                    on_grade=on_grade,
-                                    agent_label="CodexServerRemoteAgent",
-                                )
-                            except ValueError:
-                                # Disallowed tool — already logged by
-                                # enforce_tool_allowlist inside route_tool_call.
-                                pass
-
-                        elif event_type == "output":
-                            text = str(event.get("text", ""))
-                            output_lines.append(text)
-                            if on_output is not None:
-                                await on_output([text])
-
-                        elif event_type in ("complete", "error", "cancelled"):
-                            terminal = True
-                            break
-
-                    # Yield to allow asyncio cancellation to be processed.
-                    await asyncio.sleep(0)
-
+            # First drain any notifications buffered during the request-response phase.
+            for msg in notification_buffer:
                 if self._cancelled:
                     raise AgentCancelledError(AgentType.CODEX_SERVER_REMOTE.value)
+                if await _process_msg(msg):
+                    done = True
+                    break
 
-            finally:
-                if not injected_client:
-                    await client.aclose()
+            # Then continue reading live notifications until terminal.
+            while not done and not self._cancelled:
+                msg = await transport.recv()
+                if await _process_msg(msg):
+                    done = True
 
-            duration_ms = int(time.monotonic() * 1000) - start_ms
-            return build_execution_result(output_lines, duration_ms)
+            if self._cancelled:
+                raise AgentCancelledError(AgentType.CODEX_SERVER_REMOTE.value)
 
-        except (AgentCancelledError, AgentNotAvailableError, AgentTimeoutError):
+        except (
+            AgentCancelledError,
+            AgentNotAvailableError,
+            AgentTimeoutError,
+            AgentExecutionError,
+        ):
             raise
         except asyncio.CancelledError:
-            # asyncio task cancellation is mapped to AgentCancelledError so
-            # callers receive a typed, actionable error rather than a raw
-            # CancelledError propagating out of the agent boundary.
-            logger.debug(
-                "CodexServerRemoteAgent: asyncio task cancelled — treating as AgentCancelledError"
-            )
             raise AgentCancelledError(AgentType.CODEX_SERVER_REMOTE.value)
-        except httpx.TimeoutException as exc:
-            # Bounded timeout — map to AgentTimeoutError with redacted diagnostics.
+        except OSError as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
-            logger.debug(
-                "CodexServerRemoteAgent: request timed out after %dms (timeout=%.1fs)",
-                duration_ms,
-                self._timeout,
-            )
             raise map_transport_error(
                 exc, AgentType.CODEX_SERVER_REMOTE.value, duration_ms
             ) from exc
-        except httpx.ConnectError as exc:
-            # Unreachable endpoint — map to AgentNotAvailableError.
+        except websockets.exceptions.ConnectionClosed as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
-            logger.debug(
-                "CodexServerRemoteAgent: connection error after %dms — endpoint unreachable",
-                duration_ms,
-            )
-            raise map_transport_error(
-                exc, AgentType.CODEX_SERVER_REMOTE.value, duration_ms
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            # HTTP error responses — explicit 401/403 handling is token-safe;
-            # other status codes include only the numeric code, not the body.
-            duration_ms = int(time.monotonic() * 1000) - start_ms
-            logger.debug(
-                "CodexServerRemoteAgent: HTTP %d error after %dms",
-                exc.response.status_code,
-                duration_ms,
-            )
+            logger.debug("CodexServerRemoteAgent: WebSocket closed after %dms", duration_ms)
             raise map_transport_error(
                 exc, AgentType.CODEX_SERVER_REMOTE.value, duration_ms
             ) from exc
         except Exception as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
-            # Log full exception details at debug level only — the error
-            # message surfaced to the orchestrator must NOT include the raw
-            # exception string because it may contain secrets (API keys,
-            # endpoint URLs with credentials, etc.).
             logger.debug(
                 "CodexServerRemoteAgent: session error after %dms — %s",
                 duration_ms,
                 exc,
                 exc_info=True,
             )
-            raise map_transport_error(
-                exc, AgentType.CODEX_SERVER_REMOTE.value, duration_ms
+            raise AgentExecutionError(
+                AgentType.CODEX_SERVER_REMOTE.value,
+                f"Session failed after {duration_ms}ms",
             ) from exc
+        finally:
+            if connected and transport is not None:
+                try:
+                    await transport.close()
+                except Exception:
+                    pass
+
+        duration_ms = int(time.monotonic() * 1000) - start_ms
+        return build_execution_result(output_lines, duration_ms)
 
     async def cancel(self) -> None:
-        """Request cancellation of the active Codex server session.
-
-        Sets the cancellation flag and cancels the session asyncio task if
-        one is running.  Safe to call multiple times — subsequent calls are
-        no-ops once the flag is set and the task is already cancelled or done.
-        """
+        """Request cancellation of the active Codex server session."""
         self._cancelled = True
-        if self._session_task is not None and not self._session_task.done():
-            self._session_task.cancel()
-            logger.info("CodexServerRemoteAgent: cancelled active session task")
+        task = self._session_task
+        if task is not None and not task.done():
+            task.cancel()
+        thread_id = self._active_thread_id
+        transport = self._transport
+        if thread_id is not None and transport is not None:
+            try:
+                await transport.send(
+                    build_jsonrpc_request(99, "turn/interrupt", {"threadId": thread_id})
+                )
+            except Exception:
+                pass
+        logger.info("CodexServerRemoteAgent: cancelled")
 
     # ------------------------------------------------------------------
     # Internal helpers (public for testing)
@@ -566,78 +668,6 @@ class CodexServerRemoteAgent:
             num_actions=num_actions,
         )
 
-    async def _request_with_retry(
-        self,
-        client: httpx.AsyncClient,
-        method: str,
-        url: str,
-        **kwargs: Any,
-    ) -> httpx.Response:
-        """Execute an HTTP request with retry logic for transient errors.
-
-        Retries up to ``self._retry`` times on transient failures (5xx HTTP
-        errors and connection errors).  Client errors (4xx) are not retried
-        and are re-raised immediately after calling ``raise_for_status()``.
-
-        Args:
-            client: The ``httpx.AsyncClient`` to use for the request.
-            method: HTTP method string (``"get"``, ``"post"``, etc.).
-            url: The full request URL.
-            **kwargs: Additional keyword arguments forwarded to the httpx
-                client method (e.g. ``json=``, ``headers=``).
-
-        Returns:
-            The successful ``httpx.Response``.
-
-        Raises:
-            httpx.HTTPStatusError: On a non-retryable HTTP error response.
-            httpx.ConnectError: If the endpoint is unreachable after all
-                retries are exhausted.
-            httpx.TimeoutException: If the request times out.
-        """
-        attempts = 0
-        max_attempts = self._retry + 1
-        last_exc: Exception | None = None
-
-        while attempts < max_attempts:
-            try:
-                response: httpx.Response = await getattr(client, method)(url, **kwargs)
-                response.raise_for_status()
-                return response
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code >= 500:
-                    # Transient server error — retry.
-                    last_exc = exc
-                    attempts += 1
-                    if attempts < max_attempts:
-                        logger.debug(
-                            "CodexServerRemoteAgent: HTTP %d on %s — retrying (%d/%d)",
-                            exc.response.status_code,
-                            url,
-                            attempts,
-                            self._retry,
-                        )
-                        await asyncio.sleep(0)
-                    continue
-                # 4xx client error — do not retry.
-                raise
-            except httpx.ConnectError as exc:
-                last_exc = exc
-                attempts += 1
-                if attempts < max_attempts:
-                    logger.debug(
-                        "CodexServerRemoteAgent: connection error on %s — retrying (%d/%d)",
-                        url,
-                        attempts,
-                        self._retry,
-                    )
-                    await asyncio.sleep(0)
-                continue
-
-        # All attempts exhausted — re-raise the last exception.
-        assert last_exc is not None
-        raise last_exc
-
     async def _route_tool_call(
         self,
         tool_name: str,
@@ -646,22 +676,7 @@ class CodexServerRemoteAgent:
         on_submit: SubmitCallback,
         on_grade: GradeCallback | None = None,
     ) -> None:
-        """Route an allow-listed callback tool call to the appropriate callback.
-
-        Delegates to the shared ``route_tool_call`` helper in
-        ``codex_server_common``.  Disallowed tool names raise ``ValueError``
-        (via ``enforce_tool_allowlist``).
-
-        Args:
-            tool_name: Name of the callback tool the Codex session invoked.
-            args: Tool argument dict from the Codex server event payload.
-            on_checklist_update: Bound checklist-update callback.
-            on_submit: Bound submit callback.
-            on_grade: Bound grade callback (``None`` in builder phase).
-
-        Raises:
-            ValueError: If ``tool_name`` is not on the v1 allow-list.
-        """
+        """Route an allow-listed callback tool call to the appropriate callback."""
         await route_tool_call(
             tool_name,
             args,
@@ -670,3 +685,47 @@ class CodexServerRemoteAgent:
             on_grade=on_grade,
             agent_label="CodexServerRemoteAgent",
         )
+
+    async def _handle_notification(
+        self,
+        msg: dict[str, Any],
+        output_lines: list[str],
+        on_output: LogLineCallback | None,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_grade: GradeCallback | None,
+    ) -> bool:
+        """Process one JSON-RPC notification. Returns True if terminal."""
+        terminal, status = is_terminal_notification(msg)
+        if terminal:
+            if status == "interrupted":
+                raise AgentCancelledError(AgentType.CODEX_SERVER_REMOTE.value)
+            if status in ("systemError", "failed"):
+                raise AgentExecutionError(
+                    AgentType.CODEX_SERVER_REMOTE.value,
+                    f"Codex session ended with status: {status}",
+                )
+            return True
+
+        tool_call = extract_tool_call_from_notification(msg)
+        if tool_call is not None:
+            tool_name, tool_args = tool_call
+            try:
+                await route_tool_call(
+                    tool_name,
+                    tool_args,
+                    on_checklist_update,
+                    on_submit,
+                    on_grade=on_grade,
+                    agent_label="CodexServerRemoteAgent",
+                )
+            except ValueError:
+                pass
+
+        delta = extract_agent_message_delta(msg)
+        if delta:
+            output_lines.append(delta)
+            if on_output is not None:
+                await on_output([delta])
+
+        return False

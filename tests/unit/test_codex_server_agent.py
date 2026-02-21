@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import pytest
 
@@ -44,6 +45,19 @@ async def _noop_submit() -> None:
 
 async def _noop_grade(req_id: str, grade: str, reason: str | None) -> None:
     pass
+
+
+class _FailingTransport:
+    """Fake transport that raises OSError on send — simulates process spawn failure."""
+
+    async def send(self, message: dict[str, Any]) -> None:
+        raise OSError("simulated transport failure")
+
+    async def recv(self) -> dict[str, Any]:
+        raise OSError("not connected")
+
+    async def close(self) -> None:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -114,9 +128,9 @@ async def test_execute_raises_agent_cancelled_error_if_already_cancelled() -> No
         )
 
 
-async def test_execute_raises_agent_not_available_error_transport_not_implemented() -> None:
-    """execute() raises AgentNotAvailableError until HTTP transport is wired up."""
-    agent = CodexServerAgent()
+async def test_execute_raises_agent_not_available_error_on_transport_failure() -> None:
+    """execute() raises AgentNotAvailableError when the transport raises OSError."""
+    agent = CodexServerAgent(api_key=None, _transport=_FailingTransport())
     with pytest.raises(AgentNotAvailableError):
         await agent.execute(
             context=_ctx(),
@@ -409,8 +423,8 @@ async def test_cancel_with_active_session_task_cancels_it() -> None:
 
 
 async def test_execute_startup_failure_raises_agent_not_available_error() -> None:
-    """Startup/transport failure raises AgentNotAvailableError (not generic Exception)."""
-    agent = CodexServerAgent()
+    """Transport failure raises AgentNotAvailableError (not generic Exception)."""
+    agent = CodexServerAgent(api_key=None, _transport=_FailingTransport())
     with pytest.raises(AgentNotAvailableError) as exc_info:
         await agent.execute(
             context=_ctx(),
@@ -437,7 +451,7 @@ async def test_execute_cancelled_before_start_raises_agent_cancelled_error() -> 
 
 async def test_execute_agent_not_available_error_does_not_leak_internal_details() -> None:
     """AgentNotAvailableError raised from execute() uses typed error, not raw exception."""
-    agent = CodexServerAgent()
+    agent = CodexServerAgent(api_key=None, _transport=_FailingTransport(), _environ={})
     exc: AgentNotAvailableError | None = None
     try:
         await agent.execute(

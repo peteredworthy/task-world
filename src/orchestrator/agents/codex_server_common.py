@@ -1,8 +1,8 @@
 """Shared code for Codex Server agent variants.
 
-Contains prompt assembly, tool allow-list enforcement, and output
-normalization used by both the local (``codex_server``) and remote
-(``codex_server_remote``) Codex Server agents.
+Contains the ``JsonRpcTransport`` protocol, JSON-RPC helpers, prompt assembly,
+tool allow-list enforcement, and output normalization used by both the local
+(``codex_server``) and remote (``codex_server_remote``) Codex Server agents.
 
 Per the integration contract (docs/codex-server/context/contract-matrix.md §4):
   - The v1 experimental tool allow-list is limited to exactly four
@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import logging
 from typing import Any, cast
+
+from typing_extensions import Protocol
 
 from orchestrator.agents.types import (
     ChecklistUpdateCallback,
@@ -31,8 +33,249 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Transport protocol (implemented by both stdio and WebSocket variants)
+# ---------------------------------------------------------------------------
+
+
+class JsonRpcTransport(Protocol):
+    """Protocol for JSON-RPC 2.0 message transport.
+
+    Implemented by ``RealStdioTransport`` (local subprocess) and
+    ``RealWebSocketTransport`` (remote WebSocket).  Fake implementations
+    are used in tests via dependency injection — no mocking required.
+    """
+
+    async def send(self, message: dict[str, Any]) -> None:
+        """Write one JSON-RPC message to the transport."""
+        ...
+
+    async def recv(self) -> dict[str, Any]:
+        """Read and return the next JSON-RPC message from the transport.
+
+        Raises:
+            EOFError: If the connection has been closed by the remote side.
+            OSError: On low-level transport failure.
+        """
+        ...
+
+    async def close(self) -> None:
+        """Close the transport and release resources."""
+        ...
+
+
+# ---------------------------------------------------------------------------
+# JSON-RPC helpers (pure functions)
+# ---------------------------------------------------------------------------
+
+
+def build_jsonrpc_request(
+    req_id: int,
+    method: str,
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Build a JSON-RPC 2.0 request dict.
+
+    Args:
+        req_id: Integer request identifier; matched to the response ``id``.
+        method: JSON-RPC method name (e.g. ``"thread/start"``).
+        params: Method parameters dict.
+
+    Returns:
+        A JSON-RPC 2.0 request dict ready to send over the transport.
+    """
+    return {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
+
+
+def extract_tool_call_from_notification(
+    notification: dict[str, Any],
+) -> tuple[str, dict[str, Any]] | None:
+    """Extract ``(tool_name, args)`` from an ``item/started`` mcpToolCall notification.
+
+    Handles the v2 field names (``tool``, ``arguments``) used by the current
+    codex app-server, with fallback to v1 field names (``toolName``, ``input``).
+
+    Returns the tool name and input arguments when the notification is an
+    ``item/started`` event for an MCP tool call.  Returns ``None`` for all
+    other notification types.
+
+    Args:
+        notification: A parsed JSON-RPC notification dict.
+
+    Returns:
+        ``(tool_name, args)`` tuple if the notification carries an mcpToolCall,
+        otherwise ``None``.
+    """
+    method = notification.get("method", "")
+    if method not in ("item/started", "item/completed"):
+        return None
+    params = notification.get("params", {})
+    item: dict[str, Any] = params.get("item", {})
+    if item.get("type") != "mcpToolCall":
+        return None
+    # v2: "tool" field; v1 fallback: "toolName"
+    tool_name = str(item.get("tool") or item.get("toolName", ""))
+    # v2: "arguments" field; v1 fallback: "input"
+    tool_args: dict[str, Any] = item.get("arguments") or item.get("input") or {}
+    return (tool_name, tool_args)
+
+
+def extract_dynamic_tool_call(
+    message: dict[str, Any],
+) -> tuple[int, str, dict[str, Any]] | None:
+    """Extract ``(req_id, tool_name, args)`` from an ``item/tool/call`` server request.
+
+    The ``item/tool/call`` method is used by codex app-server to invoke dynamic
+    tools registered in ``thread/start``.  Unlike notifications, this message
+    carries an ``id`` field that the client must echo back in the response.
+
+    Args:
+        message: A parsed JSON-RPC message dict.
+
+    Returns:
+        ``(req_id, tool_name, args)`` tuple if the message is an ``item/tool/call``
+        server request, otherwise ``None``.
+    """
+    if message.get("method") != "item/tool/call":
+        return None
+    req_id = message.get("id")
+    if req_id is None:
+        return None
+    params = message.get("params", {})
+    tool_name = str(params.get("tool", ""))
+    tool_args: dict[str, Any] = params.get("arguments") or {}
+    return (int(req_id), tool_name, tool_args)
+
+
+def build_dynamic_tool_call_response(req_id: int, success: bool = True) -> dict[str, Any]:
+    """Build the JSON-RPC response for an ``item/tool/call`` server request.
+
+    Args:
+        req_id: The request ID from the server's ``item/tool/call`` message.
+        success: Whether the tool call succeeded.
+
+    Returns:
+        A JSON-RPC 2.0 response dict to send back to the server.
+    """
+    text = "Tool executed successfully." if success else "Tool execution failed."
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {
+            "success": success,
+            "contentItems": [{"type": "inputText", "text": text}],
+        },
+    }
+
+
+def build_dynamic_tool_specs() -> list[dict[str, Any]]:
+    """Return the ``dynamicTools`` list for ``thread/start`` params.
+
+    These are the v1 orchestrator callback tools registered with the
+    codex app-server session so the agent can invoke them.
+
+    Requires ``experimentalApi: true`` in the ``initialize`` capabilities.
+
+    Returns:
+        List of tool spec dicts suitable for ``thread/start.dynamicTools``.
+    """
+    return [
+        {
+            "name": "update_checklist",
+            "description": "Mark a requirement as done, blocked, or not_applicable.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["req_id", "status"],
+                "properties": {
+                    "req_id": {"type": "string", "description": "Requirement ID (e.g. 'R-01')"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["done", "blocked", "not_applicable"],
+                    },
+                    "note": {"type": "string", "description": "Optional explanation"},
+                },
+            },
+        },
+        {
+            "name": "grade",
+            "description": "Set a grade on a requirement (verifier phase only).",
+            "inputSchema": {
+                "type": "object",
+                "required": ["req_id", "grade"],
+                "properties": {
+                    "req_id": {"type": "string"},
+                    "grade": {
+                        "type": "string",
+                        "enum": ["A", "B", "C", "D", "F"],
+                    },
+                    "grade_reason": {"type": "string", "description": "Optional explanation"},
+                },
+            },
+        },
+        {
+            "name": "submit",
+            "description": "Submit work for verification or complete the verification.",
+            "inputSchema": {"type": "object", "properties": {}},
+        },
+        {
+            "name": "request_clarification",
+            "description": "Request clarification on ambiguous requirements.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["question"],
+                "properties": {
+                    "question": {"type": "string", "description": "The clarification question"},
+                },
+            },
+        },
+    ]
+
+
+def extract_agent_message_delta(notification: dict[str, Any]) -> str | None:
+    """Extract incremental agent text from an ``item/agentMessage/delta`` notification.
+
+    Supports the current protocol format where ``params.delta`` is a plain string
+    (``AgentMessageDeltaNotification`` schema).
+
+    Args:
+        notification: A parsed JSON-RPC notification dict.
+
+    Returns:
+        The delta text string, or ``None`` if the notification is not an
+        agent message delta or carries no text.
+    """
+    if notification.get("method") != "item/agentMessage/delta":
+        return None
+    params = notification.get("params", {})
+    # Current format: params.delta is a plain string.
+    delta = params.get("delta")
+    if isinstance(delta, str) and delta:
+        return delta
+    return None
+
+
+def is_terminal_notification(notification: dict[str, Any]) -> tuple[bool, str]:
+    """Return ``(True, status)`` for a ``turn/completed`` notification.
+
+    Args:
+        notification: A parsed JSON-RPC notification dict.
+
+    Returns:
+        ``(True, status_str)`` when the notification is ``turn/completed``,
+        where ``status_str`` is one of ``"completed"``, ``"interrupted"``,
+        or ``"systemError"``.  Returns ``(False, "")`` for all other messages.
+    """
+    if notification.get("method") != "turn/completed":
+        return (False, "")
+    params = notification.get("params", {})
+    turn: dict[str, Any] = params.get("turn", {})
+    status = str(turn.get("status", ""))
+    return (True, status)
+
+
+# ---------------------------------------------------------------------------
 # Tool allow-list
 # ---------------------------------------------------------------------------
+
 
 #: v1 Codex callback tool allow-list — contract-matrix.md §4.
 CODEX_SERVER_TOOL_ALLOWLIST: frozenset[str] = frozenset(
@@ -188,50 +431,6 @@ def normalize_codex_metrics(
 
 
 # ---------------------------------------------------------------------------
-# Session payload assembly
-# ---------------------------------------------------------------------------
-
-
-def create_session_payload(prompt: str, model: str | None) -> dict[str, Any]:
-    """Build the JSON payload for POST /sessions.
-
-    Args:
-        prompt: The full prompt string for the Codex server session.
-        model: Optional model name to forward to the server.
-
-    Returns:
-        A dict suitable for JSON-encoding as the POST /sessions request body.
-    """
-    payload: dict[str, Any] = {"prompt": prompt}
-    if model:
-        payload["model"] = model
-    return payload
-
-
-# ---------------------------------------------------------------------------
-# Event extraction
-# ---------------------------------------------------------------------------
-
-
-def extract_events(events_payload: Any) -> list[dict[str, Any]]:
-    """Extract the event list from a GET /sessions/{id}/events response payload.
-
-    The Codex server may return events as either a top-level JSON array or as
-    a dict with an ``"events"`` key.  This function normalises both formats.
-
-    Args:
-        events_payload: Parsed JSON from the events endpoint response.
-
-    Returns:
-        List of event dicts.  Empty list if no events are present.
-    """
-    return cast(
-        "list[dict[str, Any]]",
-        events_payload if isinstance(events_payload, list) else events_payload.get("events", []),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Execution result construction
 # ---------------------------------------------------------------------------
 
@@ -240,7 +439,7 @@ def build_execution_result(output_lines: list[str], duration_ms: int) -> Executi
     """Build an ``ExecutionResult`` from collected output lines and elapsed time.
 
     Args:
-        output_lines: Text lines collected from ``output`` events.
+        output_lines: Text lines collected from agent message delta events.
         duration_ms: Wall-clock duration of the session in milliseconds.
 
     Returns:
@@ -317,7 +516,7 @@ async def route_tool_call(
 
 
 # ---------------------------------------------------------------------------
-# Output normalization (kept below for backwards compatibility)
+# Output normalization (kept for backwards compatibility)
 # ---------------------------------------------------------------------------
 
 
@@ -361,3 +560,21 @@ def normalize_codex_output_lines(raw_output: list[Any]) -> list[str]:
         else:
             lines.append(str(item))
     return lines
+
+
+# Keep these as deprecated aliases so any remaining references don't break
+# immediately. They will be removed in a follow-up cleanup.
+def create_session_payload(prompt: str, model: str | None) -> dict[str, Any]:  # pragma: no cover
+    """Deprecated — HTTP-era session payload builder. Do not use."""
+    payload: dict[str, Any] = {"prompt": prompt}
+    if model:
+        payload["model"] = model
+    return payload
+
+
+def extract_events(events_payload: Any) -> list[dict[str, Any]]:  # pragma: no cover
+    """Deprecated — HTTP-era event extractor. Do not use."""
+    return cast(
+        "list[dict[str, Any]]",
+        events_payload if isinstance(events_payload, list) else events_payload.get("events", []),
+    )
