@@ -46,6 +46,7 @@ from orchestrator.agents.types import (
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    QuotaBucket,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType
@@ -315,6 +316,8 @@ class OpenHandsAgent:
             )
     """
 
+    name = "OpenHands (local)"
+
     def __init__(
         self,
         server_url: str = "http://localhost:3000",
@@ -377,6 +380,12 @@ class OpenHandsAgent:
                 max_balance_usd=total_granted,
                 balance_pct=None,
                 label="OpenAI credit balance",
+                breakdown=[
+                    QuotaBucket(
+                        label="OpenAI credits",
+                        remaining_usd=round(balance_usd, 2),
+                    )
+                ],
             )
         except Exception:
             return None

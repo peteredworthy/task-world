@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 
 import pytest
@@ -10,6 +11,7 @@ from orchestrator.agents.codex_server_common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     build_codex_server_prompt,
     enforce_tool_allowlist,
+    fetch_codex_models,
     is_allowed_tool,
     normalize_codex_metrics,
     normalize_codex_output_lines,
@@ -310,3 +312,212 @@ def test_normalize_metrics_values_round_trip() -> None:
     assert metrics.tokens_write == 200
     assert metrics.tokens_cache == 100
     assert metrics.num_actions == 7
+
+
+# ---------------------------------------------------------------------------
+# fetch_codex_models
+# ---------------------------------------------------------------------------
+
+
+def _make_jsonl(*objs: dict) -> str:
+    """Build a JSONL string from one or more dicts."""
+    return "".join(json.dumps(o) + "\n" for o in objs)
+
+
+def test_fetch_codex_models_returns_empty_when_codex_not_installed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fetch_codex_models() returns [] when codex binary is not in PATH."""
+    monkeypatch.setattr("orchestrator.agents.codex_server_common.shutil.which", lambda name: None)
+    result = fetch_codex_models()
+    assert result == []
+
+
+def test_fetch_codex_models_returns_model_ids_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fetch_codex_models() extracts visible model IDs from a model/list response."""
+
+    response_lines = _make_jsonl(
+        # Noise before the response for id=2 (e.g. initialize response).
+        {"jsonrpc": "2.0", "id": 1, "result": {}},
+        # model/list response.
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "models": [
+                    {"id": "codex-1", "hidden": False},
+                    {"id": "codex-mini", "hidden": False},
+                ]
+            },
+        },
+    )
+
+    class _FakeProc:
+        stdin = io.StringIO()
+        stdout = io.StringIO(response_lines)
+        returncode = 0
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+    )
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common._sp.Popen",
+        lambda *a, **kw: _FakeProc(),
+    )
+
+    result = fetch_codex_models()
+    assert result == ["codex-1", "codex-mini"]
+
+
+def test_fetch_codex_models_all_hidden_models_returns_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When every model is hidden, fetch_codex_models() returns all of them.\n\n    This is the 'all hidden → use all' fallback branch.\n"""
+    import io
+
+    response_lines = _make_jsonl(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "models": [
+                    {"id": "hidden-model-a", "hidden": True},
+                    {"id": "hidden-model-b", "hidden": True},
+                ]
+            },
+        },
+    )
+
+    class _FakeProc:
+        stdin = io.StringIO()
+        stdout = io.StringIO(response_lines)
+        returncode = 0
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+    )
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common._sp.Popen",
+        lambda *a, **kw: _FakeProc(),
+    )
+
+    result = fetch_codex_models()
+    assert result == ["hidden-model-a", "hidden-model-b"]
+
+
+def test_fetch_codex_models_filters_hidden_models(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fetch_codex_models() excludes hidden models when non-hidden ones exist."""
+    import io
+
+    response_lines = _make_jsonl(
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "models": [
+                    {"id": "visible-model", "hidden": False},
+                    {"id": "hidden-model", "hidden": True},
+                ]
+            },
+        },
+    )
+
+    class _FakeProc:
+        stdin = io.StringIO()
+        stdout = io.StringIO(response_lines)
+        returncode = 0
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+    )
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common._sp.Popen",
+        lambda *a, **kw: _FakeProc(),
+    )
+
+    result = fetch_codex_models()
+    assert result == ["visible-model"]
+    assert "hidden-model" not in result
+
+
+def test_fetch_codex_models_empty_models_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fetch_codex_models() returns [] when models list is empty."""
+    import io
+
+    response_lines = _make_jsonl(
+        {"jsonrpc": "2.0", "id": 2, "result": {"models": []}},
+    )
+
+    class _FakeProc:
+        stdin = io.StringIO()
+        stdout = io.StringIO(response_lines)
+        returncode = 0
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def kill(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+    )
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common._sp.Popen",
+        lambda *a, **kw: _FakeProc(),
+    )
+
+    result = fetch_codex_models()
+    assert result == []
+
+
+def test_fetch_codex_models_returns_empty_on_subprocess_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fetch_codex_models() returns [] (not raises) when Popen fails."""
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+    )
+    monkeypatch.setattr(
+        "orchestrator.agents.codex_server_common._sp.Popen",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("spawn failed")),
+    )
+
+    result = fetch_codex_models()
+    assert result == []

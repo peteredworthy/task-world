@@ -15,7 +15,7 @@ import logging
 import os
 import shutil
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from orchestrator.agents.errors import (
     AgentCancelledError,
@@ -27,12 +27,14 @@ from orchestrator.agents.nudger import NudgeAction, Nudger, NudgerConfig, TimePr
 from orchestrator.agents.types import (
     AgentInfo,
     AgentMetadataCallback,
+    AgentQuota,
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    QuotaBucket,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType
@@ -469,3 +471,156 @@ class CLIAgent:
         self._cancelled = True
         if self._process is not None:
             self._process.terminate()
+
+
+class ClaudeCliQuotaAgent:
+    """Quota fetcher for the Claude CLI, authenticated via macOS keychain.
+
+    Reads the OAuth access token stored by ``claude auth login`` in the
+    macOS keychain (service name ``"Claude Code-credentials"``), then calls
+    the internal Anthropic usage API to get per-bucket utilisation figures.
+
+    The ``name`` must match the ``AgentOption.name`` emitted by
+    ``ToolDetector._detect_cli_tools()`` for the ``claude`` binary.
+    """
+
+    name = "claude"
+
+    def get_quota(self) -> AgentQuota | None:
+        """Fetch quota from the Anthropic OAuth usage API.
+
+        Returns ``None`` if the CLI is not installed, the keychain entry is
+        missing (e.g. non-macOS platforms or not logged in), or the API call
+        fails.
+        """
+        import json as _json
+        import subprocess as _sp
+        import sys as _sys
+
+        if shutil.which("claude") is None:
+            return None
+
+        # Keychain access is macOS-only
+        if _sys.platform != "darwin" or shutil.which("security") is None:
+            return None
+
+        # Retrieve the OAuth access token from the macOS keychain
+        try:
+            result = _sp.run(
+                [
+                    "security",
+                    "find-generic-password",
+                    "-s",
+                    "Claude Code-credentials",
+                    "-g",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode != 0:
+                return None
+
+            # Password appears in stderr as: password: "...json..."
+            combined = result.stdout + result.stderr
+            password_line = next(
+                (line for line in combined.splitlines() if line.startswith("password:")),
+                None,
+            )
+            if not password_line:
+                return None
+
+            # Strip leading 'password: "' and trailing '"'
+            raw_json = password_line[len('password: "') : -1]
+            creds = _json.loads(raw_json)
+            token: str | None = creds.get("claudeAiOauth", {}).get("accessToken")
+            if not token:
+                return None
+        except Exception:
+            return None
+
+        # Call the internal Anthropic OAuth usage API
+        try:
+            import httpx as _httpx
+
+            resp = _httpx.get(
+                "https://api.anthropic.com/api/oauth/usage",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "anthropic-beta": "oauth-2025-04-20",
+                },
+                timeout=5.0,
+            )
+            resp.raise_for_status()
+            data: dict[str, Any] = resp.json()
+        except Exception:
+            return None
+
+        # --- Parse the response ---
+        five_hour: dict[str, Any] = data.get("five_hour") or {}
+        seven_day: dict[str, Any] = data.get("seven_day") or {}
+        seven_day_sonnet: dict[str, Any] = data.get("seven_day_sonnet") or {}
+        extra: dict[str, Any] = data.get("extra_usage") or {}
+
+        week_used_pct = float(seven_day.get("utilization", 0))
+        week_remaining_pct = 100.0 - week_used_pct
+        session_used_pct = float(five_hour.get("utilization", 0))
+        session_remaining_pct = 100.0 - session_used_pct
+
+        # Determine resets date for the weekly bucket (for label only)
+        week_resets_at: str | None = seven_day.get("resets_at")
+        resets_label = ""
+        if week_resets_at:
+            try:
+                dt = datetime.fromisoformat(week_resets_at.replace("Z", "+00:00"))
+                resets_label = f"resets {dt.strftime('%b %d')}"
+            except Exception:
+                pass
+
+        # Build compact label
+        label_parts = [f"Claude Max — 7d: {week_remaining_pct:.0f}%"]
+        label_parts.append(f"session: {session_remaining_pct:.0f}%")
+        if seven_day_sonnet:
+            sonnet_used_pct = float(seven_day_sonnet.get("utilization", 0))
+            label_parts.append(f"sonnet: {100.0 - sonnet_used_pct:.0f}%")
+        if resets_label:
+            label_parts.append(resets_label)
+
+        # Build structured breakdown for expanded sidebar view
+        buckets: list[QuotaBucket] = [
+            QuotaBucket(
+                label="7-day weekly",
+                remaining_pct=week_remaining_pct,
+                resets_at=seven_day.get("resets_at"),
+            ),
+            QuotaBucket(
+                label="5-hour session",
+                remaining_pct=session_remaining_pct,
+                resets_at=five_hour.get("resets_at"),
+            ),
+        ]
+        if seven_day_sonnet:
+            sonnet_used_pct = float(seven_day_sonnet.get("utilization", 0))
+            buckets.append(
+                QuotaBucket(
+                    label="Sonnet weekly",
+                    remaining_pct=100.0 - sonnet_used_pct,
+                    resets_at=seven_day_sonnet.get("resets_at"),
+                )
+            )
+        if extra.get("is_enabled"):
+            extra_limit = float(extra.get("monthly_limit", 0)) / 100  # cents → USD
+            extra_used = float(extra.get("used_credits", 0)) / 100
+            extra_remaining = round(extra_limit - extra_used, 2)
+            buckets.append(
+                QuotaBucket(
+                    label="Extra usage",
+                    remaining_usd=extra_remaining,
+                )
+            )
+
+        return AgentQuota(
+            balance_pct=week_remaining_pct,
+            label=" · ".join(label_parts),
+            breakdown=buckets,
+        )

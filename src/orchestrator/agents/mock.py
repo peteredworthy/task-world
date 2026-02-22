@@ -3,8 +3,11 @@
 from dataclasses import dataclass, field
 
 from orchestrator.agents.errors import AgentCancelledError, AgentExecutionError
+from orchestrator.agents.quota import QuotaFetcher
 from orchestrator.agents.types import (
     AgentInfo,
+    AgentMetadataCallback,
+    AgentQuota,
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionMetrics,
@@ -59,6 +62,10 @@ class MockAgent:
             version="1.0.0",
         )
 
+    def get_quota(self, fetcher: QuotaFetcher | None = None) -> AgentQuota | None:
+        """Mock agents do not report quota."""
+        return None
+
     async def execute(
         self,
         context: ExecutionContext,
@@ -66,6 +73,7 @@ class MockAgent:
         on_submit: SubmitCallback,
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
     ) -> ExecutionResult:
         """Execute mock agent behavior."""
         if self._behavior.should_fail:

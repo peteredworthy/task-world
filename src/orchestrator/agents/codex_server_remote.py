@@ -312,6 +312,9 @@ class CodexServerRemoteAgent:
             WebSocket transport.  When set, no WebSocket connection is made.
     """
 
+    #: Matches AgentOption.name produced by ToolDetector._detect_codex_server_remote().
+    name = "Codex Server Remote"
+
     #: v1 tool allow-list surfaced as a class attribute for inspection/testing.
     TOOL_ALLOWLIST: frozenset[str] = CODEX_SERVER_TOOL_ALLOWLIST
 

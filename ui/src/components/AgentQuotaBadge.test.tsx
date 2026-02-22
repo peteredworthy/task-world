@@ -10,6 +10,7 @@ function makeQuota(overrides: Partial<AgentQuota> = {}): AgentQuota {
     max_balance_usd: null,
     label: 'Test quota',
     supports_quota: true,
+    breakdown: null,
     ...overrides,
   };
 }

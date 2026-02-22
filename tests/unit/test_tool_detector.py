@@ -174,7 +174,13 @@ async def test_detect_codex_server_model_field_present() -> None:
     assert "model" in field_names
 
     model_field = next(f for f in cs.config_schema if f.name == "model")
-    assert model_field.field_type == "string"
+    # When codex is installed and models are discoverable the field is 'select';
+    # otherwise it falls back to 'string'. Both are valid.
+    assert model_field.field_type in ("string", "select")
+    if model_field.field_type == "select":
+        assert model_field.options is not None
+        assert len(model_field.options) > 0
+        assert model_field.default == model_field.options[0]
 
 
 async def test_detect_codex_server_remote_model_field_present() -> None:

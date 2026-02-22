@@ -9,12 +9,20 @@ export interface AgentConfigField {
   options: string[] | null;
 }
 
+export interface QuotaBucket {
+  label: string;
+  remaining_pct: number | null;
+  remaining_usd: number | null;
+  resets_at: string | null;
+}
+
 export interface AgentQuota {
   balance_usd: number | null;
   balance_pct: number | null;
   max_balance_usd: number | null;
   label: string;
   supports_quota: boolean;
+  breakdown: QuotaBucket[] | null;
 }
 
 export interface AgentOption {
