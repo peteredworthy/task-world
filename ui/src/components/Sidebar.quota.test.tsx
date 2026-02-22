@@ -1,9 +1,10 @@
 import { afterEach, describe, it, expect } from 'vitest';
 import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
-import type { AgentOption, AgentQuota } from '../types/agents';
+import type { AgentOption, AgentQuota, QuotaBucket } from '../types/agents';
 
 afterEach(() => {
   cleanup();
@@ -16,6 +17,7 @@ function makeQuota(overrides: Partial<AgentQuota> = {}): AgentQuota {
     max_balance_usd: 100.00,
     label: 'Test quota',
     supports_quota: true,
+    breakdown: null,
     ...overrides,
   };
 }
@@ -130,6 +132,56 @@ describe('Sidebar quota section', () => {
 
     expect(screen.getByText('Available Agent')).toBeInTheDocument();
     expect(screen.queryByText('Unavailable Agent')).not.toBeInTheDocument();
+  });
+
+  it('clicking an agent with breakdown expands and shows bucket details', async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    const breakdown: QuotaBucket[] = [
+      { label: '7-day weekly', remaining_pct: 39, remaining_usd: null, resets_at: '2026-02-22T19:00:00+00:00' },
+      { label: '5-hour session', remaining_pct: 68, remaining_usd: null, resets_at: null },
+    ];
+    queryClient.setQueryData<AgentOption[]>(['agents'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Claude',
+        quota: makeQuota({ balance_pct: 39, balance_usd: null, breakdown }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    // Bucket labels hidden before click
+    expect(screen.queryByText('7-day weekly')).not.toBeInTheDocument();
+    expect(screen.queryByText('5-hour session')).not.toBeInTheDocument();
+
+    // Click the agent row to expand
+    await user.click(screen.getByText('Claude'));
+
+    // Bucket labels are now visible
+    expect(screen.getByText('7-day weekly')).toBeInTheDocument();
+    expect(screen.getByText('5-hour session')).toBeInTheDocument();
+
+    // Click again to collapse
+    await user.click(screen.getByText('Claude'));
+    expect(screen.queryByText('7-day weekly')).not.toBeInTheDocument();
+  });
+
+  it('agent without breakdown has no chevron and is not expandable', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<AgentOption[]>(['agents'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Static Agent',
+        quota: makeQuota({ balance_usd: 5, breakdown: null }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    const row = screen.getByText('Static Agent').closest('button');
+    // No aria-expanded on non-expandable rows
+    expect(row).not.toHaveAttribute('aria-expanded');
   });
 
   it('has no manual refresh button in any state', () => {

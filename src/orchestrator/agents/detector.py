@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from orchestrator.agents.codex_server_common import fetch_codex_models
 from orchestrator.agents.types import AgentConfigField, AgentOption, AgentQuota
 from orchestrator.config.enums import AgentType
 
@@ -149,6 +150,39 @@ _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     ),
 ]
 
+
+def _codex_server_config_with_models(models: list[str]) -> list[AgentConfigField]:
+    """Return the Codex Server config schema with the model field populated.
+
+    When *models* is non-empty the model field is upgraded to a ``"select"``
+    with the discovered model IDs as options and the first entry as the
+    default.  When empty the field stays as a plain ``"string"`` with no
+    options, preserving the existing behaviour.
+
+    Args:
+        models: Ordered list of model ID strings returned by
+            ``fetch_codex_models()``.
+
+    Returns:
+        A new config schema list with the model field updated.
+    """
+    config: list[AgentConfigField] = []
+    for cfg_field in _CODEX_SERVER_CONFIG:
+        if cfg_field.name == "model" and models:
+            config.append(
+                cfg_field.model_copy(
+                    update={
+                        "field_type": "select",
+                        "options": models,
+                        "default": models[0],
+                    }
+                )
+            )
+        else:
+            config.append(cfg_field.model_copy())
+    return config
+
+
 _CODEX_SERVER_REMOTE_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="endpoint",
@@ -173,6 +207,43 @@ _CODEX_SERVER_REMOTE_CONFIG: list[AgentConfigField] = [
         default="rest",
         description="How the Codex server calls back to the orchestrator",
         options=["rest", "mcp"],
+    ),
+]
+
+_CLAUDE_SDK_CONFIG: list[AgentConfigField] = [
+    AgentConfigField(
+        name="model",
+        field_type="string",
+        default="claude-sonnet-4-5",
+        description="Claude model to use (e.g. claude-sonnet-4-5, claude-opus-4-5)",
+    ),
+    AgentConfigField(
+        name="api_key",
+        field_type="secret",
+        description=(
+            "Anthropic API key (optional). Falls back to ANTHROPIC_API_KEY env var, "
+            "then the Claude CLI OAuth token from the macOS keychain (`claude auth login`)."
+        ),
+    ),
+    AgentConfigField(
+        name="auth_token",
+        field_type="secret",
+        description=(
+            "Anthropic OAuth bearer token (optional). Falls back to ANTHROPIC_AUTH_TOKEN env var, "
+            "then the Claude CLI OAuth token from the macOS keychain."
+        ),
+    ),
+    AgentConfigField(
+        name="max_tokens",
+        field_type="number",
+        default=4096,
+        description="Maximum tokens per response turn",
+    ),
+    AgentConfigField(
+        name="max_iterations",
+        field_type="number",
+        default=50,
+        description="Maximum agentic loop iterations per run",
     ),
 ]
 
@@ -262,6 +333,7 @@ class ToolDetector:
         options.extend(self._detect_cli_tools())
         options.append(self._detect_codex_server())
         options.append(self._detect_codex_server_remote())
+        options.append(self._detect_claude_sdk())
         options.append(self._detect_user_managed())
 
         quotas: list[AgentQuota | None] = list(
@@ -374,12 +446,26 @@ class ToolDetector:
         )
 
     def _detect_cli_tools(self) -> list[AgentOption]:
-        """Detect CLI tools available via PATH."""
+        """Detect CLI tools available via PATH.
+
+        For the ``codex`` CLI entry, model options are fetched from the Codex
+        app server via ``fetch_codex_models()``.  When successful, the
+        ``model`` config field becomes a ``select`` with the available model
+        IDs and the first model set as the default.  When model discovery
+        fails (codex not found, server unreachable, etc.) the field stays as
+        a plain ``string`` — existing behaviour is preserved.
+        """
         results: list[AgentOption] = []
 
         for tool_name in ("claude", "codex"):
             path = shutil.which(tool_name)
-            config_schema = _cli_config_for_command(tool_name)
+            if tool_name == "codex" and path is not None:
+                # Attempt to discover available models from the Codex API server.
+                models = fetch_codex_models()
+                config_schema = self._cli_config_for_codex(tool_name, models)
+            else:
+                config_schema = _cli_config_for_command(tool_name)
+
             if path is not None:
                 results.append(
                     AgentOption(
@@ -408,14 +494,57 @@ class ToolDetector:
 
         return results
 
+    @staticmethod
+    def _cli_config_for_codex(command: str, models: list[str]) -> list[AgentConfigField]:
+        """Return the CLI config schema for ``codex`` with model options populated.
+
+        When *models* is non-empty the ``model`` field is upgraded to a
+        ``"select"`` with the discovered IDs as options and the first entry
+        as the default.  When empty the field stays as a plain
+        ``"string"`` — identical to the baseline ``_cli_config_for_command``
+        output.
+
+        Args:
+            command: The CLI command name (e.g. ``"codex"``).
+            models: Ordered list of model ID strings returned by
+                ``fetch_codex_models()``.
+
+        Returns:
+            A config schema list with the ``command`` default pinned and the
+            ``model`` field updated when models are available.
+        """
+        config: list[AgentConfigField] = []
+        for cfg_field in _CLI_SUBPROCESS_CONFIG:
+            if cfg_field.name == "command":
+                config.append(cfg_field.model_copy(update={"default": command}))
+            elif cfg_field.name == "model" and models:
+                config.append(
+                    cfg_field.model_copy(
+                        update={
+                            "field_type": "select",
+                            "options": models,
+                            "default": models[0],
+                        }
+                    )
+                )
+            else:
+                config.append(cfg_field.model_copy())
+        return config
+
     def _detect_codex_server(self) -> AgentOption:
         """Check if codex binary is available for running a local app-server process.
 
-        Availability requires the codex CLI to be installed; the detector checks
-        PATH only — it does not start or probe the server process at detection time.
+        When the binary is present, ``fetch_codex_models()`` is called to
+        discover the models the Codex API server exposes.  If successful, the
+        ``model`` config field is upgraded to a ``"select"`` with the
+        available model IDs and the first model set as the default value.
+        When model discovery fails the field stays as a plain ``"string"``.
         """
         path = shutil.which("codex")
         if path is not None:
+            # Attempt to discover available models from the Codex API server.
+            models = fetch_codex_models()
+            config_schema = _codex_server_config_with_models(models)
             return AgentOption(
                 agent_type=AgentType.CODEX_SERVER,
                 name="Codex Server",
@@ -427,7 +556,7 @@ class ToolDetector:
                 ),
                 available=True,
                 detail=f"codex binary found at {path}",
-                config_schema=_CODEX_SERVER_CONFIG,
+                config_schema=config_schema,
             )
         return AgentOption(
             agent_type=AgentType.CODEX_SERVER,
@@ -467,6 +596,43 @@ class ToolDetector:
             detail="Always available; requires endpoint and api_key configuration",
             config_schema=_CODEX_SERVER_REMOTE_CONFIG,
         )
+
+    def _detect_claude_sdk(self) -> AgentOption:
+        """Check if the anthropic SDK is importable for in-process Claude execution.
+
+        Availability requires the anthropic package to be installed.
+        """
+        try:
+            import anthropic  # noqa: F401  # pyright: ignore[reportUnusedImport]
+
+            return AgentOption(
+                agent_type=AgentType.CLAUDE_SDK,
+                name="Claude SDK",
+                title="Claude SDK Agent",
+                description=(
+                    "In-process Claude agent using the Anthropic Python SDK. "
+                    "Runs entirely locally with no subprocess required — calls "
+                    "the Anthropic API directly via the Messages API with tool use."
+                ),
+                available=True,
+                detail="anthropic SDK installed",
+                config_schema=_CLAUDE_SDK_CONFIG,
+            )
+        except ImportError:
+            return AgentOption(
+                agent_type=AgentType.CLAUDE_SDK,
+                name="Claude SDK",
+                title="Claude SDK Agent",
+                description=(
+                    "In-process Claude agent using the Anthropic Python SDK. "
+                    "Runs entirely locally with no subprocess required — calls "
+                    "the Anthropic API directly via the Messages API with tool use."
+                ),
+                available=False,
+                detail="anthropic SDK not installed",
+                install_hint="Install with: pip install anthropic",
+                config_schema=_CLAUDE_SDK_CONFIG,
+            )
 
     def _detect_user_managed(self) -> AgentOption:
         """User Managed is always available for external agent connections."""

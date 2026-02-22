@@ -52,11 +52,13 @@ from orchestrator.agents.errors import (
 from orchestrator.agents.types import (
     AgentInfo,
     AgentMetadataCallback,
+    AgentQuota,
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
+    QuotaBucket,
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType
@@ -154,6 +156,9 @@ class CodexServerAgent:
             test-only use.
     """
 
+    #: Matches AgentOption.name produced by ToolDetector._detect_codex_server().
+    name = "Codex Server"
+
     #: v1 tool allow-list surfaced as a class attribute for inspection/testing.
     TOOL_ALLOWLIST: frozenset[str] = CODEX_SERVER_TOOL_ALLOWLIST
 
@@ -192,6 +197,117 @@ class CodexServerAgent:
             name="Codex Server",
             version=None,
         )
+
+    def get_quota(self) -> AgentQuota | None:
+        """Fetch Codex rate-limit quota via ``account/rateLimits/read`` JSON-RPC.
+
+        Spawns a short-lived ``codex app-server`` subprocess, completes the
+        required ``initialize``/``initialized`` handshake, sends
+        ``account/rateLimits/read``, reads the response, then terminates the
+        process immediately.  The secondary (weekly) rate limit is used as the
+        quota signal since it reflects the sustained-use ceiling most relevant
+        to long-running orchestration sessions.
+
+        Returns ``None`` on any error (codex not installed, no auth configured,
+        subprocess timeout, malformed response, etc.).  All exceptions are
+        swallowed so the caller is never interrupted by quota-fetch failures.
+        """
+        if shutil.which("codex") is None:
+            return None
+
+        try:
+            import subprocess as _sp
+
+            proc = _sp.Popen(
+                ["codex", "app-server"],
+                stdin=_sp.PIPE,
+                stdout=_sp.PIPE,
+                stderr=_sp.DEVNULL,
+                text=True,
+                bufsize=1,
+            )
+
+            def _send(msg: dict[str, Any]) -> None:
+                assert proc.stdin is not None
+                proc.stdin.write(json.dumps(msg) + "\n")
+                proc.stdin.flush()
+
+            _send(
+                {
+                    "method": "initialize",
+                    "id": 1,
+                    "params": {
+                        "clientInfo": {
+                            "name": "orchestrator",
+                            "title": "Orchestrator",
+                            "version": "0.1.0",
+                        }
+                    },
+                }
+            )
+            _send({"method": "initialized", "params": {}})
+            _send({"method": "account/rateLimits/read", "id": 2})
+
+            result: dict[str, Any] | None = None
+            assert proc.stdout is not None
+            for _ in range(20):
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                try:
+                    obj = json.loads(line)
+                    if obj.get("id") == 2:
+                        result = obj.get("result")
+                        break
+                except json.JSONDecodeError:
+                    pass
+
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except Exception:
+                proc.kill()
+
+            if result is None:
+                return None
+
+            rate_limits = result.get("rateLimits", {})
+            secondary = rate_limits.get("secondary", {})
+            used_pct: float = float(secondary.get("usedPercent", 0))
+            plan_type: str = rate_limits.get("planType", "")
+            resets_at: int | None = secondary.get("resetsAt")
+            window_mins: int = int(secondary.get("windowDurationMins", 10080))
+            window_label = f"{window_mins // 1440}d" if window_mins >= 1440 else f"{window_mins}m"
+
+            from datetime import datetime, timezone
+
+            resets_at_iso: str | None = None
+            resets_label = ""
+            if resets_at:
+                resets_dt = datetime.fromtimestamp(resets_at, tz=timezone.utc)
+                resets_at_iso = resets_dt.isoformat()
+                resets_label = f"· resets {resets_dt.strftime('%b %d')}"
+
+            label_parts = ["Codex"]
+            if plan_type:
+                label_parts.append(f"({plan_type})")
+            label_parts.append(f"— {window_label} remaining")
+            if resets_label:
+                label_parts.append(resets_label)
+
+            return AgentQuota(
+                balance_pct=float(100 - used_pct),
+                label=" ".join(label_parts),
+                breakdown=[
+                    QuotaBucket(
+                        label=f"{window_label} window",
+                        remaining_pct=float(100 - used_pct),
+                        resets_at=resets_at_iso,
+                    )
+                ],
+            )
+        except Exception:
+            return None
 
     async def execute(
         self,

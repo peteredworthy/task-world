@@ -81,6 +81,19 @@ class AgentConfigField(BaseModel):
     options: list[str] | None = None  # for "select" type
 
 
+class QuotaBucket(BaseModel):
+    """A named quota bucket within an agent's overall quota breakdown.
+
+    Used to show per-window details (e.g. 5-hour session, 7-day weekly,
+    Sonnet-specific) in the sidebar expandable panel.
+    """
+
+    label: str
+    remaining_pct: float | None = None  # 0–100 remaining percentage
+    remaining_usd: float | None = None  # remaining dollar amount (may be negative if over limit)
+    resets_at: str | None = None  # ISO 8601 datetime string
+
+
 class AgentQuota(BaseModel):
     """Quota/balance information for an agent."""
 
@@ -89,6 +102,7 @@ class AgentQuota(BaseModel):
     max_balance_usd: float | None = None
     label: str = ""
     supports_quota: bool = True
+    breakdown: list[QuotaBucket] | None = None  # per-bucket detail for expanded view
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)

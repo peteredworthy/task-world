@@ -91,6 +91,11 @@ def test_agent_info_no_version() -> None:
     assert info.version is None
 
 
+def test_agent_type_claude_sdk_in_enum() -> None:
+    assert AgentType.CLAUDE_SDK == "claude_sdk"
+    assert AgentType.CLAUDE_SDK in AgentType
+
+
 def test_agent_option() -> None:
     opt = AgentOption(
         agent_type=AgentType.CLI_SUBPROCESS,
@@ -131,6 +136,9 @@ class _FakeAgent:
 
     async def cancel(self) -> None:
         pass
+
+    def get_quota(self, fetcher: object = None) -> None:
+        return None
 
 
 def test_agent_protocol_runtime_check() -> None:

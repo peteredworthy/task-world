@@ -233,6 +233,7 @@ class AgentExecutor:
             AgentType.OPENHANDS_DOCKER,
             AgentType.CODEX_SERVER,
             AgentType.CODEX_SERVER_REMOTE,
+            AgentType.CLAUDE_SDK,
         ):
             assert agent_type is not None  # Type narrowing for pyright
             task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, run.agent_config))
@@ -1493,6 +1494,23 @@ class AgentExecutor:
                 token_env_var=token_env_var,
             )
 
+        elif agent_type == AgentType.CLAUDE_SDK:
+            from orchestrator.agents.claude_sdk import ClaudeSDKAgent
+
+            model = agent_config.get("model", "claude-sonnet-4-5")
+            api_key = agent_config.get("api_key")
+            auth_token = agent_config.get("auth_token")
+            max_tokens = agent_config.get("max_tokens", 4096)
+            max_iterations = agent_config.get("max_iterations", 50)
+
+            return ClaudeSDKAgent(  # type: ignore[return-value]
+                model=model,
+                api_key=api_key,
+                auth_token=auth_token,
+                max_tokens=max_tokens,
+                max_iterations=max_iterations,
+            )
+
         else:
             raise AgentNotAvailableError(
                 agent_type.value if agent_type else "none",
@@ -1523,6 +1541,7 @@ class AgentExecutor:
             AgentType.OPENHANDS_DOCKER,
             AgentType.CODEX_SERVER,
             AgentType.CODEX_SERVER_REMOTE,
+            AgentType.CLAUDE_SDK,
         ):
             return False
 

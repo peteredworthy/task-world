@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import subprocess as _sp
 from typing import Any, cast
 
 from typing_extensions import Protocol
@@ -560,6 +562,100 @@ def normalize_codex_output_lines(raw_output: list[Any]) -> list[str]:
         else:
             lines.append(str(item))
     return lines
+
+
+# ---------------------------------------------------------------------------
+# Model discovery
+# ---------------------------------------------------------------------------
+
+
+def fetch_codex_models() -> list[str]:
+    """Fetch the list of available model IDs from a local Codex app server.
+
+    Spawns a short-lived ``codex app-server`` subprocess, performs the
+    required ``initialize``/``initialized`` handshake, sends ``model/list``,
+    reads the response, then terminates the process immediately.
+
+    Only non-hidden models are returned.  If all models are hidden (or the
+    ``hidden`` field is absent), all models are returned.
+
+    Returns an empty list on any error (codex not installed, no auth
+    configured, subprocess timeout, malformed response, etc.).  All
+    exceptions are swallowed so callers are never interrupted by
+    model-discovery failures.
+
+    Returns:
+        Ordered list of model ID strings, or ``[]`` on failure.
+    """
+    if shutil.which("codex") is None:
+        return []
+
+    try:
+        proc = _sp.Popen(
+            ["codex", "app-server"],
+            stdin=_sp.PIPE,
+            stdout=_sp.PIPE,
+            stderr=_sp.DEVNULL,
+            text=True,
+            bufsize=1,
+        )
+
+        def _send(msg: dict[str, Any]) -> None:
+            assert proc.stdin is not None
+            proc.stdin.write(json.dumps(msg) + "\n")
+            proc.stdin.flush()
+
+        _send(
+            {
+                "jsonrpc": "2.0",
+                "method": "initialize",
+                "id": 1,
+                "params": {
+                    "clientInfo": {
+                        "name": "orchestrator",
+                        "title": "Orchestrator",
+                        "version": "0.1.0",
+                    }
+                },
+            }
+        )
+        _send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+        _send({"jsonrpc": "2.0", "method": "model/list", "id": 2, "params": {}})
+
+        result: dict[str, Any] | None = None
+        assert proc.stdout is not None
+        for _ in range(30):
+            line = proc.stdout.readline()
+            if not line:
+                break
+            try:
+                obj = json.loads(line)
+                if obj.get("id") == 2:
+                    result = obj.get("result")
+                    break
+            except json.JSONDecodeError:
+                pass
+
+        proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            proc.kill()
+
+        if result is None:
+            return []
+
+        models: list[dict[str, Any]] = result.get("models", [])
+        if not models:
+            return []
+
+        # Prefer non-hidden models; fall back to all if every entry is hidden.
+        visible = [m for m in models if not m.get("hidden", False)]
+        chosen = visible if visible else models
+        return [str(m["id"]) for m in chosen if "id" in m]
+
+    except Exception:
+        return []
 
 
 # Keep these as deprecated aliases so any remaining references don't break

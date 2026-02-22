@@ -250,9 +250,15 @@ def create_app(
     require_ws_auth = get_require_ws_auth(auth_config)
 
     # Agent tool detector
+    from orchestrator.agents.claude_sdk import ClaudeSDKAgent
+    from orchestrator.agents.cli import ClaudeCliQuotaAgent
+    from orchestrator.agents.codex_server import CodexServerAgent
     from orchestrator.agents.detector import ToolDetector
+    from orchestrator.agents.openhands import OpenHandsAgent
 
-    app.state.tool_detector = ToolDetector()
+    app.state.tool_detector = ToolDetector(
+        agents=[OpenHandsAgent(), CodexServerAgent(), ClaudeCliQuotaAgent(), ClaudeSDKAgent()]
+    )
 
     # Shared submit event registry (singleton for cross-service notification)
     from orchestrator.workflow.service import SubmitEventRegistry
