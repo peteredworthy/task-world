@@ -916,6 +916,7 @@ async def transition_back(
 async def get_branch_status_endpoint(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    config: Annotated[GlobalConfig, Depends(get_global_config)],
 ) -> BranchStatusResponse:
     """Get branch status for a run (ahead/behind counts, merge-ability).
 
@@ -934,7 +935,13 @@ async def get_branch_status_endpoint(
     # Derive the run branch name from the worktree convention
     run_branch = f"orchestrator/run-{run.id}"
 
-    status = get_branch_status(Path(run.worktree_path), run_branch, run.source_branch)
+    # Use the worktree path if it still exists, otherwise fall back to the main repo
+    worktree_path = Path(run.worktree_path)
+    repo_path = (
+        worktree_path if worktree_path.exists() else config.paths.get_repos_path() / run.repo_name
+    )
+
+    status = get_branch_status(repo_path, run_branch, run.source_branch)
 
     return BranchStatusResponse(
         behind_count=status.behind_count,
