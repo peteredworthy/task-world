@@ -96,6 +96,63 @@ def _read_claude_cli_oauth_token() -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Model discovery
+# ---------------------------------------------------------------------------
+
+
+def fetch_claude_models(
+    api_key: str | None = None,
+    auth_token: str | None = None,
+) -> list[str]:
+    """Fetch available Claude model IDs from the Anthropic API.
+
+    Uses the same credential resolution chain as ClaudeSDKAgent:
+    1. api_key argument or ANTHROPIC_API_KEY env var
+    2. auth_token argument or ANTHROPIC_AUTH_TOKEN env var
+    3. Claude CLI OAuth token from the macOS keychain
+
+    Returns an empty list on any error (SDK not installed, no credentials,
+    API unreachable, etc.). All exceptions are swallowed so callers are
+    never interrupted by model-discovery failures.
+
+    Args:
+        api_key: Optional explicit Anthropic API key.
+        auth_token: Optional explicit bearer token.
+
+    Returns:
+        Ordered list of model ID strings, or [] on failure.
+    """
+    try:
+        import anthropic
+    except ImportError:
+        return []
+
+    try:
+        resolved_api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        resolved_auth_token = (
+            auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN") or _read_claude_cli_oauth_token()
+        )
+
+        if not resolved_api_key and not resolved_auth_token:
+            return []
+
+        client: anthropic.Anthropic
+        if resolved_api_key:
+            client = anthropic.Anthropic(api_key=resolved_api_key)
+        else:
+            client = anthropic.Anthropic(
+                auth_token=resolved_auth_token,
+                default_headers={"anthropic-beta": "oauth-2025-04-20"},
+            )
+
+        page = client.models.list()
+        return [model.id for model in page.data]
+
+    except Exception:
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Optional SDK availability guard
 # ---------------------------------------------------------------------------
 

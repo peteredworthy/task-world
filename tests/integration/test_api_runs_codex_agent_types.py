@@ -1,4 +1,4 @@
-"""Integration tests for codex_server and codex_server_remote agent types."""
+"""Integration tests for the codex_server agent type."""
 
 from pathlib import Path
 
@@ -52,13 +52,6 @@ async def test_create_run_with_codex_server(client: AsyncClient) -> None:
     assert data["status"] == "draft"
 
 
-async def test_create_run_with_codex_server_remote(client: AsyncClient) -> None:
-    """codex_server_remote agent type is accepted and persisted on creation."""
-    data = await _create_run_with_agent(client, "codex_server_remote")
-    assert data["agent_type"] == "codex_server_remote"
-    assert data["status"] == "draft"
-
-
 async def test_read_run_round_trip_codex_server(client: AsyncClient) -> None:
     """A run created with codex_server returns the same agent_type on GET."""
     created = await _create_run_with_agent(
@@ -71,20 +64,6 @@ async def test_read_run_round_trip_codex_server(client: AsyncClient) -> None:
     data = response.json()
     assert data["agent_type"] == "codex_server"
     assert data["agent_config"] == {"endpoint": "http://localhost:9000"}
-
-
-async def test_read_run_round_trip_codex_server_remote(client: AsyncClient) -> None:
-    """A run created with codex_server_remote returns the same agent_type on GET."""
-    created = await _create_run_with_agent(
-        client, "codex_server_remote", {"endpoint": "https://api.example.com"}
-    )
-    run_id = created["id"]
-
-    response = await client.get(f"/api/runs/{run_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["agent_type"] == "codex_server_remote"
-    assert data["agent_config"] == {"endpoint": "https://api.example.com"}
 
 
 async def test_update_run_agent_type_to_codex_server(client: AsyncClient) -> None:
@@ -118,46 +97,8 @@ async def test_update_run_agent_type_to_codex_server(client: AsyncClient) -> Non
     assert data["agent_config"] == {"endpoint": "http://localhost:9000"}
 
 
-async def test_update_run_agent_type_to_codex_server_remote(client: AsyncClient) -> None:
-    """Resuming a paused run with codex_server_remote updates agent_type correctly."""
-    response = await client.post(
-        "/api/runs",
-        json={
-            "routine_id": "simple-routine",
-            "repo_name": "proj-codex-remote",
-            "branch": "main",
-            "agent_type": "cli_subprocess",
-            "agent_config": {"timeout": 300},
-        },
-    )
-    assert response.status_code == 201
-    run_id = response.json()["id"]
-
-    await client.post(f"/api/runs/{run_id}/start")
-    await client.post(f"/api/runs/{run_id}/pause")
-
-    response = await client.post(
-        f"/api/runs/{run_id}/resume",
-        json={
-            "agent_type": "codex_server_remote",
-            "agent_config": {"endpoint": "https://api.example.com"},
-        },
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["agent_type"] == "codex_server_remote"
-    assert data["agent_config"] == {"endpoint": "https://api.example.com"}
-
-
 async def test_codex_server_display_name(client: AsyncClient) -> None:
     """codex_server agent type returns a non-empty display name."""
     data = await _create_run_with_agent(client, "codex_server")
     assert data["agent_type_display"] == "Codex Server"
-    assert data["agent_icon"] == "codex"
-
-
-async def test_codex_server_remote_display_name(client: AsyncClient) -> None:
-    """codex_server_remote agent type returns a non-empty display name."""
-    data = await _create_run_with_agent(client, "codex_server_remote")
-    assert data["agent_type_display"] == "Codex Server Remote"
     assert data["agent_icon"] == "codex"

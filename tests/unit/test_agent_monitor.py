@@ -388,42 +388,6 @@ async def test_on_agent_died_releases_building_task_lock_codex_server(
 
 
 @pytest.mark.asyncio
-async def test_on_agent_died_releases_building_task_lock_codex_server_remote(
-    db_setup: async_sessionmaker[AsyncSession],
-) -> None:
-    """on_agent_died releases the lock on a BUILDING task for CODEX_SERVER_REMOTE."""
-    session_factory = db_setup
-    lock_manager = InMemoryLockManager()
-    monitor = AgentMonitor(session_factory, lock_manager=lock_manager)
-
-    old_ts = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
-    async with session_factory() as session:
-        repo = RunRepository(session)
-        run = _create_test_run(
-            run_id="run-lock-csr",
-            agent_type=AgentType.CODEX_SERVER_REMOTE,
-            agent_config={"session_id": "sess-old", "session_created_at": old_ts},
-        )
-        run.status = RunStatus.ACTIVE
-        task_state = run.steps[0].tasks[0]
-        task_state.status = TaskStatus.BUILDING
-        await repo.save(run)
-        await session.commit()
-
-    now = datetime.now(timezone.utc)
-    lock_manager.acquire(task_state.id, "default", now)
-    assert lock_manager.is_locked(task_state.id, now) is True
-
-    await monitor.on_agent_died(
-        run_id="run-lock-csr",
-        agent_type=AgentType.CODEX_SERVER_REMOTE,
-        reason="remote_codex_session_expired",
-    )
-
-    assert lock_manager.is_locked(task_state.id, datetime.now(timezone.utc)) is False
-
-
-@pytest.mark.asyncio
 async def test_on_agent_died_without_lock_manager_does_not_error(
     db_setup: async_sessionmaker[AsyncSession],
 ) -> None:

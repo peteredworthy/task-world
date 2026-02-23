@@ -828,6 +828,5 @@ def test_claude_sdk_is_distinct_from_other_types() -> None:
         AgentType.CLI_SUBPROCESS,
         AgentType.USER_MANAGED,
         AgentType.CODEX_SERVER,
-        AgentType.CODEX_SERVER_REMOTE,
     }
     assert AgentType.CLAUDE_SDK not in other_types

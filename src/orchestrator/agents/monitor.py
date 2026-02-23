@@ -230,39 +230,6 @@ class AgentMonitor:
                 return False
             return _is_process_alive(int(pid))
 
-        elif run.agent_type == AgentType.CODEX_SERVER_REMOTE:
-            # Remote variant: session-based liveness using session_id + timestamp.
-            # If no session_id is stored the agent never started a session — dead.
-            session_id = run.agent_config.get("session_id")
-            if not session_id:
-                return False
-
-            # If a session_id exists but no creation timestamp is available we
-            # cannot determine age — assume the session is still alive so we
-            # don't unnecessarily discard in-progress remote work.
-            session_created_str = run.agent_config.get("session_created_at")
-            if session_created_str is None:
-                return True
-
-            # Parse the creation timestamp and compare against the configured
-            # session timeout.
-            try:
-                if isinstance(session_created_str, str):
-                    session_created = datetime.fromisoformat(
-                        session_created_str.replace("Z", "+00:00")
-                    )
-                elif isinstance(session_created_str, datetime):
-                    session_created = session_created_str
-                else:
-                    return False
-            except (ValueError, AttributeError):
-                return False
-
-            timeout_minutes = self._global_config.agents.codex_session_timeout_minutes
-            timeout = timedelta(minutes=timeout_minutes)
-            now = datetime.now(timezone.utc)
-            return now - session_created < timeout
-
         elif run.agent_type == AgentType.USER_MANAGED:
             # Check if last activity was within timeout
             last_activity_str = run.agent_config.get("last_activity_at")

@@ -3,7 +3,9 @@ import { useAgents, useResumeRun } from '../../hooks/useApi';
 import { Spinner } from '../Spinner';
 import { AgentIcon } from '../AgentIcon';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
-import type { RunResponse, AgentOption } from '../../types';
+import { AgentConfigForm } from '../AgentConfigForm';
+import { buildDefaultAgentConfig } from '../agentConfigUtils';
+import type { RunResponse } from '../../types';
 
 interface ResumeDialogProps {
   open: boolean;
@@ -14,7 +16,8 @@ interface ResumeDialogProps {
 interface DialogState {
   showAgentPicker: boolean;
   selectedAgentIndex: string;
-  agentConfigJson: string;
+  /** Structured config values, managed by AgentConfigForm */
+  agentConfigValues: Record<string, unknown>;
   agentConfigError: string;
   prevOpen: boolean;
 }
@@ -37,20 +40,11 @@ function agentVisual(agentType: string): { icon: string; tintBg: string; tintTex
   return { icon: '\u{1F916}', tintBg: 'bg-purple-500/10', tintText: 'text-purple-400' };
 }
 
-function buildDefaultAgentConfig(agent: AgentOption): Record<string, unknown> {
-  const config: Record<string, unknown> = {};
-  for (const field of agent.config_schema) {
-    if (field.default !== null && field.default !== undefined) {
-      config[field.name] = field.default;
-    }
-  }
-  return config;
-}
 
 const INITIAL_STATE: DialogState = {
   showAgentPicker: false,
   selectedAgentIndex: '',
-  agentConfigJson: '{}',
+  agentConfigValues: {},
   agentConfigError: '',
   prevOpen: false,
 };
@@ -107,20 +101,11 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
   async function handleResumeWithNewAgent() {
     if (!run || !selectedAgent) return;
 
-    let agentConfig: Record<string, unknown>;
-    try {
-      agentConfig = JSON.parse(state.agentConfigJson);
-      setState(prev => ({ ...prev, agentConfigError: '' }));
-    } catch {
-      setState(prev => ({ ...prev, agentConfigError: 'Invalid JSON' }));
-      return;
-    }
-
     try {
       await resumeRun.mutateAsync({
         runId: run.id,
         agentType: selectedAgent.agent_type,
-        agentConfig,
+        agentConfig: state.agentConfigValues,
       });
       onClose();
     } catch {
@@ -282,13 +267,13 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
                             onClick={() => {
                               if (disabled) return;
                               const newIdx = isSelected ? '' : String(idx);
-                              const newAgentConfigJson = !isSelected
-                                ? JSON.stringify(buildDefaultAgentConfig(agent), null, 2)
-                                : '{}';
+                              const agentConfigValues = !isSelected
+                                ? buildDefaultAgentConfig(agent)
+                                : {};
                               setState(prev => ({
                                 ...prev,
                                 selectedAgentIndex: newIdx,
-                                agentConfigJson: newAgentConfigJson,
+                                agentConfigValues,
                                 agentConfigError: '',
                               }));
                             }}
@@ -364,20 +349,13 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
                       <span className="text-base leading-none">{'\u{1F527}'}</span>
                       Agent Configuration
                     </label>
-                    <textarea
-                      rows={3}
-                      value={state.agentConfigJson}
-                      onChange={e => setState(prev => ({
-                        ...prev,
-                        agentConfigJson: e.target.value,
-                        agentConfigError: '',
-                      }))}
-                      className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm font-mono text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 resize-none"
+                    <AgentConfigForm
+                      agent={selectedAgent}
+                      values={state.agentConfigValues}
+                      onChange={(vals) => setState(prev => ({ ...prev, agentConfigValues: vals }))}
+                      disabled={submitting}
                     />
-                    {state.agentConfigError && (
-                      <p className="mt-1 text-xs text-status-failed">{state.agentConfigError}</p>
-                    )}
-                    <p className="mt-1 text-xs text-text-muted">{selectedAgent.detail}</p>
+                    <p className="mt-2 text-xs text-text-muted">{selectedAgent.detail}</p>
                   </div>
                 )}
 

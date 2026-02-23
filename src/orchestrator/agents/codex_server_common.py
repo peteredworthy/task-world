@@ -1,8 +1,8 @@
 """Shared code for Codex Server agent variants.
 
 Contains the ``JsonRpcTransport`` protocol, JSON-RPC helpers, prompt assembly,
-tool allow-list enforcement, and output normalization used by both the local
-(``codex_server``) and remote (``codex_server_remote``) Codex Server agents.
+tool allow-list enforcement, and output normalization used by the local
+Codex Server agent (``codex_server``).
 
 Per the integration contract (docs/codex-server/context/contract-matrix.md §4):
   - The v1 experimental tool allow-list is limited to exactly four

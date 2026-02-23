@@ -118,50 +118,13 @@ async def test_detect_codex_server_config_fields() -> None:
     assert "mcp" in cb_field.options
 
 
-async def test_detect_codex_server_remote_always_available() -> None:
-    """CODEX_SERVER_REMOTE is always reported as available."""
-    detector = ToolDetector()
-    options = await detector.detect_all()
-
-    csr = [o for o in options if o.agent_type == AgentType.CODEX_SERVER_REMOTE]
-    assert len(csr) == 1
-    entry = csr[0]
-    assert entry.name == "Codex Server Remote"
-    assert entry.available is True
-
-
-async def test_detect_codex_server_remote_config_fields() -> None:
-    """CODEX_SERVER_REMOTE option has required config fields including api_key."""
-    detector = ToolDetector()
-    options = await detector.detect_all()
-
-    csr = [o for o in options if o.agent_type == AgentType.CODEX_SERVER_REMOTE][0]
-    field_names = [f.name for f in csr.config_schema]
-    assert "endpoint" in field_names
-    assert "api_key" in field_names
-    assert "callback_channel" in field_names
-
-    endpoint_field = next(f for f in csr.config_schema if f.name == "endpoint")
-    assert endpoint_field.required is True
-
-    api_key_field = next(f for f in csr.config_schema if f.name == "api_key")
-    assert api_key_field.required is True
-    assert api_key_field.field_type == "secret"
-
-    cb_field = next(f for f in csr.config_schema if f.name == "callback_channel")
-    assert cb_field.options is not None
-    assert "rest" in cb_field.options
-    assert "mcp" in cb_field.options
-
-
-async def test_detect_all_includes_codex_server_types() -> None:
-    """detect_all returns both CODEX_SERVER and CODEX_SERVER_REMOTE entries."""
+async def test_detect_all_includes_codex_server_type() -> None:
+    """detect_all returns a CODEX_SERVER entry."""
     detector = ToolDetector()
     options = await detector.detect_all()
 
     agent_types = [o.agent_type for o in options]
     assert AgentType.CODEX_SERVER in agent_types
-    assert AgentType.CODEX_SERVER_REMOTE in agent_types
 
 
 async def test_detect_codex_server_model_field_present() -> None:
@@ -183,19 +146,6 @@ async def test_detect_codex_server_model_field_present() -> None:
         assert model_field.default == model_field.options[0]
 
 
-async def test_detect_codex_server_remote_model_field_present() -> None:
-    """CODEX_SERVER_REMOTE config schema includes a 'model' field for session model selection."""
-    detector = ToolDetector()
-    options = await detector.detect_all()
-
-    csr = [o for o in options if o.agent_type == AgentType.CODEX_SERVER_REMOTE][0]
-    field_names = [f.name for f in csr.config_schema]
-    assert "model" in field_names
-
-    model_field = next(f for f in csr.config_schema if f.name == "model")
-    assert model_field.field_type == "string"
-
-
 async def test_detect_codex_server_title() -> None:
     """CODEX_SERVER entry has the expected title describing local operation."""
     detector = ToolDetector()
@@ -205,15 +155,6 @@ async def test_detect_codex_server_title() -> None:
     assert cs.title == "Codex Server (local)"
 
 
-async def test_detect_codex_server_remote_title() -> None:
-    """CODEX_SERVER_REMOTE entry has the expected title."""
-    detector = ToolDetector()
-    options = await detector.detect_all()
-
-    csr = [o for o in options if o.agent_type == AgentType.CODEX_SERVER_REMOTE][0]
-    assert csr.title == "Codex Server Remote"
-
-
 async def test_detect_codex_server_description_mentions_local_process() -> None:
     """CODEX_SERVER description mentions it launches a local process."""
     detector = ToolDetector()
@@ -221,15 +162,6 @@ async def test_detect_codex_server_description_mentions_local_process() -> None:
 
     cs = [o for o in options if o.agent_type == AgentType.CODEX_SERVER][0]
     assert "local" in cs.description.lower() or "stdio" in cs.description.lower()
-
-
-async def test_detect_codex_server_remote_description_mentions_bearer() -> None:
-    """CODEX_SERVER_REMOTE description mentions bearer token authentication."""
-    detector = ToolDetector()
-    options = await detector.detect_all()
-
-    csr = [o for o in options if o.agent_type == AgentType.CODEX_SERVER_REMOTE][0]
-    assert "bearer" in csr.description.lower() or "api_key" in csr.description.lower()
 
 
 async def test_detect_codex_server_install_hint_content() -> None:

@@ -11,7 +11,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from orchestrator.agents.action_log import ActionLog
@@ -232,7 +232,6 @@ class AgentExecutor:
             AgentType.OPENHANDS_LOCAL,
             AgentType.OPENHANDS_DOCKER,
             AgentType.CODEX_SERVER,
-            AgentType.CODEX_SERVER_REMOTE,
             AgentType.CLAUDE_SDK,
         ):
             assert agent_type is not None  # Type narrowing for pyright
@@ -1268,8 +1267,8 @@ class AgentExecutor:
           removed) and a non-None ``stale_reason`` string describing why the
           session was discarded.
 
-        Only CODEX_SERVER and CODEX_SERVER_REMOTE are handled; all other
-        agent types are returned unchanged with ``stale_reason=None``.
+        Only CODEX_SERVER is handled; all other agent types are returned
+        unchanged with ``stale_reason=None``.
 
         Args:
             agent_type: The agent type of the run.
@@ -1294,72 +1293,6 @@ class AgentExecutor:
             stale_reason = f"local_codex_process_not_alive (pid={pid})"
             cleaned = {k: v for k, v in agent_config.items() if k != "pid"}
             logger.info("Executor: Codex local session stale — %s; starting fresh", stale_reason)
-            return cleaned, stale_reason
-
-        elif agent_type == AgentType.CODEX_SERVER_REMOTE:
-            session_id = agent_config.get("session_id")
-            if not session_id:
-                # No session_id stored — nothing to resume or discard.
-                return agent_config, None
-
-            session_created_str = agent_config.get("session_created_at")
-            if session_created_str is None:
-                # session_id present but no creation timestamp — unknown age;
-                # assume healthy to avoid discarding in-progress remote work.
-                return agent_config, None
-
-            # Parse creation timestamp.
-            try:
-                if isinstance(session_created_str, str):
-                    session_created = datetime.fromisoformat(
-                        session_created_str.replace("Z", "+00:00")
-                    )
-                else:
-                    stale_reason = "invalid_session_created_at"
-                    cleaned = {
-                        k: v
-                        for k, v in agent_config.items()
-                        if k not in ("session_id", "session_created_at")
-                    }
-                    logger.info(
-                        "Executor: Codex remote session stale — %s; starting fresh",
-                        stale_reason,
-                    )
-                    return cleaned, stale_reason
-            except (ValueError, AttributeError):
-                stale_reason = "invalid_session_created_at"
-                cleaned = {
-                    k: v
-                    for k, v in agent_config.items()
-                    if k not in ("session_id", "session_created_at")
-                }
-                logger.info(
-                    "Executor: Codex remote session stale — %s; starting fresh", stale_reason
-                )
-                return cleaned, stale_reason
-
-            # Compare age against configured timeout.
-            timeout_minutes = 120  # default
-            if self._global_config is not None:
-                timeout_minutes = self._global_config.agents.codex_session_timeout_minutes
-            timeout = timedelta(minutes=timeout_minutes)
-            now = datetime.now(timezone.utc)
-            age = now - session_created
-            if age < timeout:
-                # Healthy: session is within timeout — resume.
-                return agent_config, None
-
-            # Stale: session has expired — clear session keys and return reason.
-            stale_reason = (
-                f"remote_codex_session_expired (age={age.total_seconds():.0f}s, "
-                f"timeout={int(timeout.total_seconds())}s)"
-            )
-            cleaned = {
-                k: v
-                for k, v in agent_config.items()
-                if k not in ("session_id", "session_created_at")
-            }
-            logger.info("Executor: Codex remote session stale — %s; starting fresh", stale_reason)
             return cleaned, stale_reason
 
         # Non-Codex agent type — no session classification needed.
@@ -1475,25 +1408,6 @@ class AgentExecutor:
                 api_key=api_key,
             )
 
-        elif agent_type == AgentType.CODEX_SERVER_REMOTE:
-            from orchestrator.agents.codex_server_remote import CodexServerRemoteAgent
-
-            base_url = agent_config.get("base_url", "")
-            model = agent_config.get("model")
-            session_id = agent_config.get("session_id")
-            callback_channel = agent_config.get("callback_channel", "rest")
-            api_key = agent_config.get("api_key")
-            token_env_var = agent_config.get("token_env_var", "CODEX_SERVER_API_KEY")
-
-            return CodexServerRemoteAgent(  # type: ignore[return-value]
-                base_url=base_url,
-                model=model,
-                session_id=session_id,
-                callback_channel=callback_channel,
-                api_key=api_key,
-                token_env_var=token_env_var,
-            )
-
         elif agent_type == AgentType.CLAUDE_SDK:
             from orchestrator.agents.claude_sdk import ClaudeSDKAgent
 
@@ -1540,7 +1454,6 @@ class AgentExecutor:
             AgentType.OPENHANDS_LOCAL,
             AgentType.OPENHANDS_DOCKER,
             AgentType.CODEX_SERVER,
-            AgentType.CODEX_SERVER_REMOTE,
             AgentType.CLAUDE_SDK,
         ):
             return False

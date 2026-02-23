@@ -40,7 +40,6 @@ class AgentType(str, Enum):
     CLI_SUBPROCESS = "cli_subprocess"
     USER_MANAGED = "user_managed"
     CODEX_SERVER = "codex_server"
-    CODEX_SERVER_REMOTE = "codex_server_remote"
     CLAUDE_SDK = "claude_sdk"
 
 

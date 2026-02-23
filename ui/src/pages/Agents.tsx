@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAgents } from '../hooks/useApi';
 import { Spinner } from '../components/Spinner';
 import { EmptyState } from '../components/EmptyState';
+import { loadAgentModelDefaults, saveAgentModelDefault } from '../components/agentConfigUtils';
 import type { AgentOption } from '../types/agents';
 
 export function Agents() {
@@ -103,6 +105,16 @@ export function Agents() {
 }
 
 function AgentCard({ agent }: { agent: AgentOption }) {
+  // Find the model field specifically to call it out prominently
+  const modelField = agent.config_schema.find((f) => f.name === 'model');
+  const otherFields = agent.config_schema.filter(
+    (f) => f.name !== 'model' && f.field_type !== 'secret',
+  );
+
+  const storedDefault = loadAgentModelDefaults()[agent.name];
+  const initialModel = storedDefault ?? (modelField?.default != null ? String(modelField.default) : '');
+  const [modelValue, setModelValue] = useState(initialModel);
+
   return (
     <div
       className={
@@ -151,27 +163,69 @@ function AgentCard({ agent }: { agent: AgentOption }) {
         </div>
       )}
 
-      {agent.available && agent.config_schema.length > 0 && (
-        <div className="mt-3 pt-3 border-t border-border/50">
-          <p className="text-xs font-medium text-text-muted mb-1">
-            Configuration fields:
-          </p>
-          <ul className="text-xs text-text-secondary space-y-0.5">
-            {agent.config_schema.slice(0, 3).map((field) => (
-              <li key={field.name} className="flex items-center gap-1">
-                <span className="text-text-muted">•</span>
-                <span className="font-mono">{field.name}</span>
-                <span className="text-text-muted">
-                  ({field.field_type})
-                </span>
-              </li>
-            ))}
-            {agent.config_schema.length > 3 && (
-              <li className="text-text-muted italic">
-                +{agent.config_schema.length - 3} more
-              </li>
-            )}
-          </ul>
+      {agent.available && (
+        <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
+          {/* Model field: show available options as chips if it's a select */}
+          {modelField && (
+            <div>
+              <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide mb-1">
+                Model
+              </p>
+              {modelField.field_type === 'select' && modelField.options && modelField.options.length > 0 ? (
+                <select
+                  className="w-full rounded border border-border bg-bg-elevated px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-purple/50 appearance-none cursor-pointer"
+                  defaultValue={modelField.default != null ? String(modelField.default) : modelField.options[0]}
+                >
+                  {modelField.options.map((opt) => (
+                    <option key={opt} value={opt}>
+                      {opt}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={modelValue}
+                  onChange={(e) => {
+                    setModelValue(e.target.value);
+                    saveAgentModelDefault(agent.name, e.target.value);
+                  }}
+                  placeholder={modelField.default != null ? String(modelField.default) : 'Enter model name…'}
+                  className="w-full rounded border border-border bg-bg-elevated px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-purple/50"
+                />
+              )}
+            </div>
+          )}
+
+          {/* Other visible config fields */}
+          {otherFields.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide mb-1">
+                Config fields
+              </p>
+              <ul className="text-xs text-text-secondary space-y-0.5">
+                {otherFields.slice(0, 3).map((field) => (
+                  <li key={field.name} className="flex items-center gap-1">
+                    <span className="text-text-muted">•</span>
+                    <span className="font-mono">{field.name}</span>
+                    <span className="text-text-muted">
+                      ({field.field_type})
+                    </span>
+                    {field.default != null && (
+                      <span className="text-text-muted truncate max-w-[80px]">
+                        = {String(field.default)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+                {otherFields.length > 3 && (
+                  <li className="text-text-muted italic">
+                    +{otherFields.length - 3} more
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
         </div>
       )}
     </div>

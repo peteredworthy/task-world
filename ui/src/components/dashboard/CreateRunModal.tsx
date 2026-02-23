@@ -6,8 +6,9 @@ import { useCreateRunModal } from '../../hooks/useCreateRunModal';
 import { BranchSelector } from '../BranchSelector';
 import { RoutineSelector } from '../RoutineSelector';
 import { RoutineValidatorModal } from '../RoutineValidatorModal';
+import { AgentConfigForm } from '../AgentConfigForm';
+import { buildDefaultAgentConfig } from '../agentConfigUtils';
 import type { RoutineSelection } from '../RoutineSelector';
-import type { AgentOption } from '../../types/agents';
 
 interface CreateRunModalProps {
   open: boolean;
@@ -30,9 +31,9 @@ interface FormState {
   selectedAgentIndex: string; // index into allAgents array, '' means none
   autoStart: boolean;
   configJson: string;
-  agentConfigJson: string;
+  /** Structured agent config values (field name → value), updated by AgentConfigForm */
+  agentConfigValues: Record<string, unknown>;
   configError: string;
-  agentConfigError: string;
   prevOpen: boolean;
 }
 
@@ -45,25 +46,10 @@ const INITIAL_FORM: FormState = {
   selectedAgentIndex: '',
   autoStart: true,
   configJson: '{}',
-  agentConfigJson: '{}',
+  agentConfigValues: {},
   configError: '',
-  agentConfigError: '',
   prevOpen: false,
 };
-
-function buildDefaultAgentConfig(agent: AgentOption): Record<string, unknown> {
-  const config: Record<string, unknown> = {};
-  for (const field of agent.config_schema) {
-    if (field.default !== null && field.default !== undefined) {
-      config[field.name] = field.default;
-    }
-  }
-  // CLI backends share agent_type, so pin the selected command explicitly.
-  if (agent.agent_type === 'cli_subprocess' && typeof config.command !== 'string') {
-    config.command = agent.name;
-  }
-  return config;
-}
 
 /** Map agent_type to a display icon and tint color */
 function agentVisual(agentType: string): { icon: string; tintBg: string; tintText: string } {
@@ -203,13 +189,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
 
     let agentConfig: Record<string, unknown> | undefined;
     if (selectedAgent) {
-      try {
-        agentConfig = JSON.parse(form.agentConfigJson);
-        setForm(prev => ({ ...prev, agentConfigError: '' }));
-      } catch {
-        setForm(prev => ({ ...prev, agentConfigError: 'Invalid JSON' }));
-        return;
-      }
+      agentConfig = form.agentConfigValues;
     }
 
     try {
@@ -442,13 +422,13 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                           onClick={() => {
                             if (disabled) return;
                             const newIdx = isSelected ? '' : String(idx);
-                            const agentConfigJson = !isSelected
-                              ? JSON.stringify(buildDefaultAgentConfig(agent), null, 2)
-                              : '{}';
+                            const agentConfigValues = !isSelected
+                              ? buildDefaultAgentConfig(agent)
+                              : {};
                             setForm(prev => ({
                               ...prev,
                               selectedAgentIndex: newIdx,
-                              agentConfigJson,
+                              agentConfigValues,
                             }));
                           }}
                           className={`
@@ -523,20 +503,13 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                     <span className="text-base leading-none">{'\u{1F527}'}</span>
                     Agent Configuration
                   </label>
-                  <textarea
-                    rows={3}
-                    value={form.agentConfigJson}
-                    onChange={e => setForm(prev => ({
-                      ...prev,
-                      agentConfigJson: e.target.value,
-                      agentConfigError: '',
-                    }))}
-                    className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm font-mono text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 resize-none"
+                  <AgentConfigForm
+                    agent={selectedAgent}
+                    values={form.agentConfigValues}
+                    onChange={(vals) => setForm(prev => ({ ...prev, agentConfigValues: vals }))}
+                    disabled={submitting}
                   />
-                  {form.agentConfigError && (
-                    <p className="mt-1 text-xs text-status-failed">{form.agentConfigError}</p>
-                  )}
-                  <p className="mt-1 text-xs text-text-muted">{selectedAgent.detail}</p>
+                  <p className="mt-2 text-xs text-text-muted">{selectedAgent.detail}</p>
                 </div>
               )}
 

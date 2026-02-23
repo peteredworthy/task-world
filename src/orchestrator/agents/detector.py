@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from orchestrator.agents.claude_sdk import fetch_claude_models
 from orchestrator.agents.codex_server_common import fetch_codex_models
 from orchestrator.agents.types import AgentConfigField, AgentOption, AgentQuota
 from orchestrator.config.enums import AgentType
@@ -183,32 +184,37 @@ def _codex_server_config_with_models(models: list[str]) -> list[AgentConfigField
     return config
 
 
-_CODEX_SERVER_REMOTE_CONFIG: list[AgentConfigField] = [
-    AgentConfigField(
-        name="endpoint",
-        field_type="string",
-        required=True,
-        description="Remote Codex app server endpoint URL (e.g. https://api.example.com)",
-    ),
-    AgentConfigField(
-        name="api_key",
-        field_type="secret",
-        required=True,
-        description="Bearer token for authentication (Authorization: Bearer <token>). Never logged or exposed in API responses.",
-    ),
-    AgentConfigField(
-        name="model",
-        field_type="string",
-        description="Model to use for Codex agent sessions",
-    ),
-    AgentConfigField(
-        name="callback_channel",
-        field_type="select",
-        default="rest",
-        description="How the Codex server calls back to the orchestrator",
-        options=["rest", "mcp"],
-    ),
-]
+def _claude_sdk_config_with_models(models: list[str]) -> list[AgentConfigField]:
+    """Return the Claude SDK config schema with the model field populated.
+
+    When *models* is non-empty the model field is upgraded to a ``"select"``
+    with the discovered model IDs as options and the first entry as the
+    default.  When empty the field stays as a plain ``"string"`` with the
+    existing default, preserving the existing behaviour.
+
+    Args:
+        models: Ordered list of model ID strings returned by
+            ``fetch_claude_models()``.
+
+    Returns:
+        A new config schema list with the model field updated.
+    """
+    config: list[AgentConfigField] = []
+    for cfg_field in _CLAUDE_SDK_CONFIG:
+        if cfg_field.name == "model" and models:
+            config.append(
+                cfg_field.model_copy(
+                    update={
+                        "field_type": "select",
+                        "options": models,
+                        "default": models[0],
+                    }
+                )
+            )
+        else:
+            config.append(cfg_field.model_copy())
+    return config
+
 
 _CLAUDE_SDK_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
@@ -332,7 +338,6 @@ class ToolDetector:
         options.append(await self._detect_openhands_docker())
         options.extend(self._detect_cli_tools())
         options.append(self._detect_codex_server())
-        options.append(self._detect_codex_server_remote())
         options.append(self._detect_claude_sdk())
         options.append(self._detect_user_managed())
 
@@ -463,6 +468,10 @@ class ToolDetector:
                 # Attempt to discover available models from the Codex API server.
                 models = fetch_codex_models()
                 config_schema = self._cli_config_for_codex(tool_name, models)
+            elif tool_name == "claude" and path is not None:
+                # Attempt to discover available models from the Anthropic API.
+                models = fetch_claude_models()
+                config_schema = self._cli_config_for_codex(tool_name, models)
             else:
                 config_schema = _cli_config_for_command(tool_name)
 
@@ -576,35 +585,21 @@ class ToolDetector:
             config_schema=_CODEX_SERVER_CONFIG,
         )
 
-    def _detect_codex_server_remote(self) -> AgentOption:
-        """Codex Server Remote connects to an existing remote HTTP endpoint.
-
-        Always reported as available because no local binary is required.
-        The caller must supply `endpoint` and `api_key` in the agent config
-        before starting a run.
-        """
-        return AgentOption(
-            agent_type=AgentType.CODEX_SERVER_REMOTE,
-            name="Codex Server Remote",
-            title="Codex Server Remote",
-            description=(
-                "Remote Codex app server accessible via HTTP. Authenticates using a "
-                "static bearer API key (Authorization: Bearer <token>). Configure "
-                "`endpoint` and `api_key` before starting a run."
-            ),
-            available=True,
-            detail="Always available; requires endpoint and api_key configuration",
-            config_schema=_CODEX_SERVER_REMOTE_CONFIG,
-        )
-
     def _detect_claude_sdk(self) -> AgentOption:
         """Check if the anthropic SDK is importable for in-process Claude execution.
 
-        Availability requires the anthropic package to be installed.
+        Availability requires the anthropic package to be installed.  When
+        available, ``fetch_claude_models()`` is called to discover the models
+        exposed by the Anthropic API.  If successful, the ``model`` config
+        field is upgraded to a ``"select"`` with the available model IDs and
+        the first model set as the default value.  When model discovery fails
+        the field stays as a plain ``"string"``.
         """
         try:
             import anthropic  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
+            models = fetch_claude_models()
+            config_schema = _claude_sdk_config_with_models(models)
             return AgentOption(
                 agent_type=AgentType.CLAUDE_SDK,
                 name="Claude SDK",
@@ -616,7 +611,7 @@ class ToolDetector:
                 ),
                 available=True,
                 detail="anthropic SDK installed",
-                config_schema=_CLAUDE_SDK_CONFIG,
+                config_schema=config_schema,
             )
         except ImportError:
             return AgentOption(
