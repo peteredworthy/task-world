@@ -81,6 +81,12 @@ export interface DiffViewerProps {
   expandAllSignal?: number;
   /** Increment to collapse all file sections. */
   collapseAllSignal?: number;
+  /** Show only the diff entry for this file path (matches old or new path). */
+  filePathFilter?: string;
+  /** Hide per-file header bars (useful when a single file is selected elsewhere). */
+  showFileHeaders?: boolean;
+  /** Allow collapsing file sections. */
+  collapsible?: boolean;
 }
 
 interface DiffFileItemProps {
@@ -93,6 +99,8 @@ interface DiffFileItemProps {
   viewType: ViewType;
   collapsed: boolean;
   onToggleCollapse: () => void;
+  showHeader: boolean;
+  collapsible: boolean;
 }
 
 /**
@@ -109,6 +117,8 @@ function DiffFileItem({
   viewType,
   collapsed,
   onToggleCollapse,
+  showHeader,
+  collapsible,
 }: DiffFileItemProps) {
   const filePath = newPath ?? oldPath ?? '';
   const renderGutter = usePruneGutter({ filePath, hunks });
@@ -116,36 +126,40 @@ function DiffFileItem({
 
   return (
     <div key={`${oldRevision ?? ''}-${newRevision ?? ''}-${newPath}`} className="mb-4">
-      <div className="rounded-t border border-border bg-bg-muted px-3 py-1.5 flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="shrink-0 text-text-muted hover:text-text-primary transition-colors"
-          aria-label={collapsed ? 'Expand file diff' : 'Collapse file diff'}
-          aria-expanded={!collapsed}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="currentColor"
-            aria-hidden="true"
-            className={`transition-transform duration-150 ${collapsed ? '-rotate-90' : ''}`}
-          >
-            <path d="M6 8L2 4h8L6 8z" />
-          </svg>
-        </button>
-        <span className="flex-1 font-mono text-xs text-text-secondary">
-          {newPath ?? oldPath ?? 'unknown'}
-        </span>
-        {collapsed && lineCount > 0 && (
-          <span className="text-xs text-text-muted tabular-nums">
-            {lineCount.toLocaleString()} lines
+      {showHeader && (
+        <div className="rounded-t border border-border bg-bg-muted px-3 py-1.5 flex items-center gap-2">
+          {collapsible && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              className="shrink-0 text-text-muted hover:text-text-primary transition-colors"
+              aria-label={collapsed ? 'Expand file diff' : 'Collapse file diff'}
+              aria-expanded={!collapsed}
+            >
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 12 12"
+                fill="currentColor"
+                aria-hidden="true"
+                className={`transition-transform duration-150 ${collapsed ? '-rotate-90' : ''}`}
+              >
+                <path d="M6 8L2 4h8L6 8z" />
+              </svg>
+            </button>
+          )}
+          <span className="flex-1 font-mono text-xs text-text-secondary">
+            {newPath ?? oldPath ?? 'unknown'}
           </span>
-        )}
-      </div>
-      {!collapsed && (
-        <div className="overflow-auto rounded-b border border-t-0 border-border text-xs">
+          {collapsible && collapsed && lineCount > 0 && (
+            <span className="text-xs text-text-muted tabular-nums">
+              {lineCount.toLocaleString()} lines
+            </span>
+          )}
+        </div>
+      )}
+      {(!collapsible || !collapsed) && (
+        <div className={`overflow-auto border border-border text-xs ${showHeader ? 'rounded-b border-t-0' : 'rounded'}`}>
           <Diff
             viewType={viewType}
             diffType={type}
@@ -162,7 +176,15 @@ function DiffFileItem({
   );
 }
 
-export function DiffViewer({ diffText, viewType = 'unified', expandAllSignal, collapseAllSignal }: DiffViewerProps) {
+export function DiffViewer({
+  diffText,
+  viewType = 'unified',
+  expandAllSignal,
+  collapseAllSignal,
+  filePathFilter,
+  showFileHeaders = true,
+  collapsible = true,
+}: DiffViewerProps) {
   const { files, parseError, binaryFiles } = useMemo(() => {
     if (!diffText || diffText.trim() === '') {
       return { files: [], parseError: null, binaryFiles: new Set<string>() };
@@ -175,6 +197,26 @@ export function DiffViewer({ diffText, viewType = 'unified', expandAllSignal, co
       return { files: [], parseError: err instanceof Error ? err.message : 'Failed to parse diff', binaryFiles };
     }
   }, [diffText]);
+
+  const visibleFiles = useMemo(
+    () =>
+      !filePathFilter
+        ? files
+        : files.filter((file) => {
+            const newPath = file.newPath ?? '';
+            const oldPath = file.oldPath ?? '';
+            return newPath === filePathFilter || oldPath === filePathFilter;
+          }),
+    [files, filePathFilter],
+  );
+
+  const visibleBinaryFiles = useMemo(
+    () =>
+      !filePathFilter
+        ? Array.from(binaryFiles)
+        : Array.from(binaryFiles).filter((p) => p === filePathFilter),
+    [binaryFiles, filePathFilter],
+  );
 
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
 
@@ -202,22 +244,24 @@ export function DiffViewer({ diffText, viewType = 'unified', expandAllSignal, co
   // Respond to expandAll signal — only when signal value changes
   const prevExpandRef = useRef<number | undefined>(undefined);
   useEffect(() => {
+    if (!collapsible) return;
     if (expandAllSignal !== undefined && expandAllSignal !== prevExpandRef.current) {
       prevExpandRef.current = expandAllSignal;
       setCollapsedFiles(new Set());
     }
-  }, [expandAllSignal]);
+  }, [expandAllSignal, collapsible]);
 
   // Respond to collapseAll signal — only when signal value changes
   const prevCollapseRef = useRef<number | undefined>(undefined);
   useEffect(() => {
+    if (!collapsible) return;
     if (collapseAllSignal !== undefined && collapseAllSignal !== prevCollapseRef.current) {
       prevCollapseRef.current = collapseAllSignal;
       setCollapsedFiles(
-        new Set(files.map((f) => f.newPath ?? f.oldPath ?? '').filter(Boolean)),
+        new Set(visibleFiles.map((f) => f.newPath ?? f.oldPath ?? '').filter(Boolean)),
       );
     }
-  }, [collapseAllSignal, files]);
+  }, [collapseAllSignal, visibleFiles, collapsible]);
 
   const toggleCollapse = (fileKey: string) => {
     setCollapsedFiles((prev) => {
@@ -252,6 +296,14 @@ export function DiffViewer({ diffText, viewType = 'unified', expandAllSignal, co
     );
   }
 
+  if (filePathFilter && visibleFiles.length === 0 && visibleBinaryFiles.length === 0) {
+    return (
+      <div className="flex items-center justify-center p-8 text-sm text-text-muted">
+        No changes for the selected file in this scope.
+      </div>
+    );
+  }
+
   if (files.length === 0) {
     return (
       <div className="flex items-center justify-center p-8 text-sm text-text-muted">
@@ -261,8 +313,8 @@ export function DiffViewer({ diffText, viewType = 'unified', expandAllSignal, co
   }
 
   return (
-    <div className="overflow-auto">
-      {files.map((file) => {
+    <div className="diff-theme-review overflow-auto">
+      {visibleFiles.map((file) => {
         const filePath = file.newPath ?? file.oldPath ?? '';
         if (binaryFiles.has(filePath)) {
           return (
@@ -282,14 +334,16 @@ export function DiffViewer({ diffText, viewType = 'unified', expandAllSignal, co
             type={file.type}
             hunks={file.hunks}
             viewType={viewType}
-            collapsed={collapsedFiles.has(filePath)}
+            collapsed={collapsible && collapsedFiles.has(filePath)}
             onToggleCollapse={() => toggleCollapse(filePath)}
+            showHeader={showFileHeaders}
+            collapsible={collapsible}
           />
         );
       })}
       {/* Show any binary-only files that parseDiff may have omitted */}
-      {Array.from(binaryFiles).filter(
-        (p) => !files.some((f) => (f.newPath ?? f.oldPath) === p),
+      {visibleBinaryFiles.filter(
+        (p) => !visibleFiles.some((f) => (f.newPath ?? f.oldPath) === p),
       ).map((p) => (
         <BinaryFileView key={`binary-only-${p}`} filePath={p} />
       ))}

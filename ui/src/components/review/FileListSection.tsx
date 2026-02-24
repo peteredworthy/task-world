@@ -1,13 +1,70 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { ApiError } from '../../api/client';
 import { useDiffFiles } from '../../hooks/useReview';
 import type { DiffFileEntry } from '../../types/review';
 
 interface FileListSectionProps {
   runId: string;
+  selectedFilePath?: string | null;
   onFileSelect?: (file: DiffFileEntry) => void;
   onPruneFile?: (file: DiffFileEntry) => void;
 }
+
+// ── Tree types ────────────────────────────────────────────────────────────────
+
+interface DirNode {
+  type: 'dir';
+  name: string;
+  /** Full path from root, e.g. "src/components" */
+  path: string;
+  children: TreeNode[];
+}
+
+interface FileLeaf {
+  type: 'file';
+  /** Basename only, e.g. "DiffViewer.tsx" */
+  name: string;
+  entry: DiffFileEntry;
+}
+
+type TreeNode = DirNode | FileLeaf;
+
+function buildFileTree(files: DiffFileEntry[]): TreeNode[] {
+  const root: TreeNode[] = [];
+  for (const file of files) {
+    const parts = file.path.split('/');
+    let current = root;
+    for (let i = 0; i < parts.length - 1; i++) {
+      const part = parts[i];
+      let dir = current.find((n) => n.type === 'dir' && n.name === part) as DirNode | undefined;
+      if (!dir) {
+        dir = {
+          type: 'dir',
+          name: part,
+          path: parts.slice(0, i + 1).join('/'),
+          children: [],
+        };
+        current.push(dir);
+      }
+      current = dir.children;
+    }
+    current.push({ type: 'file', name: parts[parts.length - 1], entry: file });
+  }
+  return root;
+}
+
+function collectDirPaths(nodes: TreeNode[]): string[] {
+  const paths: string[] = [];
+  for (const n of nodes) {
+    if (n.type === 'dir') {
+      paths.push(n.path);
+      paths.push(...collectDirPaths(n.children));
+    }
+  }
+  return paths;
+}
+
+// ── Status icon ───────────────────────────────────────────────────────────────
 
 function StatusIcon({ status }: { status: DiffFileEntry['status'] }) {
   switch (status) {
@@ -15,7 +72,7 @@ function StatusIcon({ status }: { status: DiffFileEntry['status'] }) {
       return (
         <span
           title="Added"
-          className="inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold text-status-success bg-status-success/15"
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold text-status-success bg-status-success/15"
         >
           A
         </span>
@@ -24,7 +81,7 @@ function StatusIcon({ status }: { status: DiffFileEntry['status'] }) {
       return (
         <span
           title="Deleted"
-          className="inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold text-status-failed bg-status-failed/15"
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold text-status-failed bg-status-failed/15"
         >
           D
         </span>
@@ -33,7 +90,7 @@ function StatusIcon({ status }: { status: DiffFileEntry['status'] }) {
       return (
         <span
           title="Renamed"
-          className="inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold text-status-running bg-status-running/15"
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold text-status-running bg-status-running/15"
         >
           R
         </span>
@@ -42,7 +99,7 @@ function StatusIcon({ status }: { status: DiffFileEntry['status'] }) {
       return (
         <span
           title="Modified"
-          className="inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold text-status-pending bg-status-pending/15"
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold text-status-pending bg-status-pending/15"
         >
           M
         </span>
@@ -50,19 +107,26 @@ function StatusIcon({ status }: { status: DiffFileEntry['status'] }) {
   }
 }
 
+// ── File row ──────────────────────────────────────────────────────────────────
+
 function FileRow({
   file,
+  isSelected,
   onClick,
   onPruneFile,
+  depth = 0,
+  displayName,
 }: {
   file: DiffFileEntry;
+  isSelected?: boolean;
   onClick?: (file: DiffFileEntry) => void;
   onPruneFile?: (file: DiffFileEntry) => void;
+  depth?: number;
+  displayName?: string;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Close menu when clicking outside
   useEffect(() => {
     if (!menuOpen) return;
     const handler = (e: MouseEvent) => {
@@ -75,21 +139,31 @@ function FileRow({
   }, [menuOpen]);
 
   return (
-    <div className="relative flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-bg-muted transition-colors group">
+    <div
+      className={`relative flex w-full items-center gap-2 rounded pr-2 py-1.5 text-left transition-colors group ${
+        isSelected ? 'bg-blue-500/12 ring-1 ring-blue-500/25' : 'hover:bg-bg-muted'
+      }`}
+      style={{ paddingLeft: `${depth * 14 + 8}px` }}
+    >
       <button
         type="button"
         onClick={() => onClick?.(file)}
+        aria-pressed={isSelected}
         className="flex flex-1 items-center gap-2 min-w-0"
       >
         <StatusIcon status={file.status} />
-        <span className="flex-1 truncate font-mono text-xs text-text-secondary group-hover:text-text-primary">
-          {file.path}
+        <span
+          className={`flex-1 truncate font-mono text-xs ${
+            isSelected ? 'text-text-primary' : 'text-text-secondary group-hover:text-text-primary'
+          }`}
+          title={file.path}
+        >
+          {displayName ?? file.path}
         </span>
       </button>
       <span className="shrink-0 text-xs text-status-success">+{file.additions}</span>
       <span className="shrink-0 text-xs text-status-failed">-{file.deletions}</span>
 
-      {/* Three-dot context menu */}
       {onPruneFile && (
         <div ref={menuRef} className="relative">
           <button
@@ -130,8 +204,135 @@ function FileRow({
   );
 }
 
-export function FileListSection({ runId, onFileSelect, onPruneFile }: FileListSectionProps) {
+// ── Directory row ─────────────────────────────────────────────────────────────
+
+function DirRow({
+  name,
+  depth,
+  isOpen,
+  onToggle,
+}: {
+  name: string;
+  depth: number;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex w-full items-center gap-1.5 rounded py-1 text-left hover:bg-bg-muted transition-colors"
+      style={{ paddingLeft: `${depth * 14 + 8}px` }}
+    >
+      <svg
+        className={`shrink-0 text-text-muted transition-transform duration-150 ${isOpen ? '' : '-rotate-90'}`}
+        width="10"
+        height="10"
+        viewBox="0 0 10 10"
+        fill="currentColor"
+        aria-hidden="true"
+      >
+        <path d="M5 7L1 3h8L5 7z" />
+      </svg>
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className="shrink-0 text-text-muted"
+        aria-hidden="true"
+      >
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+      </svg>
+      <span className="text-xs text-text-muted font-medium">{name}/</span>
+    </button>
+  );
+}
+
+// ── Recursive tree node ───────────────────────────────────────────────────────
+
+function FileTreeNode({
+  node,
+  depth,
+  selectedFilePath,
+  onFileSelect,
+  onPruneFile,
+  openDirs,
+  onToggleDir,
+}: {
+  node: TreeNode;
+  depth: number;
+  selectedFilePath?: string | null;
+  onFileSelect?: (file: DiffFileEntry) => void;
+  onPruneFile?: (file: DiffFileEntry) => void;
+  openDirs: Set<string>;
+  onToggleDir: (path: string) => void;
+}) {
+  if (node.type === 'file') {
+    return (
+      <FileRow
+        file={node.entry}
+        isSelected={selectedFilePath === node.entry.path}
+        onClick={onFileSelect}
+        onPruneFile={onPruneFile}
+        depth={depth}
+        displayName={node.name}
+      />
+    );
+  }
+
+  const isOpen = openDirs.has(node.path);
+  return (
+    <div>
+      <DirRow
+        name={node.name}
+        depth={depth}
+        isOpen={isOpen}
+        onToggle={() => onToggleDir(node.path)}
+      />
+      {isOpen &&
+        node.children.map((child) => (
+          <FileTreeNode
+            key={child.type === 'dir' ? child.path : child.entry.path}
+            node={child}
+            depth={depth + 1}
+            selectedFilePath={selectedFilePath}
+            onFileSelect={onFileSelect}
+            onPruneFile={onPruneFile}
+            openDirs={openDirs}
+            onToggleDir={onToggleDir}
+          />
+        ))}
+    </div>
+  );
+}
+
+// ── Main export ───────────────────────────────────────────────────────────────
+
+export function FileListSection({ runId, selectedFilePath, onFileSelect, onPruneFile }: FileListSectionProps) {
   const { data, isLoading, isError, error, refetch } = useDiffFiles(runId);
+
+  const tree = useMemo(() => buildFileTree(data ?? []), [data]);
+
+  const [openDirs, setOpenDirs] = useState<Set<string>>(new Set());
+
+  // Initialise all directories as expanded whenever the file list changes
+  useEffect(() => {
+    setOpenDirs(new Set(collectDirPaths(tree)));
+  }, [tree]);
+
+  const toggleDir = (path: string) => {
+    setOpenDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
 
   if (isLoading) {
     return (
@@ -205,13 +406,17 @@ export function FileListSection({ runId, onFileSelect, onPruneFile }: FileListSe
           <p className="text-xs text-text-muted">Nothing to review</p>
         </div>
       ) : (
-        <div className="mt-2 flex flex-col gap-0.5">
-          {data.map((file) => (
-            <FileRow
-              key={file.path}
-              file={file}
-              onClick={onFileSelect}
+        <div className="mt-2 flex flex-col gap-0">
+          {tree.map((node) => (
+            <FileTreeNode
+              key={node.type === 'dir' ? node.path : node.entry.path}
+              node={node}
+              depth={0}
+              selectedFilePath={selectedFilePath}
+              onFileSelect={onFileSelect}
               onPruneFile={onPruneFile}
+              openDirs={openDirs}
+              onToggleDir={toggleDir}
             />
           ))}
         </div>

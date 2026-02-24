@@ -58,7 +58,7 @@ async def get_commit_diff(worktree_path: Path, commit_sha: str) -> str:
     """
     return await asyncio.to_thread(
         _run_git_sync,
-        ["show", commit_sha],
+        ["diff-tree", "--no-commit-id", "-p", commit_sha],
         worktree_path,
     )
 

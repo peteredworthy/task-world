@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
 import { BranchStatusSection } from './BranchStatusSection';
 import { FileListSection } from './FileListSection';
-import { DiffDialog } from './DiffDialog';
+import { DiffPanel } from './DiffPanel';
 import { HistoryPanel } from './HistoryPanel';
 import type { DiffScope } from './HistoryPanel';
 import { TaskFilesPanel } from './TaskFilesPanel';
@@ -30,17 +30,93 @@ interface ReviewMergeTabProps {
   worktreePath: string | null;
 }
 
+// ── Section collapse state ────────────────────────────────────────────────────
+
+type SectionKey = 'branch' | 'files' | 'conflicts' | 'tests' | 'history' | 'taskfiles';
+
+// ── Collapsible section wrapper ───────────────────────────────────────────────
+
+function CollapsibleSection({
+  label,
+  isOpen,
+  onToggle,
+  children,
+}: {
+  label: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`flex items-center gap-1.5 rounded px-2 py-1 text-left transition-colors hover:bg-bg-muted group ${
+          isOpen ? '' : 'rounded-md border border-border bg-bg-elevated'
+        }`}
+        aria-expanded={isOpen}
+      >
+        <svg
+          className={`shrink-0 transition-transform duration-150 ${
+            isOpen ? 'text-text-muted' : 'text-text-secondary'
+          } ${isOpen ? '' : '-rotate-90'}`}
+          width="10"
+          height="10"
+          viewBox="0 0 10 10"
+          fill="currentColor"
+          aria-hidden="true"
+        >
+          <path d="M5 7L1 3h8L5 7z" />
+        </svg>
+        <span
+          className={`text-[11px] font-semibold uppercase tracking-wide transition-colors ${
+            isOpen
+              ? 'text-text-muted group-hover:text-text-secondary'
+              : 'text-text-secondary'
+          }`}
+        >
+          {label}
+        </span>
+      </button>
+      {isOpen && children}
+    </div>
+  );
+}
+
+// ── Main content ──────────────────────────────────────────────────────────────
+
 function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
   const [selectedFile, setSelectedFile] = useState<DiffFileEntry | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [historyScope, setHistoryScope] = useState<DiffScope>('aggregate');
   // Responsive left rail — collapsed by default on narrow viewports
   const [isRailOpen, setIsRailOpen] = useState(true);
+  const [isRailMinimized, setIsRailMinimized] = useState(false);
   const [selectedCommitSha, setSelectedCommitSha] = useState<string | null>(null);
   const [logsResult, setLogsResult] = useState<TestRunResult | null>(null);
   const [showLogsDrawer, setShowLogsDrawer] = useState(false);
   const [agentFixResult, setAgentFixResult] = useState<TestRunResult | null>(null);
   const [showAgentFixModal, setShowAgentFixModal] = useState(false);
+
+  // Collapsible section state — branch+files+conflicts open by default, rest closed
+  const [openSections, setOpenSections] = useState<Record<SectionKey, boolean>>({
+    branch: true,
+    files: true,
+    conflicts: true,
+    tests: false,
+    history: false,
+    taskfiles: false,
+  });
+
+  const toggleSection = (id: SectionKey) =>
+    setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
+
+  const expandSection = (id: SectionKey) => {
+    setIsRailMinimized(false);
+    setOpenSections((prev) => ({ ...prev, [id]: true }));
+  };
+
   const { isPruneMode, togglePruneMode, buildPruneSelection, clearSelections, selectFile } = usePruneMode();
   const { data: run } = useRun(runId);
   const { data: branchStatus } = useBranchStatus(runId);
@@ -101,10 +177,8 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
 
   const handleMergeComplete = (result: BackMergeResponse) => {
     if (result.status === 'clean') {
-      // Show banner for both cases: merge commit created or already in sync (null sha)
       setBackMergeBanner({ mergeCommitSha: result.merge_commit_sha });
     }
-    // conflicts case: ConflictFileList will auto-show via useConflicts query
   };
 
   const handleConflictFileSelect = (file: ConflictFile) => {
@@ -117,9 +191,8 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
     (f) => f.status === 'unresolved',
   ).length;
 
-  // Determine if the routine has auto_verify test commands configured
   const hasAutoVerify = useMemo(() => {
-    if (!run?.routine_embedded) return true; // assume yes when unknown
+    if (!run?.routine_embedded) return true;
     const steps = run.routine_embedded.steps as Record<string, unknown>[] | undefined;
     if (!Array.isArray(steps)) return true;
     return steps.some((step) => {
@@ -136,7 +209,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
     setMergeSuccessSha(result.merge_commit);
   };
 
-  // Keyboard shortcuts — active in the Review tab, disabled in text inputs
   useReviewKeyboardShortcuts({
     files: diffFiles ?? [],
     selectedFile,
@@ -150,11 +222,18 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
     onRunTests: handleRunTests,
   });
 
+  // Show conflicts section during loading (null) or when conflicts exist
+  const showConflictsSection = conflictFiles == null || conflictFiles.length > 0;
+
+  // Shared icon button class for the minimized strip
+  const iconBtnClass =
+    'rounded p-1.5 text-text-muted hover:bg-bg-muted hover:text-text-primary transition-colors';
+
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Tab header */}
       <div className="mb-3 flex items-center justify-end gap-2">
-        {/* Rail toggle — visible on narrow viewports only (hidden on md+) */}
+        {/* Rail toggle — visible on narrow viewports only */}
         <button
           type="button"
           onClick={() => setIsRailOpen((v) => !v)}
@@ -174,17 +253,8 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
             strokeLinejoin="round"
             aria-hidden="true"
           >
-            {isRailOpen ? (
-              <>
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <line x1="9" y1="3" x2="9" y2="21" />
-              </>
-            ) : (
-              <>
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <line x1="9" y1="3" x2="9" y2="21" />
-              </>
-            )}
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
           </svg>
         </button>
 
@@ -198,7 +268,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
           Back Merge
         </button>
 
-        {/* Agent Resolve button — only shown when unresolved conflicts exist */}
         {unresolvedConflictCount > 0 && run && (
           <button
             type="button"
@@ -224,14 +293,12 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
         </button>
       </div>
 
-      {/* Prune toolbar (visible when prune mode is active) */}
       {isPruneMode && (
         <div className="mb-3">
           <PruneToolbar onPreview={() => setShowPreviewModal(true)} />
         </div>
       )}
 
-      {/* Back merge banner (clean merge) */}
       {backMergeBanner && (
         <div className="mb-3">
           <BackMergeBanner
@@ -243,7 +310,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
         </div>
       )}
 
-      {/* Final merge success banner */}
       {mergeSuccessSha && (
         <div className="mb-3 rounded-md border border-status-passed/30 bg-status-passed/8 px-4 py-3 flex items-center justify-between gap-3">
           <p className="text-sm text-status-passed font-medium">
@@ -275,64 +341,298 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
       )}
 
       <div className="flex h-full min-h-0 gap-4">
-        {/* Left rail — always visible on md+, toggleable on narrow screens */}
-        <div
-          className={`${isRailOpen ? 'flex' : 'hidden'} md:flex w-72 shrink-0 flex-col gap-4 overflow-y-auto`}
-        >
-          <PanelErrorBoundary label="Branch Status">
-            <BranchStatusSection runId={runId} worktreePath={worktreePath} />
-          </PanelErrorBoundary>
-          <PanelErrorBoundary label="File List">
-            <FileListSection
-              runId={runId}
-              onFileSelect={setSelectedFile}
-              onPruneFile={handlePruneFile}
-            />
-          </PanelErrorBoundary>
-          {/* Conflict file list — shown when conflicts exist */}
-          <PanelErrorBoundary label="Conflicts">
-            <ConflictFileList
-              runId={runId}
-              onFileSelect={handleConflictFileSelect}
-            />
-          </PanelErrorBoundary>
-          <PanelErrorBoundary label="Tests">
-            <TestPanel
-              runId={runId}
-              hasAutoVerify={hasAutoVerify}
-              testRunId={testRunId}
-              isStarting={isStartingTests}
-              onRunTests={handleRunTests}
-              onViewLogs={handleViewLogs}
-              onAgentFix={handleAgentFix}
-            />
-          </PanelErrorBoundary>
-          <PanelErrorBoundary label="History">
-            <HistoryPanel
-              runId={runId}
-              scope={historyScope}
-              selectedCommitSha={selectedCommitSha}
-              onScopeChange={setHistoryScope}
-              onCommitSelect={setSelectedCommitSha}
-            />
-          </PanelErrorBoundary>
-          {run && (
-            <PanelErrorBoundary label="Task Files">
-              <TaskFilesPanel runId={runId} run={run} />
-            </PanelErrorBoundary>
-          )}
-          {showLogsDrawer && (
-            <TestLogsDrawer
-              result={logsResult}
-              isOpen={showLogsDrawer}
-              onClose={() => setShowLogsDrawer(false)}
-            />
-          )}
-        </div>
+        {/* ── Left rail ─────────────────────────────────────────────────── */}
+        {isRailMinimized ? (
+          /* Minimized: narrow icon strip */
+          <div
+            className={`${isRailOpen ? 'flex' : 'hidden'} md:flex w-10 shrink-0 flex-col items-center gap-1 border-r border-border py-2`}
+          >
+            {/* Expand button */}
+            <button
+              type="button"
+              onClick={() => setIsRailMinimized(false)}
+              title="Expand side panel"
+              className={iconBtnClass}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="9 18 15 12 9 6" />
+              </svg>
+            </button>
 
-        {/* Main panel */}
-        <div className="flex-1 min-w-0 rounded-md border border-border bg-bg-elevated p-4">
-          {/* On narrow viewports when rail is hidden, show a prompt to open it */}
+            <div className="my-0.5 h-px w-6 bg-border" />
+
+            {/* Branch Status */}
+            <button
+              type="button"
+              onClick={() => expandSection('branch')}
+              title="Branch Status"
+              className={iconBtnClass}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <line x1="6" y1="3" x2="6" y2="15" />
+                <circle cx="18" cy="6" r="3" />
+                <circle cx="6" cy="18" r="3" />
+                <path d="M18 9a9 9 0 0 1-9 9" />
+              </svg>
+            </button>
+
+            {/* Modified Files */}
+            <button
+              type="button"
+              onClick={() => expandSection('files')}
+              title="Modified Files"
+              className={iconBtnClass}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+            </button>
+
+            {/* Conflicts */}
+            <button
+              type="button"
+              onClick={() => expandSection('conflicts')}
+              title="Conflicts"
+              className={iconBtnClass}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+            </button>
+
+            {/* Tests */}
+            <button
+              type="button"
+              onClick={() => expandSection('tests')}
+              title="Tests"
+              className={iconBtnClass}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v11l-2 3h10l-2-3V3" />
+              </svg>
+            </button>
+
+            {/* History */}
+            <button
+              type="button"
+              onClick={() => expandSection('history')}
+              title="History"
+              className={iconBtnClass}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+            </button>
+
+            {/* Task Files */}
+            {run && (
+              <button
+                type="button"
+                onClick={() => expandSection('taskfiles')}
+                title="Task Files"
+                className={iconBtnClass}
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+              </button>
+            )}
+          </div>
+        ) : (
+          /* Full rail */
+          <div
+            className={`${isRailOpen ? 'flex' : 'hidden'} md:flex w-72 shrink-0 flex-col gap-2 overflow-y-auto`}
+          >
+            {/* Minimize button */}
+            <div className="flex shrink-0 items-center justify-end px-1">
+              <button
+                type="button"
+                onClick={() => setIsRailMinimized(true)}
+                title="Minimize side panel"
+                className="rounded p-1 text-text-muted hover:bg-bg-muted hover:text-text-primary transition-colors"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="15 18 9 12 15 6" />
+                </svg>
+              </button>
+            </div>
+
+            <CollapsibleSection
+              label="Branch Status"
+              isOpen={openSections.branch}
+              onToggle={() => toggleSection('branch')}
+            >
+              <PanelErrorBoundary label="Branch Status">
+                <BranchStatusSection runId={runId} worktreePath={worktreePath} />
+              </PanelErrorBoundary>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              label="Modified Files"
+              isOpen={openSections.files}
+              onToggle={() => toggleSection('files')}
+            >
+              <PanelErrorBoundary label="File List">
+                <FileListSection
+                  runId={runId}
+                  selectedFilePath={selectedFile?.path ?? null}
+                  onFileSelect={setSelectedFile}
+                  onPruneFile={handlePruneFile}
+                />
+              </PanelErrorBoundary>
+            </CollapsibleSection>
+
+            {showConflictsSection && (
+              <CollapsibleSection
+                label="Conflicts"
+                isOpen={openSections.conflicts}
+                onToggle={() => toggleSection('conflicts')}
+              >
+                <PanelErrorBoundary label="Conflicts">
+                  <ConflictFileList
+                    runId={runId}
+                    onFileSelect={handleConflictFileSelect}
+                  />
+                </PanelErrorBoundary>
+              </CollapsibleSection>
+            )}
+
+            <CollapsibleSection
+              label="Tests"
+              isOpen={openSections.tests}
+              onToggle={() => toggleSection('tests')}
+            >
+              <PanelErrorBoundary label="Tests">
+                <TestPanel
+                  runId={runId}
+                  hasAutoVerify={hasAutoVerify}
+                  testRunId={testRunId}
+                  isStarting={isStartingTests}
+                  onRunTests={handleRunTests}
+                  onViewLogs={handleViewLogs}
+                  onAgentFix={handleAgentFix}
+                />
+              </PanelErrorBoundary>
+            </CollapsibleSection>
+
+            <CollapsibleSection
+              label="History"
+              isOpen={openSections.history}
+              onToggle={() => toggleSection('history')}
+            >
+              <PanelErrorBoundary label="History">
+                <HistoryPanel
+                  runId={runId}
+                  scope={historyScope}
+                  selectedCommitSha={selectedCommitSha}
+                  onScopeChange={setHistoryScope}
+                  onCommitSelect={setSelectedCommitSha}
+                />
+              </PanelErrorBoundary>
+            </CollapsibleSection>
+
+            {run && (
+              <CollapsibleSection
+                label="Task Files"
+                isOpen={openSections.taskfiles}
+                onToggle={() => toggleSection('taskfiles')}
+              >
+                <PanelErrorBoundary label="Task Files">
+                  <TaskFilesPanel runId={runId} run={run} />
+                </PanelErrorBoundary>
+              </CollapsibleSection>
+            )}
+          </div>
+        )}
+
+        {/* ── Main panel ────────────────────────────────────────────────── */}
+        <div className="flex-1 min-w-0 min-h-0">
           {!isRailOpen && (
             <div className="mb-3 flex items-center gap-2 md:hidden">
               <button
@@ -344,18 +644,23 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
               </button>
             </div>
           )}
-          <p className="text-xs text-text-muted">Select a file to view its diff.</p>
+          <DiffPanel
+            runId={runId}
+            filePath={selectedFile?.path ?? null}
+            run={run ?? undefined}
+          />
         </div>
       </div>
 
-      <DiffDialog
-        runId={runId}
-        filePath={selectedFile?.path ?? ''}
-        isOpen={selectedFile !== null}
-        onClose={() => setSelectedFile(null)}
-        initialScope={historyScope === 'commit' && selectedCommitSha ? 'commit' : 'aggregate'}
-        initialRef={historyScope === 'commit' && selectedCommitSha ? selectedCommitSha : undefined}
-      />
+      {/* ── Drawers & modals ──────────────────────────────────────────────── */}
+
+      {showLogsDrawer && (
+        <TestLogsDrawer
+          result={logsResult}
+          isOpen={showLogsDrawer}
+          onClose={() => setShowLogsDrawer(false)}
+        />
+      )}
 
       <PrunePreviewModal
         isOpen={showPreviewModal}
@@ -375,7 +680,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
         />
       )}
 
-      {/* Back Merge Modal */}
       <BackMergeModal
         isOpen={showBackMergeModal}
         onClose={() => setShowBackMergeModal(false)}
@@ -384,7 +688,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
         onMergeComplete={handleMergeComplete}
       />
 
-      {/* Conflict Resolver Dialog */}
       {conflictFiles && conflictFiles.length > 0 && (
         <ConflictResolverDialog
           runId={runId}
@@ -395,7 +698,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
         />
       )}
 
-      {/* Agent Resolve Conflicts Modal */}
       {run && (
         <AgentResolveConflictsModal
           isOpen={showAgentResolveModal}
@@ -406,7 +708,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
         />
       )}
 
-      {/* Merge Confirm Modal */}
       <MergeConfirmModal
         isOpen={showMergeConfirmModal}
         onClose={() => setShowMergeConfirmModal(false)}

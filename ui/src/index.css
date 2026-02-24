@@ -172,3 +172,48 @@
   animation: shimmer 1.5s ease-in-out infinite;
   border-radius: 4px;
 }
+
+/* react-diff-view dark theme overrides for review panels */
+.diff-theme-review {
+  --diff-background-color: transparent;
+  --diff-text-color: #e5edf7;
+  --diff-font-family: "JetBrains Mono", monospace;
+  --diff-selection-background-color: rgba(59, 130, 246, 0.25);
+  --diff-selection-text-color: #f8fafc;
+
+  --diff-gutter-insert-background-color: rgba(34, 197, 94, 0.16);
+  --diff-gutter-insert-text-color: #bbf7d0;
+  --diff-gutter-delete-background-color: rgba(239, 68, 68, 0.16);
+  --diff-gutter-delete-text-color: #fecaca;
+  --diff-gutter-selected-background-color: rgba(59, 130, 246, 0.18);
+  --diff-gutter-selected-text-color: #dbeafe;
+
+  --diff-code-insert-background-color: rgba(34, 197, 94, 0.12);
+  --diff-code-insert-text-color: #eafff1;
+  --diff-code-delete-background-color: rgba(239, 68, 68, 0.12);
+  --diff-code-delete-text-color: #ffe8ea;
+  --diff-code-insert-edit-background-color: rgba(34, 197, 94, 0.28);
+  --diff-code-insert-edit-text-color: #f0fff6;
+  --diff-code-delete-edit-background-color: rgba(239, 68, 68, 0.28);
+  --diff-code-delete-edit-text-color: #fff3f4;
+  --diff-code-selected-background-color: rgba(59, 130, 246, 0.14);
+  --diff-code-selected-text-color: #eff6ff;
+  --diff-omit-gutter-line-color: #f87171;
+}
+
+.diff-theme-review .diff {
+  color: var(--diff-text-color);
+  /* Allow table to expand beyond container width for long lines */
+  width: auto;
+  min-width: 100%;
+}
+
+.diff-theme-review .diff td {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+}
+
+.diff-theme-review .diff-code {
+  color: #dbe6f5;
+  /* Prevent line wrapping so split view scrolls horizontally */
+  white-space: pre;
+}
