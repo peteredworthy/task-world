@@ -889,6 +889,11 @@ class WorkflowService:
                             error=f"Max attempts ({task.max_attempts}) exhausted; recovery triggered",
                         )
 
+                    # Finalize the failing attempt before creating a new one
+                    if task.attempts:
+                        task.attempts[-1].outcome = "failed"
+                        task.attempts[-1].completed_at = self._clock.now()
+
                     rev_result = transition_to_building(task, self._clock.now())
                     if rev_result.success:
                         # Populate agent snapshot on the newly created attempt

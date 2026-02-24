@@ -435,11 +435,15 @@ function AttemptCard({
               <span className="text-xs font-semibold text-text-primary">
                 Attempt #{att.attempt_num}
               </span>
-              {att.outcome && (
+              {att.outcome ? (
                 <span className={'text-[10px] font-semibold uppercase rounded px-1.5 py-0.5 bg-bg-card border border-border ' + outcomeColor(att.outcome)}>
                   {outcomeLabel(att.outcome)}
                 </span>
-              )}
+              ) : !isLatest ? (
+                <span className="text-[10px] font-semibold uppercase rounded px-1.5 py-0.5 bg-bg-card border border-border text-text-muted">
+                  Interrupted
+                </span>
+              ) : null}
             </div>
 
             {att.agent_type && (
