@@ -2,17 +2,17 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from orchestrator.api.schemas.base import ApiModel
 
 
-class HumanApprovalRequest(BaseModel):
+class HumanApprovalRequest(ApiModel):
     """Request to approve a human gate."""
 
     approved_by: str
     comment: str | None = None
 
 
-class HumanApprovalResponse(BaseModel):
+class HumanApprovalResponse(ApiModel):
     """Response with human approval details."""
 
     approved_by: str
@@ -20,7 +20,7 @@ class HumanApprovalResponse(BaseModel):
     comment: str | None = None
 
 
-class StepResponse(BaseModel):
+class StepResponse(ApiModel):
     """Response with step details after approval."""
 
     id: str

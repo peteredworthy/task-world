@@ -58,12 +58,14 @@ async def test_agent_started_sets_timestamp(client: AsyncClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["agent_started_at"] is not None
+    assert data["agent_started_at"].endswith("Z")
 
     # Verify the timestamp persists
     response = await client.get(f"/api/runs/{run_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["agent_started_at"] is not None
+    assert data["agent_started_at"].endswith("Z")
 
 
 async def test_agent_started_can_be_called_multiple_times(client: AsyncClient) -> None:

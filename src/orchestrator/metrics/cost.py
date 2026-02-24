@@ -47,6 +47,12 @@ def estimate_cost(
 
     pricing = PRICING.get(model)
     if pricing is None:
+        # Try prefix matching for versioned model names (e.g. "claude-sonnet-4-6" → "claude-sonnet-4")
+        for key in PRICING:
+            if model.startswith(key):
+                pricing = PRICING[key]
+                break
+    if pricing is None:
         return None
 
     input_per_1m, output_per_1m, cache_per_1m = pricing

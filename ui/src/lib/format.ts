@@ -1,7 +1,22 @@
+const ISO_TIMESTAMP_WITHOUT_TZ =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
+
+export function parseApiTimestamp(dateStr: string): Date | null {
+  if (!dateStr) return null;
+
+  // Backend timestamps may be emitted as UTC without a trailing "Z".
+  const normalized = ISO_TIMESTAMP_WITHOUT_TZ.test(dateStr) ? `${dateStr}Z` : dateStr;
+  const date = new Date(normalized);
+  if (Number.isNaN(date.getTime())) return null;
+  return date;
+}
+
 export function formatRelativeTime(dateStr: string): string {
-  const date = new Date(dateStr);
+  const date = parseApiTimestamp(dateStr);
+  if (!date) return dateStr;
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
+  if (diffMs < -60_000) return date.toLocaleString();
   const diffSec = Math.floor(diffMs / 1000);
 
   if (diffSec < 60) return 'just now';

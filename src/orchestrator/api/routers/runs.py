@@ -136,25 +136,49 @@ def _run_to_response(run: Run) -> RunResponse:
         for step in run.steps
     ]
 
-    # Cost estimation: The Run model doesn't currently track which LLM model
-    # was used, so we default to gpt-4o for estimation purposes. This gives
-    # users a rough cost estimate based on token usage.
+    # Use actual cost from action logs when available; otherwise estimate from token counts.
+    actual_cost_usd = sum(
+        attempt.action_log.total_cost_usd
+        for step in run.steps
+        for task in step.tasks
+        for attempt in task.attempts
+        if attempt.action_log is not None and attempt.action_log.total_cost_usd > 0
+    )
+
     estimated_cost_usd = None
     cost_disclaimer = None
 
-    if run.total_tokens_read > 0 or run.total_tokens_write > 0 or run.total_tokens_cache > 0:
+    if actual_cost_usd > 0:
+        estimated_cost_usd = round(actual_cost_usd, 6)
+        cost_disclaimer = "Actual cost from API response."
+    elif run.total_tokens_read > 0 or run.total_tokens_write > 0 or run.total_tokens_cache > 0:
+        # Detect which model was used: try agent_config first, then action log
+        model_hint: str | None = None
+        raw_model = run.agent_config.get("model")
+        if isinstance(raw_model, str) and raw_model:
+            model_hint = raw_model
+        if not model_hint:
+            for step in run.steps:
+                for task in step.tasks:
+                    for attempt in task.attempts:
+                        if attempt.action_log and attempt.action_log.agent_model:
+                            model_hint = attempt.action_log.agent_model
+                            break
+                    if model_hint:
+                        break
+                if model_hint:
+                    break
+
         cost_estimate = estimate_cost(
             tokens_read=run.total_tokens_read,
             tokens_write=run.total_tokens_write,
             tokens_cache=run.total_tokens_cache,
-            model="gpt-4o",
+            model=model_hint or "gpt-4o",
         )
         if cost_estimate:
             estimated_cost_usd = cost_estimate.total_usd
-            cost_disclaimer = (
-                "Estimate only, based on gpt-4o pricing. "
-                "Actual costs may vary depending on model used. " + cost_estimate.disclaimer
-            )
+            model_label = model_hint or "gpt-4o"
+            cost_disclaimer = f"Estimate based on {model_label} pricing. {cost_estimate.disclaimer}"
 
     from orchestrator.api.schemas.runs import EnvFileSpecSchema
 

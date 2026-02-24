@@ -13,6 +13,7 @@ from orchestrator.config.enums import ChecklistStatus
 from orchestrator.mcp.clarification_tools import CLARIFICATION_TOOL
 from orchestrator.repos.discovery import get_repo, list_branches, list_repos
 from orchestrator.repos.errors import RepoNotFoundError
+from orchestrator.time_utils import format_utc_datetime
 from orchestrator.workflow.clarifications import ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService
 
@@ -318,7 +319,7 @@ class ToolHandler:
                 }
                 for q in request.questions
             ],
-            "created_at": request.created_at.isoformat(),
+            "created_at": format_utc_datetime(request.created_at),
         }
 
     async def _list_repos(self, args: dict[str, Any]) -> dict[str, Any]:

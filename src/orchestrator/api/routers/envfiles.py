@@ -15,6 +15,7 @@ from orchestrator.api.schemas.envfiles import (
 )
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.tools import EnvFileToolExecutor
+from orchestrator.time_utils import format_utc_datetime
 
 router = APIRouter(prefix="/api", tags=["envfiles"])
 
@@ -43,7 +44,7 @@ async def list_snapshots(
                 "snapshot_id": s.snapshot_id,
                 "type": s.point_type.value,
                 "task_id": s.task_id,
-                "timestamp": s.timestamp.isoformat(),
+                "timestamp": format_utc_datetime(s.timestamp),
                 "files": s.files,
             }
             for s in manifest.snapshots

@@ -220,7 +220,13 @@ export function StructuredLogsViewer({ actionLog }: StructuredLogsViewerProps) {
           {actionLog.total_turns > 0 && <span>| {actionLog.total_turns} turns</span>}
           {actionLog.total_cost_usd > 0 && <span>| ${actionLog.total_cost_usd.toFixed(4)}</span>}
           {actionLog.total_input_tokens > 0 && (
-            <span>| {formatTokens(actionLog.total_input_tokens + actionLog.total_output_tokens)} tokens</span>
+            <span>
+              | {formatTokens(actionLog.total_input_tokens)} in
+              {' / '}{formatTokens(actionLog.total_output_tokens)} out
+              {(actionLog.total_cache_read_tokens + actionLog.total_cache_creation_tokens) > 0 && (
+                <> / {formatTokens(actionLog.total_cache_read_tokens + actionLog.total_cache_creation_tokens)} cache</>
+              )}
+            </span>
           )}
         </div>
       )}

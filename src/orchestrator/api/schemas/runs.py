@@ -3,24 +3,26 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import model_validator
+
+from orchestrator.api.schemas.base import ApiModel
 
 from orchestrator.config.enums import AgentType
 
 
-class EnvFileSpecSchema(BaseModel):
+class EnvFileSpecSchema(ApiModel):
     path: str
     promote_on_success: bool = False
 
 
-class EnvFileRequestConfig(BaseModel):
+class EnvFileRequestConfig(ApiModel):
     """Env file configuration for run creation."""
 
     source_dir: str | None = None
     files: list[EnvFileSpecSchema] | None = None
 
 
-class CreateRunRequest(BaseModel):
+class CreateRunRequest(ApiModel):
     routine_id: str | None = None
     repo_name: str
     branch: str  # Source branch to base worktree on
@@ -41,17 +43,17 @@ class CreateRunRequest(BaseModel):
         return self
 
 
-class GradeSummaryItem(BaseModel):
+class GradeSummaryItem(ApiModel):
     grade: str | None = None
     priority: str
 
 
-class AttemptOutcome(BaseModel):
+class AttemptOutcome(ApiModel):
     attempt_num: int
     outcome: str | None = None
 
 
-class TaskSummary(BaseModel):
+class TaskSummary(ApiModel):
     id: str
     config_id: str
     title: str = ""
@@ -64,7 +66,7 @@ class TaskSummary(BaseModel):
     pending_clarification_count: int | None = None
 
 
-class StepSummary(BaseModel):
+class StepSummary(ApiModel):
     id: str
     config_id: str
     title: str = ""
@@ -74,7 +76,7 @@ class StepSummary(BaseModel):
     approval_status: str | None = None  # "pending" | "approved" | "rejected" | None
 
 
-class RunResponse(BaseModel):
+class RunResponse(ApiModel):
     id: str
     repo_name: str
     status: str
@@ -113,11 +115,11 @@ class RunResponse(BaseModel):
     cost_disclaimer: str | None = None
 
 
-class RunListResponse(BaseModel):
+class RunListResponse(ApiModel):
     runs: list[RunResponse]
 
 
-class GuidanceResponse(BaseModel):
+class GuidanceResponse(ApiModel):
     """Aggregate guidance for external agents."""
 
     run_id: str
@@ -128,20 +130,20 @@ class GuidanceResponse(BaseModel):
     expected_actions: list[str]
 
 
-class AgentCancelledRequest(BaseModel):
+class AgentCancelledRequest(ApiModel):
     """Request to cancel waiting for external agent."""
 
     reason: str | None = None
 
 
-class BackwardTransitionRequest(BaseModel):
+class BackwardTransitionRequest(ApiModel):
     """Request to transition backward to an earlier step."""
 
     target_step_index: int
     reason: str | None = None
 
 
-class ResumeRunRequest(BaseModel):
+class ResumeRunRequest(ApiModel):
     """Request to resume a paused run, optionally changing the agent."""
 
     agent_type: str | None = None
@@ -155,7 +157,7 @@ class ResumeRunRequest(BaseModel):
         return self
 
 
-class RecoverRequest(BaseModel):
+class RecoverRequest(ApiModel):
     """Request to recover a failed run to a target task."""
 
     target_task_id: str
@@ -165,7 +167,7 @@ class RecoverRequest(BaseModel):
     preserve_checklist: bool = False
 
 
-class RecoverResponse(BaseModel):
+class RecoverResponse(ApiModel):
     """Response for run recovery."""
 
     run_id: str
@@ -174,7 +176,7 @@ class RecoverResponse(BaseModel):
     current_step_index: int | None = None
 
 
-class BranchStatusResponse(BaseModel):
+class BranchStatusResponse(ApiModel):
     """Response for branch status check."""
 
     behind_count: int
@@ -185,21 +187,21 @@ class BranchStatusResponse(BaseModel):
     run_branch: str
 
 
-class BackMergeResponse(BaseModel):
+class BackMergeResponse(ApiModel):
     """Response for back-merge operation."""
 
     merge_commit: str
     message: str
 
 
-class MergeBackRequest(BaseModel):
+class MergeBackRequest(ApiModel):
     """Request for merge-back operation."""
 
     strategy: str | None = None
     dirty_action: Literal["stash", "commit"] | None = None
 
 
-class MergeBackResponse(BaseModel):
+class MergeBackResponse(ApiModel):
     """Response for merge-back operation."""
 
     merge_commit: str

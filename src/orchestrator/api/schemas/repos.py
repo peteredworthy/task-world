@@ -2,10 +2,12 @@
 
 from typing import Any
 
-from pydantic import BaseModel, model_validator
+from pydantic import model_validator
+
+from orchestrator.api.schemas.base import ApiModel
 
 
-class RepoResponse(BaseModel):
+class RepoResponse(ApiModel):
     """Response schema for a repository."""
 
     name: str
@@ -13,13 +15,13 @@ class RepoResponse(BaseModel):
     default_branch: str
 
 
-class ReposListResponse(BaseModel):
+class ReposListResponse(ApiModel):
     """Response schema for listing repositories."""
 
     repos: list[RepoResponse]
 
 
-class BranchResponse(BaseModel):
+class BranchResponse(ApiModel):
     """Response schema for a branch."""
 
     name: str
@@ -27,7 +29,7 @@ class BranchResponse(BaseModel):
     commit: str
 
 
-class BranchesListResponse(BaseModel):
+class BranchesListResponse(ApiModel):
     """Response schema for listing branches."""
 
     branches: list[BranchResponse]
@@ -35,14 +37,14 @@ class BranchesListResponse(BaseModel):
     truncated: bool
 
 
-class BranchCountResponse(BaseModel):
+class BranchCountResponse(ApiModel):
     """Response schema for branch count."""
 
     count: int
     pattern: str
 
 
-class ProjectRoutineResponse(BaseModel):
+class ProjectRoutineResponse(ApiModel):
     """Response schema for a project routine."""
 
     id: str
@@ -55,7 +57,7 @@ class ProjectRoutineResponse(BaseModel):
     config: dict[str, Any]  # Full routine config
 
 
-class ProjectRoutinesListResponse(BaseModel):
+class ProjectRoutinesListResponse(ApiModel):
     """Response schema for listing project routines."""
 
     routines: list[ProjectRoutineResponse]
@@ -63,13 +65,13 @@ class ProjectRoutinesListResponse(BaseModel):
     commit: str
 
 
-class RepoStatsResponse(BaseModel):
+class RepoStatsResponse(ApiModel):
     """Response schema for repository statistics."""
 
     run_count: int
 
 
-class AddRepoRequest(BaseModel):
+class AddRepoRequest(ApiModel):
     """Request schema for adding a repository."""
 
     url: str | None = None  # git clone URL (https/ssh)

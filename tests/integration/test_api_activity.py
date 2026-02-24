@@ -83,6 +83,7 @@ async def test_activity_after_task_lifecycle(client: AsyncClient) -> None:
     # Events should be ordered by id ascending
     ids = [e["id"] for e in data["events"]]
     assert ids == sorted(ids)
+    assert all(e["timestamp"].endswith("Z") for e in data["events"])
 
 
 async def test_activity_pagination(client: AsyncClient) -> None:
@@ -180,6 +181,7 @@ async def test_sse_stream_sends_events(client: AsyncClient) -> None:
     # Should have received events from run start
     assert len(events_received) >= 1
     assert any(e["event_type"] == "run_status_changed" for e in events_received)
+    assert all(e["timestamp"].endswith("Z") for e in events_received)
 
 
 async def test_sse_stream_since_id_resumption(client: AsyncClient) -> None:
