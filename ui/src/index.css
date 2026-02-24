@@ -154,3 +154,21 @@
 .scrollbar-dark::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--color-text-muted) 70%, black);
 }
+
+/* Skeleton shimmer loader */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-muted)     25%,
+    var(--color-bg-hover)     50%,
+    var(--color-bg-muted)     75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}

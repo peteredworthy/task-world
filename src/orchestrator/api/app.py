@@ -276,6 +276,11 @@ def create_app(
     # Env file lifecycle (manages snapshots across run/task lifecycle)
     app.state.env_lifecycle = EnvFileLifecycle(app.state.envfile_store)
 
+    # Test runner for review workbench test execution
+    from orchestrator.review.test_runner import TestRunner
+
+    app.state.test_runner = TestRunner()
+
     # Agent executor for spawning managed agents (created here so it's available
     # in tests that don't run the lifespan)
     from orchestrator.agents.executor import AgentExecutor
@@ -304,6 +309,7 @@ def create_app(
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.envfiles import router as envfiles_router
     from orchestrator.api.routers.repos import router as repos_router
+    from orchestrator.api.routers.review import router as review_router
     from orchestrator.api.routers.routines import router as routines_router
     from orchestrator.api.routers.runs import router as runs_router
     from orchestrator.api.routers.tasks import router as tasks_router
@@ -314,6 +320,7 @@ def create_app(
     app.include_router(config_router, dependencies=auth_deps)
     app.include_router(envfiles_router, dependencies=auth_deps)
     app.include_router(repos_router, dependencies=auth_deps)
+    app.include_router(review_router, dependencies=auth_deps)
     app.include_router(routines_router, dependencies=auth_deps)
     app.include_router(runs_router, dependencies=auth_deps)
     app.include_router(tasks_router, dependencies=auth_deps)

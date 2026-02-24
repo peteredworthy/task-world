@@ -94,6 +94,10 @@ class AttemptSchema(BaseModel):
     has_output: bool = False
     has_action_log: bool = False
 
+    # Git commit range for this attempt
+    start_commit: str | None = None
+    end_commit: str | None = None
+
 
 class TaskDetailResponse(BaseModel):
     id: str

@@ -1,7 +1,7 @@
 """Branch operations: status, back-merge, merge-back."""
 
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from orchestrator.git.errors import (
@@ -68,6 +68,25 @@ class BranchStatus:
     ahead_count: int  # commits on run branch not in source
     can_merge_cleanly: bool
     has_conflicts: bool
+    predicted_conflict_count: int = 0  # number of files predicted to conflict
+
+
+@dataclass
+class BackMergeResult:
+    """Result of a back_merge operation when abort_on_conflict=False."""
+
+    status: str  # "clean" | "conflicts"
+    merge_commit_sha: str | None = None
+    conflict_files: list[str] = field(default_factory=list[str])
+    conflict_count: int = 0
+
+
+@dataclass
+class RevertBackMergeResult:
+    """Result of a revert_back_merge operation."""
+
+    reverted_commit: str
+    new_head: str
 
 
 def get_branch_status(repo_path: Path, run_branch: str, source_branch: str) -> BranchStatus:
@@ -101,10 +120,11 @@ def get_branch_status(repo_path: Path, run_branch: str, source_branch: str) -> B
     # Check if merge would be clean using merge-tree (git 2.38+)
     can_merge_cleanly = True
     has_conflicts = False
+    predicted_conflict_count = 0
 
     if behind_count > 0:
         # merge-tree --write-tree returns exit 0 for clean, exit 1 for conflict
-        # On conflict, it outputs "CONFLICT" lines in stderr/stdout
+        # On conflict, it outputs "CONFLICT" lines in stdout
         result = subprocess.run(
             ["git", "merge-tree", "--write-tree", run_branch, source_branch],
             cwd=repo_path,
@@ -115,20 +135,34 @@ def get_branch_status(repo_path: Path, run_branch: str, source_branch: str) -> B
             # Non-zero exit = conflicts
             can_merge_cleanly = False
             has_conflicts = True
+            # Count CONFLICT lines to get predicted conflict file count
+            conflict_lines = [
+                line for line in result.stdout.splitlines() if line.startswith("CONFLICT")
+            ]
+            predicted_conflict_count = len(conflict_lines)
         elif "CONFLICT" in result.stdout:
             # Some git versions output CONFLICT in stdout even with exit 0
             can_merge_cleanly = False
             has_conflicts = True
+            conflict_lines = [
+                line for line in result.stdout.splitlines() if line.startswith("CONFLICT")
+            ]
+            predicted_conflict_count = len(conflict_lines)
 
     return BranchStatus(
         behind_count=behind_count,
         ahead_count=ahead_count,
         can_merge_cleanly=can_merge_cleanly,
         has_conflicts=has_conflicts,
+        predicted_conflict_count=predicted_conflict_count,
     )
 
 
-def back_merge(repo_path: Path, source_branch: str) -> str:
+def back_merge(
+    repo_path: Path,
+    source_branch: str,
+    abort_on_conflict: bool = True,
+) -> str | BackMergeResult:
     """Merge source branch into the current branch (in worktree).
 
     This is run inside the worktree directory to pull updates from
@@ -137,13 +171,19 @@ def back_merge(repo_path: Path, source_branch: str) -> str:
     Args:
         repo_path: Path to the worktree directory
         source_branch: The source branch to merge from
+        abort_on_conflict: If True (default), abort the merge and raise
+            MergeConflictError on conflict (backward-compatible behavior).
+            If False, leave the merge in-progress state and return a
+            BackMergeResult with status="conflicts" and the conflict file list.
 
     Returns:
-        The merge commit SHA
+        When abort_on_conflict=True: the merge commit SHA (str).
+        When abort_on_conflict=False: a BackMergeResult with status "clean"
+            or "conflicts".
 
     Raises:
         BranchNotFoundError: If source branch doesn't exist
-        MergeConflictError: If merge has conflicts
+        MergeConflictError: If merge has conflicts and abort_on_conflict=True
     """
     if not _branch_exists(repo_path, source_branch):
         raise BranchNotFoundError(source_branch)
@@ -157,18 +197,55 @@ def back_merge(repo_path: Path, source_branch: str) -> str:
     except GitCommandError:
         # Check for conflicts
         conflicting = _get_conflict_files(repo_path)
-        # Abort the merge
-        subprocess.run(
-            ["git", "merge", "--abort"],
-            cwd=repo_path,
-            capture_output=True,
-            text=True,
+        if abort_on_conflict:
+            # Abort the merge and raise (backward-compatible behavior)
+            subprocess.run(
+                ["git", "merge", "--abort"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+            )
+            raise MergeConflictError(source_branch, current_branch, conflicting)
+        # Leave merge in-progress; return conflict details
+        return BackMergeResult(
+            status="conflicts",
+            merge_commit_sha=None,
+            conflict_files=conflicting,
+            conflict_count=len(conflicting),
         )
-        raise MergeConflictError(source_branch, current_branch, conflicting)
 
-    # Return the merge commit SHA
-    result = _run_git(["rev-parse", "HEAD"], cwd=repo_path)
-    return result.stdout.strip()
+    # Clean merge — return the merge commit SHA
+    sha = _run_git(["rev-parse", "HEAD"], cwd=repo_path).stdout.strip()
+    if abort_on_conflict:
+        # Original return type for backward compatibility
+        return sha
+    return BackMergeResult(
+        status="clean",
+        merge_commit_sha=sha,
+        conflict_files=[],
+        conflict_count=0,
+    )
+
+
+def revert_back_merge(repo_path: Path, merge_sha: str) -> RevertBackMergeResult:
+    """Revert the last back merge commit using git revert.
+
+    Args:
+        repo_path: Path to the worktree directory
+        merge_sha: SHA of the merge commit to revert
+
+    Returns:
+        RevertBackMergeResult with the SHA of the new revert commit and
+        the new HEAD SHA.
+
+    Raises:
+        GitCommandError: If the git revert operation fails
+    """
+    # -m 1 selects the first parent (the run branch before the back merge)
+    # as the mainline, effectively undoing the merge.
+    _run_git(["revert", "--no-edit", "-m", "1", merge_sha], cwd=repo_path)
+    new_head = _run_git(["rev-parse", "HEAD"], cwd=repo_path).stdout.strip()
+    return RevertBackMergeResult(reverted_commit=merge_sha, new_head=new_head)
 
 
 def sync_branch_to_worktree(repo_path: Path, branch: str, worktree_path: Path) -> None:

@@ -134,6 +134,8 @@ async def get_task(
                 error=att.error,
                 has_output=bool(att.agent_output),
                 has_action_log=bool(att.action_log),
+                start_commit=att.start_commit,
+                end_commit=att.end_commit,
             )
             for att in task.attempts
         ],

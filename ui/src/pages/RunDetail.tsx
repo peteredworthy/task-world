@@ -23,6 +23,7 @@ import { classifyTasks, getLastAgentError } from '../lib/activity';
 import { formatRelativeTime } from '../lib/format';
 import { AgentIcon } from '../components/AgentIcon';
 import { ApiError } from '../api/client';
+import { ReviewMergeTab } from '../components/review/ReviewMergeTab';
 import type { RunResponse } from '../types';
 import type { StepSummarySchema } from '../types/routines';
 import type { PendingAction } from '../types/clarifications';
@@ -132,6 +133,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
+  const [activeTab, setActiveTab] = useState<'activity' | 'review'>('activity');
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
     const detail = err instanceof ApiError
@@ -347,10 +349,46 @@ function RunDetailInner({ runId }: { runId: string }) {
           </div>
 
           {/* Metrics Bar */}
-          <div className="mt-4 mb-6">
+          <div className="mt-4 mb-4">
             <MetricsBar run={run} />
           </div>
 
+          {/* Tab bar */}
+          <div className="flex items-center gap-1 border-b border-border mb-6">
+            <button
+              onClick={() => setActiveTab('activity')}
+              className={
+                'px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ' +
+                (activeTab === 'activity'
+                  ? 'border-accent-purple text-text-primary'
+                  : 'border-transparent text-text-muted hover:text-text-secondary')
+              }
+            >
+              Activity
+            </button>
+            {run.worktree_path && (
+              <button
+                onClick={() => setActiveTab('review')}
+                className={
+                  'px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ' +
+                  (activeTab === 'review'
+                    ? 'border-accent-purple text-text-primary'
+                    : 'border-transparent text-text-muted hover:text-text-secondary')
+                }
+              >
+                Review &amp; Merge
+              </button>
+            )}
+          </div>
+
+          {/* Review & Merge tab */}
+          {activeTab === 'review' && run.worktree_path !== undefined && (
+            <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path} />
+          )}
+
+          {/* Activity tab content */}
+          {activeTab === 'activity' && (
+          <>
           {/* Mutation error banner */}
           {mutationError && (
             <div className="mb-6 rounded-md bg-status-failed/10 border border-status-failed/30 p-4 flex items-center justify-between">
@@ -551,6 +589,8 @@ function RunDetailInner({ runId }: { runId: string }) {
                 tasks={upcoming}
               />
             </div>
+          )}
+          </>
           )}
         </div>
       </div>

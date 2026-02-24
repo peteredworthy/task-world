@@ -206,6 +206,73 @@ class ApprovalDecision(WorkflowEvent):
     decided_by: str = ""
 
 
+@dataclass
+class PruneApplied(WorkflowEvent):
+    """Emitted when a prune operation is applied to the run branch."""
+
+    commit_sha: str = ""
+    files_affected: int = 0
+    hunks_removed: int = 0
+    lines_removed: int = 0
+
+
+@dataclass
+class TestRunStarted(WorkflowEvent):
+    """Emitted when a test run is started from the review workbench."""
+
+    test_run_id: str = ""
+
+
+@dataclass
+class TestRunCompleted(WorkflowEvent):
+    """Emitted when a test run completes from the review workbench."""
+
+    test_run_id: str = ""
+    status: str = ""  # "passed" | "failed" | "error"
+    duration_ms: int | None = None
+
+
+@dataclass
+class ConflictResolved(WorkflowEvent):
+    """Emitted when a conflict file is resolved."""
+
+    file_path: str = ""
+    remaining_conflicts: int = 0
+
+
+@dataclass
+class BackMergeCompleted(WorkflowEvent):
+    """Emitted when a back merge operation completes."""
+
+    status: str = ""  # "clean" | "conflicts"
+    merge_commit_sha: str | None = None
+    conflict_count: int = 0
+
+
+@dataclass
+class BackMergeReverted(WorkflowEvent):
+    """Emitted when a back merge commit is reverted."""
+
+    reverted_commit: str = ""
+    new_head: str = ""
+
+
+@dataclass
+class AgentFixStarted(WorkflowEvent):
+    """Emitted when an agent is dispatched to fix conflicts or tests."""
+
+    job_id: str = ""
+    agent_type: str = ""
+
+
+@dataclass
+class AgentFixCompleted(WorkflowEvent):
+    """Emitted when an agent-dispatched fix completes."""
+
+    job_id: str = ""
+    status: str = ""  # "completed" | "failed"
+
+
 class BufferingEmitter:
     """Event emitter that buffers events in memory.
 

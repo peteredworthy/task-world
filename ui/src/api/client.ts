@@ -126,7 +126,7 @@ function normalizeValidationErrors(rawErrors: unknown): ValidationError[] {
   });
 }
 
-async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
+export async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string>),
   };

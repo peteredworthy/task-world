@@ -21,6 +21,7 @@ from orchestrator.workflow.service import WorkflowService
 from orchestrator.agents.executor import AgentExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
+from orchestrator.review.test_runner import TestRunner
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -93,6 +94,25 @@ async def get_workflow_service(
     )
 
 
+async def get_event_emitter(
+    request: Request,
+    event_store: Annotated[EventStore, Depends(get_event_store)],
+) -> PersistentEventEmitter:
+    """Create a PersistentEventEmitter wired to WebSocket broadcast."""
+    emitter = PersistentEventEmitter(event_store)
+    manager: ConnectionManager = request.app.state.connection_manager
+
+    def _on_event(event: WorkflowEvent) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(manager.broadcast_event(event))
+        except RuntimeError:
+            pass
+
+    emitter.add_listener(_on_event)
+    return emitter
+
+
 def get_routine_dirs(request: Request) -> list[tuple[Path, RoutineSource]]:
     """Get routine directories from app state."""
     return request.app.state.routine_dirs  # type: ignore[no-any-return]
@@ -123,6 +143,11 @@ def get_agent_executor(request: Request) -> AgentExecutor:
 def get_envfile_store(request: Request) -> EnvFileStore:
     """Get the env file store from app state."""
     return request.app.state.envfile_store  # type: ignore[no-any-return]
+
+
+def get_test_runner(request: Request) -> TestRunner:
+    """Get the TestRunner singleton from app state."""
+    return request.app.state.test_runner  # type: ignore[no-any-return]
 
 
 def get_current_user() -> str:

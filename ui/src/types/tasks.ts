@@ -92,6 +92,8 @@ export interface AttemptSchema {
   error: string | null;
   has_output: boolean;
   has_action_log: boolean;
+  start_commit: string | null;
+  end_commit: string | null;
 }
 
 export interface TaskDetailResponse {
