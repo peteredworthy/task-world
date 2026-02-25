@@ -1,37 +1,10 @@
-import { useRef, useEffect } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import { Sidebar, MobileBottomNav } from './Sidebar';
 import { ConnectionBanner } from './ConnectionBanner';
-import { useCreateRunModal } from '../hooks/useCreateRunModal';
 import { useSettingsModal } from '../hooks/useSettingsModal';
 
 export function Layout() {
-  const searchRef = useRef<HTMLInputElement>(null);
-  const navigate = useNavigate();
-  const { open: openCreateRun } = useCreateRunModal();
   const { open: openSettings } = useSettingsModal();
-
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        searchRef.current?.focus();
-      }
-    }
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') {
-      const value = (e.target as HTMLInputElement).value.trim();
-      if (value) {
-        navigate('/?search=' + encodeURIComponent(value));
-      } else {
-        navigate('/');
-      }
-    }
-  }
 
   return (
     <div className="flex min-h-screen bg-bg-primary">
@@ -39,34 +12,9 @@ export function Layout() {
       <div className="flex-1 flex flex-col overflow-auto scrollbar-dark pb-16 md:pb-0">
         <header className="sticky top-0 z-40 bg-bg-card border-b border-border">
           <div className="px-6">
-            <div className="flex items-center justify-between h-14">
-              {/* Center: Search bar */}
-              <div className="hidden md:flex flex-1 max-w-md">
-                <div className="relative w-full">
-                  <input
-                    ref={searchRef}
-                    type="text"
-                    placeholder="Search runs..."
-                    className="w-full bg-bg-elevated border border-border rounded-lg px-4 py-2 text-sm text-text-primary placeholder-text-muted focus:outline-none focus:border-accent-purple"
-                    onKeyDown={handleSearchKeyDown}
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted text-xs bg-bg-hover px-1.5 py-0.5 rounded">
-                    &#x2318;K
-                  </span>
-                </div>
-              </div>
-
-              {/* Spacer */}
-              <div className="flex-1" />
-
+            <div className="flex items-center justify-end h-14">
               {/* Right: Actions */}
               <div className="flex items-center gap-4">
-                <button
-                  onClick={() => openCreateRun()}
-                  className="hidden sm:flex items-center gap-2 bg-accent-purple hover:bg-accent-purple/90 text-white px-4 py-2 rounded-lg text-sm font-semibold"
-                >
-                  + New Run
-                </button>
                 <button
                   onClick={openSettings}
                   className="text-text-secondary hover:text-text-primary"

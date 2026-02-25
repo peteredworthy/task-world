@@ -16,9 +16,6 @@ export function useActivityStream(runId: string | undefined) {
   // SSE mode (new real-time behavior)
   const sseConnection = useActivitySSE(runId, {
     enabled: useSSE && !!runId,
-    onEvent: () => {
-      // Events are also accumulated in the hook's state, but we use onEvent for side effects if needed
-    },
   });
 
   // Return unified interface

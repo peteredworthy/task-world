@@ -87,15 +87,17 @@ export function StepTimeline({
               <div
                 className={
                   'relative flex items-center justify-center rounded font-mono text-[10px] font-bold leading-none ' +
-                  'w-7 h-[22px] ' +
+                  'w-7 h-[22px] group/steptip ' +
                   stepBadgeClasses(state)
                 }
                 tabIndex={0}
                 role="img"
                 aria-label={`Step ${i + 1}: ${completed}/${total} tasks, ${state}`}
-                title={`Step ${i + 1}: ${completed}/${total} tasks`}
               >
                 S{i + 1}
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-bg-elevated border border-border rounded text-[10px] text-text-secondary whitespace-nowrap opacity-0 group-hover/steptip:opacity-100 pointer-events-none transition-opacity z-20">
+                  {`Step ${i + 1}: ${completed}/${total} tasks`}
+                </div>
                 {showPending && (
                   onPendingClick ? (
                     <button
