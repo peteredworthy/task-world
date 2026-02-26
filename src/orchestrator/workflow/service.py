@@ -348,11 +348,11 @@ class WorkflowService:
 
         return result
 
-    async def pause_run(self, run_id: str) -> Run:
+    async def pause_run(self, run_id: str, reason: str = "manual_pause") -> Run:
         """Pause a run (ACTIVE -> PAUSED)."""
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
-        engine.pause_run(run_id)
+        engine.pause_run(run_id, reason=reason)
         return await self._persist(state, run_id, buffer)
 
     async def resume_run(
@@ -592,6 +592,10 @@ class WorkflowService:
                 attempt.agent_type = run.agent_type
                 attempt.agent_model = run.agent_config.get("model")
                 attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+                # Revert restores the worktree to the previous start_commit,
+                # so the new attempt starts from the same point.
+                if len(task.attempts) >= 2:
+                    attempt.start_commit = task.attempts[-2].start_commit
 
             # Checkout start_commit in worktree if available
             if len(task.attempts) >= 2:
@@ -904,6 +908,12 @@ class WorkflowService:
                             attempt.agent_settings = self._sanitize_agent_config(
                                 run_obj.agent_config
                             )
+                            # Capture start_commit for git tracking: revision starts
+                            # from where the previous attempt ended.
+                            if len(task.attempts) >= 2:
+                                prev_end = task.attempts[-2].end_commit
+                                if prev_end:
+                                    attempt.start_commit = prev_end
 
                         buffer.emit(
                             TaskStatusChanged(
@@ -1693,6 +1703,11 @@ class WorkflowService:
             attempt.agent_type = run.agent_type
             attempt.agent_model = run.agent_config.get("model")
             attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+            # Capture start_commit: recovery retry starts from where the previous attempt ended.
+            if len(task.attempts) >= 2:
+                prev_end = task.attempts[-2].end_commit
+                if prev_end:
+                    attempt.start_commit = prev_end
 
         # Resume the run if paused
         if run.status == RunStatus.PAUSED:

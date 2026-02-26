@@ -5,6 +5,9 @@ import type { DiffFileEntry } from '../../types/review';
 
 interface FileListSectionProps {
   runId: string;
+  diffScope?: 'aggregate' | 'task';
+  diffRef?: string;
+  selectionSummary?: string;
   selectedFilePath?: string | null;
   onFileSelect?: (file: DiffFileEntry) => void;
   onPruneFile?: (file: DiffFileEntry) => void;
@@ -313,8 +316,16 @@ function FileTreeNode({
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
-export function FileListSection({ runId, selectedFilePath, onFileSelect, onPruneFile }: FileListSectionProps) {
-  const { data, isLoading, isError, error, refetch } = useDiffFiles(runId);
+export function FileListSection({
+  runId,
+  diffScope = 'aggregate',
+  diffRef,
+  selectionSummary,
+  selectedFilePath,
+  onFileSelect,
+  onPruneFile,
+}: FileListSectionProps) {
+  const { data, isLoading, isError, error, refetch } = useDiffFiles(runId, diffScope, diffRef);
 
   const tree = useMemo(() => buildFileTree(data ?? []), [data]);
 
@@ -381,6 +392,11 @@ export function FileListSection({ runId, selectedFilePath, onFileSelect, onPrune
           <span className="ml-1.5 font-normal text-text-muted">({data.length})</span>
         )}
       </h3>
+      {selectionSummary && (
+        <p className="mt-1 text-[11px] text-text-muted truncate" title={selectionSummary}>
+          {selectionSummary}
+        </p>
+      )}
 
       {data.length === 0 ? (
         <div className="mt-4 flex flex-col items-center gap-2 py-4 text-center">

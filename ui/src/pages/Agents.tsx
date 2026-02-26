@@ -3,7 +3,12 @@ import { Link } from 'react-router-dom';
 import { useAgents } from '../hooks/useApi';
 import { Spinner } from '../components/Spinner';
 import { EmptyState } from '../components/EmptyState';
-import { loadAgentModelDefaults, saveAgentModelDefault } from '../components/agentConfigUtils';
+import {
+  loadAgentModelDefaults,
+  saveAgentModelDefault,
+  loadAgentFieldDefaults,
+  saveAgentFieldDefault,
+} from '../components/agentConfigUtils';
 import type { AgentOption } from '../types/agents';
 
 export function Agents() {
@@ -105,15 +110,26 @@ export function Agents() {
 }
 
 function AgentCard({ agent }: { agent: AgentOption }) {
-  // Find the model field specifically to call it out prominently
+  // Promote model and restrictions to interactive controls; hide secrets and those two from the bullet list
   const modelField = agent.config_schema.find((f) => f.name === 'model');
+  const restrictionsField = agent.config_schema.find((f) => f.name === 'restrictions');
   const otherFields = agent.config_schema.filter(
-    (f) => f.name !== 'model' && f.field_type !== 'secret',
+    (f) => f.name !== 'model' && f.name !== 'restrictions' && f.field_type !== 'secret',
   );
 
-  const storedDefault = loadAgentModelDefaults()[agent.name];
-  const initialModel = storedDefault ?? (modelField?.default != null ? String(modelField.default) : '');
+  const savedFieldDefaults = loadAgentFieldDefaults(agent.name);
+
+  const storedModel = loadAgentModelDefaults()[agent.name];
+  const initialModel = storedModel ?? (modelField?.default != null ? String(modelField.default) : '');
   const [modelValue, setModelValue] = useState(initialModel);
+
+  const initialRestrictions =
+    savedFieldDefaults['restrictions'] ??
+    (restrictionsField?.default != null ? String(restrictionsField.default) : '');
+  const [restrictionsValue, setRestrictionsValue] = useState(initialRestrictions);
+
+  const selectClass =
+    'w-full rounded border border-border bg-bg-elevated px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-purple/50 appearance-none cursor-pointer';
 
   return (
     <div
@@ -165,39 +181,61 @@ function AgentCard({ agent }: { agent: AgentOption }) {
 
       {agent.available && (
         <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
-          {/* Model field: show available options as chips if it's a select */}
+          {/* Model — combobox: free-text with dropdown suggestions from discovered models */}
           {modelField && (
             <div>
               <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide mb-1">
-                Model
+                Default model
               </p>
-              {modelField.field_type === 'select' && modelField.options && modelField.options.length > 0 ? (
-                <select
-                  className="w-full rounded border border-border bg-bg-elevated px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-purple/50 appearance-none cursor-pointer"
-                  defaultValue={modelField.default != null ? String(modelField.default) : modelField.options[0]}
-                >
+              <input
+                type="text"
+                list={`${agent.name}-model-list`}
+                value={modelValue}
+                onChange={(e) => {
+                  setModelValue(e.target.value);
+                  saveAgentModelDefault(agent.name, e.target.value);
+                }}
+                placeholder={modelField.default != null ? String(modelField.default) : 'Select or type model…'}
+                className="w-full rounded border border-border bg-bg-elevated px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-purple/50"
+                autoComplete="off"
+              />
+              {modelField.options && modelField.options.length > 0 && (
+                <datalist id={`${agent.name}-model-list`}>
                   {modelField.options.map((opt) => (
-                    <option key={opt} value={opt}>
-                      {opt}
-                    </option>
+                    <option key={opt} value={opt} />
                   ))}
-                </select>
-              ) : (
-                <input
-                  type="text"
-                  value={modelValue}
-                  onChange={(e) => {
-                    setModelValue(e.target.value);
-                    saveAgentModelDefault(agent.name, e.target.value);
-                  }}
-                  placeholder={modelField.default != null ? String(modelField.default) : 'Enter model name…'}
-                  className="w-full rounded border border-border bg-bg-elevated px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-purple/50"
-                />
+                </datalist>
               )}
             </div>
           )}
 
-          {/* Other visible config fields */}
+          {/* Restrictions — interactive select for agents that expose it */}
+          {restrictionsField && restrictionsField.options && restrictionsField.options.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide mb-1">
+                Restrictions
+              </p>
+              <select
+                className={selectClass}
+                value={restrictionsValue}
+                onChange={(e) => {
+                  setRestrictionsValue(e.target.value);
+                  saveAgentFieldDefault(agent.name, 'restrictions', e.target.value);
+                }}
+              >
+                {restrictionsField.options.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+              {restrictionsField.description && (
+                <p className="mt-0.5 text-[10px] text-text-muted">{restrictionsField.description}</p>
+              )}
+            </div>
+          )}
+
+          {/* Other visible config fields (read-only summary) */}
           {otherFields.length > 0 && (
             <div>
               <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide mb-1">

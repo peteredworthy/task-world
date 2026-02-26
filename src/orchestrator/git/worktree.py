@@ -104,6 +104,100 @@ class WorktreeManager:
             commit=result.stdout.strip(),
         )
 
+    def ensure_exists(self, run_id: str, base_branch: str = "main") -> WorktreeInfo:
+        """Ensure a worktree exists for a run, recreating it if the directory is missing.
+
+        Unlike ``create()``, this method handles the case where the worktree
+        directory was deleted (e.g., by cleanup) but the git branch may still
+        exist from the original creation. It:
+
+        1. Returns immediately if the directory already exists.
+        2. Prunes stale git worktree entries (where the directory is gone).
+        3. If the branch ``orchestrator/run-{run_id}`` already exists, creates
+           the worktree pointing to that branch (preserving git history).
+        4. If the branch doesn't exist, creates a fresh worktree and branch
+           from ``base_branch`` (same as ``create()``).
+
+        Args:
+            run_id: Unique identifier for the run
+            base_branch: Branch to use if a fresh worktree must be created
+
+        Returns:
+            WorktreeInfo with path, branch, and commit
+
+        Raises:
+            GitCommandError: If git command fails
+        """
+        worktree_path = self._worktree_dir / f"run-{run_id}"
+        branch_name = f"orchestrator/run-{run_id}"
+
+        if worktree_path.exists():
+            # Already present - get the current commit and return
+            try:
+                result = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                return WorktreeInfo(
+                    path=worktree_path.resolve(),
+                    branch=branch_name,
+                    commit=result.stdout.strip(),
+                )
+            except subprocess.CalledProcessError:
+                pass  # Fall through to recreate
+
+        # Prune stale worktree entries so git doesn't block re-adding
+        subprocess.run(
+            ["git", "worktree", "prune"],
+            cwd=self._repo,
+            capture_output=True,
+        )
+
+        self._worktree_dir.mkdir(parents=True, exist_ok=True)
+
+        # Check if the branch already exists
+        branch_exists = (
+            subprocess.run(
+                ["git", "rev-parse", "--verify", branch_name],
+                cwd=self._repo,
+                capture_output=True,
+            ).returncode
+            == 0
+        )
+
+        if branch_exists:
+            # Reuse the existing branch (preserves any committed work)
+            cmd = ["git", "worktree", "add", str(worktree_path), branch_name]
+        else:
+            # Fresh worktree from base_branch
+            cmd = ["git", "worktree", "add", "-b", branch_name, str(worktree_path), base_branch]
+
+        try:
+            subprocess.run(cmd, cwd=self._repo, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            raise GitCommandError(" ".join(cmd), e.returncode, e.stderr) from e
+
+        # Symlink .venv from main repo to avoid duplicating the virtual environment
+        main_venv = self._repo / ".venv"
+        if main_venv.exists() and not (worktree_path / ".venv").exists():
+            (worktree_path / ".venv").symlink_to(main_venv.resolve())
+
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return WorktreeInfo(
+            path=worktree_path.resolve(),
+            branch=branch_name,
+            commit=result.stdout.strip(),
+        )
+
     def delete(self, run_id: str, force: bool = False) -> None:
         """
         Remove worktree for a run.

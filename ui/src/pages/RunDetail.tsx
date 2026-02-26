@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack } from '../hooks/useApi';
+import { useBranchStatus } from '../hooks/useReview';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { usePendingActions } from '../hooks/usePendingActions';
 import { WebSocketProvider } from '../context/WebSocketContext';
@@ -128,6 +129,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const pauseRun = usePauseRun();
   const cancelRun = useCancelRun();
   const mergeBack = useMergeBack();
+  const { data: branchStatus } = useBranchStatus(runId);
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
@@ -274,6 +276,23 @@ function RunDetailInner({ runId }: { runId: string }) {
                   </div>
                 </div>
               )}
+              {run.status === 'paused' && run.pause_reason && run.pause_reason !== 'manual_pause' && (
+                <div className="mt-1.5 text-xs text-status-paused">
+                  {({
+                    server_shutdown: 'Paused — server restarted, will auto-resume',
+                    agent_not_available: 'Paused — agent not available',
+                    agent_execution_error: 'Paused — agent execution error',
+                    agent_exit_failure: 'Paused — agent exited with error',
+                    gate_blocked: 'Paused — checklist gate not satisfied',
+                    recovery_loop: 'Paused — recovery loop detected',
+                    unexpected_error: 'Paused — unexpected error',
+                    agent_health_check_failed: 'Paused — agent health check failed',
+                    agent_not_running_on_startup: 'Paused — agent was not running on startup',
+                    recovered: 'Paused — recovered from failure',
+                    recovery_triggered: 'Paused — recovery triggered',
+                  } as Record<string, string>)[run.pause_reason] ?? `Paused (${run.pause_reason})`}
+                </div>
+              )}
             </div>
 
             {/* Action buttons */}
@@ -314,36 +333,42 @@ function RunDetailInner({ runId }: { runId: string }) {
                 </button>
               )}
               {run.status === 'completed' && !mergeResult && (
-                <button
-                  onClick={() => {
-                    setMutationError(null);
-                    setDirtyWorkingTree(null);
-                    mergeBack.mutate(
-                      { runId: run.id },
-                      {
-                        onSuccess: (data) => setMergeResult(data.message),
-                        onError: (err: Error) => {
-                          if (err instanceof ApiError && err.body && typeof err.body === 'object') {
-                            const body = err.body as Record<string, unknown>;
-                            if (body.error === 'dirty_working_tree') {
-                              setDirtyWorkingTree({
-                                branch: body.branch as string,
-                                dirty_files: body.dirty_files as string[],
-                              });
-                              return;
+                branchStatus?.ahead_count === 0 ? (
+                  <span className="px-3 py-1.5 text-xs font-medium text-status-completed bg-status-completed/10 border border-status-completed/30 rounded-md">
+                    Merged
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setMutationError(null);
+                      setDirtyWorkingTree(null);
+                      mergeBack.mutate(
+                        { runId: run.id },
+                        {
+                          onSuccess: (data) => setMergeResult(data.message),
+                          onError: (err: Error) => {
+                            if (err instanceof ApiError && err.body && typeof err.body === 'object') {
+                              const body = err.body as Record<string, unknown>;
+                              if (body.error === 'dirty_working_tree') {
+                                setDirtyWorkingTree({
+                                  branch: body.branch as string,
+                                  dirty_files: body.dirty_files as string[],
+                                });
+                                return;
+                              }
                             }
-                          }
-                          handleMutationError('merge back')(err);
+                            handleMutationError('merge back')(err);
+                          },
                         },
-                      },
-                    );
-                  }}
-                  disabled={mergeBack.isPending}
-                  className="px-3 py-1.5 text-xs font-medium text-text-primary bg-status-completed/20 border border-status-completed/40 rounded-md hover:bg-status-completed/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  aria-label="Merge run branch back to source"
-                >
-                  {mergeBack.isPending ? 'Merging...' : `Merge to ${run.source_branch || 'main'}`}
-                </button>
+                      );
+                    }}
+                    disabled={mergeBack.isPending}
+                    className="px-3 py-1.5 text-xs font-medium text-text-primary bg-status-completed/20 border border-status-completed/40 rounded-md hover:bg-status-completed/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    aria-label="Merge run branch back to source"
+                  >
+                    {mergeBack.isPending ? 'Merging...' : `Merge to ${run.source_branch || 'main'}`}
+                  </button>
+                )
               )}
             </div>
           </div>

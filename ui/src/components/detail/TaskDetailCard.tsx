@@ -646,7 +646,7 @@ export function TaskDetailCard({
           <StatusIcon status={status} />
 
           {/* Task title */}
-          <span className="text-sm font-medium text-text-primary truncate flex-1 min-w-0">
+          <span className="text-sm font-medium text-text-primary truncate flex-1 min-w-0" title={taskTitle}>
             {taskTitle}
           </span>
 

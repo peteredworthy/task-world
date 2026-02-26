@@ -1,2 +1,0 @@
-I can only see the builder or verifier prompt. The builder prompt while the task is being built and once it has completed the verifier prompt. Both should be available.
-There isn't any indication of steps, it just appears to be a long list of the tasks.

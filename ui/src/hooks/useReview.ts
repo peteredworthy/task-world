@@ -4,10 +4,14 @@ import { api } from '../api/client';
 import type { DiffFileEntry, CommitEntry, BranchStatusResponse } from '../types';
 import type { PruneSelection, TestRunResult, BlockResolution, FinalMergeBackResponse, MergeReadiness } from '../types/review';
 
-export function useDiffFiles(runId: string | undefined) {
+export function useDiffFiles(
+  runId: string | undefined,
+  scope: string = 'aggregate',
+  ref?: string,
+) {
   return useQuery({
-    queryKey: ['diffFiles', runId],
-    queryFn: () => getDiffFiles(runId!),
+    queryKey: ['diffFiles', runId, scope, ref],
+    queryFn: () => getDiffFiles(runId!, scope, ref),
     enabled: !!runId,
     staleTime: 30_000,
   });

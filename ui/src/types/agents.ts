@@ -7,6 +7,7 @@ export interface AgentConfigField {
   default: unknown;
   description: string;
   options: string[] | null;
+  allow_custom: boolean;
 }
 
 export interface QuotaBucket {

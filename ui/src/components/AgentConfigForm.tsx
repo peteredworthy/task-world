@@ -26,6 +26,32 @@ function ConfigFieldInput({
         'shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none ' +
         'focus:ring-1 focus:ring-accent-purple/50 disabled:opacity-60 disabled:cursor-not-allowed';
 
+    // Combobox: allow_custom takes precedence — free-text input with dropdown suggestions.
+    // Checked before field_type so it works even if field_type is "string" with options.
+    if (field.allow_custom && field.options && field.options.length > 0) {
+        const listId = `agent-config-${field.name}-list`;
+        return (
+            <>
+                <input
+                    id={`agent-config-${field.name}`}
+                    type="text"
+                    list={listId}
+                    value={value != null ? String(value) : ''}
+                    onChange={(e) => onChange(e.target.value || undefined)}
+                    placeholder={field.default != null ? String(field.default) : `Select or type…`}
+                    disabled={disabled}
+                    className={baseInputClass}
+                    autoComplete="off"
+                />
+                <datalist id={listId}>
+                    {field.options.map((opt) => (
+                        <option key={opt} value={opt} />
+                    ))}
+                </datalist>
+            </>
+        );
+    }
+
     if (field.field_type === 'select' && field.options && field.options.length > 0) {
         return (
             <select

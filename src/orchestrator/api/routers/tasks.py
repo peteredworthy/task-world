@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
 
 from orchestrator.api.deps import (
     get_current_user,
@@ -185,6 +186,42 @@ async def complete_verification(
 ) -> TransitionResponse:
     """Complete verification phase."""
     result = await service.complete_verification(run_id, task_id)
+    return TransitionResponse(
+        success=result.success,
+        new_status=result.new_status.value,
+        error=result.error,
+    )
+
+
+class CompleteRecoveryRequest(BaseModel):
+    outcome: str  # "retry", "skip", or "abandon"
+    notes: str = ""
+
+
+@router.post(
+    "/{run_id}/tasks/{task_id}/complete-recovery",
+    response_model=TransitionResponse,
+)
+async def complete_recovery(
+    run_id: str,
+    task_id: str,
+    request: CompleteRecoveryRequest,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> TransitionResponse:
+    """Complete recovery phase by specifying the recovery outcome."""
+    outcome = request.outcome
+    notes = request.notes
+    if outcome == "retry":
+        result = await service.complete_recovery_retry(run_id, task_id, notes)
+    elif outcome == "skip":
+        result = await service.complete_recovery_skip(run_id, task_id, notes)
+    elif outcome == "abandon":
+        result = await service.complete_recovery_abandon(run_id, task_id, notes)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid outcome {outcome!r}. Must be one of: retry, skip, abandon",
+        )
     return TransitionResponse(
         success=result.success,
         new_status=result.new_status.value,

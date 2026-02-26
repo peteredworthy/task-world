@@ -6,8 +6,14 @@
 import { fetchApi } from './client';
 import type { AgentJobResponse, BackMergeResponse, CommitEntry, ConflictFile, BlockResolution, ConflictResolutionResponse, RevertBackMergeResponse, DiffFileEntry, DiffResponse, FinalMergeBackResponse, MergeReadiness, PruneSelection, PrunePreviewResponse, PruneApplyResponse, TestRunResponse, TestRunResult } from '../types/review';
 
-export async function getDiffFiles(runId: string): Promise<DiffFileEntry[]> {
-  return fetchApi<DiffFileEntry[]>(`/api/runs/${runId}/review/diff/files`);
+export async function getDiffFiles(
+  runId: string,
+  scope: string = 'aggregate',
+  ref?: string,
+): Promise<DiffFileEntry[]> {
+  const sp = new URLSearchParams({ scope });
+  if (ref) sp.set('ref', ref);
+  return fetchApi<DiffFileEntry[]>(`/api/runs/${runId}/review/diff/files?${sp.toString()}`);
 }
 
 export async function getTaskDiffFiles(runId: string, ref: string): Promise<DiffFileEntry[]> {

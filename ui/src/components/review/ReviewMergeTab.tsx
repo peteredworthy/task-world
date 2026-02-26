@@ -1,10 +1,9 @@
-import { useState, useMemo, type ReactNode } from 'react';
+import { useState, useMemo, useEffect, type ReactNode } from 'react';
 import { BranchStatusSection } from './BranchStatusSection';
 import { FileListSection } from './FileListSection';
 import { DiffPanel } from './DiffPanel';
 import { HistoryPanel } from './HistoryPanel';
 import type { DiffScope } from './HistoryPanel';
-import { TaskFilesPanel } from './TaskFilesPanel';
 import { PruneModeProvider, usePruneMode } from './PruneModeProvider';
 import { PruneToolbar } from './PruneToolbar';
 import { PrunePreviewModal } from './PrunePreviewModal';
@@ -18,6 +17,7 @@ import { ConflictResolverDialog } from './ConflictResolverDialog';
 import { AgentResolveConflictsModal } from './AgentResolveConflictsModal';
 import { MergeReadinessBar } from './MergeReadinessBar';
 import { MergeConfirmModal } from './MergeConfirmModal';
+import { TaskRangeSelectorBar, type SharedDiffSelection } from './TaskRangeSelectorBar';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { useRun } from '../../hooks/useApi';
 import { useBranchStatus, useConflicts, useDiffFiles, useRunTests } from '../../hooks/useReview';
@@ -32,7 +32,7 @@ interface ReviewMergeTabProps {
 
 // ── Section collapse state ────────────────────────────────────────────────────
 
-type SectionKey = 'branch' | 'files' | 'conflicts' | 'tests' | 'history' | 'taskfiles';
+type SectionKey = 'branch' | 'files' | 'conflicts' | 'tests' | 'history';
 
 // ── Collapsible section wrapper ───────────────────────────────────────────────
 
@@ -87,6 +87,10 @@ function CollapsibleSection({
 // ── Main content ──────────────────────────────────────────────────────────────
 
 function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
+  const [sharedDiffSelection, setSharedDiffSelection] = useState<SharedDiffSelection>({
+    scope: 'aggregate',
+    summary: 'All work',
+  });
   const [selectedFile, setSelectedFile] = useState<DiffFileEntry | null>(null);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
   const [historyScope, setHistoryScope] = useState<DiffScope>('aggregate');
@@ -106,7 +110,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
     conflicts: true,
     tests: false,
     history: false,
-    taskfiles: false,
   });
 
   const toggleSection = (id: SectionKey) =>
@@ -150,7 +153,18 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
   const [mergeSuccessSha, setMergeSuccessSha] = useState<string | null>(null);
 
   // Diff file list (for j/k keyboard navigation)
-  const { data: diffFiles } = useDiffFiles(runId);
+  const { data: diffFiles } = useDiffFiles(
+    runId,
+    sharedDiffSelection.scope,
+    sharedDiffSelection.ref,
+  );
+
+  useEffect(() => {
+    if (!selectedFile || !diffFiles) return;
+    if (!diffFiles.some((f) => f.path === selectedFile.path)) {
+      setSelectedFile(null);
+    }
+  }, [diffFiles, selectedFile]);
 
   const handlePruneFile = (file: DiffFileEntry) => {
     if (!isPruneMode) {
@@ -340,6 +354,12 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
         </div>
       )}
 
+      <TaskRangeSelectorBar
+        runId={runId}
+        run={run ?? undefined}
+        onSelectionChange={setSharedDiffSelection}
+      />
+
       <div className="flex h-full min-h-0 gap-4">
         {/* ── Left rail ─────────────────────────────────────────────────── */}
         {isRailMinimized ? (
@@ -490,29 +510,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
               </svg>
             </button>
 
-            {/* Task Files */}
-            {run && (
-              <button
-                type="button"
-                onClick={() => expandSection('taskfiles')}
-                title="Task Files"
-                className={iconBtnClass}
-              >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  aria-hidden="true"
-                >
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                </svg>
-              </button>
-            )}
           </div>
         ) : (
           /* Full rail */
@@ -561,6 +558,9 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
               <PanelErrorBoundary label="File List">
                 <FileListSection
                   runId={runId}
+                  diffScope={sharedDiffSelection.scope}
+                  diffRef={sharedDiffSelection.ref}
+                  selectionSummary={sharedDiffSelection.summary}
                   selectedFilePath={selectedFile?.path ?? null}
                   onFileSelect={setSelectedFile}
                   onPruneFile={handlePruneFile}
@@ -616,18 +616,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
                 />
               </PanelErrorBoundary>
             </CollapsibleSection>
-
-            {run && (
-              <CollapsibleSection
-                label="Task Files"
-                isOpen={openSections.taskfiles}
-                onToggle={() => toggleSection('taskfiles')}
-              >
-                <PanelErrorBoundary label="Task Files">
-                  <TaskFilesPanel runId={runId} run={run} />
-                </PanelErrorBoundary>
-              </CollapsibleSection>
-            )}
           </div>
         )}
 
@@ -647,7 +635,9 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
           <DiffPanel
             runId={runId}
             filePath={selectedFile?.path ?? null}
-            run={run ?? undefined}
+            diffScope={sharedDiffSelection.scope}
+            diffRef={sharedDiffSelection.ref}
+            selectionSummary={sharedDiffSelection.summary}
           />
         </div>
       </div>

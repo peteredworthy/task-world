@@ -132,15 +132,10 @@ _USER_MANAGED_CONFIG: list[AgentConfigField] = [
 
 _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
-        name="endpoint",
-        field_type="string",
-        default="http://localhost:9000",
-        description="Codex app server endpoint URL (stdio transport via local process)",
-    ),
-    AgentConfigField(
         name="model",
         field_type="string",
         description="Model to use for Codex agent sessions",
+        allow_custom=True,
     ),
     AgentConfigField(
         name="callback_channel",
@@ -148,6 +143,18 @@ _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
         default="rest",
         description="How the Codex server calls back to the orchestrator",
         options=["rest", "mcp"],
+    ),
+    AgentConfigField(
+        name="restrictions",
+        field_type="select",
+        default="no-network",
+        description=(
+            "How strictly to sandbox Codex. "
+            "'none' runs with workspace-write and network enabled. "
+            "'no-network' forces workspace-write with network disabled. "
+            "'use-local' hands control to your local Codex config.toml (may be read-only)."
+        ),
+        options=["none", "no-network", "use-local"],
     ),
 ]
 
