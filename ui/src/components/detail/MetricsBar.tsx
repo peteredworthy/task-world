@@ -40,6 +40,7 @@ function MetricCard({
 export function MetricsBar({ run }: MetricsBarProps) {
   const tokensRead = run.total_tokens_read;
   const tokensWrite = run.total_tokens_write;
+  const tokensCache = run.total_tokens_cache;
   const durationMs = run.total_duration_ms;
 
   // Use backend's estimated_cost_usd if available, otherwise fall back to calculation
@@ -49,13 +50,22 @@ export function MetricsBar({ run }: MetricsBarProps) {
         ? estimateCost(tokensRead, tokensWrite)
         : '--');
 
+  // Show "Cost" for actual API cost, "Est. Cost" for estimates
+  const isActualCost = run.cost_disclaimer?.startsWith('Actual cost');
+
   return (
     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3" role="region" aria-label="Run metrics">
-      <MetricCard icon={'\u26A1'} label="Tokens (Read / Write)">
+      <MetricCard icon={'\u26A1'} label={tokensCache > 0 ? 'Tokens (R / W / Cache)' : 'Tokens (Read / Write)'}>
         <div className="flex items-baseline gap-1">
           <span>{formatTokens(tokensRead)}</span>
           <span className="text-text-muted text-base font-normal">/</span>
           <span>{formatTokens(tokensWrite)}</span>
+          {tokensCache > 0 && (
+            <>
+              <span className="text-text-muted text-base font-normal">/</span>
+              <span className="text-text-secondary">{formatTokens(tokensCache)}</span>
+            </>
+          )}
         </div>
       </MetricCard>
 
@@ -63,7 +73,7 @@ export function MetricsBar({ run }: MetricsBarProps) {
         {durationMs > 0 ? formatDuration(durationMs) : '--'}
       </MetricCard>
 
-      <MetricCard icon="$" label="Est. Cost">
+      <MetricCard icon="$" label={isActualCost ? 'Cost' : 'Est. Cost'}>
         {costDisplay}
       </MetricCard>
     </div>

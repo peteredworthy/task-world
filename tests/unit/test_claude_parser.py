@@ -10,6 +10,46 @@ def _make_line(event: dict) -> str:
     return json.dumps(event)
 
 
+def _assistant_event(content: list, usage: dict | None = None) -> dict:
+    """Build a real Claude CLI assistant event with content nested in message."""
+    msg: dict = {"role": "assistant", "content": content}
+    if usage:
+        msg["usage"] = usage
+    return {"type": "assistant", "message": msg}
+
+
+def _user_tool_result(tool_use_id: str, content: str | list, is_error: bool = False) -> dict:
+    """Build a real Claude CLI user event wrapping a tool_result block."""
+    block: dict = {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
+    if is_error:
+        block["is_error"] = True
+    return {"type": "user", "message": {"role": "user", "content": [block]}}
+
+
+def _result_event(
+    result: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    total_cost_usd: float = 0.0,
+    duration_ms: int = 0,
+    num_turns: int = 0,
+) -> dict:
+    """Build a real Claude CLI result event."""
+    return {
+        "type": "result",
+        "subtype": "success",
+        "result": result,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read_input_tokens": 0,
+        },
+        "total_cost_usd": total_cost_usd,
+        "duration_ms": duration_ms,
+        "num_turns": num_turns,
+    }
+
+
 def test_system_init():
     parser = ClaudeStreamParser()
     parser.parse_line(
@@ -36,11 +76,10 @@ def test_assistant_text():
     parser = ClaudeStreamParser()
     parser.parse_line(
         _make_line(
-            {
-                "type": "assistant",
-                "content": [{"type": "text", "text": "Hello, world!"}],
-                "usage": {"input_tokens": 100, "output_tokens": 50},
-            }
+            _assistant_event(
+                [{"type": "text", "text": "Hello, world!"}],
+                usage={"input_tokens": 100, "output_tokens": 50, "cache_read_input_tokens": 0},
+            )
         )
     )
     log = parser.finalize()
@@ -60,12 +99,7 @@ def test_assistant_text():
 def test_thinking_block():
     parser = ClaudeStreamParser()
     parser.parse_line(
-        _make_line(
-            {
-                "type": "assistant",
-                "content": [{"type": "thinking", "thinking": "Let me consider..."}],
-            }
-        )
+        _make_line(_assistant_event([{"type": "thinking", "thinking": "Let me consider..."}]))
     )
     log = parser.finalize()
 
@@ -78,17 +112,16 @@ def test_tool_use():
     parser = ClaudeStreamParser()
     parser.parse_line(
         _make_line(
-            {
-                "type": "assistant",
-                "content": [
+            _assistant_event(
+                [
                     {
                         "type": "tool_use",
                         "id": "tu_abc",
                         "name": "bash",
                         "input": {"command": "ls -la"},
                     }
-                ],
-            }
+                ]
+            )
         )
     )
     log = parser.finalize()
@@ -105,16 +138,7 @@ def test_tool_use():
 
 def test_tool_result():
     parser = ClaudeStreamParser()
-    parser.parse_line(
-        _make_line(
-            {
-                "type": "tool_result",
-                "tool_use_id": "tu_abc",
-                "content": "file1.py\nfile2.py",
-                "is_error": False,
-            }
-        )
-    )
+    parser.parse_line(_make_line(_user_tool_result("tu_abc", "file1.py\nfile2.py")))
     log = parser.finalize()
 
     assert len(log.entries) == 1
@@ -127,18 +151,20 @@ def test_tool_result():
     assert entry.tool_result.output_length == 17
 
 
+def test_tool_result_error():
+    parser = ClaudeStreamParser()
+    parser.parse_line(_make_line(_user_tool_result("tu_abc", "command not found", is_error=True)))
+    log = parser.finalize()
+
+    entry = log.entries[0]
+    assert entry.tool_result is not None
+    assert entry.tool_result.success is False
+
+
 def test_tool_result_truncation():
     parser = ClaudeStreamParser()
     long_output = "x" * 10000
-    parser.parse_line(
-        _make_line(
-            {
-                "type": "tool_result",
-                "tool_use_id": "tu_big",
-                "content": long_output,
-            }
-        )
-    )
+    parser.parse_line(_make_line(_user_tool_result("tu_big", long_output)))
     log = parser.finalize()
 
     entry = log.entries[0]
@@ -152,13 +178,14 @@ def test_result_event():
     parser = ClaudeStreamParser()
     parser.parse_line(
         _make_line(
-            {
-                "type": "result",
-                "content": [{"type": "text", "text": "Task completed!"}],
-                "usage": {"input_tokens": 1000, "output_tokens": 500},
-                "cost_usd": 0.05,
-                "duration_ms": 30000,
-            }
+            _result_event(
+                "Task completed!",
+                input_tokens=1000,
+                output_tokens=500,
+                total_cost_usd=0.05,
+                duration_ms=30000,
+                num_turns=3,
+            )
         )
     )
     log = parser.finalize()
@@ -170,6 +197,8 @@ def test_result_event():
     assert log.total_cost_usd == 0.05
     assert log.total_input_tokens == 1000
     assert log.total_output_tokens == 500
+    assert log.total_duration_ms == 30000
+    assert log.total_turns == 3
 
     # Readable text should include the result
     assert "Task completed!" in parser.get_readable_text()
@@ -193,7 +222,7 @@ def test_error_event():
 
 
 def test_full_conversation():
-    """Test parsing a full conversation flow."""
+    """Test parsing a full conversation flow with real Claude CLI event format."""
     parser = ClaudeStreamParser()
 
     lines = [
@@ -204,29 +233,21 @@ def test_full_conversation():
             "model": "claude-sonnet-4-5-20250514",
             "tools": ["bash"],
         },
-        {
-            "type": "assistant",
-            "content": [{"type": "text", "text": "I'll check the files."}],
-            "usage": {"input_tokens": 100, "output_tokens": 20},
-        },
-        {
-            "type": "assistant",
-            "content": [
-                {"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"command": "ls"}}
-            ],
-        },
-        {"type": "tool_result", "tool_use_id": "tu_1", "content": "main.py\ntest.py"},
-        {
-            "type": "assistant",
-            "content": [{"type": "text", "text": "Found 2 files."}],
-            "usage": {"input_tokens": 200, "output_tokens": 15},
-        },
-        {
-            "type": "result",
-            "content": [{"type": "text", "text": "Done!"}],
-            "usage": {"input_tokens": 300, "output_tokens": 35},
-            "cost_usd": 0.02,
-        },
+        _assistant_event(
+            [{"type": "text", "text": "I'll check the files."}],
+            usage={"input_tokens": 100, "output_tokens": 20, "cache_read_input_tokens": 0},
+        ),
+        _assistant_event(
+            [{"type": "tool_use", "id": "tu_1", "name": "bash", "input": {"command": "ls"}}]
+        ),
+        _user_tool_result("tu_1", "main.py\ntest.py"),
+        _assistant_event(
+            [{"type": "text", "text": "Found 2 files."}],
+            usage={"input_tokens": 200, "output_tokens": 15, "cache_read_input_tokens": 0},
+        ),
+        _result_event(
+            "Done!", input_tokens=300, output_tokens=35, total_cost_usd=0.02, num_turns=2
+        ),
     ]
 
     for event in lines:
@@ -242,7 +263,7 @@ def test_full_conversation():
     assert log.entries[4].kind == ActionEntryKind.ASSISTANT_TEXT
     assert log.entries[5].kind == ActionEntryKind.RESULT
 
-    assert log.total_turns == 2  # Two assistant_text entries
+    assert log.total_turns == 2  # num_turns from result event
     assert log.total_cost_usd == 0.02
     assert log.session_id == "s1"
 
@@ -256,6 +277,7 @@ def test_full_conversation():
 def test_skips_unknown_event_types():
     parser = ClaudeStreamParser()
     parser.parse_line(_make_line({"type": "unknown_event", "data": "foo"}))
+    parser.parse_line(_make_line({"type": "rate_limit_event", "rate_limit_info": {}}))
     log = parser.finalize()
     assert len(log.entries) == 0
 
@@ -274,9 +296,8 @@ def test_multiple_content_blocks():
     parser = ClaudeStreamParser()
     parser.parse_line(
         _make_line(
-            {
-                "type": "assistant",
-                "content": [
+            _assistant_event(
+                [
                     {"type": "text", "text": "Let me read that file."},
                     {
                         "type": "tool_use",
@@ -285,8 +306,8 @@ def test_multiple_content_blocks():
                         "input": {"file_path": "src/main.py"},
                     },
                 ],
-                "usage": {"input_tokens": 50, "output_tokens": 30},
-            }
+                usage={"input_tokens": 50, "output_tokens": 30, "cache_read_input_tokens": 0},
+            )
         )
     )
     log = parser.finalize()
@@ -298,3 +319,30 @@ def test_multiple_content_blocks():
     assert log.entries[1].metrics is None  # Second block doesn't duplicate metrics
     assert log.entries[1].tool_use is not None
     assert log.entries[1].tool_use.summary == "read: src/main.py"
+
+
+def test_user_event_with_multiple_tool_results():
+    """A user event may carry multiple tool result blocks."""
+    parser = ClaudeStreamParser()
+    parser.parse_line(
+        _make_line(
+            {
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "tu_1", "content": "result 1"},
+                        {"type": "tool_result", "tool_use_id": "tu_2", "content": "result 2"},
+                    ],
+                },
+            }
+        )
+    )
+    log = parser.finalize()
+
+    assert len(log.entries) == 2
+    assert log.entries[0].kind == ActionEntryKind.TOOL_RESULT
+    assert log.entries[0].tool_result is not None
+    assert log.entries[0].tool_result.tool_use_id == "tu_1"
+    assert log.entries[1].tool_result is not None
+    assert log.entries[1].tool_result.tool_use_id == "tu_2"

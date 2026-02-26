@@ -3,20 +3,30 @@
 import dataclasses
 import json
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db.models import EventModel
+from orchestrator.time_utils import ensure_utc, format_utc_datetime
 from orchestrator.workflow.events import WorkflowEvent
 
 
 def _serialize_event(event: WorkflowEvent) -> dict[str, Any]:
     """Serialize a WorkflowEvent to a JSON-compatible dict."""
     data = dataclasses.asdict(event)
-    # Convert enums and datetimes via JSON round-trip
-    return json.loads(json.dumps(data, default=str))
+
+    # Convert enums and datetimes via JSON round-trip, preserving UTC timestamp shape.
+    def _json_default(obj: object) -> str:
+        if isinstance(obj, datetime):
+            return format_utc_datetime(obj)
+        if hasattr(obj, "value"):
+            return obj.value  # type: ignore[return-value]
+        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+
+    return json.loads(json.dumps(data, default=_json_default))
 
 
 class EventStore:
@@ -56,7 +66,7 @@ class EventStore:
             select(EventModel).where(EventModel.run_id == run_id).order_by(EventModel.id)
         )
         return [
-            {"type": e.event_type, "timestamp": e.timestamp, "payload": e.payload}
+            {"type": e.event_type, "timestamp": ensure_utc(e.timestamp), "payload": e.payload}
             for e in result.scalars()
         ]
 
@@ -94,7 +104,7 @@ class EventStore:
             {
                 "id": e.id,
                 "event_type": e.event_type,
-                "timestamp": e.timestamp,
+                "timestamp": ensure_utc(e.timestamp),
                 "payload": e.payload,
             }
             for e in result.scalars()

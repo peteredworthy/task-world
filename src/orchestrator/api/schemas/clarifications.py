@@ -3,10 +3,12 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, model_validator
+from pydantic import model_validator
+
+from orchestrator.api.schemas.base import ApiModel
 
 
-class ClarificationQuestionSchema(BaseModel):
+class ClarificationQuestionSchema(ApiModel):
     """A question from the builder needing human input."""
 
     id: str
@@ -37,7 +39,7 @@ class ClarificationQuestionSchema(BaseModel):
         return self
 
 
-class ClarificationAnswerSchema(BaseModel):
+class ClarificationAnswerSchema(ApiModel):
     """Human's answer to a clarification question."""
 
     question_id: str
@@ -48,13 +50,13 @@ class ClarificationAnswerSchema(BaseModel):
     skip_reason: str | None = None
 
 
-class CreateClarificationRequest(BaseModel):
+class CreateClarificationRequest(ApiModel):
     """Request to create a clarification from the builder."""
 
     questions: list[ClarificationQuestionSchema]
 
 
-class ClarificationRequestResponse(BaseModel):
+class ClarificationRequestResponse(ApiModel):
     """Response containing a clarification request."""
 
     id: str
@@ -66,7 +68,7 @@ class ClarificationRequestResponse(BaseModel):
     responded_at: datetime | None = None
 
 
-class RespondToClarificationRequest(BaseModel):
+class RespondToClarificationRequest(ApiModel):
     """Request to submit answers to clarification questions."""
 
     answers: list[ClarificationAnswerSchema]
@@ -74,20 +76,20 @@ class RespondToClarificationRequest(BaseModel):
     skip_reason: str | None = None
 
 
-class ClarificationHistoryItem(BaseModel):
+class ClarificationHistoryItem(ApiModel):
     """A single clarification round (request + optional response)."""
 
     request: ClarificationRequestResponse
     response: RespondToClarificationRequest | None = None
 
 
-class ClarificationHistoryResponse(BaseModel):
+class ClarificationHistoryResponse(ApiModel):
     """All clarification rounds for a task."""
 
     items: list[ClarificationHistoryItem]
 
 
-class PendingActionSchema(BaseModel):
+class PendingActionSchema(ApiModel):
     """A pending user action (clarification or approval)."""
 
     task_id: str

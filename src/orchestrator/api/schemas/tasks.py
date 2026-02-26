@@ -3,10 +3,10 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from orchestrator.api.schemas.base import ApiModel
 
 
-class ChecklistItemSchema(BaseModel):
+class ChecklistItemSchema(ApiModel):
     req_id: str
     desc: str
     priority: str
@@ -16,7 +16,7 @@ class ChecklistItemSchema(BaseModel):
     grade_reason: str | None = None
 
 
-class GradeSnapshotItemSchema(BaseModel):
+class GradeSnapshotItemSchema(ApiModel):
     req_id: str
     grade: str | None = None
     grade_reason: str | None = None
@@ -25,14 +25,14 @@ class GradeSnapshotItemSchema(BaseModel):
 # --- Structured Action Log schemas ---
 
 
-class ToolUseDetailSchema(BaseModel):
+class ToolUseDetailSchema(ApiModel):
     tool_use_id: str = ""
     tool_name: str = ""
     arguments: dict[str, Any] = {}
     summary: str | None = None
 
 
-class ToolResultDetailSchema(BaseModel):
+class ToolResultDetailSchema(ApiModel):
     tool_use_id: str = ""
     output: str = ""
     exit_code: int | None = None
@@ -40,14 +40,14 @@ class ToolResultDetailSchema(BaseModel):
     output_length: int = 0
 
 
-class TurnMetricsSchema(BaseModel):
+class TurnMetricsSchema(ApiModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cost_usd: float = 0.0
 
 
-class ActionLogEntrySchema(BaseModel):
+class ActionLogEntrySchema(ApiModel):
     sequence_num: int = 0
     kind: str
     timestamp: datetime | None = None
@@ -58,7 +58,7 @@ class ActionLogEntrySchema(BaseModel):
     raw_type: str | None = None
 
 
-class ActionLogSchema(BaseModel):
+class ActionLogSchema(ApiModel):
     entries: list[ActionLogEntrySchema] = []
     session_id: str | None = None
     agent_model: str | None = None
@@ -73,7 +73,7 @@ class ActionLogSchema(BaseModel):
 # --- Attempt and Task schemas ---
 
 
-class AttemptSchema(BaseModel):
+class AttemptSchema(ApiModel):
     id: str
     attempt_num: int
     started_at: datetime | None = None
@@ -99,7 +99,7 @@ class AttemptSchema(BaseModel):
     end_commit: str | None = None
 
 
-class TaskDetailResponse(BaseModel):
+class TaskDetailResponse(ApiModel):
     id: str
     config_id: str
     title: str = ""
@@ -110,23 +110,23 @@ class TaskDetailResponse(BaseModel):
     max_attempts: int
 
 
-class TransitionResponse(BaseModel):
+class TransitionResponse(ApiModel):
     success: bool
     new_status: str
     error: str | None = None
 
 
-class UpdateChecklistRequest(BaseModel):
+class UpdateChecklistRequest(ApiModel):
     status: str
     note: str | None = None
 
 
-class SetGradeRequest(BaseModel):
+class SetGradeRequest(ApiModel):
     grade: str
     grade_reason: str | None = None
 
 
-class CallbackInstructions(BaseModel):
+class CallbackInstructions(ApiModel):
     """Instructions for external agents to call back to the orchestrator."""
 
     run_id: str
@@ -136,14 +136,14 @@ class CallbackInstructions(BaseModel):
     mcp_instructions: str
 
 
-class PromptResponse(BaseModel):
+class PromptResponse(ApiModel):
     system: str
     user: str
     phase: str  # "building" or "verifying"
     callback: CallbackInstructions | None = None
 
 
-class AgentLogsResponse(BaseModel):
+class AgentLogsResponse(ApiModel):
     """Response for agent log retrieval."""
 
     run_id: str
@@ -155,9 +155,9 @@ class AgentLogsResponse(BaseModel):
     action_log: ActionLogSchema | None = None
 
 
-class ApproveTaskRequest(BaseModel):
+class ApproveTaskRequest(ApiModel):
     comment: str | None = None
 
 
-class RejectTaskRequest(BaseModel):
+class RejectTaskRequest(ApiModel):
     reason: str | None = None

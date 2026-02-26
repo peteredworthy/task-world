@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { formatDuration, formatTokens, formatRelativeTime } from './format';
+import { formatDuration, formatTokens, formatRelativeTime, parseApiTimestamp } from './format';
 
 // ---------------------------------------------------------------------------
 // formatDuration
@@ -105,5 +105,17 @@ describe('formatRelativeTime', () => {
     expect(result).not.toContain('just now');
     // The exact format depends on the locale, but it should contain date info
     expect(result.length).toBeGreaterThan(0);
+  });
+
+  it('treats timezone-less ISO timestamps as UTC', () => {
+    const parsed = parseApiTimestamp('2025-06-15T12:00:00');
+    expect(parsed?.toISOString()).toBe('2025-06-15T12:00:00.000Z');
+  });
+
+  it('does not show far-future timestamps as "just now"', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2025-06-15T12:00:00Z'));
+
+    expect(formatRelativeTime('2025-06-15T14:00:00Z')).not.toBe('just now');
   });
 });

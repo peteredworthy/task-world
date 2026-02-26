@@ -84,8 +84,13 @@ async def test_connection_manager_broadcast_event() -> None:
         old_status=RunStatus.DRAFT,
         new_status=RunStatus.ACTIVE,
     )
-    # No connections, should not fail
+    ws = MockWebSocket()
+    await manager.connect("run-1", ws)  # type: ignore[arg-type]
+
     await manager.broadcast_event(event)
+    assert len(ws.messages) == 1
+    payload = json.loads(ws.messages[0])
+    assert payload["timestamp"].endswith("Z")
 
 
 async def test_connection_manager_broadcast_event_clarification_requested_payload() -> None:

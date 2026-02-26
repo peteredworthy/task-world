@@ -730,6 +730,7 @@ class AgentExecutor:
                 metrics = ExecutionMetrics(
                     tokens_read=al.total_input_tokens,
                     tokens_write=al.total_output_tokens,
+                    tokens_cache=al.total_cache_read_tokens + al.total_cache_creation_tokens,
                     duration_ms=al.total_duration_ms,
                     num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
                 )
@@ -931,6 +932,7 @@ class AgentExecutor:
                 metrics = ExecutionMetrics(
                     tokens_read=al.total_input_tokens,
                     tokens_write=al.total_output_tokens,
+                    tokens_cache=al.total_cache_read_tokens + al.total_cache_creation_tokens,
                     duration_ms=al.total_duration_ms,
                     num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
                 )
@@ -1041,6 +1043,7 @@ class AgentExecutor:
                 metrics = ExecutionMetrics(
                     tokens_read=al.total_input_tokens,
                     tokens_write=al.total_output_tokens,
+                    tokens_cache=al.total_cache_read_tokens + al.total_cache_creation_tokens,
                     duration_ms=al.total_duration_ms,
                     num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
                 )
@@ -1155,6 +1158,8 @@ class AgentExecutor:
         merged.total_duration_ms += second.total_duration_ms
         merged.total_input_tokens += second.total_input_tokens
         merged.total_output_tokens += second.total_output_tokens
+        merged.total_cache_read_tokens += second.total_cache_read_tokens
+        merged.total_cache_creation_tokens += second.total_cache_creation_tokens
         return merged
 
     async def _store_attempt_prompt(

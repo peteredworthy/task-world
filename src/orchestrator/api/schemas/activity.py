@@ -3,10 +3,10 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel
+from orchestrator.api.schemas.base import ApiModel
 
 
-class ActivityEvent(BaseModel):
+class ActivityEvent(ApiModel):
     id: int
     event_type: str
     timestamp: datetime
@@ -15,7 +15,7 @@ class ActivityEvent(BaseModel):
     step_title: str | None = None
 
 
-class ActivityResponse(BaseModel):
+class ActivityResponse(ApiModel):
     run_id: str
     events: list[ActivityEvent]
     has_more: bool

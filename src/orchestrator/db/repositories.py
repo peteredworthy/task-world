@@ -42,6 +42,10 @@ from orchestrator.workflow.clarifications import (
     ClarificationRequest,
     ClarificationResponse,
 )
+from orchestrator.time_utils import (
+    ensure_utc as _core_ensure_utc,
+    ensure_utc_optional as _core_ensure_utc_optional,
+)
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -51,16 +55,12 @@ def _ensure_utc(dt: datetime) -> datetime:
     database are naive. This re-attaches UTC so they serialize with a Z
     suffix in JSON responses.
     """
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
+    return _core_ensure_utc(dt)
 
 
 def _ensure_utc_optional(dt: datetime | None) -> datetime | None:
     """Like _ensure_utc but accepts and returns None for optional fields."""
-    if dt is None:
-        return None
-    return _ensure_utc(dt)
+    return _core_ensure_utc_optional(dt)
 
 
 def _eager_run_query() -> Any:  # noqa: ANN401

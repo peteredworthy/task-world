@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import Field
+
+from orchestrator.api.schemas.base import ApiModel
 
 
-class ManagedFileInfo(BaseModel):
+class ManagedFileInfo(ApiModel):
     """Info about a managed env file."""
 
     path: str
     promote_on_success: bool = False
 
 
-class SnapshotInfo(BaseModel):
+class SnapshotInfo(ApiModel):
     """Info about a snapshot point."""
 
     snapshot_id: str
@@ -22,7 +24,7 @@ class SnapshotInfo(BaseModel):
     files: list[str] = Field(default_factory=list)
 
 
-class RevertEnvFileRequest(BaseModel):
+class RevertEnvFileRequest(ApiModel):
     """Request to revert env files to a snapshot."""
 
     revert_to: str  # "task_start" or "run_start"
@@ -31,21 +33,21 @@ class RevertEnvFileRequest(BaseModel):
     files: list[str] | None = None  # Specific files to revert, None = all
 
 
-class RevertEnvFileResponse(BaseModel):
+class RevertEnvFileResponse(ApiModel):
     """Response from reverting env files."""
 
     reverted_to: str
     files_restored: list[str] = Field(default_factory=list)
 
 
-class EnvFileListResponse(BaseModel):
+class EnvFileListResponse(ApiModel):
     """Response listing managed env files."""
 
     managed_files: list[ManagedFileInfo] = []
     snapshots: list[SnapshotInfo] = []
 
 
-class CopyBackRequest(BaseModel):
+class CopyBackRequest(ApiModel):
     """Request to copy env files back to a target directory."""
 
     target_dir: str
@@ -53,7 +55,7 @@ class CopyBackRequest(BaseModel):
     files: list[str] | None = None
 
 
-class CopyBackResponse(BaseModel):
+class CopyBackResponse(ApiModel):
     """Response from copying env files back."""
 
     target_dir: str

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack } from '../hooks/useApi';
 import { useBranchStatus } from '../hooks/useReview';
@@ -115,7 +115,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   );
   const { data: activityData } = useActivityStream(runId);
   const { data: pendingActionsData } = usePendingActions(runId);
-  const taskPendingActions = pendingActionsData?.pendingActions ?? [];
+  const taskPendingActions = useMemo(() => pendingActionsData?.pendingActions ?? [], [pendingActionsData]);
   const pendingActionsCount = pendingActionsData?.badgeCount ?? 0;
   const pendingClarificationAction =
     taskPendingActions.find(

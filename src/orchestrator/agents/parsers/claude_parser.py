@@ -7,7 +7,7 @@ Claude stream-json event mapping:
 | {"type":"assistant"} content block type=text        | assistant_text  |
 | {"type":"assistant"} content block type=thinking    | thinking        |
 | {"type":"assistant"} content block type=tool_use    | tool_use        |
-| {"type":"tool_result"}                              | tool_result     |
+| {"type":"user"} content block type=tool_result      | tool_result     |
 | {"type":"result"}                                   | result          |
 """
 
@@ -44,7 +44,10 @@ class ClaudeStreamParser:
         self._total_input_tokens = 0
         self._total_output_tokens = 0
         self._total_cache_read = 0
+        self._total_cache_creation = 0
         self._total_cost = 0.0
+        self._total_duration_ms = 0
+        self._num_turns = 0
         self._readable_parts: list[str] = []
 
     def parse_line(self, line: str) -> None:
@@ -68,8 +71,8 @@ class ClaudeStreamParser:
             self._handle_system(event)
         elif event_type == "assistant":
             self._handle_assistant(event)
-        elif event_type == "tool_result":
-            self._handle_tool_result(event)
+        elif event_type == "user":
+            self._handle_user(event)
         elif event_type == "result":
             self._handle_result(event)
         elif event_type == "error":
@@ -78,15 +81,21 @@ class ClaudeStreamParser:
 
     def finalize(self) -> ActionLog:
         """Return the completed ActionLog."""
+        num_turns = self._num_turns or sum(
+            1 for e in self._entries if e.kind == ActionEntryKind.ASSISTANT_TEXT
+        )
         return ActionLog(
             entries=self._entries,
             session_id=self._session_id,
             agent_model=self._model,
             tools_available=self._tools,
-            total_turns=sum(1 for e in self._entries if e.kind == ActionEntryKind.ASSISTANT_TEXT),
+            total_turns=num_turns,
             total_cost_usd=self._total_cost,
+            total_duration_ms=self._total_duration_ms,
             total_input_tokens=self._total_input_tokens,
             total_output_tokens=self._total_output_tokens,
+            total_cache_read_tokens=self._total_cache_read,
+            total_cache_creation_tokens=self._total_cache_creation,
         )
 
     def get_readable_text(self) -> str:
@@ -114,19 +123,23 @@ class ClaudeStreamParser:
             )
 
     def _handle_assistant(self, event: dict[str, Any]) -> None:
-        content_blocks = event.get("content", [])
+        # Content and usage are nested inside event["message"], not at the top level
+        message = event.get("message", event)
+        content_blocks = message.get("content", [])
         # Extract per-message usage if present
-        usage = event.get("usage")
+        usage = message.get("usage")
         turn_metrics = None
         if usage:
             turn_metrics = TurnMetrics(
                 input_tokens=usage.get("input_tokens", 0),
                 output_tokens=usage.get("output_tokens", 0),
                 cache_read_tokens=usage.get("cache_read_input_tokens", 0),
+                cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
             )
             self._total_input_tokens += turn_metrics.input_tokens
             self._total_output_tokens += turn_metrics.output_tokens
             self._total_cache_read += turn_metrics.cache_read_tokens
+            self._total_cache_creation += turn_metrics.cache_creation_tokens
 
         for block in content_blocks:
             block_type = block.get("type", "")
@@ -184,19 +197,29 @@ class ClaudeStreamParser:
                 )
                 turn_metrics = None
 
-    def _handle_tool_result(self, event: dict[str, Any]) -> None:
-        tool_use_id = event.get("tool_use_id", "")
-        content = event.get("content", "")
+    def _handle_user(self, event: dict[str, Any]) -> None:
+        """Handle user-role events, which carry tool results from the previous turn."""
+        message = event.get("message", {})
+        content_blocks = message.get("content", [])
+        for block in cast(list[Any], content_blocks):
+            if isinstance(block, dict):
+                typed_block = cast(dict[str, Any], block)
+                if typed_block.get("type") == "tool_result":
+                    self._handle_tool_result_block(typed_block)
+
+    def _handle_tool_result_block(self, block: dict[str, Any]) -> None:
+        tool_use_id = block.get("tool_use_id", "")
+        content = block.get("content", "")
         # Content can be a string or a list of content blocks
         if isinstance(content, list):
             text_parts: list[str] = []
-            for block in cast(list[Any], content):
-                if isinstance(block, dict):
-                    b = cast(dict[str, Any], block)
+            for item in cast(list[Any], content):
+                if isinstance(item, dict):
+                    b = cast(dict[str, Any], item)
                     if b.get("type") == "text":
                         text_parts.append(str(b.get("text", "")))
-                elif isinstance(block, str):
-                    text_parts.append(block)
+                elif isinstance(item, str):
+                    text_parts.append(item)
             output: str = "\n".join(text_parts)
         else:
             output = str(content)
@@ -205,7 +228,7 @@ class ClaudeStreamParser:
         if len(output) > MAX_TOOL_OUTPUT_SIZE:
             output = output[:MAX_TOOL_OUTPUT_SIZE] + "\n... (truncated)"
 
-        is_error: bool = bool(event.get("is_error", False))
+        is_error: bool = bool(block.get("is_error", False))
 
         self._entries.append(
             ActionLogEntry(
@@ -223,34 +246,30 @@ class ClaudeStreamParser:
         )
 
     def _handle_result(self, event: dict[str, Any]) -> None:
-        # The result event contains the final text output and session totals
-        text: str = ""
-        content = event.get("content", [])
-        if isinstance(content, list):
-            for block in cast(list[Any], content):
-                if isinstance(block, dict):
-                    b = cast(dict[str, Any], block)
-                    if b.get("type") == "text":
-                        text += str(b.get("text", ""))
-        elif isinstance(content, str):
-            text = content
+        # The result event carries the final summary text in the "result" field
+        # and session-level totals in "usage" / "total_cost_usd".
+        text: str = str(event.get("result", ""))
 
         # Extract session-level usage totals
         usage = event.get("usage")
-        cost: float = float(event.get("cost_usd", 0.0))
+        cost: float = float(event.get("total_cost_usd", event.get("cost_usd", 0.0)))
         turn_metrics = None
         if usage:
             turn_metrics = TurnMetrics(
                 input_tokens=int(usage.get("input_tokens", 0)),
                 output_tokens=int(usage.get("output_tokens", 0)),
                 cache_read_tokens=int(usage.get("cache_read_input_tokens", 0)),
+                cache_creation_tokens=int(usage.get("cache_creation_input_tokens", 0)),
                 cost_usd=cost,
             )
             # Update totals from result event (these are session totals)
             self._total_input_tokens = turn_metrics.input_tokens
             self._total_output_tokens = turn_metrics.output_tokens
             self._total_cache_read = turn_metrics.cache_read_tokens
+            self._total_cache_creation = turn_metrics.cache_creation_tokens
         self._total_cost = cost
+        self._total_duration_ms = int(event.get("duration_ms", 0))
+        self._num_turns = int(event.get("num_turns", 0))
 
         self._entries.append(
             ActionLogEntry(

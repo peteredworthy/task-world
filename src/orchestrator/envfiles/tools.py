@@ -7,6 +7,7 @@ from typing import Any
 
 from orchestrator.envfiles.errors import SnapshotNotFoundError
 from orchestrator.envfiles.store import EnvFileStore
+from orchestrator.time_utils import format_utc_datetime
 
 
 # MCP/OpenHands tool definitions
@@ -115,7 +116,7 @@ class EnvFileToolExecutor:
                     "snapshot_id": s.snapshot_id,
                     "type": s.point_type.value,
                     "task_id": s.task_id,
-                    "timestamp": s.timestamp.isoformat(),
+                    "timestamp": format_utc_datetime(s.timestamp),
                     "files": s.files,
                 }
                 for s in manifest.snapshots

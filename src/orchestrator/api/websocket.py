@@ -10,6 +10,7 @@ from typing import Any
 
 from fastapi import WebSocket
 from orchestrator.workflow.events import ClarificationRequested, ClarificationResponded
+from orchestrator.time_utils import format_utc_datetime
 
 # Maximum updates per second per client (throttle interval in seconds)
 _THROTTLE_INTERVAL = 0.1  # 10 updates/sec
@@ -21,7 +22,7 @@ _DEFAULT_BATCH_WINDOW = 0.1  # 100ms
 def _json_default(obj: object) -> str:
     """JSON serializer for objects not serializable by default."""
     if isinstance(obj, datetime):
-        return obj.isoformat()
+        return format_utc_datetime(obj)
     if hasattr(obj, "value"):
         return obj.value  # type: ignore[return-value]
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
