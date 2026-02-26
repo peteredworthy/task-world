@@ -20,6 +20,7 @@ class GradeSnapshotItemSchema(ApiModel):
     req_id: str
     grade: str | None = None
     grade_reason: str | None = None
+    note: str | None = None
 
 
 # --- Structured Action Log schemas ---

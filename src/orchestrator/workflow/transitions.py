@@ -229,7 +229,9 @@ def transition_from_approval(
                 error=f"Max attempts ({task.max_attempts}) reached",
             )
 
-        # Start new attempt
+        # Start new attempt - clear stale builder notes
+        for item in task.checklist:
+            item.note = None
         new_attempt_num = task.current_attempt + 1
         task.attempts.append(Attempt(attempt_num=new_attempt_num, started_at=now))
         task.current_attempt = new_attempt_num
@@ -285,13 +287,14 @@ def transition_after_verification(task: TaskState, now: datetime) -> TransitionR
 
     grade_result = evaluate_grades(task.checklist)
 
-    # Snapshot checklist grades into the current attempt
+    # Snapshot checklist grades and builder notes into the current attempt
     if task.attempts:
         task.attempts[-1].grade_snapshot = [
             GradeSnapshotItem(
                 req_id=item.req_id,
                 grade=item.grade,
                 grade_reason=item.grade_reason,
+                note=item.note,
             )
             for item in task.checklist
         ]
@@ -319,7 +322,9 @@ def transition_after_verification(task: TaskState, now: datetime) -> TransitionR
             error=f"Max attempts ({task.max_attempts}) reached",
         )
 
-    # Start revision - create new attempt
+    # Start revision - clear stale builder notes and create new attempt
+    for item in task.checklist:
+        item.note = None
     new_attempt_num = task.current_attempt + 1
     task.attempts.append(Attempt(attempt_num=new_attempt_num, started_at=now))
     task.current_attempt = new_attempt_num

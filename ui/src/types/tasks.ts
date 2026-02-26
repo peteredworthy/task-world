@@ -14,6 +14,7 @@ export interface GradeSnapshotItem {
   req_id: string;
   grade: string | null;
   grade_reason: string | null;
+  note: string | null;
 }
 
 // --- Structured Action Log types ---

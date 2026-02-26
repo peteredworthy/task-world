@@ -15,6 +15,7 @@ import {
   PRIORITY_ORDER,
   PRIORITY_LABELS,
   getMetric,
+  isGradeFailing,
   COLLAPSIBLE_BORDER_CLASS,
   COLLAPSIBLE_DIVIDER_CLASS,
 } from './sharedUtils';
@@ -158,49 +159,6 @@ function PromptBlock({ label, text }: { label: string; text: string }) {
   );
 }
 
-function FailureSummary({
-  snapshot,
-  checklist,
-}: {
-  snapshot: GradeSnapshotItem[];
-  checklist: ChecklistItemSchema[];
-}) {
-  const checklistMap = new Map(checklist.map(c => [c.req_id, c]));
-
-  const issues: { reqId: string; desc: string; reason: string }[] = [];
-  for (const gs of snapshot) {
-    const cl = checklistMap.get(gs.req_id);
-    const desc = cl?.desc ?? gs.req_id;
-    const priority = cl?.priority ?? 'expected';
-
-    if (gs.grade === null) {
-      issues.push({ reqId: gs.req_id, desc, reason: `Not graded (${priority})` });
-    } else if (priority === 'critical' && gs.grade !== 'A') {
-      issues.push({ reqId: gs.req_id, desc, reason: `Grade ${gs.grade} below A` });
-    } else if (priority === 'expected' && gs.grade !== 'A' && gs.grade !== 'B') {
-      issues.push({ reqId: gs.req_id, desc, reason: `Grade ${gs.grade} below B` });
-    }
-  }
-
-  if (issues.length === 0) return null;
-
-  return (
-    <div className="rounded bg-status-failed/10 border border-status-failed/30 px-2.5 py-2">
-      <span className="text-[10px] font-semibold text-status-failed uppercase block mb-1">
-        Why verification failed
-      </span>
-      <ul className="space-y-0.5">
-        {issues.map(i => (
-          <li key={i.reqId} className="text-xs text-text-secondary">
-            <span className="text-status-failed font-medium">{i.reqId}</span>
-            {' '}{i.desc} — <span className="text-text-muted">{i.reason}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 function AutoVerifyResults({ results }: { results: Record<string, unknown>[] }) {
   return (
     <div className="rounded-md border border-border bg-bg-card/40 p-2">
@@ -283,27 +241,37 @@ function AttemptGrades({
               </span>
             </div>
             <div className="space-y-1">
-              {items.map(item => (
-                <div key={item.req_id} className="rounded bg-bg-card border border-border px-2 py-1.5">
-                  <div className="flex items-center gap-2">
-                    <span className="flex-1 text-xs text-text-secondary truncate">
-                      {item.desc}
-                    </span>
-                    <div className="w-10 shrink-0 flex justify-end">
-                      {item.grade ? (
-                        <GradeBadge grade={item.grade} />
-                      ) : (
-                        <span className="text-text-muted text-[10px]">--</span>
-                      )}
+              {items.map(item => {
+                const failing = isGradeFailing(item.grade, item.priority);
+                return (
+                  <div key={item.req_id} className={`rounded border px-2 py-1.5 ${failing ? 'bg-status-failed/5 border-status-failed/40' : 'bg-bg-card border-border'}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="flex-1 text-xs text-text-secondary truncate">
+                        {item.desc}
+                      </span>
+                      <div className="w-10 shrink-0 flex justify-end">
+                        {item.grade ? (
+                          <GradeBadge grade={item.grade} />
+                        ) : (
+                          <span className="text-text-muted text-[10px]">--</span>
+                        )}
+                      </div>
                     </div>
+                    {(item.grade_reason || item.note) && (
+                      <p className="text-[11px] text-text-muted mt-1 pl-0.5">
+                        {item.grade_reason}
+                        {item.grade_reason && item.note && <span className="mx-1">·</span>}
+                        {item.note}
+                      </p>
+                    )}
+                    {failing && (
+                      <div className="flex justify-end mt-0.5">
+                        <span className="text-[10px] font-semibold text-status-failed uppercase tracking-wide">Failed</span>
+                      </div>
+                    )}
                   </div>
-                  {item.grade_reason && (
-                    <p className="text-[11px] text-text-muted mt-1 pl-0.5">
-                      {item.grade_reason}
-                    </p>
-                  )}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         );
@@ -334,7 +302,6 @@ function InspectorAttemptCard({
   const hasPrompts = Boolean(att.builder_prompt || att.verifier_prompt || att.outcome);
   const hasBodyContent = Boolean(
     att.error
-    || (att.outcome && att.outcome !== 'passed' && att.grade_snapshot.length > 0)
     || att.grade_snapshot.length > 0
     || (att.auto_verify_results && att.auto_verify_results.length > 0)
     || att.verifier_comment
@@ -413,10 +380,6 @@ function InspectorAttemptCard({
               </span>
               <p className="text-xs text-status-failed whitespace-pre-wrap break-words">{att.error}</p>
             </div>
-          )}
-
-          {att.outcome && att.outcome !== 'passed' && att.grade_snapshot.length > 0 && (
-            <FailureSummary snapshot={att.grade_snapshot} checklist={checklist} />
           )}
 
           {att.grade_snapshot.length > 0 && (
@@ -575,21 +538,19 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
             {detail.attempts.length > 0 && (() => {
               const latest = detail.attempts[detail.attempts.length - 1];
               if (latest.outcome === 'passed') return null;
-              const hasFailure = latest.error || latest.grade_snapshot.some(g => g.grade === null || (g.grade !== 'A' && g.grade !== 'B'));
-              if (!hasFailure) return null;
+              const hasError = Boolean(latest.error);
+              const hasAutoVerify = Boolean(latest.auto_verify_results && latest.auto_verify_results.length > 0);
+              if (!hasError && !hasAutoVerify) return null;
               return (
-              <div className="rounded-lg border-2 border-status-failed/30 bg-status-failed/5 px-3 py-2.5">
-                <h4 className="text-xs font-semibold text-status-failed uppercase tracking-wide mb-1.5">
-                  Why this failed
-                </h4>
-                  {latest.error && (
+                <div className="rounded-lg border-2 border-status-failed/30 bg-status-failed/5 px-3 py-2.5">
+                  <h4 className="text-xs font-semibold text-status-failed uppercase tracking-wide mb-1.5">
+                    Why this failed
+                  </h4>
+                  {hasError && (
                     <p className="text-sm text-status-failed mb-2 whitespace-pre-wrap break-words">{latest.error}</p>
                   )}
-                  <FailureSummary snapshot={latest.grade_snapshot} checklist={detail.checklist} />
-                  {latest.auto_verify_results && latest.auto_verify_results.length > 0 && (
-                    <div className="mt-2">
-                      <AutoVerifyResults results={latest.auto_verify_results} />
-                    </div>
+                  {hasAutoVerify && (
+                    <AutoVerifyResults results={latest.auto_verify_results!} />
                   )}
                 </div>
               );

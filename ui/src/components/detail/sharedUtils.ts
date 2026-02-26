@@ -1,3 +1,11 @@
+/** Returns true if a grade + priority combination caused a verification failure. */
+export function isGradeFailing(grade: string | null | undefined, priority: string): boolean {
+  if (!grade) return priority === 'critical' || priority === 'expected';
+  if (priority === 'critical') return grade !== 'A';
+  if (priority === 'expected') return grade !== 'A' && grade !== 'B';
+  return false;
+}
+
 export function getMetric(metrics: Record<string, unknown>, key: string): number {
   const v = metrics[key];
   return typeof v === 'number' ? v : 0;
