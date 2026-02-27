@@ -32,7 +32,7 @@ _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
     ),
     AgentConfigField(
         name="tools",
-        field_type="select",
+        field_type="multiselect",
         default=["terminal", "file_editor"],
         description="OpenHands tools to enable",
         options=["terminal", "file_editor", "browser", "glob", "grep"],
@@ -50,6 +50,22 @@ _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
         description="LLM reasoning effort level",
         options=["low", "medium", "high"],
     ),
+    AgentConfigField(
+        name="base_url",
+        field_type="string",
+        description="Local LLM base URL (e.g. http://localhost:1234/v1). Leave blank to use OpenAI.",
+    ),
+    AgentConfigField(
+        name="timeout",
+        field_type="number",
+        default=300,
+        description="HTTP request timeout in seconds. Increase for slow local LLMs.",
+    ),
+    AgentConfigField(
+        name="model_canonical_name",
+        field_type="string",
+        description="Canonical model name for capability lookups (e.g. openai/gpt-4o). Required when using a local LLM with a custom model name.",
+    ),
 ]
 
 _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
@@ -61,7 +77,7 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
     ),
     AgentConfigField(
         name="tools",
-        field_type="select",
+        field_type="multiselect",
         default=["terminal", "file_editor"],
         description="OpenHands tools to enable",
         options=["terminal", "file_editor", "browser", "glob", "grep"],
@@ -84,6 +100,22 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
         default="high",
         description="LLM reasoning effort level",
         options=["low", "medium", "high"],
+    ),
+    AgentConfigField(
+        name="base_url",
+        field_type="string",
+        description="Local LLM base URL (e.g. http://localhost:1234/v1). Leave blank to use OpenAI.",
+    ),
+    AgentConfigField(
+        name="timeout",
+        field_type="number",
+        default=300,
+        description="HTTP request timeout in seconds. Increase for slow local LLMs.",
+    ),
+    AgentConfigField(
+        name="model_canonical_name",
+        field_type="string",
+        description="Canonical model name for capability lookups (e.g. openai/gpt-4o). Required when using a local LLM with a custom model name.",
     ),
 ]
 
@@ -373,8 +405,8 @@ class ToolDetector:
                 name="OpenHands (local)",
                 title="OpenHands Local Agent",
                 description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
-                available=False,
-                detail="openhands-ai SDK not installed",
+                available=True,
+                detail="openhands-ai SDK not installed (will fail at runtime)",
                 install_hint="Install with: uv sync --extra openhands",
                 config_schema=_OPENHANDS_LOCAL_CONFIG,
             )

@@ -1,4 +1,5 @@
 import type { AgentConfigField, AgentOption } from '../types/agents';
+import { OpenHandsLLMTabs } from './OpenHandsLLMTabs';
 
 interface AgentConfigFormProps {
     agent: AgentOption;
@@ -49,6 +50,31 @@ function ConfigFieldInput({
                     ))}
                 </datalist>
             </>
+        );
+    }
+
+    if (field.field_type === 'multiselect' && field.options && field.options.length > 0) {
+        const selectedValues = Array.isArray(value) ? value : value != null ? [value] : [];
+        return (
+            <div className="space-y-2">
+                {field.options.map((opt) => (
+                    <label key={opt} className="flex items-center gap-2 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={selectedValues.includes(opt)}
+                            onChange={(e) => {
+                                const newValues = e.target.checked
+                                    ? [...selectedValues, opt]
+                                    : selectedValues.filter((v) => v !== opt);
+                                onChange(newValues);
+                            }}
+                            disabled={disabled}
+                            className="w-4 h-4 rounded border-border accent-accent-purple"
+                        />
+                        <span className="text-sm text-text-secondary">{opt}</span>
+                    </label>
+                ))}
+            </div>
         );
     }
 
@@ -133,12 +159,20 @@ function ConfigFieldInput({
     );
 }
 
+// Fields managed by OpenHandsLLMTabs — excluded from the generic loop
+const OPENHANDS_LLM_FIELDS = new Set(['model', 'api_key', 'base_url', 'model_canonical_name']);
+
 /**
  * Renders a structured form for an agent's config schema.
  *
  * Each field in `agent.config_schema` is rendered with an appropriate
  * control (dropdown for "select", number input for "number", etc.).
  * The parent receives the full updated values map via `onChange`.
+ *
+ * For OpenHands agents, the LLM-related fields are rendered via
+ * `OpenHandsLLMTabs` which provides a tabbed "API / Cloud" vs "Local LLM"
+ * interface. Remaining fields (tools, max_iterations, etc.) use the
+ * standard loop below.
  */
 export function AgentConfigForm({ agent, values, onChange, disabled }: AgentConfigFormProps) {
     if (agent.config_schema.length === 0) {
@@ -151,9 +185,19 @@ export function AgentConfigForm({ agent, values, onChange, disabled }: AgentConf
         onChange({ ...values, [name]: value });
     }
 
+    const isOpenHands =
+        agent.agent_type === 'openhands_local' || agent.agent_type === 'openhands_docker';
+
+    const remainingFields = isOpenHands
+        ? agent.config_schema.filter((f) => !OPENHANDS_LLM_FIELDS.has(f.name))
+        : agent.config_schema;
+
     return (
         <div className="space-y-3">
-            {agent.config_schema.map((field) => {
+            {isOpenHands && (
+                <OpenHandsLLMTabs values={values} onChange={onChange} disabled={disabled} />
+            )}
+            {remainingFields.map((field) => {
                 const currentValue = values[field.name];
 
                 return (
