@@ -51,8 +51,8 @@ _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="timeout",
         field_type="number",
-        default=300,
-        description="HTTP request timeout in seconds. Increase for slow local LLMs.",
+        default=1800,
+        description="HTTP request timeout in seconds. Local LLMs may need 900-1800+.",
     ),
     AgentConfigField(
         name="model_canonical_name",
@@ -95,8 +95,8 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="timeout",
         field_type="number",
-        default=300,
-        description="HTTP request timeout in seconds. Increase for slow local LLMs.",
+        default=1800,
+        description="HTTP request timeout in seconds. Local LLMs may need 900-1800+.",
     ),
     AgentConfigField(
         name="model_canonical_name",

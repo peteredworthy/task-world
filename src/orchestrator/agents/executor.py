@@ -1327,6 +1327,25 @@ class AgentExecutor:
         # Non-Codex agent type — no session classification needed.
         return agent_config, None
 
+    # Keys in _LLM_CONFIG_KEYS that must be numeric (int or float).
+    # Frontend number inputs produce strings; coerce them here.
+    _NUMERIC_LLM_KEYS = {"timeout", "num_retries", "temperature", "top_p", "max_output_tokens"}
+
+    def _coerce_llm_config(self, agent_config: dict[str, Any]) -> dict[str, Any]:
+        """Extract LLM config keys and coerce numeric strings to proper types."""
+        result: dict[str, Any] = {}
+        for k, v in agent_config.items():
+            if k not in _LLM_CONFIG_KEYS:
+                continue
+            if k in self._NUMERIC_LLM_KEYS and isinstance(v, str):
+                try:
+                    result[k] = int(v) if v.isdigit() else float(v)
+                except (ValueError, TypeError):
+                    result[k] = v
+            else:
+                result[k] = v
+        return result
+
     def _create_agent(
         self,
         agent_type: AgentType,
@@ -1388,8 +1407,8 @@ class AgentExecutor:
 
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
-            max_iterations = agent_config.get("max_iterations", 100)
-            llm_config = {k: v for k, v in agent_config.items() if k in _LLM_CONFIG_KEYS}
+            max_iterations = int(agent_config.get("max_iterations", 100))
+            llm_config = self._coerce_llm_config(agent_config)
 
             return OpenHandsAgent(
                 api_key=api_key,
@@ -1404,9 +1423,9 @@ class AgentExecutor:
 
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
-            max_iterations = agent_config.get("max_iterations", 100)
+            max_iterations = int(agent_config.get("max_iterations", 100))
             server_image = agent_config.get("server_image")
-            llm_config = {k: v for k, v in agent_config.items() if k in _LLM_CONFIG_KEYS}
+            llm_config = self._coerce_llm_config(agent_config)
 
             # Build kwargs, only include server_image if explicitly set
             kwargs: dict[str, Any] = {
