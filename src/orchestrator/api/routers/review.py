@@ -46,13 +46,8 @@ from orchestrator.git.conflict_ops import (
     get_conflict_files,
     resolve_conflict,
 )
-from orchestrator.git.diff_ops import (
-    get_branch_diff,
-    get_commit_diff,
-    get_commit_log,
-    get_modified_files,
-    get_task_diff,
-)
+from orchestrator.cache.lru_cache import LRUCache
+from orchestrator.git.cached_diff_ops import CachedDiffOps, DiffOps, GitDiffOps
 from orchestrator.git.errors import GitCommandError
 from orchestrator.git.prune_ops import (
     FileSelectionEntry,
@@ -75,6 +70,11 @@ from orchestrator.workflow.events import (
 from orchestrator.workflow.service import WorkflowService
 
 router = APIRouter(prefix="/api/runs", tags=["review"])
+
+_diff_ops: DiffOps = CachedDiffOps(
+    next_layer=GitDiffOps(),
+    cache=LRUCache(maxsize=256),
+)
 
 
 def _get_merge_base_sync(worktree_path: Path, source_branch: str) -> str:
@@ -157,7 +157,7 @@ async def get_diff(
                     status_code=400,
                     detail="'ref' query parameter is required for commit scope",
                 )
-            diff_text = await get_commit_diff(worktree_path, ref)
+            diff_text = await _diff_ops.get_commit_diff(worktree_path, ref)
         else:
             if not run.source_branch:
                 raise HTTPException(
@@ -172,11 +172,11 @@ async def get_diff(
                 # Support explicit "{start}..{end}" range or legacy single-SHA (uses merge-base)
                 if ".." in ref:
                     start_sha, end_sha = ref.split("..", 1)
-                    diff_text = await get_task_diff(worktree_path, start_sha, end_sha)
+                    diff_text = await _diff_ops.get_task_diff(worktree_path, start_sha, end_sha)
                 else:
-                    diff_text = await get_task_diff(worktree_path, base_sha, ref)
+                    diff_text = await _diff_ops.get_task_diff(worktree_path, base_sha, ref)
             else:
-                diff_text = await get_branch_diff(worktree_path, base_sha, head_sha)
+                diff_text = await _diff_ops.get_branch_diff(worktree_path, base_sha, head_sha)
     except GitCommandError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -211,7 +211,7 @@ async def get_diff_files(
                     detail="'ref' must be in '{start_sha}..{end_sha}' format for task scope",
                 )
             start_sha, end_sha = ref.split("..", 1)
-            modified_files = await get_modified_files(worktree_path, start_sha, end_sha)
+            modified_files = await _diff_ops.get_modified_files(worktree_path, start_sha, end_sha)
         else:
             if not run.source_branch:
                 raise HTTPException(
@@ -222,7 +222,7 @@ async def get_diff_files(
                 asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch),
                 asyncio.to_thread(_get_head_sha_sync, worktree_path),
             )
-            modified_files = await get_modified_files(worktree_path, base_sha, head_sha)
+            modified_files = await _diff_ops.get_modified_files(worktree_path, base_sha, head_sha)
     except GitCommandError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -257,7 +257,7 @@ async def get_commits(
             asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch),
             asyncio.to_thread(_get_head_sha_sync, worktree_path),
         )
-        commits = await get_commit_log(worktree_path, base_sha, head_sha)
+        commits = await _diff_ops.get_commit_log(worktree_path, base_sha, head_sha)
     except GitCommandError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -652,29 +652,30 @@ async def get_conflicts(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    result: list[ConflictFile] = []
-    for file_path in conflict_file_paths:
-        try:
-            blocks = await get_conflict_blocks(worktree_path, file_path)
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        result.append(
-            ConflictFile(
-                path=file_path,
-                status="unresolved",
-                block_count=len(blocks),
-                blocks=[
-                    ConflictBlockSchema(
-                        index=b.index,
-                        ours_content=b.ours_content,
-                        theirs_content=b.theirs_content,
-                        base_content=b.base_content,
-                    )
-                    for b in blocks
-                ],
-            )
+    try:
+        blocks_list = await asyncio.gather(
+            *[get_conflict_blocks(worktree_path, fp) for fp in conflict_file_paths]
         )
-    return result
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return [
+        ConflictFile(
+            path=file_path,
+            status="unresolved",
+            block_count=len(blocks),
+            blocks=[
+                ConflictBlockSchema(
+                    index=b.index,
+                    ours_content=b.ours_content,
+                    theirs_content=b.theirs_content,
+                    base_content=b.base_content,
+                )
+                for b in blocks
+            ],
+        )
+        for file_path, blocks in zip(conflict_file_paths, blocks_list)
+    ]
 
 
 # ---------------------------------------------------------------------------
