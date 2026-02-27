@@ -450,7 +450,12 @@ class OpenHandsAgent:
 
         try:
             # Build LLM — api_key is optional when using a local server
-            llm_kwargs: dict[str, Any] = {"model": self._model, **self._llm_config}
+            # When using a local LLM server (base_url set), LiteLLM requires
+            # a provider prefix. Local servers speak the OpenAI-compatible API.
+            model = self._model
+            if using_local_llm and "/" not in model:
+                model = f"openai/{model}"
+            llm_kwargs: dict[str, Any] = {"model": model, **self._llm_config}
             if self._api_key:
                 llm_kwargs["api_key"] = SecretStr(self._api_key)
             llm = OHLLM(**llm_kwargs)
