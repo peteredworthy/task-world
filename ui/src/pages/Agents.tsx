@@ -140,10 +140,10 @@ function AgentCard({ agent }: { agent: AgentOption }) {
 
   const handleFullConfigChange = (values: Record<string, unknown>) => {
     setFullConfigValues(values);
-    // Persist each field
+    // Persist each field (preserve type: arrays stay arrays, strings stay strings)
     agent.config_schema.forEach((field) => {
       if (values[field.name] !== undefined && values[field.name] !== null) {
-        saveAgentFieldDefault(agent.name, field.name, String(values[field.name]));
+        saveAgentFieldDefault(agent.name, field.name, values[field.name]);
       }
     });
   };

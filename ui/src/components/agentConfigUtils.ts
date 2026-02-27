@@ -33,10 +33,11 @@ export function loadAgentFieldDefaults(agentName: string): Record<string, string
 }
 
 /** Persist a single field override for an agent. */
-export function saveAgentFieldDefault(agentName: string, fieldName: string, value: string): void {
+export function saveAgentFieldDefault(agentName: string, fieldName: string, value: unknown): void {
     try {
         const stored = localStorage.getItem(AGENT_FIELD_DEFAULTS_KEY);
-        const all = stored ? (JSON.parse(stored) as Record<string, Record<string, string>>) : {};
+        const all = stored ? (JSON.parse(stored) as Record<string, Record<string, unknown>>) : {};
+        // Store as-is to preserve type (arrays stay arrays, strings stay strings)
         all[agentName] = { ...(all[agentName] ?? {}), [fieldName]: value };
         localStorage.setItem(AGENT_FIELD_DEFAULTS_KEY, JSON.stringify(all));
     } catch {
