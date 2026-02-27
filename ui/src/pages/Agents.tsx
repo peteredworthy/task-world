@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAgents } from '../hooks/useApi';
 import { Spinner } from '../components/Spinner';
 import { EmptyState } from '../components/EmptyState';
+import { AgentConfigForm } from '../components/AgentConfigForm';
 import {
   loadAgentModelDefaults,
   saveAgentModelDefault,
@@ -128,6 +129,25 @@ function AgentCard({ agent }: { agent: AgentOption }) {
     (restrictionsField?.default != null ? String(restrictionsField.default) : '');
   const [restrictionsValue, setRestrictionsValue] = useState(initialRestrictions);
 
+  const [showFullConfig, setShowFullConfig] = useState(false);
+  const [fullConfigValues, setFullConfigValues] = useState<Record<string, unknown>>(() => {
+    const values: Record<string, unknown> = {};
+    agent.config_schema.forEach((field) => {
+      values[field.name] = savedFieldDefaults[field.name] ?? field.default;
+    });
+    return values;
+  });
+
+  const handleFullConfigChange = (values: Record<string, unknown>) => {
+    setFullConfigValues(values);
+    // Persist each field
+    agent.config_schema.forEach((field) => {
+      if (values[field.name] !== undefined && values[field.name] !== null) {
+        saveAgentFieldDefault(agent.name, field.name, String(values[field.name]));
+      }
+    });
+  };
+
   const selectClass =
     'w-full rounded border border-border bg-bg-elevated px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-purple/50 appearance-none cursor-pointer';
 
@@ -235,8 +255,30 @@ function AgentCard({ agent }: { agent: AgentOption }) {
             </div>
           )}
 
-          {/* Other visible config fields (read-only summary) */}
-          {otherFields.length > 0 && (
+          {/* Toggle button for full configuration */}
+          {agent.config_schema.length > 0 && (
+            <button
+              onClick={() => setShowFullConfig(!showFullConfig)}
+              className="mt-2 text-xs font-medium text-accent-purple hover:text-accent-purple/80 transition-colors"
+            >
+              {showFullConfig ? '▼ Hide all options' : '▶ Show all options'}
+            </button>
+          )}
+
+          {/* Full configuration form (expandable) */}
+          {showFullConfig && (
+            <div className="mt-3 pt-3 border-t border-border/50">
+              <AgentConfigForm
+                agent={agent}
+                values={fullConfigValues}
+                onChange={handleFullConfigChange}
+                disabled={!agent.available}
+              />
+            </div>
+          )}
+
+          {/* Other visible config fields (read-only summary) — only when not expanded */}
+          {!showFullConfig && otherFields.length > 0 && (
             <div>
               <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide mb-1">
                 Config fields

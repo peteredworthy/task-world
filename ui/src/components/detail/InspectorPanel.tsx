@@ -458,7 +458,7 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
     if (!logAttempt) return;
     setAgentLogViewMode('structured');
     setAgentLogCapabilities({ hasStructured: false, hasRaw: false });
-  }, [logAttempt?.id]);
+  }, [logAttempt]);
 
   const canSwitchAgentLogView = agentLogCapabilities.hasStructured && agentLogCapabilities.hasRaw;
   const storedBuilderPrompt = promptAttempt?.builder_prompt ?? null;

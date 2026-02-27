@@ -21,6 +21,7 @@ import { TaskRangeSelectorBar, type SharedDiffSelection } from './TaskRangeSelec
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { useRun } from '../../hooks/useApi';
 import { useBranchStatus, useConflicts, useDiffFiles, useRunTests } from '../../hooks/useReview';
+import { useReviewMerge } from '../../context/useReviewMerge';
 import { useReviewKeyboardShortcuts } from '../../hooks/useReviewKeyboardShortcuts';
 import type { DiffFileEntry } from '../../types/review';
 import type { TestRunResult, BackMergeResponse, ConflictFile, FinalMergeBackResponse } from '../../types/review';
@@ -103,9 +104,9 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
   const [agentFixResult, setAgentFixResult] = useState<TestRunResult | null>(null);
   const [showAgentFixModal, setShowAgentFixModal] = useState(false);
 
-  // Collapsible section state — branch+files+conflicts open by default, rest closed
+  // Collapsible section state — files+conflicts open by default, rest closed
   const [openSections, setOpenSections] = useState<Record<SectionKey, boolean>>({
-    branch: true,
+    branch: false,
     files: true,
     conflicts: true,
     tests: false,
@@ -120,7 +121,8 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
     setOpenSections((prev) => ({ ...prev, [id]: true }));
   };
 
-  const { isPruneMode, togglePruneMode, buildPruneSelection, clearSelections, selectFile } = usePruneMode();
+  const { buildPruneSelection, clearSelections, selectFile } = usePruneMode();
+  const { isPruneMode, onTogglePruneMode, showBackMergeModal, onCloseBackMergeModal } = useReviewMerge();
   const { data: run } = useRun(runId);
   const { data: branchStatus } = useBranchStatus(runId);
 
@@ -137,7 +139,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
   }
 
   // Back merge state
-  const [showBackMergeModal, setShowBackMergeModal] = useState(false);
   const [backMergeBanner, setBackMergeBanner] = useState<{ mergeCommitSha: string | null } | null>(null);
 
   // Conflict resolver state
@@ -168,14 +169,14 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
 
   const handlePruneFile = (file: DiffFileEntry) => {
     if (!isPruneMode) {
-      togglePruneMode();
+      onTogglePruneMode();
     }
     selectFile(file.path);
   };
 
   const handleApplied = () => {
     clearSelections();
-    if (isPruneMode) togglePruneMode();
+    if (isPruneMode) onTogglePruneMode();
     setShowPreviewModal(false);
   };
 
@@ -232,7 +233,7 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
     conflictResolverIndex: conflictResolverInitialIndex,
     onSetConflictIndex: setConflictResolverInitialIndex,
     onOpenConflictResolver: () => setConflictResolverOpen(true),
-    onTogglePruneMode: togglePruneMode,
+    onTogglePruneMode: onTogglePruneMode,
     onRunTests: handleRunTests,
   });
 
@@ -272,16 +273,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
           </svg>
         </button>
 
-        {/* Back Merge button */}
-        <button
-          type="button"
-          onClick={() => setShowBackMergeModal(true)}
-          className="rounded border border-border px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-muted hover:text-text-primary transition-colors"
-          title="Merge target branch into run branch"
-        >
-          Back Merge
-        </button>
-
         {unresolvedConflictCount > 0 && run && (
           <button
             type="button"
@@ -292,19 +283,6 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
             Use Agent to Resolve
           </button>
         )}
-
-        <button
-          type="button"
-          onClick={togglePruneMode}
-          className={`rounded border px-3 py-1.5 text-xs font-medium transition-colors ${
-            isPruneMode
-              ? 'border-amber-500/50 bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
-              : 'border-border text-text-secondary hover:bg-bg-muted hover:text-text-primary'
-          }`}
-          title={isPruneMode ? 'Exit prune mode (Shift+P)' : 'Enter prune mode to select changes for removal (Shift+P)'}
-        >
-          {isPruneMode ? 'Exit Prune Mode' : 'Prune Mode'}
-        </button>
       </div>
 
       {isPruneMode && (
@@ -672,7 +650,7 @@ function ReviewMergeTabContent({ runId, worktreePath }: ReviewMergeTabProps) {
 
       <BackMergeModal
         isOpen={showBackMergeModal}
-        onClose={() => setShowBackMergeModal(false)}
+        onClose={() => onCloseBackMergeModal()}
         runId={runId}
         branchStatus={branchStatus ?? null}
         onMergeComplete={handleMergeComplete}

@@ -5,6 +5,8 @@ import { useBranchStatus } from '../hooks/useReview';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { usePendingActions } from '../hooks/usePendingActions';
 import { WebSocketProvider } from '../context/WebSocketContext';
+import { ReviewMergeProvider } from '../context/ReviewMergeContext';
+import { useReviewMerge } from '../context/useReviewMerge';
 import { useWebSocketStatus } from '../hooks/useWebSocketStatus';
 import { RunStatusBadge } from '../components/StatusBadge';
 import { ConnectionIndicator } from '../components/ConnectionIndicator';
@@ -13,84 +15,15 @@ import { ResumeDialog } from '../components/run/ResumeDialog';
 import { ClarificationModal } from '../components/detail/ClarificationModal';
 import { ApprovalModal } from '../components/detail/ApprovalModal';
 import { Spinner } from '../components/Spinner';
-import { MetricsBar } from '../components/detail/MetricsBar';
-import { ActivityFeed } from '../components/detail/ActivityFeed';
-import { UpcomingPlan } from '../components/detail/UpcomingPlan';
 import { RecoveryPanel } from '../components/detail/RecoveryPanel';
 import { StepApprovalBanner } from '../components/detail/StepApprovalBanner';
 import { BranchStatusPanel } from '../components/detail/BranchStatusPanel';
 import { EnvFilesPanel } from '../components/detail/EnvFilesPanel';
-import { classifyTasks, getLastAgentError } from '../lib/activity';
-import { formatRelativeTime } from '../lib/format';
-import { AgentIcon } from '../components/AgentIcon';
+import { getLastAgentError } from '../lib/activity';
 import { ApiError } from '../api/client';
 import { ReviewMergeTab } from '../components/review/ReviewMergeTab';
 import type { RunResponse } from '../types';
-import type { StepSummarySchema } from '../types/routines';
 import type { PendingAction } from '../types/clarifications';
-
-/** Compact horizontal progress bar showing step completion at a glance. Blocks scroll to step. */
-function StepProgressBar({
-  run,
-  routineSteps,
-}: {
-  run: RunResponse;
-  routineSteps: StepSummarySchema[] | undefined;
-}) {
-  const isTerminal = run.status === 'completed' || run.status === 'failed';
-
-  const scrollToStep = (stepId: string) => {
-    const el = document.getElementById(`step-${stepId}`);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-1" role="progressbar" aria-label="Step progress">
-      {run.steps.map((step, i) => {
-        const isCurrent = i === run.current_step_index;
-        const completed = step.completed;
-        const isFuture = i > run.current_step_index && !completed;
-        const hasFailed = step.tasks.some(t => t.status === 'failed');
-        const stepTitle = step.title || routineSteps?.[i]?.title || step.config_id;
-        const doneCount = step.tasks.filter(t => t.status === 'completed').length;
-        const totalCount = step.tasks.length;
-
-        let bgClass = 'bg-border';
-        if (hasFailed) bgClass = 'bg-status-failed';
-        else if (completed) bgClass = 'bg-status-completed';
-        else if (isCurrent) bgClass = 'bg-accent-purple';
-
-        // Only pulse the current step when the run is actively running
-        const shouldPulse = isCurrent && !hasFailed && !isTerminal;
-
-        return (
-          <button
-            key={step.id}
-            className="flex-1 group relative cursor-pointer"
-            title={`${stepTitle} (${doneCount}/${totalCount})`}
-            onClick={() => scrollToStep(step.id)}
-            aria-label={`Jump to step ${i + 1}: ${stepTitle}`}
-          >
-            <div
-              className={
-                'h-2 rounded-full transition-colors ' +
-                bgClass +
-                (isFuture ? ' opacity-30' : '') +
-                (shouldPulse ? ' animate-pulse-dot' : '')
-              }
-            />
-            {/* Tooltip on hover */}
-            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-bg-elevated border border-border rounded text-[10px] text-text-secondary whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-10">
-              S{i + 1}: {stepTitle} ({doneCount}/{totalCount})
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /** Detect if the run is stuck: active but a task has failed with no remaining attempts. */
 function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | null } {
@@ -113,7 +46,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { data: routine } = useRoutine(
     run?.routine_source === 'embedded' ? null : run?.routine_id
   );
-  const { data: activityData } = useActivityStream(runId);
+  const { data: activityData } = useActivityStream(runId, run?.status);
   const { data: pendingActionsData } = usePendingActions(runId);
   const taskPendingActions = useMemo(() => pendingActionsData?.pendingActions ?? [], [pendingActionsData]);
   const pendingActionsCount = pendingActionsData?.badgeCount ?? 0;
@@ -130,12 +63,12 @@ function RunDetailInner({ runId }: { runId: string }) {
   const cancelRun = useCancelRun();
   const mergeBack = useMergeBack();
   const { data: branchStatus } = useBranchStatus(runId);
+  const { isPruneMode, onTogglePruneMode, onOpenBackMergeModal } = useReviewMerge();
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
-  const [activeTab, setActiveTab] = useState<'activity' | 'review'>('activity');
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
     const detail = err instanceof ApiError
@@ -197,11 +130,7 @@ function RunDetailInner({ runId }: { runId: string }) {
 
   const embeddedName = (run.routine_embedded as Record<string, unknown> | null)?.name as string | undefined;
   const routineName = routine?.name || embeddedName || run.routine_id || 'Run';
-  const routineSteps: StepSummarySchema[] | undefined = routine?.steps;
   const events = activityData?.events ?? [];
-
-  // Classify tasks into active (have events or non-pending status) vs upcoming
-  const { active: activeTasks, upcoming } = classifyTasks(run, events);
 
   // Check if the run is stuck (failed task blocking progress)
   const { stuck: isStuck, failedTask: stuckTaskName } = isRunStuck(run);
@@ -244,38 +173,6 @@ function RunDetailInner({ runId }: { runId: string }) {
                 <RunStatusBadge status={run.status} />
                 <ConnectionIndicator status={wsStatus} onReconnect={wsReconnect} />
               </div>
-              <div className="flex items-center gap-3 mt-1.5">
-                <span className="inline-flex items-center rounded bg-bg-elevated px-2 py-0.5 text-[11px] font-mono text-text-muted">
-                  {run.id.slice(0, 8)}
-                </span>
-                {run.started_at && (
-                  <span className="text-xs text-text-muted">
-                    Started {formatRelativeTime(run.started_at)}
-                  </span>
-                )}
-                {!run.started_at && (
-                  <span className="text-xs text-text-muted">
-                    Created {formatRelativeTime(run.created_at)}
-                  </span>
-                )}
-              </div>
-              {run.agent_type && (
-                <div className="flex items-center gap-2 mt-1.5 text-xs text-text-secondary">
-                  <span className="text-text-muted">Agent:</span>
-                  <div className="flex items-center gap-1.5">
-                    <AgentIcon icon={run.agent_icon} className="h-3.5 w-3.5" />
-                    <span className="font-medium">{run.agent_type_display}</span>
-                    {'model' in run.agent_config && typeof run.agent_config.model === 'string' && (
-                      <>
-                        <span className="text-text-muted">·</span>
-                        <span className="text-text-muted">
-                          Model: {run.agent_config.model as string}
-                        </span>
-                      </>
-                    )}
-                  </div>
-                </div>
-              )}
               {run.status === 'paused' && run.pause_reason && run.pause_reason !== 'manual_pause' && (
                 <div className="mt-1.5 text-xs text-status-paused">
                   {({
@@ -332,6 +229,34 @@ function RunDetailInner({ runId }: { runId: string }) {
                   {cancelRun.isPending ? 'Aborting...' : 'Abort Run'}
                 </button>
               )}
+              {/* Back Merge button */}
+              {run.worktree_path && (
+                <button
+                  type="button"
+                  onClick={onOpenBackMergeModal}
+                  className="rounded border border-border px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-muted hover:text-text-primary transition-colors"
+                  title="Merge target branch into run branch"
+                >
+                  Back Merge
+                </button>
+              )}
+
+              {/* Prune Mode button */}
+              {run.worktree_path && (
+                <button
+                  type="button"
+                  onClick={onTogglePruneMode}
+                  className={`rounded border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    isPruneMode
+                      ? 'border-amber-500/50 bg-amber-500/15 text-amber-400 hover:bg-amber-500/25'
+                      : 'border-border text-text-secondary hover:bg-bg-muted hover:text-text-primary'
+                  }`}
+                  title={isPruneMode ? 'Exit prune mode' : 'Enter prune mode to select changes for removal'}
+                >
+                  {isPruneMode ? 'Exit Prune Mode' : 'Prune Mode'}
+                </button>
+              )}
+
               {run.status === 'completed' && !mergeResult && (
                 branchStatus?.ahead_count === 0 ? (
                   <span className="px-3 py-1.5 text-xs font-medium text-status-completed bg-status-completed/10 border border-status-completed/30 rounded-md">
@@ -373,46 +298,7 @@ function RunDetailInner({ runId }: { runId: string }) {
             </div>
           </div>
 
-          {/* Metrics Bar */}
-          <div className="mt-4 mb-4">
-            <MetricsBar run={run} />
-          </div>
 
-          {/* Tab bar */}
-          <div className="flex items-center gap-1 border-b border-border mb-6">
-            <button
-              onClick={() => setActiveTab('activity')}
-              className={
-                'px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ' +
-                (activeTab === 'activity'
-                  ? 'border-accent-purple text-text-primary'
-                  : 'border-transparent text-text-muted hover:text-text-secondary')
-              }
-            >
-              Activity
-            </button>
-            {run.worktree_path && (
-              <button
-                onClick={() => setActiveTab('review')}
-                className={
-                  'px-3 py-2 text-sm font-medium transition-colors border-b-2 -mb-px ' +
-                  (activeTab === 'review'
-                    ? 'border-accent-purple text-text-primary'
-                    : 'border-transparent text-text-muted hover:text-text-secondary')
-                }
-              >
-                Review &amp; Merge
-              </button>
-            )}
-          </div>
-
-          {/* Review & Merge tab */}
-          {activeTab === 'review' && run.worktree_path !== undefined && (
-            <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path} />
-          )}
-
-          {/* Activity tab content */}
-          {activeTab === 'activity' && (
           <>
           {/* Mutation error banner */}
           {mutationError && (
@@ -569,23 +455,6 @@ function RunDetailInner({ runId }: { runId: string }) {
             </div>
           )}
 
-          {/* Step progress bar */}
-          <div className="mb-4">
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-xs font-semibold text-text-muted uppercase tracking-wide">
-                Progress
-              </h2>
-              <span className="text-[11px] text-text-muted">
-                {run.status === 'completed'
-                  ? `All ${run.steps.length} steps done`
-                  : run.status === 'failed'
-                    ? `Failed at step ${run.current_step_index + 1} of ${run.steps.length}`
-                    : `Step ${run.current_step_index + 1} of ${run.steps.length}`}
-              </span>
-            </div>
-            <StepProgressBar run={run} routineSteps={routineSteps} />
-          </div>
-
           {/* Per-step approval gates */}
           <div className="mb-2">
             {run.steps.map((step, index) => (
@@ -595,28 +464,9 @@ function RunDetailInner({ runId }: { runId: string }) {
             ))}
           </div>
 
-          {/* Activity Feed */}
-          <div className="mb-6">
-            <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wide mb-3">
-              Activity
-            </h2>
-            <ActivityFeed
-              events={events}
-              activeTasks={activeTasks}
-              run={run}
-            />
-          </div>
-
-          {/* Upcoming Plan */}
-          {upcoming.length > 0 && (
-            <div className="mb-6">
-              <UpcomingPlan
-                tasks={upcoming}
-              />
-            </div>
-          )}
+          {/* View Changes */}
+          <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path ?? null} />
           </>
-          )}
         </div>
       </div>
 
@@ -655,7 +505,9 @@ export function RunDetail() {
 
   return (
     <WebSocketProvider runId={runId}>
-      <RunDetailInner runId={runId!} />
+      <ReviewMergeProvider>
+        <RunDetailInner runId={runId!} />
+      </ReviewMergeProvider>
     </WebSocketProvider>
   );
 }
