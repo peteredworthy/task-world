@@ -46,7 +46,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { data: routine } = useRoutine(
     run?.routine_source === 'embedded' ? null : run?.routine_id
   );
-  const { data: activityData } = useActivityStream(runId, run?.status);
+  const { data: activityData } = useActivityStream(runId);
   const { data: pendingActionsData } = usePendingActions(runId);
   const taskPendingActions = useMemo(() => pendingActionsData?.pendingActions ?? [], [pendingActionsData]);
   const pendingActionsCount = pendingActionsData?.badgeCount ?? 0;
