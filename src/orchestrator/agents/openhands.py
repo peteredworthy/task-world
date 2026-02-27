@@ -40,6 +40,7 @@ from orchestrator.agents.openhands_common import (
 )
 from orchestrator.agents.types import (
     AgentInfo,
+    AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
     ExecutionContext,
@@ -349,11 +350,11 @@ class OpenHandsAgent:
     async def check_health(self) -> bool:
         """Check if the local OpenHands agent is usable.
 
-        Returns True if the openhands-ai SDK is importable and an API key
-        is configured.  No remote server is involved — this agent runs
-        entirely in-process via LocalConversation.
+        Returns True if the openhands-ai SDK is importable.  No remote
+        server is involved — this agent runs entirely in-process via
+        LocalConversation.  API key is not required when using a local LLM.
         """
-        return _SDK_AVAILABLE and bool(self._api_key)
+        return _SDK_AVAILABLE
 
     def get_quota(self, fetcher: QuotaFetcher | None = None) -> AgentQuota | None:
         """Fetch the OpenAI credit balance for the configured API key.
@@ -397,6 +398,7 @@ class OpenHandsAgent:
         on_submit: SubmitCallback,
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via OpenHands.
 
@@ -422,7 +424,9 @@ class OpenHandsAgent:
         )
         from pydantic import SecretStr
 
-        if not self._api_key:
+        # API key is required for OpenAI/cloud LLMs but optional for local servers
+        using_local_llm = bool(self._llm_config.get("base_url"))
+        if not self._api_key and not using_local_llm:
             raise AgentNotAvailableError(
                 "openhands_local",
                 "OPENAI_API_KEY environment variable not set",
@@ -445,12 +449,11 @@ class OpenHandsAgent:
         )
 
         try:
-            # Build LLM
-            llm = OHLLM(
-                model=self._model,
-                api_key=SecretStr(self._api_key),
-                **self._llm_config,
-            )
+            # Build LLM — api_key is optional when using a local server
+            llm_kwargs: dict[str, Any] = {"model": self._model, **self._llm_config}
+            if self._api_key:
+                llm_kwargs["api_key"] = SecretStr(self._api_key)
+            llm = OHLLM(**llm_kwargs)
 
             # Build Agent with built-in + custom tools.
             from orchestrator.agents.openhands_common import DEFAULT_OPENHANDS_TOOLS
