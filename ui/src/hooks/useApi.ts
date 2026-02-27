@@ -2,11 +2,19 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, getConfig, validateRoutine } from '../api/client';
 import type { CreateRunRequest, RecoverRequest, SetGradeRequest, UpdateChecklistRequest } from '../types';
 
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
 export function useRuns(params?: { status?: string; repo_name?: string; limit?: number }) {
   return useQuery({
     queryKey: ['runs', params],
     queryFn: () => api.listRuns(params),
-    refetchInterval: 10000,
+    refetchInterval: (query) => {
+      const runs = query.state.data?.runs;
+      if (!runs?.length) return 10000;
+      // Use a slower interval when the list contains only terminal runs
+      const hasActiveRuns = runs.some((r) => !TERMINAL_STATUSES.has(r.status));
+      return hasActiveRuns ? 10000 : 60000;
+    },
   });
 }
 
@@ -108,15 +116,14 @@ export function useTask(runId: string, taskId: string | undefined) {
   });
 }
 
-export function useActivity(runId: string | undefined) {
+export function useActivity(runId: string | undefined, runStatus?: string) {
   return useQuery({
     queryKey: ['activity', runId],
     queryFn: () => api.getActivity(runId!),
     enabled: !!runId,
-    refetchInterval: (query) => {
-      // Stop polling for terminal run states (no new events expected)
-      const hasMore = query.state.data?.has_more;
-      if (hasMore) return 10000;
+    refetchInterval: () => {
+      // Stop polling once the run reaches a terminal state — no new events will arrive
+      if (runStatus && TERMINAL_STATUSES.has(runStatus)) return false;
       return 10000;
     },
   });

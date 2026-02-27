@@ -855,7 +855,7 @@ function ExpandedView(props: RunCardProps) {
             to={'/runs/' + run.id}
             className="text-[11px] font-semibold text-accent-purple hover:text-accent-purple/80 transition-colors"
           >
-            Open Detailed View
+            View Changes
           </Link>
           {clarificationTaskId && (
             <Link

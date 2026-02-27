@@ -103,16 +103,17 @@ def get_branch_status(repo_path: Path, run_branch: str, source_branch: str) -> B
     Raises:
         BranchNotFoundError: If either branch doesn't exist
     """
-    if not _branch_exists(repo_path, run_branch):
-        raise BranchNotFoundError(run_branch)
-    if not _branch_exists(repo_path, source_branch):
+    # Try rev-list directly; it fails if either branch is missing.
+    # Only fall back to per-branch checks on failure to produce a precise error.
+    try:
+        result = _run_git(
+            ["rev-list", "--left-right", "--count", f"{run_branch}...{source_branch}"],
+            cwd=repo_path,
+        )
+    except GitCommandError:
+        if not _branch_exists(repo_path, run_branch):
+            raise BranchNotFoundError(run_branch)
         raise BranchNotFoundError(source_branch)
-
-    # Get ahead/behind counts using rev-list --left-right --count
-    result = _run_git(
-        ["rev-list", "--left-right", "--count", f"{run_branch}...{source_branch}"],
-        cwd=repo_path,
-    )
     parts = result.stdout.strip().split("\t")
     ahead_count = int(parts[0])
     behind_count = int(parts[1])

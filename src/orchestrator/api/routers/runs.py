@@ -139,14 +139,23 @@ def _run_to_response(run: Run) -> RunResponse:
         for step in run.steps
     ]
 
-    # Use actual cost from action logs when available; otherwise estimate from token counts.
-    actual_cost_usd = sum(
-        attempt.action_log.total_cost_usd
-        for step in run.steps
-        for task in step.tasks
-        for attempt in task.attempts
-        if attempt.action_log is not None and attempt.action_log.total_cost_usd > 0
-    )
+    # Single pass over all attempts to sum actual cost and find model hint.
+    actual_cost_usd = 0.0
+    model_hint: str | None = None
+
+    # Prefer model from agent_config (no iteration needed)
+    raw_model = run.agent_config.get("model")
+    if isinstance(raw_model, str) and raw_model:
+        model_hint = raw_model
+
+    for step in run.steps:
+        for task in step.tasks:
+            for attempt in task.attempts:
+                if attempt.action_log is not None:
+                    if attempt.action_log.total_cost_usd > 0:
+                        actual_cost_usd += attempt.action_log.total_cost_usd
+                    if model_hint is None and attempt.action_log.agent_model:
+                        model_hint = attempt.action_log.agent_model
 
     estimated_cost_usd = None
     cost_disclaimer = None
@@ -155,23 +164,6 @@ def _run_to_response(run: Run) -> RunResponse:
         estimated_cost_usd = round(actual_cost_usd, 6)
         cost_disclaimer = "Actual cost from API response."
     elif run.total_tokens_read > 0 or run.total_tokens_write > 0 or run.total_tokens_cache > 0:
-        # Detect which model was used: try agent_config first, then action log
-        model_hint: str | None = None
-        raw_model = run.agent_config.get("model")
-        if isinstance(raw_model, str) and raw_model:
-            model_hint = raw_model
-        if not model_hint:
-            for step in run.steps:
-                for task in step.tasks:
-                    for attempt in task.attempts:
-                        if attempt.action_log and attempt.action_log.agent_model:
-                            model_hint = attempt.action_log.agent_model
-                            break
-                    if model_hint:
-                        break
-                if model_hint:
-                    break
-
         cost_estimate = estimate_cost(
             tokens_read=run.total_tokens_read,
             tokens_write=run.total_tokens_write,

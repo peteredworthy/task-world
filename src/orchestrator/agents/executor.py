@@ -50,6 +50,10 @@ _LLM_CONFIG_KEYS = {
     "temperature",
     "top_p",
     "max_output_tokens",
+    "base_url",
+    "timeout",
+    "num_retries",
+    "model_canonical_name",
 }
 
 
@@ -1385,14 +1389,12 @@ class AgentExecutor:
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
             max_iterations = agent_config.get("max_iterations", 100)
-            tools = agent_config.get("tools")
             llm_config = {k: v for k, v in agent_config.items() if k in _LLM_CONFIG_KEYS}
 
             return OpenHandsAgent(
                 api_key=api_key,
                 model=model,
                 max_iterations=max_iterations,
-                tools=tools,
                 llm_config=llm_config,
             )  # type: ignore[return-value]
 
@@ -1403,7 +1405,6 @@ class AgentExecutor:
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
             max_iterations = agent_config.get("max_iterations", 100)
-            tools = agent_config.get("tools")
             server_image = agent_config.get("server_image")
             llm_config = {k: v for k, v in agent_config.items() if k in _LLM_CONFIG_KEYS}
 
@@ -1412,7 +1413,6 @@ class AgentExecutor:
                 "api_key": api_key,
                 "model": model,
                 "max_iterations": max_iterations,
-                "tools": tools,
                 "llm_config": llm_config,
             }
             if server_image is not None:

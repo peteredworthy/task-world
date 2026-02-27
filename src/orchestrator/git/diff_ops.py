@@ -94,15 +94,17 @@ async def get_modified_files(
     Returns:
         List of ModifiedFile objects with path, status, additions, deletions
     """
-    name_status_output = await asyncio.to_thread(
-        _run_git_sync,
-        ["diff", "--name-status", f"{base_sha}..{head_sha}"],
-        worktree_path,
-    )
-    numstat_output = await asyncio.to_thread(
-        _run_git_sync,
-        ["diff", "--numstat", f"{base_sha}..{head_sha}"],
-        worktree_path,
+    name_status_output, numstat_output = await asyncio.gather(
+        asyncio.to_thread(
+            _run_git_sync,
+            ["diff", "--name-status", f"{base_sha}..{head_sha}"],
+            worktree_path,
+        ),
+        asyncio.to_thread(
+            _run_git_sync,
+            ["diff", "--numstat", f"{base_sha}..{head_sha}"],
+            worktree_path,
+        ),
     )
 
     # Parse name-status: "M\tfile.py", "A\tfile.py", "D\tfile.py", "R100\told.py\tnew.py"

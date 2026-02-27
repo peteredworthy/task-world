@@ -31,13 +31,6 @@ _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
         description="LLM model to use",
     ),
     AgentConfigField(
-        name="tools",
-        field_type="multiselect",
-        default=["terminal", "file_editor"],
-        description="OpenHands tools to enable",
-        options=["terminal", "file_editor", "browser", "glob", "grep"],
-    ),
-    AgentConfigField(
         name="max_iterations",
         field_type="number",
         default=100,
@@ -74,13 +67,6 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
         field_type="string",
         default="gpt-5-mini",
         description="LLM model to use",
-    ),
-    AgentConfigField(
-        name="tools",
-        field_type="multiselect",
-        default=["terminal", "file_editor"],
-        description="OpenHands tools to enable",
-        options=["terminal", "file_editor", "browser", "glob", "grep"],
     ),
     AgentConfigField(
         name="max_iterations",

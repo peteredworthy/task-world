@@ -6,12 +6,12 @@ import { useSettings } from './useSettings';
  * Unified hook for streaming activity events.
  * Uses SSE or polling based on user settings.
  */
-export function useActivityStream(runId: string | undefined) {
+export function useActivityStream(runId: string | undefined, runStatus?: string) {
   const { settings } = useSettings();
   const useSSE = settings.activityStreamMode === 'sse';
 
   // Polling mode (existing behavior)
-  const pollingQuery = useActivity(runId);
+  const pollingQuery = useActivity(runId, runStatus);
 
   // SSE mode (new real-time behavior)
   const sseConnection = useActivitySSE(runId, {
