@@ -24,6 +24,20 @@ Transform the orchestrator's tool availability system from **phase-only** (build
 - Each agent type wires external MCP servers using its native mechanism (API parameter, config file, prompt text)
 - Phase-based filtering still works as a baseline when no step-level config is specified
 
+## Key Design Decisions
+
+These decisions were resolved through human Q&A (see `clarifications.md`):
+
+| Decision | Resolution | Rationale |
+|----------|------------|-----------|
+| Step-level tools vs. phase tools | **Additive** — step-level `available_tools` and `mcp_servers` are added to phase tools. Both Builder and Verifier get access to step-level MCPs. | Routine authors add capabilities per-step; phase logic handles role-specific tools. |
+| Claude API MCP wiring | **MCP Connector beta** — `client.beta.messages.create()` with `mcp_servers` parameter and `mcp_toolset` tools. Requires beta header `mcp-client-2025-11-20`. Remote HTTPS servers only. | Native API support confirmed; no proxy needed for remote servers. |
+| OpenHands MCP wiring | **Native `mcp_config` parameter** — `Agent(mcp_config={...})` supports stdio, SSE, and Streamable HTTP transports via FastMCP library. | SDK already supports this; minimal wiring effort (~5 lines). |
+| Codex Server MCP wiring | **dynamicTools only** — per-thread control, no config.toml. | Consistent with existing dynamicTools pattern for orchestrator callback tools. |
+| MCP connection failures | **Defer to agents** — each agent handles MCP failures according to its own error-handling logic. | Simplest approach; avoids adding required/optional semantics to MCPServerConfig. |
+| Unknown tool names | **Log warning but continue** — if `available_tools` references a name that doesn't exist, log a warning and proceed with tools that do exist. | Avoids brittle failures from typos or version drift. |
+| Agent implementation priority | **CLI and Claude SDK first** — then Codex Server, OpenHands, User-Managed. | Most actively used agent types get priority. |
+
 ## Scope
 
 ### In Scope
@@ -38,7 +52,7 @@ Transform the orchestrator's tool availability system from **phase-only** (build
 - Implement tool hints in CLI agent (include available tools/MCPs in prompt text)
 - Register all tools in User-Managed MCP server (remove phase filtering, rely on runtime validation)
 - Expose external MCP info in prompt response for User-Managed agents
-- Wire external MCPs to Claude SDK (`mcp_servers` API parameter), Codex Server (config.toml or dynamicTools), OpenHands (`mcp_config` parameter), CLI (.mcp.json or prompt text)
+- Wire external MCPs to Claude SDK (beta MCP Connector `mcp_servers` parameter), Codex Server (dynamicTools), OpenHands (native `mcp_config` parameter), CLI (.mcp.json or prompt text)
 - Unit tests for tool filtering per agent type
 - Integration tests for step-level tool availability
 - Integration tests for external MCP configuration passthrough
@@ -51,6 +65,7 @@ Transform the orchestrator's tool availability system from **phase-only** (build
 - Dynamic tool updates mid-execution (tools are fixed at step start)
 - Tool registry abstraction layer (Phase 3 future work)
 - Production readiness for Codex Server variants (blocked by separate risk items R-01 through R-06)
+- Claude API MCP Connector for local stdio servers (only remote HTTPS supported by MCP Connector; stdio servers would require the Claude Agent SDK or proxy pattern)
 
 ## Definition of Complete
 
@@ -58,9 +73,9 @@ Transform the orchestrator's tool availability system from **phase-only** (build
 - [ ] `MCPServerConfig` model exists with url/command/args/env/auth_token_env/timeout fields
 - [ ] `ExecutionContext` in `src/orchestrator/agents/types.py` has `step_id`, `available_tools`, `mcp_servers`
 - [ ] Executor populates step-level context from `StepConfig` when creating `ExecutionContext`
-- [ ] Claude SDK agent filters tools based on `context.available_tools` and passes `mcp_servers` to API
-- [ ] Codex Server agent uses `is_verifier` for phase filtering and supports step-level tool specs
-- [ ] OpenHands agent filters built-in tools based on `context.available_tools` and passes `mcp_config`
+- [ ] Claude SDK agent filters tools based on `context.available_tools` and passes `mcp_servers` via beta MCP Connector
+- [ ] Codex Server agent uses `is_verifier` for phase filtering and supports step-level tool specs via dynamicTools
+- [ ] OpenHands agent filters built-in tools based on `context.available_tools` and passes `mcp_config` to constructor
 - [ ] CLI agent includes available tools and external MCP info in subprocess prompt
 - [ ] User-Managed MCP server registers all tools (no phase filtering at registration)
 - [ ] User-Managed prompt response includes external MCP server information

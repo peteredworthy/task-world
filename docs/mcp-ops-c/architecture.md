@@ -76,15 +76,15 @@ context = ExecutionContext(
 
 #### Agent Implementations
 
-Each agent filters tools and wires MCPs differently, matching its execution boundary:
+Each agent adds step-level tools **additively** to its phase tools and wires MCPs using its native mechanism. If `available_tools` references unknown tool names, a warning is logged but execution continues. MCP connection failures are deferred to each agent's error handling.
 
-| Agent | Tool Filtering | MCP Wiring | Execution Boundary |
-|-------|---------------|------------|-------------------|
-| Claude SDK | Filter `tools` list before `messages.create()` | Pass `mcp_servers` parameter to API | Per-request |
-| Codex Server | Filter `dynamicTools` in `thread/start` | Include in `dynamicTools` or config.toml | Per-thread |
-| OpenHands | Filter `tools` at `Agent()` construction | Pass `mcp_config` to constructor | Per-instance |
-| CLI | Include tool list as text in prompt | Write `.mcp.json` to working dir or include URLs in prompt | Per-subprocess |
-| User-Managed | Register all tools; runtime validation | Include in `CallbackInstructions` in prompt response | Per-request |
+| Agent | Tool Filtering | MCP Wiring | Execution Boundary | Priority |
+|-------|---------------|------------|-------------------|----------|
+| CLI | Include tool list as text in prompt | Write `.mcp.json` to working dir or include URLs in prompt | Per-subprocess | 1st |
+| Claude SDK | Add step tools to phase-filtered `tools` list before API call | MCP Connector beta: `client.beta.messages.create()` with `mcp_servers` + `mcp_toolset` tools (remote HTTPS only, beta header `mcp-client-2025-11-20`) | Per-request | 1st |
+| Codex Server | Add step tools to `dynamicTools` in `thread/start` | Include MCP config in `dynamicTools` (no config.toml) | Per-thread | 2nd |
+| OpenHands | Add step tools at `Agent()` construction | Pass `mcp_config` dict (`{"mcpServers": {...}}`) to constructor; supports stdio/SSE/SHTTP via FastMCP | Per-instance | 3rd |
+| User-Managed | Register all tools; runtime validation | Include in `CallbackInstructions` in prompt response | Per-request | 3rd |
 
 ### Interactions
 
@@ -95,22 +95,24 @@ Routine YAML ──parse──▶ StepConfig
                            ▼
                         Executor
                            │
-                           │ populate context
+                           │ populate context (step tools ADDITIVE to phase tools)
                            ▼
                      ExecutionContext
                            │
               ┌────────────┼────────────┬────────────┬──────────┐
               ▼            ▼            ▼            ▼          ▼
-         Claude SDK    Codex Server  OpenHands      CLI    User-Managed
+           CLI        Claude SDK   Codex Server  OpenHands  User-Managed
               │            │            │            │          │
-         filter tools  filter tools  filter tools  text hint  all tools
-         pass MCPs     dynamicTools  mcp_config    .mcp.json  expose info
+         text hint   add to phase  add to dyn.  add tools   all tools
+         .mcp.json   MCP Connector dynamicTools  mcp_config  expose info
               │            │            │            │          │
               ▼            ▼            ▼            ▼          ▼
-         API request   thread/start  Agent()     subprocess  prompt resp
+         subprocess   beta API     thread/start  Agent()    prompt resp
 ```
 
 **Data flow is one-directional:** YAML → StepConfig → Executor → ExecutionContext → Agent. No feedback loop needed. Tools are fixed when a step starts.
+
+**Additive semantics:** Step-level `available_tools` adds to (never restricts) the phase-determined tool set. Both Builder and Verifier get step-level MCPs. Phase-specific tools (submit, grade, etc.) are always determined by role.
 
 ## Technology Choices
 
@@ -119,8 +121,13 @@ Routine YAML ──parse──▶ StepConfig
 | Schema | Pydantic v2 `BaseModel` | Consistent with all existing models; validation built-in |
 | Transport detection | `url` vs `command` field presence | Matches MCP spec (HTTP vs STDIO); explicit and self-documenting |
 | Auth | Environment variable references only | Tokens never in YAML/logs/prompts; agent reads from env at runtime |
+| Claude SDK MCP | MCP Connector beta (`mcp-client-2025-11-20`) | Native API support; remote HTTPS only; uses `mcp_servers` + `mcp_toolset` |
+| OpenHands MCP | Native `mcp_config` parameter | SDK supports stdio/SSE/SHTTP via FastMCP library; `{"mcpServers": {...}}` format |
+| Codex Server MCP | dynamicTools only | Per-thread control; consistent with existing orchestrator callback tool pattern |
 | CLI MCP config | `.mcp.json` file in working dir | Standard MCP client config format; discovered automatically by Claude Code |
 | User-Managed MCP info | `CallbackInstructions` in prompt response | No new endpoints needed; external agent decides which MCPs to connect to |
+| MCP failures | Deferred to agents | No orchestrator-level required/optional semantics; simplest approach |
+| Unknown tools | Log warning, continue | Avoids brittle failures from typos or version drift in `available_tools` |
 
 ## Testing Strategy
 
@@ -138,9 +145,10 @@ tests/unit/test_mcp_server_config.py
 ```
 
 Each file tests:
-- `available_tools=None` → all standard tools (backward compat)
-- `available_tools=["terminal"]` → only terminal tool included
-- `available_tools=["grade"]` in verifier phase → grade included
+- `available_tools=None` → all standard phase tools (backward compat)
+- `available_tools=["terminal"]` → terminal tool added to phase tools (additive)
+- Phase filtering still works (builders don't get `grade`, verifiers get `grade`)
+- Unknown tool names in `available_tools` produce warning, don't fail
 - `mcp_servers` config reaches the agent's underlying mechanism
 
 **Schema tests:**
@@ -180,11 +188,11 @@ tests/integration/test_step_tool_control.py
 
 - **Zero overhead for existing routines:** When `available_tools` and `mcp_servers` are None (the default), no filtering or MCP wiring occurs. The code path is identical to today.
 - **Minimal overhead for configured steps:** Tool filtering is a single list intersection at step start (not per-turn). MCP config is passed through as data, not connected eagerly.
-- **No eager MCP connections:** The executor passes MCP config as data. The agent decides when/whether to connect. Failed MCPs don't block execution.
+- **No eager MCP connections:** The executor passes MCP config as data. The agent decides when/whether to connect. Failed MCPs are handled by each agent individually (deferred to agents).
 - **Agent-specific efficiency:**
-  - Claude SDK: Zero overhead — `mcp_servers` is already a supported API parameter
-  - Codex Server: Tool specs built once per thread, not per turn
-  - OpenHands: Tools set once per agent instance
+  - Claude SDK: MCP Connector beta handles server connections on Anthropic's side; minimal client overhead
+  - Codex Server: Tool specs built once per thread, not per turn; MCP config via dynamicTools
+  - OpenHands: Tools and MCP config set once per agent instance via FastMCP
   - CLI: Config file written once to disk before subprocess starts
   - User-Managed: Info included in prompt response (no runtime cost)
 
@@ -192,17 +200,17 @@ tests/integration/test_step_tool_control.py
 
 | File | Change | Priority |
 |------|--------|----------|
-| `src/orchestrator/config/models.py` | Add `MCPServerConfig`, extend `StepConfig` | Phase 0 (first) |
-| `src/orchestrator/agents/types.py` | Extend `ExecutionContext` | Phase 1 |
-| `src/orchestrator/agents/executor.py` | Populate step-level context | Phase 1 |
-| `src/orchestrator/agents/codex_server_common.py` | Add `is_verifier` param + context filtering | Phase 2a/2b |
-| `src/orchestrator/mcp/server.py` | Register all tools (remove phase filter) | Phase 2a |
-| `src/orchestrator/agents/claude_sdk.py` | Tool filtering + MCP passthrough | Phase 2b/3 |
-| `src/orchestrator/agents/openhands.py` | Tool filtering + MCP passthrough | Phase 2b/3 |
-| `src/orchestrator/agents/codex_server.py` | MCP config in thread creation | Phase 3 |
-| `src/orchestrator/agents/cli.py` | Tool hints + MCP info in prompt | Phase 2c/3 |
-| `src/orchestrator/api/routers/tasks.py` | MCP info in prompt response | Phase 3 |
-| `src/orchestrator/api/schemas/tasks.py` | `CallbackInstructions.mcp_servers` field | Phase 3 |
-| `tests/unit/` (multiple) | Tool filtering tests per agent | Phase 2-3 |
-| `tests/integration/test_step_tool_control.py` | End-to-end step-level tests | Phase 4 |
-| `examples/routines/` | Example routines with new fields | Phase 4 |
+| `src/orchestrator/config/models.py` | Add `MCPServerConfig`, extend `StepConfig` | Step 1 (foundation) |
+| `src/orchestrator/agents/types.py` | Extend `ExecutionContext` | Step 2 (foundation) |
+| `src/orchestrator/agents/executor.py` | Populate step-level context | Step 2 (foundation) |
+| `src/orchestrator/agents/cli.py` | Tool hints + MCP info in prompt | Step 3 (Priority 1) |
+| `src/orchestrator/agents/claude_sdk.py` | Additive tool filtering + MCP Connector beta wiring | Step 4 (Priority 1) |
+| `src/orchestrator/agents/codex_server_common.py` | Add `is_verifier` param + additive context filtering + MCP via dynamicTools | Step 5 (Priority 2) |
+| `src/orchestrator/agents/codex_server.py` | MCP config in thread creation via dynamicTools | Step 5 (Priority 2) |
+| `src/orchestrator/agents/openhands.py` | Additive tool filtering + native `mcp_config` passthrough | Step 6 (Priority 3) |
+| `src/orchestrator/mcp/server.py` | Register all tools (remove phase filter) | Step 7 (Priority 3) |
+| `src/orchestrator/api/routers/tasks.py` | MCP info in prompt response | Step 7 (Priority 3) |
+| `src/orchestrator/api/schemas/tasks.py` | `CallbackInstructions.mcp_servers` field | Step 7 (Priority 3) |
+| `tests/unit/` (multiple) | Tool filtering tests per agent | Steps 3-7 |
+| `tests/integration/test_step_tool_control.py` | End-to-end step-level tests | Step 8 |
+| `examples/routines/` | Example routines with new fields | Step 8 |
