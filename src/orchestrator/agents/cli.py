@@ -192,15 +192,15 @@ class CLIAgent:
         if context.auth_token:
             if callback_channel == "mcp":
                 api_section += (
-                    f"\n\n## Authentication\n"
-                    f"Include the following header when connecting to the MCP server:\n"
-                    f"Authorization: Bearer {context.auth_token}"
+                    "\n\n## Authentication\n"
+                    "Include the following header when connecting to the MCP server:\n"
+                    "Authorization: Bearer ${ORCHESTRATOR_AUTH_TOKEN}"
                 )
             else:
                 api_section += (
-                    f"\n\n## Authentication\n"
-                    f"Include the following header with all API requests:\n"
-                    f"Authorization: Bearer {context.auth_token}"
+                    "\n\n## Authentication\n"
+                    "Include the following header with all API requests:\n"
+                    "Authorization: Bearer ${ORCHESTRATOR_AUTH_TOKEN}"
                 )
 
         # Add step-level tool hints
@@ -277,9 +277,9 @@ class CLIAgent:
 
         if context.auth_token:
             api_section += (
-                f"\n\n## Authentication\n"
-                f"Include the following header with all requests:\n"
-                f"Authorization: Bearer {context.auth_token}"
+                "\n\n## Authentication\n"
+                "Include the following header with all requests:\n"
+                "Authorization: Bearer ${ORCHESTRATOR_AUTH_TOKEN}"
             )
 
         # Add step-level tool hints
@@ -365,6 +365,10 @@ class CLIAgent:
             # Remove CLAUDECODE so that nested `claude` invocations don't
             # refuse to start with "cannot be launched inside another session".
             child_env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+            # Pass auth token via environment variable if present
+            if context.auth_token:
+                child_env["ORCHESTRATOR_AUTH_TOKEN"] = context.auth_token
 
             # Write .mcp.json for Claude Code auto-discovery if MCP servers are configured
             if context.mcp_servers:
