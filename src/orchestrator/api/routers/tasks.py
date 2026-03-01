@@ -32,7 +32,7 @@ from orchestrator.api.schemas.tasks import (
     UpdateChecklistRequest,
 )
 from orchestrator.config.enums import ChecklistStatus, RoutineSource, TaskStatus
-from orchestrator.config.models import RoutineConfig
+from orchestrator.config.models import MCPServerConfig, RoutineConfig
 from orchestrator.db.repositories import RunRepository
 from orchestrator.routines.discovery import discover_routines
 from orchestrator.routines.errors import RoutineNotFoundError
@@ -290,7 +290,10 @@ async def set_grade(
 
 
 def _build_callback_instructions(
-    request: Request, run_id: str, task_id: str
+    request: Request,
+    run_id: str,
+    task_id: str,
+    mcp_servers: list[MCPServerConfig] | None = None,
 ) -> CallbackInstructions:
     """Build callback instructions for external agents."""
     # Determine base URL from request
@@ -324,6 +327,7 @@ Available MCP tools:
         api_base_url=base_url,
         rest_instructions=rest_instructions,
         mcp_instructions=mcp_instructions,
+        mcp_servers=mcp_servers,
     )
 
 
@@ -456,6 +460,7 @@ async def get_task_prompt(
 
     task_config = None
     step_context: str | None = None
+    mcp_servers: list[MCPServerConfig] | None = None
     for step in routine_config.steps:
         if step_config_id is not None and step.id != step_config_id:
             continue
@@ -463,13 +468,14 @@ async def get_task_prompt(
             if task.id == task_state.config_id:
                 task_config = task
                 step_context = step.step_context
+                mcp_servers = step.mcp_servers
                 break
         if task_config is not None:
             break
     if task_config is None:
         raise TaskNotFoundError(run_id, task_id)
 
-    callback = _build_callback_instructions(request, run_id, task_id)
+    callback = _build_callback_instructions(request, run_id, task_id, mcp_servers=mcp_servers)
 
     if task_state.status == TaskStatus.BUILDING:
         (
