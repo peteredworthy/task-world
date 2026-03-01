@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from orchestrator.api.schemas.base import ApiModel
+from orchestrator.config.models import MCPServerConfig
 
 
 class ChecklistItemSchema(ApiModel):
@@ -135,6 +136,7 @@ class CallbackInstructions(ApiModel):
     api_base_url: str
     rest_instructions: str
     mcp_instructions: str
+    mcp_servers: list[MCPServerConfig] | None = None
 
 
 class PromptResponse(ApiModel):
