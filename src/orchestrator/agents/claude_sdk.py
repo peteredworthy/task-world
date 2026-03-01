@@ -293,6 +293,53 @@ _VERIFIER_TOOLS: list[dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
+# Tool list construction
+# ---------------------------------------------------------------------------
+
+
+def _build_tool_list(
+    is_verifier: bool,
+    available_tools: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Build tool list: phase tools + additive step tools.
+
+    Step-level available_tools adds to (never restricts) phase tools.
+    Unknown tool names are logged as warnings and skipped.
+
+    Args:
+        is_verifier: If True, include verifier tools; otherwise include builder tools.
+        available_tools: Optional list of additional tool names to add (additive).
+
+    Returns:
+        List of tool schema dicts, starting with phase tools plus any known additional tools.
+    """
+    base_tools = list(_VERIFIER_TOOLS if is_verifier else _BUILDER_TOOLS)
+
+    if not available_tools:
+        return base_tools
+
+    # Collect names already in base tools
+    existing_names = {t["name"] for t in base_tools}
+
+    # Known additional tools that can be added via available_tools
+    # (This registry can be expanded as new tools are supported)
+    known_additional_tools: dict[str, dict[str, Any]] = {}
+
+    for tool_name in available_tools:
+        if tool_name in existing_names:
+            continue  # Already in phase tools
+        if tool_name in known_additional_tools:
+            base_tools.append(known_additional_tools[tool_name])
+        else:
+            logger.warning(
+                "Unknown tool '%s' in available_tools — skipping (not in Claude SDK tool registry)",
+                tool_name,
+            )
+
+    return base_tools
+
+
+# ---------------------------------------------------------------------------
 # Prompt assembly
 # ---------------------------------------------------------------------------
 
@@ -560,7 +607,7 @@ class ClaudeSDKAgent:
                     default_headers={"anthropic-beta": "oauth-2025-04-20"},
                 )
 
-            tools = _VERIFIER_TOOLS if is_verifier else _BUILDER_TOOLS
+            tools = _build_tool_list(is_verifier, context.available_tools)
             full_prompt = build_claude_sdk_prompt(context, is_verifier=is_verifier)
 
             messages: list[dict[str, Any]] = [{"role": "user", "content": full_prompt}]
