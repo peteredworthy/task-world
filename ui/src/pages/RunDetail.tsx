@@ -14,6 +14,7 @@ import { AgentGuidancePanel } from '../components/guidance/AgentGuidancePanel';
 import { ResumeDialog } from '../components/run/ResumeDialog';
 import { ClarificationModal } from '../components/detail/ClarificationModal';
 import { ApprovalModal } from '../components/detail/ApprovalModal';
+import { ApprovalReviewDialog } from '../components/detail/ApprovalReviewDialog';
 import { Spinner } from '../components/Spinner';
 import { RecoveryPanel } from '../components/detail/RecoveryPanel';
 import { StepApprovalBanner } from '../components/detail/StepApprovalBanner';
@@ -69,6 +70,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
+  const [approvalReviewAction, setApprovalReviewAction] = useState<PendingAction | null>(null);
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
     const detail = err instanceof ApiError
@@ -493,6 +495,20 @@ function RunDetailInner({ runId }: { runId: string }) {
           open={true}
           onClose={() => setSelectedPendingAction(null)}
           pendingAction={selectedPendingAction}
+          runId={runId}
+          onReviewChanges={() => {
+            setApprovalReviewAction(selectedPendingAction);
+            setSelectedPendingAction(null);
+          }}
+        />
+      )}
+
+      {/* Full-screen approval review dialog */}
+      {approvalReviewAction && (
+        <ApprovalReviewDialog
+          open={true}
+          onClose={() => setApprovalReviewAction(null)}
+          pendingAction={approvalReviewAction}
           runId={runId}
         />
       )}

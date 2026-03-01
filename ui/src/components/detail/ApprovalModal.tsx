@@ -9,6 +9,7 @@ interface ApprovalModalProps {
   onClose: () => void;
   pendingAction: PendingAction;
   runId: string;
+  onReviewChanges?: () => void;
 }
 
 export function ApprovalModal({
@@ -16,6 +17,7 @@ export function ApprovalModal({
   onClose,
   pendingAction,
   runId,
+  onReviewChanges,
 }: ApprovalModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const approveTaskMutation = useApproveTask(runId, pendingAction.task_id);
@@ -279,6 +281,19 @@ export function ApprovalModal({
           >
             Cancel
           </button>
+          {onReviewChanges && (
+            <button
+              type="button"
+              onClick={onReviewChanges}
+              disabled={isPending}
+              className="px-5 py-2 text-sm font-medium text-text-primary bg-bg-elevated border border-border-hover rounded-md hover:bg-bg-hover transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              </svg>
+              <span>Review Changes</span>
+            </button>
+          )}
           {!pendingAction.is_gate_approval && (
           <button
             type="button"

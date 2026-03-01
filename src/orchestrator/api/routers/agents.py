@@ -1,6 +1,7 @@
 """Agent discovery API endpoints."""
 
 import logging
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Query, Request
@@ -23,7 +24,7 @@ async def list_agents(request: Request) -> list[AgentOption]:
 @router.get("/local-models")
 async def discover_local_models(
     base_url: str = Query(..., description="Base URL of the local OpenAI-compatible server"),
-) -> dict:
+) -> dict[str, Any]:
     """Discover models from a local OpenAI-compatible LLM server.
 
     Calls ``{base_url}/models`` and returns the list of model IDs.
