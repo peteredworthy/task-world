@@ -11,6 +11,7 @@ from orchestrator.agents.claude_sdk import (
     ClaudeSDKAgent,
     _BUILDER_TOOLS,
     _VERIFIER_TOOLS,
+    _build_tool_list,
     _dispatch_tool,
     build_claude_sdk_prompt,
 )
@@ -830,3 +831,119 @@ def test_claude_sdk_is_distinct_from_other_types() -> None:
         AgentType.CODEX_SERVER,
     }
     assert AgentType.CLAUDE_SDK not in other_types
+
+
+# ---------------------------------------------------------------------------
+# Tool filtering: step-level tools are additive to phase tools
+# ---------------------------------------------------------------------------
+
+
+class TestBuildToolList:
+    """Tests for _build_tool_list() — additive step-level tool filtering."""
+
+    def test_builder_without_available_tools(self) -> None:
+        """Builder phase returns standard builder tools when available_tools is None."""
+        tools = _build_tool_list(is_verifier=False, available_tools=None)
+        tool_names = {t["name"] for t in tools}
+
+        # Should have all builder phase tools
+        assert "update_checklist" in tool_names
+        assert "submit" in tool_names
+        assert "request_clarification" in tool_names
+        # Builder should NOT have grade
+        assert "grade" not in tool_names
+
+    def test_verifier_without_available_tools(self) -> None:
+        """Verifier phase returns standard verifier tools when available_tools is None."""
+        tools = _build_tool_list(is_verifier=True, available_tools=None)
+        tool_names = {t["name"] for t in tools}
+
+        # Should have all verifier phase tools
+        assert "grade" in tool_names
+        assert "update_checklist" in tool_names
+        assert "submit" in tool_names
+        assert "request_clarification" in tool_names
+
+    def test_phase_tools_always_included(self) -> None:
+        """Phase tools are always included regardless of available_tools."""
+        tools = _build_tool_list(is_verifier=False, available_tools=["terminal"])
+        tool_names = {t["name"] for t in tools}
+
+        # Phase tools must always be present
+        assert "update_checklist" in tool_names
+        assert "submit" in tool_names
+        assert "request_clarification" in tool_names
+
+    def test_verifier_phase_tools_always_included(self) -> None:
+        """Verifier phase tools are always included even when available_tools is provided."""
+        tools = _build_tool_list(is_verifier=True, available_tools=["terminal"])
+        tool_names = {t["name"] for t in tools}
+
+        # Verifier phase tools must always be present
+        assert "grade" in tool_names
+        assert "update_checklist" in tool_names
+        assert "submit" in tool_names
+
+    def test_unknown_tool_produces_warning(self, caplog) -> None:
+        """Unknown tool names produce a warning and are skipped."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            tools = _build_tool_list(is_verifier=False, available_tools=["nonexistent_tool"])
+
+        # Should log a warning about the unknown tool
+        assert "nonexistent_tool" in caplog.text
+        assert "Unknown tool" in caplog.text
+
+        # But should still return the phase tools
+        tool_names = {t["name"] for t in tools}
+        assert "submit" in tool_names
+
+    def test_multiple_unknown_tools_produce_warnings(self, caplog) -> None:
+        """Multiple unknown tools each produce a warning."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            tools = _build_tool_list(
+                is_verifier=False,
+                available_tools=["fake1", "fake2", "fake3"],
+            )
+
+        # All three unknown tools should be mentioned in warnings
+        assert "fake1" in caplog.text
+        assert "fake2" in caplog.text
+        assert "fake3" in caplog.text
+
+        # But should still return the phase tools
+        tool_names = {t["name"] for t in tools}
+        assert "submit" in tool_names
+
+    def test_duplicate_phase_tool_not_added(self) -> None:
+        """If available_tools contains a tool already in phase tools, it's not duplicated."""
+        tools = _build_tool_list(is_verifier=False, available_tools=["submit"])
+        tool_names = [t["name"] for t in tools]
+
+        # Count how many times "submit" appears
+        submit_count = tool_names.count("submit")
+        assert submit_count == 1  # Should appear exactly once, not twice
+
+    def test_empty_available_tools_list(self) -> None:
+        """Empty available_tools list returns only phase tools."""
+        tools = _build_tool_list(is_verifier=False, available_tools=[])
+        tool_names = {t["name"] for t in tools}
+
+        # Should have phase tools
+        assert "update_checklist" in tool_names
+        assert "submit" in tool_names
+
+    def test_builder_tools_count_baseline(self) -> None:
+        """Builder tools have the expected baseline count."""
+        tools = _build_tool_list(is_verifier=False, available_tools=None)
+        # Builder phase should have: update_checklist, submit, request_clarification (3 tools)
+        assert len(tools) == 3
+
+    def test_verifier_tools_count_baseline(self) -> None:
+        """Verifier tools have the expected baseline count."""
+        tools = _build_tool_list(is_verifier=True, available_tools=None)
+        # Verifier phase should have: grade, update_checklist, submit, request_clarification (4 tools)
+        assert len(tools) == 4
