@@ -54,11 +54,11 @@ async def get_commit_diff(worktree_path: Path, commit_sha: str) -> str:
         commit_sha: The commit SHA to diff
 
     Returns:
-        Unified diff text as a string
+        Unified diff text as a string including commit metadata
     """
     return await asyncio.to_thread(
         _run_git_sync,
-        ["diff-tree", "--no-commit-id", "-p", commit_sha],
+        ["show", commit_sha],
         worktree_path,
     )
 
