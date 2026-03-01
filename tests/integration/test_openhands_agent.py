@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.agents.errors import AgentNotAvailableError
-from orchestrator.agents.openhands import OpenHandsAgent
+from orchestrator.agents.openhands import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
 from orchestrator.agents.types import ExecutionContext
 from orchestrator.config.enums import ChecklistStatus
 
@@ -60,11 +60,12 @@ async def test_openhands_missing_api_key_raises() -> None:
 
 
 async def test_openhands_health_check_no_api_key() -> None:
-    """check_health returns False when no API key is set."""
+    """check_health still returns True without API key (local LLM supported)."""
     saved = os.environ.pop("OPENAI_API_KEY", None)
     try:
         agent = OpenHandsAgent(api_key="")
-        assert await agent.check_health() is False
+        # API key is not required when using a local LLM
+        assert await agent.check_health() == _SDK_AVAILABLE
     finally:
         if saved is not None:
             os.environ["OPENAI_API_KEY"] = saved

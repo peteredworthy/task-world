@@ -218,10 +218,15 @@ async def test_check_agent_alive_cli_subprocess_without_pid(
 
 
 @pytest.mark.asyncio
-async def test_check_agent_alive_openhands_local_always_false(
+async def test_check_agent_alive_openhands_local_returns_true(
     db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
-    """OPENHANDS_LOCAL agent should always be considered dead (in-process agent)."""
+    """OPENHANDS_LOCAL agent should be considered alive during normal operation.
+
+    In-process agents run via asyncio.to_thread and don't require health monitoring
+    since the executor handles failures. Returns True to prevent the health monitor
+    from killing the agent prematurely. Server restart recovery is handled separately.
+    """
     session_factory = db_setup
     monitor = AgentMonitor(session_factory)
 
@@ -233,7 +238,7 @@ async def test_check_agent_alive_openhands_local_always_false(
     run.status = RunStatus.ACTIVE
 
     is_alive = await monitor.check_agent_alive(run)
-    assert is_alive is False
+    assert is_alive is True
 
 
 @pytest.mark.asyncio

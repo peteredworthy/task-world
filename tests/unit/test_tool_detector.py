@@ -77,7 +77,6 @@ async def test_config_schema_populated() -> None:
     oh_local = [o for o in options if o.agent_type == AgentType.OPENHANDS_LOCAL][0]
     field_names = [f.name for f in oh_local.config_schema]
     assert "model" in field_names
-    assert "tools" in field_names
     assert "max_iterations" in field_names
 
     um = [o for o in options if o.agent_type == AgentType.USER_MANAGED][0]
@@ -109,8 +108,9 @@ async def test_detect_codex_server_config_fields() -> None:
 
     cs = [o for o in options if o.agent_type == AgentType.CODEX_SERVER][0]
     field_names = [f.name for f in cs.config_schema]
-    assert "endpoint" in field_names
+    assert "model" in field_names
     assert "callback_channel" in field_names
+    assert "restrictions" in field_names
 
     cb_field = next(f for f in cs.config_schema if f.name == "callback_channel")
     assert cb_field.options is not None
@@ -176,12 +176,12 @@ async def test_detect_codex_server_install_hint_content() -> None:
         assert "codex" in hint_lower or "npm" in hint_lower
 
 
-async def test_detect_codex_server_endpoint_field_has_default() -> None:
-    """CODEX_SERVER endpoint config field has a default localhost URL."""
+async def test_detect_codex_server_restrictions_field_has_default() -> None:
+    """CODEX_SERVER restrictions config field has a default value."""
     detector = ToolDetector()
     options = await detector.detect_all()
 
     cs = [o for o in options if o.agent_type == AgentType.CODEX_SERVER][0]
-    endpoint_field = next(f for f in cs.config_schema if f.name == "endpoint")
-    assert endpoint_field.default is not None
-    assert "localhost" in str(endpoint_field.default)
+    restrictions_field = next(f for f in cs.config_schema if f.name == "restrictions")
+    assert restrictions_field.default is not None
+    assert restrictions_field.default == "no-network"

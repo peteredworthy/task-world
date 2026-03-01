@@ -388,6 +388,9 @@ def test_fetch_codex_models_all_hidden_models_returns_all(
     import io
 
     response_lines = _make_jsonl(
+        # Initialize response.
+        {"jsonrpc": "2.0", "id": 1, "result": {}},
+        # Model/list response.
         {
             "jsonrpc": "2.0",
             "id": 2,
@@ -433,6 +436,9 @@ def test_fetch_codex_models_filters_hidden_models(
     import io
 
     response_lines = _make_jsonl(
+        # Initialize response.
+        {"jsonrpc": "2.0", "id": 1, "result": {}},
+        # Model/list response.
         {
             "jsonrpc": "2.0",
             "id": 2,
@@ -479,6 +485,9 @@ def test_fetch_codex_models_empty_models_list(
     import io
 
     response_lines = _make_jsonl(
+        # Initialize response.
+        {"jsonrpc": "2.0", "id": 1, "result": {}},
+        # Model/list response.
         {"jsonrpc": "2.0", "id": 2, "result": {"models": []}},
     )
 

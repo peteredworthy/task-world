@@ -388,8 +388,8 @@ async def test_execute_multiple_tool_call_events_fire_in_order() -> None:
 async def test_execute_output_event_populates_output_lines() -> None:
     """item/agentMessage/delta notifications populate ExecutionResult.output_lines."""
     notifications = [
-        _agent_message_delta("Step 1 complete", "m1"),
-        _agent_message_delta("Step 2 complete", "m2"),
+        _agent_message_delta("Step 1 complete\n", "m1"),
+        _agent_message_delta("Step 2 complete\n", "m2"),
         _turn_completed(),
     ]
     agent, _ = _make_agent(notifications)
@@ -429,8 +429,8 @@ async def test_execute_output_event_invokes_on_output_callback() -> None:
 async def test_execute_returns_execution_result_with_output_lines() -> None:
     """execute() returns ExecutionResult with output_lines from agent message deltas."""
     notifications = [
-        _agent_message_delta("line one"),
-        _agent_message_delta("line two"),
+        _agent_message_delta("line one\n"),
+        _agent_message_delta("line two\n"),
         _turn_completed(),
     ]
     agent, _ = _make_agent(notifications)
@@ -488,9 +488,9 @@ async def test_execute_breaks_loop_on_turn_completed() -> None:
 async def test_execute_mixed_events_produces_correct_output_and_callbacks() -> None:
     """Mixed tool-call and output notifications are all processed correctly."""
     notifications = [
-        _agent_message_delta("starting work"),
+        _agent_message_delta("starting work\n"),
         _tool_call_request("update_checklist", {"req_id": "R-01", "status": "done"}, 10),
-        _agent_message_delta("work complete"),
+        _agent_message_delta("work complete\n"),
         _tool_call_request("submit", {}, 11),
         _turn_completed(),
     ]

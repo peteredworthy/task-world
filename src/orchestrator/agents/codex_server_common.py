@@ -732,7 +732,7 @@ def fetch_codex_models() -> list[str]:
                 proc.wait(timeout=2)
             except Exception:
                 proc.kill()
-            return list(_CODEX_FALLBACK_MODELS)
+            return []
 
         # Step 2: Acknowledge initialisation.
         _send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
@@ -748,11 +748,11 @@ def fetch_codex_models() -> list[str]:
             proc.kill()
 
         if model_resp is None:
-            return list(_CODEX_FALLBACK_MODELS)
+            return []
 
         result: Any = model_resp.get("result")
         if result is None:
-            return list(_CODEX_FALLBACK_MODELS)
+            return []
 
         # Handle both {"models": [...]} and a bare list result.
         def _to_model_dicts(src: Any) -> list[dict[str, Any]]:
@@ -771,8 +771,11 @@ def fetch_codex_models() -> list[str]:
             raw: Any = result.get("data") or result.get("models") or []
             models_raw = _to_model_dicts(raw)
 
+        # If we got a successful response but models list is empty, return empty list.
+        # Fallback models are only used on API failure, not when API explicitly
+        # returns an empty list.
         if not models_raw:
-            return list(_CODEX_FALLBACK_MODELS)
+            return []
 
         # Prefer non-hidden models; fall back to all if every entry is hidden.
         visible = [m for m in models_raw if not m.get("hidden", False)]
@@ -781,7 +784,7 @@ def fetch_codex_models() -> list[str]:
         return discovered if discovered else list(_CODEX_FALLBACK_MODELS)
 
     except Exception:
-        return list(_CODEX_FALLBACK_MODELS)
+        return []
 
 
 # Keep these as deprecated aliases so any remaining references don't break

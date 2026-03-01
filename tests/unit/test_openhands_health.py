@@ -13,13 +13,14 @@ async def test_health_check_with_api_key() -> None:
 
 
 async def test_health_check_no_api_key() -> None:
-    """check_health returns False when API key is empty."""
+    """check_health still returns True without API key (local LLM supported)."""
     import os
 
     saved = os.environ.pop("OPENAI_API_KEY", None)
     try:
         agent = OpenHandsAgent(api_key="")
-        assert await agent.check_health() is False
+        # API key is not required when using a local LLM
+        assert await agent.check_health() == _SDK_AVAILABLE
     finally:
         if saved is not None:
             os.environ["OPENAI_API_KEY"] = saved
