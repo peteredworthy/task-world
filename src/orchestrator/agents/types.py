@@ -6,6 +6,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.config.models import MCPServerConfig
 
 # Callback type aliases.
 # run_id and task_id are captured in the closure by the caller,
@@ -60,6 +61,9 @@ class ExecutionContext(BaseModel):
     api_base_url: str | None = None
     auth_token: str | None = None
     end_commit: str | None = None  # For verifier: commit to checkout before verification
+    step_id: str | None = None
+    available_tools: list[str] | None = None
+    mcp_servers: list[MCPServerConfig] | None = None
 
 
 class AgentInfo(BaseModel):
