@@ -432,7 +432,7 @@ class CodexServerAgent:
             thread_params: dict[str, Any] = {
                 "cwd": context.working_dir,
                 "approvalPolicy": "never",
-                "dynamicTools": build_dynamic_tool_specs(),
+                "dynamicTools": build_dynamic_tool_specs(is_verifier=is_verifier),
             }
             if sandbox_mode is not None:
                 thread_params["sandbox"] = sandbox_mode

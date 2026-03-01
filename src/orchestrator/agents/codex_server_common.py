@@ -170,7 +170,7 @@ def build_dynamic_tool_call_response(req_id: int, success: bool = True) -> dict[
     }
 
 
-def build_dynamic_tool_specs() -> list[dict[str, Any]]:
+def build_dynamic_tool_specs(is_verifier: bool = False) -> list[dict[str, Any]]:
     """Return the ``dynamicTools`` list for ``thread/start`` params.
 
     These are the v1 orchestrator callback tools registered with the
@@ -178,10 +178,14 @@ def build_dynamic_tool_specs() -> list[dict[str, Any]]:
 
     Requires ``experimentalApi: true`` in the ``initialize`` capabilities.
 
+    Args:
+        is_verifier: If ``True``, include the ``grade`` tool (verifier phase).
+            If ``False`` (default), exclude the ``grade`` tool (builder phase).
+
     Returns:
         List of tool spec dicts suitable for ``thread/start.dynamicTools``.
     """
-    return [
+    specs: list[dict[str, Any]] = [
         {
             "name": "update_checklist",
             "description": "Mark a requirement as done, blocked, or not_applicable.",
@@ -195,22 +199,6 @@ def build_dynamic_tool_specs() -> list[dict[str, Any]]:
                         "enum": ["done", "blocked", "not_applicable"],
                     },
                     "note": {"type": "string", "description": "Optional explanation"},
-                },
-            },
-        },
-        {
-            "name": "grade",
-            "description": "Set a grade on a requirement (verifier phase only).",
-            "inputSchema": {
-                "type": "object",
-                "required": ["req_id", "grade"],
-                "properties": {
-                    "req_id": {"type": "string"},
-                    "grade": {
-                        "type": "string",
-                        "enum": ["A", "B", "C", "D", "F"],
-                    },
-                    "grade_reason": {"type": "string", "description": "Optional explanation"},
                 },
             },
         },
@@ -256,6 +244,27 @@ def build_dynamic_tool_specs() -> list[dict[str, Any]]:
             },
         },
     ]
+
+    if is_verifier:
+        grade_spec: dict[str, Any] = {
+            "name": "grade",
+            "description": "Set a grade on a requirement (verifier phase only).",
+            "inputSchema": {
+                "type": "object",
+                "required": ["req_id", "grade"],
+                "properties": {
+                    "req_id": {"type": "string"},
+                    "grade": {
+                        "type": "string",
+                        "enum": ["A", "B", "C", "D", "F"],
+                    },
+                    "grade_reason": {"type": "string", "description": "Optional explanation"},
+                },
+            },
+        }
+        specs.append(grade_spec)
+
+    return specs
 
 
 def extract_agent_message_delta(notification: dict[str, Any]) -> str | None:
