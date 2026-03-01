@@ -201,6 +201,15 @@ class CLIAgent:
                     f"Authorization: Bearer {context.auth_token}"
                 )
 
+        # Add step-level tool hints
+        if context.available_tools:
+            tools_section = (
+                "\n\n## Step Tools\nThe following additional tools are available for this step:\n"
+            )
+            for tool_name in context.available_tools:
+                tools_section += f"- {tool_name}\n"
+            api_section += tools_section
+
         return prompt + api_section
 
     @staticmethod
@@ -259,6 +268,15 @@ class CLIAgent:
                 f"Include the following header with all requests:\n"
                 f"Authorization: Bearer {context.auth_token}"
             )
+
+        # Add step-level tool hints
+        if context.available_tools:
+            tools_section = (
+                "\n\n## Step Tools\nThe following additional tools are available for this step:\n"
+            )
+            for tool_name in context.available_tools:
+                tools_section += f"- {tool_name}\n"
+            api_section += tools_section
 
         return prompt + api_section
 

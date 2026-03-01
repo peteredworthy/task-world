@@ -283,3 +283,69 @@ def test_build_prompt_no_auth_section_without_api_url() -> None:
 
     assert "Authentication" not in result
     assert result == "Do the thing"
+
+
+# --- Step tools tests ---
+
+
+def test_build_prompt_with_available_tools() -> None:
+    """When available_tools is set, prompt includes Step Tools section."""
+    ctx = _make_context(api_base_url="http://localhost:8000")
+    ctx.available_tools = ["terminal", "file_editor"]
+    result = CLIAgent.build_prompt("Do the thing", ctx)
+
+    assert "Step Tools" in result
+    assert "terminal" in result
+    assert "file_editor" in result
+    assert "additional tools are available" in result
+
+
+def test_build_prompt_no_tools_section_when_none() -> None:
+    """When available_tools is None, no Step Tools section is added."""
+    ctx = _make_context(api_base_url="http://localhost:8000")
+    ctx.available_tools = None
+    result = CLIAgent.build_prompt("Do the thing", ctx)
+
+    assert "Step Tools" not in result
+
+
+def test_build_prompt_no_tools_section_when_empty() -> None:
+    """When available_tools is empty list, no Step Tools section is added."""
+    ctx = _make_context(api_base_url="http://localhost:8000")
+    ctx.available_tools = []
+    result = CLIAgent.build_prompt("Do the thing", ctx)
+
+    assert "Step Tools" not in result
+
+
+def test_build_prompt_available_tools_without_api_url() -> None:
+    """When api_base_url is None, available_tools is ignored."""
+    ctx = _make_context(api_base_url=None)
+    ctx.available_tools = ["terminal", "file_editor"]
+    result = CLIAgent.build_prompt("Do the thing", ctx)
+
+    # Without api_base_url, the entire enrichment is skipped
+    assert result == "Do the thing"
+
+
+def test_build_prompt_mcp_with_available_tools() -> None:
+    """MCP prompt also includes Step Tools section when available_tools is set."""
+    ctx = _make_context(api_base_url="http://localhost:8000")
+    ctx.available_tools = ["browser", "grep"]
+    result = CLIAgent.build_prompt("Do the thing", ctx, callback_channel="mcp")
+
+    assert "Step Tools" in result
+    assert "browser" in result
+    assert "grep" in result
+
+
+def test_build_prompt_verifier_with_available_tools() -> None:
+    """Verifier prompt includes Step Tools section when available_tools is set."""
+    ctx = _make_context(api_base_url="http://localhost:8000")
+    ctx.available_tools = ["terminal", "file_editor"]
+    result = CLIAgent.build_prompt("Review the code", ctx, phase="verifying")
+
+    assert "Step Tools" in result
+    assert "terminal" in result
+    assert "file_editor" in result
+    assert "Verifier" in result  # Verifier-specific section
