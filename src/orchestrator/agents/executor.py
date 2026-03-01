@@ -584,6 +584,9 @@ class AgentExecutor:
 
         task_config = None
         step_context: str | None = None
+        step_id: str | None = None
+        available_tools: list[str] | None = None
+        mcp_servers: list[Any] | None = None
         for step in routine_config.steps:
             if step_config_id is not None and step.id != step_config_id:
                 continue
@@ -591,6 +594,9 @@ class AgentExecutor:
                 if task.id == task_state.config_id:
                     task_config = task
                     step_context = step.step_context
+                    step_id = step.id
+                    available_tools = step.available_tools
+                    mcp_servers = step.mcp_servers
                     break
             if task_config is not None:
                 break
@@ -605,13 +611,30 @@ class AgentExecutor:
         # Handle VERIFYING phase
         if task_state.status == TaskStatus.VERIFYING:
             await self._handle_verification(
-                run, task_state, task_config, service, agent_type, agent_config
+                run,
+                task_state,
+                task_config,
+                service,
+                agent_type,
+                agent_config,
+                step_id=step_id,
+                available_tools=available_tools,
+                mcp_servers=mcp_servers,
             )
             return
 
         # Handle RECOVERING phase - use stored recovery prompt
         if task_state.status == TaskStatus.RECOVERING:
-            await self._handle_recovery(run, task_state, service, agent_type, agent_config)
+            await self._handle_recovery(
+                run,
+                task_state,
+                service,
+                agent_type,
+                agent_config,
+                step_id=step_id,
+                available_tools=available_tools,
+                mcp_servers=mcp_servers,
+            )
             return
 
         # Handle PENDING/BUILDING phase
@@ -658,6 +681,9 @@ class AgentExecutor:
             prompt=f"{prompt.system}\n\n{prompt.user}",
             requirements=requirements,
             api_base_url=self._api_base_url,
+            step_id=step_id,
+            available_tools=available_tools,
+            mcp_servers=mcp_servers,
         )
 
         # Store the builder prompt BEFORE agent execution
@@ -761,6 +787,9 @@ class AgentExecutor:
         service: WorkflowService,
         agent_type: AgentType,
         agent_config: dict[str, Any],
+        step_id: str | None = None,
+        available_tools: list[str] | None = None,
+        mcp_servers: list[Any] | None = None,
     ) -> None:
         """Handle the VERIFYING phase for a task.
 
@@ -829,6 +858,9 @@ class AgentExecutor:
             requirements=requirements,
             api_base_url=self._api_base_url,
             end_commit=end_commit,
+            step_id=step_id,
+            available_tools=available_tools,
+            mcp_servers=mcp_servers,
         )
 
         # Store the verifier prompt BEFORE agent execution
@@ -956,6 +988,9 @@ class AgentExecutor:
         service: WorkflowService,
         agent_type: AgentType,
         agent_config: dict[str, Any],
+        step_id: str | None = None,
+        available_tools: list[str] | None = None,
+        mcp_servers: list[Any] | None = None,
     ) -> None:
         """Handle the RECOVERING phase for a task.
 
@@ -992,6 +1027,9 @@ class AgentExecutor:
             prompt=recovery_prompt,
             requirements=[],
             api_base_url=self._api_base_url,
+            step_id=step_id,
+            available_tools=available_tools,
+            mcp_servers=mcp_servers,
         )
 
         # Define callbacks - recovery agent uses complete_recovery via dynamic tool
