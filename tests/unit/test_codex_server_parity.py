@@ -73,9 +73,11 @@ def test_local_allowlist_matches_common_constant() -> None:
     assert CodexServerAgent.TOOL_ALLOWLIST == CODEX_SERVER_TOOL_ALLOWLIST
 
 
-def test_allowlist_contains_exactly_the_four_required_tools() -> None:
-    """v1 allow-list is exactly the four orchestrator callback tools."""
-    expected = frozenset({"update_checklist", "grade", "submit", "request_clarification"})
+def test_allowlist_contains_expected_tools() -> None:
+    """v1 allow-list contains the expected orchestrator callback tools."""
+    expected = frozenset(
+        {"update_checklist", "grade", "submit", "request_clarification", "complete_recovery"}
+    )
     assert CodexServerAgent.TOOL_ALLOWLIST == expected
 
 

@@ -57,13 +57,13 @@ async def _noop_grade(req_id: str, grade: str, reason: str | None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_integration_allowlist_has_exactly_four_tools() -> None:
-    """The canonical allow-list has exactly four v1 orchestrator callback tools."""
-    assert len(CODEX_SERVER_TOOL_ALLOWLIST) == 4
+def test_integration_allowlist_has_expected_tools() -> None:
+    """The canonical allow-list contains the expected v1 orchestrator callback tools."""
     assert "update_checklist" in CODEX_SERVER_TOOL_ALLOWLIST
     assert "grade" in CODEX_SERVER_TOOL_ALLOWLIST
     assert "submit" in CODEX_SERVER_TOOL_ALLOWLIST
     assert "request_clarification" in CODEX_SERVER_TOOL_ALLOWLIST
+    assert "complete_recovery" in CODEX_SERVER_TOOL_ALLOWLIST
 
 
 # ---------------------------------------------------------------------------

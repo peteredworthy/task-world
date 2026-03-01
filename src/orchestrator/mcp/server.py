@@ -31,6 +31,9 @@ VERIFIER_TOOLS = {
     "orchestrator_submit",
 }
 
+# All tools registered regardless of phase; runtime validation prevents phase-inappropriate calls
+ALL_TOOLS = BUILDER_TOOLS | VERIFIER_TOOLS
+
 
 class OrchestratorMCPServer:
     """MCP server that exposes orchestrator tools for external agents.
@@ -56,7 +59,7 @@ class OrchestratorMCPServer:
             raise ValueError("phase must be one of: building, verifying")
 
         self.phase: Literal["building", "verifying"] = phase
-        self._allowed_tools = BUILDER_TOOLS if self.phase == "building" else VERIFIER_TOOLS
+        self._allowed_tools = ALL_TOOLS
         self._repos_dir = repos_dir
         self._mcp = FastMCP(
             name="orchestrator",
@@ -140,40 +143,36 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
-        if "orchestrator_get_requirements" in self._allowed_tools:
-            self._mcp.add_tool(
-                orchestrator_get_requirements,
-                name="orchestrator_get_requirements",
-                description="Get the list of requirements (checklist items) for a task.",
-            )
-        if "orchestrator_update_checklist" in self._allowed_tools:
-            self._mcp.add_tool(
-                orchestrator_update_checklist,
-                name="orchestrator_update_checklist",
-                description="Mark a requirement as done, not applicable, or blocked.",
-            )
-        if "orchestrator_submit" in self._allowed_tools:
-            self._mcp.add_tool(
-                orchestrator_submit,
-                name="orchestrator_submit",
-                description="Submit the task for verification after completing requirements.",
-            )
-        if "orchestrator_set_grade" in self._allowed_tools:
-            self._mcp.add_tool(
-                orchestrator_set_grade,
-                name="orchestrator_set_grade",
-                description="Set a grade for a requirement (used by verifier).",
-            )
-        if "orchestrator_request_clarification" in self._allowed_tools:
-            self._mcp.add_tool(
-                orchestrator_request_clarification,
-                name="orchestrator_request_clarification",
-                description=(
-                    "Request clarification from the human. "
-                    "The task will pause until the human answers. "
-                    "Answers will be appended to the clarifications artifact file."
-                ),
-            )
+        # Register all tools regardless of phase; runtime validation prevents phase-inappropriate calls
+        self._mcp.add_tool(
+            orchestrator_get_requirements,
+            name="orchestrator_get_requirements",
+            description="Get the list of requirements (checklist items) for a task.",
+        )
+        self._mcp.add_tool(
+            orchestrator_update_checklist,
+            name="orchestrator_update_checklist",
+            description="Mark a requirement as done, not applicable, or blocked.",
+        )
+        self._mcp.add_tool(
+            orchestrator_submit,
+            name="orchestrator_submit",
+            description="Submit the task for verification after completing requirements.",
+        )
+        self._mcp.add_tool(
+            orchestrator_set_grade,
+            name="orchestrator_set_grade",
+            description="Set a grade for a requirement (used by verifier).",
+        )
+        self._mcp.add_tool(
+            orchestrator_request_clarification,
+            name="orchestrator_request_clarification",
+            description=(
+                "Request clarification from the human. "
+                "The task will pause until the human answers. "
+                "Answers will be appended to the clarifications artifact file."
+            ),
+        )
 
         async def orchestrator_list_repos() -> str:
             """List available repositories in the repos directory."""
@@ -198,18 +197,16 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
-        if "orchestrator_list_repos" in self._allowed_tools:
-            self._mcp.add_tool(
-                orchestrator_list_repos,
-                name="orchestrator_list_repos",
-                description="List available repositories in the repos directory.",
-            )
-        if "orchestrator_list_branches" in self._allowed_tools:
-            self._mcp.add_tool(
-                orchestrator_list_branches,
-                name="orchestrator_list_branches",
-                description="List branches in a repository with optional glob pattern filter.",
-            )
+        self._mcp.add_tool(
+            orchestrator_list_repos,
+            name="orchestrator_list_repos",
+            description="List available repositories in the repos directory.",
+        )
+        self._mcp.add_tool(
+            orchestrator_list_branches,
+            name="orchestrator_list_branches",
+            description="List branches in a repository with optional glob pattern filter.",
+        )
 
     @property
     def mcp(self) -> FastMCP:

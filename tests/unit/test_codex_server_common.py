@@ -45,10 +45,10 @@ def _ctx(
 # ---------------------------------------------------------------------------
 
 
-def test_tool_allowlist_contains_exactly_four_tools() -> None:
-    """v1 allow-list has exactly the four sanctioned tools."""
+def test_tool_allowlist_contains_expected_tools() -> None:
+    """v1 allow-list contains the expected callback tools."""
     assert CODEX_SERVER_TOOL_ALLOWLIST == frozenset(
-        {"update_checklist", "grade", "submit", "request_clarification"}
+        {"update_checklist", "grade", "submit", "request_clarification", "complete_recovery"}
     )
 
 

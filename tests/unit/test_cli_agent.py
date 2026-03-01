@@ -255,7 +255,7 @@ def test_build_prompt_rest_with_auth_token() -> None:
     result = CLIAgent.build_prompt("Do the thing", ctx, callback_channel="rest")
 
     assert "Authentication" in result
-    assert "Authorization: Bearer tok-abc123" in result
+    assert "Authorization: Bearer ${ORCHESTRATOR_AUTH_TOKEN}" in result
 
 
 def test_build_prompt_mcp_with_auth_token() -> None:
@@ -264,7 +264,7 @@ def test_build_prompt_mcp_with_auth_token() -> None:
     result = CLIAgent.build_prompt("Do the thing", ctx, callback_channel="mcp")
 
     assert "Authentication" in result
-    assert "Authorization: Bearer tok-abc123" in result
+    assert "Authorization: Bearer ${ORCHESTRATOR_AUTH_TOKEN}" in result
 
 
 def test_build_prompt_no_auth_section_without_token() -> None:

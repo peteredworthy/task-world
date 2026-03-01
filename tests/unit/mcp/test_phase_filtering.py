@@ -1,8 +1,11 @@
-"""Unit tests for MCP phase-based tool filtering."""
+"""Unit tests for MCP server tool registration.
+
+All tools are registered regardless of phase. Runtime validation prevents phase-inappropriate calls.
+"""
 
 import pytest
 
-from orchestrator.mcp.server import BUILDER_TOOLS, OrchestratorMCPServer
+from orchestrator.mcp.server import ALL_TOOLS, OrchestratorMCPServer
 
 
 class _NoOpHandler:
@@ -10,18 +13,30 @@ class _NoOpHandler:
         raise AssertionError(f"Unexpected call: {tool_name} with {args}")
 
 
-def test_builder_phase_excludes_set_grade_tool() -> None:
+def test_builder_phase_registers_all_tools() -> None:
+    """Builder phase now registers all tools including set_grade.
+
+    Runtime validation prevents phase-inappropriate calls.
+    """
     server = OrchestratorMCPServer(handler=_NoOpHandler(), phase="building")
 
     names = server.tool_names()
-    assert "orchestrator_set_grade" not in names
+    # All tools should be registered
+    assert "orchestrator_set_grade" in names
+    assert "orchestrator_update_checklist" in names
 
 
-def test_verifier_phase_excludes_update_checklist_tool() -> None:
+def test_verifier_phase_registers_all_tools() -> None:
+    """Verifier phase registers all tools including update_checklist.
+
+    Runtime validation prevents phase-inappropriate calls.
+    """
     server = OrchestratorMCPServer(handler=_NoOpHandler(), phase="verifying")
 
     names = server.tool_names()
-    assert "orchestrator_update_checklist" not in names
+    # All tools should be registered
+    assert "orchestrator_update_checklist" in names
+    assert "orchestrator_set_grade" in names
 
 
 def test_invalid_phase_raises_value_error() -> None:
@@ -29,7 +44,8 @@ def test_invalid_phase_raises_value_error() -> None:
         OrchestratorMCPServer(handler=_NoOpHandler(), phase="unknown")  # type: ignore[arg-type]
 
 
-def test_default_phase_is_building_toolset() -> None:
+def test_all_tools_registered() -> None:
+    """All tools are registered regardless of phase."""
     server = OrchestratorMCPServer(handler=_NoOpHandler())
 
-    assert set(server.tool_names()) == BUILDER_TOOLS
+    assert set(server.tool_names()) == ALL_TOOLS
