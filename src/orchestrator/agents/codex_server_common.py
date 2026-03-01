@@ -23,6 +23,7 @@ from typing_extensions import Protocol
 
 from orchestrator.agents.types import (
     ChecklistUpdateCallback,
+    CompleteRecoveryCallback,
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
@@ -229,6 +230,31 @@ def build_dynamic_tool_specs() -> list[dict[str, Any]]:
                 },
             },
         },
+        {
+            "name": "complete_recovery",
+            "description": (
+                "Finalize recovery for a failed task. "
+                "Call this after diagnosing the failure. "
+                "outcome='retry' to retry the task, "
+                "outcome='skip' to skip it (non-critical tasks only), "
+                "outcome='abandon' to permanently fail it."
+            ),
+            "inputSchema": {
+                "type": "object",
+                "required": ["outcome"],
+                "properties": {
+                    "outcome": {
+                        "type": "string",
+                        "enum": ["retry", "skip", "abandon"],
+                        "description": "Recovery decision: retry, skip, or abandon the task",
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Explanation of the recovery decision",
+                    },
+                },
+            },
+        },
     ]
 
 
@@ -286,6 +312,7 @@ CODEX_SERVER_TOOL_ALLOWLIST: frozenset[str] = frozenset(
         "grade",
         "submit",
         "request_clarification",
+        "complete_recovery",
     }
 )
 
@@ -440,17 +467,24 @@ def normalize_codex_metrics(
 def build_execution_result(output_lines: list[str], duration_ms: int) -> ExecutionResult:
     """Build an ``ExecutionResult`` from collected output lines and elapsed time.
 
+    The codex app-server sends text as character-level delta fragments via
+    ``item/agentMessage/delta`` notifications.  Concatenate them into a single
+    string and then split on real newlines so the stored output is readable.
+
     Args:
-        output_lines: Text lines collected from agent message delta events.
+        output_lines: Text fragments collected from agent message delta events.
         duration_ms: Wall-clock duration of the session in milliseconds.
 
     Returns:
         Populated ``ExecutionResult`` with ``success=True``.
     """
+    # Join char-level deltas without separator, then split on real newlines.
+    combined = "".join(output_lines)
+    final_lines = combined.splitlines() if combined else []
     return ExecutionResult(
         success=True,
         metrics=normalize_codex_metrics(duration_ms=duration_ms),
-        output_lines=output_lines,
+        output_lines=final_lines,
     )
 
 
@@ -465,6 +499,7 @@ async def route_tool_call(
     on_checklist_update: ChecklistUpdateCallback,
     on_submit: SubmitCallback,
     on_grade: GradeCallback | None = None,
+    on_complete_recovery: CompleteRecoveryCallback | None = None,
     *,
     agent_label: str = "CodexServer",
 ) -> None:
@@ -515,6 +550,18 @@ async def route_tool_call(
     elif tool_name == "request_clarification":
         question: str = str(args.get("question", ""))
         logger.info("%s: request_clarification received — question=%r", agent_label, question)
+
+    elif tool_name == "complete_recovery":
+        outcome: str = str(args.get("outcome", "retry"))
+        notes: str | None = args.get("notes")
+        if on_complete_recovery is not None:
+            await on_complete_recovery(outcome, notes)
+        else:
+            logger.info(
+                "%s: complete_recovery called (outcome=%r) but no callback registered — ignoring",
+                agent_label,
+                outcome,
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -569,6 +616,17 @@ def normalize_codex_output_lines(raw_output: list[Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
+# Well-known Codex models used as a fallback when model/list discovery fails.
+# Reflects the models returned by `codex app-server` model/list as of 2026-02.
+_CODEX_FALLBACK_MODELS: list[str] = [
+    "gpt-5.3-codex",
+    "gpt-5.2-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5.2",
+    "gpt-5.1-codex-mini",
+]
+
+
 def fetch_codex_models() -> list[str]:
     """Fetch the list of available model IDs from a local Codex app server.
 
@@ -578,6 +636,10 @@ def fetch_codex_models() -> list[str]:
 
     Only non-hidden models are returned.  If all models are hidden (or the
     ``hidden`` field is absent), all models are returned.
+
+    Falls back to ``_CODEX_FALLBACK_MODELS`` when the binary is present but
+    the API returns no models (e.g. older CLI versions that don't implement
+    ``model/list``).
 
     Returns an empty list on any error (codex not installed, no auth
     configured, subprocess timeout, malformed response, etc.).  All
@@ -605,6 +667,23 @@ def fetch_codex_models() -> list[str]:
             proc.stdin.write(json.dumps(msg) + "\n")
             proc.stdin.flush()
 
+        def _read_until_id(target_id: int, max_lines: int = 200) -> dict[str, Any] | None:
+            """Read stdout lines until a JSON-RPC response with the given id is found."""
+            assert proc.stdout is not None
+            for _ in range(max_lines):
+                line = proc.stdout.readline()
+                if not line:
+                    return None
+                try:
+                    obj = json.loads(line)
+                    if obj.get("id") == target_id:
+                        return obj
+                except json.JSONDecodeError:
+                    pass
+            return None
+
+        # Step 1: Initialize — wait for response before proceeding.
+        # (matches what CodexServerAgent.execute() does via _send_and_wait)
         _send(
             {
                 "jsonrpc": "2.0",
@@ -615,26 +694,26 @@ def fetch_codex_models() -> list[str]:
                         "name": "orchestrator",
                         "title": "Orchestrator",
                         "version": "0.1.0",
-                    }
+                    },
+                    "capabilities": {"experimentalApi": True},
                 },
             }
         )
-        _send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
-        _send({"jsonrpc": "2.0", "method": "model/list", "id": 2, "params": {}})
-
-        result: dict[str, Any] | None = None
-        assert proc.stdout is not None
-        for _ in range(30):
-            line = proc.stdout.readline()
-            if not line:
-                break
+        init_resp = _read_until_id(1)
+        if init_resp is None:
+            proc.terminate()
             try:
-                obj = json.loads(line)
-                if obj.get("id") == 2:
-                    result = obj.get("result")
-                    break
-            except json.JSONDecodeError:
-                pass
+                proc.wait(timeout=2)
+            except Exception:
+                proc.kill()
+            return list(_CODEX_FALLBACK_MODELS)
+
+        # Step 2: Acknowledge initialisation.
+        _send({"jsonrpc": "2.0", "method": "initialized", "params": {}})
+
+        # Step 3: Request the model list and wait for the response.
+        _send({"jsonrpc": "2.0", "method": "model/list", "id": 2, "params": {}})
+        model_resp = _read_until_id(2)
 
         proc.terminate()
         try:
@@ -642,20 +721,41 @@ def fetch_codex_models() -> list[str]:
         except Exception:
             proc.kill()
 
-        if result is None:
-            return []
+        if model_resp is None:
+            return list(_CODEX_FALLBACK_MODELS)
 
-        models: list[dict[str, Any]] = result.get("models", [])
-        if not models:
-            return []
+        result: Any = model_resp.get("result")
+        if result is None:
+            return list(_CODEX_FALLBACK_MODELS)
+
+        # Handle both {"models": [...]} and a bare list result.
+        def _to_model_dicts(src: Any) -> list[dict[str, Any]]:
+            if not isinstance(src, list):
+                return []
+            out: list[dict[str, Any]] = []
+            for item in src:  # type: ignore[reportUnknownVariableType]
+                if isinstance(item, dict):
+                    out.append(dict(item))  # type: ignore[arg-type]
+            return out
+
+        if isinstance(result, list):
+            models_raw = _to_model_dicts(result)
+        else:
+            # API returns {"data": [...]} — fall back to "models" for older versions.
+            raw: Any = result.get("data") or result.get("models") or []
+            models_raw = _to_model_dicts(raw)
+
+        if not models_raw:
+            return list(_CODEX_FALLBACK_MODELS)
 
         # Prefer non-hidden models; fall back to all if every entry is hidden.
-        visible = [m for m in models if not m.get("hidden", False)]
-        chosen = visible if visible else models
-        return [str(m["id"]) for m in chosen if "id" in m]
+        visible = [m for m in models_raw if not m.get("hidden", False)]
+        chosen = visible if visible else models_raw
+        discovered = [str(m["id"]) for m in chosen if "id" in m]
+        return discovered if discovered else list(_CODEX_FALLBACK_MODELS)
 
     except Exception:
-        return []
+        return list(_CODEX_FALLBACK_MODELS)
 
 
 # Keep these as deprecated aliases so any remaining references don't break

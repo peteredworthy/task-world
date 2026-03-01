@@ -17,6 +17,7 @@ rejects any subclass whose ``__qualname__`` contains ``<locals>``.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -40,6 +41,7 @@ from orchestrator.agents.openhands_common import (
 )
 from orchestrator.agents.types import (
     AgentInfo,
+    AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
     ExecutionContext,
@@ -267,6 +269,69 @@ if _SDK_AVAILABLE:
 _tools_registered = False
 
 
+def _format_oh_event(event: Any) -> str:
+    """Extract a human-readable log line from an OpenHands SDK event."""
+    try:
+        cls_name = type(event).__name__
+        parts: list[str] = []
+
+        # Reasoning content from thinking models (qwen <think>, deepseek, etc.)
+        reasoning = getattr(event, "reasoning_content", None)
+        if isinstance(reasoning, str) and reasoning.strip():
+            parts.append(f"[reasoning] {reasoning.strip()[:1000]}")
+
+        # ActionEvent: thought is Sequence[TextContent], action is an Action object
+        raw_thought = getattr(event, "thought", None)
+        if raw_thought and not isinstance(raw_thought, str):
+            # Sequence of TextContent objects
+            for tc in raw_thought:
+                text = getattr(tc, "text", None)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip()[:500])
+        elif isinstance(raw_thought, str) and raw_thought.strip():
+            parts.append(raw_thought.strip()[:500])
+
+        tool_name = getattr(event, "tool_name", None)
+        if isinstance(tool_name, str) and tool_name:
+            parts.append(f"tool={tool_name}")
+
+        # ActionEvent: extract action arguments for visibility
+        action = getattr(event, "action", None)
+        if action is not None:
+            # For think tool, the thought content is in action.thought
+            action_thought = getattr(action, "thought", None)
+            if isinstance(action_thought, str) and action_thought.strip():
+                parts.append(f"thought={action_thought.strip()[:500]}")
+            # For terminal, the command is in action.command
+            action_cmd = getattr(action, "command", None)
+            if isinstance(action_cmd, str) and action_cmd.strip():
+                parts.append(f"$ {action_cmd.strip()[:500]}")
+
+        # ObservationEvent: observation has .text property and .content list
+        obs = getattr(event, "observation", None)
+        if obs is not None:
+            obs_text = getattr(obs, "text", None)
+            if isinstance(obs_text, str) and obs_text.strip():
+                parts.append(obs_text.strip()[:500])
+
+        # MessageEvent or other events with content list
+        if not parts:
+            content = getattr(event, "content", None)
+            if isinstance(content, str) and content.strip():
+                parts.append(content.strip()[:500])
+            elif isinstance(content, list):
+                for c in content:  # pyright: ignore[reportUnknownVariableType]
+                    text: Any = getattr(c, "text", None)  # pyright: ignore[reportUnknownArgumentType]
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip()[:500])
+
+        if not parts:
+            return ""
+        return f"[{cls_name}] {' | '.join(parts)}"
+    except Exception:
+        return ""
+
+
 def _register_sdk_tools(tool_names: list[str] | None = None) -> None:
     """Import built-in tool modules and register custom tools.
 
@@ -349,11 +414,11 @@ class OpenHandsAgent:
     async def check_health(self) -> bool:
         """Check if the local OpenHands agent is usable.
 
-        Returns True if the openhands-ai SDK is importable and an API key
-        is configured.  No remote server is involved — this agent runs
-        entirely in-process via LocalConversation.
+        Returns True if the openhands-ai SDK is importable.  No remote
+        server is involved — this agent runs entirely in-process via
+        LocalConversation.  API key is not required when using a local LLM.
         """
-        return _SDK_AVAILABLE and bool(self._api_key)
+        return _SDK_AVAILABLE
 
     def get_quota(self, fetcher: QuotaFetcher | None = None) -> AgentQuota | None:
         """Fetch the OpenAI credit balance for the configured API key.
@@ -397,6 +462,7 @@ class OpenHandsAgent:
         on_submit: SubmitCallback,
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via OpenHands.
 
@@ -422,7 +488,9 @@ class OpenHandsAgent:
         )
         from pydantic import SecretStr
 
-        if not self._api_key:
+        # API key is required for OpenAI/cloud LLMs but optional for local servers
+        using_local_llm = bool(self._llm_config.get("base_url"))
+        if not self._api_key and not using_local_llm:
             raise AgentNotAvailableError(
                 "openhands_local",
                 "OPENAI_API_KEY environment variable not set",
@@ -445,12 +513,40 @@ class OpenHandsAgent:
         )
 
         try:
-            # Build LLM
-            llm = OHLLM(
-                model=self._model,
-                api_key=SecretStr(self._api_key),
-                **self._llm_config,
-            )
+            # Build LLM — api_key is optional when using a local server
+            # When using a local LLM server (base_url set), LiteLLM requires
+            # a provider prefix. Local servers speak the OpenAI-compatible API.
+            model = self._model
+            if using_local_llm and "/" not in model:
+                model = f"openai/{model}"
+            llm_kwargs: dict[str, Any] = {"model": model, **self._llm_config}
+            if self._api_key:
+                llm_kwargs["api_key"] = SecretStr(self._api_key)
+
+            # Log token usage (including cache info) from each LLM response
+            import litellm
+            from litellm.integrations.custom_logger import CustomLogger
+
+            _oh_logger = logging.getLogger("orchestrator.agents.openhands.usage")
+
+            class _UsageLogger(CustomLogger):
+                def log_success_event(
+                    self, kwargs: Any, response_obj: Any, start_time: Any, end_time: Any
+                ) -> None:  # type: ignore[override]
+                    usage = getattr(response_obj, "usage", None)
+                    if usage:
+                        details = getattr(usage, "prompt_tokens_details", None)
+                        cached = getattr(details, "cached_tokens", 0) if details else 0
+                        _oh_logger.info(
+                            f"LLM usage: prompt={getattr(usage, 'prompt_tokens', '?')}"
+                            f" completion={getattr(usage, 'completion_tokens', '?')}"
+                            f" cached={cached}"
+                            f" details={details}"
+                        )
+
+            litellm.callbacks.append(_UsageLogger())  # type: ignore[attr-defined]
+
+            llm = OHLLM(**llm_kwargs)
 
             # Build Agent with built-in + custom tools.
             from orchestrator.agents.openhands_common import DEFAULT_OPENHANDS_TOOLS
@@ -486,7 +582,6 @@ class OpenHandsAgent:
 
             # If this is verifier mode and we have an end_commit, checkout that commit first
             if is_verifier and context.end_commit:
-                import logging
                 import subprocess
 
                 logger = logging.getLogger(__name__)
@@ -526,12 +621,41 @@ class OpenHandsAgent:
 
             full_prompt = build_openhands_prompt(context, is_verifier=is_verifier)
 
+            # Create a visualizer that streams events to on_output in real time.
+            # on_event is called synchronously from conversation.run()'s thread,
+            # so we bridge to the async on_output via run_coroutine_threadsafe.
+            # Lines are also collected for the ExecutionResult.output_lines so
+            # they get persisted to the attempt's agent_output column.
+            collected_lines: list[str] = []
+            visualizer = None
+            if on_output:
+                from openhands.sdk.conversation.visualizer.base import (  # pyright: ignore[reportMissingImports]
+                    ConversationVisualizerBase as _VizBase,
+                )
+
+                class _StreamingVisualizer(_VizBase):  # type: ignore[misc]
+                    def on_event(self, event: Any) -> None:
+                        try:
+                            line = _format_oh_event(event)
+                            if not line:
+                                return
+                            collected_lines.append(line)
+                            future = asyncio.run_coroutine_threadsafe(  # pyright: ignore[reportUnknownVariableType]
+                                on_output([line]),  # type: ignore[arg-type]
+                                loop,
+                            )
+                            future.result(timeout=5)
+                        except Exception:
+                            pass  # Best-effort streaming — never crash the SDK
+
+                visualizer = _StreamingVisualizer()
+
             # Create conversation
             conversation = LocalConversation(
                 agent=agent,
                 workspace=context.working_dir,
                 max_iteration_per_run=self._max_iterations,
-                visualizer=None,
+                visualizer=visualizer,
             )
             self._conversation = conversation
 
@@ -557,7 +681,12 @@ class OpenHandsAgent:
             except Exception:
                 pass  # Action log is best-effort
 
-            return ExecutionResult(success=True, metrics=metrics, action_log=action_log)
+            return ExecutionResult(
+                success=True,
+                metrics=metrics,
+                action_log=action_log,
+                output_lines=collected_lines,
+            )
 
         except AgentCancelledError:
             raise

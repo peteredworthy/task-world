@@ -11,3 +11,4 @@ export type * from './guidance';
 export type * from './branches';
 export type * from './envFiles';
 export type * from './config';
+export type * from './review';

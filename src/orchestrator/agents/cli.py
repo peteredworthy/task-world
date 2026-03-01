@@ -464,6 +464,13 @@ class CLIAgent:
                     logger.warning(f"Failed to notify monitor of agent execution error: {e}")
             raise AgentExecutionError("cli_subprocess", str(exc)) from exc
         finally:
+            # Ensure the subprocess is terminated so it doesn't become an orphan
+            # when the asyncio task is cancelled (e.g. server shutdown/reload).
+            if self._process is not None and self._process.returncode is None:
+                try:
+                    self._process.terminate()
+                except Exception:
+                    pass
             self._process = None
 
     async def cancel(self) -> None:

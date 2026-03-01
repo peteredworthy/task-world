@@ -54,6 +54,7 @@ from orchestrator.agents.types import (
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
+    CompleteRecoveryCallback,
     ExecutionContext,
     ExecutionResult,
     GradeCallback,
@@ -167,12 +168,19 @@ class CodexServerAgent:
         model: str | None = None,
         callback_channel: str = "rest",
         api_key: str | None = None,
+        restrictions: str = "no-network",
         *,
         _transport: JsonRpcTransport | None = None,
         _environ: dict[str, str] | None = None,
     ) -> None:
         self._model = model
         self._callback_channel = callback_channel
+        # restrictions controls how aggressively we override Codex sandbox/config behaviour.
+        # Supported values:
+        # - "none":     Do not override sandbox/network; honour Codex defaults and local config.
+        # - "no-network": Force workspace-write sandbox with network disabled (orchestrator default).
+        # - "use-local": Delegate entirely to the user's local Codex config.toml, including sandbox.
+        self._restrictions = restrictions
         # Resolve API key: explicit arg only (or test-injected _environ).
         # Do NOT fall back to OPENAI_API_KEY from os.environ — doing so causes
         # execute() to call account/login/start with apiKey, which unconditionally
@@ -317,6 +325,7 @@ class CodexServerAgent:
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
         on_agent_metadata: AgentMetadataCallback | None = None,
+        on_complete_recovery: CompleteRecoveryCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via a local Codex app server session over stdio.
 
@@ -408,11 +417,25 @@ class CodexServerAgent:
 
             # --- Step 2: Create thread ---
             model = self._model
+            # Map restrictions to the thread-level sandbox mode.
+            # The sandbox field in thread/start controls the macOS seatbelt
+            # applied to shell commands executed by codex on behalf of the model.
+            # It is NOT controlled by CLI flags (those only affect `codex exec`).
+            sandbox_mode: str | None
+            if self._restrictions == "none":
+                sandbox_mode = "danger-full-access"
+            elif self._restrictions == "no-network":
+                sandbox_mode = "workspace-write"
+            else:
+                # "use-local": let the config.toml (already copied) decide.
+                sandbox_mode = None
             thread_params: dict[str, Any] = {
                 "cwd": context.working_dir,
                 "approvalPolicy": "never",
                 "dynamicTools": build_dynamic_tool_specs(),
             }
+            if sandbox_mode is not None:
+                thread_params["sandbox"] = sandbox_mode
             if model:
                 thread_params["model"] = model
 
@@ -468,6 +491,7 @@ class CodexServerAgent:
                         on_checklist_update,
                         on_submit,
                         on_grade=on_grade,
+                        on_complete_recovery=on_complete_recovery,
                         agent_label="CodexServerAgent",
                     )
                     await transport.send(build_dynamic_tool_call_response(req_id, success=True))
@@ -485,7 +509,13 @@ class CodexServerAgent:
                 if "id" in msg and "method" not in msg:
                     return False
                 return await self._handle_notification(
-                    msg, output_lines, on_output, on_checklist_update, on_submit, on_grade
+                    msg,
+                    output_lines,
+                    on_output,
+                    on_checklist_update,
+                    on_submit,
+                    on_grade,
+                    on_complete_recovery,
                 )
 
             # First drain any notifications buffered during the request-response phase.
@@ -633,29 +663,55 @@ class CodexServerAgent:
         context: ExecutionContext,
         on_agent_metadata: AgentMetadataCallback | None,
     ) -> tuple[RealStdioTransport, bool, Path]:
-        """Spawn a ``codex app-server`` subprocess and return its transport."""
+        """Spawn a ``codex app-server`` subprocess and return its transport.
+
+        Behaviour is controlled by ``self._restrictions``:
+
+        - ``"no-network"`` (default): Force workspace-write sandbox with network
+          disabled. Uses CLI ``--sandbox workspace-write`` and a config override
+          ``sandbox_workspace_write.network_access=false``. Does not load the
+          user's config.toml (only auth.json is copied).
+        - ``"none"``: Do not override sandbox/network; rely on Codex defaults
+          and any user config present in ``~/.codex``. We still isolate
+          ``CODEX_HOME`` and copy only auth.json to avoid touching the real
+          profile on disk.
+        - ``"use-local"``: Copy both auth.json and config.toml from the user's
+          ``~/.codex`` into the temp CODEX_HOME and launch app-server without
+          sandbox/approval overrides so that local configuration fully controls
+          behaviour. This may result in read-only workspaces or enabled
+          network access, depending on the user's own settings.
+        """
         # Create an isolated CODEX_HOME so that the subprocess cannot overwrite
         # the user's ~/.codex/auth.json.  Per codex source code, auth.json is only
         # written when account/login/start is called — but using a private CODEX_HOME
         # means any writes go to a throwaway temp directory, not the user's profile.
         #
         # We copy the user's auth.json into the temp dir so the subprocess starts
-        # with the same credentials (ChatGPT subscription tokens) without needing
-        # an explicit account/login/start call.
+        # with the same credentials (ChatGPT subscription tokens). Config
+        # propagation is controlled by self._restrictions.
         user_codex_home = Path.home() / ".codex"
         tmp_codex_home = Path(tempfile.mkdtemp(prefix="orchestrator-codex-"))
         if (user_codex_home / "auth.json").exists():
             shutil.copy2(user_codex_home / "auth.json", tmp_codex_home / "auth.json")
+
+        # Optionally propagate the user's config.toml when restrictions is "use-local".
+        if self._restrictions == "use-local" and (user_codex_home / "config.toml").exists():
+            shutil.copy2(user_codex_home / "config.toml", tmp_codex_home / "config.toml")
 
         # Strip OPENAI_API_KEY and set isolated CODEX_HOME.  Also run from the
         # worktree (not the orchestrator cwd) to avoid loading a .env file.
         clean_env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
         clean_env["CODEX_HOME"] = str(tmp_codex_home)
 
+        # Build argv.  The `--sandbox` and `--ask-for-approval` CLI flags only
+        # apply to `codex exec` / interactive mode.  For `codex app-server` the
+        # sandbox is controlled per-thread via the `sandbox` field in
+        # thread/start (see Step 2 below).  No extra CLI flags are needed here.
+        argv: list[str] = ["codex", "app-server"]
+
         try:
             proc = await asyncio.create_subprocess_exec(
-                "codex",
-                "app-server",
+                *argv,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.DEVNULL,
@@ -693,6 +749,7 @@ class CodexServerAgent:
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
         on_grade: GradeCallback | None,
+        on_complete_recovery: CompleteRecoveryCallback | None = None,
     ) -> bool:
         """Process one JSON-RPC notification.
 
@@ -730,6 +787,7 @@ class CodexServerAgent:
                     on_checklist_update,
                     on_submit,
                     on_grade=on_grade,
+                    on_complete_recovery=on_complete_recovery,
                     agent_label="CodexServerAgent",
                 )
             except ValueError:

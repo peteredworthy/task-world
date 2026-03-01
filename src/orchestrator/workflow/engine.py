@@ -153,15 +153,17 @@ class WorkflowEngine:
         )
         return run
 
-    def pause_run(self, run_id: str) -> Run:
-        """Pause a run - move from ACTIVE to PAUSED."""
+    def pause_run(self, run_id: str, reason: str = "manual_pause") -> Run:
+        """Pause a run - move from ACTIVE to PAUSED. Idempotent if already PAUSED."""
         run = self._state.get_run(run_id)
+        if run.status == RunStatus.PAUSED:
+            return run
         if run.status != RunStatus.ACTIVE:
             raise InvalidTransitionError(run.status.value, RunStatus.PAUSED.value)
 
         old_status = run.status
         run.status = RunStatus.PAUSED
-        run.pause_reason = "manual_pause"
+        run.pause_reason = reason
         self._state.update_run(run)
 
         self._emitter.emit(

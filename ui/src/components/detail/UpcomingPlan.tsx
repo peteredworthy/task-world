@@ -66,7 +66,7 @@ export function UpcomingPlan({ tasks, onSelectTask }: UpcomingPlanProps) {
                     }
                   >
                     <span className="inline-block h-2 w-2 rounded-full bg-status-pending/40 shrink-0" />
-                    <span className="text-sm text-text-muted truncate">
+                    <span className="text-sm text-text-muted truncate" title={task.task_title}>
                       {task.task_title}
                     </span>
                   </Wrapper>

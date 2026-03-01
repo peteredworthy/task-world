@@ -50,11 +50,12 @@ class AttemptMetrics(BaseModel):
 
 
 class GradeSnapshotItem(BaseModel):
-    """Snapshot of a single checklist item's grade at attempt completion."""
+    """Snapshot of a single checklist item's grade and builder note at attempt completion."""
 
     req_id: str
     grade: str | None = None
     grade_reason: str | None = None
+    note: str | None = None
 
 
 class Attempt(BaseModel):

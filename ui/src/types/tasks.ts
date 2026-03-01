@@ -14,6 +14,7 @@ export interface GradeSnapshotItem {
   req_id: string;
   grade: string | null;
   grade_reason: string | null;
+  note: string | null;
 }
 
 // --- Structured Action Log types ---
@@ -95,6 +96,8 @@ export interface AttemptSchema {
   error: string | null;
   has_output: boolean;
   has_action_log: boolean;
+  start_commit: string | null;
+  end_commit: string | null;
 }
 
 export interface TaskDetailResponse {

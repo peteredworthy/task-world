@@ -1,9 +1,25 @@
-import { useState } from 'react';
-import { useTask, useTaskPrompt } from '../../hooks/useApi';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useActivity, useTask, useTaskPrompt } from '../../hooks/useApi';
+import { useClarificationHistory } from '../../hooks/useClarifications';
+import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { TaskStatusBadge } from '../StatusBadge';
+import { GradeBadge } from '../GradeBadge';
 import { Spinner } from '../Spinner';
-import { AttemptTimeline } from './shared';
-import type { TaskSummary } from '../../types';
+import { LogsViewer } from './LogsViewer';
+import { ChecklistTable } from './ChecklistTable';
+import { ClarificationHistoryCard } from './ClarificationHistoryCard';
+import { formatDuration, formatRelativeTime, formatTokens } from '../../lib/format';
+import { groupEventsByTask, type TaskEventGroup } from '../../lib/activity';
+import { outcomeColor, outcomeLabel } from '../../lib/outcome';
+import {
+  PRIORITY_ORDER,
+  PRIORITY_LABELS,
+  getMetric,
+  isGradeFailing,
+  COLLAPSIBLE_BORDER_CLASS,
+  COLLAPSIBLE_DIVIDER_CLASS,
+} from './sharedUtils';
+import type { AttemptSchema, ChecklistItemSchema, GradeSnapshotItem, TaskSummary } from '../../types';
 
 interface InspectorPanelProps {
   task: TaskSummary;
@@ -11,17 +27,450 @@ interface InspectorPanelProps {
   onClose: () => void;
 }
 
+interface InspectorModalProps {
+  open: boolean;
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  size?: 'md' | 'lg' | 'xl';
+}
+
+function InspectorModal({ open, title, onClose, children, size = 'lg' }: InspectorModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, open);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    document.body.style.overflow = 'hidden';
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = '';
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+
+  const maxWidth =
+    size === 'md'
+      ? 'max-w-lg'
+      : size === 'xl'
+        ? 'max-w-4xl'
+        : 'max-w-2xl';
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        ref={dialogRef}
+        className={`w-full ${maxWidth} max-h-[85vh] overflow-hidden rounded-lg border border-border bg-bg-card shadow-xl`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-border px-4 py-3">
+          <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
+          <button
+            onClick={onClose}
+            className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-bg-hover transition-colors"
+            aria-label="Close modal"
+          >
+            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        <div className="max-h-[calc(85vh-56px)] overflow-y-auto px-4 py-3">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function formatAgentType(agentType: string | null): string {
+  if (!agentType) return 'Unknown';
+  return agentType
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
+
+function getAgentDisplayName(att: AttemptSchema): string {
+  if (att.agent_type === 'cli_subprocess') {
+    const command = att.agent_settings?.command;
+    if (typeof command === 'string' && command.trim().length > 0) {
+      return command.trim();
+    }
+  }
+  return formatAgentType(att.agent_type);
+}
+
+function eventLabel(eventType: string, payload: Record<string, unknown>): string {
+  switch (eventType) {
+    case 'task_status_changed': {
+      const oldS = payload.old_status as string | undefined;
+      const newS = payload.new_status as string | undefined;
+      if (oldS && newS) return `${oldS} \u2192 ${newS}`;
+      return 'status changed';
+    }
+    case 'checklist_gate_evaluated':
+      return payload.passed ? 'Gate passed' : 'Gate blocked';
+    case 'grades_evaluated': {
+      if (payload.passed) return 'Grades passed';
+      const failing = payload.failing_items as string[] | undefined;
+      if (failing && failing.length > 0) {
+        return `Grades failed: ${failing.join('; ')}`;
+      }
+      return 'Grades failed';
+    }
+    case 'step_completed':
+      return 'Step completed';
+    case 'agent_error':
+      return (payload.error_message as string) || 'Agent error';
+    default:
+      return eventType.replace(/_/g, ' ');
+  }
+}
+
+function PromptBlock({ label, text }: { label: string; text: string }) {
+  const copyToClipboard = () => { navigator.clipboard.writeText(text); };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[10px] font-semibold text-text-muted uppercase">{label}</span>
+        <button
+          onClick={copyToClipboard}
+          className="text-[10px] text-text-muted hover:text-text-primary transition-colors"
+        >
+          Copy
+        </button>
+      </div>
+      <pre className="text-[11px] text-text-secondary bg-bg-card border border-border rounded-md p-2 max-h-64 overflow-y-auto font-mono whitespace-pre-wrap">
+        {text}
+      </pre>
+    </div>
+  );
+}
+
+function AutoVerifyResults({ results }: { results: Record<string, unknown>[] }) {
+  return (
+    <div className="rounded-md border border-border bg-bg-card/40 p-2">
+      <h5 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
+        Auto-Verify Checks
+      </h5>
+      <div className="space-y-1">
+        {results.map((r, i) => {
+          const passed = r.passed as boolean;
+          const itemId = (r.item_id as string) ?? `check-${i}`;
+          const cmd = r.cmd as string | undefined;
+          const exitCode = r.exit_code as number | undefined;
+          const output = r.output as string | undefined;
+
+          return (
+            <div key={itemId} className={'rounded border px-2 py-1.5 text-xs ' + (passed ? 'bg-bg-card border-border' : 'bg-status-failed/5 border-status-failed/20')}>
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-text-primary truncate">{itemId}</span>
+                <span className={'ml-auto inline-flex min-w-12 items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ' + (passed ? 'bg-status-completed/15 text-status-completed' : 'bg-status-failed/15 text-status-failed')}>
+                  {passed ? 'Pass' : 'Fail'}
+                </span>
+              </div>
+              {cmd && <code className="text-text-muted text-[10px] block mt-0.5 truncate">{cmd}</code>}
+              {!passed && exitCode !== undefined && (
+                <div className="text-[10px] text-text-muted mt-0.5">exit code {exitCode}</div>
+              )}
+              {!passed && output && (
+                <pre className="text-[10px] text-text-muted mt-1 whitespace-pre-wrap max-h-24 overflow-y-auto font-mono">{output}</pre>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AttemptGrades({
+  snapshot,
+  checklist,
+}: {
+  snapshot: GradeSnapshotItem[];
+  checklist: ChecklistItemSchema[];
+}) {
+  if (snapshot.length === 0) return null;
+
+  const checklistMap = new Map(checklist.map(c => [c.req_id, c]));
+
+  const enriched = snapshot.map(gs => ({
+    ...gs,
+    desc: checklistMap.get(gs.req_id)?.desc ?? gs.req_id,
+    priority: (checklistMap.get(gs.req_id)?.priority ?? 'expected').toLowerCase(),
+  }));
+
+  const grouped = new Map<string, typeof enriched>();
+  for (const item of enriched) {
+    const existing = grouped.get(item.priority);
+    if (existing) existing.push(item);
+    else grouped.set(item.priority, [item]);
+  }
+
+  const activePriorities = PRIORITY_ORDER.filter(p => grouped.has(p));
+  if (activePriorities.length === 0) return null;
+
+  return (
+    <div className="space-y-2">
+      {activePriorities.map(priority => {
+        const items = grouped.get(priority) ?? [];
+        const label = PRIORITY_LABELS[priority] ?? priority;
+        const withGrade = items.filter(i => i.grade);
+
+        return (
+          <div key={priority} className="rounded-md border border-border bg-bg-card/40 p-2">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide">
+                {label}
+              </span>
+              <span className="text-[10px] text-text-muted">
+                ({withGrade.length}/{items.length})
+              </span>
+            </div>
+            <div className="space-y-1">
+              {items.map(item => {
+                const failing = isGradeFailing(item.grade, item.priority);
+                return (
+                  <div key={item.req_id} className={`rounded border px-2 py-1.5 ${failing ? 'bg-status-failed/5 border-status-failed/40' : 'bg-bg-card border-border'}`}>
+                    <div className="flex items-center gap-2">
+                      <span className="flex-1 text-xs text-text-secondary truncate">
+                        {item.desc}
+                      </span>
+                      <div className="w-10 shrink-0 flex justify-end">
+                        {item.grade ? (
+                          <GradeBadge grade={item.grade} />
+                        ) : (
+                          <span className="text-text-muted text-[10px]">--</span>
+                        )}
+                      </div>
+                    </div>
+                    {(item.grade_reason || item.note) && (
+                      <p className="text-[11px] text-text-muted mt-1 pl-0.5">
+                        {item.grade_reason}
+                        {item.grade_reason && item.note && <span className="mx-1">·</span>}
+                        {item.note}
+                      </p>
+                    )}
+                    {failing && (
+                      <div className="flex justify-end mt-0.5">
+                        <span className="text-[10px] font-semibold text-status-failed uppercase tracking-wide">Failed</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function InspectorAttemptCard({
+  att,
+  checklist,
+  isLatest,
+  onOpenLogs,
+  onOpenPrompts,
+}: {
+  att: AttemptSchema;
+  checklist: ChecklistItemSchema[];
+  isLatest: boolean;
+  onOpenLogs: (att: AttemptSchema) => void;
+  onOpenPrompts: (att: AttemptSchema) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const durationMs = getMetric(att.metrics, 'duration_ms');
+  const tokensRead = getMetric(att.metrics, 'tokens_read');
+  const tokensWrite = getMetric(att.metrics, 'tokens_write');
+  const totalTokens = tokensRead + tokensWrite;
+  const hasAgentLogs = att.has_output || att.has_action_log;
+  const hasPrompts = Boolean(att.builder_prompt || att.verifier_prompt || att.outcome);
+  const hasBodyContent = Boolean(
+    att.error
+    || att.grade_snapshot.length > 0
+    || (att.auto_verify_results && att.auto_verify_results.length > 0)
+    || att.verifier_comment
+    || hasAgentLogs
+    || hasPrompts,
+  );
+
+  return (
+    <div
+      className={
+        'rounded-md border overflow-hidden ' +
+        (isLatest ? `bg-bg-elevated ${COLLAPSIBLE_BORDER_CLASS}` : `bg-bg-card ${COLLAPSIBLE_BORDER_CLASS}`)
+      }
+    >
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="w-full text-left px-2 py-1.5 hover:bg-bg-hover/30 transition-colors"
+      >
+        <div className="flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs font-semibold text-text-primary">
+                Attempt #{att.attempt_num}
+              </span>
+              {att.outcome && (
+                <span className={'text-[10px] font-semibold uppercase rounded px-1.5 py-0.5 bg-bg-card border border-border ' + outcomeColor(att.outcome)}>
+                  {outcomeLabel(att.outcome)}
+                </span>
+              )}
+            </div>
+
+            {att.agent_type && (
+              <div className="flex flex-wrap items-center gap-1.5 text-xs text-text-secondary mb-1.5">
+                <span>Agent:</span>
+                <span className="font-medium text-text-primary truncate">{getAgentDisplayName(att)}</span>
+                {att.agent_model && (
+                  <>
+                    <span className="text-text-muted">·</span>
+                    <span className="text-text-muted truncate">{att.agent_model}</span>
+                  </>
+                )}
+                {totalTokens > 0 && (
+                  <>
+                    <span className="text-text-muted">·</span>
+                    <span className="text-text-muted">{formatTokens(totalTokens)} tokens</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-text-muted">
+              {durationMs > 0 && <span>{formatDuration(durationMs)}</span>}
+              {tokensRead > 0 && <span>{formatTokens(tokensRead)} read</span>}
+              {tokensWrite > 0 && <span>{formatTokens(tokensWrite)} write</span>}
+            </div>
+          </div>
+          <svg
+            className={'h-4 w-4 text-text-muted shrink-0 mt-0.5 transition-transform ' + (open ? 'rotate-90' : '')}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </button>
+
+      {open && hasBodyContent && (
+        <div className={`border-t ${COLLAPSIBLE_DIVIDER_CLASS} p-2 space-y-2`}>
+          {att.error && (
+            <div className="rounded bg-status-failed/10 border border-status-failed/30 px-2 py-1.5">
+              <span className="text-[10px] font-semibold text-status-failed uppercase block mb-1">
+                Error
+              </span>
+              <p className="text-xs text-status-failed whitespace-pre-wrap break-words">{att.error}</p>
+            </div>
+          )}
+
+          {att.grade_snapshot.length > 0 && (
+            <AttemptGrades snapshot={att.grade_snapshot} checklist={checklist} />
+          )}
+
+          {att.auto_verify_results && att.auto_verify_results.length > 0 && (
+            <AutoVerifyResults results={att.auto_verify_results} />
+          )}
+
+          {att.verifier_comment && (
+            <div className="rounded bg-bg-card border border-border-hover px-2 py-1.5">
+              <span className="text-[10px] font-semibold text-text-muted uppercase block mb-1">
+                Verifier Feedback
+              </span>
+              <p className="text-xs text-text-secondary whitespace-pre-wrap break-words">
+                {att.verifier_comment}
+              </p>
+            </div>
+          )}
+
+          {(hasAgentLogs || hasPrompts) && (
+            <div className="flex flex-wrap gap-2">
+              {hasAgentLogs && (
+                <button
+                  type="button"
+                  onClick={() => onOpenLogs(att)}
+                  className="px-2 py-1 text-[11px] font-medium text-text-muted bg-bg-card border border-border rounded-md hover:bg-bg-hover hover:text-text-primary transition-colors"
+                >
+                  Agent Log
+                </button>
+              )}
+              {hasPrompts && (
+                <button
+                  type="button"
+                  onClick={() => onOpenPrompts(att)}
+                  className="px-2 py-1 text-[11px] font-medium text-text-muted bg-bg-card border border-border rounded-md hover:bg-bg-hover hover:text-text-primary transition-colors"
+                >
+                  Prompts
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
-  const [showDebug, setShowDebug] = useState(false);
   const { data: detail, isLoading } = useTask(runId, task.id);
+  const { data: activityData } = useActivity(runId);
+  const { data: clarificationHistory, error: historyError } = useClarificationHistory(
+    runId,
+    task.id,
+  );
+  const [logAttempt, setLogAttempt] = useState<AttemptSchema | null>(null);
+  const [promptAttempt, setPromptAttempt] = useState<AttemptSchema | null>(null);
+  const [agentLogViewMode, setAgentLogViewMode] = useState<'structured' | 'raw'>('structured');
+  const [agentLogCapabilities, setAgentLogCapabilities] = useState({ hasStructured: false, hasRaw: false });
   const isPromptable = task.status === 'building' || task.status === 'verifying';
+  const latestAttempt = detail?.attempts[detail.attempts.length - 1];
+  const isLatestPrompt = promptAttempt && latestAttempt && promptAttempt.id === latestAttempt.id;
+  const needsApiPrompt = Boolean(
+    promptAttempt
+    && isLatestPrompt
+    && isPromptable
+    && (!promptAttempt.builder_prompt || !promptAttempt.verifier_prompt),
+  );
   const { data: promptData, isLoading: promptLoading, error: promptError } = useTaskPrompt(
     runId,
-    showDebug && isPromptable ? task.id : undefined
+    needsApiPrompt ? task.id : undefined,
   );
-  const latestAttempt = detail?.attempts[detail.attempts.length - 1];
-  const storedBuilderPrompt = latestAttempt?.builder_prompt ?? null;
-  const storedVerifierPrompt = latestAttempt?.verifier_prompt ?? null;
+
+  useEffect(() => {
+    if (!logAttempt) return;
+    setAgentLogViewMode('structured');
+    setAgentLogCapabilities({ hasStructured: false, hasRaw: false });
+  }, [logAttempt]);
+
+  const canSwitchAgentLogView = agentLogCapabilities.hasStructured && agentLogCapabilities.hasRaw;
+  const storedBuilderPrompt = promptAttempt?.builder_prompt ?? null;
+  const storedVerifierPrompt = promptAttempt?.verifier_prompt ?? null;
+  const livePrompt = promptData ? `${promptData.system}\n\n${promptData.user}` : null;
+  const builderPrompt = storedBuilderPrompt || (promptData?.phase === 'building' ? livePrompt : null);
+  const verifierPrompt = storedVerifierPrompt || (promptData?.phase === 'verifying' ? livePrompt : null);
+  const taskEvents = useMemo(() => {
+    const groups = groupEventsByTask(activityData?.events ?? []);
+    const taskGroup = groups.find((group): group is TaskEventGroup => group.kind === 'task' && group.task_id === task.id);
+    return taskGroup?.events ?? [];
+  }, [activityData?.events, task.id]);
 
   return (
     <div
@@ -29,8 +478,7 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
       role="complementary"
       aria-label="Task inspector"
     >
-      <div className="p-4 space-y-5">
-        {/* Header */}
+      <div className="p-2.5 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-primary uppercase tracking-wide">
             Inspector
@@ -46,13 +494,14 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
           </button>
         </div>
 
-        {/* Selected Task Card */}
-        <div className="rounded-lg bg-bg-elevated border border-border p-3">
+        <div className="rounded-lg bg-bg-elevated border border-border p-2.5">
           <div className="flex items-center justify-between mb-1">
             <span className="text-xs text-text-muted font-mono">{task.id.slice(0, 8)}</span>
             <TaskStatusBadge status={task.status} />
           </div>
-          <h3 className="text-sm font-medium text-text-primary">{task.title || task.config_id}</h3>
+          <h3 className="text-sm font-medium text-text-primary break-words">
+            {task.title || task.config_id}
+          </h3>
           <p className="text-xs text-text-muted mt-1">
             Attempt {task.current_attempt} of {task.max_attempts}
           </p>
@@ -64,174 +513,226 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
           </div>
         ) : detail ? (
           <>
-            {/* Attempt History */}
-            <div>
-              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
-                Attempt History
-              </h3>
-              <AttemptTimeline attempts={detail.attempts} checklist={detail.checklist} />
-            </div>
-          </>
-        ) : null}
+            {detail.checklist.length > 0 && (
+              <div>
+                <h3 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
+                  Requirements
+                </h3>
+                <ChecklistTable items={detail.checklist} variant="stacked" />
+              </div>
+            )}
 
-        {/* Debug Section */}
-        <div className="pt-2 border-t border-border">
-          <button
-            onClick={() => setShowDebug(!showDebug)}
-            className={
-              'w-full px-3 py-2 text-xs font-medium border rounded-md transition-colors ' +
-              (showDebug
-                ? 'text-accent-purple bg-accent-purple/10 border-accent-purple/30 hover:bg-accent-purple/20'
-                : 'text-text-muted bg-bg-elevated border-border hover:bg-bg-hover hover:text-text-secondary')
-            }
-            aria-label={showDebug ? 'Hide debug view' : 'Show debug view'}
-            aria-expanded={showDebug}
-          >
-            <span className="flex items-center justify-center gap-1.5">
-              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-              </svg>
-              {showDebug ? 'Hide Debug' : 'Debug'}
-            </span>
-          </button>
+            {task.status === 'recovering' && (
+              <div className="rounded-lg border-2 border-amber-400/40 bg-amber-500/10 px-3 py-2.5">
+                <h4 className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-1">
+                  Recovery agent diagnosing issue...
+                </h4>
+                {detail.attempts.length > 0 && detail.attempts[detail.attempts.length - 1].verifier_comment && (
+                  <p className="text-sm text-text-secondary">
+                    {detail.attempts[detail.attempts.length - 1].verifier_comment}
+                  </p>
+                )}
+              </div>
+            )}
 
-          {/* Debug Panel */}
-          {showDebug && (
-            <div className="mt-3 space-y-3 animate-slide-down">
-              {promptLoading ? (
-                <div className="flex justify-center py-4">
-                  <Spinner className="h-4 w-4" />
+            {detail.attempts.length > 0 && (() => {
+              const latest = detail.attempts[detail.attempts.length - 1];
+              if (latest.outcome === 'passed') return null;
+              const hasError = Boolean(latest.error);
+              const hasAutoVerify = Boolean(latest.auto_verify_results && latest.auto_verify_results.length > 0);
+              if (!hasError && !hasAutoVerify) return null;
+              return (
+                <div className="rounded-lg border-2 border-status-failed/30 bg-status-failed/5 px-3 py-2.5">
+                  <h4 className="text-xs font-semibold text-status-failed uppercase tracking-wide mb-1.5">
+                    Why this failed
+                  </h4>
+                  {hasError && (
+                    <p className="text-sm text-status-failed mb-2 whitespace-pre-wrap break-words">{latest.error}</p>
+                  )}
+                  {hasAutoVerify && (
+                    <AutoVerifyResults results={latest.auto_verify_results!} />
+                  )}
                 </div>
-              ) : promptData ? (
-                <>
-                  {/* Phase indicator */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold text-text-muted uppercase">Phase:</span>
-                    <span className={
-                      'text-xs font-medium px-1.5 py-0.5 rounded ' +
-                      (promptData.phase === 'building'
-                        ? 'bg-status-active/20 text-status-active'
-                        : 'bg-accent-purple/20 text-accent-purple')
-                    }>
-                      {promptData.phase}
-                    </span>
-                  </div>
+              );
+            })()}
 
-                  {/* System Prompt */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-semibold text-text-muted uppercase">System Prompt</span>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(promptData.system)}
-                        className="text-[10px] text-text-muted hover:text-text-primary transition-colors"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                    <pre className="text-[11px] text-text-secondary bg-bg-card border border-border rounded-md p-2 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
-                      {promptData.system}
-                    </pre>
-                  </div>
-
-                  {/* User Prompt */}
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-[10px] font-semibold text-text-muted uppercase">User Prompt</span>
-                      <button
-                        onClick={() => navigator.clipboard.writeText(promptData.user)}
-                        className="text-[10px] text-text-muted hover:text-text-primary transition-colors"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                    <pre className="text-[11px] text-text-secondary bg-bg-card border border-border rounded-md p-2 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
-                      {promptData.user}
-                    </pre>
-                  </div>
-
-                  {/* Copy Both button */}
-                  <button
-                    onClick={() => {
-                      const fullPrompt = `SYSTEM:\n${promptData.system}\n\nUSER:\n${promptData.user}`;
-                      navigator.clipboard.writeText(fullPrompt);
-                    }}
-                    className="w-full px-3 py-1.5 text-xs font-medium text-text-muted bg-bg-card border border-border rounded-md hover:bg-bg-hover hover:text-text-primary transition-colors"
-                  >
-                    Copy Full Prompt
-                  </button>
-                </>
-              ) : storedBuilderPrompt || storedVerifierPrompt ? (
-                <>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-semibold text-text-muted uppercase">Source:</span>
-                    <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary">
-                      stored attempt prompt
-                    </span>
-                  </div>
-
-                  {storedBuilderPrompt && (
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] font-semibold text-text-muted uppercase">Builder Prompt</span>
-                        <button
-                          onClick={() => navigator.clipboard.writeText(storedBuilderPrompt)}
-                          className="text-[10px] text-text-muted hover:text-text-primary transition-colors"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                      <pre className="text-[11px] text-text-secondary bg-bg-card border border-border rounded-md p-2 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
-                        {storedBuilderPrompt}
-                      </pre>
-                    </div>
-                  )}
-
-                  {storedVerifierPrompt && (
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[10px] font-semibold text-text-muted uppercase">Verifier Prompt</span>
-                        <button
-                          onClick={() => navigator.clipboard.writeText(storedVerifierPrompt)}
-                          className="text-[10px] text-text-muted hover:text-text-primary transition-colors"
-                        >
-                          Copy
-                        </button>
-                      </div>
-                      <pre className="text-[11px] text-text-secondary bg-bg-card border border-border rounded-md p-2 overflow-x-auto max-h-40 overflow-y-auto font-mono whitespace-pre-wrap">
-                        {storedVerifierPrompt}
-                      </pre>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-text-muted italic text-center py-2">
-                  {promptError
-                    ? 'Prompt unavailable from API for this task state.'
-                    : 'No prompt available for this task'}
+            {detail.attempts.length > 0 && detail.attempts[detail.attempts.length - 1].verifier_comment && (
+              <div className="rounded-lg border-2 border-accent-purple/30 bg-accent-purple/5 px-3 py-2.5">
+                <h4 className="text-xs font-semibold text-accent-purple uppercase tracking-wide mb-1.5">
+                  Verifier Feedback
+                </h4>
+                <p className="text-sm text-text-secondary whitespace-pre-wrap break-words">
+                  {detail.attempts[detail.attempts.length - 1].verifier_comment}
                 </p>
-              )}
+              </div>
+            )}
 
-              {/* Task ID for debugging */}
-              <div className="pt-2 border-t border-border">
-                <div className="text-[10px] text-text-muted space-y-1">
-                  <div className="flex justify-between">
-                    <span>Task ID:</span>
-                    <code className="font-mono">{task.id}</code>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Config ID:</span>
-                    <code className="font-mono">{task.config_id}</code>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Status:</span>
-                    <code className="font-mono">{task.status}</code>
-                  </div>
+            {detail.attempts.length === 0 ? (
+              <p className="text-xs text-text-muted italic">No attempts yet</p>
+            ) : (
+              <div className="space-y-2">
+                {detail.attempts.map((att, i) => (
+                  <InspectorAttemptCard
+                    key={att.id}
+                    att={att}
+                    checklist={detail.checklist}
+                    isLatest={i === detail.attempts.length - 1}
+                    onOpenLogs={setLogAttempt}
+                    onOpenPrompts={setPromptAttempt}
+                  />
+                ))}
+              </div>
+            )}
+
+            {taskEvents.length > 0 && (
+              <div>
+                <h3 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
+                  Events
+                </h3>
+                <div className="space-y-1">
+                  {taskEvents.map(ev => {
+                    if (ev.event_type === 'clarification_responded') {
+                      if (historyError) {
+                        return (
+                          <div key={ev.id} className="text-xs text-text-muted">
+                            Unable to load clarification history.
+                          </div>
+                        );
+                      }
+
+                      const requestId =
+                        typeof ev.payload.request_id === 'string'
+                          ? ev.payload.request_id
+                          : undefined;
+                      const matchingIndex = clarificationHistory?.findIndex(
+                        item => item.request.id === requestId,
+                      );
+
+                      if (matchingIndex !== undefined && matchingIndex >= 0) {
+                        const matchingItem = clarificationHistory?.[matchingIndex];
+                        if (!matchingItem) {
+                          return (
+                            <div key={ev.id} className="text-xs text-text-muted">
+                              Clarification response recorded
+                            </div>
+                          );
+                        }
+                        return (
+                          <ClarificationHistoryCard
+                            key={ev.id}
+                            item={matchingItem}
+                            roundNumber={matchingIndex + 1}
+                          />
+                        );
+                      }
+
+                      return (
+                        <div key={ev.id} className="text-xs text-text-muted">
+                          Clarification response recorded
+                        </div>
+                      );
+                    }
+
+                    const isError = ev.event_type === 'agent_error';
+                    return (
+                      <div key={ev.id} className="flex items-center gap-2 text-xs">
+                        <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (isError ? 'bg-status-failed' : 'bg-border')} />
+                        <span className={isError ? 'text-status-failed font-medium' : 'text-text-secondary'}>
+                          {eventLabel(ev.event_type, ev.payload)}
+                        </span>
+                        <span className="text-text-muted ml-auto text-[10px] whitespace-nowrap">
+                          {formatRelativeTime(ev.timestamp)}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </>
+        ) : null}
       </div>
+
+      <InspectorModal
+        open={Boolean(logAttempt)}
+        onClose={() => setLogAttempt(null)}
+        title={logAttempt ? `Agent Log · Attempt #${logAttempt.attempt_num}` : 'Agent Log'}
+        size="xl"
+      >
+        {logAttempt && (
+          <>
+            {canSwitchAgentLogView && (
+              <div className="flex justify-end mb-3">
+                <div className="relative grid grid-cols-2 w-40 rounded-md border border-border bg-bg-card p-0.5">
+                  <span
+                    className={
+                      'pointer-events-none absolute top-0.5 bottom-0.5 left-0.5 w-[calc(50%-2px)] rounded bg-bg-hover transition-transform duration-200 ease-out ' +
+                      (agentLogViewMode === 'raw' ? 'translate-x-full' : 'translate-x-0')
+                    }
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setAgentLogViewMode('structured')}
+                    className={'relative z-10 px-2 py-0.5 text-[10px] rounded transition-colors ' + (agentLogViewMode === 'structured' ? 'text-text-primary font-semibold' : 'text-text-muted hover:text-text-secondary')}
+                  >
+                    Structured
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAgentLogViewMode('raw')}
+                    className={'relative z-10 px-2 py-0.5 text-[10px] rounded transition-colors ' + (agentLogViewMode === 'raw' ? 'text-text-primary font-semibold' : 'text-text-muted hover:text-text-secondary')}
+                  >
+                    Raw
+                  </button>
+                </div>
+              </div>
+            )}
+            <LogsViewer
+              runId={runId}
+              taskId={task.id}
+              attemptNum={logAttempt.attempt_num}
+              viewMode={agentLogViewMode}
+              onViewModeChange={setAgentLogViewMode}
+              onCapabilitiesChange={setAgentLogCapabilities}
+            />
+          </>
+        )}
+      </InspectorModal>
+
+      <InspectorModal
+        open={Boolean(promptAttempt)}
+        onClose={() => setPromptAttempt(null)}
+        title={promptAttempt ? `Prompts · Attempt #${promptAttempt.attempt_num}` : 'Prompts'}
+      >
+        {promptAttempt && (
+          <div className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-semibold text-text-muted uppercase">Source:</span>
+              <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-bg-elevated text-text-secondary">
+                {promptData ? 'live prompt' : 'stored attempt prompt'}
+              </span>
+            </div>
+
+            {promptLoading ? (
+              <div className="flex justify-center py-4">
+                <Spinner className="h-4 w-4" />
+              </div>
+            ) : (
+              <>
+                {builderPrompt && <PromptBlock label="Builder Prompt" text={builderPrompt} />}
+                {verifierPrompt && <PromptBlock label="Verifier Prompt" text={verifierPrompt} />}
+                {!builderPrompt && !verifierPrompt && (
+                  <p className="text-xs text-text-muted italic text-center py-2">
+                    {promptError
+                      ? 'Prompt unavailable from API for this task state.'
+                      : 'No prompts available for this attempt'}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </InspectorModal>
     </div>
   );
 }

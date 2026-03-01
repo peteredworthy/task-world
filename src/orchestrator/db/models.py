@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orchestrator.db.base import Base
@@ -49,7 +49,7 @@ class RunModel(Base):
     current_step_index: Mapped[int] = mapped_column(Integer, default=0)
 
     # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -113,7 +113,7 @@ class TaskModel(Base):
     config_id: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False, default="")
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
-    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
     checklist: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     current_attempt: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3)
@@ -176,12 +176,16 @@ class AttemptModel(Base):
 
 class EventModel(Base):
     __tablename__ = "events"
+    __table_args__ = (
+        # Composite index for the common paginated-activity query: WHERE run_id = ? AND event_type = ?
+        Index("ix_events_run_id_event_type", "run_id", "event_type"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(
         String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
 

@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useRuns, useRoutines, useStartRun, usePauseRun, useCancelRun, useDeleteRun, useGlobalConfig } from '../hooks/useApi';
 import { RunCard } from '../components/dashboard/RunCard';
 import { RunFilters } from '../components/dashboard/RunFilters';
@@ -21,7 +21,20 @@ export function Dashboard() {
   const [recencyFilter, setRecencyFilter] = useState('');
   const createRunModal = useCreateRunModal();
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   const searchQuery = searchParams.get('search') ?? '';
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [resumeTarget, setResumeTarget] = useState<RunResponse | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
@@ -134,6 +147,26 @@ export function Dashboard() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
           <h1 className="text-2xl font-bold text-text-primary">Runs</h1>
           <div className="flex flex-wrap items-center gap-3">
+            <div className="relative">
+              <input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Search runs..."
+                value={searchQuery}
+                onChange={e => {
+                  const value = e.target.value;
+                  if (value) {
+                    navigate('/?search=' + encodeURIComponent(value), { replace: true });
+                  } else {
+                    navigate('/', { replace: true });
+                  }
+                }}
+                className="rounded-md border border-border bg-bg-card px-3 py-1.5 text-sm text-text-primary shadow-sm placeholder:text-text-muted focus:border-accent-purple focus:outline-none hover:border-border-hover transition-colors w-full sm:w-48"
+              />
+              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted text-[10px] bg-bg-hover px-1 py-0.5 rounded pointer-events-none">
+                &#x2318;K
+              </span>
+            </div>
             <RunFilters
               statusFilter={statusFilter}
               onStatusChange={setStatusFilter}

@@ -446,6 +446,10 @@ async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_p
     assert "Auto-verify failed" in task.attempts[0].verifier_comment
     assert "command `false` failed" in task.attempts[0].verifier_comment
 
+    # The failed attempt must be finalized (issue-002 fix)
+    assert task.attempts[0].outcome == "failed"
+    assert task.attempts[0].completed_at is not None
+
     # Revision prompt should include previous feedback even though a new attempt exists.
     from orchestrator.config.models import RoutineConfig
 
@@ -623,8 +627,10 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
     assert task.status == TaskStatus.COMPLETED
     assert task.current_attempt == 2
     assert len(task.attempts) == 2
-    # First attempt had failing auto-verify
+    # First attempt had failing auto-verify and must be finalized (issue-002 fix)
     assert task.attempts[0].auto_verify_results[0]["passed"] is False
+    assert task.attempts[0].outcome == "failed"
+    assert task.attempts[0].completed_at is not None
     # Second attempt had passing auto-verify
     assert task.attempts[1].auto_verify_results[0]["passed"] is True
 

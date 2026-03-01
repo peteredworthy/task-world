@@ -219,8 +219,12 @@ class AgentMonitor:
             return await _is_container_running(container_id)
 
         elif run.agent_type == AgentType.OPENHANDS_LOCAL:
-            # In-process agent — if server restarted, agent is gone
-            return False
+            # In-process agent — runs via asyncio.to_thread inside the
+            # executor task.  The executor's own try/except handles failures,
+            # so the health monitor should not interfere while it's running.
+            # On startup recovery, recover_active_runs_on_startup handles
+            # orphaned runs separately.
+            return True
 
         elif run.agent_type == AgentType.CODEX_SERVER:
             # Local variant: check if the server process PID is still alive.
@@ -255,6 +259,10 @@ class AgentMonitor:
             now = datetime.now(timezone.utc)
             return now - last_activity < timeout
 
+        elif run.agent_type == AgentType.CLAUDE_SDK:
+            # In-process agent — same rationale as OPENHANDS_LOCAL
+            return True
+
         # Unknown agent type
         return False
 
@@ -279,8 +287,17 @@ class AgentMonitor:
             repo = RunRepository(session)
             active_runs = await repo.list_by_status(RunStatus.ACTIVE)
 
+        # In-process agent types cannot survive a server restart, so they
+        # are always considered dead on startup regardless of check_agent_alive
+        # (which returns True for them during normal operation to avoid the
+        # periodic health monitor killing them prematurely).
+        _IN_PROCESS_AGENT_TYPES = {AgentType.OPENHANDS_LOCAL, AgentType.CLAUDE_SDK}
+
         for run in active_runs:
-            agent_alive = await self.check_agent_alive(run)
+            if run.agent_type in _IN_PROCESS_AGENT_TYPES:
+                agent_alive = False
+            else:
+                agent_alive = await self.check_agent_alive(run)
 
             if not agent_alive:
                 # on_agent_died creates its own session and commits

@@ -81,11 +81,13 @@ task-world/
 │   │   │   ├── repos.py       # /api/repos (repository browser)
 │   │   │   ├── config.py      # GET /api/config
 │   │   │   ├── clarifications.py # Clarification requests
-│   │   │   └── envfiles.py    # Environment file operations
+│   │   │   ├── envfiles.py    # Environment file operations
+│   │   │   └── review.py      # Review & merge workbench (13 endpoints)
 │   │   └── schemas/           # Pydantic request/response models
 │   │       ├── routines.py, runs.py, tasks.py, steps.py
 │   │       ├── repos.py, clarifications.py, envfiles.py
-│   │       └── activity.py    # Activity log schemas
+│   │       ├── activity.py    # Activity log schemas
+│   │       └── review.py      # Review schemas (diff, prune, conflicts, tests, merge)
 │   ├── artifacts/             # Artifact tracking
 │   │   ├── models.py          # Artifact data models
 │   │   └── registry.py        # Registry for generated files
@@ -120,7 +122,14 @@ task-world/
 │   │   ├── worktree.py        # Git worktree management
 │   │   ├── branch_ops.py      # Branch operations (merge, back-merge)
 │   │   ├── project_init.py    # Project initialization
-│   │   └── utils.py           # Git utility functions
+│   │   ├── utils.py           # Git utility functions
+│   │   ├── diff_ops.py        # Diff generation (branch/commit/task scopes)
+│   │   ├── prune_ops.py       # Selective change removal (file/hunk/line granularity)
+│   │   ├── conflict_ops.py    # Merge conflict detection and resolution
+│   │   └── errors.py          # Git-specific error types
+│   ├── review/                # Review subsystem
+│   │   ├── models.py          # Domain models (DiffScope, ModifiedFile, CommitInfo, FileStatus)
+│   │   └── test_runner.py     # Async test execution with result tracking and polling
 │   ├── mcp/                   # MCP server (tool protocol)
 │   │   ├── server.py          # FastMCP SSE server
 │   │   ├── tools.py           # Tool definitions
@@ -163,15 +172,43 @@ task-world/
 │   │   ├── App.tsx            # Root component + routes
 │   │   ├── main.tsx           # Entry point
 │   │   ├── api/               # API client functions
+│   │   │   ├── client.ts      # Core API client (runs, tasks, routines, etc.)
+│   │   │   └── reviewClient.ts # Review API client (diff, prune, conflicts, tests, merge)
 │   │   ├── components/        # React components
 │   │   │   ├── dashboard/     # Run list, filters, create modal, timeline
 │   │   │   ├── detail/        # Run detail, task cards, inspector, logs
 │   │   │   ├── guidance/      # Agent guidance panel
 │   │   │   ├── routines/      # Routine cards
 │   │   │   ├── run/           # Run control (resume dialog)
+│   │   │   ├── review/        # Review & merge workbench (22 components)
+│   │   │   │   ├── ReviewMergeTab.tsx          # Master container; coordinates all sub-panels
+│   │   │   │   ├── FileListSection.tsx          # Changed file list with stats
+│   │   │   │   ├── DiffViewer.tsx               # Unified diff renderer (binary + large diff support)
+│   │   │   │   ├── DiffDialog.tsx               # Modal diff viewer with expand/collapse
+│   │   │   │   ├── HistoryPanel.tsx             # Commit history list for the run branch
+│   │   │   │   ├── TaskFilesPanel.tsx           # Per-task file attribution and diff links
+│   │   │   │   ├── BranchStatusSection.tsx      # Ahead/behind indicator + back-merge option
+│   │   │   │   ├── MergeReadinessBar.tsx        # Four-gate merge readiness display
+│   │   │   │   ├── BackMergeBanner.tsx          # Back-merge status and revert button
+│   │   │   │   ├── BackMergeModal.tsx           # Trigger back-merge with conflict preview
+│   │   │   │   ├── MergeConfirmModal.tsx        # Final merge confirmation dialog
+│   │   │   │   ├── ConflictFileList.tsx         # Conflict file sidebar with keyboard nav
+│   │   │   │   ├── ConflictResolverDialog.tsx   # Per-block conflict resolution dialog
+│   │   │   │   ├── ConflictBlock.tsx            # Single conflict block renderer
+│   │   │   │   ├── AgentResolveConflictsModal.tsx # Dispatch agent to fix conflicts
+│   │   │   │   ├── TestPanel.tsx                # Test execution UI with run/results
+│   │   │   │   ├── TestLogsDrawer.tsx           # Scrollable test output log drawer
+│   │   │   │   ├── AgentFixTestsModal.tsx       # Dispatch agent to fix failing tests
+│   │   │   │   ├── PruneModeProvider.tsx        # Context provider for prune selection state
+│   │   │   │   ├── PruneToolbar.tsx             # Preview/Apply/Cancel prune actions
+│   │   │   │   ├── PrunePreviewModal.tsx        # Shows resulting diff before applying prune
+│   │   │   │   └── PruneGutter.tsx              # Clickable gutter for hunk/line selection
 │   │   │   └── *.tsx          # Shared UI (Layout, Sidebar, StatusBadge, etc.)
 │   │   ├── context/           # React contexts (create-run, settings)
 │   │   ├── hooks/             # Custom React hooks
+│   │   │   ├── useReview.ts                     # TanStack Query hooks for all review operations
+│   │   │   ├── useReviewKeyboardShortcuts.ts    # Keyboard shortcuts (j/k/[/]/Shift+P/t)
+│   │   │   └── (other hooks)
 │   │   ├── lib/               # Utilities (formatting, etc.)
 │   │   ├── pages/             # Page components
 │   │   └── types/             # TypeScript type definitions
@@ -297,6 +334,34 @@ Each task goes through:
 | POST | `/api/runs/{id}/tasks/{tid}/approve` | Human approves task |
 | POST | `/api/runs/{id}/tasks/{tid}/reject` | Human rejects task |
 
+### Review & Merge Workbench
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/runs/{id}/review/diff` | Unified diff (scope: aggregate/commit/task; optional ref, context_lines) |
+| GET | `/api/runs/{id}/review/diff/files` | Modified files with change stats (scope: aggregate/task) |
+| GET | `/api/runs/{id}/review/commits` | Commit history from source-branch merge-base to HEAD |
+| POST | `/api/runs/{id}/review/prune/preview` | Preview prune selection (no worktree change) |
+| POST | `/api/runs/{id}/review/prune/apply` | Apply prune and create audit commit |
+| POST | `/api/runs/{id}/review/revert-file` | Revert single file to base-branch state |
+| POST | `/api/runs/{id}/review/test` | Start async test run; returns test_run_id (202) |
+| GET | `/api/runs/{id}/review/test/{test_run_id}` | Poll test status and results |
+| GET | `/api/runs/{id}/review/conflicts` | List conflict files with structured blocks |
+| POST | `/api/runs/{id}/review/conflicts/agent-resolve` | Dispatch agent to resolve conflicts |
+| POST | `/api/runs/{id}/review/conflicts/{file_path}/resolve` | Apply per-block resolutions for a file |
+| GET | `/api/runs/{id}/review/merge-readiness` | Evaluate 4 merge gates (clean_merge, no_unresolved_conflicts, tests_pass, no_active_jobs) |
+| POST | `/api/runs/{id}/review/revert-back-merge` | Revert last back-merge commit (HEAD must be merge commit) |
+
+**Review Schemas** (`src/orchestrator/api/schemas/review.py`):
+- `DiffResponse`, `DiffFileEntry` — diff text and file change stats
+- `CommitEntry` — commit metadata (sha, short_sha, message, author, timestamp)
+- `FilePrune`, `PruneSelection`, `LineRange` — prune request bodies
+- `PrunePreviewResponse`, `PruneApplyResponse` — prune results with stats
+- `ConflictBlock`, `ConflictFile` — conflict file/block structure
+- `BlockResolution`, `ConflictResolutionRequest`, `ConflictResolutionResponse` — resolution inputs/outputs
+- `TestRunRequest`, `TestRunResponse`, `TestRunResult`, `TestSummary` — test execution lifecycle
+- `BackMergeResponse`, `Gate`, `MergeReadiness` — merge readiness evaluation
+
 ### Clarifications
 
 | Method | Path | Description |
@@ -407,3 +472,24 @@ Both Codex Server agent variants (`codex_server.py` and `codex_server_remote.py`
 | Agent implementations | `src/orchestrator/agents/*.py` |
 | Frontend entry | `ui/src/App.tsx`, `ui/src/pages/*.tsx` |
 | Test examples | `tests/unit/*.py`, `tests/integration/*.py` |
+| Review API routes | `src/orchestrator/api/routers/review.py` |
+| Review schemas | `src/orchestrator/api/schemas/review.py` |
+| Git diff/prune/conflict ops | `src/orchestrator/git/diff_ops.py`, `prune_ops.py`, `conflict_ops.py` |
+| Review domain models | `src/orchestrator/review/models.py` |
+| Async test runner | `src/orchestrator/review/test_runner.py` |
+| Review frontend components | `ui/src/components/review/ReviewMergeTab.tsx` |
+| Review API client | `ui/src/api/reviewClient.ts` |
+| Review hooks | `ui/src/hooks/useReview.ts`, `ui/src/hooks/useReviewKeyboardShortcuts.ts` |
+
+### Review Workflow Events
+
+The following event types (`src/orchestrator/workflow/events.py`) are emitted by review operations and persisted to the activity log:
+
+| Event | Trigger | Key Fields |
+|-------|---------|------------|
+| `PruneApplied` | Prune apply completes | commit_sha, files_affected, hunks_removed, lines_removed |
+| `TestRunStarted` | Test run begins | test_run_id |
+| `TestRunCompleted` | Test run finishes | test_run_id, status, duration_ms |
+| `ConflictResolved` | Conflict file resolved | file_path, remaining_conflicts |
+| `BackMergeReverted` | Back-merge undone | reverted_commit, new_head |
+| `AgentFixStarted` | Agent dispatched for conflict/test fix | job_id, agent_type |

@@ -1,3 +1,0 @@
-The same as with question. I don't like the auto-popup dialogue. It needs to be visible on the dashboard and the details page with a button to interact. 
-The text of the approval should be something that the LLM can set instead of fixed content from the routine. I want to see an actual summary of the plan not a list of files to review.
-If we later have a file viewer and/or git diff viewer then the approval could reffer to files as long as we can jumpt to those files in the UI before clicking OK.

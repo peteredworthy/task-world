@@ -441,6 +441,7 @@ function TaskCard({
         'relative rounded px-2 py-1.5 text-[11px] font-medium ' + bgClass +
         (onClick ? ' cursor-pointer hover:ring-1 hover:ring-accent-purple/40 transition-shadow' : '')
       }
+      title={task.title || task.config_id}
       onClick={onClick ? e => { e.stopPropagation(); onClick(); } : undefined}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -586,11 +587,14 @@ function StepColumn({ step, index, isCurrent, runId, onTaskClick }: { step: Step
       <div className="flex items-center gap-2 mb-2">
         <div
           className={
-            'flex items-center justify-center rounded font-mono text-[10px] font-bold leading-none w-7 h-[22px] ' +
+            'relative flex items-center justify-center rounded font-mono text-[10px] font-bold leading-none w-7 h-[22px] group/stepbadge ' +
             badgeClass
           }
         >
           S{index + 1}
+          <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-bg-elevated border border-border rounded text-[10px] text-text-secondary whitespace-nowrap opacity-0 group-hover/stepbadge:opacity-100 pointer-events-none transition-opacity z-20">
+            {step.title || step.config_id} ({completed}/{total})
+          </div>
         </div>
         <span className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary truncate">
           {step.title || step.config_id}
@@ -826,7 +830,7 @@ function ExpandedView(props: RunCardProps) {
       </div>
 
       {/* Step columns + Footer (animated) */}
-      <div className="animate-slide-down overflow-hidden">
+      <div className="animate-slide-down">
       {run.steps.length > 0 && (
         <div className="px-4 py-4">
           <div className="flex gap-4 overflow-x-auto scrollbar-dark">
@@ -851,7 +855,7 @@ function ExpandedView(props: RunCardProps) {
             to={'/runs/' + run.id}
             className="text-[11px] font-semibold text-accent-purple hover:text-accent-purple/80 transition-colors"
           >
-            Open Detailed View
+            View Changes
           </Link>
           {clarificationTaskId && (
             <Link

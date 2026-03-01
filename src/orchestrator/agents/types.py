@@ -21,6 +21,9 @@ LogLineCallback = Callable[[list[str]], Awaitable[None]]
 GradeCallback = Callable[[str, str, str | None], Awaitable[None]]
 """(req_id, grade, grade_reason) -> None. run_id/task_id bound by caller."""
 
+CompleteRecoveryCallback = Callable[[str, str | None], Awaitable[None]]
+"""(outcome, notes) -> None. outcome is 'retry', 'skip', or 'abandon'. run_id/task_id bound by caller."""
+
 AgentMetadataCallback = Callable[[dict[str, Any]], Awaitable[None]]
 """Called when agent subprocess is created, with metadata like pid."""
 
@@ -79,6 +82,7 @@ class AgentConfigField(BaseModel):
     default: Any = None
     description: str = ""
     options: list[str] | None = None  # for "select" type
+    allow_custom: bool = False  # if True, render as combobox (free-text + suggestions)
 
 
 class QuotaBucket(BaseModel):

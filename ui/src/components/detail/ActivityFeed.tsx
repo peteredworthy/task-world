@@ -133,7 +133,7 @@ function TaskGroupCard({
             ) : (
               <span className="inline-block h-2 w-2 rounded-full bg-status-pending shrink-0" />
             )}
-            <span className="text-sm font-medium text-text-primary truncate">
+            <span className="text-sm font-medium text-text-primary truncate" title={group.task_title}>
               {group.task_title}
             </span>
           </div>
@@ -231,7 +231,7 @@ function ActiveTaskCard({
             ) : (
               <span className="inline-block h-2 w-2 rounded-full bg-status-pending shrink-0" />
             )}
-            <span className="text-sm font-medium text-text-primary truncate">
+            <span className="text-sm font-medium text-text-primary truncate" title={task.task_title}>
               {task.task_title}
             </span>
           </div>
@@ -291,7 +291,7 @@ function StepSection({
         </span>
 
         {/* Step title */}
-        <span className="text-sm font-semibold text-text-primary truncate flex-1 min-w-0">
+        <span className="text-sm font-semibold text-text-primary truncate flex-1 min-w-0" title={step.title || step.config_id}>
           {step.title || step.config_id}
         </span>
 

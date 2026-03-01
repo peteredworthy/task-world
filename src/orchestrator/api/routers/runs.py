@@ -19,10 +19,12 @@ from orchestrator.api.deps import (
     get_routine_dirs,
     get_session,
     get_session_factory,
+    get_test_runner,
     get_workflow_service,
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
 from orchestrator.agents.executor import AgentExecutor
+from orchestrator.review.test_runner import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
     AgentCancelledRequest,
@@ -35,6 +37,7 @@ from orchestrator.api.schemas.runs import (
     GuidanceResponse,
     MergeBackRequest,
     MergeBackResponse,
+    MergeReadinessSnapshot,
     RecoverRequest,
     RecoverResponse,
     ResumeRunRequest,
@@ -136,14 +139,23 @@ def _run_to_response(run: Run) -> RunResponse:
         for step in run.steps
     ]
 
-    # Use actual cost from action logs when available; otherwise estimate from token counts.
-    actual_cost_usd = sum(
-        attempt.action_log.total_cost_usd
-        for step in run.steps
-        for task in step.tasks
-        for attempt in task.attempts
-        if attempt.action_log is not None and attempt.action_log.total_cost_usd > 0
-    )
+    # Single pass over all attempts to sum actual cost and find model hint.
+    actual_cost_usd = 0.0
+    model_hint: str | None = None
+
+    # Prefer model from agent_config (no iteration needed)
+    raw_model = run.agent_config.get("model")
+    if isinstance(raw_model, str) and raw_model:
+        model_hint = raw_model
+
+    for step in run.steps:
+        for task in step.tasks:
+            for attempt in task.attempts:
+                if attempt.action_log is not None:
+                    if attempt.action_log.total_cost_usd > 0:
+                        actual_cost_usd += attempt.action_log.total_cost_usd
+                    if model_hint is None and attempt.action_log.agent_model:
+                        model_hint = attempt.action_log.agent_model
 
     estimated_cost_usd = None
     cost_disclaimer = None
@@ -152,23 +164,6 @@ def _run_to_response(run: Run) -> RunResponse:
         estimated_cost_usd = round(actual_cost_usd, 6)
         cost_disclaimer = "Actual cost from API response."
     elif run.total_tokens_read > 0 or run.total_tokens_write > 0 or run.total_tokens_cache > 0:
-        # Detect which model was used: try agent_config first, then action log
-        model_hint: str | None = None
-        raw_model = run.agent_config.get("model")
-        if isinstance(raw_model, str) and raw_model:
-            model_hint = raw_model
-        if not model_hint:
-            for step in run.steps:
-                for task in step.tasks:
-                    for attempt in task.attempts:
-                        if attempt.action_log and attempt.action_log.agent_model:
-                            model_hint = attempt.action_log.agent_model
-                            break
-                    if model_hint:
-                        break
-                if model_hint:
-                    break
-
         cost_estimate = estimate_cost(
             tokens_read=run.total_tokens_read,
             tokens_write=run.total_tokens_write,
@@ -967,6 +962,19 @@ async def get_branch_status_endpoint(
 
     status = get_branch_status(repo_path, run_branch, run.source_branch)
 
+    # Compute merge readiness snapshot
+    blocking_reasons: list[str] = []
+    if status.has_conflicts:
+        readiness_status = "conflicts"
+        blocking_reasons.append(
+            f"merge conflicts predicted in {status.predicted_conflict_count} file(s)"
+        )
+    elif status.behind_count > 0:
+        readiness_status = "behind"
+        blocking_reasons.append(f"branch is {status.behind_count} commit(s) behind source")
+    else:
+        readiness_status = "ready"
+
     return BranchStatusResponse(
         behind_count=status.behind_count,
         ahead_count=status.ahead_count,
@@ -974,6 +982,11 @@ async def get_branch_status_endpoint(
         has_conflicts=status.has_conflicts,
         source_branch=run.source_branch,
         run_branch=run_branch,
+        predicted_conflict_count=status.predicted_conflict_count,
+        merge_readiness=MergeReadinessSnapshot(
+            status=readiness_status,
+            blocking_reasons=blocking_reasons,
+        ),
     )
 
 
@@ -986,7 +999,7 @@ async def back_merge_endpoint(
 
     Allowed when run is ACTIVE or PAUSED.
     """
-    from orchestrator.git.branch_ops import back_merge
+    from orchestrator.git.branch_ops import BackMergeResult, back_merge
 
     run = await service.get_run(run_id)
 
@@ -1002,11 +1015,26 @@ async def back_merge_endpoint(
             detail="Run does not have a worktree or source branch configured",
         )
 
-    sha = back_merge(Path(run.worktree_path), run.source_branch)
+    result = back_merge(Path(run.worktree_path), run.source_branch, abort_on_conflict=False)
+    assert isinstance(result, BackMergeResult)
 
+    if result.status == "clean":
+        return BackMergeResponse(
+            status="clean",
+            merge_commit_sha=result.merge_commit_sha,
+            conflict_files=[],
+            conflict_count=0,
+            merge_commit=result.merge_commit_sha,
+            message=f"Merged {run.source_branch} into run branch",
+        )
+    # Conflicts — merge is left in-progress for the caller to resolve
     return BackMergeResponse(
-        merge_commit=sha,
-        message=f"Merged {run.source_branch} into run branch",
+        status="conflicts",
+        merge_commit_sha=None,
+        conflict_files=result.conflict_files,
+        conflict_count=result.conflict_count,
+        merge_commit=None,
+        message=f"Merge conflicts detected with {run.source_branch}",
     )
 
 
@@ -1015,12 +1043,16 @@ async def merge_back_endpoint(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
+    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    test_runner: Annotated[TestRunner, Depends(get_test_runner)],
     request: MergeBackRequest | None = None,
 ) -> MergeBackResponse:
     """Merge run branch back into source branch.
 
-    Allowed when run is COMPLETED.
+    Allowed when run is COMPLETED. Performs a pre-flight readiness check;
+    returns 409 if any gate is unmet.
     """
+    from orchestrator.api.routers.review import compute_readiness
     from orchestrator.git.branch_ops import merge_back
 
     run = await service.get_run(run_id)
@@ -1037,12 +1069,24 @@ async def merge_back_endpoint(
             detail="Run does not have a worktree or source branch configured",
         )
 
+    repo_path = config.paths.get_repos_path() / run.repo_name
+
+    # Pre-flight readiness check — enforce gates server-side
+    readiness = await compute_readiness(run, repo_path, test_runner, executor)
+    if not readiness.ready:
+        failed_gates = [g.model_dump() for g in readiness.gates if g.status != "pass"]
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Merge readiness gates not met",
+                "gates": failed_gates,
+            },
+        )
+
     strategy = (request.strategy if request and request.strategy else None) or run.merge_strategy
     dirty_action = request.dirty_action if request else None
     run_branch = f"orchestrator/run-{run.id}"
 
-    # merge_back operates on the main repo in the repos directory
-    repo_path = config.paths.get_repos_path() / run.repo_name
     worktree_path = Path(run.worktree_path) if run.worktree_path else None
     sha = merge_back(
         repo_path,

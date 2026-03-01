@@ -50,6 +50,10 @@ _LLM_CONFIG_KEYS = {
     "temperature",
     "top_p",
     "max_output_tokens",
+    "base_url",
+    "timeout",
+    "num_retries",
+    "model_canonical_name",
 }
 
 
@@ -303,6 +307,11 @@ class AgentExecutor:
         # Start a background health monitor for the agent
         health_monitor_task = asyncio.create_task(self._monitor_agent_health(run_id, agent_type))
 
+        # Track tasks whose recovery was already attempted in this executor session.
+        # If _handle_recovery completes without transitioning the task out of RECOVERING,
+        # we pause the run instead of looping forever.
+        recovery_attempted: set[str] = set()
+
         try:
             while True:
                 # Create a new session for each iteration
@@ -375,6 +384,21 @@ class AgentExecutor:
                     logger.info(
                         f"Run {run_id}: executing task {task_state.id} ({task_state.config_id})"
                     )
+                    was_recovering = task_state.status == TaskStatus.RECOVERING
+
+                    # Guard against infinite loop: if we already ran recovery for
+                    # this task and it's still RECOVERING, pause instead of looping.
+                    if was_recovering and task_state.id in recovery_attempted:
+                        logger.warning(
+                            f"Run {run_id}: task {task_state.id} still RECOVERING after "
+                            "previous recovery attempt without complete_recovery call — pausing"
+                        )
+                        await service.pause_run(run_id, reason="recovery_loop")
+                        await session.commit()
+                        break
+                    if was_recovering:
+                        recovery_attempted.add(task_state.id)
+
                     try:
                         await self._execute_task(
                             run, task_state, service, agent_type, effective_config
@@ -385,7 +409,7 @@ class AgentExecutor:
                             f"Run {run_id}: task {task_state.id} checklist gate blocked on submit: {e}. "
                             f"Agent ran but could not satisfy the gate — pausing run."
                         )
-                        await service.pause_run(run_id)
+                        await service.pause_run(run_id, reason="gate_blocked")
                         await session.commit()
                         break
                     except AgentCancelledError:
@@ -397,7 +421,7 @@ class AgentExecutor:
                             run_id, task_state, "AgentNotAvailableError", str(e)
                         )
                         await self._store_attempt_output(run_id, task_state.id, [], str(e))
-                        await service.pause_run(run_id)
+                        await service.pause_run(run_id, reason="agent_not_available")
                         await session.commit()
                         break
                     except AgentExecutionError as e:
@@ -406,7 +430,7 @@ class AgentExecutor:
                             run_id, task_state, "AgentExecutionError", str(e)
                         )
                         await self._store_attempt_output(run_id, task_state.id, [], str(e))
-                        await service.pause_run(run_id)
+                        await service.pause_run(run_id, reason="agent_execution_error")
                         await session.commit()
                         break
                     except Exception as e:
@@ -414,7 +438,7 @@ class AgentExecutor:
                         await self._emit_error_event(run_id, task_state, type(e).__name__, str(e))
                         # Pause the run on unexpected errors so the issue can be investigated
                         try:
-                            await service.pause_run(run_id)
+                            await service.pause_run(run_id, reason="unexpected_error")
                             await session.commit()
                         except Exception:
                             logger.exception(f"Run {run_id}: failed to pause run after error")
@@ -423,13 +447,13 @@ class AgentExecutor:
         except asyncio.CancelledError:
             # Server shutdown/reload cancels asyncio tasks. CancelledError is a
             # BaseException (not Exception) in Python 3.9+, so it must be caught
-            # explicitly. Transition the run to PAUSED so startup recovery doesn't
-            # need to guess whether an orphaned agent is still healthy.
+            # explicitly. Use "server_shutdown" reason so startup recovery can
+            # auto-resume these runs rather than leaving them stuck in PAUSED.
             logger.warning(f"Run {run_id}: agent loop cancelled (server shutdown?), pausing run")
             try:
                 async with self._session_factory() as session:
                     service = await self._create_service(session)
-                    await service.pause_run(run_id)
+                    await service.pause_run(run_id, reason="server_shutdown")
                     await session.commit()
             except Exception:
                 # DB/engine might be shutting down too (connection already closed).
@@ -441,7 +465,7 @@ class AgentExecutor:
             try:
                 async with self._session_factory() as session:
                     service = await self._create_service(session)
-                    await service.pause_run(run_id)
+                    await service.pause_run(run_id, reason="unexpected_error")
                     await session.commit()
             except Exception:
                 logger.exception(f"Run {run_id}: failed to pause run after outer error")
@@ -970,7 +994,7 @@ class AgentExecutor:
             api_base_url=self._api_base_url,
         )
 
-        # Define callbacks - recovery agent uses complete_recovery via MCP/REST
+        # Define callbacks - recovery agent uses complete_recovery via dynamic tool
         async def on_checklist_update(
             req_id: str, status: ChecklistStatus, note: str | None
         ) -> None:
@@ -1303,6 +1327,25 @@ class AgentExecutor:
         # Non-Codex agent type — no session classification needed.
         return agent_config, None
 
+    # Keys in _LLM_CONFIG_KEYS that must be numeric (int or float).
+    # Frontend number inputs produce strings; coerce them here.
+    _NUMERIC_LLM_KEYS = {"timeout", "num_retries", "temperature", "top_p", "max_output_tokens"}
+
+    def _coerce_llm_config(self, agent_config: dict[str, Any]) -> dict[str, Any]:
+        """Extract LLM config keys and coerce numeric strings to proper types."""
+        result: dict[str, Any] = {}
+        for k, v in agent_config.items():
+            if k not in _LLM_CONFIG_KEYS:
+                continue
+            if k in self._NUMERIC_LLM_KEYS and isinstance(v, str):
+                try:
+                    result[k] = int(v) if v.isdigit() else float(v)
+                except (ValueError, TypeError):
+                    result[k] = v
+            else:
+                result[k] = v
+        return result
+
     def _create_agent(
         self,
         agent_type: AgentType,
@@ -1364,15 +1407,13 @@ class AgentExecutor:
 
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
-            max_iterations = agent_config.get("max_iterations", 100)
-            tools = agent_config.get("tools")
-            llm_config = {k: v for k, v in agent_config.items() if k in _LLM_CONFIG_KEYS}
+            max_iterations = int(agent_config.get("max_iterations", 100))
+            llm_config = self._coerce_llm_config(agent_config)
 
             return OpenHandsAgent(
                 api_key=api_key,
                 model=model,
                 max_iterations=max_iterations,
-                tools=tools,
                 llm_config=llm_config,
             )  # type: ignore[return-value]
 
@@ -1382,17 +1423,15 @@ class AgentExecutor:
 
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
-            max_iterations = agent_config.get("max_iterations", 100)
-            tools = agent_config.get("tools")
+            max_iterations = int(agent_config.get("max_iterations", 100))
             server_image = agent_config.get("server_image")
-            llm_config = {k: v for k, v in agent_config.items() if k in _LLM_CONFIG_KEYS}
+            llm_config = self._coerce_llm_config(agent_config)
 
             # Build kwargs, only include server_image if explicitly set
             kwargs: dict[str, Any] = {
                 "api_key": api_key,
                 "model": model,
                 "max_iterations": max_iterations,
-                "tools": tools,
                 "llm_config": llm_config,
             }
             if server_image is not None:
@@ -1406,11 +1445,13 @@ class AgentExecutor:
             model = agent_config.get("model")
             callback_channel = agent_config.get("callback_channel", "rest")
             api_key = agent_config.get("api_key")
+            restrictions = agent_config.get("restrictions", "no-network")
 
             return CodexServerAgent(  # type: ignore[return-value]
                 model=model,
                 callback_channel=callback_channel,
                 api_key=api_key,
+                restrictions=str(restrictions),
             )
 
         elif agent_type == AgentType.CLAUDE_SDK:

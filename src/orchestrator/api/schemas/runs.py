@@ -176,6 +176,13 @@ class RecoverResponse(ApiModel):
     current_step_index: int | None = None
 
 
+class MergeReadinessSnapshot(ApiModel):
+    """Snapshot of merge readiness derived from branch status."""
+
+    status: str  # "ready" | "conflicts" | "behind"
+    blocking_reasons: list[str]
+
+
 class BranchStatusResponse(ApiModel):
     """Response for branch status check."""
 
@@ -185,13 +192,20 @@ class BranchStatusResponse(ApiModel):
     has_conflicts: bool
     source_branch: str
     run_branch: str
+    predicted_conflict_count: int = 0
+    merge_readiness: MergeReadinessSnapshot
 
 
 class BackMergeResponse(ApiModel):
     """Response for back-merge operation."""
 
-    merge_commit: str
-    message: str
+    status: str  # "clean" | "conflicts"
+    merge_commit_sha: str | None = None
+    conflict_files: list[str] = []
+    conflict_count: int = 0
+    # Backward-compatible aliases
+    merge_commit: str | None = None
+    message: str | None = None
 
 
 class MergeBackRequest(ApiModel):

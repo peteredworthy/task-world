@@ -31,13 +31,6 @@ _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
         description="LLM model to use",
     ),
     AgentConfigField(
-        name="tools",
-        field_type="select",
-        default=["terminal", "file_editor"],
-        description="OpenHands tools to enable",
-        options=["terminal", "file_editor", "browser", "glob", "grep"],
-    ),
-    AgentConfigField(
         name="max_iterations",
         field_type="number",
         default=100,
@@ -50,6 +43,22 @@ _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
         description="LLM reasoning effort level",
         options=["low", "medium", "high"],
     ),
+    AgentConfigField(
+        name="base_url",
+        field_type="string",
+        description="Local LLM base URL (e.g. http://localhost:1234/v1). Leave blank to use OpenAI.",
+    ),
+    AgentConfigField(
+        name="timeout",
+        field_type="number",
+        default=1800,
+        description="HTTP request timeout in seconds. Local LLMs may need 900-1800+.",
+    ),
+    AgentConfigField(
+        name="model_canonical_name",
+        field_type="string",
+        description="Canonical model name for capability lookups (e.g. openai/gpt-4o). Required when using a local LLM with a custom model name.",
+    ),
 ]
 
 _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
@@ -58,13 +67,6 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
         field_type="string",
         default="gpt-5-mini",
         description="LLM model to use",
-    ),
-    AgentConfigField(
-        name="tools",
-        field_type="select",
-        default=["terminal", "file_editor"],
-        description="OpenHands tools to enable",
-        options=["terminal", "file_editor", "browser", "glob", "grep"],
     ),
     AgentConfigField(
         name="max_iterations",
@@ -84,6 +86,22 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
         default="high",
         description="LLM reasoning effort level",
         options=["low", "medium", "high"],
+    ),
+    AgentConfigField(
+        name="base_url",
+        field_type="string",
+        description="Local LLM base URL (e.g. http://localhost:1234/v1). Leave blank to use OpenAI.",
+    ),
+    AgentConfigField(
+        name="timeout",
+        field_type="number",
+        default=1800,
+        description="HTTP request timeout in seconds. Local LLMs may need 900-1800+.",
+    ),
+    AgentConfigField(
+        name="model_canonical_name",
+        field_type="string",
+        description="Canonical model name for capability lookups (e.g. openai/gpt-4o). Required when using a local LLM with a custom model name.",
     ),
 ]
 
@@ -132,15 +150,10 @@ _USER_MANAGED_CONFIG: list[AgentConfigField] = [
 
 _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
-        name="endpoint",
-        field_type="string",
-        default="http://localhost:9000",
-        description="Codex app server endpoint URL (stdio transport via local process)",
-    ),
-    AgentConfigField(
         name="model",
         field_type="string",
         description="Model to use for Codex agent sessions",
+        allow_custom=True,
     ),
     AgentConfigField(
         name="callback_channel",
@@ -148,6 +161,18 @@ _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
         default="rest",
         description="How the Codex server calls back to the orchestrator",
         options=["rest", "mcp"],
+    ),
+    AgentConfigField(
+        name="restrictions",
+        field_type="select",
+        default="no-network",
+        description=(
+            "How strictly to sandbox Codex. "
+            "'none' runs with workspace-write and network enabled. "
+            "'no-network' forces workspace-write with network disabled. "
+            "'use-local' hands control to your local Codex config.toml (may be read-only)."
+        ),
+        options=["none", "no-network", "use-local"],
     ),
 ]
 
@@ -366,8 +391,8 @@ class ToolDetector:
                 name="OpenHands (local)",
                 title="OpenHands Local Agent",
                 description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
-                available=False,
-                detail="openhands-ai SDK not installed",
+                available=True,
+                detail="openhands-ai SDK not installed (will fail at runtime)",
                 install_hint="Install with: uv sync --extra openhands",
                 config_schema=_OPENHANDS_LOCAL_CONFIG,
             )

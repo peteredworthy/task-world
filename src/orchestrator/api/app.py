@@ -81,6 +81,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     _AT.CLI_SUBPROCESS,
                     _AT.OPENHANDS_LOCAL,
                     _AT.OPENHANDS_DOCKER,
+                    _AT.CODEX_SERVER,
+                    _AT.CLAUDE_SDK,
                 ):
                     if not executor.is_running(run.id):
                         spawned = executor.spawn_for_run(run.id, run.agent_type, run.agent_config)
@@ -89,6 +91,105 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                                 f"Startup recovery: re-spawned executor loop for "
                                 f"active run {run.id} ({run.agent_type.value})"
                             )
+
+            # Auto-resume runs that were paused due to server shutdown.
+            # When the server reloads, it cancels all running executor tasks and
+            # marks those runs as paused with reason "server_shutdown". On the next
+            # startup we restore them to ACTIVE and re-spawn the executor loop so
+            # they continue from where they left off without user intervention.
+            async with session_factory() as session:
+                from orchestrator.db.repositories import RunRepository as _RR2
+
+                repo2 = _RR2(session)
+                paused_runs_all = await repo2.list_by_status(RunStatus.PAUSED)
+                shutdown_runs = [
+                    r
+                    for r in paused_runs_all
+                    if r.pause_reason == "server_shutdown"
+                    and r.agent_type is not None
+                    and r.agent_type
+                    in (
+                        _AT.CLI_SUBPROCESS,
+                        _AT.OPENHANDS_LOCAL,
+                        _AT.OPENHANDS_DOCKER,
+                        _AT.CODEX_SERVER,
+                        _AT.CLAUDE_SDK,
+                    )
+                ]
+
+            for run in shutdown_runs:
+                try:
+                    # If worktree is enabled but the directory is missing, recreate it
+                    # before resuming.  This happens when the server crashed before
+                    # cleanup ran or when the directory was removed by the startup
+                    # cleanup for an older run.
+                    if run.worktree_enabled and run.worktree_path:
+                        from pathlib import Path as _Path
+
+                        if not _Path(run.worktree_path).exists():
+                            try:
+                                from orchestrator.git.worktree import WorktreeManager as _WTM
+
+                                _repos_dir = global_config.paths.get_repos_path()
+                                _wt_dir = global_config.paths.get_worktrees_path()
+                                _repo_path = _repos_dir / run.repo_name
+                                if _repo_path.is_dir() and run.source_branch:
+                                    _wt_mgr = _WTM(_repo_path, _wt_dir)
+                                    _wt_mgr.ensure_exists(run.id, run.source_branch)
+                                    logger.info(
+                                        f"Startup recovery: recreated missing worktree "
+                                        f"for run {run.id}"
+                                    )
+                                else:
+                                    logger.warning(
+                                        f"Startup recovery: cannot recreate worktree for "
+                                        f"run {run.id} (repo '{run.repo_name}' not found "
+                                        f"or no source_branch); skipping auto-resume"
+                                    )
+                                    continue
+                            except Exception as _wt_err:
+                                logger.warning(
+                                    f"Startup recovery: worktree recreation failed for "
+                                    f"run {run.id}: {_wt_err}; skipping auto-resume"
+                                )
+                                continue
+
+                    async with session_factory() as session:
+                        from orchestrator.db.repositories import RunRepository as _RR3
+                        from orchestrator.db.event_store import EventStore as _ES3
+                        from orchestrator.workflow.event_logger import (
+                            PersistentEventEmitter as _PEE3,
+                        )
+                        from orchestrator.workflow.service import WorkflowService as _WS3
+                        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner as _AVR
+
+                        repo3 = _RR3(session)
+                        event_store3 = _ES3(session)
+                        emitter3 = _PEE3(event_store3)
+                        svc = _WS3(
+                            session=session,
+                            repo=repo3,
+                            event_store=event_store3,
+                            event_emitter=emitter3,
+                            submit_event_registry=app.state.submit_event_registry,
+                            auto_verify_runner=_AVR(),
+                            lock_manager=getattr(app.state, "lock_manager", None),
+                        )
+                        await svc.resume_run(run.id)
+                        await session.commit()
+
+                    _agent_type = run.agent_type
+                    assert _agent_type is not None  # filtered above
+                    spawned = executor.spawn_for_run(run.id, _agent_type, run.agent_config)
+                    if spawned:
+                        logger.info(
+                            f"Startup recovery: auto-resumed run {run.id} "
+                            f"({_agent_type.value}) after server shutdown"
+                        )
+                except Exception as resume_err:
+                    logger.warning(
+                        f"Startup recovery: failed to auto-resume run {run.id}: {resume_err}"
+                    )
     except Exception as e:
         # If recovery fails (e.g., during first startup with no tables),
         # log but don't crash the application
@@ -133,6 +234,15 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             total_removed = 0
             for repo_dir in repos_dir.iterdir():
                 if repo_dir.is_dir() and (repo_dir / ".git").exists():
+                    # Prune stale git worktree entries (directories deleted outside
+                    # of WorktreeManager) so that cleanup_expired sees an accurate list.
+                    import subprocess as _subproc
+
+                    _subproc.run(
+                        ["git", "worktree", "prune"],
+                        cwd=repo_dir,
+                        capture_output=True,
+                    )
                     wt_mgr = WorktreeManager(repo_dir, worktrees_dir)
                     total_removed += wt_mgr.cleanup_expired(
                         all_run_ids, run_completed_at, retention
@@ -276,6 +386,11 @@ def create_app(
     # Env file lifecycle (manages snapshots across run/task lifecycle)
     app.state.env_lifecycle = EnvFileLifecycle(app.state.envfile_store)
 
+    # Test runner for review workbench test execution
+    from orchestrator.review.test_runner import TestRunner
+
+    app.state.test_runner = TestRunner()
+
     # Agent executor for spawning managed agents (created here so it's available
     # in tests that don't run the lifespan)
     from orchestrator.agents.executor import AgentExecutor
@@ -304,6 +419,7 @@ def create_app(
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.envfiles import router as envfiles_router
     from orchestrator.api.routers.repos import router as repos_router
+    from orchestrator.api.routers.review import router as review_router
     from orchestrator.api.routers.routines import router as routines_router
     from orchestrator.api.routers.runs import router as runs_router
     from orchestrator.api.routers.tasks import router as tasks_router
@@ -314,6 +430,7 @@ def create_app(
     app.include_router(config_router, dependencies=auth_deps)
     app.include_router(envfiles_router, dependencies=auth_deps)
     app.include_router(repos_router, dependencies=auth_deps)
+    app.include_router(review_router, dependencies=auth_deps)
     app.include_router(routines_router, dependencies=auth_deps)
     app.include_router(runs_router, dependencies=auth_deps)
     app.include_router(tasks_router, dependencies=auth_deps)

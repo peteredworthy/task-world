@@ -200,6 +200,17 @@ def test_pause_invalid_status() -> None:
         engine.pause_run("run-1")
 
 
+def test_pause_already_paused_is_idempotent() -> None:
+    """Pausing an already-paused run should be a no-op, not raise an error."""
+    run = _make_run(status=RunStatus.PAUSED)
+    engine, _, _, emitter = _engine(run)
+
+    result = engine.pause_run("run-1")
+    assert result.status == RunStatus.PAUSED
+    # No event should be emitted — nothing changed
+    assert len(emitter.events) == 0
+
+
 def test_resume_run() -> None:
     run = _make_run(status=RunStatus.PAUSED)
     engine, _, _, emitter = _engine(run)
