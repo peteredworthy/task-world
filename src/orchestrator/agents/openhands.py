@@ -352,6 +352,44 @@ def _register_sdk_tools(tool_names: list[str] | None = None) -> None:
     _tools_registered = True
 
 
+def _build_openhands_mcp_config(
+    mcp_servers: list[Any] | None,
+) -> dict[str, Any] | None:
+    """Convert MCPServerConfig list to OpenHands mcp_config format.
+
+    Format: {"mcpServers": {"name": {"url": "...", "command": "...", ...}}}
+    Auth tokens are resolved from environment variables via auth_token_env field.
+    """
+    if not mcp_servers:
+        return None
+
+    servers: dict[str, dict[str, Any]] = {}
+    for mcp in mcp_servers:
+        entry: dict[str, Any] = {}
+
+        # Add transport: either url or command
+        if mcp.url:
+            entry["url"] = mcp.url
+        elif mcp.command:
+            entry["command"] = mcp.command
+            if mcp.args:
+                entry["args"] = mcp.args
+
+        # Add environment variables
+        if mcp.env:
+            entry["env"] = dict(mcp.env)
+
+        # Resolve auth token from environment variable if specified
+        if mcp.auth_token_env:
+            token = os.environ.get(mcp.auth_token_env)
+            if token:
+                entry.setdefault("env", {})["AUTH_TOKEN"] = token
+
+        servers[mcp.name] = entry
+
+    return {"mcpServers": servers}
+
+
 # ---------------------------------------------------------------------------
 # OpenHands Agent
 # ---------------------------------------------------------------------------
@@ -587,10 +625,34 @@ class OpenHandsAgent:
                 ),
             ]
 
-            agent = OHAgent(
-                llm=llm,
-                tools=builtin_tools + orchestrator_tools,
-            )
+            # Build MCP config if servers are available
+            mcp_config = _build_openhands_mcp_config(context.mcp_servers)
+
+            # Create agent with MCP config if supported by this SDK version
+            agent_kwargs: dict[str, Any] = {
+                "llm": llm,
+                "tools": builtin_tools + orchestrator_tools,
+            }
+            if mcp_config:
+                agent_kwargs["mcp_config"] = mcp_config
+
+            try:
+                agent = OHAgent(**agent_kwargs)
+            except TypeError as e:
+                if "mcp_config" in str(e):
+                    # Graceful fallback: OpenHands SDK does not support mcp_config
+                    logger.warning(
+                        "OpenHands SDK does not support mcp_config parameter — "
+                        "MCP servers will not be available. Error: %s",
+                        e,
+                    )
+                    # Retry without mcp_config
+                    agent = OHAgent(
+                        llm=llm,
+                        tools=builtin_tools + orchestrator_tools,
+                    )
+                else:
+                    raise
 
             # Build prompt (with verifier flag if on_grade is provided)
             is_verifier = on_grade is not None
