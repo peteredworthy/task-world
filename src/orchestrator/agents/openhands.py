@@ -551,8 +551,23 @@ class OpenHandsAgent:
             # Build Agent with built-in + custom tools.
             from orchestrator.agents.openhands_common import DEFAULT_OPENHANDS_TOOLS
 
-            tool_names = self._tools or DEFAULT_OPENHANDS_TOOLS
-            builtin_tools = [OHTool(name=name) for name in tool_names]
+            # Start with configured or default tools
+            tool_names = list(self._tools or DEFAULT_OPENHANDS_TOOLS)
+
+            # Add step-level tools (additive to defaults)
+            if context.available_tools:
+                for tool_name in context.available_tools:
+                    if tool_name not in tool_names:
+                        tool_names.append(tool_name)
+
+            # Create tool objects with warning for unknown tools
+            logger = logging.getLogger(__name__)
+            builtin_tools: list[Any] = []
+            for name in tool_names:
+                try:
+                    builtin_tools.append(OHTool(name=name))
+                except Exception as e:
+                    logger.warning("Error creating tool '%s': %s — skipping", name, e)
             orchestrator_tools = [
                 OHTool(
                     name="OrcGetRequirementsTool",
