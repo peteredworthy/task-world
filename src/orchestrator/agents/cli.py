@@ -11,10 +11,12 @@ the orchestrator.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from orchestrator.agents.errors import (
@@ -210,6 +212,17 @@ class CLIAgent:
                 tools_section += f"- {tool_name}\n"
             api_section += tools_section
 
+        # Add external MCP server info
+        if context.mcp_servers:
+            mcp_section = "\n\n## External MCP Servers\nThe following external MCP servers are available for this step:\n"
+            for mcp in context.mcp_servers:
+                if mcp.url:
+                    mcp_section += f"- **{mcp.name}**: {mcp.url}\n"
+                elif mcp.command:
+                    cmd_str = f"{mcp.command} {' '.join(mcp.args or [])}"
+                    mcp_section += f"- **{mcp.name}**: (stdio) {cmd_str}\n"
+            api_section += mcp_section
+
         return prompt + api_section
 
     @staticmethod
@@ -278,7 +291,45 @@ class CLIAgent:
                 tools_section += f"- {tool_name}\n"
             api_section += tools_section
 
+        # Add external MCP server info
+        if context.mcp_servers:
+            mcp_section = "\n\n## External MCP Servers\nThe following external MCP servers are available for this step:\n"
+            for mcp in context.mcp_servers:
+                if mcp.url:
+                    mcp_section += f"- **{mcp.name}**: {mcp.url}\n"
+                elif mcp.command:
+                    cmd_str = f"{mcp.command} {' '.join(mcp.args or [])}"
+                    mcp_section += f"- **{mcp.name}**: (stdio) {cmd_str}\n"
+            api_section += mcp_section
+
         return prompt + api_section
+
+    def _write_mcp_json(self, working_dir: str, mcp_servers: list[Any]) -> None:
+        """Write .mcp.json to working dir for Claude Code auto-discovery.
+
+        Args:
+            working_dir: Directory path where .mcp.json will be written.
+            mcp_servers: List of MCPServerConfig objects.
+        """
+        mcp_config: dict[str, Any] = {"mcpServers": {}}
+        for mcp in mcp_servers:
+            server_entry: dict[str, Any] = {}
+            if mcp.url:
+                server_entry["url"] = mcp.url
+            elif mcp.command:
+                server_entry["command"] = mcp.command
+                if mcp.args:
+                    server_entry["args"] = mcp.args
+            if mcp.env:
+                server_entry["env"] = dict(mcp.env)
+            if mcp.auth_token_env:
+                # Pass env var reference, not the actual token
+                server_entry["env"] = server_entry.get("env", {})
+                server_entry["env"][mcp.auth_token_env] = f"${{{mcp.auth_token_env}}}"
+            mcp_config["mcpServers"][mcp.name] = server_entry
+
+        mcp_json_path = Path(working_dir) / ".mcp.json"
+        mcp_json_path.write_text(json.dumps(mcp_config, indent=2))
 
     async def execute(
         self,
@@ -314,6 +365,10 @@ class CLIAgent:
             # Remove CLAUDECODE so that nested `claude` invocations don't
             # refuse to start with "cannot be launched inside another session".
             child_env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+
+            # Write .mcp.json for Claude Code auto-discovery if MCP servers are configured
+            if context.mcp_servers:
+                self._write_mcp_json(context.working_dir, context.mcp_servers)
 
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
