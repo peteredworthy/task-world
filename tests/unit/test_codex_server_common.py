@@ -10,6 +10,7 @@ import pytest
 from orchestrator.agents.codex_server_common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     build_codex_server_prompt,
+    build_dynamic_tool_specs,
     enforce_tool_allowlist,
     fetch_codex_models,
     is_allowed_tool,
@@ -521,3 +522,110 @@ def test_fetch_codex_models_returns_empty_on_subprocess_error(
 
     result = fetch_codex_models()
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# build_dynamic_tool_specs — phase filtering
+# ---------------------------------------------------------------------------
+
+
+def test_builder_no_grade_tool() -> None:
+    """Builder phase (is_verifier=False) excludes the grade tool."""
+    specs = build_dynamic_tool_specs(is_verifier=False)
+    names = {s["name"] for s in specs}
+    assert "grade" not in names
+
+
+def test_verifier_has_grade_tool() -> None:
+    """Verifier phase (is_verifier=True) includes the grade tool."""
+    specs = build_dynamic_tool_specs(is_verifier=True)
+    names = {s["name"] for s in specs}
+    assert "grade" in names
+
+
+def test_common_tools_always_present() -> None:
+    """Common tools are present regardless of phase."""
+    for is_verifier in [True, False]:
+        specs = build_dynamic_tool_specs(is_verifier=is_verifier)
+        names = {s["name"] for s in specs}
+        assert "update_checklist" in names
+        assert "submit" in names
+        assert "request_clarification" in names
+        assert "complete_recovery" in names
+
+
+# ---------------------------------------------------------------------------
+# build_dynamic_tool_specs — step-level tools and unknown tool warnings
+# ---------------------------------------------------------------------------
+
+
+def test_unknown_tool_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Unknown tools in context.available_tools trigger a warning."""
+    ctx = ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt="test",
+        requirements=["R1"],
+        available_tools=["nonexistent_tool"],
+    )
+    with caplog.at_level("WARNING"):
+        build_dynamic_tool_specs(is_verifier=False, context=ctx)
+    assert "nonexistent_tool" in caplog.text
+    assert "Unknown tool" in caplog.text
+
+
+def test_no_context_backward_compat() -> None:
+    """Without context, build_dynamic_tool_specs returns standard tools."""
+    specs = build_dynamic_tool_specs(is_verifier=False, context=None)
+    assert len(specs) > 0
+    names = {s["name"] for s in specs}
+    assert "update_checklist" in names
+
+
+def test_available_tools_none_backward_compat() -> None:
+    """When context.available_tools is None, no warnings are raised."""
+    ctx = ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt="test",
+        requirements=["R1"],
+        available_tools=None,
+    )
+    specs = build_dynamic_tool_specs(is_verifier=False, context=ctx)
+    assert len(specs) > 0
+
+
+def test_empty_available_tools_no_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Empty available_tools list doesn't trigger warnings."""
+    ctx = ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt="test",
+        requirements=["R1"],
+        available_tools=[],
+    )
+    with caplog.at_level("WARNING"):
+        build_dynamic_tool_specs(is_verifier=False, context=ctx)
+    assert "Unknown tool" not in caplog.text
+
+
+def test_known_tool_no_duplicate(caplog: pytest.LogCaptureFixture) -> None:
+    """Existing tools in available_tools don't trigger warnings."""
+    ctx = ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt="test",
+        requirements=["R1"],
+        available_tools=["update_checklist"],  # Already a built-in tool
+    )
+    with caplog.at_level("WARNING"):
+        specs = build_dynamic_tool_specs(is_verifier=False, context=ctx)
+    # Should not warn about update_checklist since it's already in specs
+    assert "Unknown tool" not in caplog.text or "update_checklist" not in caplog.text
+    # And it should still be in the specs (no duplication)
+    names = {s["name"] for s in specs}
+    assert "update_checklist" in names

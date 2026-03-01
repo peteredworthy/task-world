@@ -432,12 +432,31 @@ class CodexServerAgent:
             thread_params: dict[str, Any] = {
                 "cwd": context.working_dir,
                 "approvalPolicy": "never",
-                "dynamicTools": build_dynamic_tool_specs(is_verifier=is_verifier),
+                "dynamicTools": build_dynamic_tool_specs(
+                    is_verifier=is_verifier,
+                    context=context,
+                ),
             }
             if sandbox_mode is not None:
                 thread_params["sandbox"] = sandbox_mode
             if model:
                 thread_params["model"] = model
+
+            # Add external MCP servers to thread params
+            if context.mcp_servers:
+                mcp_configs: list[dict[str, Any]] = []
+                for mcp in context.mcp_servers:
+                    mcp_entry: dict[str, Any] = {"name": mcp.name}
+                    if mcp.url:
+                        mcp_entry["url"] = mcp.url
+                    elif mcp.command:
+                        mcp_entry["command"] = mcp.command
+                        if mcp.args:
+                            mcp_entry["args"] = mcp.args
+                    if mcp.env:
+                        mcp_entry["env"] = mcp.env
+                    mcp_configs.append(mcp_entry)
+                thread_params["mcpServers"] = mcp_configs
 
             thread_resp = await _send_and_wait("thread/start", thread_params)
             if "error" in thread_resp:

@@ -170,7 +170,10 @@ def build_dynamic_tool_call_response(req_id: int, success: bool = True) -> dict[
     }
 
 
-def build_dynamic_tool_specs(is_verifier: bool = False) -> list[dict[str, Any]]:
+def build_dynamic_tool_specs(
+    is_verifier: bool = False,
+    context: ExecutionContext | None = None,
+) -> list[dict[str, Any]]:
     """Return the ``dynamicTools`` list for ``thread/start`` params.
 
     These are the v1 orchestrator callback tools registered with the
@@ -181,6 +184,8 @@ def build_dynamic_tool_specs(is_verifier: bool = False) -> list[dict[str, Any]]:
     Args:
         is_verifier: If ``True``, include the ``grade`` tool (verifier phase).
             If ``False`` (default), exclude the ``grade`` tool (builder phase).
+        context: Optional execution context for step-level tool specs from
+            available_tools. Unknown tools are logged as warnings and skipped.
 
     Returns:
         List of tool spec dicts suitable for ``thread/start.dynamicTools``.
@@ -263,6 +268,18 @@ def build_dynamic_tool_specs(is_verifier: bool = False) -> list[dict[str, Any]]:
             },
         }
         specs.append(grade_spec)
+
+    # Add step-level tools from context.available_tools
+    if context and context.available_tools:
+        existing_names = {s["name"] for s in specs}
+        for tool_name in context.available_tools:
+            if tool_name in existing_names:
+                continue
+            # Log warning for unknown tools (Codex Server has no additional built-in tool registry)
+            logger.warning(
+                "Unknown tool '%s' in available_tools for Codex Server — skipping",
+                tool_name,
+            )
 
     return specs
 
