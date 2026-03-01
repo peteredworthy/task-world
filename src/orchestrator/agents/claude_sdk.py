@@ -22,6 +22,7 @@ Test injection:
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -313,7 +314,7 @@ def _build_tool_list(
     Returns:
         List of tool schema dicts, starting with phase tools plus any known additional tools.
     """
-    base_tools = list(_VERIFIER_TOOLS if is_verifier else _BUILDER_TOOLS)
+    base_tools = copy.deepcopy(_VERIFIER_TOOLS if is_verifier else _BUILDER_TOOLS)
 
     if not available_tools:
         return base_tools
