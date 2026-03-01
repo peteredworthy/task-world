@@ -149,6 +149,30 @@ class DryRunConfig(BaseModel):
     report_path: str
 
 
+class MCPServerConfig(BaseModel):
+    """Configuration for an external MCP server available during a step."""
+
+    name: str
+    url: str | None = None
+    command: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+    auth_token_env: str | None = None
+    timeout_seconds: int = 30
+
+    @model_validator(mode="after")
+    def _validate_transport(self) -> "MCPServerConfig":
+        has_url = self.url is not None
+        has_cmd = self.command is not None
+        if has_url and has_cmd:
+            raise ValueError(
+                "MCPServerConfig must have exactly one of 'url' or 'command', not both"
+            )
+        if not has_url and not has_cmd:
+            raise ValueError("MCPServerConfig must have exactly one of 'url' or 'command'")
+        return self
+
+
 class StepConfig(BaseModel):
     """A step within a routine."""
 
@@ -160,6 +184,8 @@ class StepConfig(BaseModel):
     transitions: StepTransitions | None = None
     type: StepType = StepType.STANDARD
     dry_run: DryRunConfig | None = None
+    available_tools: list[str] | None = None
+    mcp_servers: list[MCPServerConfig] | None = None
 
     @model_validator(mode="before")
     @classmethod
