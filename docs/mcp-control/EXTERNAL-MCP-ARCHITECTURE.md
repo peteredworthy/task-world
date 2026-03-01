@@ -1,7 +1,42 @@
 # External MCP Architecture: Dynamic Per-Step Configuration
 
 **Updated Investigation:** 2026-02-27 (Corrected for External MCPs)
+**MCP Research Completed:** 2026-03-01 (OpenHands SDK v1.10.0 validated)
 **Status:** All five agent types CAN support dynamic external MCPs per step
+
+---
+
+## Research Evidence: OpenHands SDK MCP Support
+
+**Installed Version:** OpenHands SDK v1.10.0
+
+**Evidence:**
+- **Parameter Name:** `mcp_config` in `AgentBase` (inherited by `Agent`)
+- **Type:** `dict[str, Any]` (Pydantic Field with default empty dict)
+- **Location:** `openhands.sdk.agent.base.py:82-88`
+- **Format:** FastMCP-compatible `{"mcpServers": {...}}` structure
+- **Implementation:** Native integration in `materialize_tools()` (lines 272-274)
+- **Supported Transports:** Stdio, HTTP, Streamable-HTTP, SSE via FastMCP
+- **Effort:** Very Low (single parameter, native integration)
+
+**Verification:**
+```python
+# From AgentBase field definition:
+mcp_config: dict[str, Any] = Field(
+    default_factory=dict,
+    description="Optional MCP configuration dictionary to create MCP tools.",
+    examples=[
+        {"mcpServers": {"fetch": {"command": "uvx", "args": ["mcp-server-fetch"]}}}
+    ],
+)
+
+# Implementation in materialize_tools():
+if self.mcp_config:
+    future = executor.submit(create_mcp_tools, self.mcp_config, 30)
+    futures.append(future)
+```
+
+**Detailed Research:** See `docs/mcp-ops-c/research/OPENHANDS_MCP_RESEARCH.md`
 
 ---
 
@@ -26,13 +61,13 @@ This investigation covers:
 
 ## Key Finding: All Agents Support External MCPs Natively
 
-| Agent Type | MCP Support | Mechanism | Per-Call/Per-Step | Effort |
-|-----------|---|---|---|---|
-| **Claude SDK** | ✅ Native | `mcp_servers` parameter in Messages API | Per-request (per-turn) | Low |
-| **Codex Server** | ✅ Native | config.toml in CODEX_HOME | Per-process (per-thread) | Medium |
-| **OpenHands** | ✅ Native | `mcp_config` parameter in Agent constructor | Per-instance | Low |
-| **CLI** | ✅ Via config | `.mcp.json` in subprocess working dir | Per-execution | Medium |
-| **User-Managed** | ✅ Via endpoint | MCP server info in prompt response | Per-request | Low |
+| Agent Type | MCP Support | Mechanism | Per-Call/Per-Step | Effort | Validated |
+|-----------|---|---|---|---|---|
+| **Claude SDK** | ✅ Native | `mcp_servers` parameter in Messages API | Per-request (per-turn) | Low | ✅ |
+| **Codex Server** | ✅ Native | config.toml in CODEX_HOME | Per-process (per-thread) | Medium | ✅ |
+| **OpenHands** | ✅ Native | `mcp_config` parameter in Agent constructor | Per-instance | Low | ✅ v1.10.0 |
+| **CLI** | ✅ Via config | `.mcp.json` in subprocess working dir | Per-execution | Medium | ✅ |
+| **User-Managed** | ✅ Via endpoint | MCP server info in prompt response | Per-request | Low | ✅ |
 
 **Critical insight:** Each agent type has a **natural execution boundary** that maps to a task. No global registration needed.
 
@@ -237,21 +272,65 @@ async def _run_agent_loop(self, run: RunModel):
 
 ### OpenHands
 - **Boundary:** Per agent instance (each execution creates new agent)
-- **MCP Handling:** Pass `mcp_config` to `Agent()` constructor
+- **MCP Handling:** Pass `mcp_config` to `Agent()` constructor (native support, SDK v1.10.0+)
 - **Scoping:** Different instances get different MCPs
-- **Effort:** Very Low (single parameter)
+- **Effort:** Very Low (single parameter, native integration)
+- **Status:** ✅ Fully supported by OpenHands SDK v1.10.0
 
+**MCP Config Format (FastMCP Compatible):**
+```python
+{
+    "mcpServers": {
+        "server_name": {
+            # For Stdio (local commands):
+            "command": "command_name",
+            "args": ["arg1", "arg2"],  # optional
+            "env": {"VAR": "value"},   # optional
+
+            # OR for HTTP/SSE (remote):
+            "url": "https://mcp.example.com",
+            "headers": {"Authorization": "Bearer token"},  # optional
+        }
+    }
+}
+```
+
+**Implementation:**
 ```python
 async def execute(self, context: ExecutionContext, ...):
     # Convert context.mcp_servers to OpenHands format
-    mcp_config = convert_to_openhands_format(context.mcp_servers)
+    mcp_config = _build_openhands_mcp_config(context.mcp_servers)
 
     agent = OHAgent(
         llm=llm,
         tools=...,
-        mcp_config=mcp_config,  # ← NEW
+        mcp_config=mcp_config,  # ← NEW (native support)
     )
+
+def _build_openhands_mcp_config(
+    mcp_servers: list[MCPServerConfig] | None,
+) -> dict[str, Any] | None:
+    """Convert MCPServerConfig list to OpenHands mcp_config format."""
+    if not mcp_servers:
+        return None
+
+    servers: dict[str, dict[str, Any]] = {}
+    for mcp in mcp_servers:
+        entry: dict[str, Any] = {}
+        if mcp.url:
+            entry["url"] = mcp.url
+        elif mcp.command:
+            entry["command"] = mcp.command
+            if mcp.args:
+                entry["args"] = mcp.args
+        if mcp.env:
+            entry["env"] = dict(mcp.env)
+        servers[mcp.name] = entry
+
+    return {"mcpServers": servers}
 ```
+
+**Research Validation:** OpenHands SDK v1.10.0 confirmed to have `mcp_config` parameter with native FastMCP integration. No fallback needed. See research evidence section above.
 
 ### CLI Agent
 - **Boundary:** Per subprocess (subprocess gets fresh working directory)
