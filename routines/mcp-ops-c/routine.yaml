@@ -1,0 +1,862 @@
+id: "mcp-ops-c"
+name: "MCP Operations — Per-Step Tool & External MCP Configuration"
+description: |
+  Implement step-level tool availability and external MCP server support
+  across all five agent types in a phased approach. Each phase delivers a
+  runnable system with passing tests. Front-loads schema changes and context
+  plumbing, then implements agent-specific filtering, and finishes with
+  integration tests and final validation.
+
+  Implementation priority: CLI and Claude SDK first, then Codex Server,
+  OpenHands, and User-Managed.
+
+steps:
+  # ── Milestone 1: Schema & Context Foundation ──────────────────────────
+
+  - id: "S-01"
+    title: "MCPServerConfig Model + StepConfig Extension"
+    step_context: |
+      Add the MCPServerConfig Pydantic model and extend StepConfig with
+      available_tools and mcp_servers fields. This is the data model
+      foundation — all downstream steps depend on these schema changes.
+      Existing routines must continue to parse unchanged (both new fields
+      default to None).
+    tasks:
+      - id: "T-01"
+        title: "Define MCPServerConfig Model"
+        task_context: |
+          Create the MCPServerConfig Pydantic model in src/orchestrator/config/models.py.
+          This model represents an external MCP server configured per-step in routine YAML.
+          It supports two transport types (HTTP via url or STDIO via command) and must
+          validate that exactly one is set via a model_validator.
+
+          Fields: name (required str), url (optional str), command (optional str),
+          args (optional list[str]), env (optional dict[str,str]), auth_token_env
+          (optional str — env var NAME, never inline token), timeout_seconds (int, default 30).
+
+          Place the class before StepConfig in the file since StepConfig will reference it.
+
+          Reference: docs/mcp-ops-c/steps/step-01.md (Task 1) and
+          docs/mcp-ops-c/architecture.md for the full specification.
+        requirements:
+          - id: "R1"
+            desc: "MCPServerConfig model created with url/command dual transport validation"
+            priority: critical
+          - id: "R2"
+            desc: "Transport validator rejects both-set and neither-set cases"
+            priority: critical
+          - id: "R3"
+            desc: "auth_token_env stores env var name reference, not inline token"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "model_importable"
+              cmd: "uv run python -c \"from orchestrator.config.models import MCPServerConfig; c = MCPServerConfig(name='test', url='https://x.com'); print(c.model_dump())\""
+              must: true
+            - id: "dual_transport_rejected"
+              cmd: "uv run python -c \"from orchestrator.config.models import MCPServerConfig; MCPServerConfig(name='bad', url='x', command='y')\" 2>&1 | grep -q 'exactly one'"
+              must: true
+        verifier:
+          rubric:
+            - id: "model_quality"
+              text: |
+                R1-R3 — A: MCPServerConfig uses Pydantic model_validator to enforce exactly
+                one of url/command. All fields have correct types and defaults. auth_token_env
+                accepts a string env var name. B: Model works but validation is incomplete or
+                field types are imprecise.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Extend StepConfig with available_tools and mcp_servers"
+        task_context: |
+          Add two optional fields to the StepConfig class in src/orchestrator/config/models.py:
+          - available_tools: list[str] | None = None
+          - mcp_servers: list[MCPServerConfig] | None = None
+
+          Both must default to None for backward compatibility. Place them after the
+          existing dry_run field. Do not modify any existing fields.
+
+          Reference: docs/mcp-ops-c/steps/step-01.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "StepConfig has available_tools and mcp_servers optional fields"
+            priority: critical
+          - id: "R2"
+            desc: "Existing routines without new fields parse unchanged"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "backward_compat"
+              cmd: "uv run pytest tests/ -x --timeout=30 -q 2>&1 | tail -5"
+              must: true
+        verifier:
+          rubric:
+            - id: "extension_quality"
+              text: |
+                R1/R2 — A: Both fields added with correct types, defaulting to None.
+                Existing test suite passes unchanged. B: Fields exist but types are
+                slightly off or a test had to be modified for compatibility.
+
+      - id: "T-03"
+        title: "Write Unit Tests for MCPServerConfig and StepConfig Extension"
+        task_context: |
+          Create tests/unit/test_mcp_server_config.py with tests for:
+          - URL transport valid construction
+          - Command/STDIO transport valid construction
+          - Both transports rejected (ValidationError)
+          - Neither transport rejected (ValidationError)
+          - timeout_seconds default (30)
+          - auth_token_env accepts string
+          - env vars dict
+          - StepConfig backward compat (no new fields -> None)
+          - StepConfig with available_tools parsed
+          - StepConfig with mcp_servers parsed
+
+          Reference: docs/mcp-ops-c/steps/step-01.md (Task 3) for exact test code.
+        requirements:
+          - id: "R1"
+            desc: "Unit tests cover MCPServerConfig validation and StepConfig extension"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/unit/test_mcp_server_config.py -v 2>&1 | tail -15"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: "S-02"
+    title: "ExecutionContext Extension + Executor Wiring"
+    step_context: |
+      Extend ExecutionContext to carry step-level tool and MCP information,
+      and update the executor to populate these fields from StepConfig.
+      This connects the schema layer (Step 1) to the agent layer (Steps 3-7).
+    tasks:
+      - id: "T-01"
+        title: "Extend ExecutionContext with Step-Level Fields"
+        task_context: |
+          Add three new optional fields to ExecutionContext in
+          src/orchestrator/agents/types.py:
+          - step_id: str | None = None
+          - available_tools: list[str] | None = None
+          - mcp_servers: list[MCPServerConfig] | None = None
+
+          Import MCPServerConfig from orchestrator.config.models.
+          All fields must default to None for backward compatibility.
+
+          Reference: docs/mcp-ops-c/steps/step-02.md (Task 1).
+        requirements:
+          - id: "R1"
+            desc: "ExecutionContext has step_id, available_tools, mcp_servers fields"
+            priority: critical
+          - id: "R2"
+            desc: "New fields default to None for backward compatibility"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "context_fields"
+              cmd: "uv run python -c \"from orchestrator.agents.types import ExecutionContext; c = ExecutionContext(run_id='r', task_id='t', working_dir='/tmp', prompt='p', requirements=[]); print(c.step_id, c.available_tools, c.mcp_servers)\""
+              must: true
+        verifier:
+          rubric:
+            - id: "context_quality"
+              text: |
+                R1/R2 — A: All three fields added with correct types, default to None,
+                and all existing tests pass. B: Fields exist but type annotations or
+                defaults are slightly off.
+
+      - id: "T-02"
+        title: "Update Executor to Populate Step-Level Context"
+        task_context: |
+          Update the executor's ExecutionContext creation in
+          src/orchestrator/agents/executor.py to read step config and
+          populate the new fields. The current step config is accessible via
+          run.routine.steps[run.current_step_index].
+
+          Add step_id, available_tools, and mcp_servers to the
+          ExecutionContext(...) construction call. Check if there is a
+          separate verifier context creation path and apply the same changes.
+
+          Reference: docs/mcp-ops-c/steps/step-02.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "Executor populates step_id, available_tools, mcp_servers from step config"
+            priority: critical
+          - id: "R2"
+            desc: "Both builder and verifier context paths are updated"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/ -x --timeout=30 -q 2>&1 | tail -5"
+              must: true
+        verifier:
+          rubric:
+            - id: "wiring_quality"
+              text: |
+                R1/R2 — A: Both builder and verifier context creation paths populate
+                all three fields from step config. When step has no tools/MCP, context
+                fields are None. B: One path updated but the other missed.
+
+      - id: "T-03"
+        title: "Write Unit Tests for ExecutionContext Extension"
+        task_context: |
+          Write tests confirming that ExecutionContext accepts the new fields
+          and that values are correctly accessible. Create
+          tests/unit/test_execution_context_extension.py with tests for:
+          - Defaults to None when not provided
+          - step_id populated when set
+          - available_tools populated when set
+          - mcp_servers populated when set
+
+          Reference: docs/mcp-ops-c/steps/step-02.md (Task 3) for exact test code.
+        requirements:
+          - id: "R1"
+            desc: "Unit tests cover ExecutionContext new fields"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/unit/test_execution_context_extension.py -v 2>&1 | tail -10"
+              must: true
+        retry:
+          max_attempts: 2
+
+  # ── Milestone 2: Agent Tool Filtering ─────────────────────────────────
+
+  - id: "S-03"
+    title: "CLI Agent Tool Hints + MCP Info in Prompt"
+    step_context: |
+      Enable the CLI agent to communicate step-level tool availability and
+      external MCP server information to its subprocess. Since CLI agents
+      operate as opaque subprocesses, tool control is text-based — hints
+      and MCP configuration are included in the enriched prompt. Priority 1.
+    tasks:
+      - id: "T-01"
+        title: "Add Step-Level Tool Hints to CLI Prompt"
+        task_context: |
+          Update CLIAgent.build_prompt() in src/orchestrator/agents/cli.py
+          to include a "Step Tools" section listing available tool names when
+          context.available_tools is set. When None or empty, no section added.
+
+          Reference: docs/mcp-ops-c/steps/step-03.md (Task 1).
+        requirements:
+          - id: "R1"
+            desc: "CLI prompt includes available tool names when configured"
+            priority: critical
+          - id: "R2"
+            desc: "Prompt unchanged when available_tools is None"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "tool_hints"
+              text: |
+                R1/R2 — A: build_prompt() conditionally adds a Step Tools section
+                with tool names. When None/empty, no section. B: Section always
+                present or tool names formatted incorrectly.
+
+      - id: "T-02"
+        title: "Add MCP Server Info to CLI Prompt and .mcp.json"
+        task_context: |
+          When context.mcp_servers is set, include MCP server connection info in
+          the CLI prompt and write a .mcp.json file to the subprocess working
+          directory for Claude Code auto-discovery.
+
+          Auth tokens must NEVER appear in prompt text or .mcp.json — only env var
+          references. The .mcp.json format uses {"mcpServers": {...}} structure.
+
+          Reference: docs/mcp-ops-c/steps/step-03.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "MCP server info included in prompt when configured"
+            priority: critical
+          - id: "R2"
+            desc: ".mcp.json written to working directory with correct format"
+            priority: critical
+          - id: "R3"
+            desc: "Auth tokens never appear in prompt text — only env var references"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "mcp_info"
+              text: |
+                R1-R3 — A: Prompt has MCP section, .mcp.json written with correct format,
+                and auth tokens are env var references only. B: Mostly correct but auth
+                token handling has a minor leak or .mcp.json format is slightly off.
+
+      - id: "T-03"
+        title: "Write Unit Tests for CLI Tool Hints and MCP Info"
+        task_context: |
+          Create tests/unit/test_cli_tool_hints.py with tests for:
+          - available_tools in prompt when set
+          - No tool section when None or empty
+          - MCP server info in prompt
+          - No MCP section when None
+          - Auth token not in prompt text
+
+          Reference: docs/mcp-ops-c/steps/step-03.md (Task 3) for exact test code.
+        requirements:
+          - id: "R1"
+            desc: "Unit tests cover CLI tool hints and MCP info"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/unit/test_cli_tool_hints.py -v 2>&1 | tail -10"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: "S-04"
+    title: "Claude SDK Tool Filtering + MCP Wiring"
+    step_context: |
+      Enable the Claude SDK agent to respect step-level available_tools by
+      additively filtering its tool list, and wire external MCP servers via
+      the MCP Connector beta API. Priority 1 alongside CLI.
+    tasks:
+      - id: "T-01"
+        title: "Implement Additive Tool Filtering in Claude SDK Agent"
+        task_context: |
+          Update the Claude SDK agent's tool construction in
+          src/orchestrator/agents/claude_sdk.py. Create a _build_tool_list()
+          helper that builds phase tools + additive step tools. Phase tools
+          (_BUILDER_TOOLS, _VERIFIER_TOOLS) remain the baseline; step tools
+          expand the available set. Unknown tool names are logged as warnings
+          and skipped.
+
+          Reference: docs/mcp-ops-c/steps/step-04.md (Task 1).
+        requirements:
+          - id: "R1"
+            desc: "Step-level tools are additive to phase tools"
+            priority: critical
+          - id: "R2"
+            desc: "Phase tools always included regardless of available_tools"
+            priority: critical
+          - id: "R3"
+            desc: "Unknown tool names produce warning, not error"
+            priority: expected
+        verifier:
+          rubric:
+            - id: "filtering_quality"
+              text: |
+                R1-R3 — A: _build_tool_list() correctly adds step tools to phase tools.
+                Builders don't get grade, verifiers get grade. Unknown tools produce
+                warnings. B: Filtering works but edge cases (empty list, duplicate names)
+                not handled.
+
+      - id: "T-02"
+        title: "Implement MCP Connector Beta Wiring"
+        task_context: |
+          When context.mcp_servers is set, convert MCPServerConfig list to the
+          format expected by the MCP Connector beta API. Use
+          client.beta.messages.create() with mcp_servers parameter and
+          mcp-client-2025-11-20 beta header. STDIO-transport servers are
+          filtered out with a warning (only remote HTTPS URLs supported).
+          Auth tokens resolved from env vars at runtime.
+
+          Reference: docs/mcp-ops-c/steps/step-04.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "MCP Connector beta API used with correct headers when MCP servers present"
+            priority: critical
+          - id: "R2"
+            desc: "STDIO-transport MCPs filtered out with warning"
+            priority: expected
+          - id: "R3"
+            desc: "Backward compatible — standard API used when no MCP servers"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "mcp_wiring"
+              text: |
+                R1-R3 — A: Beta API called with mcp_servers param and correct header.
+                STDIO servers filtered with warning. Standard API when no MCPs.
+                B: Works but header is wrong or STDIO handling missing.
+
+      - id: "T-03"
+        title: "Write Unit Tests for Claude SDK Tool Filtering and MCP Wiring"
+        task_context: |
+          Create tests/unit/test_claude_sdk_tool_filtering.py with tests for:
+          - Builder tools when available_tools=None
+          - Verifier tools when available_tools=None
+          - Unknown tool name produces warning
+          - Phase tools always included
+          - HTTPS MCP server included in params
+          - STDIO MCP server skipped with warning
+          - None returns empty params
+          - Auth token resolved from env
+
+          Reference: docs/mcp-ops-c/steps/step-04.md (Task 3) for exact test code.
+        requirements:
+          - id: "R1"
+            desc: "Unit tests cover tool filtering and MCP parameter construction"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/unit/test_claude_sdk_tool_filtering.py -v 2>&1 | tail -15"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: "S-05"
+    title: "Codex Server Phase Filtering + Context Filtering + MCP Wiring"
+    step_context: |
+      Fix Codex Server's phase filtering (builders currently see the grade
+      tool) and add step-level tool filtering and external MCP wiring. Codex
+      Server uses dynamicTools for both orchestrator callback tools and
+      external MCP configuration. Priority 2.
+    tasks:
+      - id: "T-01"
+        title: "Add Phase Filtering to build_dynamic_tool_specs()"
+        task_context: |
+          Add an is_verifier parameter to build_dynamic_tool_specs() in
+          src/orchestrator/agents/codex_server_common.py. When is_verifier=False,
+          exclude the grade tool from returned specs. Update all callers in
+          codex_server.py to pass the is_verifier parameter.
+
+          Reference: docs/mcp-ops-c/steps/step-05.md (Task 1).
+        requirements:
+          - id: "R1"
+            desc: "Builders don't see grade tool in dynamic specs"
+            priority: critical
+          - id: "R2"
+            desc: "Verifiers get grade tool in dynamic specs"
+            priority: critical
+          - id: "R3"
+            desc: "Default is_verifier=False maintains backward compatibility"
+            priority: expected
+        verifier:
+          rubric:
+            - id: "phase_filtering"
+              text: |
+                R1-R3 — A: build_dynamic_tool_specs() correctly excludes grade for
+                builders and includes it for verifiers. Default is False. All callers
+                updated. B: Filtering works but one caller missed or default is wrong.
+
+      - id: "T-02"
+        title: "Add Step-Level Tool Filtering and MCP Wiring to dynamicTools"
+        task_context: |
+          Extend build_dynamic_tool_specs() to accept context and add step-level
+          tools from available_tools. Wire mcp_servers config into the dynamicTools
+          payload during thread creation in codex_server.py. MCP config goes in
+          thread_params["mcpServers"], separate from dynamicTools.
+
+          Reference: docs/mcp-ops-c/steps/step-05.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "Step-level tools logged with warning when unknown"
+            priority: expected
+          - id: "R2"
+            desc: "MCP server entries appear in thread params when configured"
+            priority: critical
+          - id: "R3"
+            desc: "No mcpServers key when mcp_servers is None"
+            priority: expected
+        verifier:
+          rubric:
+            - id: "mcp_wiring"
+              text: |
+                R1-R3 — A: Unknown tools produce warnings. MCP config in thread params
+                with correct format. No MCP key when None. B: Mostly correct but format
+                or key naming slightly off.
+
+      - id: "T-03"
+        title: "Write Unit Tests for Codex Server Filtering and MCP Wiring"
+        task_context: |
+          Create tests/unit/test_codex_server_tool_filtering.py with tests for:
+          - Builder has no grade tool
+          - Verifier has grade tool
+          - Common tools always present
+          - Unknown tool name produces warning
+          - No context backward compat
+
+          Reference: docs/mcp-ops-c/steps/step-05.md (Task 3) for exact test code.
+        requirements:
+          - id: "R1"
+            desc: "Unit tests cover phase filtering, step tools, and MCP wiring"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/unit/test_codex_server_tool_filtering.py -v 2>&1 | tail -15"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: "S-06"
+    title: "OpenHands Tool Filtering + MCP Wiring"
+    step_context: |
+      Enable the OpenHands agent to respect step-level available_tools for
+      built-in tool selection and wire external MCP servers via OpenHands'
+      native mcp_config parameter. Includes research into OpenHands SDK MCP
+      support per Clarification Q3. Priority 3.
+    tasks:
+      - id: "T-01"
+        title: "Research OpenHands SDK MCP Support"
+        task_context: |
+          Investigate whether the installed OpenHands SDK version supports the
+          mcp_config parameter on the Agent() constructor. Check the installed
+          version, inspect the Agent class constructor signature, and search for
+          mcp_config in the SDK source.
+
+          Document findings: does Agent() accept mcp_config? What format? What
+          transports? If not supported, plan the fallback approach (prompt-based
+          MCP info, similar to CLI).
+
+          Reference: docs/mcp-ops-c/steps/step-06.md (Task 1).
+        requirements:
+          - id: "R1"
+            desc: "Research findings documented with clear conclusion"
+            priority: critical
+          - id: "R2"
+            desc: "Wiring approach decided (native mcp_config vs fallback)"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "research_quality"
+              text: |
+                R1/R2 — A: Clear documentation of SDK capabilities with specific version
+                numbers and parameter names. Decision on approach with justification.
+                B: Research done but conclusions are vague or approach not decided.
+
+      - id: "T-02"
+        title: "Implement Step-Level Tool Filtering in OpenHands Agent"
+        task_context: |
+          Update the OpenHands agent in src/orchestrator/agents/openhands.py to add
+          step-level tools from context.available_tools at Agent() construction time.
+          Default tools (terminal, file_editor) are always included; step tools are
+          additive. Unknown tool names should warn but not crash.
+
+          Reference: docs/mcp-ops-c/steps/step-06.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "Step-level tools additive to default tools"
+            priority: critical
+          - id: "R2"
+            desc: "Default tools always included"
+            priority: critical
+          - id: "R3"
+            desc: "Unknown tool names produce warning, not crash"
+            priority: expected
+        verifier:
+          rubric:
+            - id: "filtering_quality"
+              text: |
+                R1-R3 — A: Tool list correctly expanded with step tools. Defaults always
+                present. Unknown tools produce warning. B: Works but error handling for
+                unknown tools is incomplete.
+
+      - id: "T-03"
+        title: "Implement MCP Config Passthrough to OpenHands Agent"
+        task_context: |
+          Convert MCPServerConfig list to OpenHands mcp_config dict format
+          ({"mcpServers": {...}}) and pass to Agent() constructor. Add graceful
+          fallback if the mcp_config parameter is not supported (TypeError handling).
+          Auth tokens resolved from env vars.
+
+          Reference: docs/mcp-ops-c/steps/step-06.md (Task 3).
+        requirements:
+          - id: "R1"
+            desc: "MCPServerConfig converted to OpenHands mcp_config format"
+            priority: critical
+          - id: "R2"
+            desc: "Graceful fallback when mcp_config parameter not supported"
+            priority: critical
+          - id: "R3"
+            desc: "Auth tokens resolved from env vars, never hardcoded"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "mcp_quality"
+              text: |
+                R1-R3 — A: Conversion function produces correct format. TypeError caught
+                gracefully with warning. Auth tokens from env vars. B: Conversion works
+                but fallback handling or auth token handling is incomplete.
+
+      - id: "T-04"
+        title: "Write Unit Tests for OpenHands Tool Filtering and MCP Wiring"
+        task_context: |
+          Create tests/unit/test_openhands_tool_filtering.py with tests for:
+          - URL transport conversion
+          - STDIO transport conversion
+          - None returns None
+          - Multiple servers in config
+
+          Reference: docs/mcp-ops-c/steps/step-06.md (Task 4) for exact test code.
+        requirements:
+          - id: "R1"
+            desc: "Unit tests cover tool filtering and MCP config conversion"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/unit/test_openhands_tool_filtering.py -v 2>&1 | tail -10"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: "S-07"
+    title: "User-Managed MCP All-Tools + MCP Info in Prompt Response"
+    step_context: |
+      Update the User-Managed MCP server to register all tools (removing
+      phase-based filtering at registration), and extend the prompt response
+      and CallbackInstructions to include MCP server information. Priority 3.
+    tasks:
+      - id: "T-01"
+        title: "Register All Tools in MCP Server"
+        task_context: |
+          Update _register_tools() in src/orchestrator/mcp/server.py to register
+          all orchestrator tools unconditionally, removing the phase-based filtering
+          at registration time. Runtime validation continues to prevent
+          phase-inappropriate calls.
+
+          Reference: docs/mcp-ops-c/steps/step-07.md (Task 1).
+        requirements:
+          - id: "R1"
+            desc: "MCP server registers both builder and verifier tools at startup"
+            priority: critical
+          - id: "R2"
+            desc: "Runtime validation still rejects phase-inappropriate tool calls"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "all_tools"
+              text: |
+                R1/R2 — A: All tools registered unconditionally. Builder calling grade
+                still gets runtime error. All tools visible in listing. B: Tools registered
+                but runtime validation broken or partially working.
+
+      - id: "T-02"
+        title: "Extend CallbackInstructions with mcp_servers Field"
+        task_context: |
+          Add an optional mcp_servers field to CallbackInstructions in
+          src/orchestrator/api/schemas/tasks.py. Import MCPServerConfig from
+          orchestrator.config.models. Field must default to None.
+
+          Reference: docs/mcp-ops-c/steps/step-07.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "CallbackInstructions has optional mcp_servers field"
+            priority: critical
+          - id: "R2"
+            desc: "JSON serialization includes mcp_servers when set"
+            priority: expected
+        verifier:
+          rubric:
+            - id: "schema_quality"
+              text: |
+                R1/R2 — A: Field added with correct type, defaults to None, serializes
+                correctly in JSON. B: Field exists but serialization doesn't include
+                MCPServerConfig details.
+
+      - id: "T-03"
+        title: "Populate mcp_servers in Prompt Response Endpoint"
+        task_context: |
+          Update the prompt response endpoint in src/orchestrator/api/routers/tasks.py
+          to include mcp_servers from the step config when building CallbackInstructions.
+          Extract mcp_servers from step_config and pass to _build_callback_instructions().
+
+          Reference: docs/mcp-ops-c/steps/step-07.md (Task 3).
+        requirements:
+          - id: "R1"
+            desc: "Prompt response includes MCP server list in callback instructions"
+            priority: critical
+          - id: "R2"
+            desc: "Backward compatible when step has no mcp_servers"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "endpoint_quality"
+              text: |
+                R1/R2 — A: Prompt endpoint correctly extracts mcp_servers from step config
+                and includes in response. None when no MCP servers. B: Works but step index
+                lookup is fragile or error handling missing.
+
+      - id: "T-04"
+        title: "Write Unit Tests for All-Tools Registration and MCP Info"
+        task_context: |
+          Create tests/unit/test_mcp_server_all_tools.py with tests for:
+          - CallbackInstructions mcp_servers field optional (defaults None)
+          - CallbackInstructions mcp_servers field populated
+          - JSON serialization includes mcp_servers
+
+          Reference: docs/mcp-ops-c/steps/step-07.md (Task 4) for exact test code.
+        requirements:
+          - id: "R1"
+            desc: "Unit tests cover all-tools registration and MCP info in prompt"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "tests_pass"
+              cmd: "uv run pytest tests/unit/test_mcp_server_all_tools.py -v 2>&1 | tail -10"
+              must: true
+        retry:
+          max_attempts: 2
+
+  # ── Milestone 3: Integration & Polish ─────────────────────────────────
+
+  - id: "S-08"
+    title: "Integration Tests + Example Routines"
+    step_context: |
+      Validate end-to-end step-level tool and MCP configuration across the
+      full system. Create integration tests and example routines demonstrating
+      the new features. Confirms all prior work integrates correctly.
+    tasks:
+      - id: "T-01"
+        title: "Create Integration Tests for Step-Level Tool Control"
+        task_context: |
+          Create tests/integration/test_step_tool_control.py with test cases that
+          exercise the complete data flow from routine YAML through executor to
+          context. Tests should cover:
+          - Step with available_tools parsed correctly
+          - Step without available_tools defaults to None
+          - Different steps with different tools
+          - Step with mcp_servers parsed correctly
+          - Different steps with different MCPs
+          - Backward compatibility (no new fields)
+          - Mixed steps (some with tools, some without)
+          - Phase and step interaction (additive concept)
+
+          Reference: docs/mcp-ops-c/steps/step-08.md (Task 1) for exact test code.
+        requirements:
+          - id: "R1"
+            desc: "Integration tests cover step-level tools, MCPs, and backward compat"
+            priority: critical
+          - id: "R2"
+            desc: "All existing test suites pass (no regressions)"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "integration_tests_pass"
+              cmd: "uv run pytest tests/integration/test_step_tool_control.py -v 2>&1 | tail -15"
+              must: true
+            - id: "full_suite_pass"
+              cmd: "uv run pytest tests/ -x --timeout=30 -q 2>&1 | tail -5"
+              must: true
+        verifier:
+          rubric:
+            - id: "test_coverage"
+              text: |
+                R1/R2 — A: Integration tests cover all listed scenarios with non-trivial
+                assertions. Full test suite passes. B: Most scenarios covered but one or
+                two missing or assertions too weak.
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Create Example Routine YAML Files"
+        task_context: |
+          Create example routine YAML files in examples/routines/ demonstrating
+          available_tools and mcp_servers usage. Show both URL and command transport
+          types, different tools per step, and steps without new fields for backward
+          compat reference. Verify examples parse without errors.
+
+          Reference: docs/mcp-ops-c/steps/step-08.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "Example routine demonstrates per-step available_tools and mcp_servers"
+            priority: expected
+          - id: "R2"
+            desc: "Example routine parses without errors"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "example_quality"
+              text: |
+                R1/R2 — A: Example shows both transport types, different tools per step,
+                and backward compat. Parses cleanly. B: Example works but only shows one
+                transport type or all steps have same tools.
+
+  - id: "S-09"
+    title: "Final Validation"
+    step_context: |
+      Perform final validation to ensure the entire implementation is correct,
+      all tests pass, code quality checks are clean, and no regressions were
+      introduced. Last gate before the feature is complete.
+    tasks:
+      - id: "T-01"
+        title: "Run Full Test Suite"
+        task_context: |
+          Execute the complete test suite to confirm all tests pass, including
+          new tests from Steps 1-8 and all existing tests. Confirm test count
+          meets or exceeds baseline (330 unit, 235 integration, 221 frontend).
+          Fix any failures.
+
+          Run: uv run pytest tests/ -v --timeout=60
+          Run frontend if UI changed: cd ui && npm run test -- --run
+
+          Reference: docs/mcp-ops-c/steps/step-09.md (Task 1).
+        requirements:
+          - id: "R1"
+            desc: "All backend tests pass"
+            priority: critical
+          - id: "R2"
+            desc: "Test count meets or exceeds baseline"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "backend_tests"
+              cmd: "uv run pytest tests/ --timeout=60 -q 2>&1 | tail -5"
+              must: true
+        verifier:
+          rubric:
+            - id: "test_results"
+              text: |
+                R1/R2 — A: All tests pass with exit code 0. Test count exceeds baseline
+                (new tests from Steps 1-8 included). B: All pass but count is at baseline
+                (no new tests added).
+
+      - id: "T-02"
+        title: "Run Pre-Commit Checks"
+        task_context: |
+          Run all pre-commit hooks to verify code quality, formatting, linting,
+          and type checking. Fix any failures and re-run until clean.
+
+          Run: uv run pre-commit run --all-files
+
+          Reference: docs/mcp-ops-c/steps/step-09.md (Task 2).
+        requirements:
+          - id: "R1"
+            desc: "Pre-commit checks pass cleanly"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "precommit_pass"
+              cmd: "uv run pre-commit run --all-files 2>&1 | tail -10"
+              must: true
+        verifier:
+          rubric:
+            - id: "code_quality"
+              text: |
+                R1 — A: uv run pre-commit run --all-files exits with code 0.
+                B: One or two non-critical warnings but no errors.
+
+      - id: "T-03"
+        title: "Final Review and Verification"
+        task_context: |
+          Perform a final review of all changes:
+          - Review git diff of all changed files
+          - Verify no TODO/FIXME items left in new code
+          - Verify auth tokens never appear in YAML, prompts, or logs
+          - Verify backward compatibility with existing routines
+          - Cross-check with docs/mcp-ops-c/intent.md Definition of Complete
+
+          Reference: docs/mcp-ops-c/steps/step-09.md (Task 3).
+        requirements:
+          - id: "R1"
+            desc: "No unresolved TODOs in new code"
+            priority: expected
+          - id: "R2"
+            desc: "Auth tokens handled securely across all agents"
+            priority: critical
+          - id: "R3"
+            desc: "All Definition of Complete items from intent.md addressed"
+            priority: critical
+        verifier:
+          rubric:
+            - id: "final_review"
+              text: |
+                R1-R3 — A: Clean diff, no TODOs, auth tokens secure, all 16 intent
+                items addressed. B: Minor TODOs remain but all critical items complete.
