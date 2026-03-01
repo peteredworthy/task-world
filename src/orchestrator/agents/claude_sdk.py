@@ -294,6 +294,62 @@ _VERIFIER_TOOLS: list[dict[str, Any]] = [
 
 
 # ---------------------------------------------------------------------------
+# MCP Connector beta API wiring
+# ---------------------------------------------------------------------------
+
+
+def _build_mcp_params(
+    mcp_servers: list[Any] | None,
+) -> dict[str, Any]:
+    """Convert MCPServerConfig list to MCP Connector beta parameters.
+
+    Only HTTPS URL-based servers are supported. STDIO servers are skipped with a warning.
+    Returns empty dict if no servers or all filtered out.
+
+    Args:
+        mcp_servers: List of MCPServerConfig objects (or None).
+
+    Returns:
+        Dict with "mcp_servers" key if any valid servers exist, otherwise empty dict.
+    """
+    if not mcp_servers:
+        return {}
+
+    api_servers: list[dict[str, Any]] = []
+    for mcp in mcp_servers:
+        if mcp.command:
+            logger.warning(
+                "MCP server '%s' uses STDIO transport (command='%s') — "
+                "not supported by Claude MCP Connector beta, skipping",
+                mcp.name,
+                mcp.command,
+            )
+            continue
+
+        server_config: dict[str, Any] = {
+            "type": "url",
+            "url": mcp.url,
+            "name": mcp.name,
+        }
+        if mcp.auth_token_env:
+            token = os.environ.get(mcp.auth_token_env)
+            if token:
+                server_config["authorization_token"] = token
+            else:
+                logger.warning(
+                    "Auth token env var '%s' for MCP server '%s' not set",
+                    mcp.auth_token_env,
+                    mcp.name,
+                )
+        api_servers.append(server_config)
+
+    if not api_servers:
+        return {}
+
+    return {"mcp_servers": api_servers}
+
+
+# ---------------------------------------------------------------------------
 # Tool list construction
 # ---------------------------------------------------------------------------
 
@@ -609,6 +665,7 @@ class ClaudeSDKAgent:
                 )
 
             tools = _build_tool_list(is_verifier, context.available_tools)
+            mcp_params = _build_mcp_params(context.mcp_servers)
             full_prompt = build_claude_sdk_prompt(context, is_verifier=is_verifier)
 
             messages: list[dict[str, Any]] = [{"role": "user", "content": full_prompt}]
@@ -623,13 +680,26 @@ class ClaudeSDKAgent:
                     raise AgentCancelledError(AgentType.CLAUDE_SDK.value)
 
                 # Call the API in a thread to avoid blocking the event loop.
-                response = await asyncio.to_thread(
-                    client.messages.create,
-                    model=self._model,
-                    max_tokens=self._max_tokens,
-                    tools=tools,
-                    messages=messages,
-                )
+                if mcp_params:
+                    # Use beta API with MCP Connector when servers are configured
+                    response = await asyncio.to_thread(
+                        client.beta.messages.create,
+                        model=self._model,
+                        max_tokens=self._max_tokens,
+                        tools=tools,
+                        messages=messages,
+                        betas=["mcp-client-2025-11-20"],
+                        **mcp_params,
+                    )
+                else:
+                    # Use standard API when no MCP servers
+                    response = await asyncio.to_thread(
+                        client.messages.create,
+                        model=self._model,
+                        max_tokens=self._max_tokens,
+                        tools=tools,
+                        messages=messages,
+                    )
 
                 # Accumulate token usage.
                 if hasattr(response, "usage") and response.usage is not None:
