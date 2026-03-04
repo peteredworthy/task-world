@@ -143,7 +143,7 @@ async def test_codex_server_lifecycle_resume_preserves_agent_config(
     client: AsyncClient,
 ) -> None:
     """Resuming codex_server preserves agent_config when none is supplied."""
-    cfg = {"endpoint": "http://localhost:9000", "model": "o3"}
+    cfg = {"restrictions": "none", "model": "o3"}
     data = await _create_codex_run(
         client, "codex_server", agent_config=cfg, repo_name="proj-cs-cfg"
     )
@@ -151,7 +151,7 @@ async def test_codex_server_lifecycle_resume_preserves_agent_config(
     await _start(client, run_id)
     await _pause(client, run_id)
     resumed = await _resume(client, run_id)
-    assert resumed["agent_config"]["endpoint"] == "http://localhost:9000"
+    assert resumed["agent_config"]["restrictions"] == "none"
     assert resumed["agent_config"]["model"] == "o3"
 
 
@@ -167,7 +167,7 @@ async def test_codex_lifecycle_recovery_local_no_pid_start_is_clean(
     data = await _create_codex_run(
         client,
         "codex_server",
-        agent_config={"endpoint": "http://localhost:9000"},
+        agent_config={"callback_channel": "rest"},
         repo_name="proj-nopid",
     )
     run_id = data["id"]

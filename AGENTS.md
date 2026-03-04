@@ -96,6 +96,8 @@ User creates Run → Selects Agent → Start (create worktree, acquire lock)
 
 **Git-versioned routines.** Routines must be committed (warn if dirty). Record git SHA as version.
 
+**Validate all inputs at the API boundary.** Every field that represents a constrained value (enums, strategies, modes, grades) must be validated via Pydantic `Literal`, `field_validator`, or `Field(pattern=...)` on the schema — never via bare enum conversion inside the endpoint body. Invalid values must return 422 with a message listing valid options. Free-form string fields used as filesystem paths, URLs, or identifiers must be sanitized against traversal and injection. Query parameters used for enum filtering get the same treatment.
+
 **Pessimistic locking.** Lock tasks when agent starts working, release on completion.
 
 **Event sourcing for recovery.** Log transitions to JSONL first, then update state. Reconstruct from history on startup.

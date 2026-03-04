@@ -37,6 +37,12 @@ _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
         description="Maximum agent iterations per run",
     ),
     AgentConfigField(
+        name="max_actions",
+        field_type="number",
+        default=200,
+        description="Hard ceiling on total agent actions (0 = disabled)",
+    ),
+    AgentConfigField(
         name="reasoning_effort",
         field_type="select",
         default="high",
@@ -73,6 +79,12 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
         field_type="number",
         default=100,
         description="Maximum agent iterations per run",
+    ),
+    AgentConfigField(
+        name="max_actions",
+        field_type="number",
+        default=200,
+        description="Hard ceiling on total agent actions (0 = disabled)",
     ),
     AgentConfigField(
         name="server_image",
@@ -665,3 +677,15 @@ class ToolDetector:
             detail="Always available for external agent connections",
             config_schema=_USER_MANAGED_CONFIG,
         )
+
+
+# Mapping from AgentType to the set of valid config field names.
+# Used by the API layer to reject unknown agent_config keys at creation time.
+AGENT_CONFIG_FIELDS: dict[AgentType, set[str]] = {
+    AgentType.OPENHANDS_LOCAL: {f.name for f in _OPENHANDS_LOCAL_CONFIG},
+    AgentType.OPENHANDS_DOCKER: {f.name for f in _OPENHANDS_DOCKER_CONFIG},
+    AgentType.CLI_SUBPROCESS: {f.name for f in _CLI_SUBPROCESS_CONFIG},
+    AgentType.USER_MANAGED: {f.name for f in _USER_MANAGED_CONFIG},
+    AgentType.CODEX_SERVER: {f.name for f in _CODEX_SERVER_CONFIG},
+    AgentType.CLAUDE_SDK: {f.name for f in _CLAUDE_SDK_CONFIG},
+}

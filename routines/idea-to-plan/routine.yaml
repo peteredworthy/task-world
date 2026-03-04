@@ -221,7 +221,7 @@ routine:
           auto_verify:
             items:
               - id: "step_plans_exist"
-                cmd: "ls docs/{{feature}}/step-*-plan.md 2>/dev/null | wc -l | awk '{if ($1 >= 1) exit 0; else exit 1}'"
+                cmd: "ls docs/{{feature}}/step-*-plan.md >/dev/null 2>&1"
                 must: true
           verifier:
             rubric:
@@ -283,7 +283,7 @@ routine:
           auto_verify:
             items:
               - id: "step_files_exist"
-                cmd: "ls docs/{{feature}}/steps/step-*.md 2>/dev/null | wc -l | awk '{if ($1 >= 1) exit 0; else exit 1}'"
+                cmd: "ls docs/{{feature}}/steps/step-*.md >/dev/null 2>&1"
                 must: true
           verifier:
             rubric:
@@ -566,11 +566,25 @@ routine:
                       max_attempts: 2
             ```
 
+            Auto-verify exit code rules:
+            - The exit code of the command determines pass/fail. Exit 0 = pass, non-zero = fail.
+            - NEVER use shell pipes (|) in auto_verify commands. In a pipeline, the exit code
+              comes from the LAST command only. For example, `pytest ... | tail -5` always
+              returns exit 0 because tail succeeds even when pytest fails. This silently
+              hides test failures from the verification system.
+            - The runner already captures the last N lines of output (tail_lines config),
+              so piping through tail/head is unnecessary and harmful.
+            - BAD:  `uv run pytest tests/ -q 2>&1 | tail -5`  (exit code = tail = always 0)
+            - GOOD: `uv run pytest tests/ -q`  (exit code = pytest = correct)
+            - BAD:  `ls *.md | wc -l | awk '{if ($1>=1) exit 0; else exit 1}'`
+            - GOOD: `ls *.md >/dev/null 2>&1`  (ls exits non-zero when no files match)
+
             Common validation failures:
             - Missing task_context (REQUIRED on every task)
             - Empty tasks list
             - Wrong types (tasks as object instead of list)
             - Unknown fields (schema_version, owner, tags, critical, verify are NOT valid)
+            - Shell pipes in auto_verify commands (use direct commands instead)
 
             === END FORMAT GUIDE ===
           requirements:

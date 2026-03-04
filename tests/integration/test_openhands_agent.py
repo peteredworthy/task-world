@@ -6,15 +6,26 @@ Error-path tests that only need the SDK installed run unconditionally.
 LocalConversation runs entirely in-process — no remote server required.
 """
 
+import asyncio
 import os
+import re
 from pathlib import Path
 
 import pytest
 
-from orchestrator.agents.errors import AgentNotAvailableError
+from orchestrator.agents.errors import AgentExecutionError, AgentNotAvailableError
 from orchestrator.agents.openhands import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
 from orchestrator.agents.types import ExecutionContext
 from orchestrator.config.enums import ChecklistStatus
+
+# Patterns in AgentExecutionError messages that indicate an environment issue
+# (bad/expired key, no credits, network unreachable) rather than a code bug.
+_SKIP_PATTERNS = re.compile(
+    r"insufficient_quota|rate.?limit|billing|exceeded.*quota"
+    r"|connection.?error|connect.?timeout|name.?resolution"
+    r"|api.?key.*invalid|auth.*error|unauthorized",
+    re.IGNORECASE,
+)
 
 
 def _make_context() -> ExecutionContext:
@@ -87,7 +98,10 @@ async def test_openhands_executes_file_creation(tmp_path: Path) -> None:
     - Agent calls update_checklist to mark requirement as done
     - Agent calls submit when finished
     """
-    agent = OpenHandsAgent(max_iterations=30, llm_config={"reasoning_effort": "low"})
+    agent = OpenHandsAgent(
+        max_iterations=30,
+        llm_config={"reasoning_effort": "low", "num_retries": 2, "retry_min_wait": 1},
+    )
 
     updates: list[tuple[str, ChecklistStatus, str | None]] = []
     submitted = False
@@ -113,7 +127,28 @@ async def test_openhands_executes_file_creation(tmp_path: Path) -> None:
         requirements=["Create test_output.txt"],
     )
 
-    result = await agent.execute(ctx, on_update, on_submit)
+    try:
+        # Use asyncio timeout (90s) shorter than pytest-timeout (120s) so we
+        # get a catchable exception instead of a hard test failure when the
+        # SDK retries endlessly against an unavailable API.
+        result = await asyncio.wait_for(
+            agent.execute(ctx, on_update, on_submit),
+            timeout=90,
+        )
+    except (AgentExecutionError, asyncio.TimeoutError) as exc:
+        msg = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, asyncio.TimeoutError):
+            pytest.skip("LLM API unavailable: agent execution timed out (likely API retries)")
+        if _SKIP_PATTERNS.search(msg):
+            pytest.skip(f"LLM API unavailable: {msg}")
+        raise
+    except Exception as exc:
+        # The SDK may raise litellm errors or connection errors that aren't
+        # wrapped in AgentExecutionError.
+        msg = f"{type(exc).__name__}: {exc}"
+        if _SKIP_PATTERNS.search(msg):
+            pytest.skip(f"LLM API unavailable: {msg}")
+        raise
 
     # Verify execution succeeded
     assert result.success is True

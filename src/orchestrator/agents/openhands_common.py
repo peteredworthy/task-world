@@ -358,7 +358,18 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
             "  - grade_reason: Optional explanation for the grade\n"
             "  Example: orc_set_grade('R-01', 'A', 'Well implemented')\n\n"
             "- **orc_submit**()\n"
-            "  Complete the verification after grading all requirements."
+            "  Complete the verification after grading all requirements.\n\n"
+            "### Terminal Tips\n"
+            "- ALWAYS use `git --no-pager` for every git command to avoid pager hangs.\n"
+            "- For long output, pipe through `| head -80` to limit lines.\n"
+            "- To view the builder's changes:\n"
+            "  `git --no-pager show HEAD --stat` then `git --no-pager diff HEAD~1 -- <file>`\n"
+            "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager.\n\n"
+            "### Avoiding Loops\n"
+            "- NEVER re-read a file you have already read. If you catch yourself running\n"
+            "  the same command twice, stop and begin grading immediately.\n"
+            "- After each tool call, ask yourself: 'Am I making forward progress or\n"
+            "  repeating earlier steps?' If repeating, start grading now."
         )
 
     return (
@@ -387,7 +398,19 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
         "- **orc_submit**()\n"
         "  Submit your work for verification by a reviewer.\n"
         "  Only call this after addressing all requirements.\n"
-        "  Submission will fail if any CRITICAL requirement is not 'done'."
+        "  Submission will fail if any CRITICAL requirement is not 'done'.\n\n"
+        "### Terminal Tips\n"
+        "- ALWAYS use `git --no-pager` for every git command to avoid pager hangs.\n"
+        "- For long output, pipe through `| head -80` to limit lines.\n"
+        "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager.\n\n"
+        "### Avoiding Loops\n"
+        "- Limit exploration to at most 10 tool calls before you start writing code.\n"
+        "- NEVER re-read a file you have already read. If you catch yourself running\n"
+        "  the same command twice, stop exploring and begin implementation immediately.\n"
+        "- If a referenced document does not exist, proceed with the information\n"
+        "  available in the task description and requirements — do NOT keep searching.\n"
+        "- After each tool call, ask yourself: 'Am I making forward progress or\n"
+        "  repeating earlier steps?' If repeating, start coding now."
     )
 
 

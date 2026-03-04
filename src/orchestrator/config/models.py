@@ -1,5 +1,6 @@
 """Pydantic configuration models for routines, steps, and tasks."""
 
+import re
 from typing import Any, cast
 
 from pydantic import BaseModel, Field, model_validator
@@ -42,6 +43,39 @@ class AutoVerifyItemConfig(BaseModel):
     id: str
     cmd: str
     must: bool = True
+
+    @model_validator(mode="after")
+    def _reject_pipes(self) -> "AutoVerifyItemConfig":
+        """Reject commands that use shell pipes.
+
+        In a shell pipeline the exit code comes from the LAST command, so
+        ``pytest ... | tail -5`` always returns 0 even when pytest fails.
+        The auto-verify runner already captures the last N lines of output
+        (via tail_lines), so piping through tail/head is unnecessary.
+        Rewrite the command to avoid pipes entirely.
+        """
+        # Match a pipe operator ( | ) that is not part of || (logical OR).
+        # We look for ` | ` or `|` preceded/followed by non-pipe chars,
+        # but exclude content inside quotes to avoid false positives on
+        # regex alternation like grep "a|b".
+        raw = self.cmd
+
+        # Strip quoted strings before checking for pipes
+        stripped = re.sub(r"""(['"]).*?\1""", "", raw)
+        # Now check for pipe: a | that is not part of ||
+        if re.search(r"(?<!\|)\|(?!\|)", stripped):
+            raise ValueError(
+                f"Auto-verify command must not contain shell pipes — the exit "
+                f"code of earlier commands is silently lost. The runner already "
+                f"captures the last N lines of output via tail_lines.\n"
+                f"  Problematic command: {raw}\n"
+                f"Rewrite without pipes. For example:\n"
+                f"  BAD:  uv run pytest tests/ -q 2>&1 | tail -5\n"
+                f"  GOOD: uv run pytest tests/ -q\n"
+                f"  BAD:  ls *.md | wc -l | awk '{{if ($1>=1) exit 0; else exit 1}}'\n"
+                f"  GOOD: ls *.md >/dev/null 2>&1"
+            )
+        return self
 
 
 class AutoVerifyConfig(BaseModel):

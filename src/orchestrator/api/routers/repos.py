@@ -56,6 +56,12 @@ async def add_repository(
 ) -> RepoResponse:
     """Add a repository by cloning a URL or symlinking a local path."""
     if body.url:
+        # Validate URL scheme
+        if not body.url.startswith(("http://", "https://", "ssh://", "git@")):
+            raise HTTPException(
+                status_code=422,
+                detail="Repository URL must use http://, https://, ssh://, or git@ format",
+            )
         # Infer name from URL: last path segment, strip .git suffix
         url = body.url.rstrip("/")
         name = url.split("/")[-1]

@@ -11,7 +11,9 @@ from orchestrator.agents.codex_server_common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     build_codex_server_prompt,
     build_dynamic_tool_specs,
+    build_execution_result,
     enforce_tool_allowlist,
+    extract_turn_usage,
     fetch_codex_models,
     is_allowed_tool,
     normalize_codex_metrics,
@@ -638,3 +640,127 @@ def test_known_tool_no_duplicate(caplog: pytest.LogCaptureFixture) -> None:
     # And it should still be in the specs (no duplication)
     names = {s["name"] for s in specs}
     assert "update_checklist" in names
+
+
+# ---------------------------------------------------------------------------
+# extract_turn_usage
+# ---------------------------------------------------------------------------
+
+
+def test_extract_turn_usage_with_input_output_tokens() -> None:
+    """extract_turn_usage extracts input_tokens and output_tokens."""
+    msg = {
+        "method": "turn/completed",
+        "params": {
+            "turn": {
+                "status": "completed",
+                "usage": {
+                    "input_tokens": 1500,
+                    "output_tokens": 300,
+                    "cache_read_tokens": 50,
+                },
+            }
+        },
+    }
+    result = extract_turn_usage(msg)
+    assert result == {"tokens_read": 1500, "tokens_write": 300, "tokens_cache": 50}
+
+
+def test_extract_turn_usage_with_prompt_completion_tokens() -> None:
+    """extract_turn_usage handles prompt_tokens/completion_tokens field names."""
+    msg = {
+        "method": "turn/completed",
+        "params": {
+            "turn": {
+                "status": "completed",
+                "usage": {
+                    "prompt_tokens": 2000,
+                    "completion_tokens": 400,
+                    "cached_tokens": 100,
+                },
+            }
+        },
+    }
+    result = extract_turn_usage(msg)
+    assert result == {"tokens_read": 2000, "tokens_write": 400, "tokens_cache": 100}
+
+
+def test_extract_turn_usage_without_usage_field() -> None:
+    """extract_turn_usage returns zeros when no usage field is present."""
+    msg = {
+        "method": "turn/completed",
+        "params": {"turn": {"status": "completed"}},
+    }
+    result = extract_turn_usage(msg)
+    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+
+
+def test_extract_turn_usage_non_terminal_notification() -> None:
+    """extract_turn_usage returns zeros for non-turn/completed notifications."""
+    msg = {
+        "method": "item/agentMessage/delta",
+        "params": {"delta": "hello"},
+    }
+    result = extract_turn_usage(msg)
+    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+
+
+def test_extract_turn_usage_empty_usage_dict() -> None:
+    """extract_turn_usage returns zeros when usage is an empty dict."""
+    msg = {
+        "method": "turn/completed",
+        "params": {"turn": {"status": "completed", "usage": {}}},
+    }
+    result = extract_turn_usage(msg)
+    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+
+
+def test_extract_turn_usage_cache_read_input_tokens() -> None:
+    """extract_turn_usage handles cache_read_input_tokens field name."""
+    msg = {
+        "method": "turn/completed",
+        "params": {
+            "turn": {
+                "status": "completed",
+                "usage": {
+                    "input_tokens": 500,
+                    "output_tokens": 100,
+                    "cache_read_input_tokens": 200,
+                },
+            }
+        },
+    }
+    result = extract_turn_usage(msg)
+    assert result["tokens_cache"] == 200
+
+
+# ---------------------------------------------------------------------------
+# build_execution_result — with token/action params
+# ---------------------------------------------------------------------------
+
+
+def test_build_execution_result_with_tokens() -> None:
+    """build_execution_result passes token counts through to metrics."""
+    result = build_execution_result(
+        ["hello\n", "world\n"],
+        duration_ms=5000,
+        tokens_read=1000,
+        tokens_write=200,
+        tokens_cache=50,
+        num_actions=3,
+    )
+    assert result.success is True
+    assert result.metrics.tokens_read == 1000
+    assert result.metrics.tokens_write == 200
+    assert result.metrics.tokens_cache == 50
+    assert result.metrics.num_actions == 3
+    assert result.metrics.duration_ms == 5000
+
+
+def test_build_execution_result_defaults_to_zero_tokens() -> None:
+    """build_execution_result defaults token counts to 0 for backward compat."""
+    result = build_execution_result(["test\n"], duration_ms=100)
+    assert result.metrics.tokens_read == 0
+    assert result.metrics.tokens_write == 0
+    assert result.metrics.tokens_cache == 0
+    assert result.metrics.num_actions == 0

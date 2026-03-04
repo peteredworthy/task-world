@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from orchestrator.agents.detector import ToolDetector
 from orchestrator.agents.types import AgentOption
@@ -32,6 +32,11 @@ async def discover_local_models(
     rather than a 4xx/5xx status code so the UI can surface the error
     without throwing an exception.
     """
+    if not base_url.startswith(("http://", "https://")):
+        raise HTTPException(
+            status_code=422,
+            detail="base_url must start with http:// or https://",
+        )
     models_url = base_url.rstrip("/") + "/models"
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:

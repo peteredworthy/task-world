@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import type { RunResponse, StepSummary, TaskSummary } from '../../types';
-import { formatRelativeTime, formatDuration } from '../../lib/format';
+import { formatRelativeTime, formatDuration, formatTokens } from '../../lib/format';
 import { outcomeColor, outcomeLabel } from '../../lib/outcome';
 import { RunStatusBadge } from '../StatusBadge';
 import { StepTimeline } from './StepTimeline';
@@ -249,6 +249,73 @@ function DurationBadge({ ms }: { ms: number }) {
     <span className="inline-flex items-center rounded bg-bg-elevated px-2 py-0.5 text-[11px] font-mono text-text-muted">
       {formatDuration(ms)}
     </span>
+  );
+}
+
+function formatCost(run: RunResponse): string {
+  if (run.estimated_cost_usd !== null) {
+    return '$' + run.estimated_cost_usd.toFixed(2);
+  }
+
+  const inputCost = (run.total_tokens_read / 1_000_000) * 3;
+  const outputCost = (run.total_tokens_write / 1_000_000) * 15;
+  const total = inputCost + outputCost;
+
+  if (total <= 0) return '--';
+  if (total < 0.01) return '<$0.01';
+  return '$' + total.toFixed(2);
+}
+
+function MetaPill({
+  label,
+  value,
+  title,
+  icon,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+  icon?: React.ReactNode;
+}) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-2 rounded-md border border-border bg-bg-elevated/60 px-3 py-2"
+      title={title ?? `${label}: ${value}`}
+    >
+      {icon}
+      <div className="min-w-0">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
+          {label}
+        </div>
+        <div className="truncate font-mono text-[12px] text-text-secondary">
+          {value}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MetricPill({
+  label,
+  value,
+  title,
+}: {
+  label: string;
+  value: string;
+  title?: string;
+}) {
+  return (
+    <div
+      className="rounded-md border border-accent-purple/20 bg-accent-purple/6 px-3 py-2 text-right"
+      title={title ?? `${label}: ${value}`}
+    >
+      <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-text-muted">
+        {label}
+      </div>
+      <div className="font-mono text-[13px] font-semibold text-text-primary">
+        {value}
+      </div>
+    </div>
   );
 }
 
@@ -748,6 +815,10 @@ function CollapsedRow(props: RunCardProps) {
 
 function ExpandedView(props: RunCardProps) {
   const { run, routineName, onToggle, onTaskClick, loading } = props;
+  const totalTokens = run.total_tokens_read + run.total_tokens_write + run.total_tokens_cache;
+  const sourceBranch = run.source_branch ?? run.repo_name;
+  const startedLabel = run.started_at ? formatRelativeTime(run.started_at) : 'Not started';
+  const costLabel = run.cost_disclaimer?.startsWith('Actual cost') ? 'Cost' : 'Est. Cost';
 
   const currentStep = run.steps[run.current_step_index];
   const clarificationTaskId = currentStep?.tasks.find(
@@ -782,34 +853,6 @@ function ExpandedView(props: RunCardProps) {
           {routineName}
         </span>
 
-        {/* Extended meta */}
-        <div className="flex items-center gap-2 text-[11px] text-text-muted font-mono ml-1 min-w-0 overflow-hidden">
-          <span className="truncate" title={run.id}>{run.id.slice(0, 8)}</span>
-          {run.routine_id && (
-            <>
-              <span className="text-border-hover">|</span>
-              <span className="truncate">{run.routine_id}</span>
-            </>
-          )}
-          <span className="text-border-hover">|</span>
-          <span className="truncate" title={run.repo_name}>{run.repo_name}</span>
-          {run.agent_icon !== 'none' && (
-            <>
-              <span className="text-border-hover">|</span>
-              <span className="flex items-center gap-1.5">
-                <AgentIcon icon={run.agent_icon} className="h-3.5 w-3.5" />
-                <span className="truncate">{run.agent_type_display}</span>
-              </span>
-            </>
-          )}
-          {run.started_at && (
-            <>
-              <span className="text-border-hover">|</span>
-              <span>started {formatRelativeTime(run.started_at)}</span>
-            </>
-          )}
-        </div>
-
         {/* Spacer */}
         <div className="flex-1" />
 
@@ -827,6 +870,42 @@ function ExpandedView(props: RunCardProps) {
 
         {/* Chevron */}
         <ChevronToggle expanded={true} />
+      </div>
+
+      <div className="grid gap-3 border-b border-border px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          <MetaPill label="Run ID" value={run.id} title={`Run ID: ${run.id}`} />
+          <MetaPill
+            label="Source Branch"
+            value={sourceBranch}
+            title={`Source Branch: ${sourceBranch}`}
+          />
+          <MetaPill
+            label="Agent"
+            value={run.agent_type_display}
+            title={`Agent: ${run.agent_type_display}`}
+            icon={
+              run.agent_icon !== 'none' ? <AgentIcon icon={run.agent_icon} className="h-4 w-4 shrink-0 text-text-muted" /> : undefined
+            }
+          />
+          <MetaPill
+            label="Started"
+            value={startedLabel}
+            title={`Started: ${startedLabel}`}
+          />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <MetricPill
+            label="Total Tokens"
+            value={formatTokens(totalTokens)}
+            title={`Total Tokens: ${formatTokens(totalTokens)} (${totalTokens.toLocaleString()} total)`}
+          />
+          <MetricPill
+            label={costLabel}
+            value={formatCost(run)}
+            title={`${costLabel}: ${formatCost(run)}`}
+          />
+        </div>
       </div>
 
       {/* Step columns + Footer (animated) */}

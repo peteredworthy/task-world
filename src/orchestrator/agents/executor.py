@@ -1446,12 +1446,14 @@ class AgentExecutor:
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
             max_iterations = int(agent_config.get("max_iterations", 100))
+            max_actions = int(agent_config.get("max_actions", 200))
             llm_config = self._coerce_llm_config(agent_config)
 
             return OpenHandsAgent(
                 api_key=api_key,
                 model=model,
                 max_iterations=max_iterations,
+                max_actions=max_actions,
                 llm_config=llm_config,
             )  # type: ignore[return-value]
 

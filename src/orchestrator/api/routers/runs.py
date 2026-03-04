@@ -287,6 +287,20 @@ async def create_run(
         run.agent_type = AgentType(request.agent_type)
 
     if request.agent_config:
+        # Validate agent_config keys against the agent's known config schema
+        if run.agent_type is not None:
+            from orchestrator.agents.detector import AGENT_CONFIG_FIELDS
+
+            valid_fields = AGENT_CONFIG_FIELDS.get(run.agent_type, set())
+            unknown = set(request.agent_config.keys()) - valid_fields
+            if unknown:
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Unknown agent_config fields for {run.agent_type.value}: "
+                        f"{sorted(unknown)}. Valid fields: {sorted(valid_fields)}"
+                    ),
+                )
         run.agent_config = request.agent_config
 
     # Resolve env file specs from routine config and request overrides
@@ -315,14 +329,21 @@ async def list_runs(
     config: Annotated[GlobalConfig, Depends(get_global_config)],
     repo_name: str | None = Query(default=None),
     status: str | None = Query(default=None),
-    recent_hours: int | None = Query(default=None),
-    limit: int | None = Query(default=None, description="Maximum number of runs to return"),
+    recent_hours: int | None = Query(default=None, ge=1),
+    limit: int | None = Query(default=None, ge=1, description="Maximum number of runs to return"),
 ) -> RunListResponse:
     """List runs with optional filters.
 
     When no filters are specified, returns the most recent runs up to
     dashboard.max_recent_runs from global config (unless overridden by limit parameter).
     """
+    if status is not None:
+        valid_statuses = [e.value for e in RunStatus]
+        if status not in valid_statuses:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid status '{status}'. Valid options: {', '.join(valid_statuses)}",
+            )
     if recent_hours is not None:
         runs = await service.list_runs_recent(recent_hours)
     elif repo_name is not None and status is not None:
@@ -410,6 +431,7 @@ async def resume_run(
     in the background. For user-managed/external agents, the agent should
     poll the /tasks/{id}/prompt endpoint to get work.
     """
+    # Schema validator normalizes agent_type to a valid lowercase value
     agent_type = AgentType(request.agent_type) if request and request.agent_type else None
     agent_config = request.agent_config if request and request.agent_config else None
     resume_strategy = request.resume_strategy if request else None
@@ -437,6 +459,7 @@ async def recover_run(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
 ) -> RecoverResponse:
     """Recover a FAILED run by rewinding to a target task and pausing."""
+    # Schema validator normalizes agent_type to a valid lowercase value
     agent_type = AgentType(body.agent_type) if body.agent_type else None
     agent_config = body.agent_config if body.agent_config else None
     try:

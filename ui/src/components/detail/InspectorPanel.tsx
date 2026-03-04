@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useActivity, useTask, useTaskPrompt } from '../../hooks/useApi';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { useActivity, useRun, useTask, useTaskPrompt, useRecoverRun, useResumeRun } from '../../hooks/useApi';
 import { useClarificationHistory } from '../../hooks/useClarifications';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { TaskStatusBadge } from '../StatusBadge';
@@ -431,6 +431,7 @@ function InspectorAttemptCard({
 
 export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
   const { data: detail, isLoading } = useTask(runId, task.id);
+  const { data: runData } = useRun(runId);
   const { data: activityData } = useActivity(runId);
   const { data: clarificationHistory, error: historyError } = useClarificationHistory(
     runId,
@@ -440,6 +441,40 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
   const [promptAttempt, setPromptAttempt] = useState<AttemptSchema | null>(null);
   const [agentLogViewMode, setAgentLogViewMode] = useState<'structured' | 'raw'>('structured');
   const [agentLogCapabilities, setAgentLogCapabilities] = useState({ hasStructured: false, hasRaw: false });
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
+  const recoverRun = useRecoverRun(runId);
+  const resumeRun = useResumeRun();
+  const canRetry = task.status === 'failed' && (runData?.status === 'failed' || runData?.status === 'paused');
+
+  const handleRetry = useCallback(() => {
+    setRetrying(true);
+    setRetryError(null);
+    recoverRun.mutate(
+      { target_task_id: task.id },
+      {
+        onSuccess: () => {
+          resumeRun.mutate(
+            { runId },
+            {
+              onSuccess: () => {
+                setRetrying(false);
+                onClose();
+              },
+              onError: (err) => {
+                setRetrying(false);
+                setRetryError(err instanceof Error ? err.message : 'Failed to resume run');
+              },
+            },
+          );
+        },
+        onError: (err) => {
+          setRetrying(false);
+          setRetryError(err instanceof Error ? err.message : 'Failed to recover run');
+        },
+      },
+    );
+  }, [recoverRun, resumeRun, runId, task.id, onClose]);
   const isPromptable = task.status === 'building' || task.status === 'verifying';
   const latestAttempt = detail?.attempts[detail.attempts.length - 1];
   const isLatestPrompt = promptAttempt && latestAttempt && promptAttempt.id === latestAttempt.id;
@@ -505,6 +540,28 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
           <p className="text-xs text-text-muted mt-1">
             Attempt {task.current_attempt} of {task.max_attempts}
           </p>
+          {canRetry && (
+            <div className="mt-2 space-y-1">
+              <button
+                type="button"
+                onClick={handleRetry}
+                disabled={retrying}
+                className="w-full inline-flex items-center justify-center gap-2 px-3 py-1.5 text-xs font-medium text-white bg-accent-purple rounded-md hover:bg-accent-purple/80 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {retrying ? (
+                  <>
+                    <Spinner className="h-3.5 w-3.5" />
+                    Retrying...
+                  </>
+                ) : (
+                  'Retry Task'
+                )}
+              </button>
+              {retryError && (
+                <p className="text-xs text-status-failed">{retryError}</p>
+              )}
+            </div>
+          )}
         </div>
 
         {isLoading ? (

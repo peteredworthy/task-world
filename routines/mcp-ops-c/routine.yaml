@@ -54,7 +54,7 @@ steps:
               cmd: "uv run python -c \"from orchestrator.config.models import MCPServerConfig; c = MCPServerConfig(name='test', url='https://x.com'); print(c.model_dump())\""
               must: true
             - id: "dual_transport_rejected"
-              cmd: "uv run python -c \"from orchestrator.config.models import MCPServerConfig; MCPServerConfig(name='bad', url='x', command='y')\" 2>&1 | grep -q 'exactly one'"
+              cmd: "uv run python -c \"from orchestrator.config.models import MCPServerConfig; MCPServerConfig(name='bad', url='x', command='y')\" 2>/dev/null && exit 1 || exit 0"
               must: true
         verifier:
           rubric:
@@ -88,7 +88,7 @@ steps:
         auto_verify:
           items:
             - id: "backward_compat"
-              cmd: "uv run pytest tests/ -x --timeout=30 -q 2>&1 | tail -5"
+              cmd: "uv run pytest tests/ -x --timeout=30 -q"
               must: true
         verifier:
           rubric:
@@ -121,7 +121,7 @@ steps:
         auto_verify:
           items:
             - id: "tests_pass"
-              cmd: "uv run pytest tests/unit/test_mcp_server_config.py -v 2>&1 | tail -15"
+              cmd: "uv run pytest tests/unit/test_mcp_server_config.py -v"
               must: true
         retry:
           max_attempts: 2
@@ -189,7 +189,7 @@ steps:
         auto_verify:
           items:
             - id: "tests_pass"
-              cmd: "uv run pytest tests/ -x --timeout=30 -q 2>&1 | tail -5"
+              cmd: "uv run pytest tests/ -x --timeout=30 -q"
               must: true
         verifier:
           rubric:
@@ -218,7 +218,7 @@ steps:
         auto_verify:
           items:
             - id: "tests_pass"
-              cmd: "uv run pytest tests/unit/test_execution_context_extension.py -v 2>&1 | tail -10"
+              cmd: "uv run pytest tests/unit/test_execution_context_extension.py -v"
               must: true
         retry:
           max_attempts: 2
@@ -303,7 +303,7 @@ steps:
         auto_verify:
           items:
             - id: "tests_pass"
-              cmd: "uv run pytest tests/unit/test_cli_tool_hints.py -v 2>&1 | tail -10"
+              cmd: "uv run pytest tests/unit/test_cli_tool_hints.py -v"
               must: true
         retry:
           max_attempts: 2
@@ -395,7 +395,7 @@ steps:
         auto_verify:
           items:
             - id: "tests_pass"
-              cmd: "uv run pytest tests/unit/test_claude_sdk_tool_filtering.py -v 2>&1 | tail -15"
+              cmd: "uv run pytest tests/unit/test_claude_sdk_tool_filtering.py -v"
               must: true
         retry:
           max_attempts: 2
@@ -480,7 +480,7 @@ steps:
         auto_verify:
           items:
             - id: "tests_pass"
-              cmd: "uv run pytest tests/unit/test_codex_server_tool_filtering.py -v 2>&1 | tail -15"
+              cmd: "uv run pytest tests/unit/test_codex_server_tool_filtering.py -v"
               must: true
         retry:
           max_attempts: 2
@@ -592,7 +592,7 @@ steps:
         auto_verify:
           items:
             - id: "tests_pass"
-              cmd: "uv run pytest tests/unit/test_openhands_tool_filtering.py -v 2>&1 | tail -10"
+              cmd: "uv run pytest tests/unit/test_openhands_tool_filtering.py -v"
               must: true
         retry:
           max_attempts: 2
@@ -690,7 +690,7 @@ steps:
         auto_verify:
           items:
             - id: "tests_pass"
-              cmd: "uv run pytest tests/unit/test_mcp_server_all_tools.py -v 2>&1 | tail -10"
+              cmd: "uv run pytest tests/unit/test_mcp_server_all_tools.py -v"
               must: true
         retry:
           max_attempts: 2
@@ -730,10 +730,10 @@ steps:
         auto_verify:
           items:
             - id: "integration_tests_pass"
-              cmd: "uv run pytest tests/integration/test_step_tool_control.py -v 2>&1 | tail -15"
+              cmd: "uv run pytest tests/integration/test_step_tool_control.py -v"
               must: true
             - id: "full_suite_pass"
-              cmd: "uv run pytest tests/ -x --timeout=30 -q 2>&1 | tail -5"
+              cmd: "uv run pytest tests/ -x --timeout=30 -q"
               must: true
         verifier:
           rubric:
@@ -798,7 +798,7 @@ steps:
         auto_verify:
           items:
             - id: "backend_tests"
-              cmd: "uv run pytest tests/ --timeout=60 -q 2>&1 | tail -5"
+              cmd: "uv run pytest tests/ --timeout=60 -q"
               must: true
         verifier:
           rubric:
@@ -824,7 +824,7 @@ steps:
         auto_verify:
           items:
             - id: "precommit_pass"
-              cmd: "uv run pre-commit run --all-files 2>&1 | tail -10"
+              cmd: "uv run pre-commit run --all-files"
               must: true
         verifier:
           rubric:

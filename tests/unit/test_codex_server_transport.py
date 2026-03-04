@@ -137,17 +137,38 @@ def _turn_start_response(req_id: int = 3) -> dict[str, Any]:
     }
 
 
-def _turn_completed(status: str = "completed") -> dict[str, Any]:
-    """turn/completed notification."""
+def _turn_completed(
+    status: str = "completed",
+    usage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """turn/completed notification with optional usage data."""
+    turn: dict[str, Any] = {
+        "id": "turn_test001",
+        "status": status,
+        "items": [],
+        "error": None,
+    }
+    if usage is not None:
+        turn["usage"] = usage
     return {
         "jsonrpc": "2.0",
         "method": "turn/completed",
+        "params": {"turn": turn},
+    }
+
+
+def _item_completed(
+    item_type: str = "shellCommand",
+    item_id: str = "item_001",
+) -> dict[str, Any]:
+    """item/completed notification for action counting."""
+    return {
+        "jsonrpc": "2.0",
+        "method": "item/completed",
         "params": {
-            "turn": {
-                "id": "turn_test001",
-                "status": status,
-                "items": [],
-                "error": None,
+            "item": {
+                "id": item_id,
+                "type": item_type,
             }
         },
     }
@@ -581,3 +602,138 @@ async def test_execute_raises_agent_not_available_on_transport_failure() -> None
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
+
+
+# ---------------------------------------------------------------------------
+# 6. Token usage extraction from turn/completed
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_extracts_usage_from_turn_completed() -> None:
+    """Token usage in turn/completed is reflected in ExecutionResult.metrics."""
+    notifications = [
+        _turn_completed(
+            usage={
+                "input_tokens": 5000,
+                "output_tokens": 1200,
+                "cache_read_tokens": 300,
+            }
+        ),
+    ]
+    agent, _ = _make_agent(notifications)
+
+    result = await agent.execute(
+        context=_ctx(),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    assert result.metrics.tokens_read == 5000
+    assert result.metrics.tokens_write == 1200
+    assert result.metrics.tokens_cache == 300
+
+
+async def test_execute_zero_usage_when_no_usage_field() -> None:
+    """When turn/completed has no usage, metrics default to zero."""
+    notifications = [_turn_completed()]
+    agent, _ = _make_agent(notifications)
+
+    result = await agent.execute(
+        context=_ctx(),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    assert result.metrics.tokens_read == 0
+    assert result.metrics.tokens_write == 0
+    assert result.metrics.tokens_cache == 0
+
+
+# ---------------------------------------------------------------------------
+# 7. Action counting
+# ---------------------------------------------------------------------------
+
+
+async def test_execute_counts_tool_call_dispatches() -> None:
+    """item/tool/call dispatches increment num_actions in metrics."""
+    notifications = [
+        _tool_call_request("update_checklist", {"req_id": "R-01", "status": "done"}, 10),
+        _tool_call_request("submit", {}, 11),
+        _turn_completed(),
+    ]
+    agent, _ = _make_agent(notifications)
+
+    result = await agent.execute(
+        context=_ctx(),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    assert result.metrics.num_actions >= 2
+
+
+async def test_execute_counts_item_completed_as_actions() -> None:
+    """item/completed notifications (non-agentMessage) are counted as actions."""
+    notifications = [
+        _item_completed("shellCommand", "item_001"),
+        _item_completed("fileEdit", "item_002"),
+        _item_completed("agentMessage", "item_003"),  # Should NOT count
+        _turn_completed(),
+    ]
+    agent, _ = _make_agent(notifications)
+
+    result = await agent.execute(
+        context=_ctx(),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    # 2 non-agentMessage item/completed events
+    assert result.metrics.num_actions == 2
+
+
+async def test_execute_combined_metrics() -> None:
+    """Full session with tool calls, items, and usage produces correct combined metrics."""
+    notifications = [
+        _agent_message_delta("working on it\n"),
+        _item_completed("shellCommand", "item_001"),
+        _tool_call_request("update_checklist", {"req_id": "R-01", "status": "done"}, 10),
+        _item_completed("fileEdit", "item_002"),
+        _tool_call_request("submit", {}, 11),
+        _turn_completed(
+            usage={
+                "input_tokens": 10000,
+                "output_tokens": 2500,
+                "cache_read_tokens": 1000,
+            }
+        ),
+    ]
+    agent, _ = _make_agent(notifications)
+    checklist_calls: list[str] = []
+    submitted: list[bool] = []
+
+    async def capture_checklist(req_id: str, status: ChecklistStatus, note: str | None) -> None:
+        checklist_calls.append(req_id)
+
+    async def capture_submit() -> None:
+        submitted.append(True)
+
+    result = await agent.execute(
+        context=_ctx(),
+        on_checklist_update=capture_checklist,
+        on_submit=capture_submit,
+    )
+
+    # Verify callbacks fired
+    assert checklist_calls == ["R-01"]
+    assert submitted == [True]
+
+    # Verify output
+    assert "working on it" in result.output_lines
+
+    # Verify metrics: 2 item/completed (non-agentMessage) + 2 tool/call dispatches = 4
+    assert result.metrics.num_actions == 4
+    assert result.metrics.tokens_read == 10000
+    assert result.metrics.tokens_write == 2500
+    assert result.metrics.tokens_cache == 1000
+    assert result.metrics.duration_ms >= 0

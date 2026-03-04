@@ -3,7 +3,10 @@
 from datetime import datetime
 from typing import Any
 
+from pydantic import field_validator
+
 from orchestrator.api.schemas.base import ApiModel
+from orchestrator.config.enums import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
 
 
@@ -118,14 +121,36 @@ class TransitionResponse(ApiModel):
     error: str | None = None
 
 
+_VALID_CHECKLIST_STATUSES = [e.value for e in ChecklistStatus]
+_VALID_GRADES = ["A", "B", "C", "D", "F"]
+
+
 class UpdateChecklistRequest(ApiModel):
     status: str
     note: str | None = None
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def validate_status(cls, v: str) -> str:
+        lowered = v.lower()
+        if lowered not in _VALID_CHECKLIST_STATUSES:
+            raise ValueError(
+                f"Invalid status '{v}'. Valid options: {', '.join(_VALID_CHECKLIST_STATUSES)}"
+            )
+        return lowered
 
 
 class SetGradeRequest(ApiModel):
     grade: str
     grade_reason: str | None = None
+
+    @field_validator("grade", mode="before")
+    @classmethod
+    def validate_grade(cls, v: str) -> str:
+        upper = v.upper()
+        if upper not in _VALID_GRADES:
+            raise ValueError(f"Invalid grade '{v}'. Valid options: {', '.join(_VALID_GRADES)}")
+        return upper
 
 
 class CallbackInstructions(ApiModel):

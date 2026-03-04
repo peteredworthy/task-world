@@ -326,6 +326,63 @@ def is_terminal_notification(notification: dict[str, Any]) -> tuple[bool, str]:
     return (True, status)
 
 
+def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
+    """Extract token usage from a ``turn/completed`` notification.
+
+    Looks for ``params.turn.usage`` and tries multiple field name patterns
+    to handle different server versions:
+
+    - ``input_tokens`` / ``prompt_tokens`` → ``tokens_read``
+    - ``output_tokens`` / ``completion_tokens`` → ``tokens_write``
+    - ``cache_read_tokens`` / ``cached_tokens`` / ``cache_read_input_tokens`` → ``tokens_cache``
+
+    Args:
+        notification: A parsed JSON-RPC notification dict.
+
+    Returns:
+        Dict with keys ``tokens_read``, ``tokens_write``, ``tokens_cache``.
+        All values default to 0 when usage data is absent.
+    """
+    result = {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+
+    if notification.get("method") != "turn/completed":
+        return result
+
+    params = notification.get("params", {})
+    turn: dict[str, Any] = params.get("turn", {})
+
+    logger.debug("extract_turn_usage: turn payload keys=%s", list(turn.keys()))
+
+    usage: dict[str, Any] = turn.get("usage", {})
+    if not usage:
+        return result
+
+    logger.debug("extract_turn_usage: usage=%s", usage)
+
+    # Input/prompt tokens
+    for key in ("input_tokens", "prompt_tokens"):
+        val = usage.get(key)
+        if val is not None:
+            result["tokens_read"] = int(val)
+            break
+
+    # Output/completion tokens
+    for key in ("output_tokens", "completion_tokens"):
+        val = usage.get(key)
+        if val is not None:
+            result["tokens_write"] = int(val)
+            break
+
+    # Cache tokens
+    for key in ("cache_read_tokens", "cached_tokens", "cache_read_input_tokens"):
+        val = usage.get(key)
+        if val is not None:
+            result["tokens_cache"] = int(val)
+            break
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Tool allow-list
 # ---------------------------------------------------------------------------
@@ -490,7 +547,14 @@ def normalize_codex_metrics(
 # ---------------------------------------------------------------------------
 
 
-def build_execution_result(output_lines: list[str], duration_ms: int) -> ExecutionResult:
+def build_execution_result(
+    output_lines: list[str],
+    duration_ms: int,
+    tokens_read: int = 0,
+    tokens_write: int = 0,
+    tokens_cache: int = 0,
+    num_actions: int = 0,
+) -> ExecutionResult:
     """Build an ``ExecutionResult`` from collected output lines and elapsed time.
 
     The codex app-server sends text as character-level delta fragments via
@@ -500,6 +564,10 @@ def build_execution_result(output_lines: list[str], duration_ms: int) -> Executi
     Args:
         output_lines: Text fragments collected from agent message delta events.
         duration_ms: Wall-clock duration of the session in milliseconds.
+        tokens_read: Prompt/input tokens consumed.
+        tokens_write: Completion/output tokens produced.
+        tokens_cache: Cache-read tokens (if reported by the server).
+        num_actions: Number of tool invocations made during the session.
 
     Returns:
         Populated ``ExecutionResult`` with ``success=True``.
@@ -509,7 +577,13 @@ def build_execution_result(output_lines: list[str], duration_ms: int) -> Executi
     final_lines = combined.splitlines() if combined else []
     return ExecutionResult(
         success=True,
-        metrics=normalize_codex_metrics(duration_ms=duration_ms),
+        metrics=normalize_codex_metrics(
+            duration_ms=duration_ms,
+            tokens_read=tokens_read,
+            tokens_write=tokens_write,
+            tokens_cache=tokens_cache,
+            num_actions=num_actions,
+        ),
         output_lines=final_lines,
     )
 
@@ -555,7 +629,9 @@ async def route_tool_call(
     enforce_tool_allowlist(tool_name)
 
     if tool_name == "update_checklist":
-        req_id: str = str(args.get("req_id", ""))
+        req_id: str = str(args.get("req_id", "")).strip()
+        if not req_id:
+            raise ValueError("update_checklist requires a non-empty 'req_id'")
         raw_status: str = str(args.get("status", "done"))
         note: str | None = args.get("note")
         status = ChecklistStatus(raw_status)
@@ -566,8 +642,12 @@ async def route_tool_call(
 
     elif tool_name == "grade":
         if on_grade is not None:
-            req_id = str(args.get("req_id", ""))
-            grade: str = str(args.get("grade", ""))
+            req_id = str(args.get("req_id", "")).strip()
+            grade: str = str(args.get("grade", "")).strip()
+            if not req_id:
+                raise ValueError("grade requires a non-empty 'req_id'")
+            if not grade:
+                raise ValueError("grade requires a non-empty 'grade'")
             grade_reason: str | None = args.get("grade_reason")
             await on_grade(req_id, grade, grade_reason)
         else:
@@ -732,6 +812,11 @@ def fetch_codex_models() -> list[str]:
                 proc.wait(timeout=2)
             except Exception:
                 proc.kill()
+            finally:
+                if proc.stdin:
+                    proc.stdin.close()
+                if proc.stdout:
+                    proc.stdout.close()
             return []
 
         # Step 2: Acknowledge initialisation.
@@ -746,6 +831,11 @@ def fetch_codex_models() -> list[str]:
             proc.wait(timeout=2)
         except Exception:
             proc.kill()
+        finally:
+            if proc.stdin:
+                proc.stdin.close()
+            if proc.stdout:
+                proc.stdout.close()
 
         if model_resp is None:
             return []

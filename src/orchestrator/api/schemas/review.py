@@ -1,6 +1,7 @@
 """Review API schemas."""
 
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -77,7 +78,7 @@ class FilePrune(BaseModel):
     """Prune selection for a single file."""
 
     path: str
-    mode: str  # "file" | "hunk" | "line"
+    mode: Literal["file", "hunk", "line"]
     hunks: list[int] | None = None
     lines: list[LineRange] | None = None
 
@@ -86,7 +87,7 @@ class PruneSelection(BaseModel):
     """A set of prune selections across files."""
 
     files: list[FilePrune]
-    scope: str
+    scope: Literal["aggregate", "commit", "task"]
 
 
 class PrunePreviewResponse(BaseModel):
@@ -170,3 +171,16 @@ class MergeReadiness(BaseModel):
 
     ready: bool
     gates: list[Gate]
+
+
+class RevertFileRequest(BaseModel):
+    """Request to revert a single file to base-branch state."""
+
+    file_path: str
+
+
+class AgentResolveConflictsRequest(BaseModel):
+    """Request for agent-based conflict resolution."""
+
+    agent_type: str | None = None
+    agent_config: dict[str, Any] | None = None

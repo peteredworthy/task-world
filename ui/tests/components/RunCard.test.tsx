@@ -33,6 +33,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     id: 'run-1',
     repo_name: '/home/user/project',
     status: 'draft',
+    pause_reason: null,
     routine_id: 'my-routine',
     routine_sha: null,
     routine_source: null,
@@ -43,6 +44,8 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     agent_config: {},
     worktree_enabled: false,
     worktree_path: null,
+    source_branch: null,
+    merge_strategy: null,
     config: {},
     steps: [],
     current_step_index: 0,
@@ -91,6 +94,31 @@ describe('RunCard', () => {
     renderCard(run, { routineName: 'Test Routine' });
     expect(screen.getByText('Test Routine')).toBeInTheDocument();
     expect(screen.getByText('/tmp/proj')).toBeInTheDocument();
+  });
+
+  it('renders expanded metadata strip with labeled details and metrics', () => {
+    const run = makeRun({
+      status: 'active',
+      source_branch: 'mcp-ops-c',
+      agent_type_display: 'Codex Server',
+      agent_icon: 'codex',
+      started_at: '2026-03-03T12:00:00Z',
+      total_tokens_read: 1200,
+      total_tokens_write: 300,
+      total_tokens_cache: 500,
+      estimated_cost_usd: 0.012,
+    });
+
+    renderCard(run, { expanded: true, routineName: 'Test Routine' });
+
+    expect(screen.getByText('Run ID')).toBeInTheDocument();
+    expect(screen.getByText('Source Branch')).toBeInTheDocument();
+    expect(screen.getByText('Agent')).toBeInTheDocument();
+    expect(screen.getByText('Started')).toBeInTheDocument();
+    expect(screen.getByText('Total Tokens')).toBeInTheDocument();
+    expect(screen.getByText('Est. Cost')).toBeInTheDocument();
+    expect(screen.getByText('2.0k')).toBeInTheDocument();
+    expect(screen.getByText('$0.01')).toBeInTheDocument();
   });
 
   it('renders status badge', () => {
@@ -323,10 +351,7 @@ describe('RunCard', () => {
       renderCard(run, { expanded: true });
 
       expect(screen.getByText('OpenHands')).toBeInTheDocument();
-
-      // AgentIcon should be rendered (check for svg)
-      const container = screen.getByText('OpenHands').closest('span');
-      expect(container).toBeInTheDocument();
+      expect(screen.getByText('Agent')).toBeInTheDocument();
     });
 
     it('renders CLI agent icon and name', () => {
@@ -359,7 +384,7 @@ describe('RunCard', () => {
       expect(screen.getByText('User Managed')).toBeInTheDocument();
     });
 
-    it('hides agent info when agent_icon is none', () => {
+    it('shows fallback agent text when agent_icon is none', () => {
       const run = makeRun({
         agent_type: null,
         agent_type_display: 'No Agent',
@@ -367,23 +392,20 @@ describe('RunCard', () => {
       });
       renderCard(run, { expanded: true });
 
-      // Agent display text should not be in the expanded meta section
-      expect(screen.queryByText('No Agent')).not.toBeInTheDocument();
+      expect(screen.getByText('No Agent')).toBeInTheDocument();
     });
 
-    it('shows agent info with separator pipe in expanded view', () => {
+    it('shows agent info in the expanded details strip', () => {
       const run = makeRun({
         agent_type: 'openhands_local',
         agent_type_display: 'OpenHands',
         agent_icon: 'openhands',
         routine_id: 'my-routine',
       });
-      const { container } = renderCard(run, { expanded: true });
+      renderCard(run, { expanded: true });
 
-      // Should have pipe separator before agent info
-      const metaSection = container.querySelector('.font-mono');
-      expect(metaSection?.textContent).toContain('|');
-      expect(metaSection?.textContent).toContain('OpenHands');
+      expect(screen.getByText('Agent')).toBeInTheDocument();
+      expect(screen.getByText('OpenHands')).toBeInTheDocument();
     });
 
     it('shows agent info in collapsed view too', () => {

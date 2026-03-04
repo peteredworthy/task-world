@@ -445,17 +445,22 @@ class WorkflowService:
         agent_config: dict[str, object] | None = None,
         preserve_checklist: bool = False,
     ) -> RecoverResponse:
-        """Recover a FAILED run by rewinding to a target task and pausing.
+        """Recover a run by rewinding to a target task and pausing.
+
+        Allowed when the run is FAILED or PAUSED. A common scenario for PAUSED:
+        a task fails, the run continues to the next task in the step, and the
+        user pauses the run to jump back to the failed task instead of waiting
+        for the full step to complete.
 
         Recovery semantics:
-        - Only FAILED runs can be recovered (all other statuses -> 409 conflict)
+        - FAILED or PAUSED runs can be recovered (other statuses -> 409 conflict)
         - Target task is moved to BUILDING with an extra attempt budget
         - Downstream tasks are reset to PENDING with cleared attempts
         - Downstream checklist items are reset to OPEN by default
         - Run is transitioned to PAUSED with pause_reason="recovered"
         """
         run = await self._repo.get(run_id)
-        if run.status != RunStatus.FAILED:
+        if run.status not in (RunStatus.FAILED, RunStatus.PAUSED):
             raise InvalidTransitionError(run.status.value, RunStatus.PAUSED.value)
 
         if additional_attempts < 0:

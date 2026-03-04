@@ -38,6 +38,7 @@ from orchestrator.agents.codex_server_common import (
     extract_agent_message_delta,
     extract_dynamic_tool_call,
     extract_tool_call_from_notification,
+    extract_turn_usage,
     is_terminal_notification,
     normalize_codex_metrics,
     normalize_codex_output_lines,
@@ -49,6 +50,7 @@ from orchestrator.agents.errors import (
     AgentNotAvailableError,
     AgentTimeoutError,
 )
+from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.agents.types import (
     AgentInfo,
     AgentMetadataCallback,
@@ -496,13 +498,17 @@ class CodexServerAgent:
 
             # --- Step 4: Process notification stream ---
             done = False
+            num_actions = 0
+            turn_usage: dict[str, int] = {}
 
             async def _dispatch_tool_call(tool_msg: dict[str, Any]) -> None:
                 """Respond to an ``item/tool/call`` server request and fire callbacks."""
+                nonlocal num_actions
                 tool_result = extract_dynamic_tool_call(tool_msg)
                 if tool_result is None:
                     return
                 req_id, tool_name, tool_args = tool_result
+                num_actions += 1
                 try:
                     await route_tool_call(
                         tool_name,
@@ -517,9 +523,22 @@ class CodexServerAgent:
                 except ValueError:
                     # Disallowed tool — respond with failure to unblock the server.
                     await transport.send(build_dynamic_tool_call_response(req_id, success=False))
+                except Exception as cb_exc:
+                    # Callback raised an unexpected error (GateBlockedError, DB error, etc.).
+                    # Send failure response to unblock the codex server, then re-raise
+                    # so the session terminates with a meaningful error.
+                    logger.warning(
+                        "CodexServerAgent: callback error for tool %r: %s: %s",
+                        tool_name,
+                        type(cb_exc).__name__,
+                        cb_exc,
+                    )
+                    await transport.send(build_dynamic_tool_call_response(req_id, success=False))
+                    raise
 
             async def _process_msg(msg: dict[str, Any]) -> bool:
                 """Process one message; return True if it is a terminal notification."""
+                nonlocal num_actions, turn_usage
                 # Dynamic tool call request from the server (has id AND method).
                 if msg.get("method") == "item/tool/call" and "id" in msg:
                     await _dispatch_tool_call(msg)
@@ -527,7 +546,13 @@ class CodexServerAgent:
                 # Skip stray response messages (no method field).
                 if "id" in msg and "method" not in msg:
                     return False
-                return await self._handle_notification(
+                # Count item/completed notifications as actions (these represent
+                # the agent's own tool invocations, e.g. shell commands, file edits).
+                if msg.get("method") == "item/completed":
+                    item = msg.get("params", {}).get("item", {})
+                    if item.get("type") not in ("agentMessage", None):
+                        num_actions += 1
+                terminal, usage = await self._handle_notification(
                     msg,
                     output_lines,
                     on_output,
@@ -536,6 +561,9 @@ class CodexServerAgent:
                     on_grade,
                     on_complete_recovery,
                 )
+                if terminal:
+                    turn_usage = usage
+                return terminal
 
             # First drain any notifications buffered during the request-response phase.
             for msg in notification_buffer:
@@ -559,6 +587,7 @@ class CodexServerAgent:
             AgentNotAvailableError,
             AgentTimeoutError,
             AgentExecutionError,
+            GateBlockedError,
         ):
             raise
         except asyncio.CancelledError:
@@ -580,15 +609,16 @@ class CodexServerAgent:
             ) from exc
         except Exception as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
-            logger.debug(
-                "CodexServerAgent: session error after %dms — %s",
+            logger.warning(
+                "CodexServerAgent: session error after %dms — %s: %s",
                 duration_ms,
+                type(exc).__name__,
                 exc,
                 exc_info=True,
             )
             raise AgentExecutionError(
                 AgentType.CODEX_SERVER.value,
-                f"Session failed after {duration_ms}ms",
+                f"Session failed after {duration_ms}ms: {type(exc).__name__}: {exc}",
             ) from exc
         finally:
             # Only close the transport if we spawned it (not injected by tests).
@@ -602,7 +632,14 @@ class CodexServerAgent:
                 shutil.rmtree(tmp_codex_home, ignore_errors=True)
 
         duration_ms = int(time.monotonic() * 1000) - start_ms
-        return build_execution_result(output_lines, duration_ms)
+        return build_execution_result(
+            output_lines,
+            duration_ms,
+            tokens_read=turn_usage.get("tokens_read", 0),
+            tokens_write=turn_usage.get("tokens_write", 0),
+            tokens_cache=turn_usage.get("tokens_cache", 0),
+            num_actions=num_actions,
+        )
 
     async def cancel(self) -> None:
         """Request cancellation of the active Codex server session.
@@ -736,12 +773,21 @@ class CodexServerAgent:
                 stderr=asyncio.subprocess.DEVNULL,
                 env=clean_env,
                 cwd=context.working_dir,
+                limit=1024 * 1024,  # 1MB readline buffer for large JSON-RPC messages
             )
         except FileNotFoundError as exc:
             shutil.rmtree(tmp_codex_home, ignore_errors=True)
-            raise AgentNotAvailableError(
-                AgentType.CODEX_SERVER.value,
-                "codex executable not found; install Codex CLI to use this agent",
+            # create_subprocess_exec raises FileNotFoundError for BOTH
+            # a missing executable AND a missing cwd directory.
+            # Distinguish between the two to give a useful error message.
+            if shutil.which("codex") is None:
+                raise AgentNotAvailableError(
+                    AgentType.CODEX_SERVER.value,
+                    "codex executable not found; install Codex CLI to use this agent",
+                ) from exc
+            raise AgentExecutionError(
+                agent_type=AgentType.CODEX_SERVER.value,
+                message=f"Working directory does not exist: {context.working_dir}",
             ) from exc
         except OSError as exc:
             shutil.rmtree(tmp_codex_home, ignore_errors=True)
@@ -769,12 +815,14 @@ class CodexServerAgent:
         on_submit: SubmitCallback,
         on_grade: GradeCallback | None,
         on_complete_recovery: CompleteRecoveryCallback | None = None,
-    ) -> bool:
+    ) -> tuple[bool, dict[str, int]]:
         """Process one JSON-RPC notification.
 
         Returns:
-            ``True`` if this is a terminal notification (``turn/completed``),
-            ``False`` otherwise.
+            ``(True, usage)`` if this is a terminal notification
+            (``turn/completed``), where *usage* is the token usage dict
+            extracted from the turn payload.
+            ``(False, {})`` otherwise.
 
         Raises:
             AgentCancelledError: When ``turn/completed`` has
@@ -792,8 +840,9 @@ class CodexServerAgent:
                     AgentType.CODEX_SERVER.value,
                     f"Codex session ended with status: {status}",
                 )
-            # "completed" — normal success.
-            return True
+            # "completed" — normal success; extract usage from the turn payload.
+            usage = extract_turn_usage(msg)
+            return (True, usage)
 
         # Route tool calls (fire on item/started so the orchestrator is notified promptly).
         tool_call = extract_tool_call_from_notification(msg)
@@ -819,4 +868,4 @@ class CodexServerAgent:
             if on_output is not None:
                 await on_output([delta])
 
-        return False
+        return (False, {})

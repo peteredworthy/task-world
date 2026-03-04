@@ -3,11 +3,27 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import model_validator
+from pydantic import Field, field_validator, model_validator
 
 from orchestrator.api.schemas.base import ApiModel
 
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentType, MergeStrategy
+
+
+_VALID_AGENT_TYPES = [e.value for e in AgentType]
+_VALID_MERGE_STRATEGIES = [e.value for e in MergeStrategy]
+
+
+def _validate_agent_type(v: str | None) -> str | None:
+    """Validate and normalize agent_type (case-insensitive)."""
+    if v is None:
+        return v
+    lowered = v.lower()
+    if lowered not in _VALID_AGENT_TYPES:
+        raise ValueError(
+            f"Invalid agent_type '{v}'. Valid options: {', '.join(_VALID_AGENT_TYPES)}"
+        )
+    return lowered
 
 
 class EnvFileSpecSchema(ApiModel):
@@ -32,6 +48,23 @@ class CreateRunRequest(ApiModel):
     agent_config: dict[str, Any] = {}
     env_files: EnvFileRequestConfig | None = None
     merge_strategy: str | None = None
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def validate_agent_type(cls, v: str | None) -> str | None:
+        return _validate_agent_type(v)
+
+    @field_validator("merge_strategy", mode="before")
+    @classmethod
+    def validate_merge_strategy(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        lowered = v.lower()
+        if lowered not in _VALID_MERGE_STRATEGIES:
+            raise ValueError(
+                f"Invalid merge_strategy '{v}'. Valid options: {', '.join(_VALID_MERGE_STRATEGIES)}"
+            )
+        return lowered
 
     @model_validator(mode="after")
     def validate_routine_source(self) -> "CreateRunRequest":
@@ -139,7 +172,7 @@ class AgentCancelledRequest(ApiModel):
 class BackwardTransitionRequest(ApiModel):
     """Request to transition backward to an earlier step."""
 
-    target_step_index: int
+    target_step_index: int = Field(ge=0)
     reason: str | None = None
 
 
@@ -149,6 +182,11 @@ class ResumeRunRequest(ApiModel):
     agent_type: str | None = None
     agent_config: dict[str, Any] | None = None
     resume_strategy: str | None = None  # "continue" | "revert"
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def validate_agent_type(cls, v: str | None) -> str | None:
+        return _validate_agent_type(v)
 
     @model_validator(mode="after")
     def validate_resume_strategy(self) -> "ResumeRunRequest":
@@ -161,10 +199,15 @@ class RecoverRequest(ApiModel):
     """Request to recover a failed run to a target task."""
 
     target_task_id: str
-    additional_attempts: int = 1
+    additional_attempts: int = Field(default=1, ge=0)
     agent_type: str | None = None
     agent_config: dict[str, Any] | None = None
     preserve_checklist: bool = False
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def validate_agent_type(cls, v: str | None) -> str | None:
+        return _validate_agent_type(v)
 
 
 class RecoverResponse(ApiModel):
@@ -211,7 +254,7 @@ class BackMergeResponse(ApiModel):
 class MergeBackRequest(ApiModel):
     """Request for merge-back operation."""
 
-    strategy: str | None = None
+    strategy: Literal["squash", "merge"] | None = None
     dirty_action: Literal["stash", "commit"] | None = None
 
 

@@ -29,6 +29,14 @@ from orchestrator.agents.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
+from orchestrator.agents.repetition_detector import (
+    ActionBudget,
+    ActionBudgetConfig,
+    ReasoningRepetitionDetector,
+    RepetitionAction,
+    RepetitionDetector,
+    RepetitionDetectorConfig,
+)
 from orchestrator.agents.quota import HttpQuotaFetcher, QuotaFetcher
 from orchestrator.agents.openhands_common import (
     CallbackRegistry,
@@ -278,7 +286,7 @@ def _format_oh_event(event: Any) -> str:
         # Reasoning content from thinking models (qwen <think>, deepseek, etc.)
         reasoning = getattr(event, "reasoning_content", None)
         if isinstance(reasoning, str) and reasoning.strip():
-            parts.append(f"[reasoning] {reasoning.strip()[:1000]}")
+            parts.append(f"[reasoning] {reasoning.strip()[:2000]}")
 
         # ActionEvent: thought is Sequence[TextContent], action is an Action object
         raw_thought = getattr(event, "thought", None)
@@ -287,9 +295,9 @@ def _format_oh_event(event: Any) -> str:
             for tc in raw_thought:
                 text = getattr(tc, "text", None)
                 if isinstance(text, str) and text.strip():
-                    parts.append(text.strip()[:500])
+                    parts.append(text.strip()[:1500])
         elif isinstance(raw_thought, str) and raw_thought.strip():
-            parts.append(raw_thought.strip()[:500])
+            parts.append(raw_thought.strip()[:1500])
 
         tool_name = getattr(event, "tool_name", None)
         if isinstance(tool_name, str) and tool_name:
@@ -301,7 +309,7 @@ def _format_oh_event(event: Any) -> str:
             # For think tool, the thought content is in action.thought
             action_thought = getattr(action, "thought", None)
             if isinstance(action_thought, str) and action_thought.strip():
-                parts.append(f"thought={action_thought.strip()[:500]}")
+                parts.append(f"thought={action_thought.strip()[:1500]}")
             # For terminal, the command is in action.command
             action_cmd = getattr(action, "command", None)
             if isinstance(action_cmd, str) and action_cmd.strip():
@@ -312,18 +320,18 @@ def _format_oh_event(event: Any) -> str:
         if obs is not None:
             obs_text = getattr(obs, "text", None)
             if isinstance(obs_text, str) and obs_text.strip():
-                parts.append(obs_text.strip()[:500])
+                parts.append(obs_text.strip()[:2000])
 
         # MessageEvent or other events with content list
         if not parts:
             content = getattr(event, "content", None)
             if isinstance(content, str) and content.strip():
-                parts.append(content.strip()[:500])
+                parts.append(content.strip()[:1500])
             elif isinstance(content, list):
                 for c in content:  # pyright: ignore[reportUnknownVariableType]
                     text: Any = getattr(c, "text", None)  # pyright: ignore[reportUnknownArgumentType]
                     if isinstance(text, str) and text.strip():
-                        parts.append(text.strip()[:500])
+                        parts.append(text.strip()[:1500])
 
         if not parts:
             return ""
@@ -430,6 +438,7 @@ class OpenHandsAgent:
         max_iterations: int = 100,
         tools: list[str] | None = None,
         llm_config: dict[str, Any] | None = None,
+        max_actions: int = 200,
     ) -> None:
         self._server_url = server_url
         self._model = model
@@ -438,6 +447,7 @@ class OpenHandsAgent:
         self._max_iterations = max_iterations
         self._tools = tools
         self._llm_config = llm_config or {}
+        self._max_actions = max_actions
         self._cancelled = False
         self._conversation: _LocalConversation | None = None  # pyright: ignore[reportUnknownVariableType]
 
@@ -705,6 +715,9 @@ class OpenHandsAgent:
             # they get persisted to the attempt's agent_output column.
             collected_lines: list[str] = []
             visualizer = None
+            rep_detector = RepetitionDetector(RepetitionDetectorConfig())
+            reasoning_detector = ReasoningRepetitionDetector()
+            action_budget = ActionBudget(ActionBudgetConfig(max_actions=self._max_actions))
             if on_output:
                 from openhands.sdk.conversation.visualizer.base import (  # pyright: ignore[reportMissingImports]
                     ConversationVisualizerBase as _VizBase,
@@ -717,6 +730,85 @@ class OpenHandsAgent:
                             if not line:
                                 return
                             collected_lines.append(line)
+
+                            # Repetition detection: feed terminal commands and tool actions
+                            action = getattr(event, "action", None)
+                            if action is not None:
+                                rep_result = RepetitionAction.NONE
+
+                                cmd = getattr(action, "command", None)
+                                if isinstance(cmd, str) and cmd.strip():
+                                    rep_result = rep_detector.record_action(cmd)
+
+                                # Feed tool actions (file_editor views, glob, grep, etc.)
+                                ev_tool_name = getattr(event, "tool_name", None)
+                                if isinstance(ev_tool_name, str) and ev_tool_name:
+                                    action_path = getattr(action, "path", None)
+                                    action_command_attr = getattr(action, "command", None)
+
+                                    if ev_tool_name == "file_editor":
+                                        # Only track views (not productive edits)
+                                        # str_replace and create indicate productive work
+                                        old_str = getattr(action, "old_str", None)
+                                        new_str = getattr(action, "new_str", None)
+                                        file_text = getattr(action, "file_text", None)
+                                        is_edit = (
+                                            old_str is not None
+                                            or new_str is not None
+                                            or file_text is not None
+                                        )
+                                        if not is_edit and isinstance(action_path, str):
+                                            rep_result = rep_detector.record_action(
+                                                f"file_editor:view:{action_path}"
+                                            )
+                                    elif not isinstance(action_command_attr, str):
+                                        # Non-terminal tools (glob, grep, etc.)
+                                        summary = (
+                                            action_path
+                                            or getattr(action, "pattern", None)
+                                            or getattr(action, "query", None)
+                                            or ""
+                                        )
+                                        if isinstance(summary, str):
+                                            summary = summary[:100]
+                                        else:
+                                            summary = str(summary)[:100]
+                                        rep_result = rep_detector.record_action(
+                                            f"{ev_tool_name}:{summary}"
+                                        )
+
+                                if rep_result == RepetitionAction.KILL:
+                                    logger.warning(
+                                        "RepetitionDetector: agent stuck repeating %r "
+                                        "(%d times in last %d actions) — pausing",
+                                        rep_detector.repeated_command,
+                                        rep_detector.config.threshold,
+                                        rep_detector.config.window_size,
+                                    )
+                                    conversation.pause()
+
+                                # Action budget check
+                                budget_result = action_budget.record_action()
+                                if budget_result == RepetitionAction.KILL:
+                                    logger.warning(
+                                        "ActionBudget: agent exceeded %d actions — pausing",
+                                        action_budget.config.max_actions,
+                                    )
+                                    conversation.pause()
+
+                            # Reasoning repetition detection
+                            reasoning = getattr(event, "reasoning_content", None)
+                            if isinstance(reasoning, str) and reasoning.strip():
+                                reason_result = reasoning_detector.record_reasoning(reasoning)
+                                if reason_result == RepetitionAction.KILL:
+                                    logger.warning(
+                                        "ReasoningDetector: agent stuck in reasoning loop "
+                                        "(%d repeated prefixes in last %d events) — pausing",
+                                        reasoning_detector.config.threshold,
+                                        reasoning_detector.config.window_size,
+                                    )
+                                    conversation.pause()
+
                             future = asyncio.run_coroutine_threadsafe(  # pyright: ignore[reportUnknownVariableType]
                                 on_output([line]),  # type: ignore[arg-type]
                                 loop,

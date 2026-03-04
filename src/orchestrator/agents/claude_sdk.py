@@ -474,7 +474,9 @@ async def _dispatch_tool(
         A plain text result string to return to Claude as the tool result.
     """
     if tool_name == "update_checklist":
-        req_id = str(tool_input.get("req_id", ""))
+        req_id = str(tool_input.get("req_id", "")).strip()
+        if not req_id:
+            return "Error: 'req_id' is required and cannot be empty."
         raw_status = str(tool_input.get("status", "done"))
         note: str | None = tool_input.get("note")
         status = ChecklistStatus(raw_status)
@@ -487,8 +489,12 @@ async def _dispatch_tool(
 
     elif tool_name == "grade":
         if on_grade is not None:
-            req_id = str(tool_input.get("req_id", ""))
-            grade = str(tool_input.get("grade", ""))
+            req_id = str(tool_input.get("req_id", "")).strip()
+            grade = str(tool_input.get("grade", "")).strip()
+            if not req_id:
+                return "Error: 'req_id' is required and cannot be empty."
+            if not grade:
+                return "Error: 'grade' is required and cannot be empty."
             grade_reason: str | None = tool_input.get("grade_reason")
             await on_grade(req_id, grade, grade_reason)
             return f"Grade {grade} set for requirement {req_id}."

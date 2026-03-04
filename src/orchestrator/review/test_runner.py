@@ -22,6 +22,8 @@ class TestSummary(BaseModel):
 class TestRunResult(BaseModel):
     """Result of a test run."""
 
+    __test__ = False  # Not a pytest test class
+
     test_run_id: str
     status: str  # "running" | "passed" | "failed" | "error"
     summary: TestSummary | None = None

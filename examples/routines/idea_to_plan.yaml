@@ -234,7 +234,7 @@ routine:
           auto_verify:
             items:
               - id: "step_plans_exist"
-                cmd: "ls docs/{{feature}}/step-*-plan.md 2>/dev/null | wc -l | awk '{if ($1 >= 1) exit 0; else exit 1}'"
+                cmd: "ls docs/{{feature}}/step-*-plan.md >/dev/null 2>&1"
                 must: true
           verifier:
             rubric:
@@ -286,7 +286,7 @@ routine:
           auto_verify:
             items:
               - id: "step_files_exist"
-                cmd: "ls docs/{{feature}}/steps/step-*.md 2>/dev/null | wc -l | awk '{if ($1 >= 1) exit 0; else exit 1}'"
+                cmd: "ls docs/{{feature}}/steps/step-*.md >/dev/null 2>&1"
                 must: true
           verifier:
             rubric:

@@ -135,7 +135,11 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                                 _repo_path = _repos_dir / run.repo_name
                                 if _repo_path.is_dir() and run.source_branch:
                                     _wt_mgr = _WTM(_repo_path, _wt_dir)
-                                    _wt_mgr.ensure_exists(run.id, run.source_branch)
+                                    _wt_mgr.ensure_exists(
+                                        run.id,
+                                        run.source_branch,
+                                        worktree_path=run.worktree_path,
+                                    )
                                     logger.info(
                                         f"Startup recovery: recreated missing worktree "
                                         f"for run {run.id}"

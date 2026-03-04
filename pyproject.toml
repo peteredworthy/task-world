@@ -60,6 +60,12 @@ markers = [
     "slow: tests that invoke real external tools (LLMs, Docker, CLI agents)",
     "e2e: end-to-end tests that run against a real HTTP server",
 ]
+filterwarnings = [
+    "ignore::jwt.warnings.InsecureKeyLengthWarning",
+    "ignore:websockets\\.legacy:DeprecationWarning",
+    "ignore:websockets\\.server\\.WebSocketServerProtocol:DeprecationWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
 
 [tool.ruff]
 line-length = 100

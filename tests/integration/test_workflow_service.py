@@ -344,17 +344,32 @@ def _make_failed_run_with_downstream() -> Run:
     )
 
 
-@pytest.mark.parametrize("status", [RunStatus.ACTIVE, RunStatus.PAUSED, RunStatus.COMPLETED])
-async def test_recover_run_rejects_non_failed_statuses(
+@pytest.mark.parametrize("status", [RunStatus.ACTIVE, RunStatus.COMPLETED])
+async def test_recover_run_rejects_non_recoverable_statuses(
     service: WorkflowService, status: RunStatus
 ) -> None:
+    """recover_run only accepts FAILED and PAUSED runs; ACTIVE and COMPLETED are rejected."""
     run = _make_simple_run()
-    run.id = f"run-non-failed-{status.value}"
+    run.id = f"run-non-recoverable-{status.value}"
     run.status = status
     await service.create_run(run)
 
     with pytest.raises(InvalidTransitionError):
         await service.recover_run(run.id, "task-1")
+
+
+async def test_recover_run_accepts_paused_run(service: WorkflowService) -> None:
+    """A PAUSED run can be recovered — e.g. user pauses to jump back to a failed task."""
+    run = _make_failed_run_with_downstream()
+    run.id = "run-paused-recover"
+    run.status = RunStatus.PAUSED
+    run.pause_reason = "manual_pause"
+    run.completed_at = None
+    await service.create_run(run)
+
+    result = await service.recover_run("run-paused-recover", "task-1")
+    assert result.status == "paused"
+    assert result.pause_reason == "recovered"
 
 
 async def test_recover_run_resets_target_and_downstream(service: WorkflowService) -> None:

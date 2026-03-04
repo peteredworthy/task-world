@@ -1,6 +1,7 @@
 """Git worktree management for run isolation."""
 
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -34,9 +35,30 @@ class WorktreeManager:
         self._repo = repo_path
         self._worktree_dir = worktree_dir
 
+    _COUNTER_RE = re.compile(r"^r(\d+)$")
+
+    def _next_counter(self) -> int:
+        """Return the next available counter for short worktree directory names.
+
+        Scans ``_worktree_dir`` for directories matching ``r<N>`` and returns
+        max(N) + 1, or 1 if none exist.
+        """
+        max_n = 0
+        if self._worktree_dir.is_dir():
+            for entry in self._worktree_dir.iterdir():
+                if entry.is_dir():
+                    m = self._COUNTER_RE.match(entry.name)
+                    if m:
+                        max_n = max(max_n, int(m.group(1)))
+        return max_n + 1
+
     def create(self, run_id: str, base_branch: str = "main") -> WorktreeInfo:
         """
         Create a new worktree for a run.
+
+        Uses a short counter-based directory name (``r1``, ``r2``, …) to keep
+        paths short. The branch name ``orchestrator/run-{run_id}`` is kept
+        unchanged for identification.
 
         Args:
             run_id: Unique identifier for the run
@@ -49,15 +71,18 @@ class WorktreeManager:
             WorktreeExistsError: If worktree already exists
             GitCommandError: If git command fails
         """
-        worktree_path = self._worktree_dir / f"run-{run_id}"
         branch_name = f"orchestrator/run-{run_id}"
 
-        # Check if worktree already exists
-        if worktree_path.exists():
-            raise WorktreeExistsError(run_id, str(worktree_path))
+        # Check if a worktree for this run already exists (by branch)
+        for wt in self.list():
+            if wt.branch == branch_name:
+                raise WorktreeExistsError(run_id, str(wt.path))
 
         # Ensure worktree directory exists
         self._worktree_dir.mkdir(parents=True, exist_ok=True)
+
+        # Use short counter-based directory name
+        worktree_path = self._worktree_dir / f"r{self._next_counter()}"
 
         # Create worktree with new branch
         cmd = [
@@ -104,14 +129,20 @@ class WorktreeManager:
             commit=result.stdout.strip(),
         )
 
-    def ensure_exists(self, run_id: str, base_branch: str = "main") -> WorktreeInfo:
+    def ensure_exists(
+        self,
+        run_id: str,
+        base_branch: str = "main",
+        worktree_path: str | None = None,
+    ) -> WorktreeInfo:
         """Ensure a worktree exists for a run, recreating it if the directory is missing.
 
         Unlike ``create()``, this method handles the case where the worktree
         directory was deleted (e.g., by cleanup) but the git branch may still
         exist from the original creation. It:
 
-        1. Returns immediately if the directory already exists.
+        1. Returns immediately if the directory already exists (checks provided
+           ``worktree_path`` first, then searches by branch name).
         2. Prunes stale git worktree entries (where the directory is gone).
         3. If the branch ``orchestrator/run-{run_id}`` already exists, creates
            the worktree pointing to that branch (preserving git history).
@@ -121,6 +152,9 @@ class WorktreeManager:
         Args:
             run_id: Unique identifier for the run
             base_branch: Branch to use if a fresh worktree must be created
+            worktree_path: Known path for this worktree (from the run record).
+                If provided and exists, used directly. Otherwise searches by
+                branch name or allocates a new counter-based path.
 
         Returns:
             WorktreeInfo with path, branch, and commit
@@ -128,26 +162,51 @@ class WorktreeManager:
         Raises:
             GitCommandError: If git command fails
         """
-        worktree_path = self._worktree_dir / f"run-{run_id}"
         branch_name = f"orchestrator/run-{run_id}"
 
-        if worktree_path.exists():
-            # Already present - get the current commit and return
+        # Try the provided path first
+        if worktree_path:
+            wt_path = Path(worktree_path)
+            if wt_path.exists():
+                try:
+                    result = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=wt_path,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    return WorktreeInfo(
+                        path=wt_path.resolve(),
+                        branch=branch_name,
+                        commit=result.stdout.strip(),
+                    )
+                except subprocess.CalledProcessError:
+                    pass  # Fall through to recreate
+
+        # Search existing worktrees by branch name
+        for wt in self.list():
+            if wt.branch == branch_name and wt.path.exists():
+                return wt
+
+        # Also check legacy path format for backward compat
+        legacy_path = self._worktree_dir / f"run-{run_id}"
+        if legacy_path.exists():
             try:
                 result = subprocess.run(
                     ["git", "rev-parse", "HEAD"],
-                    cwd=worktree_path,
+                    cwd=legacy_path,
                     capture_output=True,
                     text=True,
                     check=True,
                 )
                 return WorktreeInfo(
-                    path=worktree_path.resolve(),
+                    path=legacy_path.resolve(),
                     branch=branch_name,
                     commit=result.stdout.strip(),
                 )
             except subprocess.CalledProcessError:
-                pass  # Fall through to recreate
+                pass
 
         # Prune stale worktree entries so git doesn't block re-adding
         subprocess.run(
@@ -157,6 +216,9 @@ class WorktreeManager:
         )
 
         self._worktree_dir.mkdir(parents=True, exist_ok=True)
+
+        # Allocate a new short path
+        new_path = self._worktree_dir / f"r{self._next_counter()}"
 
         # Check if the branch already exists
         branch_exists = (
@@ -169,11 +231,9 @@ class WorktreeManager:
         )
 
         if branch_exists:
-            # Reuse the existing branch (preserves any committed work)
-            cmd = ["git", "worktree", "add", str(worktree_path), branch_name]
+            cmd = ["git", "worktree", "add", str(new_path), branch_name]
         else:
-            # Fresh worktree from base_branch
-            cmd = ["git", "worktree", "add", "-b", branch_name, str(worktree_path), base_branch]
+            cmd = ["git", "worktree", "add", "-b", branch_name, str(new_path), base_branch]
 
         try:
             subprocess.run(cmd, cwd=self._repo, check=True, capture_output=True, text=True)
@@ -182,44 +242,41 @@ class WorktreeManager:
 
         # Symlink .venv from main repo to avoid duplicating the virtual environment
         main_venv = self._repo / ".venv"
-        if main_venv.exists() and not (worktree_path / ".venv").exists():
-            (worktree_path / ".venv").symlink_to(main_venv.resolve())
+        if main_venv.exists() and not (new_path / ".venv").exists():
+            (new_path / ".venv").symlink_to(main_venv.resolve())
 
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            cwd=worktree_path,
+            cwd=new_path,
             capture_output=True,
             text=True,
             check=True,
         )
         return WorktreeInfo(
-            path=worktree_path.resolve(),
+            path=new_path.resolve(),
             branch=branch_name,
             commit=result.stdout.strip(),
         )
 
-    def delete(self, run_id: str, force: bool = False) -> None:
-        """
-        Remove worktree for a run.
+    def delete_path(self, worktree_path: str | Path, force: bool = False) -> None:
+        """Remove a worktree by its filesystem path.
 
         Args:
-            run_id: Unique identifier for the run
+            worktree_path: Absolute path to the worktree directory
             force: Force removal even with uncommitted changes
 
         Raises:
             WorktreeNotFoundError: If worktree doesn't exist
             GitCommandError: If git command fails
         """
-        worktree_path = self._worktree_dir / f"run-{run_id}"
-
-        # Check if worktree exists
-        if not worktree_path.exists():
-            raise WorktreeNotFoundError(run_id, str(worktree_path))
+        wt_path = Path(worktree_path)
+        if not wt_path.exists():
+            raise WorktreeNotFoundError("(path)", str(wt_path))
 
         cmd: list[str] = ["git", "worktree", "remove"]
         if force:
             cmd.append("--force")
-        cmd.append(str(worktree_path))
+        cmd.append(str(wt_path))
 
         try:
             subprocess.run(
@@ -231,6 +288,37 @@ class WorktreeManager:
             )
         except subprocess.CalledProcessError as e:
             raise GitCommandError(" ".join(cmd), e.returncode, e.stderr) from e
+
+    def delete(self, run_id: str, force: bool = False) -> None:
+        """
+        Remove worktree for a run.
+
+        Finds the worktree by branch name (``orchestrator/run-{run_id}``),
+        falling back to the legacy ``run-{run_id}`` directory path.
+
+        Args:
+            run_id: Unique identifier for the run
+            force: Force removal even with uncommitted changes
+
+        Raises:
+            WorktreeNotFoundError: If worktree doesn't exist
+            GitCommandError: If git command fails
+        """
+        branch_name = f"orchestrator/run-{run_id}"
+
+        # Search by branch name first (works with both old and new naming)
+        for wt in self.list():
+            if wt.branch == branch_name:
+                self.delete_path(wt.path, force=force)
+                return
+
+        # Fallback: legacy path format
+        legacy_path = self._worktree_dir / f"run-{run_id}"
+        if legacy_path.exists():
+            self.delete_path(legacy_path, force=force)
+            return
+
+        raise WorktreeNotFoundError(run_id, str(legacy_path))
 
     def list(self) -> list[WorktreeInfo]:
         """
@@ -300,10 +388,9 @@ class WorktreeManager:
                 run_id = wt.branch.replace("orchestrator/run-", "")
                 if run_id not in active_run_ids:
                     try:
-                        self.delete(run_id, force=True)
+                        self.delete_path(wt.path, force=True)
                         removed += 1
                     except WorktreeNotFoundError:
-                        # Worktree was already removed, skip
                         pass
 
         return removed
@@ -348,7 +435,7 @@ class WorktreeManager:
             if run_id not in all_run_ids:
                 logger.info(f"Removing orphaned worktree for unknown run {run_id}")
                 try:
-                    self.delete(run_id, force=True)
+                    self.delete_path(wt.path, force=True)
                     removed += 1
                 except WorktreeNotFoundError:
                     pass
@@ -362,7 +449,7 @@ class WorktreeManager:
                     f"(completed {completed.isoformat()})"
                 )
                 try:
-                    self.delete(run_id, force=True)
+                    self.delete_path(wt.path, force=True)
                     removed += 1
                 except WorktreeNotFoundError:
                     pass

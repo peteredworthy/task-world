@@ -26,7 +26,10 @@ def handle_run_completion(
 
     if run.delete_worktree_on_completion:
         try:
-            worktree_manager.delete(run.id, force=True)
+            if run.worktree_path:
+                worktree_manager.delete_path(run.worktree_path, force=True)
+            else:
+                worktree_manager.delete(run.id, force=True)
         except WorktreeNotFoundError:
             # Worktree already removed or never existed, no action needed
             pass

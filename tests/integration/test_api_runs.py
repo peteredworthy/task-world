@@ -279,7 +279,8 @@ async def test_recover_run_conflict_when_active(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
-async def test_recover_run_conflict_when_paused(client: AsyncClient) -> None:
+async def test_recover_run_succeeds_when_paused(client: AsyncClient) -> None:
+    """Recovery is allowed on PAUSED runs (e.g., a task failed while the run was paused)."""
     created = await _create_run(client)
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
@@ -287,7 +288,10 @@ async def test_recover_run_conflict_when_paused(client: AsyncClient) -> None:
     await client.post(f"/api/runs/{run_id}/pause")
 
     response = await client.post(f"/api/runs/{run_id}/recover", json={"target_task_id": task_id})
-    assert response.status_code == 409
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "paused"
+    assert data["pause_reason"] == "recovered"
 
 
 async def test_recover_run_conflict_when_completed(client: AsyncClient) -> None:
@@ -331,7 +335,7 @@ async def test_resume_with_agent_change(client: AsyncClient) -> None:
             "repo_name": "proj-2",
             "branch": "main",
             "agent_type": "cli_subprocess",
-            "agent_config": {"timeout": 300},
+            "agent_config": {"callback_channel": "mcp"},
         },
     )
     assert response.status_code == 201
@@ -346,7 +350,7 @@ async def test_resume_with_agent_change(client: AsyncClient) -> None:
         f"/api/runs/{run_id}/resume",
         json={
             "agent_type": "user_managed",
-            "agent_config": {"custom_field": "value"},
+            "agent_config": {"timeout_minutes": 30},
         },
     )
     assert response.status_code == 200
@@ -355,7 +359,7 @@ async def test_resume_with_agent_change(client: AsyncClient) -> None:
     # Verify the run is active with new agent
     assert data["status"] == "active"
     assert data["agent_type"] == "user_managed"
-    assert data["agent_config"] == {"custom_field": "value"}
+    assert data["agent_config"] == {"timeout_minutes": 30}
 
     # Verify the agent change event was emitted
     events_response = await client.get(f"/api/runs/{run_id}/activity")
@@ -368,8 +372,8 @@ async def test_resume_with_agent_change(client: AsyncClient) -> None:
     event = agent_changed_events[0]
     assert event["payload"]["old_agent"] == "cli_subprocess"
     assert event["payload"]["new_agent"] == "user_managed"
-    assert event["payload"]["old_agent_config"] == {"timeout": 300}
-    assert event["payload"]["new_agent_config"] == {"custom_field": "value"}
+    assert event["payload"]["old_agent_config"] == {"callback_channel": "mcp"}
+    assert event["payload"]["new_agent_config"] == {"timeout_minutes": 30}
 
 
 async def test_resume_without_agent_change(client: AsyncClient) -> None:
@@ -385,7 +389,7 @@ async def test_resume_without_agent_change(client: AsyncClient) -> None:
             "repo_name": "proj-3",
             "branch": "main",
             "agent_type": "cli_subprocess",
-            "agent_config": {"timeout": 300},
+            "agent_config": {"stdin_mode": "open"},
         },
     )
     assert response.status_code == 201
@@ -403,7 +407,7 @@ async def test_resume_without_agent_change(client: AsyncClient) -> None:
     # Verify the run is active with the same agent
     assert data["status"] == "active"
     assert data["agent_type"] == "cli_subprocess"
-    assert data["agent_config"] == {"timeout": 300}
+    assert data["agent_config"] == {"stdin_mode": "open"}
 
     # Verify no agent_changed event was emitted
     events_response = await client.get(f"/api/runs/{run_id}/activity")
@@ -423,7 +427,7 @@ async def test_resume_with_config_only_change(client: AsyncClient) -> None:
             "repo_name": "proj-4",
             "branch": "main",
             "agent_type": "cli_subprocess",
-            "agent_config": {"timeout": 300, "model": "gpt-4"},
+            "agent_config": {"stdin_mode": "close", "model": "gpt-4"},
         },
     )
     assert response.status_code == 201
@@ -437,7 +441,7 @@ async def test_resume_with_config_only_change(client: AsyncClient) -> None:
     response = await client.post(
         f"/api/runs/{run_id}/resume",
         json={
-            "agent_config": {"timeout": 600, "model": "claude-3"},
+            "agent_config": {"stdin_mode": "open", "model": "claude-3"},
         },
     )
     assert response.status_code == 200
@@ -446,7 +450,7 @@ async def test_resume_with_config_only_change(client: AsyncClient) -> None:
     # Verify the run is active with same agent type but updated config
     assert data["status"] == "active"
     assert data["agent_type"] == "cli_subprocess"
-    assert data["agent_config"] == {"timeout": 600, "model": "claude-3"}
+    assert data["agent_config"] == {"stdin_mode": "open", "model": "claude-3"}
 
     # Verify the agent change event was emitted (config changed even though type didn't)
     events_response = await client.get(f"/api/runs/{run_id}/activity")
@@ -459,8 +463,8 @@ async def test_resume_with_config_only_change(client: AsyncClient) -> None:
     event = agent_changed_events[0]
     assert event["payload"]["old_agent"] == "cli_subprocess"
     assert event["payload"]["new_agent"] == "cli_subprocess"
-    assert event["payload"]["old_agent_config"] == {"timeout": 300, "model": "gpt-4"}
-    assert event["payload"]["new_agent_config"] == {"timeout": 600, "model": "claude-3"}
+    assert event["payload"]["old_agent_config"] == {"stdin_mode": "close", "model": "gpt-4"}
+    assert event["payload"]["new_agent_config"] == {"stdin_mode": "open", "model": "claude-3"}
 
 
 async def test_create_run_with_agent_config(client: AsyncClient) -> None:

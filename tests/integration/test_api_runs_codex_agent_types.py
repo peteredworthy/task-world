@@ -54,16 +54,14 @@ async def test_create_run_with_codex_server(client: AsyncClient) -> None:
 
 async def test_read_run_round_trip_codex_server(client: AsyncClient) -> None:
     """A run created with codex_server returns the same agent_type on GET."""
-    created = await _create_run_with_agent(
-        client, "codex_server", {"endpoint": "http://localhost:9000"}
-    )
+    created = await _create_run_with_agent(client, "codex_server", {"model": "gpt-4o"})
     run_id = created["id"]
 
     response = await client.get(f"/api/runs/{run_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["agent_type"] == "codex_server"
-    assert data["agent_config"] == {"endpoint": "http://localhost:9000"}
+    assert data["agent_config"] == {"model": "gpt-4o"}
 
 
 async def test_update_run_agent_type_to_codex_server(client: AsyncClient) -> None:
@@ -75,7 +73,7 @@ async def test_update_run_agent_type_to_codex_server(client: AsyncClient) -> Non
             "repo_name": "proj-codex",
             "branch": "main",
             "agent_type": "cli_subprocess",
-            "agent_config": {"timeout": 300},
+            "agent_config": {"callback_channel": "rest"},
         },
     )
     assert response.status_code == 201
@@ -88,13 +86,13 @@ async def test_update_run_agent_type_to_codex_server(client: AsyncClient) -> Non
         f"/api/runs/{run_id}/resume",
         json={
             "agent_type": "codex_server",
-            "agent_config": {"endpoint": "http://localhost:9000"},
+            "agent_config": {"model": "gpt-4o"},
         },
     )
     assert response.status_code == 200
     data = response.json()
     assert data["agent_type"] == "codex_server"
-    assert data["agent_config"] == {"endpoint": "http://localhost:9000"}
+    assert data["agent_config"] == {"model": "gpt-4o"}
 
 
 async def test_codex_server_display_name(client: AsyncClient) -> None:

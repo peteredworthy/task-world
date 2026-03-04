@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from orchestrator.api.schemas.base import ApiModel
@@ -27,7 +29,7 @@ class SnapshotInfo(ApiModel):
 class RevertEnvFileRequest(ApiModel):
     """Request to revert env files to a snapshot."""
 
-    revert_to: str  # "task_start" or "run_start"
+    revert_to: Literal["task_start", "run_start"]
     task_id: str  # Currently active task
     worktree_path: str  # Path to the worktree
     files: list[str] | None = None  # Specific files to revert, None = all
@@ -51,7 +53,7 @@ class CopyBackRequest(ApiModel):
     """Request to copy env files back to a target directory."""
 
     target_dir: str
-    snapshot_id: str = "run_end"
+    snapshot_id: str = Field(default="run_end", pattern=r"^[a-zA-Z0-9_-]+$")
     files: list[str] | None = None
 
 

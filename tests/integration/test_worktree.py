@@ -62,9 +62,8 @@ def test_create_worktree(git_repo: tuple[Path, Path]) -> None:
     # Create worktree
     wt = manager.create("test-run-1")
 
-    # Verify worktree info
-    expected_path = (worktrees / "run-test-run-1").resolve()
-    assert wt.path == expected_path
+    # Verify worktree uses short counter-based path (r1, r2, ...)
+    assert wt.path == (worktrees / "r1").resolve()
     assert wt.branch == "orchestrator/run-test-run-1"
     assert len(wt.commit) == 40  # SHA is 40 chars
 
@@ -138,8 +137,8 @@ def test_create_worktree_custom_directory(git_repo: tuple[Path, Path]) -> None:
 
     wt = manager.create("test-run-3")
 
-    expected_path = (custom_dir / "run-test-run-3").resolve()
-    assert wt.path == expected_path
+    # Custom directory also uses counter-based naming
+    assert wt.path == (custom_dir / "r1").resolve()
     assert wt.path.exists()
 
 

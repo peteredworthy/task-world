@@ -18,6 +18,7 @@ from orchestrator.api.deps import (
     get_workflow_service,
 )
 from orchestrator.api.schemas.review import (
+    AgentResolveConflictsRequest,
     CommitEntry,
     ConflictBlock as ConflictBlockSchema,
     ConflictFile,
@@ -30,6 +31,7 @@ from orchestrator.api.schemas.review import (
     PruneApplyResponse,
     PrunePreviewResponse,
     PruneSelection,
+    RevertFileRequest,
     TestRunRequest,
     TestRunResponse,
     TestRunResult as TestRunResultSchema,
@@ -147,6 +149,12 @@ async def get_diff(
     - commit: diff for a single commit (requires ref=<sha>)
     - task: diff for a commit range from merge-base to ref
     """
+    if scope not in ("aggregate", "commit", "task"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid scope '{scope}'. Valid options: aggregate, commit, task",
+        )
+
     run = await service.get_run(run_id)
     worktree_path = _require_worktree(run.worktree_path)
 
@@ -199,6 +207,12 @@ async def get_diff_files(
     - aggregate (default): all files changed from source branch merge-base to HEAD
     - task: files changed in a specific commit range (requires ref='{start}..{end}')
     """
+    if scope not in ("aggregate", "task"):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid scope '{scope}'. Valid options: aggregate, task",
+        )
+
     run = await service.get_run(run_id)
     worktree_path = _require_worktree(run.worktree_path)
 
@@ -434,13 +448,11 @@ async def prune_apply(
 @router.post("/{run_id}/review/revert-file")
 async def revert_file_endpoint(
     run_id: str,
-    body: dict[str, Any],
+    body: RevertFileRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
 ) -> dict[str, str]:
     """Revert a single file to its base-branch state and create a commit."""
-    file_path = body.get("file_path")
-    if not file_path:
-        raise HTTPException(status_code=422, detail="file_path is required")
+    file_path = body.file_path
 
     run = await service.get_run(run_id)
     worktree_path = _require_worktree(run.worktree_path)
@@ -688,17 +700,12 @@ async def get_conflicts(
 @router.post("/{run_id}/review/conflicts/agent-resolve")
 async def agent_resolve_conflicts(
     run_id: str,
-    body: dict[str, Any],
+    body: AgentResolveConflictsRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
     executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
 ) -> dict[str, str]:
-    """Dispatch the run's agent to resolve merge conflicts.
-
-    Body fields (all optional):
-    - agent_type: override the run's default agent type
-    - agent_config: override agent configuration
-    """
+    """Dispatch the run's agent to resolve merge conflicts."""
     run = await service.get_run(run_id)
     worktree_path = _require_worktree(run.worktree_path)
 
@@ -707,18 +714,18 @@ async def agent_resolve_conflicts(
         raise HTTPException(status_code=409, detail="No merge conflicts to resolve")
 
     # Resolve agent type and config from body or run defaults
-    agent_type_str: str | None = body.get("agent_type") if body else None
-    agent_config_override: dict[str, Any] | None = body.get("agent_config") if body else None
+    agent_type_str: str | None = body.agent_type
+    agent_config_override: dict[str, Any] | None = body.agent_config
 
     agent_type: AgentType | None
     if agent_type_str:
-        try:
-            agent_type = AgentType(agent_type_str)
-        except ValueError:
+        valid_agent_types = [e.value for e in AgentType]
+        if agent_type_str not in valid_agent_types:
             raise HTTPException(
                 status_code=422,
-                detail=f"Unknown agent_type: {agent_type_str!r}",
+                detail=f"Invalid agent_type '{agent_type_str}'. Valid options: {', '.join(valid_agent_types)}",
             )
+        agent_type = AgentType(agent_type_str)
     else:
         agent_type = run.agent_type
 
