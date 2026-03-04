@@ -77,7 +77,13 @@ def _run_to_response(run: Run) -> RunResponse:
     # Parse routine config if available for gate information
     routine_config: RoutineConfig | None = None
     if run.routine_embedded is not None:
-        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        try:
+            routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        except ValidationError:
+            # Stored routine may not match current validation rules
+            # (e.g. stricter validators added after run was created).
+            # Degrade gracefully — gate info won't be available.
+            pass
 
     steps = [
         StepSummary(
