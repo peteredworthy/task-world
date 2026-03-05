@@ -29,6 +29,7 @@ from orchestrator.agents.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
+from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.agents.repetition_detector import (
     ActionBudget,
     ActionBudgetConfig,
@@ -860,6 +861,8 @@ class OpenHandsAgent:
         except AgentCancelledError:
             raise
         except AgentNotAvailableError:
+            raise
+        except GateBlockedError:
             raise
         except Exception as exc:
             raise AgentExecutionError("openhands_local", str(exc)) from exc

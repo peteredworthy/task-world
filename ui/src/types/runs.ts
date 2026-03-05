@@ -43,6 +43,7 @@ export interface RunResponse {
   repo_name: string;
   status: RunStatus;
   pause_reason: string | null;
+  last_error: string | null;
   routine_id: string | null;
   routine_sha: string | null;
   routine_source: string | null;

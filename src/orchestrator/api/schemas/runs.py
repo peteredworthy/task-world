@@ -114,6 +114,7 @@ class RunResponse(ApiModel):
     repo_name: str
     status: str
     pause_reason: str | None = None
+    last_error: str | None = None
     routine_id: str | None = None
     routine_sha: str | None = None
     routine_source: str | None = None

@@ -33,6 +33,7 @@ from orchestrator.agents.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
+from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.agents.openhands_common import (
     CallbackRegistry,
     GetRequirementsExecutor,
@@ -697,6 +698,8 @@ class DockerOpenHandsAgent:
         except AgentCancelledError:
             raise
         except AgentNotAvailableError:
+            raise
+        except GateBlockedError:
             raise
         except Exception as exc:
             raise AgentExecutionError("openhands_docker", str(exc)) from exc

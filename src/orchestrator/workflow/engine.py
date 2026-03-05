@@ -153,7 +153,12 @@ class WorkflowEngine:
         )
         return run
 
-    def pause_run(self, run_id: str, reason: str = "manual_pause") -> Run:
+    def pause_run(
+        self,
+        run_id: str,
+        reason: str = "manual_pause",
+        error_detail: str | None = None,
+    ) -> Run:
         """Pause a run - move from ACTIVE to PAUSED. Idempotent if already PAUSED."""
         run = self._state.get_run(run_id)
         if run.status == RunStatus.PAUSED:
@@ -164,6 +169,7 @@ class WorkflowEngine:
         old_status = run.status
         run.status = RunStatus.PAUSED
         run.pause_reason = reason
+        run.last_error = error_detail
         self._state.update_run(run)
 
         self._emitter.emit(
@@ -186,6 +192,7 @@ class WorkflowEngine:
         old_status = run.status
         run.status = RunStatus.ACTIVE
         run.pause_reason = None  # Clear pause reason on resume
+        run.last_error = None  # Clear error detail on resume
         self._state.update_run(run)
 
         self._emitter.emit(

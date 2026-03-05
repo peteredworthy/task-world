@@ -154,6 +154,7 @@ class Run(BaseModel):
     repo_name: str
     status: RunStatus = RunStatus.DRAFT
     pause_reason: str | None = None  # e.g., "agent_died", "manual_pause"
+    last_error: str | None = None  # Human-readable error detail when paused due to error
 
     # Routine reference
     routine_id: str | None = None

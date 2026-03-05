@@ -197,6 +197,7 @@ def _run_to_response(run: Run) -> RunResponse:
         repo_name=run.repo_name,
         status=run.status.value,
         pause_reason=run.pause_reason,
+        last_error=run.last_error,
         routine_id=run.routine_id,
         routine_sha=run.routine_sha,
         routine_source=run.routine_source.value if run.routine_source else None,

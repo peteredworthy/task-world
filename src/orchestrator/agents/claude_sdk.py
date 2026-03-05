@@ -50,6 +50,7 @@ from orchestrator.agents.types import (
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.workflow.errors import GateBlockedError
 
 logger = logging.getLogger(__name__)
 
@@ -794,6 +795,8 @@ class ClaudeSDKAgent:
             raise
         except AgentNotAvailableError:
             raise
+        except GateBlockedError:
+            raise
         except asyncio.CancelledError:
             raise AgentCancelledError(AgentType.CLAUDE_SDK.value)
         except Exception as exc:
@@ -804,9 +807,14 @@ class ClaudeSDKAgent:
                 exc,
                 exc_info=True,
             )
+            # Sanitize exception message to avoid leaking secrets
+            exc_msg = str(exc)
+            for secret in (self._api_key, self._auth_token):
+                if secret and secret in exc_msg:
+                    exc_msg = exc_msg.replace(secret, "***")
             raise AgentExecutionError(
                 AgentType.CLAUDE_SDK.value,
-                f"Claude SDK session failed after {duration_ms}ms",
+                f"Claude SDK session failed after {duration_ms}ms: {exc_msg}",
             ) from exc
 
         duration_ms = int(time.monotonic() * 1000) - start_ms

@@ -421,7 +421,11 @@ class AgentExecutor:
                             run_id, task_state, "AgentNotAvailableError", str(e)
                         )
                         await self._store_attempt_output(run_id, task_state.id, [], str(e))
-                        await service.pause_run(run_id, reason="agent_not_available")
+                        await service.pause_run(
+                            run_id,
+                            reason="agent_not_available",
+                            error_detail=str(e),
+                        )
                         await session.commit()
                         break
                     except AgentExecutionError as e:
@@ -430,7 +434,11 @@ class AgentExecutor:
                             run_id, task_state, "AgentExecutionError", str(e)
                         )
                         await self._store_attempt_output(run_id, task_state.id, [], str(e))
-                        await service.pause_run(run_id, reason="agent_execution_error")
+                        await service.pause_run(
+                            run_id,
+                            reason="agent_execution_error",
+                            error_detail=str(e),
+                        )
                         await session.commit()
                         break
                     except Exception as e:
@@ -438,7 +446,11 @@ class AgentExecutor:
                         await self._emit_error_event(run_id, task_state, type(e).__name__, str(e))
                         # Pause the run on unexpected errors so the issue can be investigated
                         try:
-                            await service.pause_run(run_id, reason="unexpected_error")
+                            await service.pause_run(
+                                run_id,
+                                reason="unexpected_error",
+                                error_detail=str(e),
+                            )
                             await session.commit()
                         except Exception:
                             logger.exception(f"Run {run_id}: failed to pause run after error")

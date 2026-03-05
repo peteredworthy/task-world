@@ -348,11 +348,16 @@ class WorkflowService:
 
         return result
 
-    async def pause_run(self, run_id: str, reason: str = "manual_pause") -> Run:
+    async def pause_run(
+        self,
+        run_id: str,
+        reason: str = "manual_pause",
+        error_detail: str | None = None,
+    ) -> Run:
         """Pause a run (ACTIVE -> PAUSED)."""
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
-        engine.pause_run(run_id, reason=reason)
+        engine.pause_run(run_id, reason=reason, error_detail=error_detail)
         return await self._persist(state, run_id, buffer)
 
     async def resume_run(

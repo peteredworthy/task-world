@@ -177,19 +177,26 @@ function RunDetailInner({ runId }: { runId: string }) {
               </div>
               {run.status === 'paused' && run.pause_reason && run.pause_reason !== 'manual_pause' && (
                 <div className="mt-1.5 text-xs text-status-paused">
-                  {({
-                    server_shutdown: 'Paused — server restarted, will auto-resume',
-                    agent_not_available: 'Paused — agent not available',
-                    agent_execution_error: 'Paused — agent execution error',
-                    agent_exit_failure: 'Paused — agent exited with error',
-                    gate_blocked: 'Paused — checklist gate not satisfied',
-                    recovery_loop: 'Paused — recovery loop detected',
-                    unexpected_error: 'Paused — unexpected error',
-                    agent_health_check_failed: 'Paused — agent health check failed',
-                    agent_not_running_on_startup: 'Paused — agent was not running on startup',
-                    recovered: 'Paused — recovered from failure',
-                    recovery_triggered: 'Paused — recovery triggered',
-                  } as Record<string, string>)[run.pause_reason] ?? `Paused (${run.pause_reason})`}
+                  <div>
+                    {({
+                      server_shutdown: 'Paused — server restarted, will auto-resume',
+                      agent_not_available: 'Paused — agent not available',
+                      agent_execution_error: 'Paused — agent execution error',
+                      agent_exit_failure: 'Paused — agent exited with error',
+                      gate_blocked: 'Paused — checklist gate not satisfied',
+                      recovery_loop: 'Paused — recovery loop detected',
+                      unexpected_error: 'Paused — unexpected error',
+                      agent_health_check_failed: 'Paused — agent health check failed',
+                      agent_not_running_on_startup: 'Paused — agent was not running on startup',
+                      recovered: 'Paused — recovered from failure',
+                      recovery_triggered: 'Paused — recovery triggered',
+                    } as Record<string, string>)[run.pause_reason] ?? `Paused (${run.pause_reason})`}
+                  </div>
+                  {run.last_error && (
+                    <div className="mt-1 text-xs text-gray-400 font-mono truncate max-w-md" title={run.last_error}>
+                      {run.last_error}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

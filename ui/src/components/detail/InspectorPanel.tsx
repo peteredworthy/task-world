@@ -598,6 +598,19 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
               const hasError = Boolean(latest.error);
               const hasAutoVerify = Boolean(latest.auto_verify_results && latest.auto_verify_results.length > 0);
               if (!hasError && !hasAutoVerify) return null;
+              const hasAutoVerifyFailure = hasAutoVerify && latest.auto_verify_results!.some(r => !r.passed);
+              const isFailure = hasError || hasAutoVerifyFailure || latest.outcome === 'failed';
+              if (!isFailure) {
+                // All auto-verify checks passed, verification still in progress — show neutral
+                return hasAutoVerify ? (
+                  <div className="rounded-lg border border-border-default bg-bg-secondary px-3 py-2.5">
+                    <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
+                      Auto-verify checks
+                    </h4>
+                    <AutoVerifyResults results={latest.auto_verify_results!} />
+                  </div>
+                ) : null;
+              }
               return (
                 <div className="rounded-lg border-2 border-status-failed/30 bg-status-failed/5 px-3 py-2.5">
                   <h4 className="text-xs font-semibold text-status-failed uppercase tracking-wide mb-1.5">
