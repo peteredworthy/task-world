@@ -546,6 +546,9 @@ function TaskCard({
             } else if (att.attempt_num < task.current_attempt) {
               displayLabel = 'Needs revision';
               displayColor = outcomeColor('revision_needed');
+            } else if (task.status === 'recovering' || task.status === 'failed') {
+              displayLabel = 'Failed';
+              displayColor = outcomeColor('failed');
             } else {
               displayLabel = 'Building...';
               displayColor = 'text-status-active animate-pulse-dot';

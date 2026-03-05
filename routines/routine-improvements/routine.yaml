@@ -4,6 +4,18 @@ description: |
   Implements 16 actions (A1-A2, A4-A14, A16-A18) from the routine effectiveness review.
   Raises execution fidelity with independent verification on every task, leaner prompts,
   and failure-mode defenses. M1 and M2 run in parallel; M3-M5 follow sequentially.
+
+  VERIFIER INSTRUCTIONS (applies to ALL tasks in this routine):
+  You must verify not just that code exists, but that it is WIRED INTO the running
+  application. A feature that is implemented but never called from the live code paths
+  is NOT complete. Specifically:
+  - New functions/classes MUST be imported and called from the appropriate service,
+    router, executor, or prompt generation code path. Check call sites, not just definitions.
+  - New API fields MUST appear in both the ORM model AND the Pydantic response schema.
+  - New callbacks MUST be constructed in the executor and passed to agent.execute().
+  - New prompt sections MUST be included in the prompt returned by the /tasks/{id}/prompt endpoint.
+  - If the task says "integrate into X", grep the codebase to confirm the integration exists.
+  Grade F if the feature exists as dead code (defined but never called from the running system).
 inputs:
   - name: source_branch
     required: false
@@ -194,7 +206,7 @@ steps:
         auto_verify:
           items:
             - id: executor_imports
-              cmd: uv run python -c "from orchestrator.agents.executor import AgentExecutor; print('Executor imports ok')"
+              cmd: uv run python -c "from orchestrator.agents.executor import AgentExecutor; print('AgentExecutor imports ok')"
               must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "executor or health_check"
@@ -282,6 +294,11 @@ steps:
           Keep all required sections: task context, requirements, callback instructions,
           orchestrator integration.
 
+          IMPORTANT: If you remove instructions from the shared prompt that are needed
+          by specific agents (e.g., git commit instructions), you MUST ensure those
+          instructions still exist in every agent's prompt path. Check cli.py,
+          claude_sdk.py, codex_server_common.py, and openhands_common.py builder prompts.
+
           Write tests confirming:
           - Removed sections don't appear in generated prompts
           - Required sections still present
@@ -291,6 +308,9 @@ steps:
             priority: critical
           - id: R2
             desc: Required sections (task context, requirements, callbacks) still present
+            priority: critical
+          - id: R3
+            desc: Git commit instructions exist in ALL agent builder prompt paths (cli.py, claude_sdk.py, codex_server_common.py, openhands_common.py)
             priority: critical
         auto_verify:
           items:
@@ -325,12 +345,20 @@ steps:
 
           Write tests confirming each agent includes its instructions and shared
           prompt no longer contains agent-specific content.
+
+          IMPORTANT: Verify that no instructions are LOST in the migration. Any
+          instruction removed from prompts.py must appear in EVERY agent's builder
+          prompt path that needs it. In particular, git commit instructions must
+          exist in all agent builder prompts, not just cli.py.
         requirements:
           - id: R1
             desc: Agent-specific instructions moved from shared prompt to agent files
             priority: critical
           - id: R2
             desc: Each agent's prompt includes its specific instructions
+            priority: critical
+          - id: R3
+            desc: No instructions lost in migration — every instruction removed from shared prompt exists in all relevant agent prompt paths
             priority: critical
         auto_verify:
           items:
@@ -361,25 +389,42 @@ steps:
 
           Archive raw Q&A separately. Downstream prompt assembly uses decisions only.
 
+          CRITICAL WIRING: The compression function MUST be called from
+          respond_to_clarification() in service.py (or wherever clarification
+          responses are processed). The compressed decisions MUST be passed to
+          generate_builder_prompt() via the decisions= parameter. Verify this
+          by checking that service.py imports and calls the compression function.
+
           Write tests confirming:
           - Compress function produces correct decisions format
           - Downstream prompts use decisions, not raw Q&A
           - Archive retains full Q&A data
+          - Integration: respond_to_clarification() calls compress and passes decisions to prompt generation
         requirements:
           - id: R1
             desc: Resolved clarifications are compressed into decisions format
             priority: critical
           - id: R2
-            desc: Downstream prompts receive only decisions, not raw Q&A
-            priority: expected
+            desc: compress_clarifications() is called from respond_to_clarification() in service.py — not just defined, but wired into the live code path
+            priority: critical
+          - id: R3
+            desc: Compressed decisions are passed to generate_builder_prompt() via the decisions= parameter
+            priority: critical
         auto_verify:
           items:
             - id: service_imports
               cmd: uv run python -c "from orchestrator.workflow.service import WorkflowService; print('service ok')"
               must: true
+            - id: wiring_check
+              cmd: grep -q "compress_clarifications" src/orchestrator/workflow/service.py && echo "compress_clarifications is called in service.py"
+              must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "clarif or decision or compress"
               must: true
+        verifier:
+          rubric:
+            - id: R2_wiring
+              text: "Verify compress_clarifications() is imported AND called in respond_to_clarification() in service.py. Check the actual call site, not just the import. Grade F if it is imported but never called."
         retry:
           max_attempts: 2
 
@@ -399,10 +444,16 @@ steps:
           - Note that step_context is duplicated per task (intentional), so brevity matters
 
           This is documentation only - no code changes needed.
+
+          IMPORTANT: The document must be discoverable. Add a cross-reference from
+          AGENTS.md or another high-traffic document so routine authors can find it.
         requirements:
           - id: R1
             desc: Step context guidance document exists with actionable advice
             priority: critical
+          - id: R2
+            desc: Document is cross-referenced from AGENTS.md or another discoverable location
+            priority: expected
         auto_verify:
           items:
             - id: doc_exists
@@ -486,13 +537,18 @@ steps:
         title: "Add escalation callback and endpoint"
         task_context: |
           1. In src/orchestrator/agents/interface.py, add EscalationCallback protocol
-          2. In src/orchestrator/routers/tasks.py, add POST escalation endpoint:
+          2. In src/orchestrator/api/routers/tasks.py, add POST escalation endpoint:
              POST /api/runs/{run_id}/tasks/{task_id}/escalate
              Body: {"requirement_id": "R1", "reason": "..."}
              Response: 200 on success, 404/400/409 on error
           3. In src/orchestrator/workflow/engine.py, handle escalation:
              - Set requirement status to "escalated"
              - Pause run with reason "requirement_escalated"
+          4. In src/orchestrator/agents/executor.py, create an on_escalation callback
+             closure (similar to on_checklist_update and on_submit) and pass it to
+             agent.execute(). Add on_escalation parameter to the Agent.execute() protocol.
+          5. In _build_callback_instructions() in routers/tasks.py, include the
+             escalation endpoint URL so external/user-managed agents know about it.
         requirements:
           - id: R1
             desc: Escalation endpoint exists and accepts requirement_id + reason
@@ -500,17 +556,33 @@ steps:
           - id: R2
             desc: Escalation pauses run with descriptive reason
             priority: critical
+          - id: R3
+            desc: on_escalation callback is created in executor.py and passed to agent.execute() — agents must be able to trigger escalation during execution
+            priority: critical
+          - id: R4
+            desc: Escalation endpoint is listed in callback instructions returned by GET /tasks/{id}/prompt
+            priority: expected
         auto_verify:
           items:
             - id: interface_import
               cmd: uv run python -c "from orchestrator.agents.interface import *; print('interface ok')"
               must: true
             - id: router_import
-              cmd: uv run python -c "from orchestrator.routers.tasks import router; print('tasks router ok')"
+              cmd: uv run python -c "from orchestrator.api.routers.tasks import router; print('tasks router ok')"
+              must: true
+            - id: executor_wiring
+              cmd: grep -q "on_escalation" src/orchestrator/agents/executor.py && echo "on_escalation found in executor"
+              must: true
+            - id: callback_instructions
+              cmd: grep -q "escalat" src/orchestrator/api/routers/tasks.py && echo "escalation in callback instructions"
               must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "escalat"
               must: true
+        verifier:
+          rubric:
+            - id: R3_wiring
+              text: "Verify that executor.py creates an on_escalation callback and passes it to agent.execute(). Check that the Agent protocol in interface.py includes on_escalation as a parameter. Grade F if the callback exists but is never passed to agents."
         retry:
           max_attempts: 2
 
@@ -572,6 +644,10 @@ steps:
              - If all pass: mark step complete, advance to next step
              - If any fail: mark step failed, halt the run (no auto-advance)
           3. Steps without step_auto_verify: existing behavior unchanged
+
+          WIRING: The step_auto_verify execution MUST be called from the actual
+          complete_verification() or step completion path in service.py. Verify
+          by tracing the code path from the API endpoint through to execution.
         requirements:
           - id: R1
             desc: StepConfig accepts step_auto_verify field
@@ -579,10 +655,13 @@ steps:
           - id: R2
             desc: Failing step_auto_verify halts the run
             priority: critical
+          - id: R3
+            desc: step_auto_verify is executed from the live step completion path in service.py — not just defined but called when a step completes
+            priority: critical
         auto_verify:
           items:
             - id: schema_field
-              cmd: uv run python -c "from orchestrator.config.models import StepConfig; s = StepConfig(id='test', title='t', tasks=[]); print('step_auto_verify field:', s.step_auto_verify)"
+              cmd: uv run python -c "from orchestrator.config.models import StepConfig; assert 'step_auto_verify' in StepConfig.model_fields; print('step_auto_verify field exists')"
               must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "step_auto_verify or step_verify"
@@ -653,8 +732,13 @@ steps:
           - Re-summarize with explicit preservation instruction (max 2 iterations)
           - Fallback to full content on model failure
 
-          Integrate into prompt assembly in src/orchestrator/workflow/prompts.py:
-          when context_from has summarize=true, use summarized content instead of full.
+          CRITICAL WIRING: Integrate into prompt assembly so that when a task has
+          context_from entries with summarize=true, the system actually generates
+          and uses summaries. This means:
+          - TaskContextBuilder (or SummaryCache) MUST be imported and called from
+            the prompt generation path (routers/tasks.py or workflow/prompts.py)
+          - The summarized content MUST appear in the prompt returned by GET /tasks/{id}/prompt
+          - Verify by tracing: task with context_from[summarize:true] → prompt endpoint → summary in output
         requirements:
           - id: R1
             desc: Summary cache stores and retrieves by content hash
@@ -665,14 +749,24 @@ steps:
           - id: R3
             desc: Model failure falls back to full content
             priority: critical
+          - id: R4
+            desc: TaskContextBuilder is imported and called from the prompt generation path — summarized content appears in prompts for tasks with context_from[summarize=true]
+            priority: critical
         auto_verify:
           items:
             - id: cache_import
               cmd: uv run python -c "from orchestrator.workflow.summary_cache import *; print('summary_cache module ok')"
               must: true
+            - id: wiring_check
+              cmd: grep -rq "TaskContextBuilder\|SummaryCache\|summary_cache\|context_builder" src/orchestrator/api/routers/tasks.py src/orchestrator/workflow/prompts.py src/orchestrator/workflow/service.py && echo "summarization wired into prompt path"
+              must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "summary or summariz"
               must: true
+        verifier:
+          rubric:
+            - id: R4_wiring
+              text: "Verify that TaskContextBuilder or SummaryCache is imported and called from the prompt generation path (routers/tasks.py, prompts.py, or service.py). Trace the code path: when a task has context_from with summarize=true, does the prompt endpoint actually return summarized content? Grade F if the classes exist but are never called from the live prompt path."
         retry:
           max_attempts: 2
 
@@ -719,6 +813,8 @@ steps:
           3. Invalid value raises validation error
 
           This is purely additive metadata - no behavior changes needed.
+          However, it MUST be visible in the API response so it can be used
+          as a diagnostic. Add it to the task API response schema.
         requirements:
           - id: R1
             desc: TaskConfig has complexity field with simple/standard values
@@ -726,6 +822,9 @@ steps:
           - id: R2
             desc: Default complexity is standard
             priority: critical
+          - id: R3
+            desc: Complexity field is included in the task API response schema so it is visible to API consumers
+            priority: expected
         auto_verify:
           items:
             - id: schema_check
