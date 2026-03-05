@@ -767,7 +767,26 @@ class WorkflowService:
                         if item.status == ChecklistStatus.OPEN:
                             item.status = ChecklistStatus.DONE
                 else:
-                    # Must-items failed: emit event, then block the BUILDING->VERIFYING transition
+                    # Must-items failed: store results/feedback and block the transition
+                    if task.attempts:
+                        task.attempts[-1].auto_verify_results = [
+                            r.model_dump() for r in pre_av_results
+                        ]
+                        failing_lines: list[str] = []
+                        for av in pre_av_results:
+                            if av.item_id not in failing_must_ids_pre:
+                                continue
+                            output = av.output.strip() if av.output else ""
+                            snippet = output if output else "(no command output)"
+                            failing_lines.append(
+                                f"- [{av.item_id}] command `{av.cmd}` failed (exit {av.exit_code})\n"
+                                f"  Output:\n{snippet}"
+                            )
+                        if failing_lines:
+                            task.attempts[-1].verifier_comment = (
+                                "Auto-verify failed. Fix the following and resubmit:\n"
+                                + "\n".join(failing_lines)
+                            )
                     buffer.emit(
                         AutoVerifyCompleted(
                             timestamp=self._clock.now(),
