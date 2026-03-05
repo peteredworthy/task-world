@@ -38,12 +38,14 @@ def create_task_state(
     id_generator: Callable[[], str] = default_id_generator,
 ) -> TaskState:
     """Create task state from task config."""
+    has_verification = bool(task_config.auto_verify.items) or bool(task_config.verifier.rubric)
     return TaskState(
         id=id_generator(),
         config_id=task_config.id,
         title=task_config.title,
         checklist=create_checklist_from_requirements(task_config),
         max_attempts=task_config.retry.max_attempts,
+        has_verification=has_verification,
     )
 
 

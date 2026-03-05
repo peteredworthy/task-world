@@ -103,6 +103,7 @@ class TaskState(BaseModel):
     max_attempts: int = 3
     pending_action_type: str | None = None  # "clarification" | "approval"
     pending_clarification_id: str | None = None
+    has_verification: bool = True  # False if task has no auto_verify items and no verifier rubric
 
 
 class HumanApproval(BaseModel):
