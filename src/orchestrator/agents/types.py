@@ -28,6 +28,9 @@ CompleteRecoveryCallback = Callable[[str, str | None], Awaitable[None]]
 AgentMetadataCallback = Callable[[dict[str, Any]], Awaitable[None]]
 """Called when agent subprocess is created, with metadata like pid."""
 
+EscalationCallback = Callable[[str, str], Awaitable[None]]
+"""(requirement_id, reason) -> None. Called when agent flags a requirement as unfulfillable."""
+
 
 class ExecutionMetrics(BaseModel):
     """Metrics collected during agent execution."""

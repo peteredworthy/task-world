@@ -16,6 +16,16 @@ from orchestrator.agents.types import (
 )
 
 
+class EscalationCallback(Protocol):
+    """Protocol for escalation callbacks.
+
+    Called when an agent flags a requirement as unfulfillable so the run can be
+    paused and a human can intervene.
+    """
+
+    async def __call__(self, requirement_id: str, reason: str) -> None: ...
+
+
 @runtime_checkable
 class Agent(Protocol):
     """Protocol that all agent implementations must satisfy."""

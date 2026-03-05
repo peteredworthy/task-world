@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
-from orchestrator.config.enums import RunStatus, TaskStatus
+from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
 from orchestrator.state.models import Run
 from orchestrator.state.session import SessionStateManager
 from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
@@ -202,6 +202,45 @@ class WorkflowEngine:
                 event_type="run_status_changed",
                 old_status=old_status,
                 new_status=RunStatus.ACTIVE,
+            )
+        )
+        return run
+
+    def escalate_requirement(
+        self,
+        run_id: str,
+        task_id: str,
+        req_id: str,
+        reason: str,
+    ) -> Run:
+        """Flag a requirement as escalated and pause the run.
+
+        Sets the requirement status to 'escalated' and pauses the run with
+        pause_reason='requirement_escalated' so a human can modify/skip/resume.
+        """
+        run = self._state.get_run(run_id)
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(
+                run.status.value, "escalate_requirement (requires ACTIVE run)"
+            )
+
+        self._state.update_checklist_item(
+            run_id, task_id, req_id, ChecklistStatus.ESCALATED, note=reason
+        )
+
+        old_status = run.status
+        run.status = RunStatus.PAUSED
+        run.pause_reason = "requirement_escalated"
+        run.last_error = f"Requirement {req_id} escalated: {reason}"
+        self._state.update_run(run)
+
+        self._emitter.emit(
+            RunStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="run_status_changed",
+                old_status=old_status,
+                new_status=RunStatus.PAUSED,
             )
         )
         return run

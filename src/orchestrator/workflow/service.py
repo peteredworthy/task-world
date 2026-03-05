@@ -1094,6 +1094,21 @@ class WorkflowService:
         await self._session.commit()
         return item
 
+    async def escalate_requirement(
+        self,
+        run_id: str,
+        task_id: str,
+        req_id: str,
+        reason: str,
+    ) -> Run:
+        """Flag a requirement as unfulfillable and pause the run."""
+        run = await self._repo.get(run_id)
+        engine, state, buffer = self._build_engine(run)
+        task = state.get_task(run_id, task_id)
+        resolved_req_id = self._resolve_req_id(run_id, task, req_id)
+        engine.escalate_requirement(run_id, task_id, resolved_req_id, reason)
+        return await self._persist(state, run_id, buffer)
+
     async def set_grade(
         self,
         run_id: str,

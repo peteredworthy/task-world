@@ -36,7 +36,7 @@ from orchestrator.config.models import MCPServerConfig, RoutineConfig
 from orchestrator.db.repositories import RunRepository
 from orchestrator.routines.discovery import discover_routines
 from orchestrator.routines.errors import RoutineNotFoundError
-from orchestrator.state.errors import TaskNotFoundError
+from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
 from orchestrator.workflow.clarifications import (
     ClarificationRequest,
     ClarificationResponse,
@@ -617,6 +617,33 @@ async def get_attempt_logs(
         line_count=len(output.split("\n")) if output else 0,
         action_log=action_log_schema,
     )
+
+
+class EscalateRequirementRequest(BaseModel):
+    requirement_id: str
+    reason: str
+
+
+@router.post("/{run_id}/tasks/{task_id}/escalate", status_code=200)
+async def escalate_requirement(
+    run_id: str,
+    task_id: str,
+    request: EscalateRequirementRequest,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> dict[str, str]:
+    """Agent flags a requirement as unfulfillable.
+
+    Sets the requirement status to 'escalated' and pauses the run with
+    pause_reason='requirement_escalated'. A human can then modify, skip,
+    or resume the run.
+    """
+    try:
+        await service.escalate_requirement(run_id, task_id, request.requirement_id, request.reason)
+    except InvalidTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except (TaskNotFoundError, ChecklistItemNotFoundError) as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"status": "escalated", "pause_reason": "requirement_escalated"}
 
 
 @router.post("/{run_id}/tasks/{task_id}/approve", response_model=TransitionResponse)
