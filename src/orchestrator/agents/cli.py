@@ -130,8 +130,23 @@ class CLIAgent:
             phase: ``"building"`` for builder instructions, ``"verifying"``
                 for verifier instructions.
         """
+        # Git workflow instructions for builder phase — added to every CLI agent prompt
+        # because the CLI agent is responsible for committing work before submitting.
+        git_section = ""
+        if phase == "building":
+            git_section = (
+                "\n\n## Git Workflow\n"
+                "Before submitting, commit your changes to git:\n"
+                "- Stage all relevant changes: `git add <files>`\n"
+                "- Commit with a descriptive message: `git commit -m 'Description'`\n"
+                "- Example: `git commit -m 'Implement authentication system with login and signup'`\n"
+                "- ALWAYS use `git --no-pager` for git commands that produce output\n"
+                "  (e.g. `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`)\n"
+                "- Commit conventions: use imperative mood, e.g. 'Add feature' not 'Added feature'\n"
+            )
+
         if context.api_base_url is None:
-            return prompt
+            return prompt + git_section
 
         base = context.api_base_url.rstrip("/")
 
@@ -223,7 +238,7 @@ class CLIAgent:
                     mcp_section += f"- **{mcp.name}**: (stdio) {cmd_str}\n"
             api_section += mcp_section
 
-        return prompt + api_section
+        return prompt + git_section + api_section
 
     @staticmethod
     def _build_verifier_prompt(

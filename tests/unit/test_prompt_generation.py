@@ -607,33 +607,42 @@ def test_avoiding_loops_removed_from_shared_prompt() -> None:
 
 
 def test_required_sections_still_in_shared_prompt() -> None:
-    """Required task context, requirements, and git-commit sections remain."""
+    """Required task context, requirements, and workflow sections remain in shared prompt."""
     config = _task_config()
     state = _task_state()
     prompt = generate_builder_prompt(config, state, {"feature": "auth"})
     # Task context and requirements are in the user section
     assert "## Task" in prompt.user
     assert "## Requirements" in prompt.user
-    # Git commit instructions remain in the system section
-    assert "git add" in prompt.system
-    assert "git commit" in prompt.system
     # Workflow and callback instructions remain
     assert "BUILDER phase" in prompt.system
     assert "submit" in prompt.system.lower()
 
 
+def test_git_commit_instructions_not_in_shared_prompt() -> None:
+    """Git commit instructions must NOT appear in the shared builder system prompt.
+
+    They have been moved to each agent's individual prompt builder.
+    """
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+    assert "git add" not in prompt.system
+    assert "git commit" not in prompt.system
+
+
 def test_git_commit_instructions_in_cli_agent_prompt() -> None:
-    """CLIAgent.build_prompt passes through git commit instructions from context.prompt."""
+    """CLIAgent.build_prompt explicitly adds git commit instructions for builder phase."""
     shared_prompt = _shared_system_prompt()
     context = _make_context(shared_prompt)
-    # Without api_base_url, build_prompt returns prompt unchanged
+    # Without api_base_url, build_prompt adds git workflow section for builder phase
     result = CLIAgent.build_prompt(shared_prompt, context)
     assert "git add" in result
     assert "git commit" in result
 
 
 def test_git_commit_instructions_in_claude_sdk_prompt() -> None:
-    """build_claude_sdk_prompt includes git commit instructions from context.prompt."""
+    """build_claude_sdk_prompt explicitly adds git commit instructions."""
     shared_prompt = _shared_system_prompt()
     context = _make_context(shared_prompt)
     result = build_claude_sdk_prompt(context, is_verifier=False)
@@ -642,7 +651,7 @@ def test_git_commit_instructions_in_claude_sdk_prompt() -> None:
 
 
 def test_git_commit_instructions_in_codex_server_prompt() -> None:
-    """build_codex_server_prompt includes git commit instructions from context.prompt."""
+    """build_codex_server_prompt explicitly adds git commit instructions."""
     shared_prompt = _shared_system_prompt()
     context = _make_context(shared_prompt)
     result = build_codex_server_prompt(context, is_verifier=False)
@@ -651,7 +660,7 @@ def test_git_commit_instructions_in_codex_server_prompt() -> None:
 
 
 def test_git_commit_instructions_in_openhands_prompt() -> None:
-    """build_openhands_prompt includes git commit instructions from context.prompt."""
+    """build_openhands_prompt explicitly adds git commit instructions."""
     shared_prompt = _shared_system_prompt()
     context = _make_context(shared_prompt)
     result = build_openhands_prompt(context, is_verifier=False)
@@ -673,3 +682,107 @@ def test_avoiding_loops_removed_from_openhands_verifier_prompt() -> None:
     context = _make_context(shared_prompt)
     result = build_openhands_prompt(context, is_verifier=True)
     assert "Avoiding Loops" not in result
+
+
+# --- Agent-specific behavioral instructions ---
+
+
+def test_cli_agent_includes_git_workflow_section() -> None:
+    """CLIAgent.build_prompt includes a dedicated Git Workflow section."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = CLIAgent.build_prompt(shared_prompt, context)
+    assert "## Git Workflow" in result
+    assert "git --no-pager" in result
+    assert "Commit conventions" in result
+
+
+def test_cli_agent_no_git_section_for_verifier() -> None:
+    """CLIAgent.build_prompt does NOT add git workflow for verifier phase."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    # api_base_url=None, verifying phase — returns prompt unchanged (no git section)
+    result = CLIAgent.build_prompt(shared_prompt, context, phase="verifying")
+    assert "## Git Workflow" not in result
+
+
+def test_openhands_prompt_includes_file_rereading_avoidance() -> None:
+    """build_openhands_prompt includes file re-reading avoidance instructions."""
+    context = _make_context("Some prompt")
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "re-read" in result.lower() or "NEVER re-read" in result
+    assert "File Exploration Guidelines" in result
+
+
+def test_openhands_prompt_includes_docker_awareness() -> None:
+    """build_openhands_prompt includes Docker/container awareness instructions."""
+    context = _make_context("Some prompt")
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "Container Awareness" in result or "Docker" in result
+
+
+def test_openhands_prompt_includes_git_workflow() -> None:
+    """build_openhands_prompt includes a Git Workflow section."""
+    context = _make_context("Some prompt")
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "## Git Workflow" in result
+
+
+def test_codex_prompt_includes_sandbox_constraints() -> None:
+    """build_codex_server_prompt includes sandbox constraint instructions."""
+    context = _make_context("Some prompt")
+    result = build_codex_server_prompt(context, is_verifier=False)
+    assert "Sandbox Constraints" in result
+    assert "network" in result.lower()
+
+
+def test_codex_prompt_includes_response_style() -> None:
+    """build_codex_server_prompt includes response style guidance."""
+    context = _make_context("Some prompt")
+    result = build_codex_server_prompt(context, is_verifier=False)
+    assert "Response Style" in result
+    assert "concise" in result.lower()
+
+
+def test_codex_prompt_includes_git_workflow() -> None:
+    """build_codex_server_prompt includes a Git Workflow section."""
+    context = _make_context("Some prompt")
+    result = build_codex_server_prompt(context, is_verifier=False)
+    assert "## Git Workflow" in result
+
+
+def test_claude_sdk_prompt_includes_tool_usage_patterns() -> None:
+    """build_claude_sdk_prompt includes tool usage pattern instructions."""
+    context = _make_context("Some prompt")
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+    assert "Tool Usage Patterns" in result
+    assert "update_checklist" in result
+
+
+def test_claude_sdk_prompt_includes_sub_agent_guidance() -> None:
+    """build_claude_sdk_prompt includes sub-agent guidance instructions."""
+    context = _make_context("Some prompt")
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+    assert "Sub-Agent Guidance" in result
+
+
+def test_claude_sdk_prompt_includes_git_workflow() -> None:
+    """build_claude_sdk_prompt includes a Git Workflow section."""
+    context = _make_context("Some prompt")
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+    assert "## Git Workflow" in result
+
+
+def test_agent_specific_sections_not_in_verifier_prompts() -> None:
+    """Agent-specific builder sections should not appear in verifier prompts."""
+    context = _make_context("Some prompt")
+    # Codex verifier prompt should not have sandbox constraints or response style
+    codex_verifier = build_codex_server_prompt(context, is_verifier=True)
+    assert "Sandbox Constraints" not in codex_verifier
+    assert "Response Style" not in codex_verifier
+    # OpenHands verifier should not have file re-reading avoidance
+    oh_verifier = build_openhands_prompt(context, is_verifier=True)
+    assert "File Exploration Guidelines" not in oh_verifier
+    # Claude SDK verifier should not have sub-agent guidance
+    sdk_verifier = build_claude_sdk_prompt(context, is_verifier=True)
+    assert "Sub-Agent Guidance" not in sdk_verifier

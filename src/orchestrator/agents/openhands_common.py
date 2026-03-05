@@ -397,7 +397,20 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
         "### Terminal Tips\n"
         "- ALWAYS use `git --no-pager` for every git command to avoid pager hangs.\n"
         "- For long output, pipe through `| head -80` to limit lines.\n"
-        "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager."
+        "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager.\n\n"
+        "## Git Workflow\n"
+        "Before submitting, commit your changes to git:\n"
+        "- Stage changes: `git add <files>`\n"
+        "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
+        "- Always use `git --no-pager` for git commands.\n\n"
+        "## File Exploration Guidelines\n"
+        "- NEVER re-read a file you have already read in this session.\n"
+        "- If you catch yourself about to read the same file again, stop and use your existing knowledge.\n"
+        "- Each file read consumes context — be selective and avoid redundant reads.\n\n"
+        "## Container Awareness\n"
+        "- You may be running inside a Docker container.\n"
+        "- The workspace is mounted at the configured working directory.\n"
+        "- External network access may be limited depending on the sandbox configuration.\n"
     )
 
 

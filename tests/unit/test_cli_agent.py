@@ -92,9 +92,19 @@ def test_model_parameter_no_args() -> None:
 
 
 def test_build_prompt_without_api_url() -> None:
-    """Without api_base_url, prompt is returned unchanged."""
+    """Without api_base_url, builder phase adds git workflow section to prompt."""
     ctx = _make_context(api_base_url=None, prompt="Original prompt")
     result = CLIAgent.build_prompt("Original prompt", ctx)
+    assert "Original prompt" in result
+    assert "## Git Workflow" in result
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_build_prompt_without_api_url_verifier_phase_unchanged() -> None:
+    """Without api_base_url, verifier phase returns prompt unchanged (no git section)."""
+    ctx = _make_context(api_base_url=None, prompt="Original prompt")
+    result = CLIAgent.build_prompt("Original prompt", ctx, phase="verifying")
     assert result == "Original prompt"
 
 
@@ -155,10 +165,11 @@ def test_build_prompt_mcp_strips_trailing_slash() -> None:
 
 
 def test_build_prompt_mcp_without_api_url() -> None:
-    """Without api_base_url, MCP prompt is returned unchanged."""
+    """Without api_base_url, MCP builder prompt includes git workflow section."""
     ctx = _make_context(api_base_url=None)
     result = CLIAgent.build_prompt("Original", ctx, callback_channel="mcp")
-    assert result == "Original"
+    assert "Original" in result
+    assert "## Git Workflow" in result
 
 
 # --- Prompt ↔ API route sync tests ---
@@ -282,7 +293,9 @@ def test_build_prompt_no_auth_section_without_api_url() -> None:
     result = CLIAgent.build_prompt("Do the thing", ctx)
 
     assert "Authentication" not in result
-    assert result == "Do the thing"
+    assert "Do the thing" in result
+    # Git workflow section is added but no auth section
+    assert "## Git Workflow" in result
 
 
 # --- Step tools tests ---
@@ -319,13 +332,15 @@ def test_build_prompt_no_tools_section_when_empty() -> None:
 
 
 def test_build_prompt_available_tools_without_api_url() -> None:
-    """When api_base_url is None, available_tools is ignored."""
+    """When api_base_url is None, available_tools are not listed (no Step Tools section)."""
     ctx = _make_context(api_base_url=None)
     ctx.available_tools = ["terminal", "file_editor"]
     result = CLIAgent.build_prompt("Do the thing", ctx)
 
-    # Without api_base_url, the entire enrichment is skipped
-    assert result == "Do the thing"
+    # Without api_base_url, no Step Tools section is added
+    assert "Step Tools" not in result
+    # But git workflow is still added for builder phase
+    assert "## Git Workflow" in result
 
 
 def test_build_prompt_mcp_with_available_tools() -> None:
