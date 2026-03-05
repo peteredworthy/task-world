@@ -1,11 +1,14 @@
 """Pydantic configuration models for routines, steps, and tasks."""
 
+import logging
 import re
 from typing import Any, cast
 
 from pydantic import BaseModel, Field, model_validator
 
 from orchestrator.config.enums import GateType, Priority, StepType
+
+logger = logging.getLogger(__name__)
 
 
 def _check_for_inheritance_keys(v: dict[str, Any]) -> None:
@@ -158,6 +161,20 @@ class TaskConfig(BaseModel):
     artifacts: list[ArtifactSpec] = Field(default_factory=lambda: [])
     context_from: list[ContextSource] = Field(default_factory=lambda: [])
 
+    @model_validator(mode="after")
+    def _warn_if_no_verification(self) -> "TaskConfig":
+        """Warn when task has no auto_verify items and no verifier rubric."""
+        has_auto_verify = bool(self.auto_verify.items)
+        has_rubric = bool(self.verifier.rubric)
+        if not has_auto_verify and not has_rubric:
+            logger.warning(
+                "Task '%s' ('%s') has no auto_verify items and no verifier rubric. "
+                "The verifier will have no criteria to grade against.",
+                self.id,
+                self.title,
+            )
+        return self
+
 
 class TransitionCondition(BaseModel):
     """Condition for a backward transition."""
@@ -273,6 +290,7 @@ class RoutineConfig(BaseModel):
     steps: list[StepConfig]
     env_files: list[EnvFileConfig] = Field(default_factory=lambda: [])
     clarifications: ClarificationsConfig | None = None
+    strict_validation: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -280,3 +298,22 @@ class RoutineConfig(BaseModel):
         """Reject ref/use in routine data and nested steps."""
         _check_value_recursive(data)
         return data  # type: ignore[no-any-return]
+
+    @model_validator(mode="after")
+    def _enforce_strict_validation(self) -> "RoutineConfig":
+        """When strict_validation=True, reject any task with no verification."""
+        if not self.strict_validation:
+            return self
+        unverified: list[str] = []
+        for step in self.steps:
+            for task in step.tasks:
+                has_auto_verify = bool(task.auto_verify.items)
+                has_rubric = bool(task.verifier.rubric)
+                if not has_auto_verify and not has_rubric:
+                    unverified.append(f"{step.id}/{task.id}")
+        if unverified:
+            raise ValueError(
+                f"strict_validation=True: the following tasks have no auto_verify items "
+                f"and no verifier rubric: {', '.join(unverified)}"
+            )
+        return self
