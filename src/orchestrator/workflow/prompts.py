@@ -121,15 +121,7 @@ def generate_builder_prompt(
         "- All CRITICAL requirements must be marked 'done' before submission will succeed.\n"
         "- You MUST commit your changes to git before submitting for verification.\n"
         "- The verifier will review the committed code and grade each requirement.\n"
-        "- If the verifier finds issues, you may be asked to revise (with feedback provided).\n\n"
-        "## Avoiding Loops\n"
-        "- Limit exploration to at most 10 tool calls before you start writing code.\n"
-        "- NEVER re-read a file you have already read. If you catch yourself running\n"
-        "  the same command twice, stop exploring and begin implementation immediately.\n"
-        "- If a referenced document does not exist, proceed with the information\n"
-        "  available in the task description and requirements — do NOT keep searching.\n"
-        "- After each tool call, ask yourself: 'Am I making forward progress or\n"
-        "  repeating earlier steps?' If repeating, start coding now."
+        "- If the verifier finds issues, you may be asked to revise (with feedback provided)."
     )
 
     user = ""

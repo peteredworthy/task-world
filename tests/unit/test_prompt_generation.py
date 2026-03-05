@@ -1,5 +1,10 @@
 """Tests for prompt generation."""
 
+from orchestrator.agents.claude_sdk import build_claude_sdk_prompt
+from orchestrator.agents.codex_server_common import build_codex_server_prompt
+from orchestrator.agents.openhands_common import build_openhands_prompt
+from orchestrator.agents.cli import CLIAgent
+from orchestrator.agents.types import ExecutionContext
 from orchestrator.config.models import (
     RequirementConfig,
     RubricItemConfig,
@@ -573,3 +578,98 @@ def test_builder_prompt_line_range_and_skip_combined() -> None:
     assert "/artifact.md" in prompt.user
     assert "declined to answer" in prompt.user
     assert "Too vague" in prompt.user
+
+
+# --- D4 dead-weight removal ---
+
+
+def _shared_system_prompt() -> str:
+    """Return the system section of a generated builder prompt."""
+    config = _task_config()
+    state = _task_state()
+    return generate_builder_prompt(config, state, {"feature": "auth"}).system
+
+
+def _make_context(prompt: str) -> ExecutionContext:
+    return ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt=prompt,
+        requirements=["R1: do the thing"],
+    )
+
+
+def test_avoiding_loops_removed_from_shared_prompt() -> None:
+    """'Avoiding Loops' section must not appear in the shared builder system prompt."""
+    system = _shared_system_prompt()
+    assert "Avoiding Loops" not in system
+
+
+def test_required_sections_still_in_shared_prompt() -> None:
+    """Required task context, requirements, and git-commit sections remain."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+    # Task context and requirements are in the user section
+    assert "## Task" in prompt.user
+    assert "## Requirements" in prompt.user
+    # Git commit instructions remain in the system section
+    assert "git add" in prompt.system
+    assert "git commit" in prompt.system
+    # Workflow and callback instructions remain
+    assert "BUILDER phase" in prompt.system
+    assert "submit" in prompt.system.lower()
+
+
+def test_git_commit_instructions_in_cli_agent_prompt() -> None:
+    """CLIAgent.build_prompt passes through git commit instructions from context.prompt."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    # Without api_base_url, build_prompt returns prompt unchanged
+    result = CLIAgent.build_prompt(shared_prompt, context)
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_git_commit_instructions_in_claude_sdk_prompt() -> None:
+    """build_claude_sdk_prompt includes git commit instructions from context.prompt."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_git_commit_instructions_in_codex_server_prompt() -> None:
+    """build_codex_server_prompt includes git commit instructions from context.prompt."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_codex_server_prompt(context, is_verifier=False)
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_git_commit_instructions_in_openhands_prompt() -> None:
+    """build_openhands_prompt includes git commit instructions from context.prompt."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_avoiding_loops_removed_from_openhands_builder_prompt() -> None:
+    """'Avoiding Loops' section must not appear in the openhands builder prompt."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "Avoiding Loops" not in result
+
+
+def test_avoiding_loops_removed_from_openhands_verifier_prompt() -> None:
+    """'Avoiding Loops' section must not appear in the openhands verifier prompt."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_openhands_prompt(context, is_verifier=True)
+    assert "Avoiding Loops" not in result
