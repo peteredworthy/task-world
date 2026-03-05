@@ -757,89 +757,17 @@ class WorkflowService:
                     project_path,
                     variables=run.config,
                 )
-                all_must_passed_pre, failing_must_ids_pre = evaluate_auto_verify(
-                    pre_av_config, pre_av_results
-                )
+                all_must_passed_pre, _ = evaluate_auto_verify(pre_av_config, pre_av_results)
 
                 if all_must_passed_pre:
                     # Auto-verify confirms work is done — mark OPEN checklist items as DONE
+                    # so the checklist gate passes without requiring explicit self-reporting.
                     for item in task.checklist:
                         if item.status == ChecklistStatus.OPEN:
                             item.status = ChecklistStatus.DONE
-                else:
-                    # Must-items failed: store results/feedback, finalize the attempt,
-                    # and transition back to BUILDING for revision.
-                    if task.attempts:
-                        task.attempts[-1].auto_verify_results = [
-                            r.model_dump() for r in pre_av_results
-                        ]
-                        failing_lines: list[str] = []
-                        for av in pre_av_results:
-                            if av.item_id not in failing_must_ids_pre:
-                                continue
-                            output = av.output.strip() if av.output else ""
-                            snippet = output if output else "(no command output)"
-                            failing_lines.append(
-                                f"- [{av.item_id}] command `{av.cmd}` failed (exit {av.exit_code})\n"
-                                f"  Output:\n{snippet}"
-                            )
-                        if failing_lines:
-                            task.attempts[-1].verifier_comment = (
-                                "Auto-verify failed. Fix the following and resubmit:\n"
-                                + "\n".join(failing_lines)
-                            )
-                        # Finalize the failing attempt
-                        task.attempts[-1].outcome = "failed"
-                        task.attempts[-1].completed_at = self._clock.now()
-
-                    buffer.emit(
-                        AutoVerifyCompleted(
-                            timestamp=self._clock.now(),
-                            run_id=run_id,
-                            event_type="auto_verify_completed",
-                            task_id=task_id,
-                            passed=False,
-                            failing_must_items=failing_must_ids_pre,
-                            results=[r.model_dump() for r in pre_av_results],
-                        )
-                    )
-
-                    # Create a new attempt for the revision (task is still in BUILDING)
-                    run_obj = state.get_run(run_id)
-                    old_status = task.status
-                    attempt_num = len(task.attempts) + 1
-                    task.attempts.append(
-                        Attempt(attempt_num=attempt_num, started_at=self._clock.now())
-                    )
-                    task.current_attempt = attempt_num
-                    # Populate agent snapshot on the new attempt
-                    new_attempt = task.attempts[-1]
-                    new_attempt.agent_type = run_obj.agent_type
-                    new_attempt.agent_model = run_obj.agent_config.get("model")
-                    new_attempt.agent_settings = self._sanitize_agent_config(run_obj.agent_config)
-                    if len(task.attempts) >= 2:
-                        prev_end = task.attempts[-2].end_commit
-                        if prev_end:
-                            new_attempt.start_commit = prev_end
-
-                    buffer.emit(
-                        TaskStatusChanged(
-                            timestamp=self._clock.now(),
-                            run_id=run_id,
-                            event_type="task_status_changed",
-                            task_id=task_id,
-                            old_status=old_status,
-                            new_status=TaskStatus.BUILDING,
-                        )
-                    )
-                    state.update_run(run_obj)
-                    await self._persist(state, run_id, buffer)
-                    self._notify_submit(task_id)
-                    return TransitionResult(
-                        success=True,
-                        new_status=TaskStatus.BUILDING,
-                        error="Auto-verify must-items failed",
-                    )
+                # If auto-verify failed, fall through: the engine will transition to
+                # VERIFYING (if the checklist is otherwise satisfied), and the
+                # post-engine auto-verify block will store results and return to BUILDING.
 
         try:
             result = engine.submit_for_verification(run_id, task_id)
