@@ -27,6 +27,13 @@ function StatusIcon({ status }: { status: ChecklistStatus }) {
       </svg>
     );
   }
+  if (status === 'escalated') {
+    return (
+      <svg className={'h-4 w-4 ' + color} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+      </svg>
+    );
+  }
   return (
     <svg className={'h-4 w-4 ' + color} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
       <circle cx="12" cy="12" r="9" />
@@ -107,13 +114,14 @@ export function ChecklistTable({ items, variant = 'table' }: ChecklistTableProps
               <div>
                 {groupItems.map((item, index) => {
                   const failing = item.grade ? isGradeFailing(item.grade, item.priority) : false;
+                  const escalated = item.status === 'escalated';
                   return (
                     <div
                       key={item.req_id}
                       className={
                         'px-2 py-1.5 ' +
                         (index > 0 ? 'border-t border-border/50 ' : '') +
-                        (failing ? 'bg-status-failed/5' : '')
+                        (escalated ? 'bg-status-paused/5' : failing ? 'bg-status-failed/5' : '')
                       }
                     >
                       <div className="grid grid-cols-[20px_minmax(0,1fr)] gap-x-2 items-start">
@@ -124,13 +132,18 @@ export function ChecklistTable({ items, variant = 'table' }: ChecklistTableProps
                           <div className="text-xs text-text-secondary break-words leading-snug">
                             {item.desc}
                           </div>
-                          {(item.grade_reason || item.note || failing) && (
+                          {(item.grade_reason || item.note || failing || escalated) && (
                             <div className="mt-0.5 flex flex-wrap items-center gap-x-1 text-[10px] text-text-muted break-words">
                               {item.grade_reason && (
                                 <span className="text-text-secondary">{item.grade_reason}</span>
                               )}
                               {item.grade_reason && item.note && <span>·</span>}
                               {item.note && <span>{item.note}</span>}
+                              {escalated && (
+                                <span className="ml-auto shrink-0 font-semibold uppercase tracking-wide text-status-paused">
+                                  Escalated
+                                </span>
+                              )}
                               {failing && (
                                 <span className="ml-auto shrink-0 font-semibold uppercase tracking-wide text-status-failed">
                                   Failed
@@ -166,8 +179,9 @@ export function ChecklistTable({ items, variant = 'table' }: ChecklistTableProps
         <tbody>
           {items.map(item => {
             const failing = item.grade ? isGradeFailing(item.grade, item.priority) : false;
+            const escalated = item.status === 'escalated';
             return (
-              <tr key={item.req_id} className={`border-b ${failing ? 'border-status-failed/30 bg-status-failed/5' : 'border-border/50'}`}>
+              <tr key={item.req_id} className={`border-b ${escalated ? 'border-status-paused/30 bg-status-paused/5' : failing ? 'border-status-failed/30 bg-status-failed/5' : 'border-border/50'}`}>
                 <td className="py-1.5">
                   <StatusIcon status={item.status} />
                 </td>
@@ -188,6 +202,9 @@ export function ChecklistTable({ items, variant = 'table' }: ChecklistTableProps
                   )}
                   {item.grade_reason && item.note && <span className="mx-1">·</span>}
                   {item.note || ''}
+                  {escalated && (
+                    <span className={`${item.note ? 'ml-2' : ''} text-[10px] font-semibold text-status-paused uppercase tracking-wide`}>Escalated</span>
+                  )}
                   {failing && (
                     <span className={`${item.grade_reason || item.note ? 'ml-2' : ''} text-[10px] font-semibold text-status-failed uppercase tracking-wide`}>Failed</span>
                   )}

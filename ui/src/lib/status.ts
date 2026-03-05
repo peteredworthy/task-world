@@ -27,6 +27,7 @@ export function checklistStatusColor(status: ChecklistStatus): string {
     case 'done': return 'text-status-completed';
     case 'not_applicable': return 'text-status-pending';
     case 'blocked': return 'text-status-failed';
+    case 'escalated': return 'text-status-paused';
   }
 }
 

@@ -190,6 +190,7 @@ function RunDetailInner({ runId }: { runId: string }) {
                       agent_not_running_on_startup: 'Paused — agent was not running on startup',
                       recovered: 'Paused — recovered from failure',
                       recovery_triggered: 'Paused — recovery triggered',
+                      requirement_escalated: 'Paused — agent flagged an unfulfillable requirement',
                     } as Record<string, string>)[run.pause_reason] ?? `Paused (${run.pause_reason})`}
                   </div>
                   {run.last_error && (
