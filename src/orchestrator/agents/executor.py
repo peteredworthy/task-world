@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -150,6 +151,65 @@ class AgentExecutor:
             auto_verify_runner=LocalAutoVerifyRunner(),
             lock_manager=self._lock_manager,
         )
+
+    async def _run_project_health_check(self, project_dir: str) -> str | None:
+        """Run the project test suite before the first task attempt.
+
+        Reads .task-world/config.yaml for test_command. Falls back to the
+        convention default. Returns None on success/skip, or an error message
+        if the tests fail.
+        """
+        import yaml
+
+        config_path = Path(project_dir) / ".task-world" / "config.yaml"
+        test_command: str | None = "uv run pytest --tb=no -q"
+
+        if config_path.exists():
+            try:
+                with open(config_path) as f:
+                    config_data = yaml.safe_load(f)
+                if isinstance(config_data, dict) and "test_command" in config_data:
+                    from typing import cast
+
+                    cfg: dict[str, Any] = cast(dict[str, Any], config_data)
+                    raw = cfg["test_command"]
+                    test_command = str(raw) if raw is not None else None
+            except Exception as e:
+                logger.warning(f"Health check: failed to read {config_path}: {e}")
+
+        if test_command is None:
+            logger.info("Health check: test_command is null, skipping")
+            return None
+
+        logger.info(f"Health check: running '{test_command}' in {project_dir}")
+        try:
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: subprocess.run(
+                    test_command,
+                    shell=True,
+                    cwd=project_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                ),
+            )
+            if result.returncode != 0:
+                output = (result.stdout + result.stderr).strip()
+                return (
+                    f"Pre-run health check failed.\n"
+                    f"Command: {test_command}\n"
+                    f"Exit code: {result.returncode}\n"
+                    f"Output:\n{output}"
+                )
+            logger.info("Health check: tests passed")
+            return None
+        except subprocess.TimeoutExpired:
+            return f"Pre-run health check timed out.\nCommand: {test_command}"
+        except Exception as e:
+            logger.warning(f"Health check: unexpected error: {e}")
+            return f"Pre-run health check error: {e}\nCommand: {test_command}"
 
     async def start_run_with_agent(self, run_id: str, service: WorkflowService) -> Run:
         """Start a run and spawn the appropriate agent.
@@ -312,6 +372,9 @@ class AgentExecutor:
         # we pause the run instead of looping forever.
         recovery_attempted: set[str] = set()
 
+        # Run project health check before the first task attempt.
+        health_check_done = False
+
         try:
             while True:
                 # Create a new session for each iteration
@@ -398,6 +461,22 @@ class AgentExecutor:
                         break
                     if was_recovering:
                         recovery_attempted.add(task_state.id)
+
+                    # Run project health check before the very first task attempt.
+                    if not health_check_done and run.worktree_path:
+                        health_check_done = True
+                        health_error = await self._run_project_health_check(run.worktree_path)
+                        if health_error:
+                            logger.error(f"Run {run_id}: pre-run health check failed, pausing run")
+                            await service.pause_run(
+                                run_id,
+                                reason="health_check_failed",
+                                error_detail=health_error,
+                            )
+                            await session.commit()
+                            break
+                    elif not health_check_done:
+                        health_check_done = True  # No worktree_path, skip silently
 
                     try:
                         await self._execute_task(

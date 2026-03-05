@@ -428,6 +428,9 @@ async def test_executor_persists_builder_prompt_before_execution(
         run.agent_type = AgentType.CLI_SUBPROCESS
         # Use a command that exits immediately with error
         run.agent_config = {"command": "false"}
+        # Skip pre-run health check in tests
+        (tmp_path / ".task-world").mkdir(exist_ok=True)
+        (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")
 
         run = await service.create_run(run)
         run_id = run.id
@@ -514,6 +517,9 @@ async def test_agent_metadata_persisted_immediately(
         run.agent_config = {"command": "sleep", "args": ["0.1"]}
         # Set worktree path so agent can execute
         run.worktree_path = str(tmp_path)
+        # Skip pre-run health check in tests
+        (tmp_path / ".task-world").mkdir(exist_ok=True)
+        (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")
 
         run = await service.create_run(run)
         run_id = run.id
@@ -592,6 +598,9 @@ async def test_agent_death_detection_on_startup(
         run.agent_config = {"command": "false"}
         # Set worktree path so agent can execute
         run.worktree_path = str(tmp_path)
+        # Skip pre-run health check in tests
+        (tmp_path / ".task-world").mkdir(exist_ok=True)
+        (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")
 
         run = await service.create_run(run)
         run_id = run.id
