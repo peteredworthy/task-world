@@ -170,6 +170,7 @@ class Run(BaseModel):
     # Agent configuration
     agent_type: AgentType | None = None
     agent_config: dict[str, Any] = Field(default_factory=lambda: {})
+    verifier_model: str | None = None  # Pinned at run creation; verifier always uses this model
 
     # Worktree
     worktree_enabled: bool = True

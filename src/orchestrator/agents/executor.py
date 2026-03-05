@@ -902,8 +902,13 @@ class AgentExecutor:
         logger.info(f"Task {task_state.id}: running verifier agent for rubric evaluation")
         phase = self._phase_for_task_status(task_state.status)
 
+        # Use pinned verifier model from run state (snapshotted at creation time)
+        effective_verifier_config = dict(agent_config)
+        if run.verifier_model is not None:
+            effective_verifier_config["model"] = run.verifier_model
+
         # Create the agent for verification (pass run_id for death detection)
-        agent = self._create_agent(agent_type, agent_config, run.id, phase=phase)
+        agent = self._create_agent(agent_type, effective_verifier_config, run.id, phase=phase)
 
         # Build the verifier context - worktree_path is required
         if not run.worktree_path:
