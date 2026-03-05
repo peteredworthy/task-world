@@ -26,8 +26,8 @@ routine:
     - id: "S-01"
       title: "Initial Plan"
       step_context: |
-        Stage 1 from docs/plan-runner/idea_to_plan_stripped.md.
-        Produce initial planning docs and front-load uncertainty.
+        Create the three foundational planning documents from the idea.
+        Front-load uncertainty — surface unknowns now, not during execution.
       tasks:
         - id: "T-01"
           title: "Generate Initial Artifacts"
@@ -75,26 +75,29 @@ routine:
                 must: true
           verifier:
             rubric:
-              - id: "artifact_quality"
+              - id: "R1_intent"
                 text: |
-                  Evaluate artifact quality per requirement:
                   R1 (intent.md) — A: has a concrete goal statement, bounded scope with explicit exclusions,
                   and measurable completion criteria (e.g. "game renders at 60fps"). B: has goal/scope/criteria
-                  but they are vague or unmeasurable (e.g. "game works well").
+                  but they are vague or unmeasurable (e.g. "game works well"). F: file missing or only headings.
+              - id: "R2_plan"
+                text: |
                   R2 (plan.md) — A: milestones are ordered with explicit dependencies, each milestone has
                   a concrete deliverable. B: milestones listed but ordering rationale or deliverables are unclear.
+                  F: file missing or only headings.
+              - id: "R3_architecture"
+                text: |
                   R3 (architecture.md) — A: names specific files/modules to create, testing approach references
                   concrete tools or patterns. B: describes architecture in general terms without file-level specifics.
-              - id: "completeness"
-                text: "Are all required files present with non-trivial content (not just headings)?"
+                  F: file missing or only headings.
           retry:
             max_attempts: 2
 
     - id: "S-02"
       title: "Requirements Gathering"
       step_context: |
-        Stage 2: Identify all open design questions through dialogue with the human,
-        then update all planning documents to be fully consistent with the answers.
+        Resolve all open design questions with the human via clarifications.
+        Update intent, plan, and architecture to reflect answers consistently.
       tasks:
         - id: "T-01"
           title: "Gather Requirements and Update Docs"
@@ -177,8 +180,8 @@ routine:
     - id: "S-03"
       title: "Step Planning"
       step_context: |
-        Stage 4 from docs/plan-runner/idea_to_plan_stripped.md.
-        Define contracts and verification per implementation step.
+        Break the plan into step-level plans with contracts (inputs/outputs/errors)
+        and verification strategies. Each step delivers a coherent capability.
       tasks:
         - id: "T-01"
           title: "Create Step Plans"
@@ -225,18 +228,22 @@ routine:
                 must: true
           verifier:
             rubric:
-              - id: "plan_quality"
+              - id: "R1_step_plans"
                 text: |
                   R1 — A: each step-XX-plan.md has a clear purpose, concrete prerequisites,
                   and names specific files/modules. B: files exist but purpose is generic or
-                  prerequisites are vague.
+                  prerequisites are vague. F: step plan files missing.
+              - id: "R2_contracts"
+                text: |
                   R2 — A: each plan has explicit "Inputs", "Outputs", and "Error handling" sections
                   with concrete types or file paths. B: contracts are mentioned but described in
-                  prose rather than structured sections.
-              - id: "coverage"
+                  prose rather than structured sections. F: no contract information.
+              - id: "R3_verification"
                 text: |
                   R3 — A: verification approach names specific commands, test patterns, or manual
                   checks. B: verification says "test it" without specifics.
+              - id: "R4_dependencies"
+                text: |
                   R4 — A: each plan states which prior steps must complete first and why.
                   B: ordering is implied by numbering but not stated.
           retry:
@@ -252,8 +259,8 @@ routine:
     - id: "S-04"
       title: "Task Breakdown"
       step_context: |
-        Stage 5 from docs/plan-runner/idea_to_plan_stripped.md.
-        Convert step plans into atomic execution tasks.
+        Convert step plans into atomic tasks (<5 files, <500 LOC each).
+        Each task must be independently verifiable and keep the system runnable.
       tasks:
         - id: "T-01"
           title: "Create Step Files"
@@ -287,15 +294,23 @@ routine:
                 must: true
           verifier:
             rubric:
-              - id: "atomicity"
+              - id: "R1_step_files"
+                text: |
+                  R1 — A: step files exist and each contains a clear task description with specific
+                  file paths and expected changes. B: files exist but descriptions are abstract.
+                  F: step files missing.
+              - id: "R2_atomicity"
                 text: |
                   R2 — A: every task changes ≤5 files and has a specific verification command or
                   check listed. B: tasks are reasonably scoped but some bundle multiple concerns
                   or lack a verification step.
-              - id: "actionability"
+              - id: "R3_runnable"
                 text: |
-                  R1 — A: step files exist and each contains a clear task description with specific
-                  file paths and expected changes. B: files exist but descriptions are abstract.
+                  R3 — A: each task's changes keep the system runnable — no step introduces a
+                  broken state. B: mostly runnable but one task might temporarily break something
+                  that the next task fixes.
+              - id: "R4_context_refs"
+                text: |
                   R4 — A: each task references the step-plan or design doc it implements.
                   B: tasks are self-contained but don't link back to planning context.
           retry:
@@ -308,32 +323,53 @@ routine:
             max_iterations: 2
 
     - id: "S-05"
-      title: "Dry Run"
+      title: "Dry Run & Failure Mode Analysis"
       type: dry_run
       step_context: |
-        Stage 6 from docs/plan-runner/idea_to_plan_stripped.md.
-        Simulate execution and identify gaps.
+        Simulate execution, identify gaps, and analyze failure modes.
+        Then harden the plan to minimize likelihood of failures.
       dry_run:
         target_steps: ["S-08"]
         context_limit: 4000
         report_path: "docs/{{feature}}/dry-run-notes.md"
       tasks:
         - id: "T-01"
-          title: "Simulate Execution"
+          title: "Simulate Execution and Analyze Failure Modes"
           task_context: |
-            Simulate execution across generated tasks and capture:
-            - assumptions
-            - expected outputs
-            - blockers and mitigation
+            Simulate execution across generated tasks. For each step:
 
-            Save notes to docs/{{feature}}/dry-run-notes.md.
+            1. Walk through the tasks in order and capture:
+               - Assumptions being made
+               - Expected outputs
+               - Blockers and mitigation
+
+            2. Identify likely failure modes:
+               - What could go wrong during execution? (e.g. API changes, missing
+                 dependencies, environment differences, ambiguous instructions)
+               - What requirements might be unfulfillable in certain environments?
+               - Where might an agent get stuck in a retry loop?
+
+            3. For each failure mode, propose a plan hardening action:
+               - Tighten the task instructions to prevent the failure
+               - Add fallback approaches
+               - Split overly complex tasks
+               - Add environment checks as early auto_verify commands
+               - Flag requirements that depend on external state
+
+            Save notes to docs/{{feature}}/dry-run-notes.md with sections:
+            - Per-step simulation results
+            - Failure mode analysis (table: step, failure mode, likelihood, hardening action)
+            - Plan changes recommended
           requirements:
             - id: "R1"
-              desc: "Dry run simulation completes for generated tasks"
+              desc: "Dry run simulation completes for every generated task"
               priority: critical
             - id: "R2"
               desc: "Gaps are documented with concrete remediation"
               priority: expected
+            - id: "R3"
+              desc: "Failure modes identified per step with hardening actions"
+              priority: critical
           auto_verify:
             items:
               - id: "dry_run_exists"
@@ -341,24 +377,29 @@ routine:
                 must: true
           verifier:
             rubric:
-              - id: "thoroughness"
+              - id: "R1_simulation"
                 text: |
                   R1 — A: simulation walks through each step in order and identifies at least one
                   concrete assumption or risk per step. B: simulation covers steps but at a
                   high level without step-specific analysis.
-              - id: "gap_resolution"
+              - id: "R2_gaps"
                 text: |
                   R2 — A: each identified gap has a specific remediation action (e.g. "add error
                   handling in step 3 for missing file case"). B: gaps listed but remediations
                   are generic ("handle edge cases").
+              - id: "R3_failure_modes"
+                text: |
+                  R3 — A: failure mode table covers every step, each failure mode has a concrete
+                  hardening action that could be applied to the plan or routine. B: failure modes
+                  listed but hardening actions are vague or some steps are skipped.
       transitions:
         on_complete: "S-06"
 
     - id: "S-06"
       title: "Final Check"
       step_context: |
-        Stage 7 from docs/plan-runner/idea_to_plan_stripped.md.
-        Cross-check all plan artifacts for consistency and readiness.
+        Cross-check all artifacts for mutual consistency and execution readiness.
+        Verify intent→plan→steps alignment and that dry-run gaps are resolved.
       tasks:
         - id: "T-01"
           title: "Cross-Check All Artifacts"
@@ -397,16 +438,21 @@ routine:
               priority: critical
           verifier:
             rubric:
-              - id: "completeness"
+              - id: "R1_alignment"
                 text: |
                   R1 — A: verification report explicitly maps each step file back to the plan
                   and confirms alignment. B: report says things align but doesn't show the mapping.
-              - id: "consistency"
+                  F: no mapping attempted.
+              - id: "R2_gaps"
+                text: |
+                  R2 — A: every dry-run gap is either addressed in the plan or explicitly tracked
+                  with a justification for deferral. B: most gaps addressed but one or two are
+                  untracked. F: dry-run gaps ignored.
+              - id: "R3_conflicts"
                 text: |
                   R3 — A: report confirms no critical conflicts remain, or lists remaining ones
-                  with justification for why they are acceptable. Any conflicts should have been
-                  resolved via the Q&A in S-02. B: conflicts mentioned but not explicitly resolved
-                  or justified.
+                  with justification for why they are acceptable. B: conflicts mentioned but not
+                  explicitly resolved or justified. F: unresolved critical conflicts.
               - id: "executability"
                 text: |
                   Overall — A: an implementation agent could pick up the step files and execute
@@ -433,8 +479,7 @@ routine:
     - id: "S-07"
       title: "Final Plan Review"
       step_context: |
-        Stage 8 from docs/plan-runner/idea_to_plan_stripped.md.
-        Human approval before final routine packaging.
+        Human approval gate before final routine packaging.
       gate:
         type: human_approval
         approval_prompt: |
@@ -457,12 +502,19 @@ routine:
             - id: "R1"
               desc: "Human approval received — mark done and submit"
               priority: critical
+          verifier:
+            rubric:
+              - id: "R1_approval"
+                text: |
+                  R1 — A: the agent acknowledged the human approval and submitted without
+                  making any code or document changes. F: the agent modified files or
+                  failed to submit.
 
     - id: "S-08"
       title: "Execution Ready"
       step_context: |
-        Stage 9 from docs/plan-runner/idea_to_plan_stripped.md.
-        Produce execution summary plus validated routine YAML.
+        Produce the execution summary and validated routine YAML.
+        The routine must have contract-level auto_verify on every task.
       tasks:
         - id: "T-01"
           title: "Generate Summary"
@@ -586,6 +638,22 @@ routine:
             - Unknown fields (schema_version, owner, tags, critical, verify are NOT valid)
             - Shell pipes in auto_verify commands (use direct commands instead)
 
+            === AUTO_VERIFY QUALITY GUIDE ===
+
+            Every task MUST have at least one auto_verify item or a verifier rubric.
+            Tasks without either can pass via self-report alone — this is a critical gap.
+
+            Prefer contract-level checks over existence checks:
+            - BAD:  `test -f src/models.py` (file exists but may be empty/wrong)
+            - GOOD: `uv run python -c "from mymodule.models import MyModel; m = MyModel(name='test'); assert m.name == 'test'"` (tests the contract)
+            - GOOD: `uv run pytest tests/unit/test_models.py -v` (runs behavioral tests)
+            - GOOD: `uv run python -c "import mymodule; assert hasattr(mymodule, 'expected_function')"` (tests API surface)
+
+            Contract-level means: test public API signatures, return types, schema
+            fields/defaults, import paths, and integration boundaries. Do NOT test
+            internal implementation details — those break when the builder makes
+            reasonable implementation choices that differ from the planner's assumptions.
+
             === END FORMAT GUIDE ===
           requirements:
             - id: "R1"
@@ -594,6 +662,9 @@ routine:
             - id: "R2"
               desc: "Routine YAML passes CLI validation"
               priority: critical
+            - id: "R3"
+              desc: "Every task has contract-level auto_verify commands (not just existence checks)"
+              priority: expected
           artifacts:
             - path: "routines/{{feature}}/routine.yaml"
               required: true
@@ -607,13 +678,19 @@ routine:
                 must: true
           verifier:
             rubric:
-              - id: "schema_compliance"
+              - id: "R1_schema"
                 text: |
-                  R1/R2 — A: routine.yaml passes validation and each step has task_context,
-                  requirements with priorities, and auto_verify hooks. B: passes validation
-                  but some tasks have thin contexts or missing auto_verify.
-              - id: "execution_mapping"
+                  R1 — A: routine.yaml has correct structure, each step has task_context,
+                  requirements with priorities, and routine steps map 1:1 to generated step
+                  files. B: structure correct but some tasks have thin contexts or mapping
+                  diverges from step files.
+              - id: "R2_validation"
                 text: |
-                  R1 — A: routine steps map 1:1 to the generated step files with matching
-                  requirement descriptions. B: mapping exists but some steps are combined
-                  or requirement wording diverges.
+                  R2 — A: routine.yaml passes CLI validation with zero errors. B: passes
+                  with warnings only. F: validation fails.
+              - id: "R3_auto_verify"
+                text: |
+                  R3 — A: every task has auto_verify commands that test behavior (not just file
+                  existence) using contract-level checks — e.g. import checks, API signature
+                  validation, schema field assertions. No shell pipes in commands. B: auto_verify
+                  present but some checks are existence-only. F: tasks missing auto_verify entirely.

@@ -194,7 +194,7 @@ steps:
         auto_verify:
           items:
             - id: executor_imports
-              cmd: uv run python -c "from orchestrator.agents.executor import Executor; print('Executor imports ok')"
+              cmd: uv run python -c "from orchestrator.agents.executor import AgentExecutor; print('Executor imports ok')"
               must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "executor or health_check"

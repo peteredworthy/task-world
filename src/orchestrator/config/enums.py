@@ -26,6 +26,7 @@ class ChecklistStatus(str, Enum):
     DONE = "done"
     NOT_APPLICABLE = "not_applicable"
     BLOCKED = "blocked"
+    ESCALATED = "escalated"
 
 
 class Priority(str, Enum):
