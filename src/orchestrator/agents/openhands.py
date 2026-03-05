@@ -53,6 +53,7 @@ from orchestrator.agents.types import (
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionResult,
     GradeCallback,
@@ -512,6 +513,7 @@ class OpenHandsAgent:
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
         on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via OpenHands.
 

@@ -51,6 +51,7 @@ class _GateBlockedAgent:
         on_output: Any = None,  # noqa: ARG002
         on_grade: Any = None,  # noqa: ARG002
         on_agent_metadata: Any = None,  # noqa: ARG002
+        on_escalation: Any = None,  # noqa: ARG002
     ) -> Any:
         raise GateBlockedError("checklist", ["R1"])
 

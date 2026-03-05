@@ -31,6 +31,7 @@ from orchestrator.agents.types import (
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
@@ -354,6 +355,7 @@ class CLIAgent:
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
         on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         """Execute the CLI tool with the given context."""
         path = shutil.which(self._command)

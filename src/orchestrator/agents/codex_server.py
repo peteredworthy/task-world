@@ -57,6 +57,7 @@ from orchestrator.agents.types import (
     AgentQuota,
     ChecklistUpdateCallback,
     CompleteRecoveryCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionResult,
     GradeCallback,
@@ -328,6 +329,7 @@ class CodexServerAgent:
         on_grade: GradeCallback | None = None,
         on_agent_metadata: AgentMetadataCallback | None = None,
         on_complete_recovery: CompleteRecoveryCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via a local Codex app server session over stdio.
 

@@ -42,6 +42,7 @@ from orchestrator.agents.types import (
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
@@ -620,6 +621,7 @@ class ClaudeSDKAgent:
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
         on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via the Anthropic Claude SDK.
 

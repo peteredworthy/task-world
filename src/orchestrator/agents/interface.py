@@ -8,22 +8,13 @@ from orchestrator.agents.types import (
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
     SubmitCallback,
 )
-
-
-class EscalationCallback(Protocol):
-    """Protocol for escalation callbacks.
-
-    Called when an agent flags a requirement as unfulfillable so the run can be
-    paused and a human can intervene.
-    """
-
-    async def __call__(self, requirement_id: str, reason: str) -> None: ...
 
 
 @runtime_checkable
@@ -41,6 +32,7 @@ class Agent(Protocol):
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
         on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult: ...
 
     async def cancel(self) -> None: ...

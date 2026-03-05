@@ -46,6 +46,7 @@ from orchestrator.agents.openhands_common import (
 from orchestrator.agents.types import (
     AgentInfo,
     ChecklistUpdateCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionResult,
     GradeCallback,
@@ -540,6 +541,7 @@ class DockerOpenHandsAgent:
         on_submit: SubmitCallback,
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via Docker container using hybrid approach.
 

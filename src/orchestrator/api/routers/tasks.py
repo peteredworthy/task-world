@@ -310,7 +310,9 @@ Endpoints:
 - POST {base_url}/api/runs/{run_id}/tasks/{task_id}/submit   → Submit task for verification
 - PUT  {base_url}/api/runs/{run_id}/tasks/{task_id}/checklist/{{req_id}}/grade → Set grade on requirement
   Body: {{"grade": "A", "grade_reason": "optional reason"}}
-- POST {base_url}/api/runs/{run_id}/tasks/{task_id}/complete-verification → Complete verification phase"""
+- POST {base_url}/api/runs/{run_id}/tasks/{task_id}/complete-verification → Complete verification phase
+- POST {base_url}/api/runs/{run_id}/tasks/{task_id}/escalate → Flag a requirement as unfulfillable (pauses run)
+  Body: {{"requirement_id": "R1", "reason": "explanation of why it cannot be fulfilled"}}"""
 
     mcp_instructions = f"""## Orchestrator MCP Server
 Connect to: {base_url}/mcp/sse

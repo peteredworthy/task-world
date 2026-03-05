@@ -823,6 +823,10 @@ class AgentExecutor:
         async def on_agent_metadata(metadata: dict[str, Any]) -> None:
             await self._persist_agent_metadata(run.id, metadata)
 
+        # Define escalation callback - agent flags a requirement as unfulfillable
+        async def on_escalation(requirement_id: str, reason: str) -> None:
+            await service.escalate_requirement(run.id, task_state.id, requirement_id, reason)
+
         # Execute the agent
         logger.info(f"Task {task_state.id}: starting builder agent")
         try:
@@ -833,6 +837,7 @@ class AgentExecutor:
                 on_output=on_output,
                 on_grade=None,
                 on_agent_metadata=on_agent_metadata,
+                on_escalation=on_escalation,
             )
         except GateBlockedError:
             logger.warning("Agent submit blocked by gate - task remains BUILDING, will retry")
@@ -1042,6 +1047,10 @@ class AgentExecutor:
         async def on_agent_metadata(metadata: dict[str, Any]) -> None:
             await self._persist_agent_metadata(run.id, metadata)
 
+        # Define escalation callback - verifier flags a requirement as unfulfillable
+        async def on_escalation(requirement_id: str, reason: str) -> None:
+            await service.escalate_requirement(run.id, task_state.id, requirement_id, reason)
+
         # Execute the verifier agent
         result = await agent.execute(
             context,
@@ -1050,6 +1059,7 @@ class AgentExecutor:
             on_output=on_output,
             on_grade=on_grade,
             on_agent_metadata=on_agent_metadata,
+            on_escalation=on_escalation,
         )
 
         # Store agent metadata
