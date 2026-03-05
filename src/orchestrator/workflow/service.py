@@ -18,6 +18,7 @@ from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, Ta
 from orchestrator.state.session import SessionStateManager
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
 from orchestrator.workflow.auto_verify import (
+    AutoVerifyResult,
     AutoVerifyRunner,
     evaluate_auto_verify,
     has_crashes,
@@ -730,6 +731,8 @@ class WorkflowService:
         # items as DONE so the gate check succeeds. This prevents agents from
         # needing to explicitly call on_checklist_update() when auto-verify
         # already confirms the work was done.
+        # Results are cached here so the post-engine block can reuse them
+        # without running the same commands a second time.
         task = state.get_task(run_id, task_id)
         step_config_id_pre = None
         for step in run.steps:
@@ -740,6 +743,9 @@ class WorkflowService:
             if step_config_id_pre is not None:
                 break
 
+        cached_av_results: list[AutoVerifyResult] | None = (
+            None  # Pre-gate results reused by post-engine block
+        )
         pre_av_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
         if pre_av_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
@@ -758,6 +764,7 @@ class WorkflowService:
                     variables=run.config,
                 )
                 all_must_passed_pre, _ = evaluate_auto_verify(pre_av_config, pre_av_results)
+                cached_av_results = pre_av_results  # Cache for post-engine reuse
 
                 if all_must_passed_pre:
                     # Auto-verify confirms work is done — mark OPEN checklist items as DONE
@@ -808,12 +815,17 @@ class WorkflowService:
         if auto_verify_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
             if project_path is not None:
-                av_results = await run_auto_verify(
-                    auto_verify_config,
-                    self._auto_verify_runner,
-                    project_path,
-                    variables=run.config,
-                )
+                # Reuse pre-gate results when available (same commands already ran);
+                # this avoids running stateful commands a second time.
+                if cached_av_results is not None:
+                    av_results = cached_av_results
+                else:
+                    av_results = await run_auto_verify(
+                        auto_verify_config,
+                        self._auto_verify_runner,
+                        project_path,
+                        variables=run.config,
+                    )
 
                 # Store results in the current attempt
                 if task.attempts:
