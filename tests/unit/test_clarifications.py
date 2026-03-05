@@ -10,7 +10,10 @@ from orchestrator.workflow.clarifications import (
     ClarificationQuestion,
     ClarificationRequest,
     ClarificationResponse,
+    CompressedDecision,
+    CompressedDecisions,
     build_artifact_header,
+    compress_clarifications,
     format_clarification_artifact,
     resolve_artifact_path,
 )
@@ -499,3 +502,215 @@ def test_format_clarification_artifact_with_skipped_answer():
     assert line_count > 0
     assert "(skipped)" in result
     assert "Not needed" in result
+
+
+# --- compress_clarifications tests ---
+
+
+def _make_request(
+    questions: list[ClarificationQuestion], req_id: str = "req1"
+) -> ClarificationRequest:
+    return ClarificationRequest(
+        id=req_id,
+        run_id="run123",
+        task_id="task456",
+        attempt_num=1,
+        questions=questions,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+def _make_response(
+    answers: list[ClarificationAnswer], req_id: str = "req1"
+) -> ClarificationResponse:
+    return ClarificationResponse(
+        request_id=req_id,
+        answers=answers,
+        responded_at=datetime.now(timezone.utc),
+    )
+
+
+def test_compress_clarifications_returns_compressed_decisions():
+    """compress_clarifications extracts question, decision, rationale from Q&A."""
+    now = datetime.now(timezone.utc)
+    q1 = ClarificationQuestion(
+        id="q1",
+        question="Which framework?",
+        context="Need to choose frontend stack",
+        options=["React", "Vue"],
+    )
+    req = _make_request([q1])
+    a1 = ClarificationAnswer(
+        question_id="q1",
+        selected_option="React",
+        answered_by="alice",
+        answered_at=now,
+    )
+    resp = _make_response([a1])
+
+    result = compress_clarifications(req, resp)
+
+    assert isinstance(result, CompressedDecisions)
+    assert result.source_request_id == "req1"
+    assert len(result.decisions) == 1
+    d = result.decisions[0]
+    assert isinstance(d, CompressedDecision)
+    assert d.question == "Which framework?"
+    assert d.decision == "React"
+    assert d.rationale == "Need to choose frontend stack"
+
+
+def test_compress_clarifications_free_text_answer():
+    """compress_clarifications uses free_text as decision for free text answers."""
+    now = datetime.now(timezone.utc)
+    q1 = ClarificationQuestion(
+        id="q1",
+        question="Describe the feature",
+        context="Requirements context",
+        options=["Option A", "Option B", "Other"],
+    )
+    req = _make_request([q1])
+    a1 = ClarificationAnswer(
+        question_id="q1",
+        free_text="Build a multi-tenant auth system",
+        answered_by="bob",
+        answered_at=now,
+    )
+    resp = _make_response([a1])
+
+    result = compress_clarifications(req, resp)
+
+    assert len(result.decisions) == 1
+    assert result.decisions[0].decision == "Build a multi-tenant auth system"
+
+
+def test_compress_clarifications_multi_select():
+    """compress_clarifications joins multi-select options with comma."""
+    now = datetime.now(timezone.utc)
+    q1 = ClarificationQuestion(
+        id="q1",
+        question="Which features?",
+        context="Select all required features",
+        options=["Auth", "Payments", "Analytics"],
+        question_type="multi_select",
+    )
+    req = _make_request([q1])
+    a1 = ClarificationAnswer(
+        question_id="q1",
+        selected_options=["Auth", "Payments"],
+        answered_by="alice",
+        answered_at=now,
+    )
+    resp = _make_response([a1])
+
+    result = compress_clarifications(req, resp)
+
+    assert len(result.decisions) == 1
+    assert result.decisions[0].decision == "Auth, Payments"
+
+
+def test_compress_clarifications_skipped_answer():
+    """compress_clarifications records (skipped) with reason for skipped answers."""
+    now = datetime.now(timezone.utc)
+    q1 = ClarificationQuestion(
+        id="q1",
+        question="Optional preference?",
+        context="Not critical",
+        options=["Yes", "No"],
+        required=False,
+    )
+    req = _make_request([q1])
+    a1 = ClarificationAnswer(
+        question_id="q1",
+        skipped=True,
+        skip_reason="Not relevant now",
+        answered_by="alice",
+        answered_at=now,
+    )
+    resp = _make_response([a1])
+
+    result = compress_clarifications(req, resp)
+
+    assert len(result.decisions) == 1
+    assert "(skipped)" in result.decisions[0].decision
+    assert "Not relevant now" in result.decisions[0].decision
+
+
+def test_compress_clarifications_multiple_questions():
+    """compress_clarifications handles multiple questions."""
+    now = datetime.now(timezone.utc)
+    q1 = ClarificationQuestion(id="q1", question="Q1?", context="Context1", options=["A", "B"])
+    q2 = ClarificationQuestion(id="q2", question="Q2?", context="Context2", options=["X", "Y"])
+    req = _make_request([q1, q2])
+    answers = [
+        ClarificationAnswer(
+            question_id="q1", selected_option="A", answered_by="alice", answered_at=now
+        ),
+        ClarificationAnswer(
+            question_id="q2", selected_option="Y", answered_by="alice", answered_at=now
+        ),
+    ]
+    resp = _make_response(answers)
+
+    result = compress_clarifications(req, resp)
+
+    assert len(result.decisions) == 2
+    assert result.decisions[0].question == "Q1?"
+    assert result.decisions[0].decision == "A"
+    assert result.decisions[1].question == "Q2?"
+    assert result.decisions[1].decision == "Y"
+
+
+def test_compress_clarifications_unanswered_question_omitted():
+    """compress_clarifications omits questions with no matching answer."""
+    now = datetime.now(timezone.utc)
+    q1 = ClarificationQuestion(id="q1", question="Q1?", context="C1", options=["A", "B"])
+    q2 = ClarificationQuestion(id="q2", question="Q2?", context="C2", options=["X", "Y"])
+    req = _make_request([q1, q2])
+    # Only answer q1
+    answers = [
+        ClarificationAnswer(
+            question_id="q1", selected_option="A", answered_by="alice", answered_at=now
+        ),
+    ]
+    resp = _make_response(answers)
+
+    result = compress_clarifications(req, resp)
+
+    assert len(result.decisions) == 1
+    assert result.decisions[0].question == "Q1?"
+
+
+def test_compress_clarifications_archive_vs_decisions():
+    """format_clarification_artifact (archive) retains full Q&A; compress_clarifications gives compact decisions."""
+    now = datetime.now(timezone.utc)
+    q1 = ClarificationQuestion(
+        id="q1",
+        question="Which DB?",
+        context="Choose the database backend",
+        options=["PostgreSQL", "MySQL"],
+    )
+    req = _make_request([q1])
+    a1 = ClarificationAnswer(
+        question_id="q1",
+        selected_option="PostgreSQL",
+        answered_by="alice",
+        answered_at=now,
+    )
+    resp = _make_response([a1])
+
+    # Archive retains full Q&A
+    archive_text, _, _ = format_clarification_artifact(req, resp, "step1", 1)
+    assert "**Answered by:** alice" in archive_text
+    assert f"**Answered at:** {now.isoformat()}" in archive_text
+    assert "**Options:**" in archive_text
+
+    # Decisions give compact form
+    decisions = compress_clarifications(req, resp)
+    assert len(decisions.decisions) == 1
+    d = decisions.decisions[0]
+    assert d.question == "Which DB?"
+    assert d.decision == "PostgreSQL"
+    assert d.rationale == "Choose the database backend"
+    # Compact form does not contain metadata like "answered_by"
+    assert not hasattr(d, "answered_by")

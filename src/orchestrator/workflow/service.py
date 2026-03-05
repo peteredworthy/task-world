@@ -29,7 +29,9 @@ from orchestrator.workflow.clarifications import (
     ClarificationQuestion,
     ClarificationRequest,
     ClarificationResponse,
+    CompressedDecisions,
     build_artifact_header,
+    compress_clarifications,
     format_clarification_artifact,
     resolve_artifact_path,
 )
@@ -1455,6 +1457,11 @@ class WorkflowService:
                 if task_config_obj is not None:
                     break
 
+        # Compress Q&A into compact decisions (pure function, always available).
+        # Raw Q&A is archived in the artifact file; decisions are the compact form
+        # passed downstream to prompt assembly.
+        compressed: CompressedDecisions = compress_clarifications(request, response)
+
         if task_config_obj is not None:
             clarifications_path: str | None = (
                 str(artifact_path) if artifact_path is not None else None
@@ -1468,6 +1475,7 @@ class WorkflowService:
                 clarification_line_range=clarification_line_range,
                 skipped_questions=skipped_question_texts,
                 skip_reason=skip_reason,
+                decisions=compressed,
             )
 
         return result

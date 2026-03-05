@@ -5,6 +5,7 @@ from typing import Any
 
 from orchestrator.config.models import TaskConfig
 from orchestrator.state.models import TaskState
+from orchestrator.workflow.clarifications import CompressedDecisions
 
 
 @dataclass
@@ -20,6 +21,7 @@ class BuilderPrompt:
     clarifications_path: str | None = None
     clarification_line_range: tuple[str, int, int] | None = None
     skipped_questions: list[str] | None = None
+    decisions: "CompressedDecisions | None" = None
 
 
 @dataclass
@@ -65,13 +67,16 @@ def generate_builder_prompt(
     clarification_line_range: tuple[str, int, int] | None = None,
     skipped_questions: list[str] | None = None,
     skip_reason: str | None = None,
+    decisions: CompressedDecisions | None = None,
 ) -> BuilderPrompt:
     """Generate builder prompt with fresh context.
 
     Applies variable substitution ({{key}} -> value) and includes
     previous feedback if this is a revision attempt. If step_context
-    is provided, it is included before the task context. If clarifications_path
-    is provided, it is included after step_context but before task details.
+    is provided, it is included before the task context. If decisions
+    is provided, compact Q&A decisions are embedded directly in the prompt
+    (the raw Q&A archive is stored separately). If clarifications_path is
+    also provided, it is referenced as the raw archive location.
     """
     task_context = get_task_context(task_config, model)
 
@@ -123,7 +128,28 @@ def generate_builder_prompt(
         user += f"## Step Context\n{resolved_step_context}\n\n"
 
     clarification_text = ""
-    if clarifications_path is not None:
+    if decisions is not None and decisions.decisions:
+        # Embed compact decisions directly — the raw Q&A is archived separately.
+        lines = ["## Decisions from Clarifications\n"]
+        for d in decisions.decisions:
+            lines.append(f"**Q: {d.question}**")
+            lines.append(f"Decision: {d.decision}")
+            if d.rationale:
+                lines.append(f"Rationale: {d.rationale}")
+            lines.append("")
+        if clarifications_path is not None:
+            lines.append(f"*(Raw Q&A archive: {clarifications_path})*")
+            lines.append("")
+        if skipped_questions:
+            reason = skip_reason or "none given"
+            q_list = ", ".join(f'"{q}"' for q in skipped_questions)
+            lines.append(
+                f"The user declined to answer: {q_list}. "
+                f"Reason: {reason}. Proceed with your best judgment."
+            )
+            lines.append("")
+        clarification_text = "\n".join(lines) + "\n"
+    elif clarifications_path is not None:
         clarification_text = (
             "## Clarifications\n\n"
             "Previous clarifications from the human are recorded in:\n"
@@ -167,6 +193,7 @@ def generate_builder_prompt(
         clarifications_path=clarifications_path,
         clarification_line_range=clarification_line_range,
         skipped_questions=skipped_questions,
+        decisions=decisions,
     )
 
 

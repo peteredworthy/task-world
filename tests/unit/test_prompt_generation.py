@@ -13,6 +13,7 @@ from orchestrator.config.models import (
     VerifierConfig,
 )
 from orchestrator.state.models import Attempt, TaskState
+from orchestrator.workflow.clarifications import CompressedDecision, CompressedDecisions
 from orchestrator.workflow.prompts import (
     generate_builder_prompt,
     generate_verifier_prompt,
@@ -786,3 +787,129 @@ def test_agent_specific_sections_not_in_verifier_prompts() -> None:
     # Claude SDK verifier should not have sub-agent guidance
     sdk_verifier = build_claude_sdk_prompt(context, is_verifier=True)
     assert "Sub-Agent Guidance" not in sdk_verifier
+
+
+# --- decisions= parameter in builder prompt ---
+
+
+def _make_decisions(items: list[tuple[str, str, str]]) -> CompressedDecisions:
+    """Helper to build CompressedDecisions from (question, decision, rationale) tuples."""
+    return CompressedDecisions(
+        decisions=[CompressedDecision(question=q, decision=d, rationale=r) for q, d, r in items],
+        source_request_id="req1",
+    )
+
+
+def test_builder_prompt_with_decisions_embeds_compact_format() -> None:
+    """Prompt with decisions= embeds compact decisions section in user text."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Which framework?", "React", "Need to choose frontend stack")])
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    assert "## Decisions from Clarifications" in prompt.user
+    assert "Which framework?" in prompt.user
+    assert "React" in prompt.user
+    assert "Need to choose frontend stack" in prompt.user
+
+
+def test_builder_prompt_with_decisions_does_not_use_raw_qa_section() -> None:
+    """When decisions= is provided, the raw '## Clarifications' section is NOT used."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    # The raw Q&A prompt block ("Review this file...") should not appear
+    assert "Previous clarifications from the human are recorded in:" not in prompt.user
+    assert "Review this file for context on decisions made." not in prompt.user
+
+
+def test_builder_prompt_decisions_stored_on_result() -> None:
+    """BuilderPrompt.decisions field stores the CompressedDecisions object."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    assert prompt.decisions is decisions
+
+
+def test_builder_prompt_decisions_none_no_decisions_section() -> None:
+    """When decisions=None, no decisions section appears in the prompt."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+
+    assert "## Decisions from Clarifications" not in prompt.user
+    assert prompt.decisions is None
+
+
+def test_builder_prompt_decisions_with_clarifications_path_shows_archive_ref() -> None:
+    """When decisions= and clarifications_path= are both set, archive path is shown."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        decisions=decisions,
+        clarifications_path="/archive/clarifications.md",
+    )
+
+    assert "## Decisions from Clarifications" in prompt.user
+    assert "/archive/clarifications.md" in prompt.user
+    # Raw Q&A section should not be used (decisions take over)
+    assert "Previous clarifications from the human are recorded in:" not in prompt.user
+
+
+def test_builder_prompt_decisions_positioned_before_task() -> None:
+    """Decisions section appears before ## Task section."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    decisions_pos = prompt.user.index("## Decisions from Clarifications")
+    task_pos = prompt.user.index("## Task")
+    assert decisions_pos < task_pos
+
+
+def test_builder_prompt_decisions_multiple_entries() -> None:
+    """Multiple decisions are all embedded in the prompt."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions(
+        [
+            ("Framework?", "React", "Frontend choice"),
+            ("DB?", "PostgreSQL", "Database choice"),
+            ("Auth?", "JWT", "Auth method"),
+        ]
+    )
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    assert "React" in prompt.user
+    assert "PostgreSQL" in prompt.user
+    assert "JWT" in prompt.user
+    assert "Frontend choice" in prompt.user
+    assert "Database choice" in prompt.user
+    assert "Auth method" in prompt.user
+
+
+def test_builder_prompt_decisions_with_skipped_questions() -> None:
+    """Skipped questions note appears when decisions= and skipped_questions= are both set."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        decisions=decisions,
+        skipped_questions=["Optional question?"],
+        skip_reason="Not relevant",
+    )
+
+    assert "declined to answer" in prompt.user
+    assert "Not relevant" in prompt.user
