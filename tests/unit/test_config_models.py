@@ -376,3 +376,122 @@ def test_clarifications_config_default_artifact_path() -> None:
 
     config = ClarificationsConfig()
     assert config.artifact_path == "docs/clarifications.md"
+
+
+# --- Verification requirement tests ---
+
+
+def _make_routine(
+    *,
+    strict_validation: bool = False,
+    auto_verify_items: list[dict] | None = None,
+    rubric_items: list[dict] | None = None,
+) -> dict:
+    """Build a minimal RoutineConfig dict for testing verification scenarios."""
+    task: dict = {
+        "id": "T-01",
+        "title": "Task 1",
+        "task_context": "Do something",
+    }
+    if auto_verify_items:
+        task["auto_verify"] = {"items": auto_verify_items}
+    if rubric_items:
+        task["verifier"] = {"rubric": rubric_items}
+    return {
+        "id": "test-routine",
+        "name": "Test Routine",
+        "strict_validation": strict_validation,
+        "steps": [
+            {
+                "id": "S-01",
+                "title": "Step 1",
+                "tasks": [task],
+            }
+        ],
+    }
+
+
+def test_task_no_verification_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """TaskConfig with no auto_verify and no verifier logs a warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="orchestrator.config.models"):
+        TaskConfig(id="T1", title="Task 1", task_context="ctx")
+
+    assert any("no auto_verify" in record.message for record in caplog.records)
+
+
+def test_routine_strict_no_verification_raises() -> None:
+    """RoutineConfig with strict_validation=True and unverified task raises ValueError."""
+    with pytest.raises(ValueError, match="strict_validation=True"):
+        RoutineConfig.model_validate(_make_routine(strict_validation=True))
+
+
+def test_routine_strict_with_auto_verify_passes() -> None:
+    """RoutineConfig with strict_validation=True and auto_verify items passes."""
+    routine = RoutineConfig.model_validate(
+        _make_routine(
+            strict_validation=True,
+            auto_verify_items=[{"id": "AV1", "cmd": "echo ok"}],
+        )
+    )
+    assert routine.strict_validation is True
+    assert bool(routine.steps[0].tasks[0].auto_verify.items)
+
+
+def test_routine_strict_with_rubric_passes() -> None:
+    """RoutineConfig with strict_validation=True and rubric items passes."""
+    routine = RoutineConfig.model_validate(
+        _make_routine(
+            strict_validation=True,
+            rubric_items=[{"id": "RQ1", "text": "Does it work?"}],
+        )
+    )
+    assert bool(routine.steps[0].tasks[0].verifier.rubric)
+
+
+def test_existing_routines_without_strict_load() -> None:
+    """Routines without strict_validation (default False) load even without verification."""
+    data = yaml.safe_load("""
+id: legacy-routine
+name: Legacy Routine
+steps:
+  - id: S-01
+    title: Step 1
+    task:
+      id: T-01
+      title: Old Task
+      task_context: Does not have verification
+""")
+    routine = RoutineConfig.model_validate(data)
+    assert routine.strict_validation is False
+    assert routine.id == "legacy-routine"
+
+
+def test_auto_grade_blocked_when_no_verification() -> None:
+    """transition_after_verification blocks auto-grade when task has no verification."""
+    from datetime import datetime, timezone
+
+    from orchestrator.config.enums import ChecklistStatus, Priority, TaskStatus
+    from orchestrator.state.models import ChecklistItem, TaskState
+    from orchestrator.workflow.transitions import transition_after_verification
+
+    task = TaskState(
+        id="task-1",
+        config_id="T-01",
+        status=TaskStatus.VERIFYING,
+        max_attempts=3,
+        has_verification=False,
+        checklist=[
+            ChecklistItem(
+                req_id="R1",
+                desc="Req 1",
+                priority=Priority.CRITICAL,
+                status=ChecklistStatus.DONE,
+            )
+        ],
+    )
+    now = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
+    result = transition_after_verification(task, now)
+    assert result.success is False
+    assert "no verification configured" in result.error
