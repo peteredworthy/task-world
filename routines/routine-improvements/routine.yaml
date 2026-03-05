@@ -1,0 +1,857 @@
+id: routine-improvements
+name: Routine System Effectiveness Improvements
+description: |
+  Implements 16 actions (A1-A2, A4-A14, A16-A18) from the routine effectiveness review.
+  Raises execution fidelity with independent verification on every task, leaner prompts,
+  and failure-mode defenses. M1 and M2 run in parallel; M3-M5 follow sequentially.
+inputs:
+  - name: source_branch
+    required: false
+    default: main
+    description: Branch to base the work on
+
+steps:
+  # ── Milestone 1: Gate Fixes & Safety ──
+
+  - id: S-01
+    title: "Fix auto_verify timing (A1)"
+    step_context: |
+      Reorder submit_for_verification() so auto_verify commands execute BEFORE
+      the checklist gate evaluates self-reported status. If any must:true item
+      fails, block the BUILDING->VERIFYING transition with GateBlockedError.
+      Primary file: src/orchestrator/workflow/engine.py (or service.py).
+    tasks:
+      - id: T-01
+        title: "Reorder auto_verify before gate check"
+        task_context: |
+          In the submit_for_verification flow, move auto_verify execution to run
+          BEFORE the checklist gate evaluates self-reported status. If any must:true
+          auto_verify item fails, raise GateBlockedError and block the BUILDING->VERIFYING
+          transition. Currently auto_verify may run after the gate, allowing builders
+          to pass by self-reporting done even when auto_verify would fail.
+
+          Files to modify: src/orchestrator/workflow/engine.py or service.py
+          (find where submit_for_verification is implemented).
+        requirements:
+          - id: R1
+            desc: auto_verify commands execute before the checklist gate in submit_for_verification
+            priority: critical
+          - id: R2
+            desc: A failing must:true auto_verify item blocks the BUILDING->VERIFYING transition
+            priority: critical
+        auto_verify:
+          items:
+            - id: import_check
+              cmd: uv run python -c "from orchestrator.workflow.engine import WorkflowEngine; print('engine imports ok')"
+              must: true
+            - id: auto_verify_module
+              cmd: uv run python -c "from orchestrator.workflow.auto_verify import run_auto_verify_items; print('auto_verify module ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "auto_verify or gate" 2>&1
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-02
+        title: "Add tests for auto_verify timing"
+        task_context: |
+          Write tests confirming the auto_verify timing fix:
+          1. submit_for_verification with a failing must:true auto_verify item
+             where all checklist items are self-reported as done -> GateBlockedError raised.
+          2. submit_for_verification with passing auto_verify -> transition proceeds.
+          3. Integration test through API with auto_verify configured -> 409 on failure.
+
+          Place tests in tests/unit/ or tests/integration/ as appropriate.
+          Do NOT use mock, patch, or MagicMock (per AGENTS.md).
+        requirements:
+          - id: R1
+            desc: Test exists that confirms failing auto_verify blocks transition even with done checklist
+            priority: critical
+          - id: R2
+            desc: Test exists that confirms passing auto_verify allows transition
+            priority: critical
+        auto_verify:
+          items:
+            - id: test_files_exist
+              cmd: uv run python -c "import glob; files = glob.glob('tests/**/test_*auto_verify*', recursive=True); assert len(files) > 0, 'No auto_verify test files found'; print('Found test files')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "auto_verify"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-02
+    title: "Require verification on every task (A2)"
+    step_context: |
+      Ensure every task has at least one verification mechanism (auto_verify or verifier rubric).
+      Warn by default. Add strict_validation flag for hard rejection.
+      Block auto-grade path for unverified tasks at runtime.
+    tasks:
+      - id: T-01
+        title: "Add load-time validation for task verification"
+        task_context: |
+          In src/orchestrator/config/models.py, add a model_validator to TaskConfig
+          that checks every task has at least one of: auto_verify items, or a verifier rubric.
+
+          Default behavior: log a warning but allow loading (for backwards compatibility).
+          When strict_validation is true on the routine config: raise ValueError, reject the routine.
+
+          Add strict_validation: bool = False to the routine-level config model.
+        requirements:
+          - id: R1
+            desc: TaskConfig warns when task has no auto_verify and no verifier rubric
+            priority: critical
+          - id: R2
+            desc: strict_validation flag causes hard rejection of unverified tasks
+            priority: critical
+        auto_verify:
+          items:
+            - id: config_imports
+              cmd: uv run python -c "from orchestrator.config.models import TaskConfig; print('TaskConfig imports ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "task_config or validation or strict"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-02
+        title: "Block auto-grade path for unverified tasks"
+        task_context: |
+          In src/orchestrator/workflow/transitions.py, block the auto-grade path
+          (code that assigns A to self-reported done items) when no verification
+          was configured on the task. This prevents tasks from silently passing
+          without any verification.
+        requirements:
+          - id: R1
+            desc: Auto-grade path is blocked when task has no verification configured
+            priority: critical
+        auto_verify:
+          items:
+            - id: transitions_import
+              cmd: uv run python -c "from orchestrator.workflow.transitions import *; print('transitions imports ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "transition or auto_grade or grade"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-03
+        title: "Add tests for verification requirement"
+        task_context: |
+          Write tests for the verification requirement feature:
+          1. TaskConfig with no auto_verify and no verifier -> warning logged (default mode)
+          2. TaskConfig with strict_validation and no verification -> ValueError raised
+          3. TaskConfig with auto_verify OR verifier -> passes in both modes
+          4. transition blocks auto-grade when no verification configured
+          5. Existing routines without strict mode continue to load
+
+          Do NOT use mock, patch, or MagicMock.
+        requirements:
+          - id: R1
+            desc: Tests cover all validation modes (warn, strict, valid task)
+            priority: critical
+        auto_verify:
+          items:
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "verif" 2>&1
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-03
+    title: "Pre-run test health check (A5)"
+    step_context: |
+      Before the first task attempt, run the project test suite. If it fails,
+      block task start. Config from .task-world/config.yaml with test_command field.
+      Default: uv run pytest --tb=no -q. test_command: null to skip.
+    tasks:
+      - id: T-01
+        title: "Implement pre-run test health check"
+        task_context: |
+          In src/orchestrator/agents/executor.py, add a health check that runs
+          the project test suite before the first task attempt in a run.
+
+          Config resolution:
+          1. Read .task-world/config.yaml in project dir for test_command field
+          2. If not found, use convention default: "uv run pytest --tb=no -q"
+          3. If test_command is explicitly null, skip the health check
+
+          On failure: block task start with descriptive error including command, exit code, output.
+        requirements:
+          - id: R1
+            desc: Health check runs project tests before first task attempt
+            priority: critical
+          - id: R2
+            desc: Failing tests block task start with descriptive error
+            priority: critical
+          - id: R3
+            desc: test_command null skips the health check
+            priority: expected
+        auto_verify:
+          items:
+            - id: executor_imports
+              cmd: uv run python -c "from orchestrator.agents.executor import Executor; print('Executor imports ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "executor or health_check"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-02
+        title: "Add tests for health check"
+        task_context: |
+          Write tests for the pre-run health check:
+          1. Executor with failing project tests -> task start blocked with error
+          2. Executor with passing tests -> task starts normally
+          3. Project with test_command: null -> health check skipped
+          4. No .task-world/config.yaml -> convention default used
+
+          Do NOT use mock, patch, or MagicMock.
+        requirements:
+          - id: R1
+            desc: Tests cover passing, failing, skip, and default-config scenarios
+            priority: critical
+        auto_verify:
+          items:
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "health_check"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-04
+    title: "Verifier model pinning (A10)"
+    step_context: |
+      Pin verifier model at run creation. Store in run state. All verifier
+      invocations use pinned model, ignoring later config changes.
+    tasks:
+      - id: T-01
+        title: "Pin verifier model at run creation"
+        task_context: |
+          1. Add verifier_model: str | None = None field to Run state model
+             in src/orchestrator/state/models.py (use None default for backwards compat).
+          2. At run creation time (in engine or executor), snapshot the current
+             verifier model into the run state.
+          3. Ensure all verifier invocations use run.verifier_model instead of
+             reading from current config.
+
+          Write tests confirming:
+          - Run creation stores verifier model
+          - Verifier uses pinned model, not current config
+          - Changing config after creation doesn't affect pinned model
+        requirements:
+          - id: R1
+            desc: Run state has verifier_model field populated at creation
+            priority: critical
+          - id: R2
+            desc: Verifier invocations use pinned model from run state
+            priority: critical
+        auto_verify:
+          items:
+            - id: model_field
+              cmd: uv run python -c "from orchestrator.state.models import Run; r = Run.__new__(Run); print('Run model ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "verifier_model or pin"
+              must: true
+        retry:
+          max_attempts: 2
+
+  # ── Milestone 2: Prompt & Context Efficiency ──
+
+  - id: S-05
+    title: "Trim prompt dead weight (A7)"
+    step_context: |
+      Remove identified dead-weight sections from shared system prompt in prompts.py.
+      Remove "Avoiding Loops" section and other D4-identified dead weight.
+      39% reduction figure is informational only.
+    tasks:
+      - id: T-01
+        title: "Remove dead-weight prompt sections"
+        task_context: |
+          In src/orchestrator/workflow/prompts.py, remove the following sections
+          from the shared system prompt template:
+          - "Avoiding Loops" section
+          - Other agent-behavioral instructions identified in experiment D4 as dead weight
+
+          Keep all required sections: task context, requirements, callback instructions,
+          orchestrator integration.
+
+          Write tests confirming:
+          - Removed sections don't appear in generated prompts
+          - Required sections still present
+        requirements:
+          - id: R1
+            desc: Avoiding Loops section removed from shared prompt
+            priority: critical
+          - id: R2
+            desc: Required sections (task context, requirements, callbacks) still present
+            priority: critical
+        auto_verify:
+          items:
+            - id: prompts_import
+              cmd: uv run python -c "from orchestrator.workflow.prompts import *; print('prompts module ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "prompt"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-06
+    title: "Migrate agent-specific instructions (A8)"
+    step_context: |
+      Move agent-behavioral instructions from shared prompt to individual agent
+      implementations. Each agent's build_prompt/prompt method gets its specific
+      instructions. Shared prompt becomes agent-agnostic.
+    tasks:
+      - id: T-01
+        title: "Migrate instructions to agent implementations"
+        task_context: |
+          1. Identify agent-specific sections in src/orchestrator/workflow/prompts.py
+          2. Move each section to the relevant agent:
+             - CLI (cli.py): git workflow, commit conventions
+             - OpenHands (openhands.py): file re-reading avoidance, Docker awareness
+             - Codex (codex_server.py): sandbox constraints, shorter responses
+             - Claude SDK (claude_sdk.py): tool usage patterns, sub-agent guidance
+          3. Remove moved sections from shared prompt
+          4. Add instructions to each agent's build_prompt() or prompt construction method
+             Note: codex_server.py uses _build_prompt (with underscore prefix)
+
+          Write tests confirming each agent includes its instructions and shared
+          prompt no longer contains agent-specific content.
+        requirements:
+          - id: R1
+            desc: Agent-specific instructions moved from shared prompt to agent files
+            priority: critical
+          - id: R2
+            desc: Each agent's prompt includes its specific instructions
+            priority: critical
+        auto_verify:
+          items:
+            - id: agents_import
+              cmd: uv run python -c "from orchestrator.agents.cli import CLIAgent; from orchestrator.agents.claude_sdk import ClaudeSdkAgent; print('agent imports ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "prompt or agent"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-07
+    title: "Compress clarifications on resolution (A6)"
+    step_context: |
+      After Q&A resolution, compress resolved questions into compact decisions.
+      Downstream tasks receive only decisions, not full Q&A history.
+      Use template-based extraction, not LLM summarization.
+    tasks:
+      - id: T-01
+        title: "Add clarification compression"
+        task_context: |
+          In src/orchestrator/workflow/service.py (or a new module), add logic
+          to compress resolved Q&A clarifications into a compact decisions section.
+
+          Use template-based extraction: extract decision + rationale from each
+          resolved question. This is deterministic (no LLM needed).
+
+          Archive raw Q&A separately. Downstream prompt assembly uses decisions only.
+
+          Write tests confirming:
+          - Compress function produces correct decisions format
+          - Downstream prompts use decisions, not raw Q&A
+          - Archive retains full Q&A data
+        requirements:
+          - id: R1
+            desc: Resolved clarifications are compressed into decisions format
+            priority: critical
+          - id: R2
+            desc: Downstream prompts receive only decisions, not raw Q&A
+            priority: expected
+        auto_verify:
+          items:
+            - id: service_imports
+              cmd: uv run python -c "from orchestrator.workflow.service import WorkflowService; print('service ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "clarif or decision or compress"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-08
+    title: "Step context guidance (A14)"
+    step_context: |
+      Add planner documentation about keeping step_context compact and builder-relevant.
+      Documentation only - no code changes.
+    tasks:
+      - id: T-01
+        title: "Write step context guidance documentation"
+        task_context: |
+          Create or update planner guidance documentation in docs/ with guidance on:
+          - Keeping step_context concise and builder-relevant
+          - Avoiding duplication of information already in task descriptions
+          - Examples of good vs verbose step context
+          - Note that step_context is duplicated per task (intentional), so brevity matters
+
+          This is documentation only - no code changes needed.
+        requirements:
+          - id: R1
+            desc: Step context guidance document exists with actionable advice
+            priority: critical
+        auto_verify:
+          items:
+            - id: doc_exists
+              cmd: uv run python -c "import glob; docs = glob.glob('docs/**/step*context*', recursive=True) + glob.glob('docs/**/planner*', recursive=True); assert len(docs) > 0, 'No guidance doc found'; print('Found guidance docs')"
+              must: true
+            - id: doc_has_content
+              cmd: uv run python -c "import glob, os; docs = glob.glob('docs/**/step*context*', recursive=True) + glob.glob('docs/**/planner*', recursive=True); sizes = [os.path.getsize(f) for f in docs]; assert any(s > 200 for s in sizes), 'Doc too small'; print('Doc has substantive content')"
+              must: true
+        retry:
+          max_attempts: 2
+
+  # ── Milestone 3: Safety Guards ──
+
+  - id: S-09
+    title: "Test count regression guard (A4)"
+    step_context: |
+      Create scripts/check_test_count.sh that captures test names before/after
+      builder work and exits non-zero if tests were removed. Opt-in auto_verify
+      command for routine authors.
+    tasks:
+      - id: T-01
+        title: "Create test count regression guard script"
+        task_context: |
+          Create scripts/check_test_count.sh with two modes:
+          1. --snapshot <file>: capture test names via pytest --collect-only -q, save to file
+          2. --compare <file>: capture current tests, compare with snapshot, exit non-zero if any removed
+
+          Exit codes: 0 = no tests removed, non-zero = tests removed (list on stderr).
+          If pytest --collect-only fails, exit non-zero with the pytest error.
+
+          Document usage for routine authors as an opt-in auto_verify command.
+        requirements:
+          - id: R1
+            desc: Script detects removed tests and exits non-zero
+            priority: critical
+          - id: R2
+            desc: Script handles test additions without false positives
+            priority: critical
+        auto_verify:
+          items:
+            - id: script_exists
+              cmd: test -f scripts/check_test_count.sh && test -x scripts/check_test_count.sh
+              must: true
+            - id: script_has_modes
+              cmd: grep -q "snapshot" scripts/check_test_count.sh && grep -q "compare" scripts/check_test_count.sh
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-02
+        title: "Test the regression guard script"
+        task_context: |
+          Write tests for check_test_count.sh:
+          1. Snapshot mode captures test names correctly
+          2. Compare with no changes -> exit 0
+          3. Compare after adding a test -> exit 0
+          4. Compare after removing a test -> exit non-zero with removed test listed
+          5. Handle project with no tests gracefully
+
+          Tests can be shell-based or Python subprocess tests.
+        requirements:
+          - id: R1
+            desc: Tests verify script behavior for additions, removals, and no-change scenarios
+            priority: critical
+        auto_verify:
+          items:
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "test_count or check_test or regression_guard"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-10
+    title: "Agent escalation for unfulfillable requirements (A11)"
+    step_context: |
+      Add POST /api/runs/{run_id}/tasks/{task_id}/escalate endpoint.
+      Agent flags a requirement as unfulfillable, run pauses with
+      pause_reason="requirement_escalated". Human can modify/skip/resume.
+    tasks:
+      - id: T-01
+        title: "Add escalation callback and endpoint"
+        task_context: |
+          1. In src/orchestrator/agents/interface.py, add EscalationCallback protocol
+          2. In src/orchestrator/routers/tasks.py, add POST escalation endpoint:
+             POST /api/runs/{run_id}/tasks/{task_id}/escalate
+             Body: {"requirement_id": "R1", "reason": "..."}
+             Response: 200 on success, 404/400/409 on error
+          3. In src/orchestrator/workflow/engine.py, handle escalation:
+             - Set requirement status to "escalated"
+             - Pause run with reason "requirement_escalated"
+        requirements:
+          - id: R1
+            desc: Escalation endpoint exists and accepts requirement_id + reason
+            priority: critical
+          - id: R2
+            desc: Escalation pauses run with descriptive reason
+            priority: critical
+        auto_verify:
+          items:
+            - id: interface_import
+              cmd: uv run python -c "from orchestrator.agents.interface import *; print('interface ok')"
+              must: true
+            - id: router_import
+              cmd: uv run python -c "from orchestrator.routers.tasks import router; print('tasks router ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "escalat"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-02
+        title: "Add UI for escalation display"
+        task_context: |
+          Update frontend components to display escalated requirements and the
+          pause reason. Show the escalation reason in the run detail view.
+          Update types if needed (e.g., add "escalated" to requirement status type).
+        requirements:
+          - id: R1
+            desc: UI displays escalated requirements with reason
+            priority: expected
+        auto_verify:
+          items:
+            - id: typescript_check
+              cmd: cd ui && npx tsc --noEmit 2>&1
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-03
+        title: "Add integration tests for escalation flow"
+        task_context: |
+          Write integration tests:
+          1. POST escalation -> requirement marked escalated, run paused
+          2. Human modifies requirement after escalation -> run can resume
+          3. Escalation on completed run -> 409
+
+          Do NOT use mock, patch, or MagicMock.
+        requirements:
+          - id: R1
+            desc: Integration tests cover escalation, resume, and error paths
+            priority: critical
+        auto_verify:
+          items:
+            - id: tests_pass
+              cmd: uv run pytest tests/integration/ -x -q --tb=short -k "escalat"
+              must: true
+        retry:
+          max_attempts: 2
+
+  # ── Milestone 4: Schema & Architecture Extensions ──
+
+  - id: S-11
+    title: "Step-level integration tests (A12)"
+    step_context: |
+      Add step_auto_verify field to StepConfig. After all step tasks complete,
+      run step-level auto_verify. If it fails, step fails and run halts.
+    tasks:
+      - id: T-01
+        title: "Add step_auto_verify schema and execution"
+        task_context: |
+          1. In src/orchestrator/config/models.py, add step_auto_verify field to StepConfig:
+             step_auto_verify: list[AutoVerifyItemConfig] = Field(default_factory=list)
+          2. In the step completion logic (likely src/orchestrator/workflow/service.py
+             or engine.py), after all tasks in a step reach terminal state:
+             - If step_auto_verify is configured, execute the commands
+             - If all pass: mark step complete, advance to next step
+             - If any fail: mark step failed, halt the run (no auto-advance)
+          3. Steps without step_auto_verify: existing behavior unchanged
+        requirements:
+          - id: R1
+            desc: StepConfig accepts step_auto_verify field
+            priority: critical
+          - id: R2
+            desc: Failing step_auto_verify halts the run
+            priority: critical
+        auto_verify:
+          items:
+            - id: schema_field
+              cmd: uv run python -c "from orchestrator.config.models import StepConfig; s = StepConfig(id='test', title='t', tasks=[]); print('step_auto_verify field:', s.step_auto_verify)"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "step_auto_verify or step_verify"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-02
+        title: "Add tests for step-level verification"
+        task_context: |
+          Write tests:
+          1. StepConfig with step_auto_verify -> items validated correctly
+          2. Step completion with passing step_auto_verify -> step advances
+          3. Step completion with failing step_auto_verify -> step fails, run halts
+          4. Step with no step_auto_verify -> unchanged behavior
+
+          Do NOT use mock, patch, or MagicMock.
+        requirements:
+          - id: R1
+            desc: Tests cover step_auto_verify pass, fail, and absent scenarios
+            priority: critical
+        auto_verify:
+          items:
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "step_auto_verify or step_verify"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-12
+    title: "Context summarization (A13)"
+    step_context: |
+      Extend context_from with summarize, critical, and summarize_model fields.
+      Generate summaries with cheap model (configurable). Cache by content hash.
+      Re-summarize if critical aspects missing (max 2 iterations).
+      Fallback to full content on failure.
+    tasks:
+      - id: T-01
+        title: "Extend context_from schema for summarization"
+        task_context: |
+          In src/orchestrator/config/models.py, extend ContextFromConfig:
+          - summarize: bool = False
+          - critical: str | None = None (description of critical aspects to preserve)
+          - summarize_model: str | None = None (override default model)
+
+          Default summarization model should be configurable with a cheap default
+          (e.g., claude-haiku-4-5-20251001).
+        requirements:
+          - id: R1
+            desc: ContextFromConfig has summarize, critical, and summarize_model fields
+            priority: critical
+        auto_verify:
+          items:
+            - id: schema_check
+              cmd: uv run python -c "from orchestrator.config.models import ContextFromConfig; c = ContextFromConfig(artifact='test.md', summarize=True, critical='key decisions'); print('summarize:', c.summarize, 'critical:', c.critical)"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-02
+        title: "Implement summary cache and generator"
+        task_context: |
+          Create src/orchestrator/workflow/summary_cache.py:
+          - Cache keyed by (artifact_path, content_hash)
+          - Lifetime: run duration
+          - Summary generation using configurable model
+          - Critical-aspect verification: check summary contains critical aspects
+          - Re-summarize with explicit preservation instruction (max 2 iterations)
+          - Fallback to full content on model failure
+
+          Integrate into prompt assembly in src/orchestrator/workflow/prompts.py:
+          when context_from has summarize=true, use summarized content instead of full.
+        requirements:
+          - id: R1
+            desc: Summary cache stores and retrieves by content hash
+            priority: critical
+          - id: R2
+            desc: Critical-aspect check triggers re-summarization when needed
+            priority: expected
+          - id: R3
+            desc: Model failure falls back to full content
+            priority: critical
+        auto_verify:
+          items:
+            - id: cache_import
+              cmd: uv run python -c "from orchestrator.workflow.summary_cache import *; print('summary_cache module ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "summary or summariz"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-03
+        title: "Add tests for context summarization"
+        task_context: |
+          Write tests:
+          1. Summary generation produces shorter output than original
+          2. Cache hit returns cached summary without calling model
+          3. Missing critical aspect triggers re-summarization
+          4. Model failure falls back to full content
+          5. End-to-end prompt assembly with summarized context
+
+          Do NOT use mock, patch, or MagicMock. Use test-specific implementations.
+        requirements:
+          - id: R1
+            desc: Tests cover cache, critical-aspect check, fallback, and integration
+            priority: critical
+        auto_verify:
+          items:
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "summary or summariz"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-13
+    title: "Task complexity labeling (A16)"
+    step_context: |
+      Add complexity field to TaskConfig: simple | standard.
+      Default is standard. Diagnostic metadata only, no behavior changes.
+    tasks:
+      - id: T-01
+        title: "Add complexity field to TaskConfig"
+        task_context: |
+          In src/orchestrator/config/models.py, add to TaskConfig:
+            complexity: Literal["simple", "standard"] = "standard"
+
+          Optionally add a Complexity enum to src/orchestrator/config/enums.py.
+
+          Write tests:
+          1. TaskConfig accepts complexity: "simple" and "standard"
+          2. Default is "standard"
+          3. Invalid value raises validation error
+
+          This is purely additive metadata - no behavior changes needed.
+        requirements:
+          - id: R1
+            desc: TaskConfig has complexity field with simple/standard values
+            priority: critical
+          - id: R2
+            desc: Default complexity is standard
+            priority: critical
+        auto_verify:
+          items:
+            - id: schema_check
+              cmd: uv run python -c "from orchestrator.config.models import TaskConfig; t = TaskConfig(id='t1', title='test', task_context='ctx'); assert t.complexity == 'standard'; t2 = TaskConfig(id='t2', title='test2', task_context='ctx', complexity='simple'); assert t2.complexity == 'simple'; print('complexity field ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "complexity"
+              must: true
+        retry:
+          max_attempts: 2
+
+  - id: S-14
+    title: "Multi-file routine definitions (A17)"
+    step_context: |
+      Support routines split across YAML files. Steps can have file: path field
+      to reference external step definitions. Loader resolves, validates, assembles.
+      If step has file AND other fields, validation fails (no overlap per Q7).
+    tasks:
+      - id: T-01
+        title: "Add file field to StepConfig and overlap validation"
+        task_context: |
+          In src/orchestrator/config/models.py:
+          1. Add file: str | None = None to StepConfig
+          2. Add model_validator: if file is set AND any other step field
+             (title, tasks, step_context, etc.) is also set, raise ValueError.
+             Per clarification Q7: no overlap allowed.
+        requirements:
+          - id: R1
+            desc: StepConfig accepts file field for referencing external YAML
+            priority: critical
+          - id: R2
+            desc: Step with file AND other fields raises validation error
+            priority: critical
+        auto_verify:
+          items:
+            - id: schema_check
+              cmd: uv run python -c "from orchestrator.config.models import StepConfig; assert hasattr(StepConfig, 'model_fields') and 'file' in StepConfig.model_fields; print('file field ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "multi_file or multifile or step_file or loader"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-02
+        title: "Implement multi-file loader"
+        task_context: |
+          In src/orchestrator/config/loader.py (create if needed):
+          1. Parse root routine.yaml
+          2. For each step with file field, resolve path relative to routine directory
+          3. Validate referenced file exists (raise RoutineValidationError if not)
+          4. Load and parse referenced YAML as complete step definition
+          5. Assemble final RoutineConfig
+
+          Handle edge cases: missing files, relative paths, circular references.
+        requirements:
+          - id: R1
+            desc: Loader resolves step file references and assembles complete routine
+            priority: critical
+          - id: R2
+            desc: Missing step file raises descriptive error
+            priority: critical
+        auto_verify:
+          items:
+            - id: loader_import
+              cmd: uv run python -c "from orchestrator.config.loader import *; print('loader ok')"
+              must: true
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "loader or multi_file"
+              must: true
+        retry:
+          max_attempts: 2
+
+      - id: T-03
+        title: "Add tests for multi-file routines"
+        task_context: |
+          Write tests (suggest tests/unit/test_loader_multifile.py):
+          1. Loader resolves step file references correctly
+          2. Missing step file raises RoutineValidationError
+          3. Step with file AND other fields raises error
+          4. Inline steps (no file) work unchanged
+          5. Full routine load from multi-file structure
+
+          Do NOT use mock, patch, or MagicMock.
+        requirements:
+          - id: R1
+            desc: Tests cover file resolution, missing files, overlap rejection, and inline steps
+            priority: critical
+        auto_verify:
+          items:
+            - id: tests_pass
+              cmd: uv run pytest tests/ -x -q --tb=short -k "multi_file or multifile or loader"
+              must: true
+        retry:
+          max_attempts: 2
+
+  # ── Milestone 5: Planning Documentation ──
+
+  - id: S-15
+    title: "Failure mode analysis in dry run (A18)"
+    step_context: |
+      Update planner documentation to codify failure mode analysis as part
+      of the dry-run stage. Documentation only.
+    tasks:
+      - id: T-01
+        title: "Write failure mode analysis guidance"
+        task_context: |
+          Create or update planner documentation in docs/ covering:
+          - What failure mode analysis is and why it matters
+          - When to perform it (during dry-run stage)
+          - How to identify failure modes per step
+          - How to re-engineer the plan based on identified risks
+          - Examples from existing routines (reference docs/routine-improvements/dry-run-notes.md)
+
+          This is documentation only - no code changes needed.
+        requirements:
+          - id: R1
+            desc: Failure mode analysis guidance document exists with actionable content
+            priority: critical
+        auto_verify:
+          items:
+            - id: doc_exists
+              cmd: uv run python -c "import glob; docs = glob.glob('docs/**/failure*mode*', recursive=True) + glob.glob('docs/**/dry*run*guide*', recursive=True) + glob.glob('docs/**/planner*', recursive=True); assert len(docs) > 0, 'No failure mode docs found'; print('Found failure mode docs')"
+              must: true
+            - id: doc_has_content
+              cmd: uv run python -c "import glob, os; docs = glob.glob('docs/**/failure*mode*', recursive=True) + glob.glob('docs/**/dry*run*guide*', recursive=True) + glob.glob('docs/**/planner*', recursive=True); sizes = [os.path.getsize(f) for f in docs]; assert any(s > 200 for s in sizes), 'Doc too small'; print('Doc has substantive content')"
+              must: true
+        retry:
+          max_attempts: 2
