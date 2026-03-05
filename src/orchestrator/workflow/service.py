@@ -741,11 +741,7 @@ class WorkflowService:
                 break
 
         pre_av_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
-        if (
-            pre_av_config is not None
-            and self._auto_verify_runner is not None
-            and any(item.status == ChecklistStatus.OPEN for item in task.checklist)
-        ):
+        if pre_av_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
             if project_path is not None:
                 # Auto-commit any uncommitted changes before running auto-verify
@@ -761,13 +757,33 @@ class WorkflowService:
                     project_path,
                     variables=run.config,
                 )
-                all_must_passed_pre, _ = evaluate_auto_verify(pre_av_config, pre_av_results)
+                all_must_passed_pre, failing_must_ids_pre = evaluate_auto_verify(
+                    pre_av_config, pre_av_results
+                )
 
                 if all_must_passed_pre:
                     # Auto-verify confirms work is done — mark OPEN checklist items as DONE
                     for item in task.checklist:
                         if item.status == ChecklistStatus.OPEN:
                             item.status = ChecklistStatus.DONE
+                else:
+                    # Must-items failed: emit event, then block the BUILDING->VERIFYING transition
+                    buffer.emit(
+                        AutoVerifyCompleted(
+                            timestamp=self._clock.now(),
+                            run_id=run_id,
+                            event_type="auto_verify_completed",
+                            task_id=task_id,
+                            passed=False,
+                            failing_must_items=failing_must_ids_pre,
+                            results=[r.model_dump() for r in pre_av_results],
+                        )
+                    )
+                    await self._persist(state, run_id, buffer)
+                    raise GateBlockedError(
+                        gate_name="auto_verify",
+                        blocking_items=failing_must_ids_pre,
+                    )
 
         try:
             result = engine.submit_for_verification(run_id, task_id)
