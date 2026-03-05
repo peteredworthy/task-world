@@ -852,3 +852,7 @@ class ClaudeSDKAgent:
         """
         self._cancelled = True
         logger.info("ClaudeSDKAgent: cancelled")
+
+
+# Alias for backwards-compatible import (camelCase variant)
+ClaudeSdkAgent = ClaudeSDKAgent
