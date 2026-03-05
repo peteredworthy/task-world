@@ -22,14 +22,14 @@ The change is within `engine.py:submit_for_verification()`. Auto_verify executio
 Add `verifier_model: str | None` to `Run` state. Set at run creation from the current agent config. The executor passes this pinned model to all verifier invocations, ignoring any subsequent config changes.
 
 **After A12 (step-level auto_verify):**
-In the step completion path (`check_step_progression` or the engine method that calls it), after confirming all tasks are terminal, run `step_auto_verify` commands. If any fail, the step does not advance — tasks remain complete but the step is blocked. This is a new state edge: "tasks complete, step verification pending."
+In the step completion path (`check_step_progression` or the engine method that calls it), after confirming all tasks are terminal, run `step_auto_verify` commands. **Decision:** If any fail, the step fails and the run halts (no auto-advance to next step). Tasks remain complete but the step is marked as failed. There is no "pending" intermediate state — it either passes and advances, or fails and stops the run.
 
 ### 2. Config Models (`src/orchestrator/config/models.py`)
 
 **A2 — Verification requirement validation:**
 Add a `model_validator` on `TaskConfig` that checks: if `auto_verify` is empty AND `verifier` rubric is empty, raise `ValueError`. This catches undefended tasks at routine load time.
 
-Consider a migration strategy: initially warn (log) rather than reject, allowing existing routines to be updated. Then switch to hard rejection.
+**Decision:** Warn by default (log warning, allow loading). Add a `strict_validation: bool` flag on the routine config — when `True`, undefended tasks cause a hard rejection. This allows existing routines to continue working while encouraging migration to full verification coverage.
 
 **A12 — StepConfig extension:**
 ```python
@@ -44,6 +44,7 @@ class ContextFromConfig(BaseModel):
     # ... existing fields ...
     summarize: bool = False
     critical: str | None = None  # description of what must be preserved
+    summarize_model: str | None = None  # override summarization model (default: cheap model like Haiku)
 ```
 
 **A16 — Task complexity:**
@@ -62,7 +63,7 @@ class StepConfig(BaseModel):
     file: str | None = None  # relative path to step YAML file
 ```
 
-When `file` is set, the loader reads the referenced YAML and merges it into the step. All other step fields are ignored when `file` is present — the referenced file is the complete step definition.
+When `file` is set, the loader reads the referenced YAML and uses it as the complete step definition. **Decision:** If a step specifies `file` AND includes other step fields (name, tasks, etc.), validation fails. A routine must not include step fields that overlap with a referenced file — this prevents ambiguity about which definition takes precedence.
 
 ### 3. Config Loader (`src/orchestrator/config/loader.py`)
 
@@ -83,7 +84,7 @@ Remove these sections from the system message template:
 - "Avoiding Loops" section (~512 chars) — universally ignored per D4
 - Other agent-behavioral instructions that belong in individual runners
 
-Target: 39% reduction in system prompt size.
+**Decision:** The 39% figure is informational only. Remove the specific identified dead-weight sections; do not target an exact percentage.
 
 **A8 — Agent-specific instruction migration:**
 Move to individual agent runners:
@@ -99,7 +100,7 @@ When `context_from` has `summarize: true`:
 1. Check summary cache (keyed by artifact path + content hash)
 2. If cached, use cached summary
 3. If not cached:
-   a. Call the run's primary model with a summarization prompt
+   a. Call the configured summarization model (default: a cheap model like Haiku; configurable per routine/project) with a summarization prompt
    b. If `critical` is set, verify the summary contains the critical aspects
    c. If critical aspects missing, re-summarize with explicit instruction to preserve them (max 2 iterations)
    d. Cache the result
@@ -130,7 +131,7 @@ Effect: marks the requirement as `escalated`, pauses the run with `pause_reason=
 **A5 — Pre-run test health check:**
 Before executing the first task attempt in a run, run the test command (default: `uv run pytest --tb=no -q`). If exit code is non-zero, block with a descriptive error including the test output.
 
-Configuration: the test command can be specified in the routine config or use the project default. For projects without tests, this check is skipped.
+**Decision:** Test command is configured via a project-level config file (e.g. `.task-world/config.yaml` with a `test_command` field) with convention fallback (default: `uv run pytest --tb=no -q`). For projects without tests or config, the check uses the convention default. If the project explicitly opts out (e.g. `test_command: null`), the check is skipped.
 
 ---
 

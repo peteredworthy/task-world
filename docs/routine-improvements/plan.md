@@ -26,7 +26,8 @@ Add validation that every task has at least one of: auto_verify items, or a veri
 
 **Files:** `src/orchestrator/config/models.py`, `src/orchestrator/workflow/transitions.py`
 **Tests:** Validation error on task with no auto_verify and no verifier; runtime block on auto-grade path.
-**Risk:** Medium — existing routines may have tasks without verification. Need migration path (warn first, then enforce).
+**Decision:** Warn by default (log warning, allow loading). Add `strict_validation` flag to enable hard rejection. This lets existing routines work while encouraging migration.
+**Risk:** Low with this migration strategy — existing routines continue to work until strict mode is enabled.
 
 ### Step 3: Pre-run test health check (A5)
 
@@ -35,7 +36,7 @@ Before the first task attempt in a run, execute the project's test suite. If it 
 **Files:** `src/orchestrator/agents/executor.py`
 **Tests:** Integration test with a project that has failing tests — verify task start is blocked.
 **Risk:** Medium — need to handle projects without test suites, and avoid blocking on skipped tests.
-**Decision needed:** How to configure the test command per project (convention? routine config?).
+**Decision:** Test command is configured via a project-level config file with convention fallback (default: `uv run pytest --tb=no -q`). See architecture for config file format.
 
 ### Step 4: Verifier model pinning (A10)
 
@@ -53,7 +54,7 @@ At run creation, snapshot the current verifier model into the run state. All ver
 
 ### Step 5: Trim prompt dead weight (A7)
 
-Remove the "Avoiding Loops" section and other dead-weight sections from the shared system prompt in `prompts.py`. Target the 39% reduction identified in experiment D4.
+Remove the "Avoiding Loops" section and other identified dead-weight sections from the shared system prompt in `prompts.py`. The 39% reduction figure from experiment D4 is informational — we remove the specific identified sections rather than targeting an exact percentage.
 
 **Files:** `src/orchestrator/workflow/prompts.py`
 **Tests:** Unit test confirming removed sections don't appear in generated prompts. Verify remaining prompt structure is valid.
@@ -118,7 +119,7 @@ Add a new callback type allowing builder/verifier agents to flag a requirement a
 
 ### Step 11: Step-level integration tests (A12)
 
-Add `step_auto_verify` field to `StepConfig`. After all tasks in a step complete, execute step-level auto_verify commands that verify cross-task integration.
+Add `step_auto_verify` field to `StepConfig`. After all tasks in a step complete, execute step-level auto_verify commands that verify cross-task integration. **Decision:** If step_auto_verify fails, the step fails and the run halts (no auto-advance to next step).
 
 **Files:** `src/orchestrator/config/models.py`, `src/orchestrator/workflow/engine.py` (step completion logic)
 **Tests:** Unit test with step_auto_verify configured; verify execution after step tasks complete.
@@ -127,7 +128,7 @@ Add `step_auto_verify` field to `StepConfig`. After all tasks in a step complete
 ### Step 12: Context summarization with critical-aspect preservation (A13)
 
 Expand `context_from` schema to include `summarize: true` and `critical: "description"`. When summarize is set:
-1. Generate summary using the run's primary agent model
+1. Generate summary using a configurable model (default: a cheap model like Haiku, configurable per routine/project)
 2. Verify critical aspects are preserved (check against `critical` description)
 3. Re-summarize if critical aspects missing (max 2 iterations)
 4. Cache summaries per step for reuse across tasks
@@ -148,7 +149,7 @@ Add `complexity: simple | standard` field to task config. `simple` = atomic, sui
 
 ### Step 14: Multi-file routine definitions (A17)
 
-Support routines split across multiple YAML files. A root `routine.yaml` can reference step files (`step-01.yaml`, `step-02.yaml`). The loader resolves references, validates all files exist, and assembles the complete routine.
+Support routines split across multiple YAML files. A root `routine.yaml` can reference step files (`step-01.yaml`, `step-02.yaml`). The loader resolves references, validates all files exist, and assembles the complete routine. **Decision:** If a step specifies `file` AND includes other step fields, validation fails — no overlap allowed.
 
 **Files:** `src/orchestrator/config/loader.py`, `src/orchestrator/config/models.py` (step reference schema)
 **Tests:** Unit test loading a multi-file routine; validation test for missing step files.
@@ -174,13 +175,15 @@ Update planner documentation to reflect that the dry-run stage should include fa
 
 ```
 M1 (Gate Fixes) ← no dependencies, start immediately
-M2 (Prompt)     ← no hard dependencies, can parallel with M1
+M2 (Prompt)     ← no hard dependencies, runs in PARALLEL with M1
 M3 (Guards)     ← A4 script may be used as auto_verify in M1's new validation
 M4 (Schema)     ← A12 depends on step completion logic touched in M1
                 ← A13 depends on prompt changes in M2
                 ← A17 depends on loader, independent of M1-M3
 M5 (Docs)       ← can run anytime, no code dependencies
 ```
+
+**Decision:** M1 and M2 run in parallel for faster delivery. No hard dependencies exist between them.
 
 ## Iteration Strategy
 
