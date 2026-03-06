@@ -208,7 +208,10 @@ class AgentMonitor:
             # Check if PID from run metadata is still alive
             pid = run.agent_config.get("pid")
             if pid is None:
-                return False
+                # PID not yet persisted — subprocess hasn't been spawned yet
+                # (e.g. pre-run health check is still running). Treat as alive
+                # so the health monitor doesn't kill the run prematurely.
+                return True
             return _is_process_alive(pid)
 
         elif run.agent_type == AgentType.OPENHANDS_DOCKER:
@@ -295,6 +298,12 @@ class AgentMonitor:
 
         for run in active_runs:
             if run.agent_type in _IN_PROCESS_AGENT_TYPES:
+                agent_alive = False
+            elif run.agent_type == AgentType.CLI_SUBPROCESS and run.agent_config.get("pid") is None:
+                # CLI subprocess with no PID on startup — the subprocess was
+                # never spawned (e.g. server died during pre-run health check).
+                # check_agent_alive returns True for no-PID during normal
+                # operation, but on restart the subprocess is definitely gone.
                 agent_alive = False
             else:
                 agent_alive = await self.check_agent_alive(run)

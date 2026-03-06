@@ -105,7 +105,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 shutdown_runs = [
                     r
                     for r in paused_runs_all
-                    if r.pause_reason == "server_shutdown"
+                    if r.pause_reason in ("server_shutdown", "agent_not_running_on_startup")
                     and r.agent_type is not None
                     and r.agent_type
                     in (

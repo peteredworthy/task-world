@@ -117,6 +117,14 @@ class TaskReverted(WorkflowEvent):
 
 
 @dataclass
+class HealthCheckEvent(WorkflowEvent):
+    """Emitted when the pre-run health check starts or finishes."""
+
+    phase: str = ""  # "started" or "completed" or "failed"
+    message: str = ""
+
+
+@dataclass
 class AgentOutputEvent(WorkflowEvent):
     """Emitted when agent produces output lines."""
 

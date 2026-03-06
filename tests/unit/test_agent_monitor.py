@@ -202,19 +202,24 @@ async def test_check_agent_alive_cli_subprocess_with_dead_pid(
 async def test_check_agent_alive_cli_subprocess_without_pid(
     db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
-    """CLI_SUBPROCESS agent without PID in config should be considered dead."""
+    """CLI_SUBPROCESS without PID is treated as alive (not yet spawned).
+
+    The subprocess may not have been spawned yet (e.g. pre-run health check
+    is still running). The health monitor should not kill the run prematurely.
+    Startup recovery handles the no-PID case separately.
+    """
     session_factory = db_setup
     monitor = AgentMonitor(session_factory)
 
     run = _create_test_run(
         run_id="run5",
         agent_type=AgentType.CLI_SUBPROCESS,
-        agent_config={},  # No PID
+        agent_config={},  # No PID — not yet spawned
     )
     run.status = RunStatus.ACTIVE
 
     is_alive = await monitor.check_agent_alive(run)
-    assert is_alive is False
+    assert is_alive is True
 
 
 @pytest.mark.asyncio

@@ -470,9 +470,13 @@ class AgentExecutor:
                     # Run project health check before the very first task attempt.
                     if not health_check_done and run.worktree_path:
                         health_check_done = True
+                        await self._emit_health_check_event(
+                            run_id, "started", "Running pre-run health check..."
+                        )
                         health_error = await self._run_project_health_check(run.worktree_path)
                         if health_error:
                             logger.error(f"Run {run_id}: pre-run health check failed, pausing run")
+                            await self._emit_health_check_event(run_id, "failed", health_error)
                             await service.pause_run(
                                 run_id,
                                 reason="health_check_failed",
@@ -480,6 +484,9 @@ class AgentExecutor:
                             )
                             await session.commit()
                             break
+                        await self._emit_health_check_event(
+                            run_id, "completed", "Health check passed"
+                        )
                     elif not health_check_done:
                         health_check_done = True  # No worktree_path, skip silently
 
@@ -1256,6 +1263,19 @@ class AgentExecutor:
                 await self._connection_manager.broadcast_event(event)
             except Exception:
                 logger.debug(f"Failed to broadcast log event: {event.event_type}", exc_info=True)
+
+    async def _emit_health_check_event(self, run_id: str, phase: str, message: str) -> None:
+        """Emit a health check event (started/completed/failed)."""
+        from orchestrator.workflow.events import HealthCheckEvent
+
+        event = HealthCheckEvent(
+            timestamp=datetime.now(timezone.utc),
+            run_id=run_id,
+            event_type="health_check",
+            phase=phase,
+            message=message,
+        )
+        await self._emit_log_event(event)
 
     async def _emit_error_event(
         self, run_id: str, task_state: TaskState, error_type: str, message: str
