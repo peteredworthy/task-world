@@ -9,6 +9,7 @@ from orchestrator.agents.types import (
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
@@ -74,6 +75,7 @@ class MockAgent:
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
         on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         """Execute mock agent behavior."""
         if self._behavior.should_fail:

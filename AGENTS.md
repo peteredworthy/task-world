@@ -139,3 +139,7 @@ If you need to supply credentials to a `codex app-server` subprocess, use the `O
 ## Documentation Maintenance
 
 When adding new modules, API routes, or CLI commands, update `docs/ARCHITECTURE.md` (directory map, API routes table) and the key modules table above in this file. Keep the directory map and route table in sync with the actual codebase.
+
+## Routine Authoring
+
+When writing or reviewing routine YAML files, keep `step_context` short (one or two sentences). It is duplicated into every task prompt in the step, so verbosity multiplies quickly. See **[docs/step-context-guide.md](docs/step-context-guide.md)** for guidance and good/bad examples.

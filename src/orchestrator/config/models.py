@@ -1,11 +1,14 @@
 """Pydantic configuration models for routines, steps, and tasks."""
 
+import logging
 import re
 from typing import Any, cast
 
 from pydantic import BaseModel, Field, model_validator
 
-from orchestrator.config.enums import GateType, Priority, StepType
+from orchestrator.config.enums import Complexity, GateType, Priority, StepType
+
+logger = logging.getLogger(__name__)
 
 
 def _check_for_inheritance_keys(v: dict[str, Any]) -> None:
@@ -134,14 +137,24 @@ class ArtifactSpec(BaseModel):
     track_resolution: bool = False
 
 
+DEFAULT_SUMMARIZE_MODEL = "claude-haiku-4-5-20251001"
+
+
 class ContextSource(BaseModel):
     """Configuration for context from an artifact."""
 
     artifact: str  # Path pattern (supports {{variables}})
-    as_name: str = Field(alias="as")  # Variable name in context
+    as_name: str | None = Field(default=None, alias="as")  # Variable name in context
     required: bool = True
     section: str | None = None  # Extract specific section
     max_tokens: int | None = None  # Limit for this artifact
+    summarize: bool = False  # Summarize artifact content before injecting
+    critical: str | None = None  # Description of critical aspects to preserve in summary
+    summarize_model: str | None = None  # Override default summarization model
+
+
+# Alias for clarity when used as context_from config
+ContextFromConfig = ContextSource
 
 
 class TaskConfig(BaseModel):
@@ -150,6 +163,7 @@ class TaskConfig(BaseModel):
     id: str
     title: str
     task_context: str
+    complexity: Complexity = Complexity.STANDARD
     model_overrides: dict[str, dict[str, str]] | None = None
     requirements: list[RequirementConfig] = Field(default_factory=lambda: [])
     auto_verify: AutoVerifyConfig = Field(default_factory=AutoVerifyConfig)
@@ -157,6 +171,20 @@ class TaskConfig(BaseModel):
     retry: RetryConfig = Field(default_factory=RetryConfig)
     artifacts: list[ArtifactSpec] = Field(default_factory=lambda: [])
     context_from: list[ContextSource] = Field(default_factory=lambda: [])
+
+    @model_validator(mode="after")
+    def _warn_if_no_verification(self) -> "TaskConfig":
+        """Warn when task has no auto_verify items and no verifier rubric."""
+        has_auto_verify = bool(self.auto_verify.items)
+        has_rubric = bool(self.verifier.rubric)
+        if not has_auto_verify and not has_rubric:
+            logger.warning(
+                "Task '%s' ('%s') has no auto_verify items and no verifier rubric. "
+                "The verifier will have no criteria to grade against.",
+                self.id,
+                self.title,
+            )
+        return self
 
 
 class TransitionCondition(BaseModel):
@@ -211,15 +239,17 @@ class StepConfig(BaseModel):
     """A step within a routine."""
 
     id: str
-    title: str
+    file: str | None = None
+    title: str | None = None
     step_context: str | None = None
     gate: GateConfig | None = None
-    tasks: list[TaskConfig] = Field(min_length=1)
+    tasks: list[TaskConfig] = Field(default_factory=lambda: [])
     transitions: StepTransitions | None = None
     type: StepType = StepType.STANDARD
     dry_run: DryRunConfig | None = None
     available_tools: list[str] | None = None
     mcp_servers: list[MCPServerConfig] | None = None
+    step_auto_verify: list[AutoVerifyItemConfig] = Field(default_factory=lambda: [])
 
     @model_validator(mode="before")
     @classmethod
@@ -239,6 +269,48 @@ class StepConfig(BaseModel):
         """Reject ref/use in step data and nested task/tasks."""
         _check_value_recursive(data)
         return data  # type: ignore[no-any-return]
+
+    @model_validator(mode="after")
+    def _validate_file_exclusivity(self) -> "StepConfig":
+        """If file is set, no other step fields may be set (except id)."""
+        if self.file is not None:
+            overlapping: list[str] = []
+            if self.title is not None:
+                overlapping.append("title")
+            if self.tasks:
+                overlapping.append("tasks")
+            if self.step_context is not None:
+                overlapping.append("step_context")
+            if self.gate is not None:
+                overlapping.append("gate")
+            if self.transitions is not None:
+                overlapping.append("transitions")
+            if self.type != StepType.STANDARD:
+                overlapping.append("type")
+            if self.dry_run is not None:
+                overlapping.append("dry_run")
+            if self.available_tools is not None:
+                overlapping.append("available_tools")
+            if self.mcp_servers is not None:
+                overlapping.append("mcp_servers")
+            if self.step_auto_verify:
+                overlapping.append("step_auto_verify")
+            if overlapping:
+                raise ValueError(
+                    f"Step '{self.id}' sets 'file' along with other fields "
+                    f"({', '.join(overlapping)}). When 'file' is specified, no other "
+                    f"step fields may be set."
+                )
+        else:
+            if self.title is None:
+                raise ValueError(
+                    f"Step '{self.id}' must have a 'title' (or use 'file' to reference an external step)."
+                )
+            if not self.tasks:
+                raise ValueError(
+                    f"Step '{self.id}' must have at least one task (or use 'file' to reference an external step)."
+                )
+        return self
 
 
 class ClarificationsConfig(BaseModel):
@@ -273,6 +345,7 @@ class RoutineConfig(BaseModel):
     steps: list[StepConfig]
     env_files: list[EnvFileConfig] = Field(default_factory=lambda: [])
     clarifications: ClarificationsConfig | None = None
+    strict_validation: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -280,3 +353,22 @@ class RoutineConfig(BaseModel):
         """Reject ref/use in routine data and nested steps."""
         _check_value_recursive(data)
         return data  # type: ignore[no-any-return]
+
+    @model_validator(mode="after")
+    def _enforce_strict_validation(self) -> "RoutineConfig":
+        """When strict_validation=True, reject any task with no verification."""
+        if not self.strict_validation:
+            return self
+        unverified: list[str] = []
+        for step in self.steps:
+            for task in step.tasks:
+                has_auto_verify = bool(task.auto_verify.items)
+                has_rubric = bool(task.verifier.rubric)
+                if not has_auto_verify and not has_rubric:
+                    unverified.append(f"{step.id}/{task.id}")
+        if unverified:
+            raise ValueError(
+                f"strict_validation=True: the following tasks have no auto_verify items "
+                f"and no verifier rubric: {', '.join(unverified)}"
+            )
+        return self

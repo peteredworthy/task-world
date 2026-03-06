@@ -42,6 +42,7 @@ from orchestrator.agents.types import (
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
@@ -444,7 +445,21 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
             "### Available Tools\n"
             "- **update_checklist**(req_id, status, note?) — Mark a requirement as done/blocked/not_applicable\n"
             "- **submit**() — Submit your work for verification\n"
-            "- **request_clarification**(question) — Ask for clarification on ambiguous requirements\n"
+            "- **request_clarification**(question) — Ask for clarification on ambiguous requirements\n\n"
+            "## Git Workflow\n"
+            "Before submitting, commit your changes to git:\n"
+            "- Stage changes: `git add <files>`\n"
+            "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
+            "- Always use `git --no-pager` for git commands.\n\n"
+            "## Tool Usage Patterns\n"
+            "- Call **update_checklist** immediately after completing each requirement — don't batch updates.\n"
+            "- Mark each item 'done' as you finish it, before moving to the next requirement.\n"
+            "- Call **submit** only after ALL requirements are marked done or not_applicable.\n"
+            "- Use **request_clarification** for ambiguous requirements before starting implementation.\n\n"
+            "## Sub-Agent Guidance\n"
+            "- You may spawn sub-agents (via the Task tool) for complex or parallelizable subtasks.\n"
+            "- Each sub-agent gets a fresh context — provide complete, self-contained task descriptions.\n"
+            "- Collect and integrate sub-agent results before marking requirements done.\n"
         )
 
     return f"{context.prompt}\n\n## Requirements\n{requirements_text}\n\n{phase_section}"
@@ -606,6 +621,7 @@ class ClaudeSDKAgent:
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
         on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         """Execute a task via the Anthropic Claude SDK.
 
@@ -838,3 +854,7 @@ class ClaudeSDKAgent:
         """
         self._cancelled = True
         logger.info("ClaudeSDKAgent: cancelled")
+
+
+# Alias for backwards-compatible import (camelCase variant)
+ClaudeSdkAgent = ClaudeSDKAgent

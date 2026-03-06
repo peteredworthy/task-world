@@ -109,6 +109,7 @@ class TaskDetailResponse(ApiModel):
     config_id: str
     title: str = ""
     status: str
+    complexity: str = "standard"
     checklist: list[ChecklistItemSchema]
     attempts: list[AttemptSchema]
     current_attempt: int

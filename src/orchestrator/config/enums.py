@@ -65,3 +65,8 @@ class MergeStrategy(str, Enum):
 class StepType(str, Enum):
     STANDARD = "standard"
     DRY_RUN = "dry_run"
+
+
+class Complexity(str, Enum):
+    SIMPLE = "simple"
+    STANDARD = "standard"

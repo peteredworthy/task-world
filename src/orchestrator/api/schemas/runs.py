@@ -125,6 +125,7 @@ class RunResponse(ApiModel):
     agent_type_display: str
     agent_icon: str
     agent_config: dict[str, Any] = {}
+    verifier_model: str | None = None
     worktree_enabled: bool = True
     worktree_path: str | None = None
     worktree_relative_path: str | None = None

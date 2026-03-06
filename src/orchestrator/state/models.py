@@ -97,12 +97,14 @@ class TaskState(BaseModel):
     config_id: str
     title: str = ""
     status: TaskStatus = TaskStatus.PENDING
+    complexity: str = "standard"
     checklist: list[ChecklistItem] = Field(default_factory=lambda: [])
     attempts: list[Attempt] = Field(default_factory=lambda: [])
     current_attempt: int = 0
     max_attempts: int = 3
     pending_action_type: str | None = None  # "clarification" | "approval"
     pending_clarification_id: str | None = None
+    has_verification: bool = True  # False if task has no auto_verify items and no verifier rubric
 
 
 class HumanApproval(BaseModel):
@@ -169,6 +171,7 @@ class Run(BaseModel):
     # Agent configuration
     agent_type: AgentType | None = None
     agent_config: dict[str, Any] = Field(default_factory=lambda: {})
+    verifier_model: str | None = None  # Pinned at run creation; verifier always uses this model
 
     # Worktree
     worktree_enabled: bool = True

@@ -37,14 +37,17 @@ from orchestrator.db.repositories import RunRepository
 from orchestrator.routines.discovery import discover_routines
 from orchestrator.routines.errors import RoutineNotFoundError
 from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
+from orchestrator.artifacts.registry import ArtifactRegistry
 from orchestrator.workflow.clarifications import (
     ClarificationRequest,
     ClarificationResponse,
     resolve_artifact_path,
 )
+from orchestrator.workflow.context_builder import TaskContextBuilder
 from orchestrator.workflow.errors import InvalidTransitionError
 from orchestrator.workflow.prompts import generate_builder_prompt, generate_verifier_prompt
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.summary_cache import SummaryCache
 
 router = APIRouter(prefix="/api/runs", tags=["tasks"])
 
@@ -97,6 +100,7 @@ async def get_task(
         config_id=task.config_id,
         title=task.title,
         status=task.status.value,
+        complexity=task.complexity,
         checklist=[
             ChecklistItemSchema(
                 req_id=item.req_id,
@@ -310,7 +314,9 @@ Endpoints:
 - POST {base_url}/api/runs/{run_id}/tasks/{task_id}/submit   → Submit task for verification
 - PUT  {base_url}/api/runs/{run_id}/tasks/{task_id}/checklist/{{req_id}}/grade → Set grade on requirement
   Body: {{"grade": "A", "grade_reason": "optional reason"}}
-- POST {base_url}/api/runs/{run_id}/tasks/{task_id}/complete-verification → Complete verification phase"""
+- POST {base_url}/api/runs/{run_id}/tasks/{task_id}/complete-verification → Complete verification phase
+- POST {base_url}/api/runs/{run_id}/tasks/{task_id}/escalate → Flag a requirement as unfulfillable (pauses run)
+  Body: {{"requirement_id": "R1", "reason": "explanation of why it cannot be fulfilled"}}"""
 
     mcp_instructions = f"""## Orchestrator MCP Server
 Connect to: {base_url}/mcp/sse
@@ -477,6 +483,21 @@ async def get_task_prompt(
 
     callback = _build_callback_instructions(request, run_id, task_id, mcp_servers=mcp_servers)
 
+    # Build artifact context if the task has context_from entries
+    run_config = dict(run.config)
+    if task_config.context_from:
+        worktree_path = Path(run.worktree_path) if run.worktree_path else None
+        context_builder = TaskContextBuilder(ArtifactRegistry(), worktree_path=worktree_path)
+        summary_cache = SummaryCache()
+        artifact_context = await context_builder.build_context(
+            run_id=run_id,
+            context_sources=task_config.context_from,
+            variables=run.config,
+            summary_cache=summary_cache,
+        )
+        # Merge artifact context into run config so {{var}} substitution picks it up
+        run_config.update(artifact_context)
+
     if task_state.status == TaskStatus.BUILDING:
         (
             clarifications_path,
@@ -494,7 +515,7 @@ async def get_task_prompt(
         prompt = generate_builder_prompt(
             task_config,
             task_state,
-            run.config,
+            run_config,
             step_context=step_context,
             clarifications_path=clarifications_path,
             clarification_line_range=clarification_line_range,

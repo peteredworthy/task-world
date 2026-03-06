@@ -364,12 +364,7 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
             "- For long output, pipe through `| head -80` to limit lines.\n"
             "- To view the builder's changes:\n"
             "  `git --no-pager show HEAD --stat` then `git --no-pager diff HEAD~1 -- <file>`\n"
-            "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager.\n\n"
-            "### Avoiding Loops\n"
-            "- NEVER re-read a file you have already read. If you catch yourself running\n"
-            "  the same command twice, stop and begin grading immediately.\n"
-            "- After each tool call, ask yourself: 'Am I making forward progress or\n"
-            "  repeating earlier steps?' If repeating, start grading now."
+            "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager."
         )
 
     return (
@@ -403,14 +398,19 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
         "- ALWAYS use `git --no-pager` for every git command to avoid pager hangs.\n"
         "- For long output, pipe through `| head -80` to limit lines.\n"
         "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager.\n\n"
-        "### Avoiding Loops\n"
-        "- Limit exploration to at most 10 tool calls before you start writing code.\n"
-        "- NEVER re-read a file you have already read. If you catch yourself running\n"
-        "  the same command twice, stop exploring and begin implementation immediately.\n"
-        "- If a referenced document does not exist, proceed with the information\n"
-        "  available in the task description and requirements — do NOT keep searching.\n"
-        "- After each tool call, ask yourself: 'Am I making forward progress or\n"
-        "  repeating earlier steps?' If repeating, start coding now."
+        "## Git Workflow\n"
+        "Before submitting, commit your changes to git:\n"
+        "- Stage changes: `git add <files>`\n"
+        "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
+        "- Always use `git --no-pager` for git commands.\n\n"
+        "## File Exploration Guidelines\n"
+        "- NEVER re-read a file you have already read in this session.\n"
+        "- If you catch yourself about to read the same file again, stop and use your existing knowledge.\n"
+        "- Each file read consumes context — be selective and avoid redundant reads.\n\n"
+        "## Container Awareness\n"
+        "- You may be running inside a Docker container.\n"
+        "- The workspace is mounted at the configured working directory.\n"
+        "- External network access may be limited depending on the sandbox configuration.\n"
     )
 
 

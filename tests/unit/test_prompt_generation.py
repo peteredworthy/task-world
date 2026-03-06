@@ -1,5 +1,10 @@
 """Tests for prompt generation."""
 
+from orchestrator.agents.claude_sdk import build_claude_sdk_prompt
+from orchestrator.agents.codex_server_common import build_codex_server_prompt
+from orchestrator.agents.openhands_common import build_openhands_prompt
+from orchestrator.agents.cli import CLIAgent
+from orchestrator.agents.types import ExecutionContext
 from orchestrator.config.models import (
     RequirementConfig,
     RubricItemConfig,
@@ -8,6 +13,7 @@ from orchestrator.config.models import (
     VerifierConfig,
 )
 from orchestrator.state.models import Attempt, TaskState
+from orchestrator.workflow.clarifications import CompressedDecision, CompressedDecisions
 from orchestrator.workflow.prompts import (
     generate_builder_prompt,
     generate_verifier_prompt,
@@ -573,3 +579,337 @@ def test_builder_prompt_line_range_and_skip_combined() -> None:
     assert "/artifact.md" in prompt.user
     assert "declined to answer" in prompt.user
     assert "Too vague" in prompt.user
+
+
+# --- D4 dead-weight removal ---
+
+
+def _shared_system_prompt() -> str:
+    """Return the system section of a generated builder prompt."""
+    config = _task_config()
+    state = _task_state()
+    return generate_builder_prompt(config, state, {"feature": "auth"}).system
+
+
+def _make_context(prompt: str) -> ExecutionContext:
+    return ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt=prompt,
+        requirements=["R1: do the thing"],
+    )
+
+
+def test_avoiding_loops_removed_from_shared_prompt() -> None:
+    """'Avoiding Loops' section must not appear in the shared builder system prompt."""
+    system = _shared_system_prompt()
+    assert "Avoiding Loops" not in system
+
+
+def test_required_sections_still_in_shared_prompt() -> None:
+    """Required task context, requirements, and workflow sections remain in shared prompt."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+    # Task context and requirements are in the user section
+    assert "## Task" in prompt.user
+    assert "## Requirements" in prompt.user
+    # Workflow and callback instructions remain
+    assert "BUILDER phase" in prompt.system
+    assert "submit" in prompt.system.lower()
+
+
+def test_git_commit_instructions_not_in_shared_prompt() -> None:
+    """Git commit instructions must NOT appear in the shared builder system prompt.
+
+    They have been moved to each agent's individual prompt builder.
+    """
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+    assert "git add" not in prompt.system
+    assert "git commit" not in prompt.system
+
+
+def test_git_commit_instructions_in_cli_agent_prompt() -> None:
+    """CLIAgent.build_prompt explicitly adds git commit instructions for builder phase."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    # Without api_base_url, build_prompt adds git workflow section for builder phase
+    result = CLIAgent.build_prompt(shared_prompt, context)
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_git_commit_instructions_in_claude_sdk_prompt() -> None:
+    """build_claude_sdk_prompt explicitly adds git commit instructions."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_git_commit_instructions_in_codex_server_prompt() -> None:
+    """build_codex_server_prompt explicitly adds git commit instructions."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_codex_server_prompt(context, is_verifier=False)
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_git_commit_instructions_in_openhands_prompt() -> None:
+    """build_openhands_prompt explicitly adds git commit instructions."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "git add" in result
+    assert "git commit" in result
+
+
+def test_avoiding_loops_removed_from_openhands_builder_prompt() -> None:
+    """'Avoiding Loops' section must not appear in the openhands builder prompt."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "Avoiding Loops" not in result
+
+
+def test_avoiding_loops_removed_from_openhands_verifier_prompt() -> None:
+    """'Avoiding Loops' section must not appear in the openhands verifier prompt."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = build_openhands_prompt(context, is_verifier=True)
+    assert "Avoiding Loops" not in result
+
+
+# --- Agent-specific behavioral instructions ---
+
+
+def test_cli_agent_includes_git_workflow_section() -> None:
+    """CLIAgent.build_prompt includes a dedicated Git Workflow section."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    result = CLIAgent.build_prompt(shared_prompt, context)
+    assert "## Git Workflow" in result
+    assert "git --no-pager" in result
+    assert "Commit conventions" in result
+
+
+def test_cli_agent_no_git_section_for_verifier() -> None:
+    """CLIAgent.build_prompt does NOT add git workflow for verifier phase."""
+    shared_prompt = _shared_system_prompt()
+    context = _make_context(shared_prompt)
+    # api_base_url=None, verifying phase — returns prompt unchanged (no git section)
+    result = CLIAgent.build_prompt(shared_prompt, context, phase="verifying")
+    assert "## Git Workflow" not in result
+
+
+def test_openhands_prompt_includes_file_rereading_avoidance() -> None:
+    """build_openhands_prompt includes file re-reading avoidance instructions."""
+    context = _make_context("Some prompt")
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "re-read" in result.lower() or "NEVER re-read" in result
+    assert "File Exploration Guidelines" in result
+
+
+def test_openhands_prompt_includes_docker_awareness() -> None:
+    """build_openhands_prompt includes Docker/container awareness instructions."""
+    context = _make_context("Some prompt")
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "Container Awareness" in result or "Docker" in result
+
+
+def test_openhands_prompt_includes_git_workflow() -> None:
+    """build_openhands_prompt includes a Git Workflow section."""
+    context = _make_context("Some prompt")
+    result = build_openhands_prompt(context, is_verifier=False)
+    assert "## Git Workflow" in result
+
+
+def test_codex_prompt_includes_sandbox_constraints() -> None:
+    """build_codex_server_prompt includes sandbox constraint instructions."""
+    context = _make_context("Some prompt")
+    result = build_codex_server_prompt(context, is_verifier=False)
+    assert "Sandbox Constraints" in result
+    assert "network" in result.lower()
+
+
+def test_codex_prompt_includes_response_style() -> None:
+    """build_codex_server_prompt includes response style guidance."""
+    context = _make_context("Some prompt")
+    result = build_codex_server_prompt(context, is_verifier=False)
+    assert "Response Style" in result
+    assert "concise" in result.lower()
+
+
+def test_codex_prompt_includes_git_workflow() -> None:
+    """build_codex_server_prompt includes a Git Workflow section."""
+    context = _make_context("Some prompt")
+    result = build_codex_server_prompt(context, is_verifier=False)
+    assert "## Git Workflow" in result
+
+
+def test_claude_sdk_prompt_includes_tool_usage_patterns() -> None:
+    """build_claude_sdk_prompt includes tool usage pattern instructions."""
+    context = _make_context("Some prompt")
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+    assert "Tool Usage Patterns" in result
+    assert "update_checklist" in result
+
+
+def test_claude_sdk_prompt_includes_sub_agent_guidance() -> None:
+    """build_claude_sdk_prompt includes sub-agent guidance instructions."""
+    context = _make_context("Some prompt")
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+    assert "Sub-Agent Guidance" in result
+
+
+def test_claude_sdk_prompt_includes_git_workflow() -> None:
+    """build_claude_sdk_prompt includes a Git Workflow section."""
+    context = _make_context("Some prompt")
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+    assert "## Git Workflow" in result
+
+
+def test_agent_specific_sections_not_in_verifier_prompts() -> None:
+    """Agent-specific builder sections should not appear in verifier prompts."""
+    context = _make_context("Some prompt")
+    # Codex verifier prompt should not have sandbox constraints or response style
+    codex_verifier = build_codex_server_prompt(context, is_verifier=True)
+    assert "Sandbox Constraints" not in codex_verifier
+    assert "Response Style" not in codex_verifier
+    # OpenHands verifier should not have file re-reading avoidance
+    oh_verifier = build_openhands_prompt(context, is_verifier=True)
+    assert "File Exploration Guidelines" not in oh_verifier
+    # Claude SDK verifier should not have sub-agent guidance
+    sdk_verifier = build_claude_sdk_prompt(context, is_verifier=True)
+    assert "Sub-Agent Guidance" not in sdk_verifier
+
+
+# --- decisions= parameter in builder prompt ---
+
+
+def _make_decisions(items: list[tuple[str, str, str]]) -> CompressedDecisions:
+    """Helper to build CompressedDecisions from (question, decision, rationale) tuples."""
+    return CompressedDecisions(
+        decisions=[CompressedDecision(question=q, decision=d, rationale=r) for q, d, r in items],
+        source_request_id="req1",
+    )
+
+
+def test_builder_prompt_with_decisions_embeds_compact_format() -> None:
+    """Prompt with decisions= embeds compact decisions section in user text."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Which framework?", "React", "Need to choose frontend stack")])
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    assert "## Decisions from Clarifications" in prompt.user
+    assert "Which framework?" in prompt.user
+    assert "React" in prompt.user
+    assert "Need to choose frontend stack" in prompt.user
+
+
+def test_builder_prompt_with_decisions_does_not_use_raw_qa_section() -> None:
+    """When decisions= is provided, the raw '## Clarifications' section is NOT used."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    # The raw Q&A prompt block ("Review this file...") should not appear
+    assert "Previous clarifications from the human are recorded in:" not in prompt.user
+    assert "Review this file for context on decisions made." not in prompt.user
+
+
+def test_builder_prompt_decisions_stored_on_result() -> None:
+    """BuilderPrompt.decisions field stores the CompressedDecisions object."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    assert prompt.decisions is decisions
+
+
+def test_builder_prompt_decisions_none_no_decisions_section() -> None:
+    """When decisions=None, no decisions section appears in the prompt."""
+    config = _task_config()
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+
+    assert "## Decisions from Clarifications" not in prompt.user
+    assert prompt.decisions is None
+
+
+def test_builder_prompt_decisions_with_clarifications_path_shows_archive_ref() -> None:
+    """When decisions= and clarifications_path= are both set, archive path is shown."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        decisions=decisions,
+        clarifications_path="/archive/clarifications.md",
+    )
+
+    assert "## Decisions from Clarifications" in prompt.user
+    assert "/archive/clarifications.md" in prompt.user
+    # Raw Q&A section should not be used (decisions take over)
+    assert "Previous clarifications from the human are recorded in:" not in prompt.user
+
+
+def test_builder_prompt_decisions_positioned_before_task() -> None:
+    """Decisions section appears before ## Task section."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    decisions_pos = prompt.user.index("## Decisions from Clarifications")
+    task_pos = prompt.user.index("## Task")
+    assert decisions_pos < task_pos
+
+
+def test_builder_prompt_decisions_multiple_entries() -> None:
+    """Multiple decisions are all embedded in the prompt."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions(
+        [
+            ("Framework?", "React", "Frontend choice"),
+            ("DB?", "PostgreSQL", "Database choice"),
+            ("Auth?", "JWT", "Auth method"),
+        ]
+    )
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"}, decisions=decisions)
+
+    assert "React" in prompt.user
+    assert "PostgreSQL" in prompt.user
+    assert "JWT" in prompt.user
+    assert "Frontend choice" in prompt.user
+    assert "Database choice" in prompt.user
+    assert "Auth method" in prompt.user
+
+
+def test_builder_prompt_decisions_with_skipped_questions() -> None:
+    """Skipped questions note appears when decisions= and skipped_questions= are both set."""
+    config = _task_config()
+    state = _task_state()
+    decisions = _make_decisions([("Q?", "A", "Context")])
+    prompt = generate_builder_prompt(
+        config,
+        state,
+        {"feature": "auth"},
+        decisions=decisions,
+        skipped_questions=["Optional question?"],
+        skip_reason="Not relevant",
+    )
+
+    assert "declined to answer" in prompt.user
+    assert "Not relevant" in prompt.user

@@ -276,8 +276,19 @@ def transition_after_verification(task: TaskState, now: datetime) -> TransitionR
     # auto-grade checklist items based on their self-reported status.
     # Items marked "done" by the builder get grade "A"; items still "open" or
     # "blocked" stay ungraded so evaluate_grades correctly fails them.
+    # Block this path entirely when no verification was configured on the task.
     has_any_grade = any(item.grade is not None for item in task.checklist)
     if not has_any_grade:
+        if not task.has_verification:
+            return TransitionResult(
+                success=False,
+                new_status=task.status,
+                error=(
+                    "Cannot auto-complete: task has no verification configured "
+                    "(no auto_verify items and no verifier rubric). "
+                    "Add auto_verify items or a verifier rubric to the task config."
+                ),
+            )
         for item in task.checklist:
             if item.status == ChecklistStatus.DONE:
                 item.grade = "A"

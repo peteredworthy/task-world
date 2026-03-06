@@ -208,6 +208,7 @@ def _run_to_response(run: Run) -> RunResponse:
         agent_type_display=get_agent_display_name(run.agent_type, run.agent_config),
         agent_icon=get_agent_icon(run.agent_type),
         agent_config=run.agent_config,
+        verifier_model=run.verifier_model,
         worktree_enabled=run.worktree_enabled,
         worktree_path=run.worktree_path,
         worktree_relative_path=worktree_relative_path,
@@ -309,6 +310,8 @@ async def create_run(
                     ),
                 )
         run.agent_config = request.agent_config
+        # Pin the verifier model at run creation so later config changes don't affect it
+        run.verifier_model = request.agent_config.get("model")
 
     # Resolve env file specs from routine config and request overrides
     if request.env_files and request.env_files.files is not None:

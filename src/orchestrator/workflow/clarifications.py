@@ -1,5 +1,6 @@
 """Clarification models and artifact generation (pure functions)."""
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
@@ -68,6 +69,70 @@ class ClarificationResponse(BaseModel):
     request_id: str
     answers: list[ClarificationAnswer]
     responded_at: datetime
+
+
+@dataclass
+class CompressedDecision:
+    """A single decision extracted from a Q&A pair (template-based, no LLM)."""
+
+    question: str
+    decision: str
+    rationale: str
+
+
+@dataclass
+class CompressedDecisions:
+    """Compressed decisions extracted from one clarification round."""
+
+    decisions: list[CompressedDecision] = field(default_factory=lambda: [])
+    source_request_id: str = ""
+
+
+def compress_clarifications(
+    request: ClarificationRequest,
+    response: ClarificationResponse,
+) -> CompressedDecisions:
+    """Extract compact decisions from resolved Q&A (template-based, no LLM).
+
+    Transforms raw question/answer pairs into a compact decision + rationale
+    format suitable for embedding directly in downstream prompts.
+
+    The raw Q&A is archived separately (in the artifact file); this function
+    produces the compact form that prompt assembly should use.
+
+    Pure function - no I/O.
+    """
+    decisions: list[CompressedDecision] = []
+
+    for q in request.questions:
+        answer = next((a for a in response.answers if a.question_id == q.id), None)
+        if answer is None:
+            continue
+
+        if answer.skipped:
+            reason = answer.skip_reason or ""
+            decision = f"(skipped){': ' + reason if reason else ''}"
+        elif answer.free_text:
+            decision = answer.free_text
+        elif answer.selected_options is not None:
+            decision = ", ".join(answer.selected_options)
+        elif answer.selected_option:
+            decision = answer.selected_option
+        else:
+            continue
+
+        decisions.append(
+            CompressedDecision(
+                question=q.question,
+                decision=decision,
+                rationale=q.context,
+            )
+        )
+
+    return CompressedDecisions(
+        decisions=decisions,
+        source_request_id=request.id,
+    )
 
 
 def format_clarification_artifact(

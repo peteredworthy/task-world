@@ -38,12 +38,15 @@ def create_task_state(
     id_generator: Callable[[], str] = default_id_generator,
 ) -> TaskState:
     """Create task state from task config."""
+    has_verification = bool(task_config.auto_verify.items) or bool(task_config.verifier.rubric)
     return TaskState(
         id=id_generator(),
         config_id=task_config.id,
         title=task_config.title,
+        complexity=task_config.complexity.value,
         checklist=create_checklist_from_requirements(task_config),
         max_attempts=task_config.retry.max_attempts,
+        has_verification=has_verification,
     )
 
 
@@ -57,7 +60,7 @@ def create_step_state(
     return StepState(
         id=id_generator(),
         config_id=step_config.id,
-        title=step_config.title,
+        title=step_config.title or step_config.id,
         tasks=tasks,
     )
 

@@ -11,13 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.api.schemas.runs import RecoverResponse
 from orchestrator.config.enums import AgentType, ChecklistStatus, GateType, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig
-from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, TaskConfig
+from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db.event_store import EventStore
 from orchestrator.db.repositories import RunRepository
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
 from orchestrator.workflow.auto_verify import (
+    AutoVerifyResult,
     AutoVerifyRunner,
     evaluate_auto_verify,
     has_crashes,
@@ -28,7 +29,9 @@ from orchestrator.workflow.clarifications import (
     ClarificationQuestion,
     ClarificationRequest,
     ClarificationResponse,
+    CompressedDecisions,
     build_artifact_header,
+    compress_clarifications,
     format_clarification_artifact,
     resolve_artifact_path,
 )
@@ -111,6 +114,14 @@ def find_task_config(
         for task in step.tasks:
             if task.id == config_id:
                 return task
+    return None
+
+
+def find_step_config(routine_config: RoutineConfig, step_config_id: str) -> StepConfig | None:
+    """Find a StepConfig by id within a RoutineConfig. Pure function."""
+    for step in routine_config.steps:
+        if step.id == step_config_id:
+            return step
     return None
 
 
@@ -730,6 +741,8 @@ class WorkflowService:
         # items as DONE so the gate check succeeds. This prevents agents from
         # needing to explicitly call on_checklist_update() when auto-verify
         # already confirms the work was done.
+        # Results are cached here so the post-engine block can reuse them
+        # without running the same commands a second time.
         task = state.get_task(run_id, task_id)
         step_config_id_pre = None
         for step in run.steps:
@@ -740,6 +753,9 @@ class WorkflowService:
             if step_config_id_pre is not None:
                 break
 
+        cached_av_results: list[AutoVerifyResult] | None = (
+            None  # Pre-gate results reused by post-engine block
+        )
         pre_av_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
         if pre_av_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
@@ -757,52 +773,18 @@ class WorkflowService:
                     project_path,
                     variables=run.config,
                 )
-                all_must_passed_pre, failing_must_ids_pre = evaluate_auto_verify(
-                    pre_av_config, pre_av_results
-                )
+                all_must_passed_pre, _ = evaluate_auto_verify(pre_av_config, pre_av_results)
+                cached_av_results = pre_av_results  # Cache for post-engine reuse
 
                 if all_must_passed_pre:
                     # Auto-verify confirms work is done — mark OPEN checklist items as DONE
+                    # so the checklist gate passes without requiring explicit self-reporting.
                     for item in task.checklist:
                         if item.status == ChecklistStatus.OPEN:
                             item.status = ChecklistStatus.DONE
-                else:
-                    # Must-items failed: store results/feedback and block the transition
-                    if task.attempts:
-                        task.attempts[-1].auto_verify_results = [
-                            r.model_dump() for r in pre_av_results
-                        ]
-                        failing_lines: list[str] = []
-                        for av in pre_av_results:
-                            if av.item_id not in failing_must_ids_pre:
-                                continue
-                            output = av.output.strip() if av.output else ""
-                            snippet = output if output else "(no command output)"
-                            failing_lines.append(
-                                f"- [{av.item_id}] command `{av.cmd}` failed (exit {av.exit_code})\n"
-                                f"  Output:\n{snippet}"
-                            )
-                        if failing_lines:
-                            task.attempts[-1].verifier_comment = (
-                                "Auto-verify failed. Fix the following and resubmit:\n"
-                                + "\n".join(failing_lines)
-                            )
-                    buffer.emit(
-                        AutoVerifyCompleted(
-                            timestamp=self._clock.now(),
-                            run_id=run_id,
-                            event_type="auto_verify_completed",
-                            task_id=task_id,
-                            passed=False,
-                            failing_must_items=failing_must_ids_pre,
-                            results=[r.model_dump() for r in pre_av_results],
-                        )
-                    )
-                    await self._persist(state, run_id, buffer)
-                    raise GateBlockedError(
-                        gate_name="auto_verify",
-                        blocking_items=failing_must_ids_pre,
-                    )
+                # If auto-verify failed, fall through: the engine will transition to
+                # VERIFYING (if the checklist is otherwise satisfied), and the
+                # post-engine auto-verify block will store results and return to BUILDING.
 
         try:
             result = engine.submit_for_verification(run_id, task_id)
@@ -843,12 +825,17 @@ class WorkflowService:
         if auto_verify_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
             if project_path is not None:
-                av_results = await run_auto_verify(
-                    auto_verify_config,
-                    self._auto_verify_runner,
-                    project_path,
-                    variables=run.config,
-                )
+                # Reuse pre-gate results when available (same commands already ran);
+                # this avoids running stateful commands a second time.
+                if cached_av_results is not None:
+                    av_results = cached_av_results
+                else:
+                    av_results = await run_auto_verify(
+                        auto_verify_config,
+                        self._auto_verify_runner,
+                        project_path,
+                        variables=run.config,
+                    )
 
                 # Store results in the current attempt
                 if task.attempts:
@@ -985,6 +972,31 @@ class WorkflowService:
         self._notify_submit(task_id)
         return result
 
+    async def _run_step_auto_verify(
+        self, run: Run, step: "StepState"
+    ) -> tuple[bool, list[AutoVerifyResult]]:
+        """Run step-level auto-verify items for a newly completed step.
+
+        Returns (all_must_passed, results).
+        """
+        if run.routine_embedded is None or self._auto_verify_runner is None:
+            return True, []
+
+        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        step_config = find_step_config(routine_config, step.config_id)
+        if step_config is None or not step_config.step_auto_verify:
+            return True, []
+
+        # Build an AutoVerifyConfig from the step-level items
+        av_config = AutoVerifyConfig(items=step_config.step_auto_verify)
+        cwd = _resolve_working_path(run)
+        if cwd is None:
+            return True, []
+
+        results = await run_auto_verify(av_config, self._auto_verify_runner, cwd)
+        all_must_passed, _ = evaluate_auto_verify(av_config, results)
+        return all_must_passed, results
+
     async def complete_verification(self, run_id: str, task_id: str) -> TransitionResult:
         """Complete verification phase.
 
@@ -996,11 +1008,42 @@ class WorkflowService:
             raise InvalidTransitionError(
                 run.status.value, "complete_verification (requires ACTIVE run)"
             )
+
+        # Capture which steps were already completed before the engine runs
+        prev_completed_step_ids = {s.config_id for s in run.steps if s.completed}
+
         engine, state, buffer = self._build_engine(run)
         result = engine.complete_verification(run_id, task_id)
 
         # Get the updated run after engine processing
         updated_run = state.get_run(run_id)
+
+        # Run step_auto_verify for any newly completed steps
+        if result.success:
+            newly_completed = [
+                s
+                for s in updated_run.steps
+                if s.completed and s.config_id not in prev_completed_step_ids
+            ]
+            for step in newly_completed:
+                all_passed, _ = await self._run_step_auto_verify(updated_run, step)
+                if not all_passed:
+                    # Halt the run: mark it FAILED
+                    old_run_status = updated_run.status
+                    updated_run.status = RunStatus.FAILED
+                    updated_run.last_error = f"Step '{step.config_id}' auto-verify failed"
+                    updated_run.completed_at = self._clock.now()
+                    state.update_run(updated_run)
+                    buffer.emit(
+                        RunStatusChanged(
+                            timestamp=self._clock.now(),
+                            run_id=run_id,
+                            event_type="run_status_changed",
+                            old_status=old_run_status,
+                            new_status=RunStatus.FAILED,
+                        )
+                    )
+                    break
 
         await self._persist(state, run_id, buffer)
 
@@ -1478,6 +1521,11 @@ class WorkflowService:
                 if task_config_obj is not None:
                     break
 
+        # Compress Q&A into compact decisions (pure function, always available).
+        # Raw Q&A is archived in the artifact file; decisions are the compact form
+        # passed downstream to prompt assembly.
+        compressed: CompressedDecisions = compress_clarifications(request, response)
+
         if task_config_obj is not None:
             clarifications_path: str | None = (
                 str(artifact_path) if artifact_path is not None else None
@@ -1491,6 +1539,7 @@ class WorkflowService:
                 clarification_line_range=clarification_line_range,
                 skipped_questions=skipped_question_texts,
                 skip_reason=skip_reason,
+                decisions=compressed,
             )
 
         return result

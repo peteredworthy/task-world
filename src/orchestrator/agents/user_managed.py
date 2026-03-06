@@ -20,6 +20,7 @@ from orchestrator.agents.errors import AgentCancelledError, AgentTimeoutError
 from orchestrator.agents.types import (
     AgentInfo,
     ChecklistUpdateCallback,
+    EscalationCallback,
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
@@ -69,6 +70,7 @@ class UserManagedAgent:
         on_submit: SubmitCallback,
         on_output: LogLineCallback | None = None,
         on_grade: GradeCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
         """Wait for an external submit notification, then return.
 
