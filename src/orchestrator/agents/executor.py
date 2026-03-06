@@ -163,6 +163,24 @@ class AgentExecutor:
         import yaml
 
         config_path = Path(project_dir) / ".task-world" / "config.yaml"
+        # Worktrees don't have .task-world/ (it's untracked). Fall back to the
+        # main worktree's config so worktree runs use the same health check.
+        if not config_path.exists():
+            git_file = Path(project_dir) / ".git"
+            if git_file.is_file():
+                # Git worktree: .git is a file containing "gitdir: <path>"
+                # The commondir points to the main repo's .git directory.
+                try:
+                    gitdir = git_file.read_text().strip().removeprefix("gitdir: ")
+                    commondir_file = Path(gitdir) / "commondir"
+                    if commondir_file.exists():
+                        commondir = (Path(gitdir) / commondir_file.read_text().strip()).resolve()
+                        main_root = commondir.parent  # .git's parent is repo root
+                        candidate = main_root / ".task-world" / "config.yaml"
+                        if candidate.exists():
+                            config_path = candidate
+                except Exception:
+                    pass  # Fall through to default
         test_command: str | None = "uv run pytest --tb=no -q"
 
         if config_path.exists():
