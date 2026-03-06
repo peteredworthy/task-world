@@ -3,7 +3,7 @@
 import pytest
 
 from orchestrator.agents.errors import AgentExecutionError
-from orchestrator.agents.interface import Agent
+from orchestrator.agents.interface import AgentRunner
 from orchestrator.agents.mock import MockAgent, MockBehavior
 from orchestrator.agents.types import ExecutionContext
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
@@ -21,7 +21,7 @@ def _make_context() -> ExecutionContext:
 
 async def test_mock_agent_satisfies_protocol() -> None:
     agent = MockAgent()
-    assert isinstance(agent, Agent)
+    assert isinstance(agent, AgentRunner)
 
 
 async def test_mock_agent_info() -> None:

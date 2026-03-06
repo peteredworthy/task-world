@@ -6,7 +6,7 @@ from orchestrator.agents.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.agents.interface import Agent
+from orchestrator.agents.interface import AgentRunner
 from orchestrator.agents.types import (
     AgentConfigField,
     AgentRunnerInfo,
@@ -145,7 +145,7 @@ class _FakeAgent:
 
 def test_agent_protocol_runtime_check() -> None:
     agent = _FakeAgent()
-    assert isinstance(agent, Agent)
+    assert isinstance(agent, AgentRunner)
 
 
 def test_agent_error_hierarchy() -> None:
