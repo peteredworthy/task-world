@@ -2,9 +2,9 @@
 
 from dataclasses import dataclass, field
 
-from orchestrator.agents.errors import AgentCancelledError, AgentExecutionError
-from orchestrator.agents.quota import QuotaFetcher
-from orchestrator.agents.types import (
+from orchestrator.runners.errors import AgentCancelledError, AgentExecutionError
+from orchestrator.runners.quota import QuotaFetcher
+from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,

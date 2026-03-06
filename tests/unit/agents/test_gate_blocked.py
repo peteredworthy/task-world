@@ -7,9 +7,9 @@ from typing import Any
 
 import pytest
 
-from orchestrator.agents.cli import CLIAgent
-from orchestrator.agents.executor import AgentRunnerExecutor
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.executor import AgentRunnerExecutor
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, TaskStatus
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.state.factory import create_run_from_routine

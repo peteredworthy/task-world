@@ -9,7 +9,7 @@ import yaml
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from orchestrator.agents.nudger import NudgerConfig as AgentNudgerConfig
+    from orchestrator.runners.nudger import NudgerConfig as AgentNudgerConfig
 
 
 class ServerConfig(BaseModel):
@@ -51,7 +51,7 @@ class NudgerConfig(BaseModel):
         """
         from datetime import timedelta
 
-        from orchestrator.agents.nudger import NudgerConfig as AgentNudgerConfig
+        from orchestrator.runners.nudger import NudgerConfig as AgentNudgerConfig
 
         return AgentNudgerConfig(
             output_timeout=timedelta(seconds=self.nudge_after_seconds),

@@ -18,7 +18,7 @@ from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import WorkflowEvent
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.review.test_runner import TestRunner

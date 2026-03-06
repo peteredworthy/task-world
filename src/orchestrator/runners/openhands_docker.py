@@ -28,13 +28,13 @@ from typing import Any
 
 from pydantic import Field
 
-from orchestrator.agents.errors import (
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
 from orchestrator.workflow.errors import GateBlockedError
-from orchestrator.agents.openhands_common import (
+from orchestrator.runners.openhands_common import (
     CallbackRegistry,
     GetRequirementsExecutor,
     SubmitExecutor,
@@ -43,7 +43,7 @@ from orchestrator.agents.openhands_common import (
     build_openhands_prompt,
     extract_metrics,
 )
-from orchestrator.agents.types import (
+from orchestrator.runners.types import (
     AgentRunnerInfo,
     ChecklistUpdateCallback,
     EscalationCallback,
@@ -376,7 +376,7 @@ if _SDK_AVAILABLE:
                 # Return empty list if on_grade is not provided (builder phase)
                 return []
 
-            from orchestrator.agents.openhands_common import SetGradeExecutor
+            from orchestrator.runners.openhands_common import SetGradeExecutor
 
             inner = SetGradeExecutor(
                 on_grade,
@@ -687,7 +687,7 @@ class DockerOpenHandsAgent:
             # Parse OpenHands events into structured action log
             action_log = None
             try:
-                from orchestrator.agents.parsers.openhands_parser import OpenHandsEventParser
+                from orchestrator.runners.parsers.openhands_parser import OpenHandsEventParser
 
                 events_list = list(getattr(getattr(conversation, "state", None), "events", []))
                 if events_list:

@@ -6,8 +6,8 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 
-from orchestrator.agents.detector import ToolDetector
-from orchestrator.agents.types import AgentOption
+from orchestrator.runners.detector import ToolDetector
+from orchestrator.runners.types import AgentOption
 
 logger = logging.getLogger(__name__)
 

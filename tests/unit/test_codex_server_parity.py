@@ -20,9 +20,9 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.agents.codex_server import CodexServerAgent
-from orchestrator.agents.codex_server_common import CODEX_SERVER_TOOL_ALLOWLIST
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.codex_server import CodexServerAgent
+from orchestrator.runners.codex_server_common import CODEX_SERVER_TOOL_ALLOWLIST
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import ChecklistStatus
 
 # ---------------------------------------------------------------------------

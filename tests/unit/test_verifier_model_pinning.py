@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.config.enums import AgentRunnerType, TaskStatus
 from orchestrator.state.models import Run, TaskState
 

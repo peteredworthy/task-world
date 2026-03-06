@@ -15,14 +15,14 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from orchestrator.agents.action_log import ActionLog
-from orchestrator.agents.cli import CLIAgent
-from orchestrator.agents.errors import (
+from orchestrator.runners.action_log import ActionLog
+from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.agents.types import ExecutionContext, ExecutionMetrics
+from orchestrator.runners.types import ExecutionContext, ExecutionMetrics
 from orchestrator.config.enums import (
     AgentRunnerType,
     ChecklistStatus,
@@ -43,7 +43,7 @@ from orchestrator.workflow.summary_cache import SummaryCache
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from orchestrator.agents.monitor import AgentMonitor
+    from orchestrator.runners.monitor import AgentMonitor
     from orchestrator.api.websocket import ConnectionManager
     from orchestrator.config.global_config import GlobalConfig
     from orchestrator.state.models import Run, StepState, TaskState
@@ -109,7 +109,7 @@ class AgentRunnerExecutor:
 
         # Lazy init - create monitor instance with session_factory and lock_manager
         try:
-            from orchestrator.agents.monitor import AgentMonitor
+            from orchestrator.runners.monitor import AgentMonitor
 
             self._agent_monitor = AgentMonitor(
                 self._session_factory,
@@ -1566,8 +1566,8 @@ class AgentRunnerExecutor:
     ) -> CLIAgent:
         """Create the appropriate agent based on run configuration."""
         if agent_type == AgentRunnerType.CLI_SUBPROCESS:
-            from orchestrator.agents.parsers.claude_parser import ClaudeStreamParser
-            from orchestrator.agents.parsers.codex_parser import CodexStreamParser
+            from orchestrator.runners.parsers.claude_parser import ClaudeStreamParser
+            from orchestrator.runners.parsers.codex_parser import CodexStreamParser
 
             command = agent_config.get("command", "claude")
             model = agent_config.get("model")
@@ -1614,7 +1614,7 @@ class AgentRunnerExecutor:
 
         elif agent_type == AgentRunnerType.OPENHANDS_LOCAL:
             # Import here to avoid circular imports (optional dependency)
-            from orchestrator.agents.openhands import OpenHandsAgent
+            from orchestrator.runners.openhands import OpenHandsAgent
 
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
@@ -1632,7 +1632,7 @@ class AgentRunnerExecutor:
 
         elif agent_type == AgentRunnerType.OPENHANDS_DOCKER:
             # Import here to avoid circular imports (optional dependency)
-            from orchestrator.agents.openhands_docker import DockerOpenHandsAgent
+            from orchestrator.runners.openhands_docker import DockerOpenHandsAgent
 
             api_key = agent_config.get("api_key")
             model = agent_config.get("model", "gpt-5-mini")
@@ -1653,7 +1653,7 @@ class AgentRunnerExecutor:
             return DockerOpenHandsAgent(**kwargs)  # type: ignore[return-value]
 
         elif agent_type == AgentRunnerType.CODEX_SERVER:
-            from orchestrator.agents.codex_server import CodexServerAgent
+            from orchestrator.runners.codex_server import CodexServerAgent
 
             model = agent_config.get("model")
             callback_channel = agent_config.get("callback_channel", "rest")
@@ -1668,7 +1668,7 @@ class AgentRunnerExecutor:
             )
 
         elif agent_type == AgentRunnerType.CLAUDE_SDK:
-            from orchestrator.agents.claude_sdk import ClaudeSDKAgent
+            from orchestrator.runners.claude_sdk import ClaudeSDKAgent
 
             model = agent_config.get("model", "claude-sonnet-4-5")
             api_key = agent_config.get("api_key")

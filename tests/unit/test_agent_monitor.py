@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.agents.monitor import AgentMonitor
+from orchestrator.runners.monitor import AgentMonitor
 from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.config.global_config import AgentsConfig, GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig

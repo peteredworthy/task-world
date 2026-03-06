@@ -264,7 +264,7 @@ class TestScaffoldingIntegration:
     async def test_scaffolding_copied_on_worktree_creation(self, tmp_path: Path) -> None:
         """Scaffolding is copied when worktree is created during run start."""
 
-        from orchestrator.agents.executor import AgentRunnerExecutor
+        from orchestrator.runners.executor import AgentRunnerExecutor
         from orchestrator.config.enums import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
         from orchestrator.db.connection import create_engine, create_session_factory, init_db
@@ -410,7 +410,7 @@ steps:
     @pytest.mark.asyncio
     async def test_scaffolding_optional_if_missing(self, tmp_path: Path) -> None:
         """Run should succeed even if routine has no scaffolding."""
-        from orchestrator.agents.executor import AgentRunnerExecutor
+        from orchestrator.runners.executor import AgentRunnerExecutor
         from orchestrator.config.enums import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
         from orchestrator.db.connection import create_engine, create_session_factory, init_db

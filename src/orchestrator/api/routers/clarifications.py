@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 import logging
 
-from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.deps import get_agent_executor, get_run_repository, get_workflow_service
 from orchestrator.api.schemas.clarifications import (
     ClarificationAnswerSchema,

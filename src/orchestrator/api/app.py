@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
-    from orchestrator.agents.monitor import AgentMonitor
+    from orchestrator.runners.monitor import AgentMonitor
     from orchestrator.db.repositories import RunRepository
 
     await init_db(app.state.engine)
@@ -265,7 +265,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if hasattr(app.state, "agent_executor"):
         from asyncio import Task as _AsyncTask
 
-        from orchestrator.agents.executor import AgentRunnerExecutor
+        from orchestrator.runners.executor import AgentRunnerExecutor
 
         executor: AgentRunnerExecutor = app.state.agent_executor
         pending_tasks: list[_AsyncTask[Any]] = []
@@ -365,11 +365,11 @@ def create_app(
     require_ws_auth = get_require_ws_auth(auth_config)
 
     # Agent tool detector
-    from orchestrator.agents.claude_sdk import ClaudeSDKAgent
-    from orchestrator.agents.cli import ClaudeCliQuotaAgent
-    from orchestrator.agents.codex_server import CodexServerAgent
-    from orchestrator.agents.detector import ToolDetector
-    from orchestrator.agents.openhands import OpenHandsAgent
+    from orchestrator.runners.claude_sdk import ClaudeSDKAgent
+    from orchestrator.runners.cli import ClaudeCliQuotaAgent
+    from orchestrator.runners.codex_server import CodexServerAgent
+    from orchestrator.runners.detector import ToolDetector
+    from orchestrator.runners.openhands import OpenHandsAgent
 
     app.state.tool_detector = ToolDetector(
         agents=[OpenHandsAgent(), CodexServerAgent(), ClaudeCliQuotaAgent(), ClaudeSDKAgent()]
@@ -398,7 +398,7 @@ def create_app(
 
     # Agent executor for spawning managed agents (created here so it's available
     # in tests that don't run the lifespan)
-    from orchestrator.agents.executor import AgentRunnerExecutor
+    from orchestrator.runners.executor import AgentRunnerExecutor
 
     # Disable agent spawning for in-memory SQLite (tests), unless explicitly enabled
     if spawn_agents is None:
@@ -419,7 +419,7 @@ def create_app(
     register_error_handlers(app)
 
     # Register routers with auth dependency
-    from orchestrator.api.routers.agents import router as agents_router
+    from orchestrator.api.routers.runners import router as agents_router
     from orchestrator.api.routers.clarifications import router as clarifications_router
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.envfiles import router as envfiles_router

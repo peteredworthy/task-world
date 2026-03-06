@@ -4,7 +4,7 @@ This demonstrates how the new central error types (ErrorCode, OrchestratorError)
 can coexist with existing domain-specific exceptions for backward compatibility.
 """
 
-from orchestrator.agents.errors import AgentExecutionError
+from orchestrator.runners.errors import AgentExecutionError
 from orchestrator.errors import ErrorCode, OrchestratorError
 from orchestrator.routines.errors import RoutineNotFoundError
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError

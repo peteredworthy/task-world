@@ -18,9 +18,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from orchestrator.agents.errors import AgentTimeoutError
-from orchestrator.agents.user_managed import UserManagedAgent
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.errors import AgentTimeoutError
+from orchestrator.runners.user_managed import UserManagedAgent
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import (
     ChecklistStatus,

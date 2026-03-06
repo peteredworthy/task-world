@@ -21,7 +21,7 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
-from orchestrator.agents.types import (
+from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     CompleteRecoveryCallback,
     ExecutionContext,

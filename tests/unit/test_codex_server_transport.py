@@ -19,9 +19,9 @@ from typing import Any
 
 import pytest
 
-from orchestrator.agents.codex_server import CodexServerAgent
-from orchestrator.agents.errors import AgentNotAvailableError
-from orchestrator.agents.types import ExecutionContext, ExecutionResult
+from orchestrator.runners.codex_server import CodexServerAgent
+from orchestrator.runners.errors import AgentNotAvailableError
+from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config.enums import ChecklistStatus
 
 

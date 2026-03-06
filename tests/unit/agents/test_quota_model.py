@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.agents.quota import FakeQuotaFetcher
-from orchestrator.agents.types import AgentQuota
+from orchestrator.runners.quota import FakeQuotaFetcher
+from orchestrator.runners.types import AgentQuota
 
 
 def test_agent_quota_balance_usd_only() -> None:

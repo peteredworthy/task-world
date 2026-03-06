@@ -23,7 +23,7 @@ from orchestrator.api.deps import (
     get_workflow_service,
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
-from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.review.test_runner import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
@@ -303,7 +303,7 @@ async def create_run(
     if request.agent_config:
         # Validate agent_config keys against the agent's known config schema
         if run.agent_type is not None:
-            from orchestrator.agents.detector import AGENT_CONFIG_FIELDS
+            from orchestrator.runners.detector import AGENT_CONFIG_FIELDS
 
             valid_fields = AGENT_CONFIG_FIELDS.get(run.agent_type, set())
             unknown = set(request.agent_config.keys()) - valid_fields

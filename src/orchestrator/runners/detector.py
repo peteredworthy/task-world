@@ -6,9 +6,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from orchestrator.agents.claude_sdk import fetch_claude_models
-from orchestrator.agents.codex_server_common import fetch_codex_models
-from orchestrator.agents.types import AgentConfigField, AgentOption, AgentQuota
+from orchestrator.runners.claude_sdk import fetch_claude_models
+from orchestrator.runners.codex_server_common import fetch_codex_models
+from orchestrator.runners.types import AgentConfigField, AgentOption, AgentQuota
 from orchestrator.config.enums import AgentRunnerType
 
 

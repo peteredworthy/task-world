@@ -7,13 +7,13 @@ from typing import Any
 
 import pytest
 
-from orchestrator.agents.codex_server import CodexServerAgent
-from orchestrator.agents.errors import (
+from orchestrator.runners.codex_server import CodexServerAgent
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 
 
@@ -352,7 +352,7 @@ def test_normalize_output_delegates_to_common() -> None:
 
 def test_build_metrics_delegates_to_common() -> None:
     agent = CodexServerAgent()
-    from orchestrator.agents.types import ExecutionMetrics
+    from orchestrator.runners.types import ExecutionMetrics
 
     m = agent._build_metrics(
         duration_ms=500,

@@ -826,7 +826,7 @@ async def test_agent_error_handlers_registered(client: AsyncClient) -> None:
 
     For now, we verify handler registration and document the gap.
     """
-    from orchestrator.agents.errors import (
+    from orchestrator.runners.errors import (
         AgentCancelledError,
         AgentExecutionError,
         AgentNotAvailableError,

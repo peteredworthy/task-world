@@ -6,7 +6,7 @@ from orchestrator.config.models import MCPServerConfig
 
 
 # Import the conversion function
-from orchestrator.agents.openhands import _build_openhands_mcp_config
+from orchestrator.runners.openhands import _build_openhands_mcp_config
 
 
 class TestOpenHandsMCPConfig:

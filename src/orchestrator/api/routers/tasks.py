@@ -70,11 +70,11 @@ def _parse_action_log_from_raw(output: str, agent_settings: dict[str, Any]) -> A
     parser: Any | None = None
 
     if command == "codex":
-        from orchestrator.agents.parsers.codex_parser import CodexStreamParser
+        from orchestrator.runners.parsers.codex_parser import CodexStreamParser
 
         parser = CodexStreamParser()
     elif command == "claude":
-        from orchestrator.agents.parsers.claude_parser import ClaudeStreamParser
+        from orchestrator.runners.parsers.claude_parser import ClaudeStreamParser
 
         parser = ClaudeStreamParser()
     else:

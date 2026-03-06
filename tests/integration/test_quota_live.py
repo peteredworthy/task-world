@@ -7,8 +7,8 @@ import os
 
 import pytest
 
-from orchestrator.agents.openhands import OpenHandsAgent
-from orchestrator.agents.types import AgentQuota
+from orchestrator.runners.openhands import OpenHandsAgent
+from orchestrator.runners.types import AgentQuota
 
 
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
-from orchestrator.agents.action_log import ActionLog
+from orchestrator.runners.action_log import ActionLog
 
 
 @runtime_checkable

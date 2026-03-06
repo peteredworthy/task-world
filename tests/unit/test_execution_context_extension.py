@@ -1,6 +1,6 @@
 """Tests for ExecutionContext step-level fields."""
 
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.models import MCPServerConfig
 
 

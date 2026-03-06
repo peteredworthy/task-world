@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import AgentRunnerType, GateType, RoutineSource, TaskStatus
 from orchestrator.db.connection import init_db

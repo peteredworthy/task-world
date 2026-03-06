@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from orchestrator.agents.nudger import NudgeAction, Nudger, NudgerConfig
+from orchestrator.runners.nudger import NudgeAction, Nudger, NudgerConfig
 
 if TYPE_CHECKING:
     from conftest import FakeClock

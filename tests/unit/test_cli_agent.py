@@ -3,9 +3,9 @@
 import re
 from datetime import timedelta
 
-from orchestrator.agents.cli import CLIAgent
-from orchestrator.agents.nudger import NudgerConfig
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.nudger import NudgerConfig
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import AgentRunnerType
 
 

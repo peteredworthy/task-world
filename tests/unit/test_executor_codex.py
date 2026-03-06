@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.agents.codex_server import CodexServerAgent
-from orchestrator.agents.errors import AgentNotAvailableError
-from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.runners.codex_server import CodexServerAgent
+from orchestrator.runners.errors import AgentNotAvailableError
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.config.enums import AgentRunnerType
 
 

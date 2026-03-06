@@ -2,10 +2,10 @@
 
 import pytest
 
-from orchestrator.agents.errors import AgentExecutionError
-from orchestrator.agents.interface import AgentRunner
-from orchestrator.agents.mock import MockAgent, MockBehavior
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.errors import AgentExecutionError
+from orchestrator.runners.interface import AgentRunner
+from orchestrator.runners.mock import MockAgent, MockBehavior
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 
 

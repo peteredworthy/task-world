@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import asyncio
 
-from orchestrator.agents.errors import AgentCancelledError, AgentTimeoutError
-from orchestrator.agents.types import (
+from orchestrator.runners.errors import AgentCancelledError, AgentTimeoutError
+from orchestrator.runners.types import (
     AgentRunnerInfo,
     ChecklistUpdateCallback,
     EscalationCallback,

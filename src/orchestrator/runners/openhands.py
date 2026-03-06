@@ -24,13 +24,13 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from orchestrator.agents.errors import (
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
 from orchestrator.workflow.errors import GateBlockedError
-from orchestrator.agents.repetition_detector import (
+from orchestrator.runners.repetition_detector import (
     ActionBudget,
     ActionBudgetConfig,
     ReasoningRepetitionDetector,
@@ -38,8 +38,8 @@ from orchestrator.agents.repetition_detector import (
     RepetitionDetector,
     RepetitionDetectorConfig,
 )
-from orchestrator.agents.quota import HttpQuotaFetcher, QuotaFetcher
-from orchestrator.agents.openhands_common import (
+from orchestrator.runners.quota import HttpQuotaFetcher, QuotaFetcher
+from orchestrator.runners.openhands_common import (
     CallbackRegistry,
     GetRequirementsExecutor,
     SubmitExecutor,
@@ -48,7 +48,7 @@ from orchestrator.agents.openhands_common import (
     extract_metrics,
     register_builtin_tools,
 )
-from orchestrator.agents.types import (
+from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
@@ -251,7 +251,7 @@ if _SDK_AVAILABLE:
                 # Return empty list if on_grade is not provided (builder phase)
                 return []
 
-            from orchestrator.agents.openhands_common import SetGradeExecutor
+            from orchestrator.runners.openhands_common import SetGradeExecutor
 
             inner = SetGradeExecutor(
                 on_grade,
@@ -578,7 +578,7 @@ class OpenHandsAgent:
             import litellm
             from litellm.integrations.custom_logger import CustomLogger
 
-            _oh_logger = logging.getLogger("orchestrator.agents.openhands.usage")
+            _oh_logger = logging.getLogger("orchestrator.runners.openhands.usage")
 
             class _UsageLogger(CustomLogger):
                 def log_success_event(
@@ -600,7 +600,7 @@ class OpenHandsAgent:
             llm = OHLLM(**llm_kwargs)
 
             # Build Agent with built-in + custom tools.
-            from orchestrator.agents.openhands_common import DEFAULT_OPENHANDS_TOOLS
+            from orchestrator.runners.openhands_common import DEFAULT_OPENHANDS_TOOLS
 
             # Start with configured or default tools
             tool_names = list(self._tools or DEFAULT_OPENHANDS_TOOLS)
@@ -845,7 +845,7 @@ class OpenHandsAgent:
             # Parse OpenHands events into structured action log
             action_log = None
             try:
-                from orchestrator.agents.parsers.openhands_parser import OpenHandsEventParser
+                from orchestrator.runners.parsers.openhands_parser import OpenHandsEventParser
 
                 events_list = list(getattr(getattr(conversation, "state", None), "events", []))
                 if events_list:

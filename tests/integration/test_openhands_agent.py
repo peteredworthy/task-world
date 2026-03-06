@@ -13,9 +13,9 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.agents.errors import AgentExecutionError, AgentNotAvailableError
-from orchestrator.agents.openhands import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
+from orchestrator.runners.openhands import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import ChecklistStatus
 
 # Patterns in AgentExecutionError messages that indicate an environment issue

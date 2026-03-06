@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
-from orchestrator.agents.claude_sdk import _build_tool_list, _build_mcp_params
+from orchestrator.runners.claude_sdk import _build_tool_list, _build_mcp_params
 from orchestrator.config.models import MCPServerConfig
 
 

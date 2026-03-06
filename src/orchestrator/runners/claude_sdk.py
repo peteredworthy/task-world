@@ -32,12 +32,12 @@ import sys
 import time
 from typing import Any
 
-from orchestrator.agents.errors import (
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.agents.types import (
+from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,

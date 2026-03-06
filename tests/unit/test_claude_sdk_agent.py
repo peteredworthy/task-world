@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from orchestrator.agents.claude_sdk import (
+from orchestrator.runners.claude_sdk import (
     ClaudeSDKAgent,
     _BUILDER_TOOLS,
     _VERIFIER_TOOLS,
@@ -15,12 +15,12 @@ from orchestrator.agents.claude_sdk import (
     _dispatch_tool,
     build_claude_sdk_prompt,
 )
-from orchestrator.agents.errors import (
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.agents.types import ExecutionContext, ExecutionResult
+from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 
 
@@ -454,7 +454,7 @@ async def test_execute_raises_agent_cancelled_error_if_already_cancelled() -> No
 
 async def test_execute_raises_agent_not_available_when_sdk_not_installed() -> None:
     """When _SDK_AVAILABLE is False the agent raises AgentNotAvailableError."""
-    import orchestrator.agents.claude_sdk as module
+    import orchestrator.runners.claude_sdk as module
 
     original = module._SDK_AVAILABLE
     try:

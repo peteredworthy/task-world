@@ -4,13 +4,13 @@ import asyncio
 
 import pytest
 
-from orchestrator.agents.errors import AgentCancelledError, AgentTimeoutError
-from orchestrator.agents.types import (
+from orchestrator.runners.errors import AgentCancelledError, AgentTimeoutError
+from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     ExecutionContext,
     SubmitCallback,
 )
-from orchestrator.agents.user_managed import UserManagedAgent
+from orchestrator.runners.user_managed import UserManagedAgent
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.workflow.service import SubmitEventRegistry
 

@@ -1,6 +1,6 @@
 """Tests for ToolDetector."""
 
-from orchestrator.agents.detector import ToolDetector
+from orchestrator.runners.detector import ToolDetector
 from orchestrator.config.enums import AgentRunnerType
 
 

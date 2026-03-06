@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from orchestrator.agents.detector import ToolDetector
-from orchestrator.agents.types import AgentQuota
+from orchestrator.runners.detector import ToolDetector
+from orchestrator.runners.types import AgentQuota
 
 
 class _AgentStub:
@@ -203,7 +203,7 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     """
     import time
 
-    from orchestrator.agents.types import AgentOption as _AO
+    from orchestrator.runners.types import AgentOption as _AO
     from orchestrator.config.enums import AgentRunnerType
 
     AGENT_NAMES = ["agent-alpha", "agent-beta", "agent-gamma"]

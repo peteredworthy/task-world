@@ -1,13 +1,13 @@
 """Tests for agent types and protocol."""
 
-from orchestrator.agents.errors import (
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.agents.interface import AgentRunner
-from orchestrator.agents.types import (
+from orchestrator.runners.interface import AgentRunner
+from orchestrator.runners.types import (
     AgentConfigField,
     AgentRunnerInfo,
     AgentOption,
@@ -181,7 +181,7 @@ def test_agent_cancelled_error() -> None:
 
 def test_callback_type_aliases_exist() -> None:
     """Verify callback type aliases are importable."""
-    from orchestrator.agents.types import ChecklistUpdateCallback, SubmitCallback
+    from orchestrator.runners.types import ChecklistUpdateCallback, SubmitCallback
 
     # They're type aliases, so just verify they exist
     assert ChecklistUpdateCallback is not None

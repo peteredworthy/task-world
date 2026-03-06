@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
-from orchestrator.agents.action_log import ActionLog
+from orchestrator.runners.action_log import ActionLog
 from orchestrator.config.enums import (
     AgentRunnerType,
     ChecklistStatus,

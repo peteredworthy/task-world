@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from orchestrator.agents.action_log import (
+from orchestrator.runners.action_log import (
     MAX_TOOL_OUTPUT_SIZE,
     ActionEntryKind,
     ActionLog,
@@ -27,7 +27,7 @@ from orchestrator.agents.action_log import (
     ToolUseDetail,
     TurnMetrics,
 )
-from orchestrator.agents.parsers.base import tool_summary
+from orchestrator.runners.parsers.base import tool_summary
 
 logger = logging.getLogger(__name__)
 

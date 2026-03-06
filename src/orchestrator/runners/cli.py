@@ -19,14 +19,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from orchestrator.agents.errors import (
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
 from orchestrator.workflow.errors import GateBlockedError
-from orchestrator.agents.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
-from orchestrator.agents.types import (
+from orchestrator.runners.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
+from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
@@ -43,8 +43,8 @@ from orchestrator.agents.types import (
 from orchestrator.config.enums import AgentRunnerType
 
 if TYPE_CHECKING:
-    from orchestrator.agents.monitor import AgentMonitor
-    from orchestrator.agents.parsers.base import StreamParser
+    from orchestrator.runners.monitor import AgentMonitor
+    from orchestrator.runners.parsers.base import StreamParser
 
 logger = logging.getLogger(__name__)
 

@@ -11,10 +11,10 @@ import pytest
 import uvicorn
 from httpx import AsyncClient
 
-from orchestrator.agents.cli import CLIAgent
-from orchestrator.agents.errors import AgentExecutionError, AgentNotAvailableError
-from orchestrator.agents.nudger import NudgerConfig
-from orchestrator.agents.types import ChecklistUpdateCallback, ExecutionContext, SubmitCallback
+from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
+from orchestrator.runners.nudger import NudgerConfig
+from orchestrator.runners.types import ChecklistUpdateCallback, ExecutionContext, SubmitCallback
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import ChecklistStatus, RoutineSource
 from orchestrator.db.connection import init_db

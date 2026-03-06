@@ -17,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
 from orchestrator.db.connection import init_db

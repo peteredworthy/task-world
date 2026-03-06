@@ -14,7 +14,7 @@ import asyncio
 import logging
 from typing import Any
 
-from orchestrator.agents.types import (
+from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionMetrics,

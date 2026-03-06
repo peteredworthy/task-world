@@ -25,7 +25,7 @@ from orchestrator.db.models import (
     TaskModel,
 )
 from orchestrator.state.errors import RunNotFoundError
-from orchestrator.agents.action_log import ActionLog
+from orchestrator.runners.action_log import ActionLog
 from orchestrator.state.models import (
     Attempt,
     AttemptMetrics,

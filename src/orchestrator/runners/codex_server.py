@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from orchestrator.agents.codex_server_common import (
+from orchestrator.runners.codex_server_common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     JsonRpcTransport,
     build_codex_server_prompt,
@@ -44,14 +44,14 @@ from orchestrator.agents.codex_server_common import (
     normalize_codex_output_lines,
     route_tool_call,
 )
-from orchestrator.agents.errors import (
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
     AgentTimeoutError,
 )
 from orchestrator.workflow.errors import GateBlockedError
-from orchestrator.agents.types import (
+from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
