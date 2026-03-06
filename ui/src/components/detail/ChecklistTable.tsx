@@ -138,7 +138,12 @@ export function ChecklistTable({ items, variant = 'table' }: ChecklistTableProps
                                 <span className="text-text-secondary">{item.grade_reason}</span>
                               )}
                               {item.grade_reason && item.note && <span>·</span>}
-                              {item.note && <span>{item.note}</span>}
+                              {item.note && (
+                                <span>
+                                  {escalated ? <span className="text-status-paused font-medium">Escalation reason: </span> : null}
+                                  {item.note}
+                                </span>
+                              )}
                               {escalated && (
                                 <span className="ml-auto shrink-0 font-semibold uppercase tracking-wide text-status-paused">
                                   Escalated
@@ -201,7 +206,12 @@ export function ChecklistTable({ items, variant = 'table' }: ChecklistTableProps
                     <span className="text-text-secondary">{item.grade_reason}</span>
                   )}
                   {item.grade_reason && item.note && <span className="mx-1">·</span>}
-                  {item.note || ''}
+                  {item.note && (
+                    <>
+                      {escalated && <span className="text-status-paused font-medium">Escalation reason: </span>}
+                      {item.note}
+                    </>
+                  )}
                   {escalated && (
                     <span className={`${item.note ? 'ml-2' : ''} text-[10px] font-semibold text-status-paused uppercase tracking-wide`}>Escalated</span>
                   )}

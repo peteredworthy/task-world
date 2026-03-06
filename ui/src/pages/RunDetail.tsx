@@ -458,6 +458,28 @@ function RunDetailInner({ runId }: { runId: string }) {
             </div>
           )}
 
+          {/* Escalation banner — shown when run paused due to escalated requirement */}
+          {run.status === 'paused' && run.pause_reason === 'requirement_escalated' && (
+            <div className="mb-6 rounded-md bg-status-paused/10 border border-status-paused/30 px-4 py-3 flex items-start gap-3">
+              <svg className="h-5 w-5 text-status-paused shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+              </svg>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-status-paused">
+                  Agent escalated a requirement
+                </p>
+                <p className="text-xs text-text-secondary mt-0.5">
+                  The agent flagged a requirement as unfulfillable. Review the escalated requirement below, then modify, skip, or resume the run.
+                </p>
+                {run.last_error && (
+                  <p className="mt-1.5 text-xs text-text-secondary bg-bg-elevated rounded px-2 py-1 font-mono break-all">
+                    {run.last_error}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Agent guidance panel for user_managed */}
           {activeTask && (
             <div className="mb-6">
