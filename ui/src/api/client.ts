@@ -413,11 +413,11 @@ export const api = {
   },
 
   listAgents(): Promise<AgentOption[]> {
-    return fetchApi('/api/agents');
+    return fetchApi('/api/agent-runners');
   },
 
   discoverLocalModels(baseUrl: string): Promise<{ models: string[]; error?: string }> {
-    return fetchApi('/api/agents/local-models?base_url=' + encodeURIComponent(baseUrl));
+    return fetchApi('/api/agent-runners/local-models?base_url=' + encodeURIComponent(baseUrl));
   },
 
   updateChecklist(runId: string, taskId: string, reqId: string, data: UpdateChecklistRequest): Promise<ChecklistItemSchema> {

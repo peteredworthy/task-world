@@ -105,8 +105,8 @@ class QuotaBucket(BaseModel):
     resets_at: str | None = None  # ISO 8601 datetime string
 
 
-class AgentQuota(BaseModel):
-    """Quota/balance information for an agent."""
+class AgentRunnerQuota(BaseModel):
+    """Quota/balance information for an agent runner."""
 
     balance_usd: float | None = None
     balance_pct: float | None = None
@@ -121,8 +121,12 @@ class AgentQuota(BaseModel):
             raise ValueError("At least one of balance_usd or balance_pct must be set")
 
 
-class AgentOption(BaseModel):
-    """An available agent option returned by the detector."""
+# Backward-compatible alias
+AgentQuota = AgentRunnerQuota
+
+
+class AgentRunnerOption(BaseModel):
+    """An available agent runner option returned by the detector."""
 
     agent_type: str
     name: str
@@ -132,4 +136,8 @@ class AgentOption(BaseModel):
     detail: str = ""
     install_hint: str = ""
     config_schema: list[AgentConfigField] = []
-    quota: AgentQuota | None = None
+    quota: AgentRunnerQuota | None = None
+
+
+# Backward-compatible alias
+AgentOption = AgentRunnerOption

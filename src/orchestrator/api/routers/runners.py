@@ -7,15 +7,15 @@ import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from orchestrator.runners.detector import ToolDetector
-from orchestrator.runners.types import AgentOption
+from orchestrator.runners.types import AgentRunnerOption
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/agents", tags=["agents"])
+router = APIRouter(prefix="/api/agent-runners", tags=["agent-runners"])
 
 
-@router.get("", response_model=list[AgentOption])
-async def list_agents(request: Request) -> list[AgentOption]:
+@router.get("", response_model=list[AgentRunnerOption])
+async def list_agents(request: Request) -> list[AgentRunnerOption]:
     """List available agent backends."""
     detector: ToolDetector = request.app.state.tool_detector
     return await detector.detect_all()
