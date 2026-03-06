@@ -13,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from orchestrator.agents.executor import AgentExecutor
-from orchestrator.config.enums import AgentType, TaskStatus
+from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.config.enums import AgentRunnerType, TaskStatus
 from orchestrator.state.models import Run, TaskState
 
 
@@ -23,13 +23,13 @@ from orchestrator.state.models import Run, TaskState
 # ---------------------------------------------------------------------------
 
 
-def _make_executor() -> AgentExecutor:
-    """Create an AgentExecutor with no DB session and agent spawning disabled."""
-    return AgentExecutor(session_factory=None, spawn_agents=False)  # type: ignore[arg-type]
+def _make_executor() -> AgentRunnerExecutor:
+    """Create an AgentRunnerExecutor with no DB session and agent spawning disabled."""
+    return AgentRunnerExecutor(session_factory=None, spawn_agents=False)  # type: ignore[arg-type]
 
 
 def _make_run(
-    agent_type: AgentType = AgentType.CLAUDE_SDK,
+    agent_type: AgentRunnerType = AgentRunnerType.CLAUDE_SDK,
     agent_config: dict[str, Any] | None = None,
     verifier_model: str | None = None,
 ) -> Run:
@@ -95,7 +95,7 @@ async def test_verifier_uses_pinned_model_not_agent_config() -> None:
     captured_configs: list[dict[str, Any]] = []
 
     def _fake_create_agent(
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         run_id: str | None = None,
         phase: str = "building",
@@ -122,7 +122,7 @@ async def test_verifier_uses_pinned_model_not_agent_config() -> None:
                                 task_state=task_state,
                                 task_config=task_config,
                                 service=service,
-                                agent_type=AgentType.CLAUDE_SDK,
+                                agent_type=AgentRunnerType.CLAUDE_SDK,
                                 agent_config={"model": "claude-sonnet-4-5"},
                             )
 
@@ -149,7 +149,7 @@ async def test_verifier_uses_agent_config_when_no_pinned_model() -> None:
     captured_configs: list[dict[str, Any]] = []
 
     def _fake_create_agent(
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         run_id: str | None = None,
         phase: str = "building",
@@ -175,7 +175,7 @@ async def test_verifier_uses_agent_config_when_no_pinned_model() -> None:
                                 task_state=task_state,
                                 task_config=task_config,
                                 service=service,
-                                agent_type=AgentType.CLAUDE_SDK,
+                                agent_type=AgentRunnerType.CLAUDE_SDK,
                                 agent_config={"model": "claude-sonnet-4-5"},
                             )
 
@@ -203,7 +203,7 @@ async def test_changing_agent_config_after_creation_does_not_affect_verifier() -
     captured_configs: list[dict[str, Any]] = []
 
     def _fake_create_agent(
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         run_id: str | None = None,
         phase: str = "building",
@@ -229,7 +229,7 @@ async def test_changing_agent_config_after_creation_does_not_affect_verifier() -
                                 task_state=task_state,
                                 task_config=task_config,
                                 service=service,
-                                agent_type=AgentType.CLAUDE_SDK,
+                                agent_type=AgentRunnerType.CLAUDE_SDK,
                                 # Pass the current (changed) agent_config
                                 agent_config=run.agent_config,
                             )

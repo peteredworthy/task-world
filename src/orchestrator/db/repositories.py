@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from orchestrator.config.enums import (
-    AgentType,
+    AgentRunnerType,
     ChecklistStatus,
     Priority,
     RoutineSource,
@@ -114,7 +114,7 @@ def _to_domain(model: RunModel) -> Run:
                         ),
                         grade_snapshot=grade_snapshot,
                         auto_verify_results=att_model.auto_verify_results or [],
-                        agent_type=AgentType(att_model.agent_type)
+                        agent_type=AgentRunnerType(att_model.agent_type)
                         if att_model.agent_type
                         else None,
                         agent_model=att_model.agent_model,
@@ -206,7 +206,7 @@ def _to_domain(model: RunModel) -> Run:
         routine_embedded=model.routine_embedded,
         routine_path=model.routine_path,
         routine_commit=model.routine_commit,
-        agent_type=AgentType(model.agent_type) if model.agent_type else None,
+        agent_type=AgentRunnerType(model.agent_type) if model.agent_type else None,
         agent_config=model.agent_config or {},
         verifier_model=model.verifier_model,
         worktree_enabled=bool(model.worktree_enabled),

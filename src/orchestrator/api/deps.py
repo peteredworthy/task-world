@@ -18,7 +18,7 @@ from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import WorkflowEvent
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.agents.executor import AgentRunnerExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.review.test_runner import TestRunner
@@ -135,7 +135,7 @@ def get_worktrees_path(request: Request) -> Path:
     return config.paths.get_worktrees_path()
 
 
-def get_agent_executor(request: Request) -> AgentExecutor:
+def get_agent_executor(request: Request) -> AgentRunnerExecutor:
     """Get the agent executor from app state."""
     return request.app.state.agent_executor  # type: ignore[no-any-return]
 

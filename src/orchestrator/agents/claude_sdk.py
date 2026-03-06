@@ -38,7 +38,7 @@ from orchestrator.agents.errors import (
     AgentNotAvailableError,
 )
 from orchestrator.agents.types import (
-    AgentInfo,
+    AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
@@ -50,7 +50,7 @@ from orchestrator.agents.types import (
     LogLineCallback,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.workflow.errors import GateBlockedError
 
 logger = logging.getLogger(__name__)
@@ -601,10 +601,10 @@ class ClaudeSDKAgent:
         self._client = _client  # injected test client; None → create real client
 
     @property
-    def info(self) -> AgentInfo:
+    def info(self) -> AgentRunnerInfo:
         """Return static metadata for this agent instance."""
-        return AgentInfo(
-            agent_type=AgentType.CLAUDE_SDK,
+        return AgentRunnerInfo(
+            agent_type=AgentRunnerType.CLAUDE_SDK,
             name="Claude SDK",
             version=None,
         )
@@ -654,20 +654,20 @@ class ClaudeSDKAgent:
         """
         if not _SDK_AVAILABLE:
             raise AgentNotAvailableError(
-                AgentType.CLAUDE_SDK.value,
+                AgentRunnerType.CLAUDE_SDK.value,
                 "anthropic package not installed. Install with: pip install anthropic",
             )
 
         if not self._api_key and not self._auth_token:
             raise AgentNotAvailableError(
-                AgentType.CLAUDE_SDK.value,
+                AgentRunnerType.CLAUDE_SDK.value,
                 "No Anthropic credentials found. Either set ANTHROPIC_API_KEY, "
                 "set ANTHROPIC_AUTH_TOKEN, or log in with the Claude CLI "
                 "(`claude auth login`) so the keychain token can be used.",
             )
 
         if self._cancelled:
-            raise AgentCancelledError(AgentType.CLAUDE_SDK.value)
+            raise AgentCancelledError(AgentRunnerType.CLAUDE_SDK.value)
 
         start_ms = int(time.monotonic() * 1000)
         is_verifier = on_grade is not None
@@ -703,7 +703,7 @@ class ClaudeSDKAgent:
 
             for _iteration in range(self._max_iterations):
                 if self._cancelled:
-                    raise AgentCancelledError(AgentType.CLAUDE_SDK.value)
+                    raise AgentCancelledError(AgentRunnerType.CLAUDE_SDK.value)
 
                 # Call the API in a thread to avoid blocking the event loop.
                 if mcp_params:
@@ -817,7 +817,7 @@ class ClaudeSDKAgent:
         except GateBlockedError:
             raise
         except asyncio.CancelledError:
-            raise AgentCancelledError(AgentType.CLAUDE_SDK.value)
+            raise AgentCancelledError(AgentRunnerType.CLAUDE_SDK.value)
         except Exception as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             logger.debug(
@@ -832,7 +832,7 @@ class ClaudeSDKAgent:
                 if secret and secret in exc_msg:
                     exc_msg = exc_msg.replace(secret, "***")
             raise AgentExecutionError(
-                AgentType.CLAUDE_SDK.value,
+                AgentRunnerType.CLAUDE_SDK.value,
                 f"Claude SDK session failed after {duration_ms}ms: {exc_msg}",
             ) from exc
 

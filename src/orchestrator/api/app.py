@@ -67,7 +67,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # re-spawning, these runs are orphaned: the agent finishes but nobody
         # handles the next phase (verification, next task, run completion).
         if hasattr(app.state, "agent_executor"):
-            from orchestrator.config.enums import AgentType as _AT
+            from orchestrator.config.enums import AgentRunnerType as _AT
 
             executor = app.state.agent_executor
             async with session_factory() as session:
@@ -265,9 +265,9 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if hasattr(app.state, "agent_executor"):
         from asyncio import Task as _AsyncTask
 
-        from orchestrator.agents.executor import AgentExecutor
+        from orchestrator.agents.executor import AgentRunnerExecutor
 
-        executor: AgentExecutor = app.state.agent_executor
+        executor: AgentRunnerExecutor = app.state.agent_executor
         pending_tasks: list[_AsyncTask[Any]] = []
         for run_id in list(executor._running_tasks):  # pyright: ignore[reportPrivateUsage]
             task = executor._running_tasks.pop(run_id, None)  # pyright: ignore[reportPrivateUsage]
@@ -398,15 +398,15 @@ def create_app(
 
     # Agent executor for spawning managed agents (created here so it's available
     # in tests that don't run the lifespan)
-    from orchestrator.agents.executor import AgentExecutor
+    from orchestrator.agents.executor import AgentRunnerExecutor
 
     # Disable agent spawning for in-memory SQLite (tests), unless explicitly enabled
     if spawn_agents is None:
         spawn_agents = db_path != ":memory:"
 
-    # Note: agent_monitor will be set in lifespan if available, but AgentExecutor
+    # Note: agent_monitor will be set in lifespan if available, but AgentRunnerExecutor
     # can lazy-initialize it if needed. This avoids circular dependencies.
-    app.state.agent_executor = AgentExecutor(
+    app.state.agent_executor = AgentRunnerExecutor(
         session_factory=app.state.session_factory,
         global_config=global_cfg,
         lock_manager=app.state.lock_manager,

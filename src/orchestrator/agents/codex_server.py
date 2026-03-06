@@ -52,7 +52,7 @@ from orchestrator.agents.errors import (
 )
 from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.agents.types import (
-    AgentInfo,
+    AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
@@ -65,7 +65,7 @@ from orchestrator.agents.types import (
     QuotaBucket,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 
 logger = logging.getLogger(__name__)
 
@@ -201,10 +201,10 @@ class CodexServerAgent:
     # ------------------------------------------------------------------
 
     @property
-    def info(self) -> AgentInfo:
+    def info(self) -> AgentRunnerInfo:
         """Return static metadata for this agent instance."""
-        return AgentInfo(
-            agent_type=AgentType.CODEX_SERVER,
+        return AgentRunnerInfo(
+            agent_type=AgentRunnerType.CODEX_SERVER,
             name="Codex Server",
             version=None,
         )
@@ -362,7 +362,7 @@ class CodexServerAgent:
                 ``turn/completed`` with ``status: "systemError"``.
         """
         if self._cancelled:
-            raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+            raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
 
         start_ms = int(time.monotonic() * 1000)
         is_verifier = on_grade is not None
@@ -465,7 +465,7 @@ class CodexServerAgent:
             thread_resp = await _send_and_wait("thread/start", thread_params)
             if "error" in thread_resp:
                 raise AgentExecutionError(
-                    AgentType.CODEX_SERVER.value,
+                    AgentRunnerType.CODEX_SERVER.value,
                     "thread/start failed",
                 )
 
@@ -487,7 +487,7 @@ class CodexServerAgent:
             turn_resp = await _send_and_wait("turn/start", turn_params)
             if "error" in turn_resp:
                 raise AgentExecutionError(
-                    AgentType.CODEX_SERVER.value,
+                    AgentRunnerType.CODEX_SERVER.value,
                     "turn/start failed",
                 )
 
@@ -570,7 +570,7 @@ class CodexServerAgent:
             # First drain any notifications buffered during the request-response phase.
             for msg in notification_buffer:
                 if self._cancelled:
-                    raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+                    raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
                 if await _process_msg(msg):
                     done = True
                     break
@@ -582,7 +582,7 @@ class CodexServerAgent:
                     done = True
 
             if self._cancelled:
-                raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+                raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
 
         except (
             AgentCancelledError,
@@ -593,20 +593,20 @@ class CodexServerAgent:
         ):
             raise
         except asyncio.CancelledError:
-            raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+            raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
         except OSError as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             logger.debug(
                 "CodexServerAgent: OS error after %dms — %s", duration_ms, exc, exc_info=True
             )
             raise AgentNotAvailableError(
-                AgentType.CODEX_SERVER.value,
+                AgentRunnerType.CODEX_SERVER.value,
                 "Transport error communicating with codex app-server",
             ) from exc
         except EOFError as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             raise AgentNotAvailableError(
-                AgentType.CODEX_SERVER.value,
+                AgentRunnerType.CODEX_SERVER.value,
                 "codex app-server process terminated unexpectedly",
             ) from exc
         except Exception as exc:
@@ -619,7 +619,7 @@ class CodexServerAgent:
                 exc_info=True,
             )
             raise AgentExecutionError(
-                AgentType.CODEX_SERVER.value,
+                AgentRunnerType.CODEX_SERVER.value,
                 f"Session failed after {duration_ms}ms: {type(exc).__name__}: {exc}",
             ) from exc
         finally:
@@ -784,17 +784,17 @@ class CodexServerAgent:
             # Distinguish between the two to give a useful error message.
             if shutil.which("codex") is None:
                 raise AgentNotAvailableError(
-                    AgentType.CODEX_SERVER.value,
+                    AgentRunnerType.CODEX_SERVER.value,
                     "codex executable not found; install Codex CLI to use this agent",
                 ) from exc
             raise AgentExecutionError(
-                agent_type=AgentType.CODEX_SERVER.value,
+                agent_type=AgentRunnerType.CODEX_SERVER.value,
                 message=f"Working directory does not exist: {context.working_dir}",
             ) from exc
         except OSError as exc:
             shutil.rmtree(tmp_codex_home, ignore_errors=True)
             raise AgentNotAvailableError(
-                AgentType.CODEX_SERVER.value,
+                AgentRunnerType.CODEX_SERVER.value,
                 "Failed to spawn codex app-server process",
             ) from exc
 
@@ -836,10 +836,10 @@ class CodexServerAgent:
         terminal, status = is_terminal_notification(msg)
         if terminal:
             if status == "interrupted":
-                raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+                raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
             if status in ("systemError", "failed"):
                 raise AgentExecutionError(
-                    AgentType.CODEX_SERVER.value,
+                    AgentRunnerType.CODEX_SERVER.value,
                     f"Codex session ended with status: {status}",
                 )
             # "completed" — normal success; extract usage from the turn payload.

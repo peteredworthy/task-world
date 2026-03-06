@@ -9,7 +9,7 @@ from typing import Any
 from orchestrator.agents.claude_sdk import fetch_claude_models
 from orchestrator.agents.codex_server_common import fetch_codex_models
 from orchestrator.agents.types import AgentConfigField, AgentOption, AgentQuota
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 
 
 @dataclass
@@ -389,7 +389,7 @@ class ToolDetector:
             import openhands.sdk  # noqa: F401  # pyright: ignore[reportUnusedImport,reportMissingImports]
 
             return AgentOption(
-                agent_type=AgentType.OPENHANDS_LOCAL,
+                agent_type=AgentRunnerType.OPENHANDS_LOCAL,
                 name="OpenHands (local)",
                 title="OpenHands Local Agent",
                 description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
@@ -399,7 +399,7 @@ class ToolDetector:
             )
         except ImportError:
             return AgentOption(
-                agent_type=AgentType.OPENHANDS_LOCAL,
+                agent_type=AgentRunnerType.OPENHANDS_LOCAL,
                 name="OpenHands (local)",
                 title="OpenHands Local Agent",
                 description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
@@ -422,7 +422,7 @@ class ToolDetector:
             from openhands.workspace import DockerWorkspace  # noqa: F401  # pyright: ignore[reportUnusedImport,reportMissingImports]
         except ImportError:
             return AgentOption(
-                agent_type=AgentType.OPENHANDS_DOCKER,
+                agent_type=AgentRunnerType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
                 title="OpenHands Docker Agent",
                 description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -435,7 +435,7 @@ class ToolDetector:
         # 2. Check docker CLI in PATH
         if shutil.which("docker") is None:
             return AgentOption(
-                agent_type=AgentType.OPENHANDS_DOCKER,
+                agent_type=AgentRunnerType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
                 title="OpenHands Docker Agent",
                 description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -456,7 +456,7 @@ class ToolDetector:
             returncode = await asyncio.wait_for(proc.wait(), timeout=10)
             if returncode != 0:
                 return AgentOption(
-                    agent_type=AgentType.OPENHANDS_DOCKER,
+                    agent_type=AgentRunnerType.OPENHANDS_DOCKER,
                     name="OpenHands (Docker)",
                     title="OpenHands Docker Agent",
                     description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -467,7 +467,7 @@ class ToolDetector:
                 )
         except (TimeoutError, FileNotFoundError, OSError):
             return AgentOption(
-                agent_type=AgentType.OPENHANDS_DOCKER,
+                agent_type=AgentRunnerType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
                 title="OpenHands Docker Agent",
                 description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -478,7 +478,7 @@ class ToolDetector:
             )
 
         return AgentOption(
-            agent_type=AgentType.OPENHANDS_DOCKER,
+            agent_type=AgentRunnerType.OPENHANDS_DOCKER,
             name="OpenHands (Docker)",
             title="OpenHands Docker Agent",
             description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -515,7 +515,7 @@ class ToolDetector:
             if path is not None:
                 results.append(
                     AgentOption(
-                        agent_type=AgentType.CLI_SUBPROCESS,
+                        agent_type=AgentRunnerType.CLI_SUBPROCESS,
                         name=tool_name,
                         title=f"{tool_name.capitalize()} CLI Agent",
                         description=f"Subprocess agent running the {tool_name} CLI tool. Sends prompts via stdin and reads outputs from stdout.",
@@ -527,7 +527,7 @@ class ToolDetector:
             else:
                 results.append(
                     AgentOption(
-                        agent_type=AgentType.CLI_SUBPROCESS,
+                        agent_type=AgentRunnerType.CLI_SUBPROCESS,
                         name=tool_name,
                         title=f"{tool_name.capitalize()} CLI Agent",
                         description=f"Subprocess agent running the {tool_name} CLI tool. Sends prompts via stdin and reads outputs from stdout.",
@@ -592,7 +592,7 @@ class ToolDetector:
             models = fetch_codex_models()
             config_schema = _codex_server_config_with_models(models)
             return AgentOption(
-                agent_type=AgentType.CODEX_SERVER,
+                agent_type=AgentRunnerType.CODEX_SERVER,
                 name="Codex Server",
                 title="Codex Server (local)",
                 description=(
@@ -605,7 +605,7 @@ class ToolDetector:
                 config_schema=config_schema,
             )
         return AgentOption(
-            agent_type=AgentType.CODEX_SERVER,
+            agent_type=AgentRunnerType.CODEX_SERVER,
             name="Codex Server",
             title="Codex Server (local)",
             description=(
@@ -638,7 +638,7 @@ class ToolDetector:
             models = fetch_claude_models()
             config_schema = _claude_sdk_config_with_models(models)
             return AgentOption(
-                agent_type=AgentType.CLAUDE_SDK,
+                agent_type=AgentRunnerType.CLAUDE_SDK,
                 name="Claude SDK",
                 title="Claude SDK Agent",
                 description=(
@@ -652,7 +652,7 @@ class ToolDetector:
             )
         except ImportError:
             return AgentOption(
-                agent_type=AgentType.CLAUDE_SDK,
+                agent_type=AgentRunnerType.CLAUDE_SDK,
                 name="Claude SDK",
                 title="Claude SDK Agent",
                 description=(
@@ -669,7 +669,7 @@ class ToolDetector:
     def _detect_user_managed(self) -> AgentOption:
         """User Managed is always available for external agent connections."""
         return AgentOption(
-            agent_type=AgentType.USER_MANAGED,
+            agent_type=AgentRunnerType.USER_MANAGED,
             name="User Managed",
             title="User Managed Agent",
             description="Passive agent that waits for external actors (humans or third-party tools) to complete work via REST API or MCP.",
@@ -679,13 +679,13 @@ class ToolDetector:
         )
 
 
-# Mapping from AgentType to the set of valid config field names.
+# Mapping from AgentRunnerType to the set of valid config field names.
 # Used by the API layer to reject unknown agent_config keys at creation time.
-AGENT_CONFIG_FIELDS: dict[AgentType, set[str]] = {
-    AgentType.OPENHANDS_LOCAL: {f.name for f in _OPENHANDS_LOCAL_CONFIG},
-    AgentType.OPENHANDS_DOCKER: {f.name for f in _OPENHANDS_DOCKER_CONFIG},
-    AgentType.CLI_SUBPROCESS: {f.name for f in _CLI_SUBPROCESS_CONFIG},
-    AgentType.USER_MANAGED: {f.name for f in _USER_MANAGED_CONFIG},
-    AgentType.CODEX_SERVER: {f.name for f in _CODEX_SERVER_CONFIG},
-    AgentType.CLAUDE_SDK: {f.name for f in _CLAUDE_SDK_CONFIG},
+AGENT_CONFIG_FIELDS: dict[AgentRunnerType, set[str]] = {
+    AgentRunnerType.OPENHANDS_LOCAL: {f.name for f in _OPENHANDS_LOCAL_CONFIG},
+    AgentRunnerType.OPENHANDS_DOCKER: {f.name for f in _OPENHANDS_DOCKER_CONFIG},
+    AgentRunnerType.CLI_SUBPROCESS: {f.name for f in _CLI_SUBPROCESS_CONFIG},
+    AgentRunnerType.USER_MANAGED: {f.name for f in _USER_MANAGED_CONFIG},
+    AgentRunnerType.CODEX_SERVER: {f.name for f in _CODEX_SERVER_CONFIG},
+    AgentRunnerType.CLAUDE_SDK: {f.name for f in _CLAUDE_SDK_CONFIG},
 }

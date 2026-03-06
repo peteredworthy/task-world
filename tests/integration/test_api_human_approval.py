@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.agents.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import AgentType, GateType, RoutineSource, TaskStatus
+from orchestrator.config.enums import AgentRunnerType, GateType, RoutineSource, TaskStatus
 from orchestrator.db.connection import init_db
 from orchestrator.config.models import (
     GateConfig,
@@ -359,7 +359,7 @@ async def test_executor_stops_at_human_approval_gate(
     """Executor's _find_next_task returns blocked when step has unsatisfied human_approval gate."""
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
 
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=False,
     )
@@ -417,7 +417,7 @@ async def test_executor_stops_at_human_approval_gate(
             routine_source=RoutineSource.EMBEDDED,
         )
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         run = await service.create_run(run)
         await session.commit()
 
@@ -444,7 +444,7 @@ async def test_executor_proceeds_after_gate_approved(
     """After human_approval gate is satisfied, _find_next_task returns the task."""
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
 
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=False,
     )
@@ -502,7 +502,7 @@ async def test_executor_proceeds_after_gate_approved(
             routine_source=RoutineSource.EMBEDDED,
         )
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         run = await service.create_run(run)
         await session.commit()
 
@@ -615,7 +615,7 @@ async def test_step_without_gate_not_blocked(
     """Steps without a human_approval gate should not be blocked."""
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
 
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=False,
     )
@@ -668,7 +668,7 @@ async def test_step_without_gate_not_blocked(
             routine_source=RoutineSource.EMBEDDED,
         )
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         run = await service.create_run(run)
         await session.commit()
 
@@ -732,7 +732,7 @@ async def test_executor_does_not_start_future_step_when_current_waiting_for_user
     run.steps[1].tasks[0].status = TaskStatus.PENDING
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
-    executor = AgentExecutor(session_factory=session_factory, spawn_agents=False)
+    executor = AgentRunnerExecutor(session_factory=session_factory, spawn_agents=False)
     task, blocked = executor._find_next_task(run)
 
     assert task is None

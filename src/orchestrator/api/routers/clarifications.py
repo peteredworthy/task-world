@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 import logging
 
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.agents.executor import AgentRunnerExecutor
 from orchestrator.api.deps import get_agent_executor, get_run_repository, get_workflow_service
 from orchestrator.api.schemas.clarifications import (
     ClarificationAnswerSchema,
@@ -255,7 +255,7 @@ async def respond_to_clarification(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     user: Annotated[str, Depends(get_current_user)],
     repo: Annotated[RunRepository, Depends(get_run_repository)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
 ) -> TransitionResponse:
     """Human submits answers to clarification questions.
 

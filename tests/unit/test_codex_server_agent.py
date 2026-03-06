@@ -14,7 +14,7 @@ from orchestrator.agents.errors import (
     AgentNotAvailableError,
 )
 from orchestrator.agents.types import ExecutionContext
-from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 
 
 # ---------------------------------------------------------------------------
@@ -61,13 +61,13 @@ class _FailingTransport:
 
 
 # ---------------------------------------------------------------------------
-# AgentInfo
+# AgentRunnerInfo
 # ---------------------------------------------------------------------------
 
 
 def test_agent_info_type() -> None:
     agent = CodexServerAgent()
-    assert agent.info.agent_type == AgentType.CODEX_SERVER
+    assert agent.info.agent_type == AgentRunnerType.CODEX_SERVER
 
 
 def test_agent_info_name() -> None:
@@ -433,7 +433,7 @@ async def test_execute_startup_failure_raises_agent_not_available_error() -> Non
         )
     # Must be the typed agent error, never a bare RuntimeError or similar.
     assert isinstance(exc_info.value, AgentNotAvailableError)
-    assert exc_info.value.agent_type == AgentType.CODEX_SERVER.value
+    assert exc_info.value.agent_type == AgentRunnerType.CODEX_SERVER.value
 
 
 async def test_execute_cancelled_before_start_raises_agent_cancelled_error() -> None:
@@ -446,7 +446,7 @@ async def test_execute_cancelled_before_start_raises_agent_cancelled_error() -> 
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentType.CODEX_SERVER.value
+    assert exc_info.value.agent_type == AgentRunnerType.CODEX_SERVER.value
 
 
 async def test_execute_agent_not_available_error_does_not_leak_internal_details() -> None:
@@ -464,7 +464,7 @@ async def test_execute_agent_not_available_error_does_not_leak_internal_details(
 
     assert exc is not None
     # The error type is explicit and structured — it carries agent_type as a field.
-    assert exc.agent_type == AgentType.CODEX_SERVER.value
+    assert exc.agent_type == AgentRunnerType.CODEX_SERVER.value
 
 
 class _GenericFailingCodexServerAgent(CodexServerAgent):
@@ -490,7 +490,7 @@ class _GenericFailingCodexServerAgent(CodexServerAgent):
         import time
 
         if self._cancelled:
-            raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+            raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
 
         start_ms = int(time.monotonic() * 1000)
         try:
@@ -499,7 +499,7 @@ class _GenericFailingCodexServerAgent(CodexServerAgent):
         except (AgentCancelledError, AgentNotAvailableError):
             raise
         except asyncio.CancelledError:
-            raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+            raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
         except Exception as exc:
             import logging
 
@@ -511,7 +511,7 @@ class _GenericFailingCodexServerAgent(CodexServerAgent):
                 exc_info=True,
             )
             raise AgentExecutionError(
-                AgentType.CODEX_SERVER.value,
+                AgentRunnerType.CODEX_SERVER.value,
                 f"Session failed after {duration_ms}ms",
             ) from exc
 
@@ -525,7 +525,7 @@ async def test_execute_generic_failure_raises_agent_execution_error() -> None:
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentType.CODEX_SERVER.value
+    assert exc_info.value.agent_type == AgentRunnerType.CODEX_SERVER.value
 
 
 async def test_execute_generic_failure_does_not_leak_secret_in_error_message() -> None:
@@ -556,7 +556,7 @@ async def test_execute_asyncio_cancelled_error_maps_to_agent_cancelled_error() -
             on_agent_metadata: object = None,
         ) -> object:
             if self._cancelled:
-                raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+                raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
 
             import time
 
@@ -567,11 +567,11 @@ async def test_execute_asyncio_cancelled_error_maps_to_agent_cancelled_error() -
             except (AgentCancelledError, AgentNotAvailableError):
                 raise
             except asyncio.CancelledError:
-                raise AgentCancelledError(AgentType.CODEX_SERVER.value)
+                raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
             except Exception as exc:
                 duration_ms = int(time.monotonic() * 1000) - start_ms
                 raise AgentExecutionError(
-                    AgentType.CODEX_SERVER.value,
+                    AgentRunnerType.CODEX_SERVER.value,
                     f"Session failed after {duration_ms}ms",
                 ) from exc
 
@@ -582,4 +582,4 @@ async def test_execute_asyncio_cancelled_error_maps_to_agent_cancelled_error() -
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentType.CODEX_SERVER.value
+    assert exc_info.value.agent_type == AgentRunnerType.CODEX_SERVER.value

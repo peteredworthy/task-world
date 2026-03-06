@@ -1,4 +1,4 @@
-"""Tests for the pre-run health check in AgentExecutor.
+"""Tests for the pre-run health check in AgentRunnerExecutor.
 
 Covers four scenarios:
 1. Failing project tests → task start blocked (run paused with health_check_failed)
@@ -17,9 +17,9 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.agents.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import AgentType, RoutineSource, RunStatus
+from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
 from orchestrator.db.connection import init_db
 from orchestrator.db.repositories import RunRepository
 
@@ -80,13 +80,13 @@ async def _make_run(
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
         run.worktree_path = worktree_path
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         run.agent_config = {"command": agent_command}
 
         run = await service.create_run(run)
         run_id = run.id
 
-        executor = AgentExecutor(
+        executor = AgentRunnerExecutor(
             session_factory=session_factory,
             spawn_agents=True,
         )
@@ -194,7 +194,7 @@ async def test_null_test_command_skips_health_check(
     task_world.mkdir()
     (task_world / "config.yaml").write_text("test_command: null\n")
 
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=False,
     )
@@ -222,7 +222,7 @@ async def test_no_config_file_uses_default_command(
     # Ensure no config file exists
     assert not (tmp_path / ".task-world" / "config.yaml").exists()
 
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=False,
     )

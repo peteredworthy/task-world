@@ -23,7 +23,13 @@ from orchestrator.agents.errors import (
     AgentNotAvailableError,
 )
 from orchestrator.agents.types import ExecutionContext, ExecutionMetrics
-from orchestrator.config.enums import AgentType, ChecklistStatus, GateType, RunStatus, TaskStatus
+from orchestrator.config.enums import (
+    AgentRunnerType,
+    ChecklistStatus,
+    GateType,
+    RunStatus,
+    TaskStatus,
+)
 from orchestrator.workflow.events import (
     AgentErrorEvent,
     AgentOutputEvent,
@@ -59,7 +65,7 @@ _LLM_CONFIG_KEYS = {
 }
 
 
-class AgentExecutor:
+class AgentRunnerExecutor:
     """Executes agents for runs in the background.
 
     This class is responsible for:
@@ -286,18 +292,18 @@ class AgentExecutor:
             return run
 
         # For user-managed agents, don't spawn anything - external agent will poll
-        if run.agent_type == AgentType.USER_MANAGED:
+        if run.agent_type == AgentRunnerType.USER_MANAGED:
             logger.info(f"Run {run_id}: user-managed agent, waiting for external connection")
             return run
 
         # For managed agents, spawn in background
         agent_type = run.agent_type
         if agent_type in (
-            AgentType.CLI_SUBPROCESS,
-            AgentType.OPENHANDS_LOCAL,
-            AgentType.OPENHANDS_DOCKER,
-            AgentType.CODEX_SERVER,
-            AgentType.CLAUDE_SDK,
+            AgentRunnerType.CLI_SUBPROCESS,
+            AgentRunnerType.OPENHANDS_LOCAL,
+            AgentRunnerType.OPENHANDS_DOCKER,
+            AgentRunnerType.CODEX_SERVER,
+            AgentRunnerType.CLAUDE_SDK,
         ):
             assert agent_type is not None  # Type narrowing for pyright
             # Clear stale PID so the health monitor treats the agent as
@@ -314,7 +320,7 @@ class AgentExecutor:
         return run
 
     async def _monitor_agent_health(
-        self, run_id: str, agent_type: AgentType, check_interval: float = 30.0
+        self, run_id: str, agent_type: AgentRunnerType, check_interval: float = 30.0
     ) -> None:
         """Background task to periodically check if the agent is still alive.
 
@@ -365,7 +371,7 @@ class AgentExecutor:
             logger.warning(f"Run {run_id}: unexpected error in agent health monitor: {e}")
 
     async def _run_agent_loop(
-        self, run_id: str, agent_type: AgentType, agent_config: dict[str, Any]
+        self, run_id: str, agent_type: AgentRunnerType, agent_config: dict[str, Any]
     ) -> None:
         """Main loop that runs agent for all tasks in a run.
 
@@ -667,7 +673,7 @@ class AgentExecutor:
         run: Run,
         task_state: TaskState,
         service: WorkflowService,
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         summary_cache: SummaryCache | None = None,
     ) -> None:
@@ -929,7 +935,7 @@ class AgentExecutor:
         task_state: TaskState,
         task_config: Any,  # TaskConfig from config/models.py
         service: WorkflowService,
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         step_id: str | None = None,
         available_tools: list[str] | None = None,
@@ -1140,7 +1146,7 @@ class AgentExecutor:
         run: Run,
         task_state: TaskState,
         service: WorkflowService,
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         step_id: str | None = None,
         available_tools: list[str] | None = None,
@@ -1485,7 +1491,7 @@ class AgentExecutor:
 
     def _prepare_codex_config(
         self,
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
     ) -> tuple[dict[str, Any], str | None]:
         """Apply the deterministic recovery rule for Codex agents.
@@ -1514,7 +1520,7 @@ class AgentExecutor:
             keys stripped) and ``stale_reason`` is ``None`` when the session
             is healthy or the agent type is not Codex.
         """
-        if agent_type == AgentType.CODEX_SERVER:
+        if agent_type == AgentRunnerType.CODEX_SERVER:
             pid_raw = agent_config.get("pid")
             if pid_raw is None:
                 # No PID stored — no prior session to resume or discard.
@@ -1553,13 +1559,13 @@ class AgentExecutor:
 
     def _create_agent(
         self,
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         run_id: str | None = None,
         phase: str = "building",
     ) -> CLIAgent:
         """Create the appropriate agent based on run configuration."""
-        if agent_type == AgentType.CLI_SUBPROCESS:
+        if agent_type == AgentRunnerType.CLI_SUBPROCESS:
             from orchestrator.agents.parsers.claude_parser import ClaudeStreamParser
             from orchestrator.agents.parsers.codex_parser import CodexStreamParser
 
@@ -1606,7 +1612,7 @@ class AgentExecutor:
                 phase=phase,
             )
 
-        elif agent_type == AgentType.OPENHANDS_LOCAL:
+        elif agent_type == AgentRunnerType.OPENHANDS_LOCAL:
             # Import here to avoid circular imports (optional dependency)
             from orchestrator.agents.openhands import OpenHandsAgent
 
@@ -1624,7 +1630,7 @@ class AgentExecutor:
                 llm_config=llm_config,
             )  # type: ignore[return-value]
 
-        elif agent_type == AgentType.OPENHANDS_DOCKER:
+        elif agent_type == AgentRunnerType.OPENHANDS_DOCKER:
             # Import here to avoid circular imports (optional dependency)
             from orchestrator.agents.openhands_docker import DockerOpenHandsAgent
 
@@ -1646,7 +1652,7 @@ class AgentExecutor:
 
             return DockerOpenHandsAgent(**kwargs)  # type: ignore[return-value]
 
-        elif agent_type == AgentType.CODEX_SERVER:
+        elif agent_type == AgentRunnerType.CODEX_SERVER:
             from orchestrator.agents.codex_server import CodexServerAgent
 
             model = agent_config.get("model")
@@ -1661,7 +1667,7 @@ class AgentExecutor:
                 restrictions=str(restrictions),
             )
 
-        elif agent_type == AgentType.CLAUDE_SDK:
+        elif agent_type == AgentRunnerType.CLAUDE_SDK:
             from orchestrator.agents.claude_sdk import ClaudeSDKAgent
 
             model = agent_config.get("model", "claude-sonnet-4-5")
@@ -1685,7 +1691,7 @@ class AgentExecutor:
             )
 
     def spawn_for_run(
-        self, run_id: str, agent_type: AgentType, agent_config: dict[str, Any]
+        self, run_id: str, agent_type: AgentRunnerType, agent_config: dict[str, Any]
     ) -> bool:
         """Spawn an agent for a run in the background.
 
@@ -1703,11 +1709,11 @@ class AgentExecutor:
             return False
 
         if agent_type not in (
-            AgentType.CLI_SUBPROCESS,
-            AgentType.OPENHANDS_LOCAL,
-            AgentType.OPENHANDS_DOCKER,
-            AgentType.CODEX_SERVER,
-            AgentType.CLAUDE_SDK,
+            AgentRunnerType.CLI_SUBPROCESS,
+            AgentRunnerType.OPENHANDS_LOCAL,
+            AgentRunnerType.OPENHANDS_DOCKER,
+            AgentRunnerType.CODEX_SERVER,
+            AgentRunnerType.CLAUDE_SDK,
         ):
             return False
 

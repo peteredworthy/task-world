@@ -1,4 +1,4 @@
-"""Integration tests for AgentExecutor error handling."""
+"""Integration tests for AgentRunnerExecutor error handling."""
 
 import asyncio
 from collections.abc import AsyncGenerator
@@ -8,9 +8,9 @@ import pytest
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.agents.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import AgentType, RoutineSource, RunStatus
+from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
 from orchestrator.db.connection import init_db
 from orchestrator.db.repositories import RunRepository
 from orchestrator.workflow.service import WorkflowService
@@ -63,7 +63,7 @@ async def test_executor_pauses_run_on_agent_not_available(
 ) -> None:
     """AgentNotAvailableError should pause the run."""
     # Create executor with spawning enabled
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
@@ -100,7 +100,7 @@ async def test_executor_pauses_run_on_agent_not_available(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         run.agent_config = {"command": "nonexistent_command_xyz_12345"}
 
         run = await service.create_run(run)
@@ -132,7 +132,7 @@ async def test_executor_pauses_run_on_agent_execution_error(
 ) -> None:
     """AgentExecutionError should pause the run."""
     # Create executor with spawning enabled
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
@@ -173,7 +173,7 @@ async def test_executor_pauses_run_on_agent_execution_error(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         # This command will hang and be killed by the nudger
         run.agent_config = {
             "command": "python3",
@@ -194,7 +194,7 @@ async def test_executor_pauses_run_on_agent_execution_error(
             kill_after_seconds=1,
         )
     )
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         global_config=global_config,
         spawn_agents=True,
@@ -242,7 +242,7 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     """Non-zero subprocess exit should pause the run instead of retry-looping."""
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
@@ -277,7 +277,7 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         run.agent_config = {
             "command": "python3",
             "args": ["-c", "import sys; sys.exit(1)"],
@@ -315,7 +315,7 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
     the run so the user can investigate.
     """
     # Create executor with spawning enabled
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
@@ -352,7 +352,7 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         # This command will succeed but doesn't mark checklist items as done
         run.agent_config = {"command": "echo", "args": ["hello"]}
 
@@ -387,7 +387,7 @@ async def test_executor_persists_builder_prompt_before_execution(
 ) -> None:
     """Builder prompt should be persisted before agent execution starts."""
     # Create executor with spawning enabled
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
@@ -425,7 +425,7 @@ async def test_executor_persists_builder_prompt_before_execution(
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
         run.worktree_path = str(tmp_path)  # Set worktree for CLI agent to work
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         # Use a command that exits immediately with error
         run.agent_config = {"command": "false"}
         # Skip pre-run health check in tests
@@ -475,7 +475,7 @@ async def test_agent_metadata_persisted_immediately(
 ) -> None:
     """Agent metadata (PID) should be persisted immediately when subprocess is created."""
     # Create executor with spawning enabled
-    executor = AgentExecutor(
+    executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
@@ -512,7 +512,7 @@ async def test_agent_metadata_persisted_immediately(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         # Use a command that will sleep briefly so metadata is persisted before completion
         run.agent_config = {"command": "sleep", "args": ["0.1"]}
         # Set worktree path so agent can execute
@@ -556,7 +556,7 @@ async def test_agent_death_detection_on_startup(
 ) -> None:
     """On startup recovery, runs with dead agents should be paused."""
     # First, create an executor and start a run, but don't wait for it to complete
-    executor1 = AgentExecutor(
+    executor1 = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
@@ -593,7 +593,7 @@ async def test_agent_death_detection_on_startup(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentType.CLI_SUBPROCESS
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
         # Command that fails immediately
         run.agent_config = {"command": "false"}
         # Set worktree path so agent can execute

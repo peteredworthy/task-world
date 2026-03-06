@@ -49,7 +49,7 @@ from orchestrator.agents.openhands_common import (
     register_builtin_tools,
 )
 from orchestrator.agents.types import (
-    AgentInfo,
+    AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
@@ -61,7 +61,7 @@ from orchestrator.agents.types import (
     QuotaBucket,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation.local import LocalConversation as _LocalConversation  # pyright: ignore[reportMissingImports,reportUnknownVariableType]
@@ -454,9 +454,9 @@ class OpenHandsAgent:
         self._conversation: _LocalConversation | None = None  # pyright: ignore[reportUnknownVariableType]
 
     @property
-    def info(self) -> AgentInfo:
-        return AgentInfo(
-            agent_type=AgentType.OPENHANDS_LOCAL,
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_type=AgentRunnerType.OPENHANDS_LOCAL,
             name="OpenHands",
             version=None,
         )

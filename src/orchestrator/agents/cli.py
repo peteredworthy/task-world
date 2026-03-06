@@ -27,7 +27,7 @@ from orchestrator.agents.errors import (
 from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.agents.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
 from orchestrator.agents.types import (
-    AgentInfo,
+    AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
@@ -40,7 +40,7 @@ from orchestrator.agents.types import (
     QuotaBucket,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 
 if TYPE_CHECKING:
     from orchestrator.agents.monitor import AgentMonitor
@@ -108,9 +108,9 @@ class CLIAgent:
         self._run_id = run_id
 
     @property
-    def info(self) -> AgentInfo:
-        return AgentInfo(
-            agent_type=AgentType.CLI_SUBPROCESS,
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_type=AgentRunnerType.CLI_SUBPROCESS,
             name=self._command,
         )
 
@@ -482,7 +482,7 @@ class CLIAgent:
                             try:
                                 await self._agent_monitor.on_agent_died(
                                     run_id=self._run_id,
-                                    agent_type=AgentType.CLI_SUBPROCESS,
+                                    agent_type=AgentRunnerType.CLI_SUBPROCESS,
                                     exit_code=None,
                                     reason=f"agent_stuck_killed_after_{nudger.nudge_count}_nudges",
                                 )
@@ -516,7 +516,7 @@ class CLIAgent:
                 try:
                     await self._agent_monitor.on_agent_died(
                         run_id=self._run_id,
-                        agent_type=AgentType.CLI_SUBPROCESS,
+                        agent_type=AgentRunnerType.CLI_SUBPROCESS,
                         exit_code=self._process.returncode,
                         reason="agent_exit_failure",
                     )
@@ -567,7 +567,7 @@ class CLIAgent:
                     exit_code = self._process.returncode
                     await self._agent_monitor.on_agent_died(
                         run_id=self._run_id,
-                        agent_type=AgentType.CLI_SUBPROCESS,
+                        agent_type=AgentRunnerType.CLI_SUBPROCESS,
                         exit_code=exit_code,
                         reason="agent_execution_error",
                     )

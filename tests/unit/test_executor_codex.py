@@ -1,7 +1,7 @@
-"""Unit tests for AgentExecutor._create_agent — Codex agent dispatch.
+"""Unit tests for AgentRunnerExecutor._create_agent — Codex agent dispatch.
 
-Verifies that ``AgentExecutor._create_agent`` correctly instantiates
-``CodexServerAgent`` (local) from its ``AgentType`` value, and that config
+Verifies that ``AgentRunnerExecutor._create_agent`` correctly instantiates
+``CodexServerAgent`` (local) from its ``AgentRunnerType`` value, and that config
 values are forwarded to the agent as expected.
 
 These tests exercise the executor dispatch path without requiring a database,
@@ -14,8 +14,8 @@ import pytest
 
 from orchestrator.agents.codex_server import CodexServerAgent
 from orchestrator.agents.errors import AgentNotAvailableError
-from orchestrator.agents.executor import AgentExecutor
-from orchestrator.config.enums import AgentType
+from orchestrator.agents.executor import AgentRunnerExecutor
+from orchestrator.config.enums import AgentRunnerType
 
 
 # ---------------------------------------------------------------------------
@@ -23,9 +23,9 @@ from orchestrator.config.enums import AgentType
 # ---------------------------------------------------------------------------
 
 
-def _make_executor() -> AgentExecutor:
-    """Create an AgentExecutor with no DB session and agent spawning disabled."""
-    return AgentExecutor(session_factory=None, spawn_agents=False)  # type: ignore[arg-type]
+def _make_executor() -> AgentRunnerExecutor:
+    """Create an AgentRunnerExecutor with no DB session and agent spawning disabled."""
+    return AgentRunnerExecutor(session_factory=None, spawn_agents=False)  # type: ignore[arg-type]
 
 
 # ===========================================================================
@@ -36,7 +36,7 @@ def _make_executor() -> AgentExecutor:
 def test_executor_codex_create_agent_codex_server_returns_correct_type() -> None:
     """_create_agent with CODEX_SERVER returns a CodexServerAgent instance."""
     executor = _make_executor()
-    agent = executor._create_agent(AgentType.CODEX_SERVER, {})
+    agent = executor._create_agent(AgentRunnerType.CODEX_SERVER, {})
     assert isinstance(agent, CodexServerAgent)
 
 
@@ -44,7 +44,7 @@ def test_executor_codex_create_agent_codex_server_model_forwarded() -> None:
     """model in agent_config is forwarded to CodexServerAgent."""
     executor = _make_executor()
     agent = executor._create_agent(
-        AgentType.CODEX_SERVER,
+        AgentRunnerType.CODEX_SERVER,
         {"model": "o3"},
     )
     assert isinstance(agent, CodexServerAgent)
@@ -54,7 +54,7 @@ def test_executor_codex_create_agent_codex_server_model_forwarded() -> None:
 def test_executor_codex_create_agent_codex_server_model_none_when_absent() -> None:
     """model defaults to None when not present in agent_config."""
     executor = _make_executor()
-    agent = executor._create_agent(AgentType.CODEX_SERVER, {})
+    agent = executor._create_agent(AgentRunnerType.CODEX_SERVER, {})
     assert isinstance(agent, CodexServerAgent)
     assert agent._model is None
 
@@ -62,7 +62,7 @@ def test_executor_codex_create_agent_codex_server_model_none_when_absent() -> No
 def test_executor_codex_create_agent_codex_server_callback_channel_default() -> None:
     """callback_channel defaults to 'rest' for CodexServerAgent."""
     executor = _make_executor()
-    agent = executor._create_agent(AgentType.CODEX_SERVER, {})
+    agent = executor._create_agent(AgentRunnerType.CODEX_SERVER, {})
     assert isinstance(agent, CodexServerAgent)
     assert agent._callback_channel == "rest"
 
@@ -71,7 +71,7 @@ def test_executor_codex_create_agent_codex_server_callback_channel_mcp() -> None
     """callback_channel='mcp' is forwarded to CodexServerAgent."""
     executor = _make_executor()
     agent = executor._create_agent(
-        AgentType.CODEX_SERVER,
+        AgentRunnerType.CODEX_SERVER,
         {"callback_channel": "mcp"},
     )
     assert isinstance(agent, CodexServerAgent)
@@ -82,7 +82,7 @@ def test_executor_codex_create_agent_codex_server_api_key_forwarded() -> None:
     """api_key in agent_config is forwarded to CodexServerAgent."""
     executor = _make_executor()
     agent = executor._create_agent(
-        AgentType.CODEX_SERVER,
+        AgentRunnerType.CODEX_SERVER,
         {"api_key": "local-key"},  # pragma: allowlist secret
     )
     assert isinstance(agent, CodexServerAgent)
@@ -90,11 +90,11 @@ def test_executor_codex_create_agent_codex_server_api_key_forwarded() -> None:
 
 
 def test_executor_codex_create_agent_codex_server_agent_type_is_codex_server() -> None:
-    """CodexServerAgent.info.agent_type is AgentType.CODEX_SERVER."""
+    """CodexServerAgent.info.agent_type is AgentRunnerType.CODEX_SERVER."""
     executor = _make_executor()
-    agent = executor._create_agent(AgentType.CODEX_SERVER, {})
+    agent = executor._create_agent(AgentRunnerType.CODEX_SERVER, {})
     assert isinstance(agent, CodexServerAgent)
-    assert agent.info.agent_type == AgentType.CODEX_SERVER
+    assert agent.info.agent_type == AgentRunnerType.CODEX_SERVER
 
 
 # ===========================================================================
@@ -106,4 +106,4 @@ def test_executor_codex_create_agent_unsupported_type_raises() -> None:
     """_create_agent raises AgentNotAvailableError for unsupported agent types."""
     executor = _make_executor()
     with pytest.raises(AgentNotAvailableError):
-        executor._create_agent(AgentType.USER_MANAGED, {})
+        executor._create_agent(AgentRunnerType.USER_MANAGED, {})

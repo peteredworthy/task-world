@@ -18,7 +18,7 @@ import asyncio
 
 from orchestrator.agents.errors import AgentCancelledError, AgentTimeoutError
 from orchestrator.agents.types import (
-    AgentInfo,
+    AgentRunnerInfo,
     ChecklistUpdateCallback,
     EscalationCallback,
     ExecutionContext,
@@ -28,7 +28,7 @@ from orchestrator.agents.types import (
     LogLineCallback,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 from orchestrator.workflow.service import WorkflowService
 
 
@@ -57,9 +57,9 @@ class UserManagedAgent:
         self._cancelled = False
 
     @property
-    def info(self) -> AgentInfo:
-        return AgentInfo(
-            agent_type=AgentType.USER_MANAGED,
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_type=AgentRunnerType.USER_MANAGED,
             name="User Managed",
         )
 

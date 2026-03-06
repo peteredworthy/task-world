@@ -7,10 +7,10 @@ from pydantic import Field, field_validator, model_validator
 
 from orchestrator.api.schemas.base import ApiModel
 
-from orchestrator.config.enums import AgentType, MergeStrategy
+from orchestrator.config.enums import AgentRunnerType, MergeStrategy
 
 
-_VALID_AGENT_TYPES = [e.value for e in AgentType]
+_VALID_AGENT_TYPES = [e.value for e in AgentRunnerType]
 _VALID_MERGE_STRATEGIES = [e.value for e in MergeStrategy]
 
 
@@ -269,7 +269,7 @@ class MergeBackResponse(ApiModel):
 
 
 def get_agent_display_name(
-    agent_type: AgentType | None, agent_config: dict[str, Any] | None = None
+    agent_type: AgentRunnerType | None, agent_config: dict[str, Any] | None = None
 ) -> str:
     """Get human-readable display name for an agent type.
 
@@ -283,21 +283,21 @@ def get_agent_display_name(
         return "No Agent"
 
     display_map = {
-        AgentType.OPENHANDS_LOCAL: "OpenHands",
-        AgentType.OPENHANDS_DOCKER: "OpenHands Docker",
-        AgentType.CLI_SUBPROCESS: "Claude CLI",
-        AgentType.USER_MANAGED: "External Agent",
-        AgentType.CODEX_SERVER: "Codex Server",
+        AgentRunnerType.OPENHANDS_LOCAL: "OpenHands",
+        AgentRunnerType.OPENHANDS_DOCKER: "OpenHands Docker",
+        AgentRunnerType.CLI_SUBPROCESS: "Claude CLI",
+        AgentRunnerType.USER_MANAGED: "External Agent",
+        AgentRunnerType.CODEX_SERVER: "Codex Server",
     }
     display_name = display_map.get(agent_type, "Unknown Agent")
-    if agent_type == AgentType.CLI_SUBPROCESS:
+    if agent_type == AgentRunnerType.CLI_SUBPROCESS:
         command = (agent_config or {}).get("command")
         if isinstance(command, str) and command.strip():
             return f"{command} CLI"
     return display_name
 
 
-def get_agent_icon(agent_type: AgentType | None) -> str:
+def get_agent_icon(agent_type: AgentRunnerType | None) -> str:
     """Get icon key for an agent type.
 
     Args:
@@ -310,11 +310,11 @@ def get_agent_icon(agent_type: AgentType | None) -> str:
         return "none"
 
     icon_map = {
-        AgentType.OPENHANDS_LOCAL: "openhands",
-        AgentType.OPENHANDS_DOCKER: "docker",
-        AgentType.CLI_SUBPROCESS: "cli",
-        AgentType.USER_MANAGED: "external",
-        AgentType.CODEX_SERVER: "codex",
+        AgentRunnerType.OPENHANDS_LOCAL: "openhands",
+        AgentRunnerType.OPENHANDS_DOCKER: "docker",
+        AgentRunnerType.CLI_SUBPROCESS: "cli",
+        AgentRunnerType.USER_MANAGED: "external",
+        AgentRunnerType.CODEX_SERVER: "codex",
     }
 
     return icon_map.get(agent_type, "unknown")

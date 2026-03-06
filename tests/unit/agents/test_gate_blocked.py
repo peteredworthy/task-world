@@ -8,9 +8,9 @@ from typing import Any
 import pytest
 
 from orchestrator.agents.cli import CLIAgent
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.agents.executor import AgentRunnerExecutor
 from orchestrator.agents.types import ExecutionContext
-from orchestrator.config.enums import AgentType, ChecklistStatus, TaskStatus
+from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, TaskStatus
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.errors import GateBlockedError
@@ -56,14 +56,14 @@ class _GateBlockedAgent:
         raise GateBlockedError("checklist", ["R1"])
 
 
-class _TestExecutor(AgentExecutor):
+class _TestExecutor(AgentRunnerExecutor):
     def __init__(self, agent: _GateBlockedAgent, monitor: _FakeAgentMonitor) -> None:
         super().__init__(session_factory=None, spawn_agents=False, agent_monitor=monitor)
         self._agent = agent
 
     def _create_agent(
         self,
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         run_id: str | None = None,
         phase: str = "building",
@@ -159,7 +159,7 @@ async def test_execute_task_gate_blocked_does_not_call_on_agent_died(tmp_path: P
         run=run,
         task_state=task_state,
         service=service,
-        agent_type=AgentType.CLI_SUBPROCESS,
+        agent_type=AgentRunnerType.CLI_SUBPROCESS,
         agent_config={},
     )
 

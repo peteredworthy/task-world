@@ -1,4 +1,4 @@
-"""Unit tests for Codex agent lifecycle control paths in AgentExecutor.
+"""Unit tests for Codex agent lifecycle control paths in AgentRunnerExecutor.
 
 Covers:
 - ``_prepare_codex_config``: deterministic recovery rule for session health.
@@ -14,9 +14,9 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.agents.executor import AgentRunnerExecutor
 from orchestrator.agents.monitor import AgentMonitor
-from orchestrator.config.enums import AgentType, RunStatus
+from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
@@ -43,9 +43,9 @@ async def db_setup() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
 # ---------------------------------------------------------------------------
 
 
-def _make_executor(global_config: GlobalConfig | None = None) -> AgentExecutor:
-    """Return an AgentExecutor with no real DB session and spawning disabled."""
-    return AgentExecutor(
+def _make_executor(global_config: GlobalConfig | None = None) -> AgentRunnerExecutor:
+    """Return an AgentRunnerExecutor with no real DB session and spawning disabled."""
+    return AgentRunnerExecutor(
         session_factory=None,  # type: ignore[arg-type]
         global_config=global_config,
         spawn_agents=False,
@@ -54,7 +54,7 @@ def _make_executor(global_config: GlobalConfig | None = None) -> AgentExecutor:
 
 def _create_test_run(
     run_id: str = "test-run",
-    agent_type: AgentType | None = None,
+    agent_type: AgentRunnerType | None = None,
     agent_config: dict | None = None,
 ) -> Run:
     routine = RoutineConfig(
@@ -107,7 +107,9 @@ class TestPrepareCodexConfigLocal:
         """No PID in config → nothing to classify, config returned unchanged."""
         executor = _make_executor()
         config = {"endpoint": "http://localhost:9000", "model": "o3"}
-        result_config, stale_reason = executor._prepare_codex_config(AgentType.CODEX_SERVER, config)
+        result_config, stale_reason = executor._prepare_codex_config(
+            AgentRunnerType.CODEX_SERVER, config
+        )
         assert stale_reason is None
         assert result_config is config  # same object
 
@@ -115,7 +117,9 @@ class TestPrepareCodexConfigLocal:
         """PID of the current (alive) process → healthy, config unchanged."""
         executor = _make_executor()
         config = {"pid": os.getpid()}
-        result_config, stale_reason = executor._prepare_codex_config(AgentType.CODEX_SERVER, config)
+        result_config, stale_reason = executor._prepare_codex_config(
+            AgentRunnerType.CODEX_SERVER, config
+        )
         assert stale_reason is None
         assert result_config["pid"] == os.getpid()
 
@@ -123,7 +127,9 @@ class TestPrepareCodexConfigLocal:
         """Dead PID → stale; PID key removed; reason returned."""
         executor = _make_executor()
         config = {"pid": 999999, "endpoint": "http://localhost:9000"}
-        result_config, stale_reason = executor._prepare_codex_config(AgentType.CODEX_SERVER, config)
+        result_config, stale_reason = executor._prepare_codex_config(
+            AgentRunnerType.CODEX_SERVER, config
+        )
         assert stale_reason is not None
         assert "pid" not in result_config
         assert "999999" in stale_reason
@@ -133,7 +139,7 @@ class TestPrepareCodexConfigLocal:
         """Stale reason contains 'not_alive' for a dead local process."""
         executor = _make_executor()
         config = {"pid": 999999}
-        _, stale_reason = executor._prepare_codex_config(AgentType.CODEX_SERVER, config)
+        _, stale_reason = executor._prepare_codex_config(AgentRunnerType.CODEX_SERVER, config)
         assert stale_reason is not None
         assert "not_alive" in stale_reason
 
@@ -142,10 +148,10 @@ class TestPrepareCodexConfigLocal:
         executor = _make_executor()
         config = {"pid": os.getpid(), "command": "claude"}
         for agent_type in (
-            AgentType.CLI_SUBPROCESS,
-            AgentType.OPENHANDS_LOCAL,
-            AgentType.OPENHANDS_DOCKER,
-            AgentType.USER_MANAGED,
+            AgentRunnerType.CLI_SUBPROCESS,
+            AgentRunnerType.OPENHANDS_LOCAL,
+            AgentRunnerType.OPENHANDS_DOCKER,
+            AgentRunnerType.USER_MANAGED,
         ):
             result_config, stale_reason = executor._prepare_codex_config(agent_type, config)
             assert stale_reason is None
@@ -166,7 +172,7 @@ class TestCheckAgentAliveCodexLocal:
         monitor = AgentMonitor(db_setup)
         run = _create_test_run(
             run_id="r1",
-            agent_type=AgentType.CODEX_SERVER,
+            agent_type=AgentRunnerType.CODEX_SERVER,
             agent_config={"pid": os.getpid()},
         )
         run.status = RunStatus.ACTIVE
@@ -178,7 +184,7 @@ class TestCheckAgentAliveCodexLocal:
         monitor = AgentMonitor(db_setup)
         run = _create_test_run(
             run_id="r2",
-            agent_type=AgentType.CODEX_SERVER,
+            agent_type=AgentRunnerType.CODEX_SERVER,
             agent_config={"pid": 999999},
         )
         run.status = RunStatus.ACTIVE
@@ -190,7 +196,7 @@ class TestCheckAgentAliveCodexLocal:
         monitor = AgentMonitor(db_setup)
         run = _create_test_run(
             run_id="r3",
-            agent_type=AgentType.CODEX_SERVER,
+            agent_type=AgentRunnerType.CODEX_SERVER,
             agent_config={},
         )
         run.status = RunStatus.ACTIVE
@@ -219,7 +225,7 @@ async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
             repo = RunRepository(session)
             run = _create_test_run(
                 run_id="run-cs",
-                agent_type=AgentType.CODEX_SERVER,
+                agent_type=AgentRunnerType.CODEX_SERVER,
                 agent_config={"pid": 999999},
             )
             run.status = RunStatus.ACTIVE
@@ -228,7 +234,7 @@ async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
 
         await monitor.on_agent_died(
             run_id="run-cs",
-            agent_type=AgentType.CODEX_SERVER,
+            agent_type=AgentRunnerType.CODEX_SERVER,
             reason="local_codex_process_not_alive",
         )
 
@@ -248,12 +254,12 @@ async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
 
 def test_spawn_for_run_codex_server_returns_false_when_disabled() -> None:
     """spawn_for_run returns False when spawning is disabled for CODEX_SERVER."""
-    executor = AgentExecutor(session_factory=None, spawn_agents=False)  # type: ignore[arg-type]
-    spawned = executor.spawn_for_run("run-id", AgentType.CODEX_SERVER, {})
+    executor = AgentRunnerExecutor(session_factory=None, spawn_agents=False)  # type: ignore[arg-type]
+    spawned = executor.spawn_for_run("run-id", AgentRunnerType.CODEX_SERVER, {})
     assert spawned is False
 
 
 def test_is_running_returns_false_before_spawn() -> None:
     """is_running returns False for a run that has not been spawned."""
-    executor = AgentExecutor(session_factory=None, spawn_agents=False)  # type: ignore[arg-type]
+    executor = AgentRunnerExecutor(session_factory=None, spawn_agents=False)  # type: ignore[arg-type]
     assert executor.is_running("run-id") is False

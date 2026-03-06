@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from orchestrator.agents.action_log import ActionLog
 from orchestrator.config.enums import (
-    AgentType,
+    AgentRunnerType,
     ChecklistStatus,
     Priority,
     RoutineSource,
@@ -74,7 +74,7 @@ class Attempt(BaseModel):
     auto_verify_results: list[dict[str, Any]] = Field(default_factory=lambda: [])
 
     # Agent snapshot - record what agent was used for this attempt
-    agent_type: AgentType | None = None
+    agent_type: AgentRunnerType | None = None
     agent_model: str | None = None  # e.g. "claude-sonnet-4-5-20250514"
     agent_settings: dict[str, Any] = Field(default_factory=dict)
 
@@ -169,7 +169,7 @@ class Run(BaseModel):
     routine_commit: str | None = None  # Commit SHA when routine was read
 
     # Agent configuration
-    agent_type: AgentType | None = None
+    agent_type: AgentRunnerType | None = None
     agent_config: dict[str, Any] = Field(default_factory=lambda: {})
     verifier_model: str | None = None  # Pinned at run creation; verifier always uses this model
 

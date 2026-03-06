@@ -204,7 +204,7 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     import time
 
     from orchestrator.agents.types import AgentOption as _AO
-    from orchestrator.config.enums import AgentType
+    from orchestrator.config.enums import AgentRunnerType
 
     AGENT_NAMES = ["agent-alpha", "agent-beta", "agent-gamma"]
     SLEEP_S = 0.5
@@ -221,7 +221,7 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     detector = ToolDetector(agents=stubs)
 
     fake_options = [
-        _AO(agent_type=AgentType.USER_MANAGED, name=n, available=True) for n in AGENT_NAMES
+        _AO(agent_type=AgentRunnerType.USER_MANAGED, name=n, available=True) for n in AGENT_NAMES
     ]
 
     start = time.monotonic()

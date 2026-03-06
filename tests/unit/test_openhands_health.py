@@ -1,7 +1,7 @@
 """Tests for OpenHands agent health check and metadata."""
 
 from orchestrator.agents.openhands import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 
 
 async def test_health_check_with_api_key() -> None:
@@ -28,7 +28,7 @@ async def test_health_check_no_api_key() -> None:
 
 def test_agent_info() -> None:
     agent = OpenHandsAgent()
-    assert agent.info.agent_type == AgentType.OPENHANDS_LOCAL
+    assert agent.info.agent_type == AgentRunnerType.OPENHANDS_LOCAL
     assert agent.info.name == "OpenHands"
 
 

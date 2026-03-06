@@ -9,7 +9,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from orchestrator.config.enums import AgentType, RunStatus, TaskStatus
+from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.state.models import Run
 from orchestrator.workflow.events import AgentDiedEvent, RunStatusChanged
@@ -98,7 +98,7 @@ class AgentMonitor:
     async def on_agent_died(
         self,
         run_id: str,
-        agent_type: AgentType,
+        agent_type: AgentRunnerType,
         exit_code: int | None = None,
         reason: str = "agent_process_died",
     ) -> None:
@@ -204,7 +204,7 @@ class AgentMonitor:
         if run.agent_type is None:
             return False
 
-        if run.agent_type == AgentType.CLI_SUBPROCESS:
+        if run.agent_type == AgentRunnerType.CLI_SUBPROCESS:
             # Check if PID from run metadata is still alive
             pid = run.agent_config.get("pid")
             if pid is None:
@@ -214,14 +214,14 @@ class AgentMonitor:
                 return True
             return _is_process_alive(pid)
 
-        elif run.agent_type == AgentType.OPENHANDS_DOCKER:
+        elif run.agent_type == AgentRunnerType.OPENHANDS_DOCKER:
             # Check if container from run metadata is still running
             container_id = run.agent_config.get("container_id")
             if container_id is None:
                 return False
             return await _is_container_running(container_id)
 
-        elif run.agent_type == AgentType.OPENHANDS_LOCAL:
+        elif run.agent_type == AgentRunnerType.OPENHANDS_LOCAL:
             # In-process agent — runs via asyncio.to_thread inside the
             # executor task.  The executor's own try/except handles failures,
             # so the health monitor should not interfere while it's running.
@@ -229,7 +229,7 @@ class AgentMonitor:
             # orphaned runs separately.
             return True
 
-        elif run.agent_type == AgentType.CODEX_SERVER:
+        elif run.agent_type == AgentRunnerType.CODEX_SERVER:
             # Local variant: check if the server process PID is still alive.
             # The PID is stored by the agent via the on_agent_metadata callback.
             pid = run.agent_config.get("pid")
@@ -237,7 +237,7 @@ class AgentMonitor:
                 return False
             return _is_process_alive(int(pid))
 
-        elif run.agent_type == AgentType.USER_MANAGED:
+        elif run.agent_type == AgentRunnerType.USER_MANAGED:
             # Check if last activity was within timeout
             last_activity_str = run.agent_config.get("last_activity_at")
             if last_activity_str is None:
@@ -262,7 +262,7 @@ class AgentMonitor:
             now = datetime.now(timezone.utc)
             return now - last_activity < timeout
 
-        elif run.agent_type == AgentType.CLAUDE_SDK:
+        elif run.agent_type == AgentRunnerType.CLAUDE_SDK:
             # In-process agent — same rationale as OPENHANDS_LOCAL
             return True
 
@@ -294,12 +294,15 @@ class AgentMonitor:
         # are always considered dead on startup regardless of check_agent_alive
         # (which returns True for them during normal operation to avoid the
         # periodic health monitor killing them prematurely).
-        _IN_PROCESS_AGENT_TYPES = {AgentType.OPENHANDS_LOCAL, AgentType.CLAUDE_SDK}
+        _IN_PROCESS_AGENT_TYPES = {AgentRunnerType.OPENHANDS_LOCAL, AgentRunnerType.CLAUDE_SDK}
 
         for run in active_runs:
             if run.agent_type in _IN_PROCESS_AGENT_TYPES:
                 agent_alive = False
-            elif run.agent_type == AgentType.CLI_SUBPROCESS and run.agent_config.get("pid") is None:
+            elif (
+                run.agent_type == AgentRunnerType.CLI_SUBPROCESS
+                and run.agent_config.get("pid") is None
+            ):
                 # CLI subprocess with no PID on startup — the subprocess was
                 # never spawned (e.g. server died during pre-run health check).
                 # check_agent_alive returns True for no-PID during normal
@@ -312,7 +315,7 @@ class AgentMonitor:
                 # on_agent_died creates its own session and commits
                 await self.on_agent_died(
                     run_id=run.id,
-                    agent_type=run.agent_type or AgentType.CLI_SUBPROCESS,
+                    agent_type=run.agent_type or AgentRunnerType.CLI_SUBPROCESS,
                     reason="agent_not_running_on_startup",
                 )
                 paused_runs.append(run.id)

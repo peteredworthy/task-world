@@ -44,7 +44,7 @@ from orchestrator.agents.openhands_common import (
     extract_metrics,
 )
 from orchestrator.agents.types import (
-    AgentInfo,
+    AgentRunnerInfo,
     ChecklistUpdateCallback,
     EscalationCallback,
     ExecutionContext,
@@ -53,7 +53,7 @@ from orchestrator.agents.types import (
     LogLineCallback,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 
 # ---------------------------------------------------------------------------
 # SDK availability -- two separate guards
@@ -515,9 +515,9 @@ class DockerOpenHandsAgent:
         self._conversation: Any = None
 
     @property
-    def info(self) -> AgentInfo:
-        return AgentInfo(
-            agent_type=AgentType.OPENHANDS_DOCKER,
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_type=AgentRunnerType.OPENHANDS_DOCKER,
             name="OpenHands (Docker)",
             version=None,
         )

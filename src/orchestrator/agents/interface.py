@@ -4,7 +4,7 @@ from typing import Protocol, runtime_checkable
 
 from orchestrator.agents.quota import QuotaFetcher
 from orchestrator.agents.types import (
-    AgentInfo,
+    AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
@@ -18,11 +18,11 @@ from orchestrator.agents.types import (
 
 
 @runtime_checkable
-class Agent(Protocol):
+class AgentRunner(Protocol):
     """Protocol that all agent implementations must satisfy."""
 
     @property
-    def info(self) -> AgentInfo: ...
+    def info(self) -> AgentRunnerInfo: ...
 
     async def execute(
         self,

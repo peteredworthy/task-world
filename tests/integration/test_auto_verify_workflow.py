@@ -567,7 +567,7 @@ async def test_no_runner_skips_auto_verify(session: AsyncSession, tmp_path: Path
 
 async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: Path) -> None:
     """Full cycle: pre-gate auto-verify blocks, fix, auto-verify passes, complete."""
-    from orchestrator.config.enums import AgentType
+    from orchestrator.config.enums import AgentRunnerType
 
     # Create a script that fails the first time and passes the second
     script = tmp_path / "check.sh"
@@ -587,7 +587,7 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
         [{"id": "check1", "cmd": f"bash {script}", "must": True}],
     )
     # Set agent config
-    run.agent_type = AgentType.CLI_SUBPROCESS
+    run.agent_type = AgentRunnerType.CLI_SUBPROCESS
     run.agent_config = {
         "model": "claude-sonnet-4-5-20250514",
         "temperature": 0.7,
@@ -629,7 +629,7 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
     assert task.attempts[0].auto_verify_results[0]["passed"] is True
 
     # Verify agent snapshot was populated on the single attempt
-    assert task.attempts[0].agent_type == AgentType.CLI_SUBPROCESS
+    assert task.attempts[0].agent_type == AgentRunnerType.CLI_SUBPROCESS
     assert task.attempts[0].agent_model == "claude-sonnet-4-5-20250514"
     assert task.attempts[0].agent_settings["model"] == "claude-sonnet-4-5-20250514"
     assert task.attempts[0].agent_settings["temperature"] == 0.7

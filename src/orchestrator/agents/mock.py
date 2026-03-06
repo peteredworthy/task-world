@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from orchestrator.agents.errors import AgentCancelledError, AgentExecutionError
 from orchestrator.agents.quota import QuotaFetcher
 from orchestrator.agents.types import (
-    AgentInfo,
+    AgentRunnerInfo,
     AgentMetadataCallback,
     AgentQuota,
     ChecklistUpdateCallback,
@@ -17,7 +17,7 @@ from orchestrator.agents.types import (
     LogLineCallback,
     SubmitCallback,
 )
-from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 
 
 @dataclass
@@ -56,9 +56,9 @@ class MockAgent:
         self._cancelled = False
 
     @property
-    def info(self) -> AgentInfo:
-        return AgentInfo(
-            agent_type=AgentType.CLI_SUBPROCESS,
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_type=AgentRunnerType.CLI_SUBPROCESS,
             name="mock",
             version="1.0.0",
         )

@@ -10,12 +10,12 @@ from orchestrator.agents.openhands_docker import (
     _detect_platform,  # pyright: ignore[reportPrivateUsage]
 )
 from orchestrator.agents.types import ExecutionContext
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 
 
 def test_docker_agent_info() -> None:
     agent = DockerOpenHandsAgent()
-    assert agent.info.agent_type == AgentType.OPENHANDS_DOCKER
+    assert agent.info.agent_type == AgentRunnerType.OPENHANDS_DOCKER
     assert agent.info.name == "OpenHands (Docker)"
 
 

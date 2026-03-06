@@ -1,7 +1,7 @@
 """Tests for runtime state models."""
 
 from orchestrator.config.enums import (
-    AgentType,
+    AgentRunnerType,
     ChecklistStatus,
     Priority,
     RunStatus,
@@ -28,11 +28,11 @@ def test_run_with_values() -> None:
         repo_name="test-project",
         source_branch="main",
         routine_id="planning",
-        agent_type=AgentType.OPENHANDS_LOCAL,
+        agent_type=AgentRunnerType.OPENHANDS_LOCAL,
         config={"feature": "auth"},
     )
     assert run.routine_id == "planning"
-    assert run.agent_type == AgentType.OPENHANDS_LOCAL
+    assert run.agent_type == AgentRunnerType.OPENHANDS_LOCAL
     assert run.config["feature"] == "auth"
 
 

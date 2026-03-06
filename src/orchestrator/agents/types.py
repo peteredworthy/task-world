@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
 
 # Callback type aliases.
@@ -69,10 +69,10 @@ class ExecutionContext(BaseModel):
     mcp_servers: list[MCPServerConfig] | None = None
 
 
-class AgentInfo(BaseModel):
+class AgentRunnerInfo(BaseModel):
     """Information about a concrete agent instance."""
 
-    agent_type: AgentType
+    agent_type: AgentRunnerType
     name: str
     version: str | None = None
 

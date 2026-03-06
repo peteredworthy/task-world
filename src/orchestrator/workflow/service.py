@@ -9,7 +9,13 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.schemas.runs import RecoverResponse
-from orchestrator.config.enums import AgentType, ChecklistStatus, GateType, RunStatus, TaskStatus
+from orchestrator.config.enums import (
+    AgentRunnerType,
+    ChecklistStatus,
+    GateType,
+    RunStatus,
+    TaskStatus,
+)
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db.event_store import EventStore
@@ -346,9 +352,9 @@ class WorkflowService:
 
         # Warn if using a managed agent that requires spawning
         if run.agent_type in (
-            AgentType.CLI_SUBPROCESS,
-            AgentType.OPENHANDS_LOCAL,
-            AgentType.OPENHANDS_DOCKER,
+            AgentRunnerType.CLI_SUBPROCESS,
+            AgentRunnerType.OPENHANDS_LOCAL,
+            AgentRunnerType.OPENHANDS_DOCKER,
         ):
             agent_type_str = run.agent_type.value if run.agent_type else "unknown"
             logger.warning(
@@ -374,7 +380,7 @@ class WorkflowService:
     async def resume_run(
         self,
         run_id: str,
-        agent_type: AgentType | None = None,
+        agent_type: AgentRunnerType | None = None,
         agent_config: dict[str, object] | None = None,
         resume_strategy: str | None = None,
     ) -> Run:
@@ -437,7 +443,7 @@ class WorkflowService:
                         timestamp=self._clock.now(),
                         run_id=run_id,
                         event_type="agent_changed",
-                        old_agent=old_agent or AgentType.CLI_SUBPROCESS,
+                        old_agent=old_agent or AgentRunnerType.CLI_SUBPROCESS,
                         new_agent=new_agent,
                         old_agent_config=old_config,
                         new_agent_config=new_config,
@@ -457,7 +463,7 @@ class WorkflowService:
         run_id: str,
         target_task_id: str,
         additional_attempts: int = 1,
-        agent_type: AgentType | None = None,
+        agent_type: AgentRunnerType | None = None,
         agent_config: dict[str, object] | None = None,
         preserve_checklist: bool = False,
     ) -> RecoverResponse:
