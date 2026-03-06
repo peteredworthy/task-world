@@ -156,7 +156,7 @@ steps:
         auto_verify:
           items:
             - id: "context_fields"
-              cmd: "uv run python -c \"from orchestrator.agents.types import ExecutionContext; c = ExecutionContext(run_id='r', task_id='t', working_dir='/tmp', prompt='p', requirements=[]); print(c.step_id, c.available_tools, c.mcp_servers)\""
+              cmd: "uv run python -c \"from orchestrator.runners.types import ExecutionContext; c = ExecutionContext(run_id='r', task_id='t', working_dir='/tmp', prompt='p', requirements=[]); print(c.step_id, c.available_tools, c.mcp_servers)\""
               must: true
         verifier:
           rubric:

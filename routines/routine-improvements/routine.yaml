@@ -206,7 +206,7 @@ steps:
         auto_verify:
           items:
             - id: executor_imports
-              cmd: uv run python -c "from orchestrator.agents.executor import AgentExecutor; print('AgentExecutor imports ok')"
+              cmd: uv run python -c "from orchestrator.runners.executor import AgentRunnerExecutor; print('AgentRunnerExecutor imports ok')"
               must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "executor or health_check"
@@ -363,7 +363,7 @@ steps:
         auto_verify:
           items:
             - id: agents_import
-              cmd: uv run python -c "from orchestrator.agents.cli import CLIAgent; from orchestrator.agents.claude_sdk import ClaudeSdkAgent; print('agent imports ok')"
+              cmd: uv run python -c "from orchestrator.runners.cli import CLIAgent; from orchestrator.runners.claude_sdk import ClaudeSdkAgent; print('runner imports ok')"
               must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "prompt or agent"
@@ -565,7 +565,7 @@ steps:
         auto_verify:
           items:
             - id: interface_import
-              cmd: uv run python -c "from orchestrator.agents.interface import *; print('interface ok')"
+              cmd: uv run python -c "from orchestrator.runners.interface import *; print('interface ok')"
               must: true
             - id: router_import
               cmd: uv run python -c "from orchestrator.api.routers.tasks import router; print('tasks router ok')"
