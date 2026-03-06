@@ -81,7 +81,8 @@ class TaskContextBuilder:
             content = truncate_to_tokens(content, limit)
 
             remaining_tokens -= count_tokens(content)
-            context[source.as_name] = content
+            if source.as_name is not None:
+                context[source.as_name] = content
 
             if remaining_tokens <= 0:
                 break  # No more budget

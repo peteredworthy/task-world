@@ -144,7 +144,7 @@ class ContextSource(BaseModel):
     """Configuration for context from an artifact."""
 
     artifact: str  # Path pattern (supports {{variables}})
-    as_name: str = Field(alias="as")  # Variable name in context
+    as_name: str | None = Field(default=None, alias="as")  # Variable name in context
     required: bool = True
     section: str | None = None  # Extract specific section
     max_tokens: int | None = None  # Limit for this artifact
