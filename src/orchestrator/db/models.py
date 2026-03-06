@@ -157,8 +157,8 @@ class AttemptModel(Base):
     grade_snapshot: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     auto_verify_results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
-    # Agent snapshot
-    agent_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Runner snapshot
+    runner_type: Mapped[str | None] = mapped_column(String, nullable=True)
     agent_model: Mapped[str | None] = mapped_column(String, nullable=True)
     agent_settings: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 

@@ -114,8 +114,8 @@ def _to_domain(model: RunModel) -> Run:
                         ),
                         grade_snapshot=grade_snapshot,
                         auto_verify_results=att_model.auto_verify_results or [],
-                        agent_type=AgentRunnerType(att_model.agent_type)
-                        if att_model.agent_type
+                        agent_type=AgentRunnerType(att_model.runner_type)
+                        if att_model.runner_type
                         else None,
                         agent_model=att_model.agent_model,
                         agent_settings=att_model.agent_settings or {},
@@ -265,7 +265,7 @@ def _to_model(run: Run) -> RunModel:
                         num_actions=att.metrics.num_actions,
                         grade_snapshot=snapshot_json,
                         auto_verify_results=auto_verify_json,
-                        agent_type=att.agent_type.value if att.agent_type else None,
+                        runner_type=att.agent_type.value if att.agent_type else None,
                         agent_model=att.agent_model,
                         agent_settings=att.agent_settings if att.agent_settings else None,
                         agent_output=att.agent_output,

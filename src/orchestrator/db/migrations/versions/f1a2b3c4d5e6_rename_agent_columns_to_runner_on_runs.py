@@ -25,6 +25,9 @@ def upgrade() -> None:
         batch_op.alter_column("agent_config", new_column_name="runner_config")
         batch_op.alter_column("agent_started_at", new_column_name="runner_started_at")
 
+    with op.batch_alter_table("attempts", schema=None) as batch_op:
+        batch_op.alter_column("agent_type", new_column_name="runner_type")
+
 
 def downgrade() -> None:
     """Reverse rename: runner_* back to agent_* columns."""
@@ -32,3 +35,6 @@ def downgrade() -> None:
         batch_op.alter_column("runner_type", new_column_name="agent_type")
         batch_op.alter_column("runner_config", new_column_name="agent_config")
         batch_op.alter_column("runner_started_at", new_column_name="agent_started_at")
+
+    with op.batch_alter_table("attempts", schema=None) as batch_op:
+        batch_op.alter_column("runner_type", new_column_name="agent_type")
