@@ -126,7 +126,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     if run.worktree_enabled and run.worktree_path:
                         from pathlib import Path as _Path
 
-                        if not _Path(run.worktree_path).exists():
+                        wt_path = _Path(run.worktree_path)
+                        if not wt_path.exists() or not (wt_path / ".git").exists():
                             try:
                                 from orchestrator.git.worktree import WorktreeManager as _WTM
 

@@ -57,7 +57,7 @@ steps:
               cmd: uv run python -c "from orchestrator.workflow.engine import WorkflowEngine; print('engine imports ok')"
               must: true
             - id: auto_verify_module
-              cmd: uv run python -c "from orchestrator.workflow.auto_verify import run_auto_verify_items; print('auto_verify module ok')"
+              cmd: uv run python -c "from orchestrator.workflow.auto_verify import run_auto_verify; print('auto_verify module ok')"
               must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "auto_verify or gate" 2>&1

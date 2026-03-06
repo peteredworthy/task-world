@@ -161,6 +161,51 @@ F-05 and F-06 reveal a second class of problems beyond brittle auto-verify check
 
 ---
 
+## Verifier Overreach: Grading Beyond Stated Requirements
+
+### F-07: Verifier invents requirements when rubric is missing (S-12/T-02)
+
+**Date:** 2026-03-05
+**Run:** ff7863ca
+**Task:** Implement summary cache and generator
+**Status:** `failed` after 2 attempts
+
+**What happened:**
+All 3 auto-verify checks passed on both attempts (module imports, wiring grep, 4 summary tests pass). The verifier LLM graded 4 requirements — but penalized for criteria not present in the requirement text.
+
+**Attempt 1 — R4 (critical) graded B, needed A:**
+- Requirement: "summarized content appears in prompts for tasks with context_from[summarize=true]"
+- Verifier's reason for B: "summarized artifact context would not appear in **verifier prompts**"
+- The requirement says nothing about verifier prompts. The verifier invented a scope expansion.
+
+**Attempt 2 — R1 (critical) graded B, needed A:**
+- Requirement: "Summary cache stores and retrieves by content hash"
+- Verifier's reasons for B: (1) "no dedicated unit tests exist for SummaryCache" (2) "cache is per-request, so it only deduplicates within a single request"
+- The requirement says nothing about unit tests or cross-request persistence. The auto-verify already confirmed tests pass. The verifier added its own quality expectations.
+
+The builder fixed R4 between attempts (A on attempt 2) but the verifier regressed R1 from A to B by applying different invented criteria on the second pass.
+
+**Root cause:** Requirements R1–R3 had no rubric entries. The routine's `verifier.rubric` only contained one entry (`R4_wiring`). Without a rubric to constrain grading, the verifier LLM applied its own judgment about what "good enough for an A" means — including test coverage and architectural decisions that aren't in the requirement text.
+
+**Pattern:** When a requirement has a rubric entry, the verifier grades against that rubric. When it doesn't, the verifier grades against its own implicit standards, which are inconsistent across attempts and systematically stricter than the stated requirement.
+
+### Compounding factor: Requirement text didn't capture the actual intention
+
+The verifier was wrong to grade beyond the stated requirements — but the requirements themselves were also too narrow. The `task_context` described "cache keyed by (artifact_path, content_hash), lifetime: run duration" but R1 only said "Summary cache stores and retrieves by content hash." The per-request instantiation (`SummaryCache()` created fresh on every API call in `routers/tasks.py`) means the cache provides no cross-request benefit — it only deduplicates within a single prompt request. This technically satisfies R1 as written, but doesn't deliver the run-duration caching that `task_context` described and the feature was meant to provide.
+
+This is a distinct failure mode from the verifier overreach: **the requirement text failed to encode the actual design intention**. The verifier noticed the gap (per-request scope) but expressed it as a grade penalty on R1 rather than flagging that R1's text was incomplete. The builder implemented R1 as written and passed. Everyone was "correct" against the text they were given, but the feature doesn't work as intended.
+
+**Pattern:** When `task_context` describes behavior that isn't captured in any requirement's `desc` field, the builder will satisfy the requirements without implementing the full intention. The verifier may notice the gap but can only express it as a grade penalty, which looks like overreach since the requirement text doesn't support the penalty.
+
+### Potential Mitigations
+
+1. **Require rubric entries for all critical requirements.** If a requirement is critical (must get A), the routine should include a rubric entry that tells the verifier exactly what to check. Without one, the verifier will invent criteria.
+2. **Constrain verifier prompt.** Add explicit instruction: "Grade each requirement ONLY against its description text. Do not penalize for missing tests, architectural preferences, or scope beyond what the requirement states."
+3. **Rubric generation at plan time.** When the routine YAML is generated, auto-create a rubric entry for every critical requirement that mirrors its description, preventing the verifier from freelancing.
+4. **Requirement-intention alignment check.** At plan time, validate that every specific behavior described in `task_context` is captured by at least one requirement's `desc`. Flag gaps where the context promises something no requirement covers.
+
+---
+
 ## UI Bug: Recovering task showing "Building..."
 
 **Date:** 2026-03-05
@@ -243,3 +288,125 @@ No regressions from the run's changes.
 | **Medium** | A7+A8, A18 | Partial migration (git instructions lost for non-CLI agents); A18 not in worktree |
 | **Low** | A2, A4, A14, A16 | Soft enforcement, misleading docs, undiscoverable guidance, API-invisible field |
 | **None** | A1, A5, A10, A12, A17 | Fully wired, tested, and correct |
+
+---
+
+## Post 2nd Run Validation: Implementation Gaps
+
+**Date:** 2026-03-05
+**Run:** ff7863ca
+**Method:** Sub-agent deep verification of all 15 actions (A1–A18, excluding A3/A9/A15) against the action plan and worktree code at `/Users/peter/code/task-world/worktrees/r4`.
+**Context:** The routine was strengthened between runs (see `routine-plan-strengthening.md`): global verifier wiring instructions, new wiring requirements, new rubric entries, fixed auto-verify commands, and enhanced task context.
+
+### Fully Wired and Correct
+
+| Action | Summary | Change from 1st Run |
+|--------|---------|---------------------|
+| **A2** | Load-time warning + runtime block on auto-grade path. `has_verification` computed at task creation, enforced in `transition_after_verification()`. | Upgraded from low (soft enforcement) — runtime block is new |
+| **A5** | Health check in `executor.py:155–212`, runs before first task in agent loop. Configurable via `.task-world/config.yaml`. | No change (was fully wired) |
+| **A7** | Shared builder prompt reduced 43.4% (exceeds 39% target). "Avoiding Loops" and detailed git instructions removed. | No change (was part of first run) |
+| **A8** | Git workflow instructions now in ALL four agent builders (CLI, OpenHands, Codex Server, Claude SDK). OpenHands has rewritten file-exploration guidance. | Fixed — git instructions were missing for non-CLI agents |
+| **A10** | Verifier model pinned at run creation (`runs.py:314`), enforced in executor verifier phase (`executor.py:910–913`). DB migration exists. | No change (was fully wired) |
+| **A12** | `step_auto_verify` on `StepConfig`, executed in `complete_verification()` when step newly completes. Halts run on failure. 12 tests. | No change (was fully wired) |
+| **A14** | `docs/step-context-guide.md` (59 lines) cross-referenced from AGENTS.md Routine Authoring section. | Fixed — was undiscoverable, now linked |
+| **A17** | Multi-file routines: `file` field on `StepConfig`, loader resolves with circular detection. 16 tests. | No change (was fully wired) |
+| **A18** | `routines/idea-to-plan/routine.yaml` S-05 has full failure mode analysis (instructions, R3 requirement, rubric). Identical to main. | Fixed — was stripped placeholder in worktree (likely inherited from main rather than actively built) |
+
+### Implemented but with Gaps
+
+#### A1: Fix auto_verify timing — BLOCKING BEHAVIOR REMOVED (regression)
+
+Auto-verify commands still run before the checklist gate (correct). However, the blocking behavior when `must:true` items fail was **removed** compared to main. On main, `must:true` failures raised `GateBlockedError`, immediately blocking BUILDING→VERIFYING. In r4, the code falls through: the task enters VERIFYING momentarily, then the post-engine auto-verify block detects the failure and transitions back to BUILDING.
+
+The net effect is the same (task returns to BUILDING), but the task momentarily enters VERIFYING even when `must:true` items failed. The action plan says "block BUILDING→VERIFYING" — this is no longer happening. **Severity: Medium** — functional behavior is preserved but the implementation contradicts the stated requirement, and the transient VERIFYING state could confuse monitoring.
+
+#### A4: Test count regression guard — ASPIRATIONAL DOCS (unchanged)
+
+Same gap as first run. The script header documents `run_before`/`run_after` patterns that don't exist in `AutoVerifyItemConfig` (which has `id`, `cmd`, `must` — no `command`, `run_before`, `run_after` fields). A routine author following the header docs would produce invalid YAML. Script itself works correctly with `--snapshot`/`--compare`. 8 tests. **Severity: Low** — script works, docs are misleading.
+
+#### A6: Compress clarifications — CALLED BUT OUTPUT DISCARDED
+
+`compress_clarifications()` IS now called from `respond_to_clarification()` in `service.py:1527` (fixing the first-run dead-code gap). The compressed decisions are passed to `generate_builder_prompt()` at line 1542, which builds a `BuilderPrompt` object. **But the result is discarded** — not assigned, not stored, not returned.
+
+When the agent is subsequently re-spawned:
+- The **executor** (`executor.py:756`) calls `generate_builder_prompt()` WITHOUT `decisions=`
+- The **prompt API** (`tasks.py:515`) calls `generate_builder_prompt()` WITHOUT `decisions=`
+
+The `CompressedDecisions` are computed but never persisted to the database or stored on run/task state. They cannot survive across requests. **Severity: High** — the feature is no longer dead code but remains non-functional end-to-end.
+
+#### A11: Agent escalation — WIRED FOR EXTERNAL AGENTS, GAPS FOR INTERNAL
+
+Major improvement from first run. The entire chain now works:
+- `on_escalation: EscalationCallback` on `Agent.execute()` protocol
+- Executor constructs and passes callback in both builder (line 827) and verifier (line 1051) phases
+- REST endpoint `POST /tasks/{id}/escalate` with service/engine logic
+- REST callback instructions list the escalation endpoint (line 318)
+- UI displays escalated requirements with reason and pause banner
+- 10 tests (5 unit + 5 integration)
+
+**Remaining gaps:**
+1. No `orchestrator_escalate` MCP tool — agents using MCP channel cannot escalate
+2. CLI agent `build_prompt()` does not mention the escalation endpoint — internal CLI agents won't know about it
+3. MCP callback instructions text omits escalation
+
+**Severity: Low** — the primary path (REST) works end-to-end. MCP gap is a secondary channel.
+
+#### A13: Context summarization — WIRED FOR PROMPT ENDPOINT, NOT EXECUTOR
+
+Major improvement from first run. `TaskContextBuilder` and `SummaryCache` are imported and called from `tasks.py:486–499`. Summarized artifact context is merged into `run_config` and flows into `generate_builder_prompt()`.
+
+**Remaining gaps:**
+1. **Executor path not wired**: Internal agents (CLI, Claude SDK, Codex, OpenHands) get prompts via the executor, which calls `generate_builder_prompt(run.config)` without going through `TaskContextBuilder`. Routines with `context_from[summarize=true]` won't produce summarized context for internal agents.
+2. **SummaryCache is per-request**: `SummaryCache()` instantiated fresh on every `GET /tasks/{id}/prompt` call. No cross-request caching — each request hits the Anthropic API for tasks with summarized sources.
+3. **Hardcoded model**: Uses `DEFAULT_SUMMARIZE_MODEL` (Haiku) instead of the primary agent's model as specified in the action plan.
+
+**Severity: Medium** — functional for external agents via REST, not functional for internal agents via executor.
+
+#### A16: Task complexity labeling — IN API, NO CONSUMERS
+
+Improvement from first run: `Complexity` enum, `TaskConfig.complexity` field, and `TaskDetailResponse.complexity` all exist. The field flows from YAML config through state, DB, repository, to API response.
+
+**Remaining gaps:** Not used in prompts, not displayed in the frontend, no logic conditions on it. Pure informational metadata — retrievable via API but invisible to users and agents. **Severity: Low** — the action plan said "no automatic splitting, use as diagnostic" which this satisfies, but it's not visible in the UI.
+
+### Comparison: 1st Run → 2nd Run
+
+| Action | 1st Run | 2nd Run | Improved? |
+|--------|---------|---------|-----------|
+| **A1** | Fully wired | Medium: blocking removed | **Regressed** — transient VERIFYING state on must-failure |
+| **A2** | Low: soft enforcement | Fully wired (runtime block) | **Yes** |
+| **A4** | Low: aspirational docs | Low: aspirational docs | No change |
+| **A5** | Fully wired | Fully wired | No change |
+| **A6** | **High: dead code** | **High: called but output discarded** | **Marginal** — no longer dead code, still non-functional |
+| **A7** | Fully wired | Fully wired | No change |
+| **A8** | Medium: git instructions lost | Fully wired | **Yes** |
+| **A10** | Fully wired | Fully wired | No change |
+| **A11** | **High: dead code** | Low: gaps in MCP/CLI | **Yes** — core wiring fixed |
+| **A12** | Fully wired | Fully wired | No change |
+| **A13** | **High: dead code** | Medium: executor path unwired | **Yes** — prompt endpoint wired |
+| **A14** | Low: undiscoverable | Fully wired | **Yes** |
+| **A16** | Low: not in API | Low: in API, no consumers | **Marginal** |
+| **A17** | Fully wired | Fully wired | No change |
+| **A18** | Medium: not in worktree | Fully wired (inherited) | **Yes** |
+
+### Summary: Gap Severity (2nd Run)
+
+| Severity | Actions | Nature |
+|----------|---------|--------|
+| **High** (non-functional) | A6 | Compressed decisions computed but never persisted or passed to prompt generation |
+| **Medium** | A1, A13 | A1: blocking removed (regression); A13: executor path unwired |
+| **Low** | A4, A11, A16 | Aspirational docs; MCP tool missing; API-only metadata |
+| **None** | A2, A5, A7, A8, A10, A12, A14, A17, A18 | Fully wired, tested, and correct |
+
+### Key Observations
+
+**What the strengthening fixed:**
+The routine-plan-strengthening specifically targeted the 3 high-severity dead-code gaps (A6, A11, A13) with wiring requirements, rubric entries, and auto-verify grep checks. Two of three (A11, A13) moved from dead code to functional (at least on the primary path). This validates the hypothesis that better requirements and verification instructions CAN prevent dead-code gaps.
+
+**What the strengthening didn't fix:**
+A6 is the outlier. Despite explicit wiring requirements ("compress_clarifications() is called from respond_to_clarification()") and auto-verify grep checks (`grep -q "compress_clarifications" service.py`), the feature still doesn't work. The builder satisfied the letter of the requirements (the function IS called, the grep passes) without satisfying the intent (the output must reach the agent). This is the same requirement-intention gap observed in F-07: the requirement text was too narrow to capture the full wiring chain.
+
+**New weakness exposed:**
+A1 regressed — the blocking behavior for `must:true` auto-verify failures was removed. This was not caught because the auto-verify checks only tested that auto-verify runs before the gate, not that it blocks the transition. The verifier may not have noticed because the functional outcome (task returns to BUILDING) is the same. This suggests that **behavioral requirements about state transitions need auto-verify commands that test the transition behavior**, not just the execution order.
+
+**Pattern: "Letter vs Spirit" compliance:**
+Both A6 and A1 demonstrate a pattern where the builder satisfies auto-verify grep checks and stated requirements without achieving the intended behavior. Grep checks verify code presence but not code correctness. Requirements that say "X is called from Y" don't ensure the output of X is used. Requirements that say "X runs before Y" don't ensure X blocks Y on failure. Tighter requirements and richer auto-verify (behavioral tests, not just grep) are needed for features that involve multi-step data flow or conditional control flow.

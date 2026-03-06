@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from orchestrator.config.models import AutoVerifyConfig
+from orchestrator.config.models import AutoVerifyConfig, AutoVerifyItemConfig
 
 
 class AutoVerifyResult(BaseModel):
@@ -77,6 +77,49 @@ async def run_auto_verify(
     for item in config.items:
         cmd = _resolve_variables(item.cmd, variables) if variables else item.cmd
         exit_code, output = await runner.run_command(cmd, cwd, config.tail_lines)
+        if exit_code is None:
+            results.append(
+                AutoVerifyResult(
+                    item_id=item.id,
+                    cmd=cmd,
+                    passed=False,
+                    exit_code=0,
+                    output=output,
+                    crashed=True,
+                    crash_error=output,
+                )
+            )
+        else:
+            results.append(
+                AutoVerifyResult(
+                    item_id=item.id,
+                    cmd=cmd,
+                    passed=(exit_code == 0),
+                    exit_code=exit_code,
+                    output=output,
+                    crashed=False,
+                )
+            )
+    return results
+
+
+async def run_auto_verify_items(
+    items: list[AutoVerifyItemConfig],
+    runner: AutoVerifyRunner,
+    cwd: Path,
+    tail_lines: int = 20,
+    variables: dict[str, Any] | None = None,
+) -> list[AutoVerifyResult]:
+    """Run a list of auto-verify items directly (without a full AutoVerifyConfig).
+
+    Each item must have .id and .cmd attributes (same as AutoVerifyConfig.items).
+    This is a lower-level alternative to run_auto_verify for callers that already
+    have an item list rather than a full config object.
+    """
+    results: list[AutoVerifyResult] = []
+    for item in items:
+        cmd = _resolve_variables(item.cmd, variables) if variables else item.cmd
+        exit_code, output = await runner.run_command(cmd, cwd, tail_lines)
         if exit_code is None:
             results.append(
                 AutoVerifyResult(

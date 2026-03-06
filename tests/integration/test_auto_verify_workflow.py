@@ -23,7 +23,7 @@ from orchestrator.db.connection import create_engine, create_session_factory, in
 from orchestrator.db.event_store import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-from orchestrator.workflow.prompts import generate_builder_prompt
+from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.workflow.service import (
     WorkflowService,
     find_task_config,
@@ -411,7 +411,7 @@ async def test_submit_with_passing_auto_verify(session: AsyncSession, tmp_path: 
 
 
 async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_path: Path) -> None:
-    """When auto_verify must-items fail, task transitions back to BUILDING."""
+    """When auto_verify must-items fail before the gate, GateBlockedError is raised."""
     runner = LocalAutoVerifyRunner()
     service = WorkflowService(session, auto_verify_runner=runner)
 
@@ -427,38 +427,25 @@ async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_p
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
-    result = await service.submit_for_verification("run-av", "task-1")
-    assert result.success is True
-    assert result.new_status == TaskStatus.BUILDING
-    assert result.error == "Auto-verify must-items failed"
+    # Pre-gate auto_verify runs first; failing must-item blocks the transition
+    with pytest.raises(GateBlockedError) as exc_info:
+        await service.submit_for_verification("run-av", "task-1")
 
-    # Verify task went back to BUILDING with a new attempt
+    assert "check1" in exc_info.value.blocking_items
+
+    # Task must still be in BUILDING — no transition happened
     task = await service.get_task("run-av", "task-1")
     assert task.status == TaskStatus.BUILDING
-    assert task.current_attempt == 2
-    assert len(task.attempts) == 2
+    assert task.current_attempt == 1
+    assert len(task.attempts) == 1
 
-    # First attempt should have auto_verify_results stored
+    # Current attempt should have auto_verify_results stored
     assert len(task.attempts[0].auto_verify_results) == 2
     assert task.attempts[0].auto_verify_results[0]["passed"] is False
     assert task.attempts[0].auto_verify_results[0]["item_id"] == "check1"
     assert task.attempts[0].verifier_comment is not None
     assert "Auto-verify failed" in task.attempts[0].verifier_comment
     assert "command `false` failed" in task.attempts[0].verifier_comment
-
-    # The failed attempt must be finalized (issue-002 fix)
-    assert task.attempts[0].outcome == "failed"
-    assert task.attempts[0].completed_at is not None
-
-    # Revision prompt should include previous feedback even though a new attempt exists.
-    from orchestrator.config.models import RoutineConfig
-
-    routine = RoutineConfig.model_validate(run.routine_embedded)
-    task_config = find_task_config(routine, "T-01")
-    assert task_config is not None
-    prompt = generate_builder_prompt(task_config, task, run.config)
-    assert "Previous Feedback (Revision Required)" in prompt.user
-    assert "command `false` failed" in prompt.user
 
 
 async def test_submit_with_failing_non_must_still_verifying(
@@ -519,7 +506,7 @@ async def test_auto_verify_events_emitted(session: AsyncSession, tmp_path: Path)
 
 
 async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path) -> None:
-    """When auto-verify fails, both AutoVerifyCompleted and TaskStatusChanged events are emitted."""
+    """When pre-gate auto-verify fails, AutoVerifyCompleted event is emitted and GateBlockedError raised."""
     runner = LocalAutoVerifyRunner()
     service = WorkflowService(session, auto_verify_runner=runner)
 
@@ -531,21 +518,22 @@ async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path)
     await service.start_run("run-av")
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
-    await service.submit_for_verification("run-av", "task-1")
+
+    with pytest.raises(GateBlockedError):
+        await service.submit_for_verification("run-av", "task-1")
 
     store = EventStore(session)
     events = await store.get_events_for_run("run-av")
     event_types = [e["type"] for e in events]
 
+    # auto_verify_completed event must be emitted even though transition was blocked
     assert "auto_verify_completed" in event_types
 
-    # There should be a task_status_changed for BUILDING -> VERIFYING,
-    # then auto_verify_completed (failed), then task_status_changed VERIFYING -> BUILDING
+    # Task stays in BUILDING — no BUILDING->VERIFYING transition
     task_status_events = [e for e in events if e["type"] == "task_status_changed"]
-    # First: PENDING -> BUILDING (start_task)
-    # Second: BUILDING -> VERIFYING (submit)
-    # Third: VERIFYING -> BUILDING (auto-verify revision)
-    assert len(task_status_events) >= 3
+    # Only: PENDING -> BUILDING (start_task); no further transitions
+    assert len(task_status_events) == 1
+    assert task_status_events[0]["payload"]["new_status"] == "building"
 
     av_event = next(e for e in events if e["type"] == "auto_verify_completed")
     assert av_event["payload"]["passed"] is False
@@ -573,7 +561,7 @@ async def test_no_runner_skips_auto_verify(session: AsyncSession, tmp_path: Path
 
 
 async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: Path) -> None:
-    """Full cycle: auto-verify fails, revision, fix, auto-verify passes, complete."""
+    """Full cycle: pre-gate auto-verify blocks, fix, auto-verify passes, complete."""
     from orchestrator.config.enums import AgentType
 
     # Create a script that fails the first time and passes the second
@@ -606,13 +594,17 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
-    # First submit: auto-verify fails -> revision
-    result1 = await service.submit_for_verification("run-av", "task-1")
-    assert result1.new_status == TaskStatus.BUILDING
-    assert result1.error == "Auto-verify must-items failed"
+    # First submit: pre-gate auto-verify fails -> GateBlockedError, task stays BUILDING
+    with pytest.raises(GateBlockedError) as exc_info:
+        await service.submit_for_verification("run-av", "task-1")
+    assert "check1" in exc_info.value.blocking_items
 
-    # Second submit: auto-verify passes now
-    await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+    # Task is still BUILDING, same attempt
+    task_mid = await service.get_task("run-av", "task-1")
+    assert task_mid.status == TaskStatus.BUILDING
+    assert task_mid.current_attempt == 1
+
+    # Second submit: script passes now (COUNT=1 -> exit 0)
     result2 = await service.submit_for_verification("run-av", "task-1")
     assert result2.new_status == TaskStatus.VERIFYING
     assert result2.success is True
@@ -622,30 +614,20 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
     result3 = await service.complete_verification("run-av", "task-1")
     assert result3.new_status == TaskStatus.COMPLETED
 
-    # Verify final state
+    # Verify final state — single attempt (no revision was created)
     task = await service.get_task("run-av", "task-1")
     assert task.status == TaskStatus.COMPLETED
-    assert task.current_attempt == 2
-    assert len(task.attempts) == 2
-    # First attempt had failing auto-verify and must be finalized (issue-002 fix)
-    assert task.attempts[0].auto_verify_results[0]["passed"] is False
-    assert task.attempts[0].outcome == "failed"
-    assert task.attempts[0].completed_at is not None
-    # Second attempt had passing auto-verify
-    assert task.attempts[1].auto_verify_results[0]["passed"] is True
+    assert task.current_attempt == 1
+    assert len(task.attempts) == 1
+    # The attempt's auto_verify_results hold the post-gate (passing) run
+    assert task.attempts[0].auto_verify_results[0]["passed"] is True
 
-    # Verify agent snapshot was populated on both attempts
+    # Verify agent snapshot was populated on the single attempt
     assert task.attempts[0].agent_type == AgentType.CLI_SUBPROCESS
     assert task.attempts[0].agent_model == "claude-sonnet-4-5-20250514"
     assert task.attempts[0].agent_settings["model"] == "claude-sonnet-4-5-20250514"
     assert task.attempts[0].agent_settings["temperature"] == 0.7
     assert "api_key" not in task.attempts[0].agent_settings
-
-    assert task.attempts[1].agent_type == AgentType.CLI_SUBPROCESS
-    assert task.attempts[1].agent_model == "claude-sonnet-4-5-20250514"
-    assert task.attempts[1].agent_settings["model"] == "claude-sonnet-4-5-20250514"
-    assert task.attempts[1].agent_settings["temperature"] == 0.7
-    assert "api_key" not in task.attempts[1].agent_settings
 
 
 async def test_auto_verify_results_persist_across_sessions(

@@ -168,45 +168,56 @@ class WorktreeManager:
         if worktree_path:
             wt_path = Path(worktree_path)
             if wt_path.exists():
-                try:
-                    result = subprocess.run(
-                        ["git", "rev-parse", "HEAD"],
-                        cwd=wt_path,
-                        capture_output=True,
-                        text=True,
-                        check=True,
-                    )
-                    return WorktreeInfo(
-                        path=wt_path.resolve(),
-                        branch=branch_name,
-                        commit=result.stdout.strip(),
-                    )
-                except subprocess.CalledProcessError:
-                    pass  # Fall through to recreate
+                git_marker = wt_path / ".git"
+                if not git_marker.exists():
+                    # Directory exists but .git is missing — broken worktree
+                    logger.warning(f"Worktree directory {wt_path} exists but has no .git file")
+                else:
+                    try:
+                        result = subprocess.run(
+                            ["git", "rev-parse", "HEAD"],
+                            cwd=wt_path,
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                        return WorktreeInfo(
+                            path=wt_path.resolve(),
+                            branch=branch_name,
+                            commit=result.stdout.strip(),
+                        )
+                    except subprocess.CalledProcessError:
+                        pass  # Fall through to recreate
 
         # Search existing worktrees by branch name
         for wt in self.list():
-            if wt.branch == branch_name and wt.path.exists():
+            if wt.branch == branch_name and wt.path.exists() and (wt.path / ".git").exists():
                 return wt
 
         # Also check legacy path format for backward compat
         legacy_path = self._worktree_dir / f"run-{run_id}"
         if legacy_path.exists():
-            try:
-                result = subprocess.run(
-                    ["git", "rev-parse", "HEAD"],
-                    cwd=legacy_path,
-                    capture_output=True,
-                    text=True,
-                    check=True,
+            legacy_git_marker = legacy_path / ".git"
+            if not legacy_git_marker.exists():
+                logger.warning(
+                    f"Legacy worktree directory {legacy_path} exists but has no .git file"
                 )
-                return WorktreeInfo(
-                    path=legacy_path.resolve(),
-                    branch=branch_name,
-                    commit=result.stdout.strip(),
-                )
-            except subprocess.CalledProcessError:
-                pass
+            else:
+                try:
+                    result = subprocess.run(
+                        ["git", "rev-parse", "HEAD"],
+                        cwd=legacy_path,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    return WorktreeInfo(
+                        path=legacy_path.resolve(),
+                        branch=branch_name,
+                        commit=result.stdout.strip(),
+                    )
+                except subprocess.CalledProcessError:
+                    pass
 
         # Prune stale worktree entries so git doesn't block re-adding
         subprocess.run(
@@ -422,10 +433,24 @@ class WorktreeManager:
 
             now = datetime.now(timezone.utc)
 
+        # Guard against accidentally deleting all worktrees when run set is empty
+        # (e.g., empty/in-memory DB during test or misconfigured restart)
+        worktrees = self.list()
+        orchestrator_worktrees = [
+            wt for wt in worktrees if wt.branch.startswith("orchestrator/run-")
+        ]
+        if not all_run_ids and orchestrator_worktrees:
+            logger.warning(
+                "cleanup_expired called with empty run set but %d worktree(s) exist; "
+                "refusing to remove (possible misconfiguration)",
+                len(orchestrator_worktrees),
+            )
+            return 0
+
         cutoff = now - retention
         removed = 0
 
-        for wt in self.list():
+        for wt in worktrees:
             if not wt.branch.startswith("orchestrator/run-"):
                 continue
 

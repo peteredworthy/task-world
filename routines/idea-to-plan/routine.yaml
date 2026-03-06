@@ -552,7 +552,36 @@ routine:
 
             The routine must encode the generated steps so another run can execute them.
 
-            After writing routine.yaml, validate it and fix errors until it passes:
+            === INTENT-REQUIREMENT TRACEABILITY ===
+
+            After creating the routine YAML, annotate docs/{{feature}}/intent.md with
+            requirement IDs to prove every element of intent is captured by at least one
+            requirement. Use square brackets inline in the text:
+
+              Before: "The cache must persist for the duration of the run."
+              After:  "The cache must persist for the duration of the run. [S-03/T-01/R1]"
+
+            Format: [S-XX/T-YY/RN] where S-XX/T-YY/RN matches a requirement in the
+            routine YAML. For multiple requirements, separate with commas:
+            [S-01/T-01/R1, S-02/T-01/R3]
+
+            Rules:
+            - Every statement of intent, goal, constraint, or completion criterion in
+              intent.md must have at least one annotation.
+            - Every requirement ID referenced in an annotation must exist in the routine.
+            - Group annotations at the end of the sentence or bullet they apply to.
+            - If a section of intent has no corresponding requirement, you must EITHER
+              add a requirement to the routine OR note the gap explicitly with [NO-REQ]
+              and a brief justification (e.g., out of scope, covered implicitly).
+
+            This is the primary mechanism for catching requirement-intention gaps —
+            where the intent describes behavior that no requirement covers. These gaps
+            cause builders to satisfy all requirements while missing the actual goal.
+
+            === END INTENT-REQUIREMENT TRACEABILITY ===
+
+            After writing routine.yaml and annotating intent.md, validate the routine
+            and fix errors until it passes:
             uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml
 
             If validation fails, use exact error output to correct the YAML structure.
@@ -665,6 +694,9 @@ routine:
             - id: "R3"
               desc: "Every task has contract-level auto_verify commands (not just existence checks)"
               priority: expected
+            - id: "R4"
+              desc: "intent.md annotated with requirement IDs — every element of intent maps to at least one requirement, and every referenced ID exists in the routine"
+              priority: critical
           artifacts:
             - path: "routines/{{feature}}/routine.yaml"
               required: true
@@ -675,6 +707,9 @@ routine:
                 must: true
               - id: "routine_yaml_valid"
                 cmd: "uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml"
+                must: true
+              - id: "intent_annotated"
+                cmd: "grep -q '\\[S-' docs/{{feature}}/intent.md"
                 must: true
           verifier:
             rubric:
@@ -694,3 +729,19 @@ routine:
                   existence) using contract-level checks — e.g. import checks, API signature
                   validation, schema field assertions. No shell pipes in commands. B: auto_verify
                   present but some checks are existence-only. F: tasks missing auto_verify entirely.
+              - id: "R4_traceability"
+                text: |
+                  R4 (intent-requirement traceability) — check three things:
+                  1. COVERAGE: Read intent.md and verify every statement of intent, goal,
+                     constraint, and completion criterion has a [S-XX/T-YY/RN] annotation
+                     (or [NO-REQ] with justification). Any unannotated intent element = F.
+                  2. VALIDITY: Every requirement ID in an annotation must exist in the
+                     routine YAML. Extract all [S-XX/T-YY/RN] references and confirm each
+                     corresponds to a real requirement. Any dangling reference = F.
+                  3. ALIGNMENT: For each annotation, verify the requirement's desc actually
+                     captures the intent element it is tagged against. A requirement that
+                     is technically present but too narrow to cover the full intent = B.
+                  A: all three checks pass — full coverage, all IDs valid, all alignments
+                  accurate. B: coverage and validity pass but one or two alignments are
+                  loose (requirement is narrower than the intent element). F: unannotated
+                  intent elements, dangling IDs, or systematic misalignment.

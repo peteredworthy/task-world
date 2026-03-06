@@ -564,3 +564,82 @@ def test_cleanup_expired_mixed_orphaned_and_expired(git_repo: tuple[Path, Path])
     assert not wt_orphan.path.exists()
     assert not wt_expired.path.exists()
     assert wt_keep.path.exists()
+
+
+# --- broken worktree detection tests ---
+
+
+def test_ensure_exists_broken_worktree_no_git_file(git_repo: tuple[Path, Path]) -> None:
+    """Test ensure_exists recreates a worktree whose directory exists but has no .git file."""
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
+
+    # Create a real worktree first
+    wt = manager.create("broken-run-1")
+    original_path = wt.path
+
+    # Simulate a broken worktree: remove .git file but keep the directory
+    import shutil
+
+    shutil.rmtree(original_path)
+    original_path.mkdir()
+    (original_path / ".pytest_cache").mkdir()  # leftover artifact
+
+    # Verify .git is gone
+    assert original_path.exists()
+    assert not (original_path / ".git").exists()
+
+    # ensure_exists should detect the broken state and recreate
+    restored = manager.ensure_exists("broken-run-1", worktree_path=str(original_path))
+
+    # Should get a valid worktree back (possibly at a new path since the old
+    # directory still exists without .git — the recreation allocates a new counter path)
+    assert restored.path.exists()
+    assert (restored.path / ".git").exists()
+    assert restored.branch == "orchestrator/run-broken-run-1"
+    assert len(restored.commit) == 40
+
+
+def test_ensure_exists_broken_legacy_path_no_git_file(git_repo: tuple[Path, Path]) -> None:
+    """Test ensure_exists recreates a legacy-path worktree with no .git file."""
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
+
+    run_id = "legacy-broken-1"
+
+    # Create a legacy-style directory (run-{id}) without a .git file
+    legacy_path = worktrees_dir / f"run-{run_id}"
+    legacy_path.mkdir(parents=True)
+    (legacy_path / "stale-file.txt").write_text("stale")
+
+    assert legacy_path.exists()
+    assert not (legacy_path / ".git").exists()
+
+    # ensure_exists should not be tricked by the legacy directory
+    restored = manager.ensure_exists(run_id)
+
+    assert restored.path.exists()
+    assert (restored.path / ".git").exists()
+    assert restored.branch == f"orchestrator/run-{run_id}"
+    assert len(restored.commit) == 40
+
+
+def test_cleanup_expired_refuses_empty_run_set(git_repo: tuple[Path, Path]) -> None:
+    """Test cleanup_expired refuses to delete worktrees when all_run_ids is empty."""
+    repo, worktrees_dir = git_repo
+    manager = WorktreeManager(repo, worktrees_dir)
+
+    # Create worktrees that would be "orphaned" if run set is trusted
+    wt1 = manager.create("run-a")
+    wt2 = manager.create("run-b")
+
+    # Pass empty run set — should refuse to remove anything
+    removed = manager.cleanup_expired(
+        all_run_ids=set(),
+        run_completed_at={},
+        retention=timedelta(days=14),
+    )
+
+    assert removed == 0
+    assert wt1.path.exists()
+    assert wt2.path.exists()

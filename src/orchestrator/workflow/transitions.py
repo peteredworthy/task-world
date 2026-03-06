@@ -57,12 +57,13 @@ class TransitionResult:
 
 
 def transition_to_building(task: TaskState, now: datetime) -> TransitionResult:
-    """Start building (from PENDING, VERIFYING for revision, RECOVERING, or PENDING_USER_ACTION).
+    """Start building (from PENDING, BUILDING for pre-gate revision, VERIFYING for revision, RECOVERING, or PENDING_USER_ACTION).
 
     Creates a new Attempt and sets status to BUILDING.
     """
     if task.status not in (
         TaskStatus.PENDING,
+        TaskStatus.BUILDING,
         TaskStatus.VERIFYING,
         TaskStatus.PENDING_USER_ACTION,
         TaskStatus.RECOVERING,
