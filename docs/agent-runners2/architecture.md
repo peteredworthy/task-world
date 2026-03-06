@@ -54,7 +54,9 @@
 
 ### Agent Runner (renamed from Agent)
 
-The execution environment. Unchanged in behavior -- still implements the Runner protocol (renamed from Agent protocol), still detected by ToolDetector, still selected by the user when creating a run. Types: `CLI_SUBPROCESS`, `OPENHANDS_LOCAL`, `OPENHANDS_DOCKER`, `USER_MANAGED`, `CODEX_SERVER`, `CLAUDE_SDK`.
+The execution environment. Unchanged in behavior -- still implements the AgentRunner protocol (renamed from Agent protocol), still detected by ToolDetector, still selected by the user when creating a run. Types: `CLI_SUBPROCESS`, `OPENHANDS_LOCAL`, `OPENHANDS_DOCKER`, `USER_MANAGED`, `CODEX_SERVER`, `CLAUDE_SDK`.
+
+**Naming convention**: All Python classes use prefixed names to avoid confusion with the new Agent concept: `AgentRunnerType` (was `AgentType`), `AgentRunnerExecutor` (was `AgentExecutor`), `AgentRunnerInfo` (was `AgentInfo`), etc.
 
 **Key change**: Each runner now has a mapping of `ModelProfile -> model_string` that determines which model to use when executing a given cognitive profile.
 
@@ -76,11 +78,13 @@ Profiles are an enum, not user-extensible (initially). The per-runner mapping is
 A prompt template paired with a model profile. Agents define *what* to do (via prompt) and *how hard to think* (via profile). The runner determines *where* and *how* to execute.
 
 **Default agents:**
-- **Planner** -- profile: ARCHITECT. System prompt for breaking down work into steps/tasks.
+- **Planner** -- profile: ARCHITECT. System prompt for breaking down work into steps/tasks. User-assignable only; no special workflow engine integration (no planning phase exists).
 - **Builder** -- profile: CODER. System prompt for implementing requirements.
 - **Verifier** -- profile: CODER. System prompt for grading work against requirements.
 
 Users can create custom agents (e.g., a "Security Reviewer" with ARCHITECT profile).
+
+**Factory defaults**: Each agent stores both `system_prompt` (user-editable) and `default_prompt` (factory default). Users can reset their edited prompt back to the factory default via `POST /api/agents/{id}/reset-prompt`.
 
 ## Data Model Changes
 
@@ -90,7 +94,8 @@ Users can create custom agents (e.g., a "Security Reviewer" with ARCHITECT profi
 agent_configs
 ├── id: UUID (PK)
 ├── name: str (unique)
-├── system_prompt: text
+├── system_prompt: text (user-editable)
+├── default_prompt: text (factory default, immutable after seed)
 ├── model_profile: enum (ARCHITECT|DESIGNER|CODER|SUMMARIZER)
 ├── created_at: datetime
 └── updated_at: datetime
@@ -115,10 +120,10 @@ runs (renamed columns)
 
 ### Migration Strategy
 
+- Alembic migrations exclusively (production-grade). No DB recreation fallback.
 - Alembic migration renames columns on `runs` table.
 - New tables created via migration.
-- For development: `rm orchestrator.db && seed` remains the fast path.
-- Seed script creates default agents (Planner, Builder, Verifier).
+- Seed script creates default agents (Planner, Builder, Verifier) with factory default prompts.
 
 ## API Changes
 
@@ -141,6 +146,7 @@ runs (renamed columns)
 | `GET` | `/api/agents/{id}` | Get agent detail |
 | `PUT` | `/api/agents/{id}` | Update agent (prompt, profile) |
 | `DELETE` | `/api/agents/{id}` | Delete agent |
+| `POST` | `/api/agents/{id}/reset-prompt` | Reset system prompt to factory default |
 
 Note: `GET /api/agents` now returns the new Agent concept (prompt + profile), not runners.
 
@@ -165,14 +171,14 @@ class RunnerProfileDefaultsSchema(BaseModel):
     profiles: dict[str, str]  # {profile_name: model_string}
 
 # Renamed
-class RunnerOption(BaseModel):       # was AgentOption
-    runner_type: str                  # was agent_type
+class AgentRunnerOption(BaseModel):       # was AgentOption
+    runner_type: str                       # was agent_type
     name: str
     title: str
     description: str
     available: bool
-    config_schema: list[RunnerConfigField]
-    quota: RunnerQuota | None
+    config_schema: list[AgentRunnerConfigField]
+    quota: AgentRunnerQuota | None
     profile_defaults: dict[str, str]  # NEW: current profile->model mapping
 ```
 
@@ -213,9 +219,9 @@ All fields are optional. Existing routines without these fields use the system d
 src/orchestrator/
 ├── runners/                    # renamed from agents/
 │   ├── __init__.py
-│   ├── interface.py            # Runner protocol (was Agent)
+│   ├── interface.py            # AgentRunner protocol (was Agent)
 │   ├── detector.py             # ToolDetector (runner detection)
-│   ├── executor.py             # RunnerExecutor (was AgentExecutor)
+│   ├── executor.py             # AgentRunnerExecutor (was AgentExecutor)
 │   ├── types.py                # ExecutionContext, callbacks
 │   ├── cli.py                  # CLIRunner
 │   ├── openhands.py            # OpenHandsRunner
@@ -228,7 +234,7 @@ src/orchestrator/
 │   ├── schemas.py              # Pydantic schemas
 │   └── service.py              # CRUD logic
 ├── config/
-│   ├── enums.py                # RunnerType (was AgentType), ModelProfile
+│   ├── enums.py                # AgentRunnerType (was AgentType), ModelProfile
 │   └── models.py               # RoutineConfig with agent fields
 ├── api/
 │   ├── routers/
@@ -250,18 +256,18 @@ ui/src/
 │   ├── AgentRunners.tsx        # renamed from Agents.tsx
 │   └── Agents.tsx              # NEW: agent management page
 ├── components/
-│   ├── RunnerCard.tsx          # renamed from AgentCard (embedded in page)
-│   ├── RunnerConfigForm.tsx    # renamed from AgentConfigForm
-│   ├── RunnerIcon.tsx          # renamed from AgentIcon
-│   ├── RunnerQuotaBadge.tsx    # renamed from AgentQuotaBadge
-│   ├── RunnerGuidancePanel.tsx # renamed from AgentGuidancePanel
+│   ├── AgentRunnerCard.tsx          # renamed from AgentCard (embedded in page)
+│   ├── AgentRunnerConfigForm.tsx    # renamed from AgentConfigForm
+│   ├── AgentRunnerIcon.tsx          # renamed from AgentIcon
+│   ├── AgentRunnerQuotaBadge.tsx    # renamed from AgentQuotaBadge
+│   ├── AgentRunnerGuidancePanel.tsx # renamed from AgentGuidancePanel
 │   ├── AgentCard.tsx           # NEW: agent (prompt+profile) card
 │   └── AgentEditor.tsx         # NEW: prompt editing component
 ├── types/
-│   ├── agentRunners.ts         # renamed from agents.ts
+│   ├── agentRunners.ts         # renamed from agents.ts (AgentRunnerOption, etc.)
 │   └── agents.ts               # NEW: Agent, ModelProfile types
 └── lib/
-    ├── runnerConfigUtils.ts    # renamed from agentConfigUtils.ts
+    ├── agentRunnerConfigUtils.ts    # renamed from agentConfigUtils.ts
     └── agentApi.ts             # NEW: agent CRUD API calls
 ```
 
@@ -269,22 +275,22 @@ ui/src/
 
 ### Execution Flow (modified)
 
-1. User creates run, selects **runner** type and config.
+1. User creates run, selects **runner** type, config, and optional per-profile model overrides.
 2. Routine specifies **agents** for each role (or uses defaults).
 3. Engine resolves agent for current phase (build/verify) via cascading lookup.
 4. Resolved agent provides: system prompt + model profile.
-5. Runner resolves model profile to concrete model string via its profile defaults.
-6. Runner executes with resolved model and prompt.
+5. Runner resolves model profile to concrete model string. Resolution order: per-run profile overrides -> runner's profile defaults.
+6. Runner executes with resolved model and concatenated prompt (agent system prompt + separator + task prompt).
 
 ### Prompt Generation (modified)
 
 Current: `GET /api/tasks/{id}/prompt` returns a single prompt.
-After: Prompt endpoint resolves the agent for the current phase and injects the agent's system prompt as a prefix/wrapper around the task-specific prompt.
+After: Prompt endpoint resolves the agent for the current phase and prepends the agent's system prompt to the task-specific prompt using simple concatenation (agent prompt + separator + task prompt).
 
 ### Backward Compatibility
 
 - Runs created without agent fields use system default agents.
-- `runner_config.model` still works as a direct override (takes precedence over profile resolution).
+- Per-run model-profile overrides: when creating a run, users can set overrides for each model profile used in the routine (e.g., `profile_overrides: {CODER: "claude-sonnet-4-6", ARCHITECT: "claude-opus-4-6"}`). These take precedence over the runner's default profile-to-model mappings.
 - Old routine YAMLs without `*_agent` fields work unchanged.
 - API returns runner info at new `/api/agent-runners` path.
 

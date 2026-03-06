@@ -6,17 +6,19 @@ Each milestone ends with a working system where routines can be run.
 
 ### M1: Rename "Agents" to "Agent Runners" (Backend)
 
-Programmatic rename of all backend Python references using `rope` (or `rope`-based tooling like `python-rope`). Non-Python files (YAML, docs, SQL) handled with targeted find-replace.
+Programmatic rename of all backend Python references using `rope` for Python files + manual find-replace for non-Python files (YAML, docs, SQL).
+
+**Naming convention**: Use prefixed names -- `AgentRunnerType`, `AgentRunner` protocol, `AgentRunnerExecutor`, `AgentRunnerInfo`, etc. -- to avoid confusion with the new Agent concept.
 
 **Steps:**
-1. Use rope to rename `AgentType` -> `RunnerType`, `Agent` protocol -> `Runner`, `AgentInfo` -> `RunnerInfo`, `AgentExecutor` -> `RunnerExecutor`, etc. across `src/orchestrator/agents/` (rename directory to `runners/`).
+1. Use rope to rename `AgentType` -> `AgentRunnerType`, `Agent` protocol -> `AgentRunner`, `AgentInfo` -> `AgentRunnerInfo`, `AgentExecutor` -> `AgentRunnerExecutor`, etc. across `src/orchestrator/agents/` (rename directory to `runners/`).
 2. Rename API router file `routers/agents.py` -> `routers/runners.py`, update endpoint paths `/api/agents` -> `/api/agent-runners`.
-3. Rename schemas: `AgentOption` -> `RunnerOption`, `AgentQuota` -> `RunnerQuota`, etc.
+3. Rename schemas: `AgentOption` -> `AgentRunnerOption`, `AgentQuota` -> `AgentRunnerQuota`, etc.
 4. Rename DB model columns: `RunModel.agent_type` -> `runner_type`, `RunModel.agent_config` -> `runner_config`. Create Alembic migration.
 5. Rename enums in `config/enums.py`.
 6. Update all imports and references in `executor.py`, `engine.py`, `service.py`, `deps.py`, `app.py`.
 7. Update routine config models (`config/models.py`) -- field names referencing agents.
-8. Grep for any remaining "agent" references in the runner context; fix stragglers.
+8. Use manual find-replace for non-Python files (YAML, templates, docs). Grep-verify after each pass.
 9. Run full test suite, fix failures.
 
 **Verification:** All backend tests pass. `GET /api/agent-runners` returns runner list. A run can be created and started.
@@ -24,10 +26,10 @@ Programmatic rename of all backend Python references using `rope` (or `rope`-bas
 ### M2: Rename "Agents" to "Agent Runners" (Frontend)
 
 **Steps:**
-1. Rename `ui/src/pages/Agents.tsx` -> `AgentRunners.tsx`, update route in router.
-2. Rename `ui/src/types/agents.ts` -> `agentRunners.ts`, update all type names (`AgentOption` -> `RunnerOption`, etc.).
-3. Rename components: `AgentCard` -> `RunnerCard`, `AgentConfigForm` -> `RunnerConfigForm`, `AgentIcon` -> `RunnerIcon`, `AgentQuotaBadge` -> `RunnerQuotaBadge`, `AgentGuidancePanel` -> `RunnerGuidancePanel`.
-4. Update `agentConfigUtils.ts` -> `runnerConfigUtils.ts`, rename functions.
+1. Rename `ui/src/pages/Agents.tsx` -> `AgentRunners.tsx`, update route to `/agent-runners` in router.
+2. Rename `ui/src/types/agents.ts` -> `agentRunners.ts`, update all type names (`AgentOption` -> `AgentRunnerOption`, etc.).
+3. Rename components: `AgentCard` -> `AgentRunnerCard`, `AgentConfigForm` -> `AgentRunnerConfigForm`, `AgentIcon` -> `AgentRunnerIcon`, `AgentQuotaBadge` -> `AgentRunnerQuotaBadge`, `AgentGuidancePanel` -> `AgentRunnerGuidancePanel`.
+4. Update `agentConfigUtils.ts` -> `agentRunnerConfigUtils.ts`, rename functions.
 5. Update API call URLs from `/api/agents` to `/api/agent-runners`.
 6. Update all UI labels: "Agents" -> "Agent Runners" in nav, headings, tooltips.
 7. Update `CreateRunModal` and run-related components that reference agent type/config.
@@ -60,11 +62,12 @@ Programmatic rename of all backend Python references using `rope` (or `rope`-bas
 ### M5: Agents Concept (Backend + DB)
 
 **Steps:**
-1. Create `AgentConfig` model: `id`, `name`, `system_prompt` (text), `model_profile` (FK to ModelProfile enum), `created_at`, `updated_at`.
-2. Seed three default agents: Planner (ARCHITECT profile), Builder (CODER profile), Verifier (CODER profile).
-3. Create API endpoints: `GET /api/agents` (list), `POST /api/agents` (create), `GET /api/agents/{id}` (detail), `PUT /api/agents/{id}` (update), `DELETE /api/agents/{id}` (delete).
-4. Add Alembic migration.
-5. Tests for agent CRUD.
+1. Create `AgentConfig` model: `id`, `name`, `system_prompt` (text), `default_prompt` (text, factory default), `model_profile` (FK to ModelProfile enum), `created_at`, `updated_at`.
+2. Seed three default agents: Planner (ARCHITECT profile), Builder (CODER profile), Verifier (CODER profile). Store factory default prompts in `default_prompt` column.
+3. Create API endpoints: `GET /api/agents` (list), `POST /api/agents` (create), `GET /api/agents/{id}` (detail), `PUT /api/agents/{id}` (update), `DELETE /api/agents/{id}` (delete), `POST /api/agents/{id}/reset-prompt` (reset to factory default).
+4. Planner agent has no special engine integration -- it is user-assignable only.
+5. Add Alembic migration.
+6. Tests for agent CRUD including prompt reset.
 
 **Verification:** API CRUD for agents works. Default agents seeded.
 
@@ -138,5 +141,5 @@ To avoid conflicting with the production orchestrator:
 
 - **Incremental commits**: Each milestone is committed separately. If a later milestone breaks, earlier ones are safe.
 - **Rope limitations**: After rope renames, run `grep -r` to catch references in strings, comments, YAML, and templates that rope misses.
-- **DB migration**: For development, support `rm orchestrator.db && seed` as fallback. Alembic migration for production path.
+- **DB migration**: Use Alembic migrations exclusively (production-grade).
 - **Backward compatibility**: All new routine fields are optional. Existing routines run unchanged.
