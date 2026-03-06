@@ -60,7 +60,7 @@ def create_step_state(
     return StepState(
         id=id_generator(),
         config_id=step_config.id,
-        title=step_config.title,
+        title=step_config.title or step_config.id,
         tasks=tasks,
     )
 

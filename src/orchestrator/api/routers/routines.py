@@ -138,7 +138,7 @@ async def get_routine(
             steps = [
                 StepSummarySchema(
                     id=step.id,
-                    title=step.title,
+                    title=step.title or step.id,
                     task_count=len(step.tasks),
                 )
                 for step in routine.config.steps

@@ -239,10 +239,11 @@ class StepConfig(BaseModel):
     """A step within a routine."""
 
     id: str
-    title: str
+    file: str | None = None
+    title: str | None = None
     step_context: str | None = None
     gate: GateConfig | None = None
-    tasks: list[TaskConfig] = Field(min_length=1)
+    tasks: list[TaskConfig] = Field(default_factory=lambda: [])
     transitions: StepTransitions | None = None
     type: StepType = StepType.STANDARD
     dry_run: DryRunConfig | None = None
@@ -268,6 +269,48 @@ class StepConfig(BaseModel):
         """Reject ref/use in step data and nested task/tasks."""
         _check_value_recursive(data)
         return data  # type: ignore[no-any-return]
+
+    @model_validator(mode="after")
+    def _validate_file_exclusivity(self) -> "StepConfig":
+        """If file is set, no other step fields may be set (except id)."""
+        if self.file is not None:
+            overlapping: list[str] = []
+            if self.title is not None:
+                overlapping.append("title")
+            if self.tasks:
+                overlapping.append("tasks")
+            if self.step_context is not None:
+                overlapping.append("step_context")
+            if self.gate is not None:
+                overlapping.append("gate")
+            if self.transitions is not None:
+                overlapping.append("transitions")
+            if self.type != StepType.STANDARD:
+                overlapping.append("type")
+            if self.dry_run is not None:
+                overlapping.append("dry_run")
+            if self.available_tools is not None:
+                overlapping.append("available_tools")
+            if self.mcp_servers is not None:
+                overlapping.append("mcp_servers")
+            if self.step_auto_verify:
+                overlapping.append("step_auto_verify")
+            if overlapping:
+                raise ValueError(
+                    f"Step '{self.id}' sets 'file' along with other fields "
+                    f"({', '.join(overlapping)}). When 'file' is specified, no other "
+                    f"step fields may be set."
+                )
+        else:
+            if self.title is None:
+                raise ValueError(
+                    f"Step '{self.id}' must have a 'title' (or use 'file' to reference an external step)."
+                )
+            if not self.tasks:
+                raise ValueError(
+                    f"Step '{self.id}' must have at least one task (or use 'file' to reference an external step)."
+                )
+        return self
 
 
 class ClarificationsConfig(BaseModel):
