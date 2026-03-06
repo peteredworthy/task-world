@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.api.schemas.runs import RecoverResponse
 from orchestrator.config.enums import AgentType, ChecklistStatus, GateType, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig
-from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, TaskConfig
+from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db.event_store import EventStore
 from orchestrator.db.repositories import RunRepository
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
@@ -114,6 +114,14 @@ def find_task_config(
         for task in step.tasks:
             if task.id == config_id:
                 return task
+    return None
+
+
+def find_step_config(routine_config: RoutineConfig, step_config_id: str) -> StepConfig | None:
+    """Find a StepConfig by id within a RoutineConfig. Pure function."""
+    for step in routine_config.steps:
+        if step.id == step_config_id:
+            return step
     return None
 
 
@@ -964,6 +972,31 @@ class WorkflowService:
         self._notify_submit(task_id)
         return result
 
+    async def _run_step_auto_verify(
+        self, run: Run, step: "StepState"
+    ) -> tuple[bool, list[AutoVerifyResult]]:
+        """Run step-level auto-verify items for a newly completed step.
+
+        Returns (all_must_passed, results).
+        """
+        if run.routine_embedded is None or self._auto_verify_runner is None:
+            return True, []
+
+        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        step_config = find_step_config(routine_config, step.config_id)
+        if step_config is None or not step_config.step_auto_verify:
+            return True, []
+
+        # Build an AutoVerifyConfig from the step-level items
+        av_config = AutoVerifyConfig(items=step_config.step_auto_verify)
+        cwd = _resolve_working_path(run)
+        if cwd is None:
+            return True, []
+
+        results = await run_auto_verify(av_config, self._auto_verify_runner, cwd)
+        all_must_passed, _ = evaluate_auto_verify(av_config, results)
+        return all_must_passed, results
+
     async def complete_verification(self, run_id: str, task_id: str) -> TransitionResult:
         """Complete verification phase.
 
@@ -975,11 +1008,42 @@ class WorkflowService:
             raise InvalidTransitionError(
                 run.status.value, "complete_verification (requires ACTIVE run)"
             )
+
+        # Capture which steps were already completed before the engine runs
+        prev_completed_step_ids = {s.config_id for s in run.steps if s.completed}
+
         engine, state, buffer = self._build_engine(run)
         result = engine.complete_verification(run_id, task_id)
 
         # Get the updated run after engine processing
         updated_run = state.get_run(run_id)
+
+        # Run step_auto_verify for any newly completed steps
+        if result.success:
+            newly_completed = [
+                s
+                for s in updated_run.steps
+                if s.completed and s.config_id not in prev_completed_step_ids
+            ]
+            for step in newly_completed:
+                all_passed, _ = await self._run_step_auto_verify(updated_run, step)
+                if not all_passed:
+                    # Halt the run: mark it FAILED
+                    old_run_status = updated_run.status
+                    updated_run.status = RunStatus.FAILED
+                    updated_run.last_error = f"Step '{step.config_id}' auto-verify failed"
+                    updated_run.completed_at = self._clock.now()
+                    state.update_run(updated_run)
+                    buffer.emit(
+                        RunStatusChanged(
+                            timestamp=self._clock.now(),
+                            run_id=run_id,
+                            event_type="run_status_changed",
+                            old_status=old_run_status,
+                            new_status=RunStatus.FAILED,
+                        )
+                    )
+                    break
 
         await self._persist(state, run_id, buffer)
 

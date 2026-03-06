@@ -237,6 +237,7 @@ class StepConfig(BaseModel):
     dry_run: DryRunConfig | None = None
     available_tools: list[str] | None = None
     mcp_servers: list[MCPServerConfig] | None = None
+    step_auto_verify: list[AutoVerifyItemConfig] = Field(default_factory=lambda: [])
 
     @model_validator(mode="before")
     @classmethod
