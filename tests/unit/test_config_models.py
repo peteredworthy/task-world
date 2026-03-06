@@ -522,3 +522,52 @@ def test_task_config_complexity_standard_explicit() -> None:
 def test_task_config_complexity_invalid() -> None:
     with pytest.raises(pydantic.ValidationError):
         TaskConfig(id="T1", title="Test", task_context="ctx", complexity="complex")
+
+
+# --- A3: Per-requirement grading enforcement ---
+
+
+def test_rubric_auto_generated_from_requirements() -> None:
+    """Empty rubric + requirements -> rubric auto-populated with one item per requirement."""
+    task = TaskConfig(
+        id="T1",
+        title="Task 1",
+        task_context="ctx",
+        requirements=[
+            RequirementConfig(id="R1", desc="First requirement"),
+            RequirementConfig(id="R2", desc="Second requirement"),
+        ],
+    )
+    # Rubric should be auto-generated (one item per requirement).
+    assert len(task.verifier.rubric) == 2
+    assert task.verifier.rubric[0].id == "R1"
+    assert task.verifier.rubric[0].text == "Does the implementation satisfy: First requirement?"
+    assert task.verifier.rubric[1].id == "R2"
+    assert task.verifier.rubric[1].text == "Does the implementation satisfy: Second requirement?"
+
+
+def test_rubric_mismatch_warns(caplog: pytest.LogCaptureFixture) -> None:
+    """Rubric IDs that don't match any requirement ID produce a warning."""
+    import logging
+
+    with caplog.at_level(logging.WARNING, logger="orchestrator.config.models"):
+        TaskConfig(
+            id="T1",
+            title="Task 1",
+            task_context="ctx",
+            requirements=[
+                RequirementConfig(id="R1", desc="First requirement"),
+                RequirementConfig(id="R2", desc="Second requirement"),
+            ],
+            verifier={  # type: ignore[arg-type]
+                "rubric": [
+                    {"id": "R1", "text": "Check R1"},
+                    {"id": "R1-R3", "text": "Composite check covering R1 through R3"},
+                ]
+            },
+        )
+
+    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("R1-R3" in msg for msg in warning_messages), (
+        f"Expected warning about 'R1-R3', got: {warning_messages}"
+    )

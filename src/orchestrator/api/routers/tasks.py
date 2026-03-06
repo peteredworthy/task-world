@@ -41,6 +41,7 @@ from orchestrator.artifacts.registry import ArtifactRegistry
 from orchestrator.workflow.clarifications import (
     ClarificationRequest,
     ClarificationResponse,
+    decisions_from_config,
     resolve_artifact_path,
 )
 from orchestrator.workflow.context_builder import TaskContextBuilder
@@ -325,6 +326,7 @@ Run ID: {run_id}, Task ID: {task_id}
 Available MCP tools:
 - orchestrator_get_requirements(run_id, task_id) → Get checklist items
 - orchestrator_update_checklist(run_id, task_id, req_id, status, note?) → Mark requirement done/blocked
+- orchestrator_escalate_requirement(run_id, task_id, requirement_id, reason) → Flag requirement as unfulfillable (pauses run)
 - orchestrator_submit(run_id, task_id) → Submit task for verification"""
 
     return CallbackInstructions(
@@ -488,7 +490,14 @@ async def get_task_prompt(
     if task_config.context_from:
         worktree_path = Path(run.worktree_path) if run.worktree_path else None
         context_builder = TaskContextBuilder(ArtifactRegistry(), worktree_path=worktree_path)
-        summary_cache = SummaryCache()
+        # Use a run-scoped SummaryCache so repeated prompt calls for the same
+        # run reuse cached summaries instead of re-generating them each time.
+        summary_caches: dict[str, SummaryCache] = getattr(request.app.state, "summary_caches", {})
+        if not hasattr(request.app.state, "summary_caches"):
+            request.app.state.summary_caches = summary_caches
+        if run_id not in summary_caches:
+            summary_caches[run_id] = SummaryCache()
+        summary_cache = summary_caches[run_id]
         artifact_context = await context_builder.build_context(
             run_id=run_id,
             context_sources=task_config.context_from,
@@ -512,6 +521,7 @@ async def get_task_prompt(
             run_config=run.config,
             worktree_path=run.worktree_path,
         )
+        decisions = decisions_from_config(run.config)
         prompt = generate_builder_prompt(
             task_config,
             task_state,
@@ -521,6 +531,7 @@ async def get_task_prompt(
             clarification_line_range=clarification_line_range,
             skipped_questions=skipped_questions,
             skip_reason=skip_reason,
+            decisions=decisions,
         )
         return PromptResponse(
             system=prompt.system, user=prompt.user, phase="building", callback=callback

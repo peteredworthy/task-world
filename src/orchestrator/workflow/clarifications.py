@@ -135,6 +135,33 @@ def compress_clarifications(
     )
 
 
+def decisions_from_config(config: dict[str, Any]) -> CompressedDecisions | None:
+    """Reconstruct CompressedDecisions from run.config['_compressed_decisions'].
+
+    Returns None if the key is absent or the data is malformed.
+    """
+    raw = config.get("_compressed_decisions")
+    if not isinstance(raw, list):
+        return None
+    entries: list[dict[str, str]] = raw  # type: ignore[assignment]
+    try:
+        decisions: list[CompressedDecision] = []
+        for d in entries:
+            decisions.append(
+                CompressedDecision(
+                    question=d["question"],
+                    decision=d["decision"],
+                    rationale=d["rationale"],
+                )
+            )
+        return CompressedDecisions(
+            decisions=decisions,
+            source_request_id=config.get("_compressed_decisions_request_id", ""),
+        )
+    except (KeyError, TypeError):
+        return None
+
+
 def format_clarification_artifact(
     request: ClarificationRequest,
     response: ClarificationResponse,

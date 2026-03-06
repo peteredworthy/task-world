@@ -167,13 +167,18 @@ def test_verifier_prompt_with_rubric() -> None:
     assert "Rubric Questions" in prompt.user
 
 
-def test_verifier_prompt_empty_rubric() -> None:
+def test_verifier_prompt_rubric_auto_generated_from_requirements() -> None:
+    """When no rubric is provided, one item per requirement is auto-generated."""
     config = _task_config()
     state = _task_state()
     prompt = generate_verifier_prompt(config, state)
 
-    assert len(prompt.rubric) == 0
-    assert "Evaluate based on requirements only" in prompt.user
+    # Auto-generated: one rubric item per requirement (R1, R2).
+    assert len(prompt.rubric) == 2
+    assert "[R1]" in prompt.rubric[0]
+    assert "[R2]" in prompt.rubric[1]
+    # The rubric section is shown in the user prompt (not the fallback text).
+    assert "Evaluate based on requirements only" not in prompt.user
 
 
 def test_verifier_prompt_submission_instructions() -> None:
@@ -913,3 +918,90 @@ def test_builder_prompt_decisions_with_skipped_questions() -> None:
 
     assert "declined to answer" in prompt.user
     assert "Not relevant" in prompt.user
+
+
+# --- A7: Trim shared verifier system prompt (remove git-specific content) ---
+
+
+def _shared_verifier_system_prompt() -> str:
+    """Return the system section of a generated verifier prompt."""
+    config = _task_config()
+    state = _task_state()
+    return generate_verifier_prompt(config, state).system
+
+
+def test_reviewing_code_section_removed_from_shared_verifier_prompt() -> None:
+    """The 'Reviewing Code' git section must NOT appear in the shared verifier system prompt.
+
+    Git review instructions are agent-specific (CLI/OpenHands have terminal
+    access; Codex and Claude SDK do not). The shared prompt should only contain
+    universal workflow instructions.
+    """
+    system = _shared_verifier_system_prompt()
+    assert "## Reviewing Code" not in system
+    assert "git --no-pager" not in system
+
+
+def test_shared_verifier_system_prompt_still_has_required_sections() -> None:
+    """Required verifier sections (role, workflow, grading, important) remain in shared prompt."""
+    system = _shared_verifier_system_prompt()
+    assert "code reviewer" in system.lower()
+    assert "VERIFIER phase" in system
+    assert "Grading Guidelines" in system
+    assert "## Important" in system
+    # Workflow steps still present
+    assert "grade" in system.lower()
+    assert "complete the verification" in system.lower()
+
+
+# --- A8: Git review instructions migrated to agent-specific runners ---
+
+
+def _make_context_with_api(prompt: str) -> ExecutionContext:
+    """Return an ExecutionContext with api_base_url set (needed to trigger _build_verifier_prompt)."""
+    return ExecutionContext(
+        run_id="run-1",
+        task_id="task-1",
+        working_dir="/tmp",
+        prompt=prompt,
+        requirements=["R1: do the thing"],
+        api_base_url="http://localhost:8000",
+    )
+
+
+def test_cli_verifier_prompt_includes_git_review_instructions() -> None:
+    """CLIAgent._build_verifier_prompt includes git --no-pager review commands.
+
+    The CLI agent has terminal access and uses git to inspect builder changes.
+    The git review instructions were removed from the shared system prompt and
+    must now live exclusively in the CLI verifier prompt builder.
+    """
+    shared_prompt = _shared_verifier_system_prompt()
+    context = _make_context_with_api(shared_prompt)
+    result = CLIAgent.build_prompt(shared_prompt, context, phase="verifying")
+    assert "## Reviewing Code" in result
+    assert "git --no-pager" in result
+    assert "git --no-pager log --oneline" in result
+    assert "git --no-pager diff HEAD~1" in result
+    assert "git --no-pager show HEAD --stat" in result
+
+
+def test_openhands_verifier_prompt_includes_git_review_instructions() -> None:
+    """build_openhands_prompt (is_verifier=True) includes git --no-pager review commands.
+
+    OpenHands has terminal access and already includes git tips in its verifier
+    prompt under 'Terminal Tips'.
+    """
+    context = _make_context("Some prompt")
+    result = build_openhands_prompt(context, is_verifier=True)
+    assert "git --no-pager" in result
+    assert "git --no-pager show HEAD" in result
+
+
+def test_shared_verifier_prompt_does_not_contain_git_no_pager() -> None:
+    """The shared verifier system prompt must not contain any git --no-pager commands.
+
+    These are agent-specific and belong only in runners that have terminal access.
+    """
+    system = _shared_verifier_system_prompt()
+    assert "git --no-pager" not in system

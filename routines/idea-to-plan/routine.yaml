@@ -605,7 +605,19 @@ routine:
             - id (string, e.g. "S-01")
             - title (string)
             - tasks (array, >=1 task)
-            Optional: step_context, type (standard|dry_run), gate, transitions.
+            Optional: step_context, type (standard|dry_run), gate, transitions,
+                      mcp_servers (array of MCP server configs), available_tools (array of strings).
+
+            mcp_servers — attach external tool servers to a step (all tasks inherit):
+              mcp_servers:
+                - name: "browser"                    # unique name (required)
+                  command: "npx"                     # stdio transport
+                  args: ["-y", "@playwright/mcp@latest", "--headless"]
+                - name: "my-api"                     # OR url transport (not both)
+                  url: "https://api.example.com/mcp/sse"
+                  auth_token_env: "MY_API_TOKEN"     # env var name, never inline token
+            Use mcp_servers when tasks need browser control, external APIs, or tools
+            not built into the agent. See docs/planner/mcp-server-guide.md for details.
 
             Task shape — each task must have:
             - id (string, e.g. "T-01")

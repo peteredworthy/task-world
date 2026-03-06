@@ -174,9 +174,28 @@ class TaskConfig(BaseModel):
 
     @model_validator(mode="after")
     def _warn_if_no_verification(self) -> "TaskConfig":
-        """Warn when task has no auto_verify items and no verifier rubric."""
+        """Warn when task has no auto_verify items and no verifier rubric.
+
+        Also:
+        - If rubric is empty but requirements exist, auto-generate one rubric
+          item per requirement.
+        - If rubric is non-empty, warn for any rubric item whose id does not
+          match a requirement id (potential composite or mismatched item).
+        """
         has_auto_verify = bool(self.auto_verify.items)
+
+        # Auto-generate rubric from requirements when rubric is empty.
+        if not self.verifier.rubric and self.requirements:
+            self.verifier.rubric = [
+                RubricItemConfig(
+                    id=req.id,
+                    text=f"Does the implementation satisfy: {req.desc}?",
+                )
+                for req in self.requirements
+            ]
+
         has_rubric = bool(self.verifier.rubric)
+
         if not has_auto_verify and not has_rubric:
             logger.warning(
                 "Task '%s' ('%s') has no auto_verify items and no verifier rubric. "
@@ -184,6 +203,19 @@ class TaskConfig(BaseModel):
                 self.id,
                 self.title,
             )
+        elif has_rubric and self.requirements:
+            req_ids = {req.id for req in self.requirements}
+            for item in self.verifier.rubric:
+                if item.id not in req_ids:
+                    logger.warning(
+                        "Task '%s' ('%s'): rubric item '%s' does not match any "
+                        "requirement id %s. If this is a composite item (e.g. 'R1-R3'), "
+                        "consider splitting into per-requirement rubric items.",
+                        self.id,
+                        self.title,
+                        item.id,
+                        sorted(req_ids),
+                    )
         return self
 
 

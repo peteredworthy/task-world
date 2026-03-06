@@ -21,6 +21,7 @@ BUILDER_TOOLS = {
     "orchestrator_update_checklist",
     "orchestrator_submit",
     "orchestrator_request_clarification",
+    "orchestrator_escalate_requirement",
     "orchestrator_list_repos",
     "orchestrator_list_branches",
 }
@@ -29,6 +30,7 @@ VERIFIER_TOOLS = {
     "orchestrator_get_requirements",
     "orchestrator_set_grade",
     "orchestrator_submit",
+    "orchestrator_complete_recovery",
 }
 
 # All tools registered regardless of phase; runtime validation prevents phase-inappropriate calls
@@ -172,6 +174,51 @@ class OrchestratorMCPServer:
                 "The task will pause until the human answers. "
                 "Answers will be appended to the clarifications artifact file."
             ),
+        )
+
+        async def orchestrator_complete_recovery(
+            run_id: str,
+            task_id: str,
+            outcome: str,
+            notes: str,
+        ) -> str:
+            """Complete recovery for a task in failure state. Outcome: retry, skip, or abandon."""
+            result = await handler.handle(
+                "orchestrator_complete_recovery",
+                {"run_id": run_id, "task_id": task_id, "outcome": outcome, "notes": notes},
+            )
+            return json.dumps(result)
+
+        async def orchestrator_escalate_requirement(
+            run_id: str,
+            task_id: str,
+            requirement_id: str,
+            reason: str,
+        ) -> str:
+            """Flag a requirement as unfulfillable and pause the run for human review."""
+            result = await handler.handle(
+                "orchestrator_escalate_requirement",
+                {
+                    "run_id": run_id,
+                    "task_id": task_id,
+                    "requirement_id": requirement_id,
+                    "reason": reason,
+                },
+            )
+            return json.dumps(result)
+
+        self._mcp.add_tool(
+            orchestrator_complete_recovery,
+            name="orchestrator_complete_recovery",
+            description=(
+                "Complete recovery for a task that entered a failure state. "
+                "Choose an outcome: retry, skip, or abandon."
+            ),
+        )
+        self._mcp.add_tool(
+            orchestrator_escalate_requirement,
+            name="orchestrator_escalate_requirement",
+            description="Flag a requirement as unfulfillable and pause the run for human review.",
         )
 
         async def orchestrator_list_repos() -> str:

@@ -3,13 +3,16 @@
 #
 # Usage for routine authors (opt-in auto_verify command):
 #
-#   In your routine YAML, add auto_verify steps like:
+#   1. Before the run starts, create a snapshot externally:
+#        bash scripts/check_test_count.sh --snapshot /tmp/test_snapshot.txt
+#
+#   2. In your routine YAML, add an auto_verify item that compares:
 #
 #     auto_verify:
-#       - command: "bash scripts/check_test_count.sh --snapshot /tmp/test_snapshot.txt"
-#         run_before: true   # capture snapshot before builder runs
-#       - command: "bash scripts/check_test_count.sh --compare /tmp/test_snapshot.txt"
-#         run_after: true    # compare after builder is done
+#       items:
+#         - id: no-tests-removed
+#           cmd: "bash scripts/check_test_count.sh --compare /tmp/test_snapshot.txt"
+#           must: true
 #
 #   Exit codes:
 #     0  - No tests removed (additions are fine)

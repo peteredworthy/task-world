@@ -210,7 +210,7 @@ def generate_verifier_prompt(
     but before requirements.
     """
     requirements = [f"- {req.desc}" for req in task_config.requirements]
-    rubric = [f"- {item.text}" for item in task_config.verifier.rubric]
+    rubric = [f"- [{item.id}] {item.text}" for item in task_config.verifier.rubric]
 
     template = task_config.verifier.submission_template
     submission_instructions = (
@@ -225,7 +225,7 @@ def generate_verifier_prompt(
         "You are in the VERIFIER phase. A builder has implemented the task. "
         "Your job is to review the work and grade each requirement.\n\n"
         "## Your Workflow\n"
-        "1. Review the code changes made by the builder (see Reviewing Code below).\n"
+        "1. Review the code changes made by the builder.\n"
         "2. Evaluate each requirement against the rubric (if provided).\n"
         "3. For each requirement, assign a grade using the orchestrator tools "
         "(set grade with the requirement ID exactly as listed; "
@@ -233,15 +233,6 @@ def generate_verifier_prompt(
         "then include a grade letter "
         "and a reason explaining your assessment).\n"
         "4. After grading ALL requirements, complete the verification.\n\n"
-        "## Reviewing Code\n"
-        "Use these commands to inspect the builder's changes:\n"
-        "- `git --no-pager log --oneline -10` — recent commits\n"
-        "- `git --no-pager diff HEAD~1 -- <file>` — diff for a specific file\n"
-        "- `git --no-pager show HEAD --stat` — which files changed\n"
-        "- `git --no-pager show HEAD -- <file>` — full diff for one file\n"
-        "IMPORTANT: Always use `git --no-pager` (or pipe through `| head -100`)\n"
-        "to prevent interactive pagers from blocking your terminal.\n"
-        "Never run bare `git diff` or `git show` without --no-pager.\n\n"
         "## Grading Guidelines\n"
         "- A: Excellent - fully meets the requirement with high quality\n"
         "- B: Good - meets the requirement with minor issues\n"

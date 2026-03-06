@@ -184,6 +184,8 @@ class CLIAgent:
                 f"  Request clarification from the human. Task will pause until answered.\n"
                 f"  Example: orchestrator_request_clarification('{context.run_id}', "
                 f'\'{context.task_id}\', [{{"id": "Q1", "question": "...", "required": true}}])\n'
+                f"- **orchestrator_escalate_requirement**(run_id, task_id, requirement_id, reason)\n"
+                f"  Flag a requirement as unfulfillable. Pauses run for human review.\n"
                 f"- **orchestrator_submit**(run_id, task_id)\n"
                 f"  Submit your work for verification. "
                 f"All CRITICAL items must be 'done' first."
@@ -201,6 +203,9 @@ class CLIAgent:
                 f'  Body: {{"status": "done"}}\n'
                 f'  Example: PATCH .../checklist/R1 with body {{"status": "done"}}\n'
                 f"  (For numeric IDs, R1/R-01/1 are accepted.)\n\n"
+                f"**Escalate a requirement (flag as unfulfillable, pauses run):**\n"
+                f"  POST {base}/api/runs/{context.run_id}/tasks/{context.task_id}/escalate\n"
+                f'  Body: {{"requirement_id": "R1", "reason": "explanation"}}\n\n'
                 f"**Submit for verification (after all requirements addressed):**\n"
                 f"  POST {base}/api/runs/{context.run_id}/tasks/{context.task_id}/submit"
             )
@@ -249,6 +254,18 @@ class CLIAgent:
         callback_channel: str,
     ) -> str:
         """Build verifier-specific callback instructions."""
+        git_review_section = (
+            "\n\n## Reviewing Code\n"
+            "Use these commands to inspect the builder's changes:\n"
+            "- `git --no-pager log --oneline -10` — recent commits\n"
+            "- `git --no-pager diff HEAD~1 -- <file>` — diff for a specific file\n"
+            "- `git --no-pager show HEAD --stat` — which files changed\n"
+            "- `git --no-pager show HEAD -- <file>` — full diff for one file\n"
+            "IMPORTANT: Always use `git --no-pager` (or pipe through `| head -100`)\n"
+            "to prevent interactive pagers from blocking your terminal.\n"
+            "Never run bare `git diff` or `git show` without --no-pager.\n"
+        )
+
         workflow_section = (
             f"\n\n## Orchestrator Integration (Verifier)\n"
             f"You are connected to an orchestrator. Your role is to VERIFY the builder's work.\n"
@@ -318,7 +335,7 @@ class CLIAgent:
                     mcp_section += f"- **{mcp.name}**: (stdio) {cmd_str}\n"
             api_section += mcp_section
 
-        return prompt + api_section
+        return prompt + git_review_section + api_section
 
     def _write_mcp_json(self, working_dir: str, mcp_servers: list[Any]) -> None:
         """Write .mcp.json to working dir for Claude Code auto-discovery.

@@ -32,6 +32,7 @@ from orchestrator.workflow.events import (
 )
 from orchestrator.workflow.errors import GateBlockedError
 from orchestrator.workflow.prompts import generate_builder_prompt
+from orchestrator.workflow.summary_cache import SummaryCache
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -372,6 +373,10 @@ class AgentExecutor:
         # we pause the run instead of looping forever.
         recovery_attempted: set[str] = set()
 
+        # Run-scoped summary cache: summaries from earlier tasks are reused by
+        # later tasks, avoiding redundant API calls during context_from lookups.
+        summary_cache = SummaryCache()
+
         # Run project health check before the first task attempt.
         health_check_done = False
 
@@ -480,7 +485,12 @@ class AgentExecutor:
 
                     try:
                         await self._execute_task(
-                            run, task_state, service, agent_type, effective_config
+                            run,
+                            task_state,
+                            service,
+                            agent_type,
+                            effective_config,
+                            summary_cache=summary_cache,
                         )
                         await session.commit()
                     except GateBlockedError as e:
@@ -645,6 +655,7 @@ class AgentExecutor:
         service: WorkflowService,
         agent_type: AgentType,
         agent_config: dict[str, Any],
+        summary_cache: SummaryCache | None = None,
     ) -> None:
         """Execute the agent for a single task.
 
@@ -744,7 +755,10 @@ class AgentExecutor:
             )
         working_dir = run.worktree_path
         # Resolve clarifications artifact path if configured
-        from orchestrator.workflow.clarifications import resolve_artifact_path as _resolve_path
+        from orchestrator.workflow.clarifications import (
+            decisions_from_config,
+            resolve_artifact_path as _resolve_path,
+        )
 
         clarifications_path: str | None = None
         if routine_config.clarifications is not None and run.worktree_path:
@@ -753,12 +767,32 @@ class AgentExecutor:
             if clar_artifact.exists():
                 clarifications_path = str(clar_artifact)
 
+        # Reconstruct compressed decisions from persisted run.config
+        decisions = decisions_from_config(run.config)
+
+        # Build artifact context from context_from if configured
+        run_config = dict(run.config)
+        if task_config.context_from:
+            from orchestrator.artifacts.registry import ArtifactRegistry
+            from orchestrator.workflow.context_builder import TaskContextBuilder
+
+            worktree_path = Path(run.worktree_path) if run.worktree_path else None
+            ctx_builder = TaskContextBuilder(ArtifactRegistry(), worktree_path=worktree_path)
+            artifact_context = await ctx_builder.build_context(
+                run_id=run.id,
+                context_sources=task_config.context_from,
+                variables=run.config,
+                summary_cache=summary_cache,
+            )
+            run_config.update(artifact_context)
+
         prompt = generate_builder_prompt(
             task_config,
             task_state,
-            run.config,
+            run_config,
             step_context=step_context,
             clarifications_path=clarifications_path,
+            decisions=decisions,
         )
         # Include both ID and description so agent can use the ID for callbacks
         requirements = [f"{item.req_id}: {item.desc}" for item in task_state.checklist]

@@ -109,6 +109,26 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
     },
     CLARIFICATION_TOOL,
     {
+        "name": "orchestrator_escalate_requirement",
+        "description": "Flag a requirement as unfulfillable and pause the run for human review.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "The run ID"},
+                "task_id": {"type": "string", "description": "The task ID"},
+                "requirement_id": {
+                    "type": "string",
+                    "description": "The requirement ID to escalate",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Explanation of why this requirement cannot be fulfilled",
+                },
+            },
+            "required": ["run_id", "task_id", "requirement_id", "reason"],
+        },
+    },
+    {
         "name": "orchestrator_list_repos",
         "description": "List available repositories in the repos directory.",
         "inputSchema": {
@@ -172,6 +192,8 @@ class ToolHandler:
             return await self._complete_recovery(arguments)
         elif tool_name == "orchestrator_request_clarification":
             return await self._request_clarification(arguments)
+        elif tool_name == "orchestrator_escalate_requirement":
+            return await self._escalate_requirement(arguments)
         elif tool_name == "orchestrator_list_repos":
             return await self._list_repos(arguments)
         elif tool_name == "orchestrator_list_branches":
@@ -320,6 +342,21 @@ class ToolHandler:
                 for q in request.questions
             ],
             "created_at": format_utc_datetime(request.created_at),
+        }
+
+    async def _escalate_requirement(self, args: dict[str, Any]) -> dict[str, Any]:
+        run_id: str = args["run_id"]
+        task_id: str = args["task_id"]
+        requirement_id: str = args["requirement_id"]
+        reason: str = args["reason"]
+
+        run = await self._service.escalate_requirement(run_id, task_id, requirement_id, reason)
+        return {
+            "run_id": run.id,
+            "status": run.status.value,
+            "requirement_id": requirement_id,
+            "reason": reason,
+            "message": "Requirement escalated. Run is paused for human review.",
         }
 
     async def _list_repos(self, args: dict[str, Any]) -> dict[str, Any]:

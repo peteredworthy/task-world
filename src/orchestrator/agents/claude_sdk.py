@@ -322,7 +322,10 @@ def _build_mcp_params(
         if mcp.command:
             logger.warning(
                 "MCP server '%s' uses STDIO transport (command='%s') — "
-                "not supported by Claude MCP Connector beta, skipping",
+                "not supported by Claude MCP Connector beta, skipping. "
+                "To use this server, either run it as an SSE proxy "
+                "(e.g. `npx @anthropic/mcp-proxy`) and use url: instead, "
+                "or switch to CLI/OpenHands agent which supports stdio MCP.",
                 mcp.name,
                 mcp.command,
             )

@@ -782,9 +782,49 @@ class WorkflowService:
                     for item in task.checklist:
                         if item.status == ChecklistStatus.OPEN:
                             item.status = ChecklistStatus.DONE
-                # If auto-verify failed, fall through: the engine will transition to
-                # VERIFYING (if the checklist is otherwise satisfied), and the
-                # post-engine auto-verify block will store results and return to BUILDING.
+                else:
+                    # must:true items failed — block immediately instead of
+                    # falling through to the engine gate. Store results and
+                    # feedback on the current attempt so the builder can revise.
+                    _, failing_must_ids = evaluate_auto_verify(pre_av_config, pre_av_results)
+                    if task.attempts:
+                        task.attempts[-1].auto_verify_results = [
+                            r.model_dump() for r in pre_av_results
+                        ]
+                        failing_lines: list[str] = []
+                        for av in pre_av_results:
+                            if av.item_id not in failing_must_ids:
+                                continue
+                            output = av.output.strip() if av.output else ""
+                            snippet = output if output else "(no command output)"
+                            failing_lines.append(
+                                f"- [{av.item_id}] command `{av.cmd}` failed "
+                                f"(exit {av.exit_code})\n  Output:\n{snippet}"
+                            )
+                        if failing_lines:
+                            task.attempts[-1].verifier_comment = (
+                                "Auto-verify failed. Fix the following and resubmit:\n"
+                                + "\n".join(failing_lines)
+                            )
+
+                    buffer.emit(
+                        AutoVerifyCompleted(
+                            timestamp=self._clock.now(),
+                            run_id=run_id,
+                            event_type="auto_verify_completed",
+                            task_id=task_id,
+                            passed=False,
+                            failing_must_items=failing_must_ids,
+                            results=[r.model_dump() for r in pre_av_results],
+                        )
+                    )
+                    await self._persist(state, run_id, buffer)
+                    self._notify_submit(task_id)
+                    return TransitionResult(
+                        success=True,
+                        new_status=TaskStatus.BUILDING,
+                        error="Auto-verify must-items failed (pre-gate)",
+                    )
 
         try:
             result = engine.submit_for_verification(run_id, task_id)
@@ -1525,6 +1565,20 @@ class WorkflowService:
         # Raw Q&A is archived in the artifact file; decisions are the compact form
         # passed downstream to prompt assembly.
         compressed: CompressedDecisions = compress_clarifications(request, response)
+
+        # Persist compressed decisions in run.config so executor and prompt
+        # endpoint can reconstruct them without re-querying clarification history.
+        if compressed.decisions:
+            run.config["_compressed_decisions"] = [
+                {
+                    "question": d.question,
+                    "decision": d.decision,
+                    "rationale": d.rationale,
+                }
+                for d in compressed.decisions
+            ]
+            run.config["_compressed_decisions_request_id"] = compressed.source_request_id
+            await self._repo.save(run)
 
         if task_config_obj is not None:
             clarifications_path: str | None = (

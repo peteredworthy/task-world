@@ -23,7 +23,7 @@ from orchestrator.db.connection import create_engine, create_session_factory, in
 from orchestrator.db.event_store import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-from orchestrator.workflow.errors import GateBlockedError
+
 from orchestrator.workflow.service import (
     WorkflowService,
     find_task_config,
@@ -411,7 +411,8 @@ async def test_submit_with_passing_auto_verify(session: AsyncSession, tmp_path: 
 
 
 async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_path: Path) -> None:
-    """When auto_verify must-items fail before the gate, GateBlockedError is raised."""
+    """When auto_verify must-items fail before the gate, the task stays BUILDING
+    with feedback — no GateBlockedError, no transition to VERIFYING."""
     runner = LocalAutoVerifyRunner()
     service = WorkflowService(session, auto_verify_runner=runner)
 
@@ -428,10 +429,12 @@ async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_p
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
     # Pre-gate auto_verify runs first; failing must-item blocks the transition
-    with pytest.raises(GateBlockedError) as exc_info:
-        await service.submit_for_verification("run-av", "task-1")
-
-    assert "check1" in exc_info.value.blocking_items
+    # and returns a result with BUILDING status (no exception).
+    result = await service.submit_for_verification("run-av", "task-1")
+    assert result.success is True
+    assert result.new_status == TaskStatus.BUILDING
+    assert result.error is not None
+    assert "pre-gate" in result.error
 
     # Task must still be in BUILDING — no transition happened
     task = await service.get_task("run-av", "task-1")
@@ -506,7 +509,8 @@ async def test_auto_verify_events_emitted(session: AsyncSession, tmp_path: Path)
 
 
 async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path) -> None:
-    """When pre-gate auto-verify fails, AutoVerifyCompleted event is emitted and GateBlockedError raised."""
+    """When pre-gate auto-verify fails, AutoVerifyCompleted event is emitted
+    and the task stays in BUILDING (no GateBlockedError)."""
     runner = LocalAutoVerifyRunner()
     service = WorkflowService(session, auto_verify_runner=runner)
 
@@ -519,8 +523,9 @@ async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path)
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
-    with pytest.raises(GateBlockedError):
-        await service.submit_for_verification("run-av", "task-1")
+    result = await service.submit_for_verification("run-av", "task-1")
+    assert result.success is True
+    assert result.new_status == TaskStatus.BUILDING
 
     store = EventStore(session)
     events = await store.get_events_for_run("run-av")
@@ -594,10 +599,11 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
-    # First submit: pre-gate auto-verify fails -> GateBlockedError, task stays BUILDING
-    with pytest.raises(GateBlockedError) as exc_info:
-        await service.submit_for_verification("run-av", "task-1")
-    assert "check1" in exc_info.value.blocking_items
+    # First submit: pre-gate auto-verify fails -> task stays BUILDING with feedback
+    result1 = await service.submit_for_verification("run-av", "task-1")
+    assert result1.success is True
+    assert result1.new_status == TaskStatus.BUILDING
+    assert "pre-gate" in result1.error
 
     # Task is still BUILDING, same attempt
     task_mid = await service.get_task("run-av", "task-1")
