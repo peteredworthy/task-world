@@ -1,19 +1,20 @@
 # Step 3: Model Profiles (Backend + DB)
 
-Introduce Model Profiles as a first-class backend concept: an enum of cognitive work classes (ARCHITECT, DESIGNER, CODER, SUMMARIZER) with per-runner default model mappings stored in the database.
+Introduce Model Profiles as a first-class concept: an enum of cognitive work classes (ARCHITECT, DESIGNER, CODER, SUMMARIZER) with per-runner default model mappings. This enables different model strengths for different phases of work.
 
 ## Intent Verification
-**Original Intent**: M3 from `docs/agent-runners2/plan.md` -- create Model Profiles with per-runner default mappings, API endpoints, and DB storage.
+**Original Intent**: Create the Model Profiles concept so each agent-runner can map cognitive profiles to specific models (see `docs/agent-runners2/intent.md` -- "Model Profiles" section).
 **Functionality to Produce**:
-- `ModelProfile` enum with 4 values
-- `RunnerProfileDefaultModel` DB table with Alembic migration
+- `ModelProfile` enum: ARCHITECT, DESIGNER, CODER, SUMMARIZER
+- `RunnerProfileDefaultModel` DB table with per-runner profile-to-model mappings
 - API endpoints for listing profiles and managing per-runner defaults
-- Profile resolution wired into execution context
+- Profile defaults wired into execution context
+
 **Final Verification Criteria**:
 - `GET /api/model-profiles` returns 4 profiles
-- `PUT` then `GET` profile defaults round-trips correctly
+- `PUT/GET /api/agent-runners/{type}/profiles` round-trips correctly
+- Alembic migration applies cleanly
 - All existing tests continue to pass
-- New unit and integration tests pass
 
 ---
 
@@ -22,102 +23,151 @@ Introduce Model Profiles as a first-class backend concept: an enum of cognitive 
 **Description**: Add the `ModelProfile` enum to `config/enums.py` and create the `RunnerProfileDefaultModel` SQLAlchemy model in `db/models.py`.
 
 **Implementation Plan (Do These Steps)**
-- [ ] Add `ModelProfile` enum to `config/enums.py` with values: `ARCHITECT`, `DESIGNER`, `CODER`, `SUMMARIZER`
-- [ ] Create `RunnerProfileDefaultModel` in `db/models.py`:
-  - `id`: UUID primary key
-  - `runner_type`: enum (`AgentRunnerType`)
-  - `profile`: enum (`ModelProfile`)
-  - `model`: string
-  - `UNIQUE(runner_type, profile)` constraint
-- [ ] Create Alembic migration for the new table
+- [ ] Add `ModelProfile` enum to `src/orchestrator/config/enums.py`:
+  ```python
+  class ModelProfile(str, Enum):
+      ARCHITECT = "ARCHITECT"
+      DESIGNER = "DESIGNER"
+      CODER = "CODER"
+      SUMMARIZER = "SUMMARIZER"
+  ```
+- [ ] Add `RunnerProfileDefaultModel` to `src/orchestrator/db/models.py`:
+  - Columns: `id` (UUID PK), `runner_type` (enum), `profile` (enum), `model` (str)
+  - Unique constraint on `(runner_type, profile)`
+- [ ] Verify the model can be imported without errors
 
 **Dependencies**
-- [ ] Step 01 must be complete (`AgentRunnerType` enum exists)
+- [ ] Step 1 must be complete (`AgentRunnerType` enum exists)
 
 **References**
-- `docs/agent-runners2/step-03-plan.md` -- Tasks 1, 2, 3
-- `docs/agent-runners2/architecture.md` -- `runner_profile_defaults` table schema
+- `docs/agent-runners2/architecture.md` -- data model section, `runner_profile_defaults` table
+- `docs/agent-runners2/plan.md` -- M3 steps 1-2
 - Clarification Q8: Include all 4 profiles from the start
 
 **Constraints**
-- Use Alembic migration (no DB recreation)
-- Enum values must match architecture spec exactly
+- `ModelProfile` is an enum, not user-extensible (initially)
+- Do not modify existing models or enums
 
 **Functionality (Expected Outcomes)**
-- [ ] `ModelProfile` enum is importable from `config/enums.py`
-- [ ] `RunnerProfileDefaultModel` table is created by migration
-- [ ] Unique constraint prevents duplicate (runner_type, profile) pairs
+- [ ] `ModelProfile.ARCHITECT`, `.DESIGNER`, `.CODER`, `.SUMMARIZER` are valid enum values
+- [ ] `RunnerProfileDefaultModel` is importable and has correct columns
+- [ ] Unique constraint prevents duplicate `(runner_type, profile)` entries
 
 **Final Verification (Proof of Completion)**
-- [ ] `alembic upgrade head` succeeds
-- [ ] `ModelProfile` has exactly 4 members
+- [ ] `uv run python -c "from orchestrator.config.enums import ModelProfile; print(list(ModelProfile))"` prints 4 profiles
+- [ ] `uv run python -c "from orchestrator.db.models import RunnerProfileDefaultModel; print('OK')"` succeeds
 
 ---
 
-## Task 2: Create Schemas and API Endpoints
+## Task 2: Create Alembic Migration and Pydantic Schemas
 
-**Description**: Create Pydantic schemas for model profiles and API endpoints for listing profiles and managing per-runner defaults.
+**Description**: Create the Alembic migration for `runner_profile_defaults` table and define Pydantic schemas for the API layer.
 
 **Implementation Plan (Do These Steps)**
-- [ ] Create Pydantic schemas: `ModelProfileSchema` (name, description), `RunnerProfileDefaultsSchema` (runner_type, profiles dict)
-- [ ] Create API router `routers/model_profiles.py` with `GET /api/model-profiles` endpoint
-- [ ] Add profile endpoints to runners router:
-  - `GET /api/agent-runners/{type}/profiles` -- get runner's profile-to-model defaults
-  - `PUT /api/agent-runners/{type}/profiles` -- set runner's profile-to-model defaults
-- [ ] Register new router in `app.py`
-- [ ] Handle error cases: invalid runner type (422), invalid profile (422), no defaults (return empty dict)
+- [ ] Generate migration: `uv run alembic revision --autogenerate -m "Add runner_profile_defaults table"`
+- [ ] Verify the migration creates the table with correct columns and unique constraint
+- [ ] Test migration: `uv run alembic upgrade head`
+- [ ] Create Pydantic schemas:
+  ```python
+  class ModelProfileSchema(BaseModel):
+      name: str           # e.g. "ARCHITECT"
+      description: str
+
+  class RunnerProfileDefaultsSchema(BaseModel):
+      runner_type: str
+      profiles: dict[str, str]  # {profile_name: model_string}
+  ```
+- [ ] Place schemas in appropriate schema file (e.g., `schemas/runners.py` or new `schemas/profiles.py`)
 
 **Dependencies**
-- [ ] Task 1 must be complete (enum and DB model exist)
+- [ ] Task 1 must be complete (enum and model exist)
 
 **References**
-- `docs/agent-runners2/step-03-plan.md` -- Tasks 4, 5, 6
-- `docs/agent-runners2/architecture.md` -- API schemas, new endpoints table
+- `docs/agent-runners2/architecture.md` -- schema definitions
+- Clarification Q3: Alembic migrations only
 
 **Constraints**
-- `GET /api/agent-runners/{type}/profiles` for runner with no defaults returns empty mapping, not 404
-- Follow existing router patterns in the codebase
+- Migration must be reversible
+- Schemas should follow existing Pydantic patterns in the codebase
 
 **Functionality (Expected Outcomes)**
-- [ ] `GET /api/model-profiles` returns list of 4 profiles with descriptions
-- [ ] Profile defaults can be saved and retrieved per runner type
-- [ ] Validation errors returned for invalid input
+- [ ] Alembic migration creates `runner_profile_defaults` table
+- [ ] Migration applies and reverses cleanly
+- [ ] Pydantic schemas validate correctly
 
 **Final Verification (Proof of Completion)**
-- [ ] `GET /api/model-profiles` returns 200 with 4 items
-- [ ] Round-trip: PUT then GET returns saved defaults
+- [ ] `uv run alembic upgrade head` succeeds
+- [ ] `uv run alembic downgrade -1` succeeds
 
 ---
 
-## Task 3: Wire Profiles into Execution and Write Tests
+## Task 3: Create API Endpoints for Profiles
 
-**Description**: Wire profile defaults into the execution context so runners receive the resolved model, and write unit/integration tests.
+**Description**: Create the API router for model profiles and add per-runner profile endpoints.
 
 **Implementation Plan (Do These Steps)**
-- [ ] Update execution context to include profile-resolved model when a runner starts
+- [ ] Create `src/orchestrator/api/routers/model_profiles.py` with:
+  - `GET /api/model-profiles` -- returns list of `ModelProfileSchema` with name and description
+- [ ] Add profile endpoints to runners router (`routers/runners.py`):
+  - `GET /api/agent-runners/{type}/profiles` -- get runner's profile-to-model defaults
+  - `PUT /api/agent-runners/{type}/profiles` -- set runner's profile-to-model defaults
+- [ ] Register the new router in `app.py`
+- [ ] Implement DB CRUD logic for reading/writing `RunnerProfileDefaultModel` records
+
+**Dependencies**
+- [ ] Task 2 must be complete (migration applied, schemas defined)
+
+**References**
+- `docs/agent-runners2/architecture.md` -- API endpoints table
+- `docs/agent-runners2/plan.md` -- M3 steps 5-6
+- Profile descriptions: ARCHITECT (planning/design), DESIGNER (UI/UX), CODER (implementation), SUMMARIZER (docs/context)
+
+**Constraints**
+- `GET` for runner with no defaults returns empty mapping, not 404
+- Invalid runner type or profile name returns 422
+
+**Functionality (Expected Outcomes)**
+- [ ] `GET /api/model-profiles` returns 4 profiles with descriptions
+- [ ] `PUT /api/agent-runners/{type}/profiles` persists mapping
+- [ ] `GET /api/agent-runners/{type}/profiles` returns saved mapping
+
+**Final Verification (Proof of Completion)**
+- [ ] `curl localhost:8000/api/model-profiles` returns JSON array with 4 items
+- [ ] PUT then GET profile defaults round-trips correctly
+
+---
+
+## Task 4: Wire Profiles into Execution and Write Tests
+
+**Description**: Wire profile defaults into the execution context so runners receive the resolved model, and write unit + integration tests.
+
+**Implementation Plan (Do These Steps)**
+- [ ] Update execution context: when a runner starts, resolve the model from the profile mapping
 - [ ] Resolution order: per-run profile overrides (future) -> runner's profile defaults -> runner's built-in default model
 - [ ] Write unit tests for `ModelProfile` enum membership
 - [ ] Write unit tests for profile-to-model resolution logic (default fallback, explicit override)
-- [ ] Write integration tests for all 3 API endpoints
-- [ ] Verify all existing tests continue to pass
+- [ ] Write integration tests: `GET /api/model-profiles` returns 4 profiles
+- [ ] Write integration tests: `PUT` then `GET` profile defaults round-trips correctly
+- [ ] Verify all existing tests still pass
 
 **Dependencies**
-- [ ] Task 2 must be complete (API endpoints exist)
+- [ ] Task 3 must be complete (API endpoints exist)
 
 **References**
-- `docs/agent-runners2/step-03-plan.md` -- Tasks 7, 8, 9
-- Clarification Q5: Per-run profile overrides (wired in later via run creation)
+- `docs/agent-runners2/architecture.md` -- execution flow section
+- `docs/agent-runners2/plan.md` -- M3 steps 7-9
+- Clarification Q5: Per-run profile overrides possible (implemented later via run creation)
 
 **Constraints**
-- Per-run overrides are wired in a later step -- just establish the resolution chain here
-- Don't break existing execution flow
+- Per-run profile overrides are not implemented yet -- just ensure the resolution chain supports them
+- Fallback to runner's built-in default if no profile default is set
 
 **Functionality (Expected Outcomes)**
-- [ ] Runner execution uses profile-resolved model when defaults are set
-- [ ] Falls back to built-in default when no profile default configured
+- [ ] Runner execution uses profile-resolved model when profile defaults are set
+- [ ] Falls back to built-in default when no profile default exists
 - [ ] All new tests pass
-- [ ] All existing tests continue to pass
+- [ ] All existing tests still pass
 
 **Final Verification (Proof of Completion)**
-- [ ] `uv run pytest tests/` passes with no new failures
-- [ ] New profile tests exist and pass
+- [ ] `uv run pytest tests/ -x --timeout=120` -- all tests pass
+- [ ] New profile tests are included in the test count

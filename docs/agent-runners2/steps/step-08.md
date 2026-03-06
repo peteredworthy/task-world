@@ -1,132 +1,164 @@
 # Step 8: Integration Testing and Polish
 
-End-to-end verification that all pieces work together. Verify agent overrides resolve correct prompts, the full run lifecycle works, existing routines are backward compatible, and documentation is updated.
+End-to-end verification that all pieces work together: agent overrides in routines resolve correct prompts and models, the full run lifecycle works, the UI is polished, and all existing routines run without modification. Update documentation to reflect the refactored architecture.
 
 ## Intent Verification
-**Original Intent**: M8 from `docs/agent-runners2/plan.md` -- E2E testing, browser verification, documentation updates, and final polish.
+**Original Intent**: Verify the complete refactor works end-to-end and update documentation (see `docs/agent-runners2/intent.md` -- "Completion Criteria").
 **Functionality to Produce**:
-- E2E test: routine with agent overrides at all levels runs correctly
-- E2E test: existing routine without agent fields uses defaults
-- Browser verification via Playwright MCP
-- Updated documentation (AGENTS.md, docs/ARCHITECTURE.md)
-- All test suites green
+- E2E tests proving agent overrides resolve correct prompts and models
+- Browser verification of Agent Runners and Agents pages
+- All existing routines run without modification
+- Updated documentation (AGENTS.md, architecture docs)
+
 **Final Verification Criteria**:
-- E2E tests pass
-- All backend tests pass (330+ unit, 235+ integration)
-- All frontend tests pass (221+)
-- TypeScript type-check, ESLint, and build all clean
+- E2E lifecycle tests pass
+- All backend tests pass (330+ unit, 235+ integration + new tests)
+- All frontend tests pass (221+ + new tests)
+- TypeScript, ESLint, build all clean
 - Documentation updated
 
 ---
 
-## Task 1: Write E2E Tests
+## Task 1: Create E2E Tests for Agent Overrides
 
-**Description**: Create end-to-end tests verifying the full agent override lifecycle and backward compatibility.
+**Description**: Write end-to-end tests that create a routine with agent overrides at different levels, run it, and verify correct prompts and models are used.
 
 **Implementation Plan (Do These Steps)**
 - [ ] Create E2E test: routine with agent overrides at routine/step/task levels
-  - Create agents with custom prompts
-  - Create routine YAML referencing those agents at different levels
-  - Run the routine
-  - Verify correct prompt composition at each task (agent system prompt + task prompt)
-  - Verify correct model resolution via profile
-- [ ] Create E2E test: existing routine without agent fields
-  - Use an existing routine YAML (no agent fields)
-  - Run the routine
-  - Verify default Builder/Verifier agents are used
-  - Verify prompts work as before
-- [ ] Run full test suite: backend unit, integration, frontend
+  - Create custom agents with distinct prompts
+  - Create routine YAML referencing those agents
+  - Verify prompt endpoint returns correct agent-prefixed prompt at each level
+  - Verify model resolution uses the agent's profile defaults
+- [ ] Create E2E test: existing routine without agent fields runs with system defaults
+  - Use an existing routine YAML with no `*_agent` fields
+  - Verify prompt endpoint returns default Builder/Verifier prompts
+  - Verify run completes successfully
+- [ ] Create E2E test: per-run model-profile overrides (if implemented in earlier steps)
 
 **Dependencies**
-- [ ] Steps 01-07 must all be complete
+- [ ] All previous steps (01-07) must be complete
 
 **References**
-- `docs/agent-runners2/step-08-plan.md` -- Tasks 1, 2, 5
-- `docs/agent-runners2/architecture.md` -- execution flow, prompt generation
+- `docs/agent-runners2/plan.md` -- M8 steps 1-2
+- `docs/agent-runners2/architecture.md` -- execution flow, resolution order
 
 **Constraints**
-- Tests should run on non-default ports (8001/5174) to avoid conflicts with production orchestrator
+- Tests must be self-contained (create their own test data, clean up after)
+- Use test database, not production
 
 **Functionality (Expected Outcomes)**
-- [ ] E2E tests cover agent overrides at all 3 cascade levels
-- [ ] Backward compatibility confirmed
-- [ ] All test suites pass
+- [ ] E2E test with agent overrides passes
+- [ ] E2E test with backward-compatible routine passes
+- [ ] Tests verify both prompt content and model resolution
 
 **Final Verification (Proof of Completion)**
-- [ ] `uv run pytest` passes with no failures
-- [ ] E2E tests exist and pass
+- [ ] `uv run pytest tests/integration/test_agent_overrides.py -v` -- all pass (or equivalent test file)
 
 ---
 
 ## Task 2: Browser Verification with Playwright MCP
 
-**Description**: Use Playwright MCP to verify UI visually -- Agent Runners page, Agents page, and run creation.
+**Description**: Run the system on non-default ports and verify the UI using Playwright MCP browser automation.
 
 **Implementation Plan (Do These Steps)**
 - [ ] Start backend on port 8001: `uvicorn scripts.serve:app --port 8001 --reload --reload-dir src --reload-dir scripts`
 - [ ] Start frontend on port 5174: `VITE_API_PORT=8001 npx vite --port 5174`
-- [ ] Browser verification steps:
-  - Navigate to Agent Runners page, verify "Agent Runners" heading and profile config sections
-  - Navigate to Agents page, verify Planner/Builder/Verifier cards with prompt editors
-  - Create a custom agent, verify it appears in the list
-  - Edit a prompt, save, reload -- verify persistence
-  - Create a run, verify runner selection works
+- [ ] Browser verification checklist:
+  - Navigate to Agent Runners page (`http://localhost:5174/agent-runners`): verify "Agent Runners" heading, profile config sections on cards
+  - Navigate to Agents page (`http://localhost:5174/agents`): verify Planner, Builder, Verifier displayed with prompt editors
+  - Test agent CRUD: create a custom agent, edit its prompt, delete it
+  - Navigate to run creation: verify runner selection works with new naming
 - [ ] Fix any visual/UX issues found
 
 **Dependencies**
-- [ ] Task 1 should be complete (all tests pass first)
+- [ ] Task 1 must be complete (E2E tests prove backend works)
 
 **References**
-- `docs/agent-runners2/step-08-plan.md` -- Tasks 3, 4
-- Port configuration: backend 8001, frontend 5174
+- `docs/agent-runners2/plan.md` -- M8 step 3, port configuration section
 - MCP config: `npx -y @playwright/mcp@latest --headless`
 
 **Constraints**
-- Use non-default ports to avoid conflicting with production orchestrator
+- Use ports 8001/5174 to avoid conflicting with production orchestrator
+- Document any visual fixes made
 
 **Functionality (Expected Outcomes)**
-- [ ] Agent Runners page shows renamed labels and profile sections
-- [ ] Agents page shows CRUD functionality
-- [ ] Run creation works end-to-end
+- [ ] Agent Runners page displays correctly with profile sections
+- [ ] Agents page displays correctly with CRUD functionality
+- [ ] Run creation works with renamed runner selection
 
 **Final Verification (Proof of Completion)**
-- [ ] Screenshots confirm UI renders correctly
-- [ ] No visual/UX blockers remain
+- [ ] Browser screenshots confirm both pages render correctly
+- [ ] No JavaScript console errors on either page
 
 ---
 
-## Task 3: Update Documentation
+## Task 3: Run Full Test Suite and Fix Any Regressions
 
-**Description**: Update project documentation to reflect the refactored architecture.
+**Description**: Run the complete test suite across backend and frontend, fix any regressions.
 
 **Implementation Plan (Do These Steps)**
-- [ ] Update `AGENTS.md` with new concepts:
-  - Agent Runners (renamed from Agents): execution environments
-  - Model Profiles: cognitive work classes with per-runner defaults
-  - Agents: prompt templates paired with model profiles
-- [ ] Update `docs/ARCHITECTURE.md` with:
-  - New directory structure (`src/orchestrator/runners/`, `src/orchestrator/agents/`)
-  - New API routes (`/api/agent-runners`, `/api/model-profiles`, `/api/agents`)
-  - New data model (agent_configs, runner_profile_defaults tables)
-- [ ] Verify no stale "Agent" references (in the runner sense) remain in docs
-- [ ] Run `grep -r "GET /api/agents\b" docs/` to check for stale API references (should only reference the new agents concept)
+- [ ] Run backend unit tests: `uv run pytest tests/unit/ -v --timeout=60`
+- [ ] Run backend integration tests: `uv run pytest tests/integration/ -v --timeout=120`
+- [ ] Run frontend tests: `cd ui && npx vitest run`
+- [ ] Run TypeScript type-check: `cd ui && npx tsc --noEmit`
+- [ ] Run ESLint: `cd ui && npx eslint src/`
+- [ ] Run frontend build: `cd ui && npx vite build`
+- [ ] Fix any failures
 
 **Dependencies**
-- [ ] Tasks 1-2 should be complete (all code changes finalized)
+- [ ] Tasks 1-2 should be complete
 
 **References**
-- `docs/agent-runners2/step-08-plan.md` -- Tasks 6, 7
-- `docs/agent-runners2/architecture.md` -- full system overview (source of truth for docs)
+- Test baseline: 330+ unit, 235+ integration, 221+ frontend
+- `docs/agent-runners2/plan.md` -- M8 step 5
 
 **Constraints**
-- Documentation must accurately reflect the final state of the codebase
-- Don't document planned-but-unimplemented features
+- All existing tests must pass
+- New tests from steps 3-7 must also pass
 
 **Functionality (Expected Outcomes)**
-- [ ] AGENTS.md explains all 3 concepts clearly
-- [ ] ARCHITECTURE.md has accurate file structure and API routes
-- [ ] No stale references to old naming
+- [ ] All backend tests pass
+- [ ] All frontend tests pass
+- [ ] TypeScript, ESLint, build all clean
 
 **Final Verification (Proof of Completion)**
-- [ ] Documentation files updated
-- [ ] `grep -rn "AgentType\b" AGENTS.md` returns no hits (old naming)
+- [ ] `uv run pytest tests/ -v` -- all pass
+- [ ] `npx vitest run` -- all pass
+- [ ] `npx tsc --noEmit` -- clean
+- [ ] `npx vite build` -- succeeds
+
+---
+
+## Task 4: Update Documentation
+
+**Description**: Update `AGENTS.md` and architecture documentation to reflect the refactored system with Agent Runners, Model Profiles, and Agents concepts.
+
+**Implementation Plan (Do These Steps)**
+- [ ] Update `AGENTS.md`:
+  - Document Agent Runner concept (renamed from Agent)
+  - Document Model Profiles concept (4 profiles, per-runner defaults)
+  - Document Agent concept (prompt + profile, CRUD, factory defaults)
+  - Document routine schema agent fields and cascading resolution
+  - Document API endpoint changes (renamed + new)
+- [ ] Update any existing architecture docs that reference old naming
+- [ ] Verify no documentation references old "Agent" naming in the runner context
+
+**Dependencies**
+- [ ] Task 3 must be complete (all tests pass, system is stable)
+
+**References**
+- `docs/agent-runners2/architecture.md` -- source of truth for new architecture
+- `docs/agent-runners2/intent.md` -- scope and completion criteria
+- `docs/agent-runners2/plan.md` -- M8 steps 6-7
+
+**Constraints**
+- Documentation should be accurate and match implemented behavior
+- Keep docs concise -- reference architecture doc for details
+
+**Functionality (Expected Outcomes)**
+- [ ] `AGENTS.md` accurately reflects the refactored system
+- [ ] No orphaned references to old naming in documentation
+
+**Final Verification (Proof of Completion)**
+- [ ] `AGENTS.md` contains sections for Agent Runners, Model Profiles, and Agents
+- [ ] `grep -rn "AgentType\b\|AgentExecutor\b" AGENTS.md docs/` returns no hits (old naming removed)
