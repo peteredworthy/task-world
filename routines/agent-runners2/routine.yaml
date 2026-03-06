@@ -1,0 +1,935 @@
+routine:
+  id: "agent-runners2"
+  name: "Agent-Runners, Model Profiles, and Agents Refactor"
+  description: |
+    Rename the current "agents" concept to "agent-runners" throughout backend and UI,
+    then introduce Model Profiles (per-runner model mappings) and Agents (prompt+profile
+    pairings). Uses rope for Python renames, Alembic for DB migrations, and incremental
+    milestones to keep the system functional throughout.
+
+  inputs:
+    - name: "feature"
+      required: true
+      default: "agent-runners2"
+      description: "Feature name for directory structure"
+
+  steps:
+    # ── Step 1: Backend Rename ──────────────────────────────────────────
+    - id: "S-01"
+      title: "Rename Agents to Agent Runners (Backend)"
+      step_context: |
+        Programmatic rename of all backend Python references from "Agent" to
+        "AgentRunner" using rope for Python files + manual find-replace for
+        non-Python files. Rename directory, files, schemas, endpoints, and
+        DB columns via Alembic migration.
+      tasks:
+        - id: "T-01"
+          title: "Rename Python Classes with Rope"
+          task_context: |
+            Use the rope refactoring library to rename all core Python classes
+            from Agent* to AgentRunner* across the backend source tree.
+
+            Renames needed:
+            - AgentType -> AgentRunnerType in src/orchestrator/config/enums.py
+            - Agent protocol -> AgentRunner in src/orchestrator/agents/interface.py
+            - AgentInfo -> AgentRunnerInfo in src/orchestrator/agents/interface.py
+            - AgentExecutor -> AgentRunnerExecutor in src/orchestrator/agents/executor.py
+
+            Install rope if not present: uv add --dev rope
+            Write and run a rope refactoring script, then grep-verify no old names remain.
+          requirements:
+            - id: "R1"
+              desc: "All Agent* Python classes renamed to AgentRunner* equivalents"
+              priority: critical
+            - id: "R2"
+              desc: "All Python import statements updated to use new names"
+              priority: critical
+            - id: "R3"
+              desc: "No syntax errors in any Python file"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "import_runner"
+                cmd: "uv run python -c \"from orchestrator.agents.interface import AgentRunner; print('OK')\""
+                must: true
+              - id: "import_runner_type"
+                cmd: "uv run python -c \"from orchestrator.config.enums import AgentRunnerType; print('OK')\""
+                must: true
+              - id: "no_old_agent_type"
+                cmd: "! grep -rn 'class AgentType\\b' src/"
+                must: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-02"
+          title: "Rename Directory and Files"
+          task_context: |
+            Rename src/orchestrator/agents/ to src/orchestrator/runners/ and
+            rename routers/agents.py to routers/runners.py. Update all import
+            paths from orchestrator.agents.* to orchestrator.runners.*.
+
+            Use git mv to preserve history. Update router registration in app.py.
+          requirements:
+            - id: "R1"
+              desc: "src/orchestrator/runners/ directory exists with all runner modules"
+              priority: critical
+            - id: "R2"
+              desc: "All imports resolve from orchestrator.runners.*"
+              priority: critical
+            - id: "R3"
+              desc: "No imports reference orchestrator.agents.* (old path)"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "import_from_runners"
+                cmd: "uv run python -c \"from orchestrator.runners.interface import AgentRunner; print('OK')\""
+                must: true
+              - id: "no_old_imports"
+                cmd: "! grep -rn 'from orchestrator\\.agents\\.' src/"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Rename Schemas and Update API Endpoints"
+          task_context: |
+            Rename Pydantic schema classes (AgentOption -> AgentRunnerOption,
+            AgentQuota -> AgentRunnerQuota, etc.) and update endpoint paths
+            from /api/agents to /api/agent-runners. Update CreateRunRequest/
+            RunResponse schemas: agent_type -> runner_type, agent_config -> runner_config.
+          requirements:
+            - id: "R1"
+              desc: "AgentRunnerOption and AgentRunnerQuota schemas exist and are importable"
+              priority: critical
+            - id: "R2"
+              desc: "API endpoints respond at /api/agent-runners path"
+              priority: critical
+            - id: "R3"
+              desc: "No old /api/agents endpoint path in source"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "no_old_schema_classes"
+                cmd: "! grep -rn 'class AgentOption\\b\\|class AgentQuota\\b' src/"
+                must: true
+              - id: "no_old_api_path"
+                cmd: "! grep -rn '\"/api/agents\"' src/"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-04"
+          title: "Create Alembic Migration for DB Column Renames"
+          task_context: |
+            Create an Alembic migration to rename columns on the runs table:
+            agent_type -> runner_type, agent_config -> runner_config,
+            agent_started_at -> runner_started_at.
+
+            Migration must be reversible (downgrade support). Use op.alter_column()
+            with new_column_name. No data loss -- column rename only.
+          requirements:
+            - id: "R1"
+              desc: "Alembic migration file exists in alembic/versions/"
+              priority: critical
+            - id: "R2"
+              desc: "Migration applies cleanly (upgrade head)"
+              priority: critical
+            - id: "R3"
+              desc: "Migration reverses cleanly (downgrade -1)"
+              priority: expected
+            - id: "R4"
+              desc: "No old column names in db/models.py"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "migration_upgrade"
+                cmd: "uv run alembic upgrade head"
+                must: true
+              - id: "no_old_columns"
+                cmd: "! grep -rn 'agent_type\\|agent_config\\|agent_started_at' src/orchestrator/db/models.py"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-05"
+          title: "Update Config, Engine, and Non-Python Files"
+          task_context: |
+            Update routine config models field names, engine/service/executor
+            references, and manually find-replace "agent" references in non-Python
+            files (YAML, docs, templates). Update all log messages to use "runner"
+            terminology.
+          requirements:
+            - id: "R1"
+              desc: "No orphaned AgentType/AgentExecutor/AgentInfo references in source"
+              priority: critical
+            - id: "R2"
+              desc: "Routine YAML files parse correctly with updated field names"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "no_orphaned_refs"
+                cmd: "! grep -rn 'AgentType\\b\\|AgentExecutor\\b\\|AgentInfo\\b' src/"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-06"
+          title: "Run Full Backend Test Suite and Fix Failures"
+          task_context: |
+            Run the complete backend test suite (330+ unit, 235+ integration),
+            fix any failures caused by the rename. Fix import errors, assertion
+            mismatches, and fixture references. Verify no orphaned old naming
+            in src/ or tests/.
+          requirements:
+            - id: "R1"
+              desc: "All backend unit tests pass"
+              priority: critical
+            - id: "R2"
+              desc: "All backend integration tests pass (except known openhands skip)"
+              priority: critical
+            - id: "R3"
+              desc: "No orphaned AgentType references in src/ or tests/"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "unit_tests"
+                cmd: "uv run pytest tests/unit/ -x --timeout=60 -q"
+                must: true
+              - id: "integration_tests"
+                cmd: "uv run pytest tests/integration/ -x --timeout=120 -q"
+                must: true
+          retry:
+            max_attempts: 3
+
+    # ── Step 2: Frontend Rename ─────────────────────────────────────────
+    - id: "S-02"
+      title: "Rename Agents to Agent Runners (Frontend)"
+      step_context: |
+        Rename all frontend references from "Agent" to "AgentRunner" -- pages,
+        components, types, routes, API URLs, and UI labels. Clears the "Agent"
+        namespace for the new concept in Step 5.
+      tasks:
+        - id: "T-01"
+          title: "Rename Types and Utility Files"
+          task_context: |
+            Rename ui/src/types/agents.ts to agentRunners.ts and update all type
+            names (AgentOption -> AgentRunnerOption, AgentQuota -> AgentRunnerQuota).
+            Rename ui/src/lib/agentConfigUtils.ts to agentRunnerConfigUtils.ts.
+            Update all import statements across the frontend.
+          requirements:
+            - id: "R1"
+              desc: "agentRunners.ts exports AgentRunnerOption, AgentRunnerQuota types"
+              priority: critical
+            - id: "R2"
+              desc: "No imports reference old types/agents path"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "tsc_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "no_old_imports"
+                cmd: "! grep -rn 'from.*types/agents\\b' ui/src/"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Rename Page and Components"
+          task_context: |
+            Rename Agents.tsx page to AgentRunners.tsx. Rename all agent-related
+            components to use AgentRunner prefix (AgentCard -> AgentRunnerCard,
+            AgentConfigForm -> AgentRunnerConfigForm, etc.). Update all imports.
+          requirements:
+            - id: "R1"
+              desc: "AgentRunners.tsx page exists and renders"
+              priority: critical
+            - id: "R2"
+              desc: "All AgentRunner* components exist and are importable"
+              priority: critical
+            - id: "R3"
+              desc: "No orphaned AgentCard/AgentConfigForm references"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "tsc_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "no_old_components"
+                cmd: "! grep -rn 'AgentCard\\b\\|AgentConfigForm\\b\\|AgentIcon\\b' ui/src/"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Update Routes, API URLs, and UI Labels"
+          task_context: |
+            Update router to serve /agent-runners. Change API call URLs from
+            /api/agents to /api/agent-runners. Update UI text: nav sidebar
+            "Agents" -> "Agent Runners", page headings, tooltips. Leave /agents
+            route free for the new Agents concept.
+          requirements:
+            - id: "R1"
+              desc: "/agent-runners route renders the Agent Runners page"
+              priority: critical
+            - id: "R2"
+              desc: "API calls target /api/agent-runners endpoints"
+              priority: critical
+            - id: "R3"
+              desc: "UI labels display 'Agent Runners' not 'Agents'"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "no_old_api_url"
+                cmd: "! grep -rn '\"/api/agents\"' ui/src/"
+                must: true
+              - id: "no_old_route"
+                cmd: "! grep -rn 'path.*\"/agents\"' ui/src/"
+                must: false
+          retry:
+            max_attempts: 2
+
+        - id: "T-04"
+          title: "Run Frontend Tests and Fix Failures"
+          task_context: |
+            Run the complete frontend test suite (221+ tests), TypeScript
+            type-check, ESLint, and build. Fix any failures from the rename.
+            Update test files that reference old names, fix snapshot mismatches.
+          requirements:
+            - id: "R1"
+              desc: "All frontend tests pass"
+              priority: critical
+            - id: "R2"
+              desc: "TypeScript type-check clean (tsc --noEmit)"
+              priority: critical
+            - id: "R3"
+              desc: "Frontend build succeeds (vite build)"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "vitest"
+                cmd: "cd ui && npx vitest run --reporter=verbose 2>&1; exit ${PIPESTATUS[0]:-$?}"
+                must: true
+              - id: "tsc"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "build"
+                cmd: "cd ui && npx vite build"
+                must: true
+          retry:
+            max_attempts: 3
+
+    # ── Step 3: Model Profiles Backend ──────────────────────────────────
+    - id: "S-03"
+      title: "Model Profiles (Backend + DB)"
+      step_context: |
+        Introduce Model Profiles as a first-class concept: an enum of cognitive
+        work classes (ARCHITECT, DESIGNER, CODER, SUMMARIZER) with per-runner
+        default model mappings. Includes DB model, Alembic migration, API
+        endpoints, and wiring into execution context.
+      tasks:
+        - id: "T-01"
+          title: "Define ModelProfile Enum and DB Model"
+          task_context: |
+            Add ModelProfile enum to config/enums.py with 4 values: ARCHITECT,
+            DESIGNER, CODER, SUMMARIZER. Create RunnerProfileDefaultModel
+            SQLAlchemy model in db/models.py with columns: id (UUID PK),
+            runner_type (enum), profile (enum), model (str). Add unique
+            constraint on (runner_type, profile).
+          requirements:
+            - id: "R1"
+              desc: "ModelProfile enum has 4 values: ARCHITECT, DESIGNER, CODER, SUMMARIZER"
+              priority: critical
+            - id: "R2"
+              desc: "RunnerProfileDefaultModel is importable with correct columns"
+              priority: critical
+            - id: "R3"
+              desc: "Unique constraint on (runner_type, profile) pair"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "enum_values"
+                cmd: "uv run python -c \"from orchestrator.config.enums import ModelProfile; assert len(list(ModelProfile)) == 4; print('OK')\""
+                must: true
+              - id: "model_import"
+                cmd: "uv run python -c \"from orchestrator.db.models import RunnerProfileDefaultModel; print('OK')\""
+                must: true
+
+        - id: "T-02"
+          title: "Create Alembic Migration and Pydantic Schemas"
+          task_context: |
+            Generate Alembic migration for runner_profile_defaults table.
+            Create Pydantic schemas: ModelProfileSchema (name, description),
+            RunnerProfileDefaultsSchema (runner_type, profiles dict).
+            Migration must be reversible.
+          requirements:
+            - id: "R1"
+              desc: "Alembic migration creates runner_profile_defaults table"
+              priority: critical
+            - id: "R2"
+              desc: "Migration applies and reverses cleanly"
+              priority: critical
+            - id: "R3"
+              desc: "Pydantic schemas validate correctly"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "migration_applies"
+                cmd: "uv run alembic upgrade head"
+                must: true
+
+        - id: "T-03"
+          title: "Create API Endpoints for Profiles"
+          task_context: |
+            Create src/orchestrator/api/routers/model_profiles.py with:
+            GET /api/model-profiles (returns list of profiles with descriptions).
+            Add per-runner profile endpoints to runners router:
+            GET /api/agent-runners/{type}/profiles,
+            PUT /api/agent-runners/{type}/profiles.
+            Register the new router in app.py.
+
+            Profile descriptions: ARCHITECT (planning/design), DESIGNER (UI/UX),
+            CODER (implementation), SUMMARIZER (docs/context).
+          requirements:
+            - id: "R1"
+              desc: "GET /api/model-profiles returns 4 profiles"
+              priority: critical
+            - id: "R2"
+              desc: "PUT then GET profile defaults round-trips correctly"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "profiles_router_importable"
+                cmd: "uv run python -c \"from orchestrator.api.routers.model_profiles import router; print('OK')\""
+                must: true
+
+        - id: "T-04"
+          title: "Wire Profiles into Execution and Write Tests"
+          task_context: |
+            Wire profile defaults into execution context: when a runner starts,
+            resolve the model from profile mapping. Resolution order: per-run
+            profile overrides (future) -> runner profile defaults -> runner
+            built-in default model. Write unit tests for ModelProfile enum and
+            profile-to-model resolution. Write integration tests for profile
+            API endpoints. Verify all existing tests still pass.
+          requirements:
+            - id: "R1"
+              desc: "Profile-to-model resolution works with fallback chain"
+              priority: critical
+            - id: "R2"
+              desc: "All existing tests still pass"
+              priority: critical
+            - id: "R3"
+              desc: "New profile tests exist and pass"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "all_tests"
+                cmd: "uv run pytest tests/ -x --timeout=120 -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 4: Model Profiles Frontend ─────────────────────────────────
+    - id: "S-04"
+      title: "Model Profiles (Frontend)"
+      step_context: |
+        Add model profile configuration UI to each Agent Runner card. Users
+        can set which model each runner uses for each cognitive profile.
+      tasks:
+        - id: "T-01"
+          title: "Add Profile Types and API Functions"
+          task_context: |
+            Add TypeScript types for model profiles (ModelProfile, RunnerProfileDefaults)
+            and create API functions: fetchModelProfiles(), fetchRunnerProfiles(type),
+            saveRunnerProfiles(type, profiles). Wire to backend endpoints.
+          requirements:
+            - id: "R1"
+              desc: "Profile TypeScript types are importable and type-check clean"
+              priority: critical
+            - id: "R2"
+              desc: "API functions correctly target profile endpoints"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "tsc_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+
+        - id: "T-02"
+          title: "Add Profile Configuration UI to Runner Cards"
+          task_context: |
+            Add a "Model Profiles" collapsible section to each AgentRunnerCard
+            with 4 model selector fields (Architect, Designer, Coder, Summarizer).
+            Each field is a combobox/input allowing custom model strings. Wire
+            save button to PUT /api/agent-runners/{type}/profiles. Empty field
+            means "use runner default".
+          requirements:
+            - id: "R1"
+              desc: "Each runner card shows 4 profile model selector fields"
+              priority: critical
+            - id: "R2"
+              desc: "Saved profiles persist via API and reload correctly"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "tsc_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "build"
+                cmd: "cd ui && npx vite build"
+                must: true
+
+        - id: "T-03"
+          title: "Write Frontend Tests for Profile UI"
+          task_context: |
+            Write tests for profile configuration UI: profile section renders
+            with 4 fields, saving calls correct API endpoint, loading populates
+            fields, error states displayed. Run full frontend test suite.
+          requirements:
+            - id: "R1"
+              desc: "Profile UI tests cover render, save, load, and error scenarios"
+              priority: critical
+            - id: "R2"
+              desc: "All frontend tests pass"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "vitest"
+                cmd: "cd ui && npx vitest run -q"
+                must: true
+              - id: "build"
+                cmd: "cd ui && npx vite build"
+                must: true
+
+    # ── Step 5: Agents Concept Backend ──────────────────────────────────
+    - id: "S-05"
+      title: "Agents Concept (Backend + DB)"
+      step_context: |
+        Introduce the new "Agent" concept -- a prompt template paired with a
+        model profile. Three defaults: Planner (ARCHITECT), Builder (CODER),
+        Verifier (CODER). Factory default prompts stored separately for reset.
+      tasks:
+        - id: "T-01"
+          title: "Create AgentConfig DB Model and Migration"
+          task_context: |
+            Create src/orchestrator/agents/ directory (new, for the Agent concept).
+            Create AgentConfigModel SQLAlchemy model with columns: id (UUID PK),
+            name (str, unique), system_prompt (text), default_prompt (text),
+            model_profile (ModelProfile enum), created_at, updated_at.
+            Generate and apply Alembic migration for agent_configs table.
+          requirements:
+            - id: "R1"
+              desc: "AgentConfigModel is importable from orchestrator.agents.models"
+              priority: critical
+            - id: "R2"
+              desc: "agent_configs table created via migration"
+              priority: critical
+            - id: "R3"
+              desc: "Unique constraint on name column"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "model_import"
+                cmd: "uv run python -c \"from orchestrator.agents.models import AgentConfigModel; print('OK')\""
+                must: true
+              - id: "migration"
+                cmd: "uv run alembic upgrade head"
+                must: true
+
+        - id: "T-02"
+          title: "Create Pydantic Schemas and CRUD Service"
+          task_context: |
+            Define Pydantic schemas: AgentSchema, CreateAgentRequest, UpdateAgentRequest.
+            Implement CRUD service with: list_agents, get_agent, create_agent (409
+            on duplicate name), update_agent (404 if not found), delete_agent (404
+            if not found), reset_prompt (copies default_prompt to system_prompt,
+            400 if no default_prompt).
+          requirements:
+            - id: "R1"
+              desc: "All CRUD operations work correctly"
+              priority: critical
+            - id: "R2"
+              desc: "Duplicate name creation returns 409"
+              priority: expected
+            - id: "R3"
+              desc: "Prompt reset restores factory default"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "service_import"
+                cmd: "uv run python -c \"from orchestrator.agents.service import list_agents; print('OK')\""
+                must: true
+              - id: "schema_import"
+                cmd: "uv run python -c \"from orchestrator.agents.schemas import AgentSchema; print('OK')\""
+                must: true
+
+        - id: "T-03"
+          title: "Create API Router and Seed Default Agents"
+          task_context: |
+            Create src/orchestrator/api/routers/agents.py with 6 endpoints:
+            GET /api/agents (list), POST /api/agents (create, 409 on dup),
+            GET /api/agents/{id} (404 if not found), PUT /api/agents/{id} (update),
+            DELETE /api/agents/{id}, POST /api/agents/{id}/reset-prompt (400 if
+            no default). Register router in app.py.
+
+            Seed 3 default agents:
+            - Planner: profile=ARCHITECT, prompt for breaking down work
+            - Builder: profile=CODER, prompt for implementing requirements
+            - Verifier: profile=CODER, prompt for grading work
+
+            Each has system_prompt and default_prompt set to same initial value.
+          requirements:
+            - id: "R1"
+              desc: "All 6 API endpoints respond correctly"
+              priority: critical
+            - id: "R2"
+              desc: "After seed, GET /api/agents returns Planner, Builder, Verifier"
+              priority: critical
+            - id: "R3"
+              desc: "Planner agent has no special engine integration"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "router_import"
+                cmd: "uv run python -c \"from orchestrator.api.routers.agents import router; print('OK')\""
+                must: true
+
+        - id: "T-04"
+          title: "Write Unit and Integration Tests"
+          task_context: |
+            Write unit tests for agent CRUD service (create, read, update, delete,
+            duplicate name, prompt reset with/without default). Write integration
+            tests for API endpoints (GET returns seeded agents, full CRUD lifecycle,
+            reset-prompt, error cases: 404/409/400). Verify all existing tests pass.
+          requirements:
+            - id: "R1"
+              desc: "Agent CRUD unit tests cover all operations and error cases"
+              priority: critical
+            - id: "R2"
+              desc: "Agent API integration tests cover full lifecycle"
+              priority: critical
+            - id: "R3"
+              desc: "All existing tests still pass"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "all_tests"
+                cmd: "uv run pytest tests/ -x --timeout=120 -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 6: Routine Schema Update ───────────────────────────────────
+    - id: "S-06"
+      title: "Routine Schema Update"
+      step_context: |
+        Add optional agent assignment fields to the routine schema at routine,
+        step, and task levels. Implement cascading resolution (task -> step ->
+        routine -> system default) and update prompt generation.
+      tasks:
+        - id: "T-01"
+          title: "Extend Config Models with Agent Fields"
+          task_context: |
+            Add optional planner_agent, builder_agent, verifier_agent string
+            fields to RoutineConfig, StepConfig, and TaskConfig in
+            src/orchestrator/config/models.py. All default to None for backward
+            compatibility. Verify existing routine YAML files parse unchanged.
+          requirements:
+            - id: "R1"
+              desc: "New agent fields accepted in routine YAML at all three levels"
+              priority: critical
+            - id: "R2"
+              desc: "Existing routines without agent fields parse unchanged"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "task_config_agent"
+                cmd: "uv run python -c \"from orchestrator.config.models import TaskConfig; t = TaskConfig(id='t', title='t', requirements=[], builder_agent='X'); assert t.builder_agent == 'X'; print('OK')\""
+                must: true
+              - id: "existing_tests"
+                cmd: "uv run pytest tests/ -x --timeout=60 -q"
+                must: true
+
+        - id: "T-02"
+          title: "Implement Cascading Agent Resolution"
+          task_context: |
+            Create a pure function resolve_agent_name() in
+            src/orchestrator/agents/resolution.py that resolves which agent to
+            use for a given phase by cascading: task -> step -> routine ->
+            system default. Create a separate function for DB lookup of agent
+            system_prompt by name. Log warning if referenced agent doesn't exist.
+          requirements:
+            - id: "R1"
+              desc: "Task-level override takes precedence over step and routine"
+              priority: critical
+            - id: "R2"
+              desc: "Missing overrides at all levels fall back to system default"
+              priority: critical
+            - id: "R3"
+              desc: "Warning logged for non-existent agent name"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "resolution_import"
+                cmd: "uv run python -c \"from orchestrator.agents.resolution import resolve_agent_name; print('OK')\""
+                must: true
+
+        - id: "T-03"
+          title: "Update Prompt Generation and Write Tests"
+          task_context: |
+            Update GET /api/tasks/{id}/prompt to: determine phase, resolve agent
+            name, look up agent system_prompt, concatenate with separator
+            "\\n\\n---\\n\\n" + task_prompt. If agent has no system_prompt, return
+            task prompt unchanged. Write unit tests for cascading resolution and
+            integration tests for prompt endpoint. Verify backward compatibility.
+          requirements:
+            - id: "R1"
+              desc: "Prompt includes agent system prompt when agent is resolved"
+              priority: critical
+            - id: "R2"
+              desc: "Prompt unchanged for routines without agent fields"
+              priority: critical
+            - id: "R3"
+              desc: "All cascading resolution tests pass"
+              priority: critical
+            - id: "R4"
+              desc: "All existing tests still pass"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "all_tests"
+                cmd: "uv run pytest tests/ -x --timeout=120 -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 7: Agents UI ───────────────────────────────────────────────
+    - id: "S-07"
+      title: "Agents UI"
+      step_context: |
+        Create the frontend "Agents" page for managing agent configurations.
+        CRUD operations, prompt editing, model profile selection, and factory
+        default prompt reset. Route at /agents with sidebar navigation.
+      tasks:
+        - id: "T-01"
+          title: "Create Agent Types and API Functions"
+          task_context: |
+            Create ui/src/types/agents.ts with Agent, CreateAgentRequest,
+            UpdateAgentRequest interfaces. Create ui/src/lib/agentApi.ts with
+            API functions: fetchAgents, fetchAgent, createAgent, updateAgent,
+            deleteAgent, resetAgentPrompt. All target /api/agents endpoints.
+          requirements:
+            - id: "R1"
+              desc: "Agent TypeScript type is importable from types/agents"
+              priority: critical
+            - id: "R2"
+              desc: "All API functions target /api/agents endpoints"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "tsc_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+
+        - id: "T-02"
+          title: "Create Agents Page and Components"
+          task_context: |
+            Create ui/src/pages/Agents.tsx with agent list, create button,
+            agent cards showing name/profile/prompt-preview, and AgentEditor
+            component with name input, model profile selector, system prompt
+            textarea, "Reset to Default" button (visible only when default_prompt
+            is not null), and save/cancel buttons. Wire CRUD to API functions.
+          requirements:
+            - id: "R1"
+              desc: "Agents page renders with default agents listed"
+              priority: critical
+            - id: "R2"
+              desc: "Full CRUD operations work (create, edit, delete)"
+              priority: critical
+            - id: "R3"
+              desc: "Reset button restores factory default prompt"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "tsc_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "build"
+                cmd: "cd ui && npx vite build"
+                must: true
+
+        - id: "T-03"
+          title: "Add Route and Update Navigation"
+          task_context: |
+            Add /agents route to router config. Update sidebar navigation to
+            show both "Agent Runners" (at /agent-runners) and "Agents" (at
+            /agents) with appropriate differentiating icons. Verify both routes
+            render correctly.
+          requirements:
+            - id: "R1"
+              desc: "/agents route renders the Agents page"
+              priority: critical
+            - id: "R2"
+              desc: "Sidebar shows both Agent Runners and Agents navigation items"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "tsc_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "build"
+                cmd: "cd ui && npx vite build"
+                must: true
+
+        - id: "T-04"
+          title: "Write Frontend Tests"
+          task_context: |
+            Write tests for Agents page (renders with defaults, create/delete
+            calls correct API), agent editor (edit calls PUT, reset calls
+            reset-prompt, reset hidden when default_prompt null, profile selector
+            shows all 4 profiles). Run full frontend test suite.
+          requirements:
+            - id: "R1"
+              desc: "Agent page and component tests cover CRUD and reset scenarios"
+              priority: critical
+            - id: "R2"
+              desc: "All frontend tests pass"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "vitest"
+                cmd: "cd ui && npx vitest run -q"
+                must: true
+              - id: "tsc"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "build"
+                cmd: "cd ui && npx vite build"
+                must: true
+
+    # ── Step 8: Integration Testing and Polish ──────────────────────────
+    - id: "S-08"
+      title: "Integration Testing and Polish"
+      step_context: |
+        End-to-end verification: agent overrides resolve correct prompts/models,
+        full run lifecycle works, UI is polished, existing routines work without
+        modification. Update documentation.
+      tasks:
+        - id: "T-01"
+          title: "Create E2E Tests for Agent Overrides"
+          task_context: |
+            Write E2E tests: (1) routine with agent overrides at routine/step/task
+            levels -- create custom agents with distinct prompts, verify prompt
+            endpoint returns correct agent-prefixed prompt, verify model uses
+            profile defaults. (2) Existing routine without agent fields uses
+            system defaults. Tests must be self-contained (create own data, clean up).
+          requirements:
+            - id: "R1"
+              desc: "E2E test with agent overrides at all levels passes"
+              priority: critical
+            - id: "R2"
+              desc: "E2E test with backward-compatible routine (no agent fields) passes"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "e2e_tests"
+                cmd: "uv run pytest tests/integration/ -x --timeout=120 -q -k agent_override"
+                must: false
+              - id: "all_integration"
+                cmd: "uv run pytest tests/integration/ -x --timeout=120 -q"
+                must: true
+
+        - id: "T-02"
+          title: "Browser Verification"
+          task_context: |
+            Start backend on port 8001 and frontend on port 5174. Use browser
+            to verify: Agent Runners page shows profile config sections,
+            Agents page shows Planner/Builder/Verifier with prompt editors,
+            agent CRUD works, run creation works with new naming. Fix any
+            visual/UX issues found.
+          requirements:
+            - id: "R1"
+              desc: "Agent Runners page displays correctly with profile sections"
+              priority: critical
+            - id: "R2"
+              desc: "Agents page displays correctly with CRUD functionality"
+              priority: critical
+            - id: "R3"
+              desc: "Run creation works with renamed runner selection"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "backend_starts"
+                cmd: "timeout 10 uv run python -c \"from scripts.serve import app; print('App loads OK')\" 2>&1; true"
+                must: true
+              - id: "frontend_builds"
+                cmd: "cd ui && npx vite build"
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: "Does the Agent Runners page display correctly with profile config sections on cards?"
+              - id: "R2"
+                text: "Does the Agents page display correctly with CRUD functionality (create, edit, delete, reset)?"
+              - id: "R3"
+                text: "Does run creation work with the renamed runner selection?"
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Run Full Test Suite and Fix Regressions"
+          task_context: |
+            Run complete test suite: backend unit tests (330+), backend
+            integration tests (235+), frontend tests (221+), TypeScript
+            type-check, ESLint, and frontend build. Fix any failures.
+          requirements:
+            - id: "R1"
+              desc: "All backend tests pass"
+              priority: critical
+            - id: "R2"
+              desc: "All frontend tests pass"
+              priority: critical
+            - id: "R3"
+              desc: "TypeScript, ESLint, and build all clean"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "backend_unit"
+                cmd: "uv run pytest tests/unit/ -x --timeout=60 -q"
+                must: true
+              - id: "backend_integration"
+                cmd: "uv run pytest tests/integration/ -x --timeout=120 -q"
+                must: true
+              - id: "frontend_tests"
+                cmd: "cd ui && npx vitest run -q"
+                must: true
+              - id: "tsc"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "build"
+                cmd: "cd ui && npx vite build"
+                must: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-04"
+          title: "Update Documentation"
+          task_context: |
+            Update AGENTS.md to document: Agent Runner concept (renamed from
+            Agent), Model Profiles (4 profiles, per-runner defaults), Agent
+            concept (prompt + profile, CRUD, factory defaults), routine schema
+            agent fields and cascading resolution, API endpoint changes.
+            Verify no documentation references old "Agent" naming in runner context.
+          requirements:
+            - id: "R1"
+              desc: "AGENTS.md contains sections for Agent Runners, Model Profiles, and Agents"
+              priority: critical
+            - id: "R2"
+              desc: "No orphaned references to old naming in documentation"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "agents_md_exists"
+                cmd: "uv run python -c \"content = open('AGENTS.md').read(); assert 'Agent Runner' in content; assert 'Model Profile' in content; print('OK')\""
+                must: true
