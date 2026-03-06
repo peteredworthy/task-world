@@ -28,9 +28,9 @@ class RunModel(Base):
     routine_path: Mapped[str | None] = mapped_column(String, nullable=True)
     routine_commit: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # Agent configuration
-    agent_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    agent_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Runner configuration
+    runner_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    runner_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     verifier_model: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Worktree
@@ -55,7 +55,7 @@ class RunModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    agent_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    runner_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Aggregate metrics
     total_tokens_read: Mapped[int] = mapped_column(Integer, default=0)
