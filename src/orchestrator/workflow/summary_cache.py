@@ -81,6 +81,31 @@ class SummaryCache:
         logger.warning("Summarization failed for %s, falling back to full content", artifact_path)
         return content
 
+    async def _do_api_call(self, model: str, messages: list[dict[str, str]]) -> str | None:
+        """Make a single API call and return the text response.
+
+        Override in tests to provide controlled responses without hitting the real API.
+        Returns None if the call fails or returns an empty response.
+        """
+        try:
+            import anthropic  # lazy import — not all deployments need this
+        except ImportError:
+            logger.warning("anthropic package not available; cannot summarize")
+            return None
+
+        client = anthropic.AsyncAnthropic()
+        try:
+            response = await client.messages.create(
+                model=model,
+                max_tokens=1024,
+                messages=messages,  # type: ignore[arg-type]
+            )
+            text_blocks = [b for b in response.content if b.type == "text"]
+            return text_blocks[0].text if text_blocks else None  # type: ignore[union-attr]
+        except Exception as exc:
+            logger.warning("Summarization API call failed: %s", exc)
+            return None
+
     async def _generate_summary(
         self,
         content: str,
@@ -92,14 +117,6 @@ class SummaryCache:
         Attempts up to 2 iterations if critical aspects are missing from the summary.
         Returns None on API failure.
         """
-        try:
-            import anthropic  # lazy import — not all deployments need this
-        except ImportError:
-            logger.warning("anthropic package not available; cannot summarize")
-            return None
-
-        client = anthropic.AsyncAnthropic()
-
         base_prompt = (
             "Summarize the following content concisely, preserving all key information "
             "that would be useful to a developer implementing a software task."
@@ -115,43 +132,32 @@ class SummaryCache:
         last_summary: str | None = None
 
         for iteration in range(max_iterations):
-            try:
-                response = await client.messages.create(
-                    model=model,
-                    max_tokens=1024,
-                    messages=messages,  # type: ignore[arg-type]
-                )
-                text_blocks = [b for b in response.content if b.type == "text"]
-                summary: str | None = text_blocks[0].text if text_blocks else None  # type: ignore[union-attr]
-                if not summary:
-                    logger.warning("Empty summary returned by model %s", model)
-                    return last_summary
-
-                last_summary = summary
-
-                # Check critical aspects
-                if critical and not self._check_critical_aspects(summary, critical):
-                    if iteration < max_iterations - 1:
-                        # Re-request with explicit preservation instruction
-                        logger.debug(
-                            "Summary missing critical aspects on iteration %d, retrying", iteration
-                        )
-                        messages = [
-                            {
-                                "role": "user",
-                                "content": (
-                                    f"Summarize the following content concisely. "
-                                    f"You MUST explicitly include information about: {critical}. "
-                                    f"This is critical — do not omit it.\n\n---\n{content}"
-                                ),
-                            }
-                        ]
-                        continue
-
-                return summary
-
-            except Exception as exc:
-                logger.warning("Summarization API call failed: %s", exc)
+            summary = await self._do_api_call(model, messages)
+            if not summary:
+                logger.warning("Empty summary returned by model %s", model)
                 return last_summary
+
+            last_summary = summary
+
+            # Check critical aspects
+            if critical and not self._check_critical_aspects(summary, critical):
+                if iteration < max_iterations - 1:
+                    # Re-request with explicit preservation instruction
+                    logger.debug(
+                        "Summary missing critical aspects on iteration %d, retrying", iteration
+                    )
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": (
+                                f"Summarize the following content concisely. "
+                                f"You MUST explicitly include information about: {critical}. "
+                                f"This is critical — do not omit it.\n\n---\n{content}"
+                            ),
+                        }
+                    ]
+                    continue
+
+            return summary
 
         return last_summary
