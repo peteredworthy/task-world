@@ -300,7 +300,14 @@ class AgentExecutor:
             AgentType.CLAUDE_SDK,
         ):
             assert agent_type is not None  # Type narrowing for pyright
-            task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, run.agent_config))
+            # Clear stale PID so the health monitor treats the agent as
+            # "not yet spawned" until the new subprocess registers its PID.
+            # Without this, the monitor finds the old dead PID and immediately
+            # pauses the run again after resume.
+            agent_config = {k: v for k, v in run.agent_config.items() if k != "pid"}
+            if "pid" in run.agent_config:
+                await self._persist_agent_metadata(run_id, {"pid": None})
+            task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, agent_config))
             self._running_tasks[run_id] = task
             logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
 
@@ -1704,7 +1711,15 @@ class AgentExecutor:
         ):
             return False
 
-        task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, agent_config))
+        # Clear stale PID so the health monitor treats the agent as "not yet
+        # spawned" until the new subprocess registers its PID via the
+        # on_agent_metadata callback.  Without this, resuming a run whose old
+        # process has died causes the monitor to immediately re-pause it.
+        clean_config = {k: v for k, v in agent_config.items() if k != "pid"}
+        if "pid" in agent_config:
+            asyncio.create_task(self._persist_agent_metadata(run_id, {"pid": None}))
+
+        task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, clean_config))
         self._running_tasks[run_id] = task
         logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
         return True
