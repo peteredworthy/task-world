@@ -114,6 +114,7 @@ class TaskModel(Base):
     )
     config_id: Mapped[str] = mapped_column(String, nullable=False)
     title: Mapped[str] = mapped_column(String, nullable=False, default="")
+    complexity: Mapped[str] = mapped_column(String, nullable=False, default="standard")
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String, nullable=False, default="pending", index=True)
     checklist: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)

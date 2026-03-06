@@ -1,9 +1,11 @@
 """Tests for configuration models."""
 
+import pydantic
 import pytest
 import yaml
 
-from orchestrator.config.enums import Priority
+
+from orchestrator.config.enums import Complexity, Priority
 from orchestrator.config.models import (
     GateConfig,
     RequirementConfig,
@@ -495,3 +497,28 @@ def test_auto_grade_blocked_when_no_verification() -> None:
     result = transition_after_verification(task, now)
     assert result.success is False
     assert "no verification configured" in result.error
+
+
+# --- Complexity field tests ---
+
+
+def test_task_config_complexity_default() -> None:
+    task = TaskConfig(id="T1", title="Test", task_context="ctx")
+    assert task.complexity == Complexity.STANDARD
+    assert task.complexity.value == "standard"
+
+
+def test_task_config_complexity_simple() -> None:
+    task = TaskConfig(id="T1", title="Test", task_context="ctx", complexity="simple")
+    assert task.complexity == Complexity.SIMPLE
+    assert task.complexity.value == "simple"
+
+
+def test_task_config_complexity_standard_explicit() -> None:
+    task = TaskConfig(id="T1", title="Test", task_context="ctx", complexity="standard")
+    assert task.complexity == Complexity.STANDARD
+
+
+def test_task_config_complexity_invalid() -> None:
+    with pytest.raises(pydantic.ValidationError):
+        TaskConfig(id="T1", title="Test", task_context="ctx", complexity="complex")

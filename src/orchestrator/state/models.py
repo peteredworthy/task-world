@@ -97,6 +97,7 @@ class TaskState(BaseModel):
     config_id: str
     title: str = ""
     status: TaskStatus = TaskStatus.PENDING
+    complexity: str = "standard"
     checklist: list[ChecklistItem] = Field(default_factory=lambda: [])
     attempts: list[Attempt] = Field(default_factory=lambda: [])
     current_attempt: int = 0

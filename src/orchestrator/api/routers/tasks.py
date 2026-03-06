@@ -100,6 +100,7 @@ async def get_task(
         config_id=task.config_id,
         title=task.title,
         status=task.status.value,
+        complexity=task.complexity,
         checklist=[
             ChecklistItemSchema(
                 req_id=item.req_id,

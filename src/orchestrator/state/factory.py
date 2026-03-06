@@ -43,6 +43,7 @@ def create_task_state(
         id=id_generator(),
         config_id=task_config.id,
         title=task_config.title,
+        complexity=task_config.complexity.value,
         checklist=create_checklist_from_requirements(task_config),
         max_attempts=task_config.retry.max_attempts,
         has_verification=has_verification,
