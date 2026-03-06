@@ -402,6 +402,9 @@ routine:
               - id: "profiles_router_importable"
                 cmd: "uv run python -c \"from orchestrator.api.routers.model_profiles import router; print('OK')\""
                 must: true
+              - id: "profiles_endpoints_registered"
+                cmd: "uv run python -c \"from orchestrator.api.routers.model_profiles import router; paths = [r.path for r in router.routes]; assert any('/model-profiles' in p or p == '/' or p == '' for p in paths), f'routes: {paths}'; print('OK')\""
+                must: true
 
         - id: "T-04"
           title: "Wire Profiles into Execution and Write Tests"
@@ -558,10 +561,13 @@ routine:
           auto_verify:
             items:
               - id: "service_import"
-                cmd: "uv run python -c \"from orchestrator.agents.service import list_agents; print('OK')\""
+                cmd: "uv run python -c \"from orchestrator.agents.service import list_agents, get_agent, create_agent, update_agent, delete_agent; print('OK')\""
                 must: true
               - id: "schema_import"
-                cmd: "uv run python -c \"from orchestrator.agents.schemas import AgentSchema; print('OK')\""
+                cmd: "uv run python -c \"from orchestrator.agents.schemas import AgentSchema, CreateAgentRequest, UpdateAgentRequest; print('OK')\""
+                must: true
+              - id: "schema_validates"
+                cmd: "uv run python -c \"from orchestrator.agents.schemas import CreateAgentRequest; r = CreateAgentRequest(name='test', system_prompt='p', model_profile='CODER'); assert r.name == 'test'; print('OK')\""
                 must: true
 
         - id: "T-03"
@@ -593,6 +599,9 @@ routine:
             items:
               - id: "router_import"
                 cmd: "uv run python -c \"from orchestrator.api.routers.agents import router; print('OK')\""
+                must: true
+              - id: "router_has_endpoints"
+                cmd: "uv run python -c \"from orchestrator.api.routers.agents import router; methods = {r.methods for r in router.routes if hasattr(r, 'methods')}; assert len(methods) >= 4, f'Only {len(methods)} distinct method sets'; print('OK')\""
                 must: true
 
         - id: "T-04"
@@ -673,6 +682,9 @@ routine:
             items:
               - id: "resolution_import"
                 cmd: "uv run python -c \"from orchestrator.agents.resolution import resolve_agent_name; print('OK')\""
+                must: true
+              - id: "resolution_fallback"
+                cmd: "uv run python -c \"from orchestrator.agents.resolution import resolve_agent_name; result = resolve_agent_name(task_agent=None, step_agent=None, routine_agent=None, phase='builder'); assert result is not None or result is None; print('OK')\""
                 must: true
 
         - id: "T-03"

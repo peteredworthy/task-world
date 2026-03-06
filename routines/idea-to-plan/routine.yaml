@@ -705,7 +705,7 @@ routine:
               priority: critical
             - id: "R3"
               desc: "Every task has contract-level auto_verify commands (not just existence checks)"
-              priority: expected
+              priority: critical
             - id: "R4"
               desc: "intent.md annotated with requirement IDs — every element of intent maps to at least one requirement, and every referenced ID exists in the routine"
               priority: critical
