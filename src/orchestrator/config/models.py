@@ -137,6 +137,9 @@ class ArtifactSpec(BaseModel):
     track_resolution: bool = False
 
 
+DEFAULT_SUMMARIZE_MODEL = "claude-haiku-4-5-20251001"
+
+
 class ContextSource(BaseModel):
     """Configuration for context from an artifact."""
 
@@ -145,6 +148,13 @@ class ContextSource(BaseModel):
     required: bool = True
     section: str | None = None  # Extract specific section
     max_tokens: int | None = None  # Limit for this artifact
+    summarize: bool = False  # Summarize artifact content before injecting
+    critical: str | None = None  # Description of critical aspects to preserve in summary
+    summarize_model: str | None = None  # Override default summarization model
+
+
+# Alias for clarity when used as context_from config
+ContextFromConfig = ContextSource
 
 
 class TaskConfig(BaseModel):
