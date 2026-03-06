@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import pytest
+import pytest_asyncio  # noqa: F401
 
 from orchestrator.artifacts.registry import ArtifactRegistry
 from orchestrator.config.models import ContextSource
@@ -219,7 +220,8 @@ class TestTaskContextBuilder:
         worktree.mkdir()
         return worktree
 
-    def test_build_context_from_registry(
+    @pytest.mark.asyncio
+    async def test_build_context_from_registry(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test building context from registry artifacts."""
@@ -241,7 +243,7 @@ class TestTaskContextBuilder:
             ContextSource.model_validate({"artifact": "plan.md", "as": "plan", "required": True}),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -251,7 +253,8 @@ class TestTaskContextBuilder:
         assert "plan" in context
         assert context["plan"] == "This is the plan content."
 
-    def test_build_context_with_variable_substitution(
+    @pytest.mark.asyncio
+    async def test_build_context_with_variable_substitution(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test variable substitution in artifact paths."""
@@ -275,7 +278,7 @@ class TestTaskContextBuilder:
             ),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={"feature": "auth"},
@@ -284,7 +287,8 @@ class TestTaskContextBuilder:
 
         assert context["plan"] == "Auth plan content."
 
-    def test_build_context_with_section_extraction(
+    @pytest.mark.asyncio
+    async def test_build_context_with_section_extraction(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test extracting a specific section from artifact."""
@@ -315,7 +319,7 @@ Item 2 is unresolved.
             ),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -324,7 +328,8 @@ Item 2 is unresolved.
 
         assert context["resolved_questions"] == "Item 1 is resolved."
 
-    def test_build_context_with_token_limit_per_artifact(
+    @pytest.mark.asyncio
+    async def test_build_context_with_token_limit_per_artifact(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test per-artifact token limits."""
@@ -345,7 +350,7 @@ Item 2 is unresolved.
             ),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -356,7 +361,8 @@ Item 2 is unresolved.
         assert len(context["content"]) <= 250
         assert "[...truncated]" in context["content"]
 
-    def test_build_context_with_total_token_limit(
+    @pytest.mark.asyncio
+    async def test_build_context_with_total_token_limit(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test total token budget across multiple artifacts."""
@@ -375,7 +381,7 @@ Item 2 is unresolved.
             ContextSource.model_validate({"artifact": "file2.md", "as": "file2", "required": True}),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -389,7 +395,8 @@ Item 2 is unresolved.
         # file2 should be truncated due to budget
         assert len(context["file2"]) <= 200
 
-    def test_build_context_required_artifact_missing(
+    @pytest.mark.asyncio
+    async def test_build_context_required_artifact_missing(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test error when required artifact is missing."""
@@ -401,7 +408,7 @@ Item 2 is unresolved.
         ]
 
         with pytest.raises(ContextError) as exc_info:
-            builder.build_context(
+            await builder.build_context(
                 run_id="run-1",
                 context_sources=sources,
                 variables={},
@@ -410,7 +417,8 @@ Item 2 is unresolved.
 
         assert "Required artifact not found: missing.md" in str(exc_info.value)
 
-    def test_build_context_optional_artifact_missing(
+    @pytest.mark.asyncio
+    async def test_build_context_optional_artifact_missing(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test optional artifact is skipped if missing."""
@@ -421,7 +429,7 @@ Item 2 is unresolved.
             ),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -431,7 +439,8 @@ Item 2 is unresolved.
         assert "missing" not in context
         assert context == {}
 
-    def test_build_context_mixed_required_optional(
+    @pytest.mark.asyncio
+    async def test_build_context_mixed_required_optional(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test mix of required and optional artifacts."""
@@ -448,7 +457,7 @@ Item 2 is unresolved.
             ),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -459,7 +468,8 @@ Item 2 is unresolved.
         assert context["req"] == "Required content."
         assert "opt" not in context
 
-    def test_build_context_multiple_artifacts(
+    @pytest.mark.asyncio
+    async def test_build_context_multiple_artifacts(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test building context from multiple artifacts."""
@@ -482,7 +492,7 @@ Item 2 is unresolved.
             ),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -494,14 +504,15 @@ Item 2 is unresolved.
         assert context["architecture"] == "Architecture content."
         assert context["questions"] == "Questions content."
 
-    def test_build_context_no_worktree(self, registry: ArtifactRegistry) -> None:
+    @pytest.mark.asyncio
+    async def test_build_context_no_worktree(self, registry: ArtifactRegistry) -> None:
         """Test context building fails gracefully without worktree."""
         builder = TaskContextBuilder(registry, worktree_path=None)
         sources = [
             ContextSource.model_validate({"artifact": "plan.md", "as": "plan", "required": False}),
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -511,7 +522,8 @@ Item 2 is unresolved.
         # Optional artifact, no worktree -> skipped
         assert context == {}
 
-    def test_build_context_stops_at_budget_exhaustion(
+    @pytest.mark.asyncio
+    async def test_build_context_stops_at_budget_exhaustion(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test context building stops when token budget exhausted."""
@@ -529,7 +541,7 @@ Item 2 is unresolved.
             for i in range(3)
         ]
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=sources,
             variables={},
@@ -541,13 +553,14 @@ Item 2 is unresolved.
         # file2 might not be present due to budget exhaustion
         # This is acceptable behavior
 
-    def test_build_context_empty_sources(
+    @pytest.mark.asyncio
+    async def test_build_context_empty_sources(
         self, registry: ArtifactRegistry, tmp_worktree: Path
     ) -> None:
         """Test building context with no sources."""
         builder = TaskContextBuilder(registry, tmp_worktree)
 
-        context = builder.build_context(
+        context = await builder.build_context(
             run_id="run-1",
             context_sources=[],
             variables={},

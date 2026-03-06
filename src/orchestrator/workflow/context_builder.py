@@ -2,10 +2,13 @@
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from orchestrator.artifacts.registry import ArtifactRegistry
 from orchestrator.config.models import ContextSource
+
+if TYPE_CHECKING:
+    from orchestrator.workflow.summary_cache import SummaryCache
 
 
 class ContextError(Exception):
@@ -32,12 +35,13 @@ class TaskContextBuilder:
         self._registry = artifact_registry
         self._worktree = worktree_path
 
-    def build_context(
+    async def build_context(
         self,
         run_id: str,
         context_sources: list[ContextSource],
         variables: dict[str, Any],
         total_token_limit: int = 8000,
+        summary_cache: "SummaryCache | None" = None,
     ) -> dict[str, str]:
         """
         Build context dict from artifact sources.
@@ -72,6 +76,15 @@ class TaskContextBuilder:
             # Extract section if specified
             if source.section:
                 content = extract_section(content, source.section)
+
+            # Summarize if requested
+            if source.summarize and summary_cache is not None:
+                content = await summary_cache.get_or_generate(
+                    artifact_path=path,
+                    content=content,
+                    model=source.summarize_model,
+                    critical=source.critical,
+                )
 
             # Apply token limit
             limit = min(
