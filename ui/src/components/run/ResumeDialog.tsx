@@ -4,7 +4,7 @@ import { Spinner } from '../Spinner';
 import { AgentIcon } from '../AgentIcon';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { AgentConfigForm } from '../AgentConfigForm';
-import { buildDefaultAgentConfig } from '../agentConfigUtils';
+import { buildDefaultAgentConfig } from '../agentRunnerConfigUtils';
 import type { RunResponse } from '../../types';
 
 interface ResumeDialogProps {

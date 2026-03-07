@@ -4,7 +4,7 @@ import { useAgentFixTests } from '../../hooks/useReview';
 import { Spinner } from '../Spinner';
 import { AgentIcon } from '../AgentIcon';
 import { AgentConfigForm } from '../AgentConfigForm';
-import { buildDefaultAgentConfig } from '../agentConfigUtils';
+import { buildDefaultAgentConfig } from '../agentRunnerConfigUtils';
 import { ApiError } from '../../api/client';
 import type { RunResponse } from '../../types';
 import type { TestRunResult } from '../../types/review';

@@ -7,7 +7,7 @@ import { BranchSelector } from '../BranchSelector';
 import { RoutineSelector } from '../RoutineSelector';
 import { RoutineValidatorModal } from '../RoutineValidatorModal';
 import { AgentConfigForm } from '../AgentConfigForm';
-import { buildDefaultAgentConfig } from '../agentConfigUtils';
+import { buildDefaultAgentConfig } from '../agentRunnerConfigUtils';
 import type { RoutineSelection } from '../RoutineSelector';
 
 interface CreateRunModalProps {

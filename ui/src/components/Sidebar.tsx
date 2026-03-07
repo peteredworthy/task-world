@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAgents } from "../hooks/useApi";
-import { AgentQuotaBadge } from "./AgentQuotaBadge";
-import type { AgentOption, QuotaBucket } from '../types/agents';
+import { AgentRunnerQuotaBadge } from "./AgentRunnerQuotaBadge";
+import type { AgentRunnerOption, QuotaBucket } from '../types/agentRunners';
 
 const navItems = [
   { icon: '▣', label: 'Dashboard', path: '/' },
@@ -49,7 +49,7 @@ function formatBucketValue(bucket: QuotaBucket): string {
 }
 
 interface AgentQuotaRowProps {
-  agent: AgentOption;
+  agent: AgentRunnerOption;
 }
 
 function AgentQuotaRow({ agent }: AgentQuotaRowProps) {
@@ -65,7 +65,7 @@ function AgentQuotaRow({ agent }: AgentQuotaRowProps) {
       >
         <span className="text-text-secondary text-[12px] truncate mr-2">{agent.name}</span>
         <div className="flex items-center gap-1 shrink-0">
-          <AgentQuotaBadge quota={agent.quota!} />
+          <AgentRunnerQuotaBadge quota={agent.quota!} />
           {hasBreakdown && (
             <svg
               className={`w-3 h-3 text-text-muted transition-transform duration-150 ${expanded ? 'rotate-180' : ''}`}

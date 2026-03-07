@@ -17,7 +17,7 @@ export interface QuotaBucket {
   resets_at: string | null;
 }
 
-export interface AgentQuota {
+export interface AgentRunnerQuota {
   balance_usd: number | null;
   balance_pct: number | null;
   max_balance_usd: number | null;
@@ -26,7 +26,7 @@ export interface AgentQuota {
   breakdown: QuotaBucket[] | null;
 }
 
-export interface AgentOption {
+export interface AgentRunnerOption {
   agent_type: AgentType;
   name: string;
   title: string;
@@ -35,5 +35,5 @@ export interface AgentOption {
   detail: string;
   install_hint: string;
   config_schema: AgentConfigField[];
-  quota: AgentQuota | null;
+  quota: AgentRunnerQuota | null;
 }

@@ -1,9 +1,9 @@
 /* eslint-disable react-refresh/only-export-components */
-import type { AgentQuota } from '../types/agents';
+import type { AgentRunnerQuota } from '../types/agentRunners';
 
 type Colour = 'green' | 'amber' | 'red';
 
-export function deriveColour(quota: AgentQuota): Colour {
+export function deriveColour(quota: AgentRunnerQuota): Colour {
   if (quota.balance_usd !== null) {
     if (quota.max_balance_usd === null || quota.max_balance_usd === 0) {
       return 'green';
@@ -21,7 +21,7 @@ export function deriveColour(quota: AgentQuota): Colour {
   return 'green';
 }
 
-export function formatDisplay(quota: AgentQuota): string {
+export function formatDisplay(quota: AgentRunnerQuota): string {
   if (quota.balance_usd !== null) {
     return `$${quota.balance_usd.toFixed(2)}`;
   }
@@ -37,11 +37,11 @@ const colourClasses: Record<Colour, string> = {
   red: 'bg-red-100 text-red-800',
 };
 
-interface AgentQuotaBadgeProps {
-  quota: AgentQuota;
+interface AgentRunnerQuotaBadgeProps {
+  quota: AgentRunnerQuota;
 }
 
-export function AgentQuotaBadge({ quota }: AgentQuotaBadgeProps) {
+export function AgentRunnerQuotaBadge({ quota }: AgentRunnerQuotaBadgeProps) {
   if (quota.balance_usd === null && quota.balance_pct === null) {
     return null;
   }

@@ -9,8 +9,8 @@ import {
   saveAgentModelDefault,
   loadAgentFieldDefaults,
   saveAgentFieldDefault,
-} from '../components/agentConfigUtils';
-import type { AgentOption } from '../types/agents';
+} from '../components/agentRunnerConfigUtils';
+import type { AgentRunnerOption } from '../types/agentRunners';
 
 export function Agents() {
   const { data, isLoading, error } = useAgents();
@@ -110,7 +110,7 @@ export function Agents() {
   );
 }
 
-function AgentCard({ agent }: { agent: AgentOption }) {
+function AgentCard({ agent }: { agent: AgentRunnerOption }) {
   // Promote model and restrictions to interactive controls; hide secrets and those two from the bullet list
   const modelField = agent.config_schema.find((f) => f.name === 'model');
   const restrictionsField = agent.config_schema.find((f) => f.name === 'restrictions');

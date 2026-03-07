@@ -1,7 +1,7 @@
 import type {
   ActivityResponse,
   AgentLogsResponse,
-  AgentOption,
+  AgentRunnerOption,
   ApproveTaskRequest,
   BranchStatusResponse,
   BranchCountResponse,
@@ -412,7 +412,7 @@ export const api = {
     };
   },
 
-  listAgents(): Promise<AgentOption[]> {
+  listAgents(): Promise<AgentRunnerOption[]> {
     return fetchApi('/api/agent-runners');
   },
 

@@ -1,8 +1,8 @@
-import type { AgentConfigField, AgentOption } from '../types/agents';
+import type { AgentConfigField, AgentRunnerOption } from '../types/agentRunners';
 import { OpenHandsLLMTabs } from './OpenHandsLLMTabs';
 
 interface AgentConfigFormProps {
-    agent: AgentOption;
+    agent: AgentRunnerOption;
     /** Current config values (field name → value) */
     values: Record<string, unknown>;
     /** Called with the full updated values map on any change */
