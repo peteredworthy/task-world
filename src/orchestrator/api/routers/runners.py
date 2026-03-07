@@ -1,11 +1,18 @@
 """Agent discovery API endpoints."""
 
 import logging
-from typing import Any
+import uuid
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.api.deps import get_session
+from orchestrator.api.schemas.model_profiles import RunnerProfileDefaultsSchema
+from orchestrator.config.enums import ModelProfile
+from orchestrator.db.models import RunnerProfileDefaultModel
 from orchestrator.runners.detector import ToolDetector
 from orchestrator.runners.types import AgentRunnerOption
 
@@ -48,3 +55,49 @@ async def discover_local_models(
     except Exception as exc:
         logger.debug("Failed to discover local models from %s: %s", models_url, exc)
         return {"models": [], "error": str(exc)}
+
+
+@router.get("/{runner_type}/profiles", response_model=RunnerProfileDefaultsSchema)
+async def get_runner_profiles(
+    runner_type: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RunnerProfileDefaultsSchema:
+    """Get per-profile model defaults for a runner type."""
+    result = await session.execute(
+        select(RunnerProfileDefaultModel).where(
+            RunnerProfileDefaultModel.runner_type == runner_type
+        )
+    )
+    rows = result.scalars().all()
+    profiles: dict[ModelProfile, str] = {}
+    for row in rows:
+        try:
+            profiles[ModelProfile(row.profile)] = row.model
+        except ValueError:
+            pass
+    return RunnerProfileDefaultsSchema(runner_type=runner_type, profiles=profiles)
+
+
+@router.put("/{runner_type}/profiles", response_model=RunnerProfileDefaultsSchema)
+async def set_runner_profiles(
+    runner_type: str,
+    body: RunnerProfileDefaultsSchema,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> RunnerProfileDefaultsSchema:
+    """Set per-profile model defaults for a runner type."""
+    await session.execute(
+        delete(RunnerProfileDefaultModel).where(
+            RunnerProfileDefaultModel.runner_type == runner_type
+        )
+    )
+    for profile, model in body.profiles.items():
+        session.add(
+            RunnerProfileDefaultModel(
+                id=str(uuid.uuid4()),
+                runner_type=runner_type,
+                profile=profile.value,
+                model=model,
+            )
+        )
+    await session.commit()
+    return RunnerProfileDefaultsSchema(runner_type=runner_type, profiles=body.profiles)
