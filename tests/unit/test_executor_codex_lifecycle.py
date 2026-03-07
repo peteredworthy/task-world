@@ -2,7 +2,7 @@
 
 Covers:
 - ``_prepare_codex_config``: deterministic recovery rule for session health.
-- ``check_agent_alive`` (AgentMonitor): Codex-specific liveness checks.
+- ``check_agent_alive`` (AgentRunnerMonitor): Codex-specific liveness checks.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners.executor import AgentRunnerExecutor
-from orchestrator.runners.monitor import AgentMonitor
+from orchestrator.runners.monitor import AgentRunnerMonitor
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
@@ -164,12 +164,12 @@ class TestPrepareCodexConfigLocal:
 
 
 class TestCheckAgentAliveCodexLocal:
-    """AgentMonitor.check_agent_alive for CODEX_SERVER agent type."""
+    """AgentRunnerMonitor.check_agent_alive for CODEX_SERVER agent type."""
 
     @pytest.mark.asyncio
     async def test_codex_server_alive_pid(self, db_setup: async_sessionmaker[AsyncSession]) -> None:
         """CODEX_SERVER with a live PID → alive."""
-        monitor = AgentMonitor(db_setup)
+        monitor = AgentRunnerMonitor(db_setup)
         run = _create_test_run(
             run_id="r1",
             agent_type=AgentRunnerType.CODEX_SERVER,
@@ -181,7 +181,7 @@ class TestCheckAgentAliveCodexLocal:
     @pytest.mark.asyncio
     async def test_codex_server_dead_pid(self, db_setup: async_sessionmaker[AsyncSession]) -> None:
         """CODEX_SERVER with a dead PID → dead."""
-        monitor = AgentMonitor(db_setup)
+        monitor = AgentRunnerMonitor(db_setup)
         run = _create_test_run(
             run_id="r2",
             agent_type=AgentRunnerType.CODEX_SERVER,
@@ -193,7 +193,7 @@ class TestCheckAgentAliveCodexLocal:
     @pytest.mark.asyncio
     async def test_codex_server_no_pid(self, db_setup: async_sessionmaker[AsyncSession]) -> None:
         """CODEX_SERVER with no PID in config → dead."""
-        monitor = AgentMonitor(db_setup)
+        monitor = AgentRunnerMonitor(db_setup)
         run = _create_test_run(
             run_id="r3",
             agent_type=AgentRunnerType.CODEX_SERVER,
@@ -210,7 +210,7 @@ class TestCheckAgentAliveCodexLocal:
 
 @pytest.mark.asyncio
 async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
-    """AgentMonitor.on_agent_died transitions a CODEX_SERVER run to PAUSED."""
+    """AgentRunnerMonitor.on_agent_died transitions a CODEX_SERVER run to PAUSED."""
     from orchestrator.db.connection import create_engine, create_session_factory, init_db
     from orchestrator.db.repositories import RunRepository
 
@@ -219,7 +219,7 @@ async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
     session_factory = create_session_factory(engine)
 
     try:
-        monitor = AgentMonitor(session_factory)
+        monitor = AgentRunnerMonitor(session_factory)
 
         async with session_factory() as session:
             repo = RunRepository(session)

@@ -135,9 +135,9 @@ def get_worktrees_path(request: Request) -> Path:
     return config.paths.get_worktrees_path()
 
 
-def get_agent_executor(request: Request) -> AgentRunnerExecutor:
+def get_runner_executor(request: Request) -> AgentRunnerExecutor:
     """Get the agent executor from app state."""
-    return request.app.state.agent_executor  # type: ignore[no-any-return]
+    return request.app.state.runner_executor  # type: ignore[no-any-return]
 
 
 def get_envfile_store(request: Request) -> EnvFileStore:

@@ -64,7 +64,7 @@ async def _is_container_running(container_id: str) -> bool:
         return False
 
 
-class AgentMonitor:
+class AgentRunnerMonitor:
     """Watches agent processes and transitions runs on unexpected death.
 
     Provides methods to:

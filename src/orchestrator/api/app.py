@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
-    from orchestrator.runners.monitor import AgentMonitor
+    from orchestrator.runners.monitor import AgentRunnerMonitor
     from orchestrator.db.repositories import RunRepository
 
     await init_db(app.state.engine)
@@ -49,19 +49,19 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await seed_default_agents(_seed_session)
     global_config = app.state.global_config
 
-    # Create agent_monitor instance with session_factory (no bound session).
+    # Create runner_monitor instance with session_factory (no bound session).
     # Pass the shared lock_manager so on_agent_died can release orphaned locks.
-    agent_monitor = AgentMonitor(
+    runner_monitor = AgentRunnerMonitor(
         session_factory,
         global_config,
         lock_manager=getattr(app.state, "lock_manager", None),
     )
-    app.state.agent_monitor = agent_monitor
+    app.state.runner_monitor = runner_monitor
 
     try:
         # Check all ACTIVE runs and pause those with dead agents
         # Each on_agent_died call creates its own session and commits
-        paused_runs = await agent_monitor.recover_active_runs_on_startup()
+        paused_runs = await runner_monitor.recover_active_runs_on_startup()
         if paused_runs:
             logger.info(f"Startup recovery: moved {len(paused_runs)} runs to PAUSED (dead agents)")
         else:
@@ -72,10 +72,10 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # lost even though the agent subprocess may still be running. Without
         # re-spawning, these runs are orphaned: the agent finishes but nobody
         # handles the next phase (verification, next task, run completion).
-        if hasattr(app.state, "agent_executor"):
+        if hasattr(app.state, "runner_executor"):
             from orchestrator.config.enums import AgentRunnerType as _AT
 
-            executor = app.state.agent_executor
+            executor = app.state.runner_executor
             async with session_factory() as session:
                 from orchestrator.db.repositories import RunRepository as _RR
 
@@ -268,12 +268,12 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Cancel all running agent background tasks before disposing the engine.
     # Without this, background sessions try to rollback on a closed connection
     # causing "OperationalError: no active connection" during shutdown.
-    if hasattr(app.state, "agent_executor"):
+    if hasattr(app.state, "runner_executor"):
         from asyncio import Task as _AsyncTask
 
         from orchestrator.runners.executor import AgentRunnerExecutor
 
-        executor: AgentRunnerExecutor = app.state.agent_executor
+        executor: AgentRunnerExecutor = app.state.runner_executor
         pending_tasks: list[_AsyncTask[Any]] = []
         for run_id in list(executor._running_tasks):  # pyright: ignore[reportPrivateUsage]
             task = executor._running_tasks.pop(run_id, None)  # pyright: ignore[reportPrivateUsage]
@@ -410,14 +410,14 @@ def create_app(
     if spawn_agents is None:
         spawn_agents = db_path != ":memory:"
 
-    # Note: agent_monitor will be set in lifespan if available, but AgentRunnerExecutor
+    # Note: runner_monitor will be set in lifespan if available, but AgentRunnerExecutor
     # can lazy-initialize it if needed. This avoids circular dependencies.
-    app.state.agent_executor = AgentRunnerExecutor(
+    app.state.runner_executor = AgentRunnerExecutor(
         session_factory=app.state.session_factory,
         global_config=global_cfg,
         lock_manager=app.state.lock_manager,
         submit_event_registry=app.state.submit_event_registry,
-        agent_monitor=getattr(app.state, "agent_monitor", None),
+        runner_monitor=getattr(app.state, "runner_monitor", None),
         connection_manager=app.state.connection_manager,
         spawn_agents=spawn_agents,
     )

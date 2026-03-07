@@ -43,7 +43,7 @@ from orchestrator.runners.types import (
 from orchestrator.config.enums import AgentRunnerType
 
 if TYPE_CHECKING:
-    from orchestrator.runners.monitor import AgentMonitor
+    from orchestrator.runners.monitor import AgentRunnerMonitor
     from orchestrator.runners.parsers.base import StreamParser
 
 logger = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ class CLIAgent:
         time_provider: TimeProvider | None = None,
         poll_interval: float = 5.0,
         parser: StreamParser | None = None,
-        agent_monitor: AgentMonitor | None = None,
+        runner_monitor: AgentRunnerMonitor | None = None,
         run_id: str | None = None,
     ) -> None:
         self._command = command
@@ -104,7 +104,7 @@ class CLIAgent:
         self._cancelled = False
         self._process: asyncio.subprocess.Process | None = None
         self._parser = parser
-        self._agent_monitor = agent_monitor
+        self._runner_monitor = runner_monitor
         self._run_id = run_id
 
     @property
@@ -420,7 +420,7 @@ class CLIAgent:
 
             # Store PID for agent monitoring
             # This should be persisted to run.agent_config["pid"] by the caller
-            # so that AgentMonitor can check process liveness
+            # so that AgentRunnerMonitor can check process liveness
             agent_pid = self._process.pid
 
             # Notify caller that subprocess was created so metadata can be persisted
@@ -478,9 +478,9 @@ class CLIAgent:
                         if batch_buffer and on_output:
                             await on_output(batch_buffer)
                         # Notify monitor that agent was killed due to being stuck
-                        if self._agent_monitor and self._run_id:
+                        if self._runner_monitor and self._run_id:
                             try:
-                                await self._agent_monitor.on_agent_died(
+                                await self._runner_monitor.on_agent_died(
                                     run_id=self._run_id,
                                     agent_type=AgentRunnerType.CLI_SUBPROCESS,
                                     exit_code=None,
@@ -512,9 +512,9 @@ class CLIAgent:
             success = self._process.returncode == 0
 
             # If process exited with non-zero code (failure), notify monitor
-            if not success and self._agent_monitor and self._run_id:
+            if not success and self._runner_monitor and self._run_id:
                 try:
-                    await self._agent_monitor.on_agent_died(
+                    await self._runner_monitor.on_agent_died(
                         run_id=self._run_id,
                         agent_type=AgentRunnerType.CLI_SUBPROCESS,
                         exit_code=self._process.returncode,
@@ -562,10 +562,10 @@ class CLIAgent:
             raise  # Let executor handle as revision, not a crash
         except Exception as exc:
             # Check if process died unexpectedly and notify monitor
-            if self._process and self._agent_monitor and self._run_id:
+            if self._process and self._runner_monitor and self._run_id:
                 try:
                     exit_code = self._process.returncode
-                    await self._agent_monitor.on_agent_died(
+                    await self._runner_monitor.on_agent_died(
                         run_id=self._run_id,
                         agent_type=AgentRunnerType.CLI_SUBPROCESS,
                         exit_code=exit_code,

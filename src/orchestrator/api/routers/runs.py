@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.deps import (
-    get_agent_executor,
+    get_runner_executor,
     get_event_store,
     get_global_config,
     get_run_repository,
@@ -390,7 +390,7 @@ async def get_run(
 async def start_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> RunResponse:
     """Start a run (DRAFT -> ACTIVE).
 
@@ -412,7 +412,7 @@ async def start_run(
 async def cancel_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> RunResponse:
     """Cancel a run (ACTIVE/PAUSED -> FAILED)."""
     # Cancel any running agent first
@@ -425,7 +425,7 @@ async def cancel_run(
 async def pause_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> RunResponse:
     """Pause a run (ACTIVE -> PAUSED)."""
     # Cancel any running agent first
@@ -438,7 +438,7 @@ async def pause_run(
 async def resume_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
     request: ResumeRunRequest | None = None,
 ) -> RunResponse:
     """Resume a run (PAUSED -> ACTIVE), optionally changing the agent.
@@ -702,7 +702,7 @@ async def approve_step(
     approval: HumanApprovalRequest,
     repository: Annotated[RunRepository, Depends(get_run_repository)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> StepResponse:
     """Human approval for a step gate.
 
@@ -1082,7 +1082,7 @@ async def merge_back_endpoint(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
     test_runner: Annotated[TestRunner, Depends(get_test_runner)],
     request: MergeBackRequest | None = None,
 ) -> MergeBackResponse:

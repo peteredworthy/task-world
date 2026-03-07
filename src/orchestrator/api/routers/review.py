@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.deps import (
-    get_agent_executor,
+    get_runner_executor,
     get_event_emitter,
     get_global_config,
     get_test_runner,
@@ -703,7 +703,7 @@ async def agent_resolve_conflicts(
     body: AgentResolveConflictsRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> dict[str, str]:
     """Dispatch the run's agent to resolve merge conflicts."""
     run = await service.get_run(run_id)
@@ -1024,7 +1024,7 @@ async def get_merge_readiness(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
     test_runner: Annotated[TestRunner, Depends(get_test_runner)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> MergeReadiness:
     """Return merge readiness by evaluating all four gates.
 

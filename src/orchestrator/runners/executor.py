@@ -43,7 +43,7 @@ from orchestrator.workflow.summary_cache import SummaryCache
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from orchestrator.runners.monitor import AgentMonitor
+    from orchestrator.runners.monitor import AgentRunnerMonitor
     from orchestrator.api.websocket import ConnectionManager
     from orchestrator.config.global_config import GlobalConfig
     from orchestrator.state.models import Run, StepState, TaskState
@@ -81,7 +81,7 @@ class AgentRunnerExecutor:
         global_config: GlobalConfig | None = None,
         lock_manager: LockManager | None = None,
         submit_event_registry: SubmitEventRegistry | None = None,
-        agent_monitor: AgentMonitor | None = None,
+        runner_monitor: AgentRunnerMonitor | None = None,
         connection_manager: ConnectionManager | None = None,
         api_base_url: str = "http://localhost:8000",
         *,
@@ -96,28 +96,28 @@ class AgentRunnerExecutor:
         self._spawn_agents = spawn_agents
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         # Agent monitor is lazy-initialized if not provided, to avoid circular import
-        self._agent_monitor = agent_monitor
-        self._lazy_agent_monitor_init = agent_monitor is None
+        self._runner_monitor = runner_monitor
+        self._lazy_runner_monitor_init = runner_monitor is None
 
-    async def _get_agent_monitor(self) -> AgentMonitor | None:
+    async def _get_runner_monitor(self) -> AgentRunnerMonitor | None:
         """Lazy-initialize agent monitor if not provided."""
-        if self._agent_monitor is not None:
-            return self._agent_monitor
+        if self._runner_monitor is not None:
+            return self._runner_monitor
 
-        if not self._lazy_agent_monitor_init:
+        if not self._lazy_runner_monitor_init:
             return None
 
         # Lazy init - create monitor instance with session_factory and lock_manager
         try:
-            from orchestrator.runners.monitor import AgentMonitor
+            from orchestrator.runners.monitor import AgentRunnerMonitor
 
-            self._agent_monitor = AgentMonitor(
+            self._runner_monitor = AgentRunnerMonitor(
                 self._session_factory,
                 self._global_config,
                 lock_manager=self._lock_manager,
             )
-            self._lazy_agent_monitor_init = False
-            return self._agent_monitor
+            self._lazy_runner_monitor_init = False
+            return self._runner_monitor
         except Exception as e:
             logger.warning(f"Failed to initialize agent monitor: {e}")
             return None
@@ -344,7 +344,7 @@ class AgentRunnerExecutor:
 
         If the agent is found to be dead, transitions the run to PAUSED.
         """
-        monitor = await self._get_agent_monitor()
+        monitor = await self._get_runner_monitor()
         if not monitor:
             logger.debug(f"Run {run_id}: agent health monitor not available, skipping checks")
             return
@@ -1489,7 +1489,7 @@ class AgentRunnerExecutor:
 
         This should be called right after creating the agent process so that if the
         orchestrator crashes or the agent dies, we can still check if it's alive
-        via AgentMonitor.check_agent_alive().
+        via AgentRunnerMonitor.check_agent_alive().
         """
         if not agent_metadata:
             return
@@ -1677,7 +1677,7 @@ class AgentRunnerExecutor:
                 nudger_config=nudger_config,
                 poll_interval=poll_interval,
                 parser=parser,
-                agent_monitor=self._agent_monitor,
+                runner_monitor=self._runner_monitor,
                 run_id=run_id,
                 phase=phase,
             )

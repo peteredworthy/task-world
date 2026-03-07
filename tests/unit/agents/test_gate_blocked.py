@@ -34,7 +34,7 @@ class _NoopService:
         raise AssertionError("start_task should not be called when task already BUILDING")
 
 
-class _FakeAgentMonitor:
+class _FakeAgentRunnerMonitor:
     def __init__(self) -> None:
         self.calls = 0
 
@@ -57,8 +57,8 @@ class _GateBlockedAgent:
 
 
 class _TestExecutor(AgentRunnerExecutor):
-    def __init__(self, agent: _GateBlockedAgent, monitor: _FakeAgentMonitor) -> None:
-        super().__init__(session_factory=None, spawn_agents=False, agent_monitor=monitor)
+    def __init__(self, agent: _GateBlockedAgent, monitor: _FakeAgentRunnerMonitor) -> None:
+        super().__init__(session_factory=None, spawn_agents=False, runner_monitor=monitor)
         self._agent = agent
 
     def _create_agent(
@@ -152,7 +152,7 @@ async def test_execute_task_gate_blocked_does_not_call_on_agent_died(tmp_path: P
     task_state = run.steps[0].tasks[0]
     task_state.status = TaskStatus.BUILDING
 
-    monitor = _FakeAgentMonitor()
+    monitor = _FakeAgentRunnerMonitor()
     executor = _TestExecutor(agent=_GateBlockedAgent(), monitor=monitor)
     service = _NoopService()
 

@@ -1,4 +1,4 @@
-"""Unit tests for AgentMonitor class."""
+"""Unit tests for AgentRunnerMonitor class."""
 
 import os
 from collections.abc import AsyncGenerator
@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.runners.monitor import AgentMonitor
+from orchestrator.runners.monitor import AgentRunnerMonitor
 from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.config.global_config import AgentsConfig, GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
@@ -77,7 +77,7 @@ async def test_on_agent_died_transitions_run_to_paused(
 ) -> None:
     """When an ACTIVE run's agent dies, on_agent_died transitions it to PAUSED."""
     session_factory = db_setup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     # Create and save an ACTIVE run
     async with session_factory() as session:
@@ -123,7 +123,7 @@ async def test_on_agent_died_ignores_non_active_run(
 ) -> None:
     """on_agent_died should do nothing if run is not ACTIVE."""
     session_factory = db_setup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     # Create a COMPLETED run
     async with session_factory() as session:
@@ -161,7 +161,7 @@ async def test_check_agent_alive_cli_subprocess_with_valid_pid(
 ) -> None:
     """CLI_SUBPROCESS agent with a valid PID should be considered alive."""
     session_factory = db_setup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     # Use the current process PID (which is definitely alive)
     current_pid = os.getpid()
@@ -183,7 +183,7 @@ async def test_check_agent_alive_cli_subprocess_with_dead_pid(
 ) -> None:
     """CLI_SUBPROCESS agent with a dead PID should be considered dead."""
     session_factory = db_setup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     # Use a PID that definitely doesn't exist
     fake_pid = 999999
@@ -209,7 +209,7 @@ async def test_check_agent_alive_cli_subprocess_without_pid(
     Startup recovery handles the no-PID case separately.
     """
     session_factory = db_setup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     run = _create_test_run(
         run_id="run5",
@@ -233,7 +233,7 @@ async def test_check_agent_alive_openhands_local_returns_true(
     from killing the agent prematurely. Server restart recovery is handled separately.
     """
     session_factory = db_setup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     run = _create_test_run(
         run_id="run6",
@@ -255,7 +255,7 @@ async def test_check_agent_alive_user_managed_within_timeout(
 
     # Configure custom timeout (10 minutes)
     config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentMonitor(session_factory, global_config=config)
+    monitor = AgentRunnerMonitor(session_factory, global_config=config)
 
     # Set last_activity_at to 5 minutes ago
     now = datetime.now(timezone.utc)
@@ -281,7 +281,7 @@ async def test_check_agent_alive_user_managed_beyond_timeout(
 
     # Configure custom timeout (10 minutes)
     config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentMonitor(session_factory, global_config=config)
+    monitor = AgentRunnerMonitor(session_factory, global_config=config)
 
     # Set last_activity_at to 15 minutes ago (beyond timeout)
     now = datetime.now(timezone.utc)
@@ -304,7 +304,7 @@ async def test_check_agent_alive_user_managed_without_last_activity(
 ) -> None:
     """USER_MANAGED agent without last_activity_at should be considered dead."""
     session_factory = db_setup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     run = _create_test_run(
         run_id="run9",
@@ -323,7 +323,7 @@ async def test_check_agent_alive_with_no_agent_type(
 ) -> None:
     """Run without agent_type should be considered dead."""
     session_factory = db_setup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     run = _create_test_run(run_id="run10", agent_type=None)
     run.status = RunStatus.DRAFT
@@ -340,7 +340,7 @@ async def test_check_agent_alive_user_managed_with_malformed_timestamp(
     session_factory = db_setup
 
     config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentMonitor(session_factory, global_config=config)
+    monitor = AgentRunnerMonitor(session_factory, global_config=config)
 
     run = _create_test_run(
         run_id="run11",
@@ -363,7 +363,7 @@ async def test_on_agent_died_releases_building_task_lock_codex_server(
     """on_agent_died releases the lock on a BUILDING task for CODEX_SERVER."""
     session_factory = db_setup
     lock_manager = InMemoryLockManager()
-    monitor = AgentMonitor(session_factory, lock_manager=lock_manager)
+    monitor = AgentRunnerMonitor(session_factory, lock_manager=lock_manager)
 
     # Create and save an ACTIVE run with a task that will be put into BUILDING
     async with session_factory() as session:
@@ -404,7 +404,7 @@ async def test_on_agent_died_without_lock_manager_does_not_error(
     """on_agent_died works correctly when no lock_manager is provided."""
     session_factory = db_setup
     # No lock_manager passed — should be a no-op for lock cleanup
-    monitor = AgentMonitor(session_factory)
+    monitor = AgentRunnerMonitor(session_factory)
 
     async with session_factory() as session:
         repo = RunRepository(session)
@@ -440,7 +440,7 @@ async def test_on_agent_died_does_not_release_completed_task_lock(
     """on_agent_died only releases locks for BUILDING/VERIFYING tasks, not COMPLETED."""
     session_factory = db_setup
     lock_manager = InMemoryLockManager()
-    monitor = AgentMonitor(session_factory, lock_manager=lock_manager)
+    monitor = AgentRunnerMonitor(session_factory, lock_manager=lock_manager)
 
     async with session_factory() as session:
         repo = RunRepository(session)
