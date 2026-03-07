@@ -55,7 +55,7 @@ describe('Sidebar quota section', () => {
     });
     // Initiate a never-resolving fetch so the agents query stays in loading state
     void queryClient.fetchQuery({
-      queryKey: ['agents'],
+      queryKey: ['agent-runners'],
       queryFn: (): Promise<AgentRunnerOption[]> => new Promise(() => {}),
     });
 
@@ -66,7 +66,7 @@ describe('Sidebar quota section', () => {
 
   it('hides section when all agents have null quota', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({ agent_type: 'agent1', name: 'Agent One', quota: null }),
       makeAgent({ agent_type: 'agent2', name: 'Agent Two', quota: null }),
     ]);
@@ -86,7 +86,7 @@ describe('Sidebar quota section', () => {
     });
     // prefetchQuery silently swallows errors, leaving the query in error state
     await queryClient.prefetchQuery({
-      queryKey: ['agents'],
+      queryKey: ['agent-runners'],
       queryFn: () => Promise.reject(new Error('Network error')),
     });
 
@@ -99,7 +99,7 @@ describe('Sidebar quota section', () => {
 
   it('renders one row per agent with non-null quota', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({ agent_type: 'agent1', name: 'Agent Alpha', quota: makeQuota({ balance_usd: 5.00 }) }),
       makeAgent({ agent_type: 'agent2', name: 'Agent Beta', quota: makeQuota({ balance_usd: 10.00 }) }),
       makeAgent({ agent_type: 'agent3', name: 'Agent Gamma', quota: null }),
@@ -114,7 +114,7 @@ describe('Sidebar quota section', () => {
 
   it('excludes unavailable agents even with non-null quota', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Available Agent',
@@ -142,7 +142,7 @@ describe('Sidebar quota section', () => {
       { label: '7-day weekly', remaining_pct: 39, remaining_usd: null, resets_at: '2026-02-22T19:00:00+00:00' },
       { label: '5-hour session', remaining_pct: 68, remaining_usd: null, resets_at: null },
     ];
-    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Claude',
@@ -170,7 +170,7 @@ describe('Sidebar quota section', () => {
 
   it('agent without breakdown has no chevron and is not expandable', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Static Agent',
@@ -189,7 +189,7 @@ describe('Sidebar quota section', () => {
     const queryClient = new QueryClient();
     // 5 minutes ago
     const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    queryClient.setQueryData<AgentOption[]>(['agents'], [
+    queryClient.setQueryData<AgentOption[]>(['agent-runners'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Stale Agent',
@@ -207,7 +207,7 @@ describe('Sidebar quota section', () => {
     const queryClient = new QueryClient();
     // 30 seconds ago
     const thirtySecAgo = new Date(Date.now() - 30 * 1000).toISOString();
-    queryClient.setQueryData<AgentOption[]>(['agents'], [
+    queryClient.setQueryData<AgentOption[]>(['agent-runners'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Fresh Agent',
@@ -223,7 +223,7 @@ describe('Sidebar quota section', () => {
 
   it('has no manual refresh button in any state', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Agent One',

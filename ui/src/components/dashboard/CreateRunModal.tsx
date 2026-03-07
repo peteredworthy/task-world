@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { useRepos, useAgents, useCreateRun, useStartRun, useRoutine } from '../../hooks/useApi';
+import { useRepos, useAgentRunners, useCreateRun, useStartRun, useRoutine } from '../../hooks/useApi';
 import { Spinner } from '../Spinner';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useCreateRunModal } from '../../hooks/useCreateRunModal';
@@ -71,7 +71,7 @@ function agentVisual(agentType: string): { icon: string; tintBg: string; tintTex
 
 export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
   const { data: reposData, isLoading: loadingRepos } = useRepos();
-  const { data: agents, isLoading: loadingAgents } = useAgents();
+  const { data: agents, isLoading: loadingAgents } = useAgentRunners();
   const createRun = useCreateRun();
   const startRun = useStartRun();
   const dialogRef = useRef<HTMLDivElement>(null);

@@ -22,8 +22,8 @@ router = APIRouter(prefix="/api/agent-runners", tags=["agent-runners"])
 
 
 @router.get("", response_model=list[AgentRunnerOption])
-async def list_agents(request: Request) -> list[AgentRunnerOption]:
-    """List available agent backends."""
+async def list_agent_runners(request: Request) -> list[AgentRunnerOption]:
+    """List available agent runner backends."""
     detector: ToolDetector = request.app.state.tool_detector
     return await detector.detect_all()
 

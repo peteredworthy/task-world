@@ -13,7 +13,7 @@ vi.mock('react-router-dom', () => ({
 }));
 
 vi.mock('../../hooks/useApi', () => ({
-  useAgents: vi.fn(),
+  useAgentRunners: vi.fn(),
 }));
 
 vi.mock('../../api/client', () => ({
@@ -30,7 +30,7 @@ vi.mock('../../components/agentRunnerConfigUtils', () => ({
 
 const mockFetchRunnerProfiles = vi.mocked(apiClient.fetchRunnerProfiles);
 const mockSaveRunnerProfiles = vi.mocked(apiClient.saveRunnerProfiles);
-const mockUseAgents = vi.mocked(apiHooks.useAgents);
+const mockUseAgents = vi.mocked(apiHooks.useAgentRunners);
 
 function makeAgent(overrides: Partial<AgentRunnerOption> = {}): AgentRunnerOption {
   return {

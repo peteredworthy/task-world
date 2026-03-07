@@ -414,7 +414,7 @@ export const api = {
     };
   },
 
-  listAgents(): Promise<AgentRunnerOption[]> {
+  listAgentRunners(): Promise<AgentRunnerOption[]> {
     return fetchApi('/api/agent-runners');
   },
 

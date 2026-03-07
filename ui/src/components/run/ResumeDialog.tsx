@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useAgents, useResumeRun } from '../../hooks/useApi';
+import { useAgentRunners, useResumeRun } from '../../hooks/useApi';
 import { Spinner } from '../Spinner';
 import { AgentRunnerIcon } from '../AgentRunnerIcon';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
@@ -50,7 +50,7 @@ const INITIAL_STATE: DialogState = {
 };
 
 export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
-  const { data: agents, isLoading: loadingAgents } = useAgents();
+  const { data: agents, isLoading: loadingAgents } = useAgentRunners();
   const resumeRun = useResumeRun();
   const dialogRef = useRef<HTMLDivElement>(null);
 

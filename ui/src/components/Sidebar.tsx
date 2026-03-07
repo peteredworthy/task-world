@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { useAgents } from "../hooks/useApi";
+import { useAgentRunners } from "../hooks/useApi";
 import { AgentRunnerQuotaBadge } from "./AgentRunnerQuotaBadge";
 import type { AgentRunnerOption, QuotaBucket } from '../types/agentRunners';
 
@@ -133,7 +133,7 @@ function AgentQuotaRow({ agent }: AgentQuotaRowProps) {
 
 export function Sidebar() {
   const location = useLocation();
-  const { data: agents, isLoading: agentsLoading, error: agentsError } = useAgents();
+  const { data: agents, isLoading: agentsLoading, error: agentsError } = useAgentRunners();
   const quotaAgents = (agents ?? []).filter(a => a.available && a.quota !== null);
 
   return (

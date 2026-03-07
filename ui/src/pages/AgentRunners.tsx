@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { useAgents } from '../hooks/useApi';
+import { useAgentRunners } from '../hooks/useApi';
 import { Spinner } from '../components/Spinner';
 import { EmptyState } from '../components/EmptyState';
 import { AgentRunnerConfigForm } from '../components/AgentRunnerConfigForm';
@@ -22,7 +22,7 @@ const MODEL_PROFILES: { key: ModelProfile; label: string }[] = [
 ];
 
 export function AgentRunners() {
-  const { data, isLoading, error } = useAgents();
+  const { data, isLoading, error } = useAgentRunners();
 
   const agents = data ?? [];
   const available = agents.filter((a) => a.available);

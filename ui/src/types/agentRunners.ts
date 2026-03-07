@@ -1,4 +1,4 @@
-import type { AgentType } from './enums';
+import type { AgentRunnerType } from './enums';
 
 export interface AgentConfigField {
   name: string;
@@ -28,7 +28,7 @@ export interface AgentRunnerQuota {
 }
 
 export interface AgentRunnerOption {
-  agent_type: AgentType;
+  agent_type: AgentRunnerType;
   name: string;
   title: string;
   description: string;

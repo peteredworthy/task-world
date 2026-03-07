@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useAgents } from '../../hooks/useApi';
+import { useAgentRunners } from '../../hooks/useApi';
 import { useAgentResolveConflicts } from '../../hooks/useReview';
 import { Spinner } from '../Spinner';
 import { AgentRunnerIcon } from '../AgentRunnerIcon';
@@ -40,7 +40,7 @@ export function AgentResolveConflictsModal({
   run,
   unresolvedCount,
 }: AgentResolveConflictsModalProps) {
-  const { data: agents, isLoading: loadingAgents } = useAgents();
+  const { data: agents, isLoading: loadingAgents } = useAgentRunners();
   const agentResolve = useAgentResolveConflicts(runId);
   const dialogRef = useRef<HTMLDivElement>(null);
 

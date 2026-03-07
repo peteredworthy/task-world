@@ -1,4 +1,4 @@
-import type { AgentType, Priority, RunStatus, TaskStatus } from './enums';
+import type { AgentRunnerType, Priority, RunStatus, TaskStatus } from './enums';
 
 export interface GradeSummaryItem {
   grade: string | null;
@@ -48,7 +48,7 @@ export interface RunResponse {
   routine_sha: string | null;
   routine_source: string | null;
   routine_embedded: Record<string, unknown> | null;
-  agent_type: AgentType | null;
+  agent_type: AgentRunnerType | null;
   agent_type_display: string;
   agent_icon: string;
   agent_config: Record<string, unknown>;

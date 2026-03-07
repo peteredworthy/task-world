@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { useAgents } from '../../hooks/useApi';
+import { useAgentRunners } from '../../hooks/useApi';
 import { useAgentFixTests } from '../../hooks/useReview';
 import { Spinner } from '../Spinner';
 import { AgentRunnerIcon } from '../AgentRunnerIcon';
@@ -63,7 +63,7 @@ export function AgentFixTestsModal({
   run,
   testResult,
 }: AgentFixTestsModalProps) {
-  const { data: agents, isLoading: loadingAgents } = useAgents();
+  const { data: agents, isLoading: loadingAgents } = useAgentRunners();
   const agentFixTests = useAgentFixTests(runId);
   const dialogRef = useRef<HTMLDivElement>(null);
 

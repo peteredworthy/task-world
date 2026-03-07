@@ -100,10 +100,10 @@ export function useValidateRoutine() {
   });
 }
 
-export function useAgents() {
+export function useAgentRunners() {
   return useQuery({
-    queryKey: ['agents'],
-    queryFn: () => api.listAgents(),
+    queryKey: ['agent-runners'],
+    queryFn: () => api.listAgentRunners(),
     refetchInterval: 60_000,
     staleTime: 30_000,
   });

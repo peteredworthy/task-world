@@ -6,4 +6,4 @@ export type ChecklistStatus = 'open' | 'done' | 'not_applicable' | 'blocked' | '
 
 export type Priority = 'critical' | 'expected' | 'nice';
 
-export type AgentType = string;
+export type AgentRunnerType = string;
