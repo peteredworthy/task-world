@@ -6,7 +6,7 @@ import { useCreateRunModal } from '../../hooks/useCreateRunModal';
 import { BranchSelector } from '../BranchSelector';
 import { RoutineSelector } from '../RoutineSelector';
 import { RoutineValidatorModal } from '../RoutineValidatorModal';
-import { AgentConfigForm } from '../AgentConfigForm';
+import { AgentRunnerConfigForm } from '../AgentRunnerConfigForm';
 import { buildDefaultAgentConfig } from '../agentRunnerConfigUtils';
 import type { RoutineSelection } from '../RoutineSelector';
 
@@ -31,7 +31,7 @@ interface FormState {
   selectedAgentIndex: string; // index into allAgents array, '' means none
   autoStart: boolean;
   configJson: string;
-  /** Structured agent config values (field name → value), updated by AgentConfigForm */
+  /** Structured agent config values (field name → value), updated by AgentRunnerConfigForm */
   agentConfigValues: Record<string, unknown>;
   configError: string;
   prevOpen: boolean;
@@ -503,7 +503,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                     <span className="text-base leading-none">{'\u{1F527}'}</span>
                     Agent Configuration
                   </label>
-                  <AgentConfigForm
+                  <AgentRunnerConfigForm
                     agent={selectedAgent}
                     values={form.agentConfigValues}
                     onChange={(vals) => setForm(prev => ({ ...prev, agentConfigValues: vals }))}

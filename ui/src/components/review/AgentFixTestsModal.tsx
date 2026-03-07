@@ -3,7 +3,7 @@ import { useAgents } from '../../hooks/useApi';
 import { useAgentFixTests } from '../../hooks/useReview';
 import { Spinner } from '../Spinner';
 import { AgentIcon } from '../AgentIcon';
-import { AgentConfigForm } from '../AgentConfigForm';
+import { AgentRunnerConfigForm } from '../AgentRunnerConfigForm';
 import { buildDefaultAgentConfig } from '../agentRunnerConfigUtils';
 import { ApiError } from '../../api/client';
 import type { RunResponse } from '../../types';
@@ -329,7 +329,7 @@ export function AgentFixTestsModal({
               <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
                 Agent Configuration
               </label>
-              <AgentConfigForm
+              <AgentRunnerConfigForm
                 agent={selectedAgent}
                 values={agentConfigValues}
                 onChange={setAgentConfigValues}

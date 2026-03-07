@@ -7,7 +7,7 @@ import { Dashboard } from './pages/Dashboard';
 import { NotFound } from './pages/NotFound';
 import { RunDetail } from './pages/RunDetail';
 import { RoutineLibrary } from './pages/RoutineLibrary';
-import { Agents } from './pages/Agents';
+import { AgentRunners } from './pages/AgentRunners';
 import { History } from './pages/History';
 import { Repos } from './pages/Repos';
 
@@ -20,7 +20,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/runs/:runId" element={<RunDetail />} />
             <Route path="/routines" element={<RoutineLibrary />} />
-            <Route path="/agents" element={<Agents />} />
+            <Route path="/agents" element={<AgentRunners />} />
             <Route path="/history" element={<History />} />
             <Route path="/repos" element={<Repos />} />
             <Route path="*" element={<NotFound />} />

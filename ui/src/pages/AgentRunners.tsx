@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAgents } from '../hooks/useApi';
 import { Spinner } from '../components/Spinner';
 import { EmptyState } from '../components/EmptyState';
-import { AgentConfigForm } from '../components/AgentConfigForm';
+import { AgentRunnerConfigForm } from '../components/AgentRunnerConfigForm';
 import {
   loadAgentModelDefaults,
   saveAgentModelDefault,
@@ -12,7 +12,7 @@ import {
 } from '../components/agentRunnerConfigUtils';
 import type { AgentRunnerOption } from '../types/agentRunners';
 
-export function Agents() {
+export function AgentRunners() {
   const { data, isLoading, error } = useAgents();
 
   const agents = data ?? [];
@@ -34,16 +34,16 @@ export function Agents() {
           </li>
           <li aria-hidden="true">/</li>
           <li className="text-text-secondary" aria-current="page">
-            Agents
+            Agent Runners
           </li>
         </ol>
       </nav>
 
       {/* Title row */}
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-text-primary">Agents</h1>
+        <h1 className="text-2xl font-semibold text-text-primary">Agent Runners</h1>
         <p className="text-text-secondary text-sm mt-1">
-          Available agent backends for executing tasks. Configure agents to
+          Available agent runner backends for executing tasks. Configure agent runners to
           integrate different coding tools and LLM providers.
         </p>
       </div>
@@ -59,19 +59,19 @@ export function Agents() {
       {error && (
         <div className="rounded-md bg-red-900/20 border border-red-800/50 p-4 mb-6">
           <p className="text-sm text-red-300">
-            Failed to load agents. Is the backend running?
+            Failed to load agent runners. Is the backend running?
           </p>
         </div>
       )}
 
       {/* Empty state */}
       {!isLoading && !error && agents.length === 0 && (
-        <EmptyState message="No agents configured." />
+        <EmptyState message="No agent runners configured." />
       )}
 
-      {/* Available agents section */}
+      {/* Available agent runners section */}
       {!isLoading && !error && available.length > 0 && (
-        <section className="mb-8" aria-label="Available Agents">
+        <section className="mb-8" aria-label="Available Agent Runners">
           <div className="flex items-center gap-2 mb-3">
             <h2 className="text-sm font-semibold text-text-primary">
               Available
@@ -82,15 +82,15 @@ export function Agents() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {available.map((agent) => (
-              <AgentCard key={agent.name} agent={agent} />
+              <AgentRunnerCard key={agent.name} agent={agent} />
             ))}
           </div>
         </section>
       )}
 
-      {/* Unavailable agents section */}
+      {/* Unavailable agent runners section */}
       {!isLoading && !error && unavailable.length > 0 && (
-        <section className="mb-8" aria-label="Unavailable Agents">
+        <section className="mb-8" aria-label="Unavailable Agent Runners">
           <div className="flex items-center gap-2 mb-3">
             <h2 className="text-sm font-semibold text-text-primary">
               Unavailable
@@ -101,7 +101,7 @@ export function Agents() {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {unavailable.map((agent) => (
-              <AgentCard key={agent.name} agent={agent} />
+              <AgentRunnerCard key={agent.name} agent={agent} />
             ))}
           </div>
         </section>
@@ -110,7 +110,7 @@ export function Agents() {
   );
 }
 
-function AgentCard({ agent }: { agent: AgentRunnerOption }) {
+function AgentRunnerCard({ agent }: { agent: AgentRunnerOption }) {
   // Promote model and restrictions to interactive controls; hide secrets and those two from the bullet list
   const modelField = agent.config_schema.find((f) => f.name === 'model');
   const restrictionsField = agent.config_schema.find((f) => f.name === 'restrictions');
@@ -268,7 +268,7 @@ function AgentCard({ agent }: { agent: AgentRunnerOption }) {
           {/* Full configuration form (expandable) */}
           {showFullConfig && (
             <div className="mt-3 pt-3 border-t border-border/50">
-              <AgentConfigForm
+              <AgentRunnerConfigForm
                 agent={agent}
                 values={fullConfigValues}
                 onChange={handleFullConfigChange}

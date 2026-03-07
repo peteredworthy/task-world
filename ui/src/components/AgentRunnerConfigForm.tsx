@@ -1,7 +1,7 @@
 import type { AgentConfigField, AgentRunnerOption } from '../types/agentRunners';
 import { OpenHandsLLMTabs } from './OpenHandsLLMTabs';
 
-interface AgentConfigFormProps {
+interface AgentRunnerConfigFormProps {
     agent: AgentRunnerOption;
     /** Current config values (field name → value) */
     values: Record<string, unknown>;
@@ -163,7 +163,7 @@ function ConfigFieldInput({
 const OPENHANDS_LLM_FIELDS = new Set(['model', 'api_key', 'base_url', 'model_canonical_name']);
 
 /**
- * Renders a structured form for an agent's config schema.
+ * Renders a structured form for an agent runner's config schema.
  *
  * Each field in `agent.config_schema` is rendered with an appropriate
  * control (dropdown for "select", number input for "number", etc.).
@@ -174,7 +174,7 @@ const OPENHANDS_LLM_FIELDS = new Set(['model', 'api_key', 'base_url', 'model_can
  * interface. Remaining fields (tools, max_iterations, etc.) use the
  * standard loop below.
  */
-export function AgentConfigForm({ agent, values, onChange, disabled }: AgentConfigFormProps) {
+export function AgentRunnerConfigForm({ agent, values, onChange, disabled }: AgentRunnerConfigFormProps) {
     if (agent.config_schema.length === 0) {
         return (
             <p className="text-xs text-text-muted py-1">This agent has no configurable fields.</p>
@@ -240,4 +240,3 @@ export function AgentConfigForm({ agent, values, onChange, disabled }: AgentConf
         </div>
     );
 }
-
