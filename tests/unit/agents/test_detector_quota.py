@@ -4,11 +4,36 @@ from __future__ import annotations
 
 import asyncio
 import time
-
 import pytest
 
 from orchestrator.runners.detector import ToolDetector
-from orchestrator.runners.types import AgentQuota
+from orchestrator.runners.types import AgentOption, AgentQuota
+from orchestrator.config.enums import AgentRunnerType
+
+
+# Patch out expensive detection methods (docker info, model fetching, etc.)
+# since quota tests only care about quota-attachment behavior.
+_MINIMAL_OPTIONS = [
+    AgentOption(
+        agent_type=AgentRunnerType.USER_MANAGED,
+        name="User Managed",
+        available=True,
+        detail="stub",
+        config_schema=[],
+    ),
+]
+
+
+@pytest.fixture(autouse=True)
+def _fast_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Replace detect_all's detection logic with a fast stub returning only User Managed."""
+
+    async def _fast_detect_all(self: ToolDetector) -> list[AgentOption]:
+        options = list(_MINIMAL_OPTIONS)
+        quotas = list(await asyncio.gather(*[self._fetch_quota_for_option(opt) for opt in options]))
+        return [opt.model_copy(update={"quota": quota}) for opt, quota in zip(options, quotas)]
+
+    monkeypatch.setattr(ToolDetector, "detect_all", _fast_detect_all)
 
 
 class _AgentStub:
@@ -33,7 +58,7 @@ class _RaisingAgentStub:
 
 
 class _SlowAgentStub:
-    """Agent stub whose get_quota() sleeps longer than the 3-second timeout."""
+    """Agent stub whose get_quota() sleeps longer than the configured timeout."""
 
     def __init__(self, name: str) -> None:
         self.name = name
@@ -41,7 +66,7 @@ class _SlowAgentStub:
     def get_quota(self) -> AgentQuota | None:
         import time
 
-        time.sleep(5)  # blocks the thread well beyond the 3-second limit
+        time.sleep(1.5)  # blocks the thread beyond the test's 0.5s timeout
         return AgentQuota(balance_usd=99.0)
 
 
@@ -82,8 +107,6 @@ async def test_quota_none_when_get_quota_returns_none() -> None:
     This covers the protocol default: agents that do not override get_quota() return
     None, and detect_all() must propagate that as quota=None (not omit it or error).
     """
-    # _AgentStub with quota=None simulates the default protocol behaviour where
-    # get_quota() returns None without raising.
     stub = _AgentStub(name="User Managed", quota=None)
     detector = ToolDetector(agents=[stub])
 
@@ -106,18 +129,16 @@ async def test_exception_in_get_quota_yields_none() -> None:
     assert um.quota is None
 
 
-@pytest.mark.timeout(35)
+@pytest.mark.timeout(15)
 async def test_slow_get_quota_times_out_and_yields_none() -> None:
-    """A get_quota() that exceeds 3 seconds results in quota=None on first failure (no prior success).
+    """A get_quota() that exceeds the timeout results in quota=None on first failure (no prior success).
 
-    detect_all() is allowed to take up to 30s in total (docker detection can
-    consume up to 10s); this test only verifies that the quota is None when
-    get_quota() blocks longer than the 3-second threshold.
+    Uses a short quota_timeout (0.5s) to avoid waiting for the default 10s timeout.
+    The stub sleeps 2s which exceeds the 0.5s threshold.
     """
     stub = _SlowAgentStub(name="User Managed")
-    detector = ToolDetector(agents=[stub])
+    detector = ToolDetector(agents=[stub], quota_timeout=0.5)
 
-    # No outer timeout here — the per-quota 3s timeout is what we're testing.
     options = await detector.detect_all()
     um = next(o for o in options if o.name == "User Managed")
 

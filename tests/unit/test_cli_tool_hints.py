@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.agents.claude_cli.agent import CLIAgent
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.models import MCPServerConfig
 

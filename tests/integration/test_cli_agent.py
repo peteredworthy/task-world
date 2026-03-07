@@ -11,7 +11,7 @@ import pytest
 import uvicorn
 from httpx import AsyncClient
 
-from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.agents.claude_cli.agent import CLIAgent
 from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
 from orchestrator.runners.nudger import NudgerConfig
 from orchestrator.runners.types import ChecklistUpdateCallback, ExecutionContext, SubmitCallback

@@ -165,8 +165,10 @@ async def test_passing_tests_allow_task_start(
 
     run_id = await _make_run(session_factory, str(tmp_path), agent_command="true")
 
-    # Give the executor a moment to run the health check and proceed
-    pause_reason = await _poll_until_paused(session_factory, run_id, timeout_iters=80)
+    # Give the executor a moment to run the health check and proceed.
+    # Short timeout: health check passes quickly, so if the run pauses at all
+    # it happens fast (for a non-health-check reason).
+    pause_reason = await _poll_until_paused(session_factory, run_id, timeout_iters=30)
 
     # If the run paused, it must NOT be because of a health check failure
     if pause_reason is not None:

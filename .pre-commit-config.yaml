@@ -20,6 +20,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -x --timeout=30
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
       - id: ui-lint
         name: ui-lint
         entry: npm --prefix ui run lint

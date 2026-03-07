@@ -50,19 +50,35 @@ async def client_with_quota() -> AsyncGenerator[AsyncClient, None]:
         yield c
 
 
+# Module-level cache to avoid creating a new app and calling detect_all()
+# for every test function.
+_cached_client: AsyncClient | None = None
+_cached_agents_data: list[dict[str, Any]] | None = None
+
+
 @pytest.fixture
 async def client() -> AsyncGenerator[AsyncClient, None]:
-    app = create_app(db_path=":memory:")
+    global _cached_client
+    if _cached_client is None:
+        app = create_app(db_path=":memory:")
+        transport = ASGITransport(app=app)  # type: ignore[arg-type]
+        _cached_client = AsyncClient(transport=transport, base_url="http://test")
+    yield _cached_client
 
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+
+@pytest.fixture
+async def agents_data(client: AsyncClient) -> list[dict[str, Any]]:
+    """Fetch agent-runners once and cache across all tests in this module."""
+    global _cached_agents_data
+    if _cached_agents_data is None:
+        response = await client.get("/api/agent-runners")
+        assert response.status_code == 200
+        _cached_agents_data = response.json()
+    return _cached_agents_data
 
 
-async def test_list_agents(client: AsyncClient) -> None:
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
+async def test_list_agents(agents_data: list[dict[str, Any]]) -> None:
+    data = agents_data
     # OpenHands (local), OpenHands (Docker), claude, codex, User Managed (at minimum)
     assert len(data) >= 4
 
@@ -87,24 +103,16 @@ async def test_list_agents(client: AsyncClient) -> None:
     assert um_list[0]["available"] is True
 
 
-async def test_list_agents_has_both_openhands_types(client: AsyncClient) -> None:
+async def test_list_agents_has_both_openhands_types(agents_data: list[dict[str, Any]]) -> None:
     """Both OPENHANDS_LOCAL and OPENHANDS_DOCKER entries are present."""
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
-
-    agent_types = [a["agent_type"] for a in data]
+    agent_types = [a["agent_type"] for a in agents_data]
     assert "openhands_local" in agent_types
     assert "openhands_docker" in agent_types
 
 
-async def test_list_agents_includes_config_schema(client: AsyncClient) -> None:
+async def test_list_agents_includes_config_schema(agents_data: list[dict[str, Any]]) -> None:
     """All agent options include config_schema in JSON response."""
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
-
-    for agent_data in data:
+    for agent_data in agents_data:
         assert "config_schema" in agent_data
         assert isinstance(agent_data["config_schema"], list)
         schema = cast(list[dict[str, Any]], agent_data["config_schema"])
@@ -116,13 +124,9 @@ async def test_list_agents_includes_config_schema(client: AsyncClient) -> None:
             assert "field_type" in field
 
 
-async def test_list_agents_includes_codex_server(client: AsyncClient) -> None:
+async def test_list_agents_includes_codex_server(agents_data: list[dict[str, Any]]) -> None:
     """GET /api/agents always includes a codex_server entry."""
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
-
-    cs_entries = [a for a in data if a["agent_type"] == "codex_server"]
+    cs_entries = [a for a in agents_data if a["agent_type"] == "codex_server"]
     assert len(cs_entries) == 1, "Expected exactly one codex_server entry"
 
     cs = cs_entries[0]
@@ -132,13 +136,9 @@ async def test_list_agents_includes_codex_server(client: AsyncClient) -> None:
     assert cs["detail"] != ""
 
 
-async def test_codex_server_unavailable_has_install_hint(client: AsyncClient) -> None:
+async def test_codex_server_unavailable_has_install_hint(agents_data: list[dict[str, Any]]) -> None:
     """When codex_server is unavailable, the response includes an actionable install_hint."""
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
-
-    cs = next(a for a in data if a["agent_type"] == "codex_server")
+    cs = next(a for a in agents_data if a["agent_type"] == "codex_server")
     if not cs["available"]:
         assert "install_hint" in cs
         assert cs["install_hint"] != "", (
@@ -146,12 +146,8 @@ async def test_codex_server_unavailable_has_install_hint(client: AsyncClient) ->
         )
 
 
-async def test_codex_server_has_stable_shape(client: AsyncClient) -> None:
+async def test_codex_server_has_stable_shape(agents_data: list[dict[str, Any]]) -> None:
     """codex_server entry has stable response shape."""
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
-
     required_keys = {
         "agent_type",
         "name",
@@ -163,7 +159,7 @@ async def test_codex_server_has_stable_shape(client: AsyncClient) -> None:
         "config_schema",
     }
 
-    entry = next(a for a in data if a["agent_type"] == "codex_server")
+    entry = next(a for a in agents_data if a["agent_type"] == "codex_server")
     assert required_keys.issubset(entry.keys()), (
         f"codex_server missing keys: {required_keys - entry.keys()}"
     )
@@ -172,13 +168,9 @@ async def test_codex_server_has_stable_shape(client: AsyncClient) -> None:
     assert len(entry["config_schema"]) > 0
 
 
-async def test_codex_server_config_fields(client: AsyncClient) -> None:
+async def test_codex_server_config_fields(agents_data: list[dict[str, Any]]) -> None:
     """codex_server exposes model, restrictions, and callback_channel config fields."""
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
-
-    cs = next(a for a in data if a["agent_type"] == "codex_server")
+    cs = next(a for a in agents_data if a["agent_type"] == "codex_server")
     schema = cast(list[dict[str, Any]], cs["config_schema"])
     field_names = [f["name"] for f in schema]
 
@@ -203,21 +195,17 @@ async def test_get_agents_returns_200(client: AsyncClient) -> None:
     assert response.status_code == 200
 
 
-async def test_every_agent_has_quota_key(client: AsyncClient) -> None:
+async def test_every_agent_has_quota_key(agents_data: list[dict[str, Any]]) -> None:
     """Every agent object in the GET /api/agents response contains a 'quota' key.
 
     The value may be null (None) when no quota-capable agent is registered,
     but the key itself must always be present in the serialised response.
     """
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
-
-    for agent in data:
+    for agent in agents_data:
         assert "quota" in agent, f"Agent {agent.get('name')!r} is missing the 'quota' key"
 
 
-async def test_non_null_quota_has_required_fields(client: AsyncClient) -> None:
+async def test_non_null_quota_has_required_fields(agents_data: list[dict[str, Any]]) -> None:
     """Any non-null quota in the response exposes all 5 AgentQuota fields.
 
     When no agents with get_quota() are registered the test passes vacuously
@@ -232,11 +220,7 @@ async def test_non_null_quota_has_required_fields(client: AsyncClient) -> None:
         "supports_quota",
     }
 
-    response = await client.get("/api/agent-runners")
-    assert response.status_code == 200
-    data: list[dict[str, Any]] = response.json()
-
-    for agent in data:
+    for agent in agents_data:
         quota = agent.get("quota")
         if quota is not None:
             missing = _REQUIRED_QUOTA_FIELDS - quota.keys()

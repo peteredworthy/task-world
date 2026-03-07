@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.agents.claude_cli.agent import CLIAgent
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, TaskStatus

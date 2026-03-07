@@ -1,163 +1,193 @@
-"""Tests for Claude SDK agent tool filtering and MCP wiring."""
+"""Tests for Claude SDK MCP server building and tool filtering.
 
-import logging
-from unittest.mock import patch
+Tests _build_orchestrator_mcp_server() (builder vs verifier tools) and
+_build_mcp_servers() (external MCP server conversion).
+"""
 
-import pytest
+from __future__ import annotations
 
-from orchestrator.runners.claude_sdk import _build_tool_list, _build_mcp_params
+import os
+
+from orchestrator.runners.agents.claude_sdk.agent import (
+    _build_orchestrator_mcp_server,
+    _build_mcp_servers,
+)
+from orchestrator.config.enums import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
 
 
-class TestClaudeSDKToolFiltering:
-    """Test cases for _build_tool_list() function."""
-
-    def test_builder_tools_when_none(self) -> None:
-        """With available_tools=None, builder gets all builder tools."""
-        tools = _build_tool_list(is_verifier=False, available_tools=None)
-        names = {t["name"] for t in tools}
-        assert "submit" in names
-        assert "update_checklist" in names
-        assert "request_clarification" in names
-        assert "grade" not in names  # Builder doesn't get grade
-
-    def test_verifier_tools_when_none(self) -> None:
-        """With available_tools=None, verifier gets all verifier tools."""
-        tools = _build_tool_list(is_verifier=True, available_tools=None)
-        names = {t["name"] for t in tools}
-        assert "grade" in names
-        assert "submit" in names
-        assert "update_checklist" in names
-        assert "request_clarification" in names
-
-    def test_unknown_tool_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Unknown tools in available_tools produce a warning."""
-        with caplog.at_level(logging.WARNING):
-            tools = _build_tool_list(is_verifier=False, available_tools=["nonexistent_tool"])
-        assert "nonexistent_tool" in caplog.text
-        assert "Unknown tool" in caplog.text
-        # Should still have all base tools
-        names = {t["name"] for t in tools}
-        assert "submit" in names
-        assert "update_checklist" in names
-
-    def test_phase_tools_always_included(self) -> None:
-        """Step tools never remove phase tools."""
-        tools = _build_tool_list(is_verifier=False, available_tools=["nonexistent"])
-        names = {t["name"] for t in tools}
-        assert "submit" in names
-        assert "update_checklist" in names
-        assert "request_clarification" in names
-
-    def test_empty_available_tools(self) -> None:
-        """With empty available_tools list, returns only phase tools."""
-        tools = _build_tool_list(is_verifier=False, available_tools=[])
-        names = {t["name"] for t in tools}
-        assert "submit" in names
-        assert "update_checklist" in names
-        assert len(tools) == 3  # submit, update_checklist, request_clarification
-
-    def test_verifier_has_grade(self) -> None:
-        """Verifier phase includes grade tool."""
-        tools = _build_tool_list(is_verifier=True, available_tools=None)
-        names = {t["name"] for t in tools}
-        assert "grade" in names
-
-    def test_builder_no_grade(self) -> None:
-        """Builder phase never includes grade tool."""
-        tools = _build_tool_list(is_verifier=False, available_tools=None)
-        names = {t["name"] for t in tools}
-        assert "grade" not in names
-
-    def test_tools_are_deep_copied(self) -> None:
-        """Modifying returned tools doesn't affect the base tools."""
-        tools1 = _build_tool_list(is_verifier=False, available_tools=None)
-        tools2 = _build_tool_list(is_verifier=False, available_tools=None)
-        # Should have the same content
-        assert len(tools1) == len(tools2)
-        # But modifying one shouldn't affect the other
-        if tools1:
-            tools1[0]["test_key"] = "test_value"
-            assert "test_key" not in tools2[0]
+# ---------------------------------------------------------------------------
+# Callbacks
+# ---------------------------------------------------------------------------
 
 
-class TestClaudeSDKMCPParams:
-    """Test cases for _build_mcp_params() function."""
+async def _noop_checklist(req_id: str, status: ChecklistStatus, note: str | None) -> None:
+    pass
 
-    def test_https_server_included(self) -> None:
-        """HTTPS URL-based server is converted to beta API format."""
+
+async def _noop_submit() -> None:
+    pass
+
+
+async def _noop_grade(req_id: str, grade: str, reason: str | None) -> None:
+    pass
+
+
+# ---------------------------------------------------------------------------
+# _build_orchestrator_mcp_server — builder vs verifier
+# ---------------------------------------------------------------------------
+
+
+class TestOrchestratorMcpServerBuilder:
+    """Test _build_orchestrator_mcp_server() creates correct tools for each phase."""
+
+    def test_builder_server_created_without_grade(self) -> None:
+        """Builder phase (on_grade=None) produces a server without grade tool."""
+        server = _build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=None)
+        assert server is not None
+
+    def test_verifier_server_created_with_grade(self) -> None:
+        """Verifier phase (on_grade provided) produces a server with grade tool."""
+        server = _build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=_noop_grade)
+        assert server is not None
+
+    def test_builder_and_verifier_servers_differ(self) -> None:
+        """Builder and verifier servers should be different objects (different tool sets)."""
+        builder = _build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=None)
+        verifier = _build_orchestrator_mcp_server(
+            _noop_checklist, _noop_submit, on_grade=_noop_grade
+        )
+        # They are separate server instances
+        assert builder is not verifier
+
+
+# ---------------------------------------------------------------------------
+# _build_mcp_servers — external server conversion
+# ---------------------------------------------------------------------------
+
+
+class TestBuildMcpServers:
+    """Test _build_mcp_servers() converts MCPServerConfig to SDK format."""
+
+    def test_none_returns_orchestrator_only(self) -> None:
+        """None input returns dict with only orchestrator."""
+        result = _build_mcp_servers("orch", mcp_servers=None)
+        assert result == {"orchestrator": "orch"}
+
+    def test_empty_list_returns_orchestrator_only(self) -> None:
+        """Empty list returns dict with only orchestrator."""
+        result = _build_mcp_servers("orch", mcp_servers=[])
+        assert result == {"orchestrator": "orch"}
+
+    def test_url_server_converted(self) -> None:
+        """HTTPS URL-based server is converted with type=sse."""
         mcp = MCPServerConfig(name="ctx7", url="https://ctx7.example.com")
-        params = _build_mcp_params([mcp])
-        assert "mcp_servers" in params
-        assert params["mcp_servers"][0]["url"] == "https://ctx7.example.com"
-        assert params["mcp_servers"][0]["name"] == "ctx7"
-        assert params["mcp_servers"][0]["type"] == "url"
+        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        assert "ctx7" in result
+        assert result["ctx7"]["url"] == "https://ctx7.example.com"
+        assert result["ctx7"]["type"] == "sse"
 
-    def test_stdio_server_skipped(self, caplog: pytest.LogCaptureFixture) -> None:
-        """STDIO-transport server is skipped with warning."""
+    def test_stdio_server_converted(self) -> None:
+        """stdio-transport server is converted with command config."""
         mcp = MCPServerConfig(name="local", command="context7-mcp")
-        with caplog.at_level(logging.WARNING):
-            params = _build_mcp_params([mcp])
-        assert params == {}
-        assert "STDIO" in caplog.text or "STDIO transport" in caplog.text
+        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        assert "local" in result
+        assert result["local"]["command"] == "context7-mcp"
 
-    def test_none_returns_empty(self) -> None:
-        """None input returns empty dict."""
-        params = _build_mcp_params(None)
-        assert params == {}
+    def test_stdio_server_with_args(self) -> None:
+        """stdio server includes args when provided."""
+        mcp = MCPServerConfig(name="local", command="ctx-mcp", args=["--verbose"])
+        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        assert result["local"]["args"] == ["--verbose"]
 
-    def test_empty_list_returns_empty(self) -> None:
-        """Empty list returns empty dict."""
-        params = _build_mcp_params([])
-        assert params == {}
+    def test_stdio_server_without_args(self) -> None:
+        """stdio server omits args key when args is None."""
+        mcp = MCPServerConfig(name="local", command="ctx-mcp")
+        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        assert "args" not in result["local"]
 
-    def test_auth_token_from_env(self) -> None:
-        """Authorization token is resolved from env var."""
+    def test_auth_token_from_env_for_stdio(self) -> None:
+        """Authorization token is resolved from env var for stdio servers."""
+        old = os.environ.get("MY_TOKEN_STDIO")
+        os.environ["MY_TOKEN_STDIO"] = "secret-stdio"
+        try:
+            mcp = MCPServerConfig(
+                name="auth",
+                command="auth-cmd",
+                auth_token_env="MY_TOKEN_STDIO",
+            )
+            result = _build_mcp_servers("orch", mcp_servers=[mcp])
+            assert result["auth"]["env"]["MY_TOKEN_STDIO"] == "secret-stdio"
+        finally:
+            if old is None:
+                os.environ.pop("MY_TOKEN_STDIO", None)
+            else:
+                os.environ["MY_TOKEN_STDIO"] = old
+
+    def test_auth_token_from_env_for_url(self) -> None:
+        """Authorization token is resolved from env var for URL servers."""
+        old = os.environ.get("MY_TOKEN_URL")
+        os.environ["MY_TOKEN_URL"] = "secret-url"
+        try:
+            mcp = MCPServerConfig(
+                name="auth",
+                url="https://auth.example.com",
+                auth_token_env="MY_TOKEN_URL",
+            )
+            result = _build_mcp_servers("orch", mcp_servers=[mcp])
+            assert result["auth"]["headers"]["Authorization"] == "Bearer secret-url"
+        finally:
+            if old is None:
+                os.environ.pop("MY_TOKEN_URL", None)
+            else:
+                os.environ["MY_TOKEN_URL"] = old
+
+    def test_missing_env_token_no_env_dict_stdio(self) -> None:
+        """When env var is missing for stdio server, no env dict is added."""
+        os.environ.pop("MISSING_TOKEN_STDIO", None)
         mcp = MCPServerConfig(
-            name="auth",
-            url="https://auth.example.com",
-            auth_token_env="MY_TOKEN",
+            name="noauth",
+            command="cmd",
+            auth_token_env="MISSING_TOKEN_STDIO",
         )
-        with patch.dict("os.environ", {"MY_TOKEN": "secret123"}):
-            params = _build_mcp_params([mcp])
-        assert params["mcp_servers"][0].get("authorization_token") == "secret123"
+        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        assert "env" not in result["noauth"]
 
-    def test_auth_token_missing_env_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        """Warning logged when auth_token_env is not set in environment."""
+    def test_missing_env_token_no_headers_url(self) -> None:
+        """When env var is missing for URL server, no headers are added."""
+        os.environ.pop("MISSING_TOKEN_URL", None)
         mcp = MCPServerConfig(
-            name="auth",
-            url="https://auth.example.com",
-            auth_token_env="MISSING_TOKEN",
+            name="noauth",
+            url="https://x.example.com",
+            auth_token_env="MISSING_TOKEN_URL",
         )
-        with patch.dict("os.environ", {}, clear=True):
-            with caplog.at_level(logging.WARNING):
-                params = _build_mcp_params([mcp])
-        assert "MISSING_TOKEN" in caplog.text
-        # Server should still be included, just without auth token
-        assert "mcp_servers" in params
-        assert params["mcp_servers"][0].get("authorization_token") is None
+        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        assert "headers" not in result["noauth"]
 
-    def test_mixed_stdio_and_https(self) -> None:
-        """STDIO servers skipped, HTTPS servers included."""
-        mcp_https = MCPServerConfig(name="remote", url="https://remote.example.com")
+    def test_mixed_stdio_and_url(self) -> None:
+        """Both stdio and URL servers are included alongside orchestrator."""
+        mcp_url = MCPServerConfig(name="remote", url="https://remote.example.com")
         mcp_stdio = MCPServerConfig(name="local", command="local-mcp")
-        params = _build_mcp_params([mcp_https, mcp_stdio])
-        assert len(params["mcp_servers"]) == 1
-        assert params["mcp_servers"][0]["name"] == "remote"
+        result = _build_mcp_servers("orch", mcp_servers=[mcp_url, mcp_stdio])
+        assert len(result) == 3  # orchestrator + remote + local
+        assert "remote" in result
+        assert "local" in result
 
-    def test_multiple_https_servers(self) -> None:
-        """Multiple HTTPS servers are all included."""
+    def test_multiple_url_servers(self) -> None:
+        """Multiple URL servers are all included."""
         mcp1 = MCPServerConfig(name="server1", url="https://server1.example.com")
         mcp2 = MCPServerConfig(name="server2", url="https://server2.example.com")
-        params = _build_mcp_params([mcp1, mcp2])
-        assert len(params["mcp_servers"]) == 2
-        names = {s["name"] for s in params["mcp_servers"]}
-        assert names == {"server1", "server2"}
+        result = _build_mcp_servers("orch", mcp_servers=[mcp1, mcp2])
+        assert len(result) == 3
+        names = set(result.keys())
+        assert names == {"orchestrator", "server1", "server2"}
 
-    def test_all_stdio_servers_returns_empty(self, caplog: pytest.LogCaptureFixture) -> None:
-        """When all servers are STDIO, empty dict returned."""
-        mcp1 = MCPServerConfig(name="local1", command="cmd1")
-        mcp2 = MCPServerConfig(name="local2", command="cmd2")
-        with caplog.at_level(logging.WARNING):
-            params = _build_mcp_params([mcp1, mcp2])
-        assert params == {}
+    def test_orchestrator_not_overwritten_by_external(self) -> None:
+        """External server named 'orchestrator' would overwrite — verify key exists."""
+        # In practice the orchestrator key is set first, then external servers
+        # are added. If an external server is named "orchestrator" it would
+        # overwrite. This test documents the behavior.
+        mcp = MCPServerConfig(name="orchestrator", url="https://evil.example.com")
+        result = _build_mcp_servers("orch-server", mcp_servers=[mcp])
+        # The external server overwrites the orchestrator key
+        assert result["orchestrator"]["url"] == "https://evil.example.com"

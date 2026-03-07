@@ -79,7 +79,7 @@ async def test_run_creation_verifier_model_none_when_model_not_in_agent_config(
     client: AsyncClient,
 ) -> None:
     """Run created with agent_config but no model key should have verifier_model=None."""
-    data = await _create_run(client, agent_config={"max_tokens": 4096})
+    data = await _create_run(client, agent_config={"max_turns": 30})
     assert data.get("verifier_model") is None
 
 

@@ -604,7 +604,7 @@ class ClaudeCliQuotaAgent:
 
     name = "claude"
 
-    def get_quota(self) -> AgentQuota | None:
+    def get_quota(self, fetcher: Any = None) -> AgentQuota | None:
         """Fetch quota from the Anthropic OAuth usage API.
 
         Returns ``None`` if the CLI is not installed, the keychain entry is
@@ -657,7 +657,8 @@ class ClaudeCliQuotaAgent:
         except Exception:
             return None
 
-        # Call the internal Anthropic OAuth usage API
+        # Call the internal Anthropic OAuth usage API.
+        # The User-Agent header is required — without it the API returns 429.
         try:
             import httpx as _httpx
 
@@ -666,6 +667,7 @@ class ClaudeCliQuotaAgent:
                 headers={
                     "Authorization": f"Bearer {token}",
                     "anthropic-beta": "oauth-2025-04-20",
+                    "User-Agent": "claude-code/2.1.71",
                 },
                 timeout=5.0,
             )

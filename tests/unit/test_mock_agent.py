@@ -4,7 +4,7 @@ import pytest
 
 from orchestrator.runners.errors import AgentExecutionError
 from orchestrator.runners.interface import AgentRunner
-from orchestrator.runners.mock import MockAgent, MockBehavior
+from orchestrator.runners.agents.mock.agent import MockAgent, MockBehavior
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 

@@ -19,7 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from orchestrator.runners.errors import AgentTimeoutError
-from orchestrator.runners.user_managed import UserManagedAgent
+from orchestrator.runners.agents.user_managed.agent import UserManagedAgent
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import (

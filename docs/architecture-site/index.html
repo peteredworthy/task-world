@@ -1,0 +1,1088 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Task-World Backend Architecture</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #161822;
+    --surface2: #1e2030;
+    --border: #2a2d3e;
+    --text: #c8cad8;
+    --text-dim: #7f849c;
+    --accent: #89b4fa;
+    --accent2: #a6e3a1;
+    --accent3: #f9e2af;
+    --accent4: #f38ba8;
+    --accent5: #cba6f7;
+    --accent6: #94e2d5;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+  }
+
+  header {
+    border-bottom: 1px solid var(--border);
+    padding: 2rem 3rem;
+    background: var(--surface);
+  }
+
+  header h1 {
+    font-size: 1.8rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 0.25rem;
+  }
+
+  header p {
+    color: var(--text-dim);
+    font-size: 0.95rem;
+  }
+
+  nav {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 1rem;
+    flex-wrap: wrap;
+  }
+
+  nav a {
+    color: var(--accent);
+    text-decoration: none;
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    transition: all 0.15s;
+  }
+
+  nav a:hover {
+    background: var(--border);
+    color: #fff;
+  }
+
+  main {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem 3rem 4rem;
+  }
+
+  section {
+    margin-bottom: 3rem;
+  }
+
+  h2 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  h2 span {
+    color: var(--accent);
+    font-weight: 400;
+    font-size: 0.85rem;
+    margin-left: 0.5rem;
+  }
+
+  .section-desc {
+    color: var(--text-dim);
+    font-size: 0.9rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .diagram-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+  }
+
+  .diagram-header {
+    padding: 0.75rem 1.25rem;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .diagram-body {
+    padding: 1rem;
+    min-height: 200px;
+  }
+
+  .diagram-body > div {
+    width: 100%;
+  }
+
+  .diagram-body svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  /* Stats grid */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }
+
+  .stat-card .value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #fff;
+  }
+
+  .stat-card .label {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-top: 0.15rem;
+  }
+
+  /* Module cards */
+  .module-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+  }
+
+  .module-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    transition: border-color 0.15s;
+  }
+
+  .module-card:hover {
+    border-color: var(--accent);
+  }
+
+  .module-card h3 {
+    font-size: 1rem;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .module-card h3 .badge {
+    font-size: 0.7rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 99px;
+    font-weight: 500;
+  }
+
+  .module-card .desc {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    margin-bottom: 0.75rem;
+  }
+
+  .module-card .meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  .module-card .meta strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .module-card .deps {
+    margin-top: 0.6rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  .module-card .deps .dep-tag {
+    display: inline-block;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin: 0.15rem 0.15rem 0 0;
+    font-size: 0.72rem;
+  }
+
+  /* Layer colors */
+  .layer-foundation { border-left: 3px solid var(--accent6); }
+  .layer-domain { border-left: 3px solid var(--accent2); }
+  .layer-infra { border-left: 3px solid var(--accent3); }
+  .layer-orchestration { border-left: 3px solid var(--accent); }
+  .layer-execution { border-left: 3px solid var(--accent5); }
+  .layer-api { border-left: 3px solid var(--accent4); }
+  .layer-integration { border-left: 3px solid #fab387; }
+
+  .badge-foundation { background: rgba(148, 226, 213, 0.15); color: var(--accent6); }
+  .badge-domain { background: rgba(166, 227, 161, 0.15); color: var(--accent2); }
+  .badge-infra { background: rgba(249, 226, 175, 0.15); color: var(--accent3); }
+  .badge-orchestration { background: rgba(137, 180, 250, 0.15); color: var(--accent); }
+  .badge-execution { background: rgba(203, 166, 247, 0.15); color: var(--accent5); }
+  .badge-api { background: rgba(243, 139, 168, 0.15); color: var(--accent4); }
+  .badge-integration { background: rgba(250, 179, 135, 0.15); color: #fab387; }
+
+  /* D3 graph styles */
+  #dep-graph svg { width: 100%; }
+  .link { stroke-opacity: 0.25; fill: none; }
+  .link.highlighted { stroke-opacity: 0.85; stroke-width: 2.5px !important; }
+  .node circle { cursor: pointer; stroke-width: 2px; transition: r 0.2s; }
+  .node text { font-size: 11px; fill: var(--text); pointer-events: none; font-weight: 500; }
+  .node.dimmed circle { opacity: 0.15; }
+  .node.dimmed text { opacity: 0.15; }
+  .link.dimmed { stroke-opacity: 0.04; }
+
+  /* Treemap styles */
+  .treemap-cell { stroke: var(--bg); stroke-width: 2px; cursor: pointer; transition: opacity 0.15s; }
+  .treemap-cell:hover { opacity: 0.85; }
+  .treemap-label { font-size: 11px; fill: #fff; pointer-events: none; font-weight: 600; }
+  .treemap-sublabel { font-size: 9px; fill: rgba(255,255,255,0.7); pointer-events: none; }
+
+  /* Concerns table */
+  .concerns-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  .concerns-table th {
+    text-align: left;
+    padding: 0.6rem 1rem;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+    font-weight: 500;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .concerns-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+
+  .severity-low { color: var(--accent2); }
+  .severity-medium { color: var(--accent3); }
+  .severity-high { color: var(--accent4); }
+
+  .legend {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    margin-top: 0.75rem;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  /* Tooltip */
+  .tooltip {
+    position: absolute;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.85rem;
+    font-size: 0.8rem;
+    color: var(--text);
+    pointer-events: none;
+    z-index: 100;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    max-width: 280px;
+  }
+
+  .tooltip strong { color: #fff; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Task-World Backend Architecture</h1>
+  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 modules, ~32K lines of Python</p>
+  <nav>
+    <a href="#overview">Overview</a>
+    <a href="#layers">Layer Diagram</a>
+    <a href="#dependencies">Dependency Graph</a>
+    <a href="#modules">Module Catalog</a>
+    <a href="#sizes">Code Distribution</a>
+    <a href="#concerns">Boundary Concerns</a>
+    <a href="#patterns">Key Patterns</a>
+  </nav>
+</header>
+
+<main>
+
+<!-- OVERVIEW STATS -->
+<section id="overview">
+  <h2>Overview</h2>
+  <div class="stats-grid">
+    <div class="stat-card"><div class="value">19</div><div class="label">Modules</div></div>
+    <div class="stat-card"><div class="value">165</div><div class="label">Python Files</div></div>
+    <div class="stat-card"><div class="value">~32K</div><div class="label">Lines of Code</div></div>
+    <div class="stat-card"><div class="value">7</div><div class="label">Architecture Layers</div></div>
+    <div class="stat-card"><div class="value">0</div><div class="label">Circular Dependencies</div></div>
+    <div class="stat-card"><div class="value">786</div><div class="label">Total Tests</div></div>
+  </div>
+</section>
+
+<!-- LAYER DIAGRAM -->
+<section id="layers">
+  <h2>Architecture Layers <span>Stratified layering with unidirectional flow</span></h2>
+  <p class="section-desc">The backend follows a clean layered architecture. Each layer depends only on layers below it. No circular dependencies exist between layers.</p>
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Layer Architecture</span>
+      <span>Top = closest to user, Bottom = foundational</span>
+    </div>
+    <div class="diagram-body">
+      <div id="layer-diagram"></div>
+    </div>
+  </div>
+</section>
+
+<!-- DEPENDENCY GRAPH -->
+<section id="dependencies">
+  <h2>Module Dependency Graph <span>Interactive &mdash; click a node to highlight its connections</span></h2>
+  <p class="section-desc">Force-directed graph showing cross-module imports. Arrow direction indicates "depends on". Node size reflects lines of code. Click a module to isolate its dependencies.</p>
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Cross-Module Import Graph</span>
+      <span id="graph-info">Click a node to focus</span>
+    </div>
+    <div class="diagram-body" style="padding: 0;">
+      <div id="dep-graph" style="width: 100%;"></div>
+    </div>
+  </div>
+  <div class="legend" id="dep-legend"></div>
+</section>
+
+<!-- MODULE CATALOG -->
+<section id="modules">
+  <h2>Module Catalog <span>19 modules across 7 layers</span></h2>
+  <p class="section-desc">Each module's purpose, size, and outbound dependencies. Grouped by architectural layer.</p>
+  <div class="module-grid" id="module-grid"></div>
+</section>
+
+<!-- CODE DISTRIBUTION -->
+<section id="sizes">
+  <h2>Code Distribution <span>Lines of code per module</span></h2>
+  <p class="section-desc">Treemap showing relative code size. The runners module (agent execution) and API layer dominate, reflecting the system's focus on agent orchestration.</p>
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Module Size Treemap</span>
+      <span>Area proportional to lines of code</span>
+    </div>
+    <div class="diagram-body" style="padding: 0;">
+      <div id="treemap" style="width: 100%;"></div>
+    </div>
+  </div>
+</section>
+
+<!-- BOUNDARY CONCERNS -->
+<section id="concerns">
+  <h2>Boundary Concerns <span>Identified coupling and cohesion issues</span></h2>
+  <p class="section-desc">Areas where module boundaries could be tightened. No critical violations found &mdash; the architecture is well-structured with clean layering.</p>
+  <div class="diagram-container">
+    <div class="diagram-body" style="padding: 0;">
+      <table class="concerns-table">
+        <thead>
+          <tr><th>Concern</th><th>Severity</th><th>Details</th><th>Mitigation</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Wide API Router Dependencies</strong></td>
+            <td><span class="severity-medium">Medium</span></td>
+            <td><code>api/routers/runs.py</code> imports from 15+ modules, creating a wide dependency fan-out at the presentation layer.</td>
+            <td>Already mitigated by api.schemas acting as contracts. Consider a dedicated RunService to reduce direct module access.</td>
+          </tr>
+          <tr>
+            <td><strong>WorkflowService Scope</strong></td>
+            <td><span class="severity-medium">Medium</span></td>
+            <td>Single class handling state machine orchestration, verification, building, and recovery. Estimated 1500+ LOC.</td>
+            <td>Extract sub-services: VerificationService, RecoveryService, CompletionService.</td>
+          </tr>
+          <tr>
+            <td><strong>Runners/Executor Coupling</strong></td>
+            <td><span class="severity-low">Low</span></td>
+            <td>AgentRunnerExecutor directly calls workflow service methods (submit, complete_verification), binding execution to workflow.</td>
+            <td>Callback-based design already partially abstracts this. Could further decouple with an event bus.</td>
+          </tr>
+          <tr>
+            <td><strong>config Circular Risk</strong></td>
+            <td><span class="severity-low">Low</span></td>
+            <td><code>config</code> imports from <code>routines</code> and <code>runners</code> (for enum types), while both import from <code>config</code>. Currently not circular due to import structure.</td>
+            <td>Move shared types (enums) to a dedicated <code>types</code> module to prevent future circularity.</td>
+          </tr>
+          <tr>
+            <td><strong>Git Operations Scattered</strong></td>
+            <td><span class="severity-low">Low</span></td>
+            <td>Git ops accessed from workflow.service, api.routers.runs, and runners.executor through different entry points.</td>
+            <td>Consider a GitFacade to centralize all git operations behind a single interface.</td>
+          </tr>
+          <tr>
+            <td><strong>State &rarr; Runners Dependency</strong></td>
+            <td><span class="severity-low">Low</span></td>
+            <td><code>state.models</code> imports ActionLog from <code>runners</code>, creating a dependency from domain models to execution layer.</td>
+            <td>Move ActionLog to <code>state</code> or a shared <code>types</code> module.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- KEY PATTERNS -->
+<section id="patterns">
+  <h2>Key Architectural Patterns <span>Design decisions and abstractions</span></h2>
+  <p class="section-desc">The core patterns that define the system's architecture.</p>
+  <div class="diagram-container">
+    <div class="diagram-header"><span>Request Flow</span><span>How an API request flows through the system</span></div>
+    <div class="diagram-body">
+      <div id="flow-diagram"></div>
+    </div>
+  </div>
+  <div class="module-grid" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
+    <div class="module-card" style="border-left: 3px solid var(--accent);">
+      <h3>Protocol-Based Agents</h3>
+      <div class="desc">All agent types (CLI, Claude SDK, CodexServer, OpenHands, UserManaged) implement a single <code>AgentRunner</code> protocol. The executor dispatches polymorphically &mdash; adding a new agent requires only implementing the protocol.</div>
+    </div>
+    <div class="module-card" style="border-left: 3px solid var(--accent2);">
+      <h3>Event-Driven State Machine</h3>
+      <div class="desc">WorkflowEngine emits immutable <code>WorkflowEvent</code>s on every state change. Events are persisted to the EventStore and broadcast via WebSocket. This enables audit trails and real-time UI updates.</div>
+    </div>
+    <div class="module-card" style="border-left: 3px solid var(--accent3);">
+      <h3>Callback-Based Agent Output</h3>
+      <div class="desc">Agents report progress via typed callbacks (<code>on_checklist_update</code>, <code>on_submit</code>, <code>on_output</code>). The executor translates callbacks into state mutations, decoupling agent logic from orchestration.</div>
+    </div>
+    <div class="module-card" style="border-left: 3px solid var(--accent5);">
+      <h3>Separated State &amp; Persistence</h3>
+      <div class="desc">In-memory state (<code>state.models.Run</code>) is distinct from DB models (<code>db.models.RunModel</code>). <code>SessionStateManager</code> manages mutable state; repositories handle persistence. This keeps the engine pure.</div>
+    </div>
+    <div class="module-card" style="border-left: 3px solid var(--accent4);">
+      <h3>Dependency Injection</h3>
+      <div class="desc"><code>api/deps.py</code> provides factory functions for every service. Each request gets fresh instances. No global mutable state. Clean, testable, and thread-safe.</div>
+    </div>
+    <div class="module-card" style="border-left: 3px solid var(--accent6);">
+      <h3>Git Worktree Isolation</h3>
+      <div class="desc">Each run gets its own git worktree, providing filesystem isolation between concurrent agent executions. WorktreeManager handles creation, cleanup, and recovery after server restarts.</div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<div class="tooltip" id="tooltip" style="display:none;"></div>
+
+<script>
+// ============================================================
+// DATA
+// ============================================================
+const modules = {
+  config:      { loc: 705,  files: 5,  layer: 'foundation', desc: 'Runtime enums (RunStatus, TaskStatus, Priority), Pydantic models for routine/step/task YAML, and GlobalConfig for paths and settings.' },
+  cache:       { loc: 88,   files: 2,  layer: 'foundation', desc: 'Simple LRU cache utility used by git operations for memoizing expensive computations.' },
+  metrics:     { loc: 70,   files: 2,  layer: 'foundation', desc: 'Cost estimation from token usage data. Calculates USD costs using model pricing tables.' },
+  state:       { loc: 532,  files: 5,  layer: 'domain',     desc: 'In-memory runtime models: Run, StepState, TaskState, Attempt, ChecklistItem. SessionStateManager for state mutations.' },
+  routines:    { loc: 555,  files: 5,  layer: 'domain',     desc: 'Routine discovery and loading from YAML files. Handles file resolution, inheritance, and semantic versioning.' },
+  artifacts:   { loc: 146,  files: 3,  layer: 'domain',     desc: 'Structured output registry. Stores named artifacts (code snippets, configs) produced during task execution.' },
+  repos:       { loc: 268,  files: 4,  layer: 'domain',     desc: 'Git repository discovery and introspection. Lists repos, branches, and provides RepoInfo data classes.' },
+  review:      { loc: 261,  files: 3,  layer: 'domain',     desc: 'Code review models and test execution. Runs test commands in worktrees and provides diff/commit data.' },
+  scaffolding: { loc: 176,  files: 4,  layer: 'domain',     desc: 'Project setup: copies template files, ensures .gitignore, prepares workspace for new tasks.' },
+  db:          { loc: 2012, files: 21, layer: 'infra',       desc: 'Persistence via SQLAlchemy ORM. RunModel, StepModel, TaskModel, AttemptModel. Repositories for querying and hydrating state.' },
+  git:         { loc: 2605, files: 10, layer: 'infra',       desc: 'Low-level git operations: WorktreeManager, branch ops, diff computation, conflict detection, and commit utilities.' },
+  envfiles:    { loc: 908,  files: 9,  layer: 'infra',       desc: 'Environment file management: snapshots, lifecycle (create/cleanup), resolution, and security (encryption).' },
+  workflow:    { loc: 5288, files: 17, layer: 'orchestration', desc: 'State machine engine: transitions, gates, grades, locks, events, clarifications, auto-verify, prompts, and completion logic.' },
+  runners:     { loc: 9899, files: 26, layer: 'execution',   desc: 'Agent integrations and execution: CLI, Claude SDK, CodexServer, OpenHands agents. Executor, monitor, parsers, and action logging.' },
+  agents:      { loc: 348,  files: 6,  layer: 'execution',   desc: 'Agent configuration CRUD. Manages agent profiles, seeding defaults (Planner, Builder, Verifier), and name resolution.' },
+  api:         { loc: 6604, files: 30, layer: 'api',         desc: 'FastAPI application: routers, schemas, dependency injection, auth, error handlers, and WebSocket real-time events.' },
+  cli:         { loc: 1447, files: 7,  layer: 'integration', desc: 'Command-line interface: run, agent, routine, and repo commands. Approval workflows for human-in-the-loop.' },
+  mcp:         { loc: 785,  files: 4,  layer: 'integration', desc: 'Model Context Protocol server: exposes tools to external agents for run status, task context, and clarifications.' },
+  routers:     { loc: 6,    files: 2,  layer: 'integration', desc: 'Legacy router shim (6 LOC). Re-exports from api.routers for backwards compatibility.' },
+};
+
+const deps = {
+  config: ['routines','runners'],
+  state: ['config','envfiles','runners'],
+  db: ['config','envfiles','runners','state','workflow'],
+  git: ['cache','review'],
+  envfiles: ['config','workflow'],
+  routines: ['config'],
+  workflow: ['artifacts','config','db','envfiles','git','state'],
+  runners: ['artifacts','config','db','git','scaffolding','state','workflow'],
+  agents: ['config','db'],
+  api: ['agents','artifacts','cache','config','db','envfiles','git','mcp','metrics','repos','review','routines','runners','state','workflow'],
+  cli: ['config','db','repos','routines','runners','state','workflow'],
+  mcp: ['config','repos','workflow'],
+  routers: [],
+};
+
+const layerColors = {
+  foundation:    '#94e2d5',
+  domain:        '#a6e3a1',
+  infra:         '#f9e2af',
+  orchestration: '#89b4fa',
+  execution:     '#cba6f7',
+  api:           '#f38ba8',
+  integration:   '#fab387',
+};
+
+const layerNames = {
+  foundation:    'Foundation',
+  domain:        'Domain Models',
+  infra:         'Infrastructure',
+  orchestration: 'Orchestration',
+  execution:     'Execution',
+  api:           'API Layer',
+  integration:   'Integration',
+};
+
+const layerOrder = ['integration','api','execution','orchestration','infra','domain','foundation'];
+
+// ============================================================
+// LAYER DIAGRAM (SVG)
+// ============================================================
+(function drawLayerDiagram() {
+  const w = 1000, h = 680;
+  const svg = d3.select('#layer-diagram')
+    .append('svg')
+    .attr('viewBox', `0 0 ${w} ${h}`)
+    .attr('width', '100%')
+    .attr('style', 'max-width: 1200px;');
+
+  // Define arrow marker
+  svg.append('defs').append('marker')
+    .attr('id', 'layer-arrow')
+    .attr('viewBox', '0 0 10 6')
+    .attr('refX', 5).attr('refY', 3)
+    .attr('markerWidth', 10).attr('markerHeight', 7)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,0 L10,3 L0,6 Z')
+    .attr('fill', '#4a4d5e');
+
+  const layers = layerOrder;
+  const layerH = 72;
+  const gap = 16;
+  const startY = 20;
+  const lx = 140;
+  const lw = w - lx - 50;
+
+  layers.forEach((layer, i) => {
+    const y = startY + i * (layerH + gap);
+    const color = layerColors[layer];
+    const mods = Object.entries(modules).filter(([,m]) => m.layer === layer);
+
+    // Layer background
+    svg.append('rect')
+      .attr('x', lx).attr('y', y)
+      .attr('width', lw).attr('height', layerH)
+      .attr('rx', 10)
+      .attr('fill', color)
+      .attr('opacity', 0.08)
+      .attr('stroke', color)
+      .attr('stroke-opacity', 0.3);
+
+    // Layer label
+    svg.append('text')
+      .attr('x', lx - 16)
+      .attr('y', y + layerH / 2)
+      .attr('text-anchor', 'end')
+      .attr('dominant-baseline', 'middle')
+      .attr('font-size', '14px')
+      .attr('font-weight', '600')
+      .attr('fill', color)
+      .text(layerNames[layer]);
+
+    // Module pills inside layer
+    const pillW = Math.min(120, (lw - 30) / mods.length - 10);
+    const pillH = 36;
+    const totalPillW = mods.length * (pillW + 10) - 10;
+    const pillStartX = lx + (lw - totalPillW) / 2;
+
+    mods.forEach(([name], j) => {
+      const px = pillStartX + j * (pillW + 10);
+      const py = y + (layerH - pillH) / 2;
+
+      svg.append('rect')
+        .attr('x', px).attr('y', py)
+        .attr('width', pillW).attr('height', pillH)
+        .attr('rx', 8)
+        .attr('fill', color)
+        .attr('opacity', 0.2);
+
+      svg.append('text')
+        .attr('x', px + pillW / 2)
+        .attr('y', py + pillH / 2 + 1)
+        .attr('text-anchor', 'middle')
+        .attr('dominant-baseline', 'middle')
+        .attr('font-size', '13px')
+        .attr('font-weight', '500')
+        .attr('fill', color)
+        .text(name);
+    });
+
+    // Arrow between layers
+    if (i < layers.length - 1) {
+      const arrowY = y + layerH + gap / 2;
+      svg.append('line')
+        .attr('x1', lx + lw / 2)
+        .attr('y1', arrowY - 5)
+        .attr('x2', lx + lw / 2)
+        .attr('y2', arrowY + 5)
+        .attr('stroke', '#4a4d5e')
+        .attr('stroke-width', 1.5)
+        .attr('marker-end', 'url(#layer-arrow)');
+    }
+  });
+
+  // "depends on" label
+  const midY = startY + (layers.length * (layerH + gap)) / 2;
+  svg.append('text')
+    .attr('x', lx + lw + 30)
+    .attr('y', midY)
+    .attr('text-anchor', 'middle')
+    .attr('dominant-baseline', 'middle')
+    .attr('font-size', '12px')
+    .attr('fill', '#4a4d5e')
+    .attr('transform', `rotate(-90, ${lx + lw + 30}, ${midY})`)
+    .text('depends on \u2193');
+})();
+
+// ============================================================
+// DEPENDENCY GRAPH (D3 Force)
+// ============================================================
+(function drawDepGraph() {
+  const container = document.getElementById('dep-graph');
+  const w = container.clientWidth || 900;
+  const h = 550;
+
+  const svg = d3.select('#dep-graph')
+    .append('svg')
+    .attr('width', w)
+    .attr('height', h)
+    .attr('viewBox', `0 0 ${w} ${h}`);
+
+  // Build nodes & links
+  const nodeNames = Object.keys(modules).filter(n => n !== 'routers');
+  const nodes = nodeNames.map(name => ({
+    id: name,
+    loc: modules[name].loc,
+    layer: modules[name].layer,
+    r: Math.max(12, Math.sqrt(modules[name].loc) * 0.7),
+  }));
+
+  const links = [];
+  Object.entries(deps).forEach(([src, targets]) => {
+    targets.forEach(tgt => {
+      if (nodeNames.includes(src) && nodeNames.includes(tgt)) {
+        links.push({ source: src, target: tgt });
+      }
+    });
+  });
+
+  // Arrow marker
+  svg.append('defs').append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 0 10 6')
+    .attr('refX', 18).attr('refY', 3)
+    .attr('markerWidth', 7).attr('markerHeight', 5)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,0 L10,3 L0,6 Z')
+    .attr('fill', '#4a4d5e');
+
+  const simulation = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(120))
+    .force('charge', d3.forceManyBody().strength(-350))
+    .force('center', d3.forceCenter(w / 2, h / 2))
+    .force('collision', d3.forceCollide().radius(d => d.r + 8))
+    .force('y', d3.forceY().y(d => {
+      const idx = layerOrder.indexOf(d.layer);
+      return 60 + idx * (h - 120) / (layerOrder.length - 1);
+    }).strength(0.15));
+
+  const link = svg.append('g')
+    .selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('class', 'link')
+    .attr('stroke', '#4a4d5e')
+    .attr('stroke-width', 1.5)
+    .attr('marker-end', 'url(#arrow)');
+
+  const node = svg.append('g')
+    .selectAll('g')
+    .data(nodes)
+    .join('g')
+    .attr('class', 'node')
+    .call(d3.drag()
+      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
+    );
+
+  node.append('circle')
+    .attr('r', d => d.r)
+    .attr('fill', d => layerColors[d.layer])
+    .attr('fill-opacity', 0.2)
+    .attr('stroke', d => layerColors[d.layer]);
+
+  node.append('text')
+    .attr('dy', d => d.r + 14)
+    .attr('text-anchor', 'middle')
+    .text(d => d.id);
+
+  // LOC label inside circle
+  node.append('text')
+    .attr('dy', 4)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', '8px')
+    .attr('fill', '#7f849c')
+    .text(d => d.loc >= 500 ? (d.loc / 1000).toFixed(1) + 'k' : '');
+
+  // Click interaction
+  let selectedNode = null;
+
+  node.on('click', function(e, d) {
+    e.stopPropagation();
+    if (selectedNode === d.id) {
+      // Deselect
+      selectedNode = null;
+      node.classed('dimmed', false);
+      link.classed('dimmed', false).classed('highlighted', false);
+      d3.select('#graph-info').text('Click a node to focus');
+      return;
+    }
+    selectedNode = d.id;
+
+    const connected = new Set([d.id]);
+    links.forEach(l => {
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      if (sid === d.id) connected.add(tid);
+      if (tid === d.id) connected.add(sid);
+    });
+
+    node.classed('dimmed', n => !connected.has(n.id));
+    link.classed('dimmed', l => {
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      return sid !== d.id && tid !== d.id;
+    });
+    link.classed('highlighted', l => {
+      const sid = typeof l.source === 'object' ? l.source.id : l.source;
+      const tid = typeof l.target === 'object' ? l.target.id : l.target;
+      return sid === d.id || tid === d.id;
+    });
+
+    const outDeps = deps[d.id] || [];
+    const inDeps = Object.entries(deps).filter(([,v]) => v.includes(d.id)).map(([k]) => k);
+    d3.select('#graph-info').html(`<strong>${d.id}</strong> &mdash; depends on: ${outDeps.length}, depended by: ${inDeps.length}`);
+  });
+
+  svg.on('click', () => {
+    selectedNode = null;
+    node.classed('dimmed', false);
+    link.classed('dimmed', false).classed('highlighted', false);
+    d3.select('#graph-info').text('Click a node to focus');
+  });
+
+  simulation.on('tick', () => {
+    link
+      .attr('x1', d => d.source.x)
+      .attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x)
+      .attr('y2', d => d.target.y);
+
+    node.attr('transform', d => `translate(${d.x},${d.y})`);
+  });
+
+  // Legend
+  const legend = d3.select('#dep-legend');
+  Object.entries(layerNames).forEach(([key, name]) => {
+    const item = legend.append('span').attr('class', 'legend-item');
+    item.append('span').attr('class', 'legend-dot').style('background', layerColors[key]);
+    item.append('span').text(name);
+  });
+})();
+
+// ============================================================
+// MODULE CATALOG
+// ============================================================
+(function drawModuleCatalog() {
+  const grid = document.getElementById('module-grid');
+
+  // Group by layer
+  layerOrder.slice().reverse().forEach(layer => {
+    const mods = Object.entries(modules).filter(([,m]) => m.layer === layer);
+    if (mods.length === 0) return;
+
+    mods.sort((a, b) => b[1].loc - a[1].loc);
+
+    mods.forEach(([name, mod]) => {
+      const modDeps = deps[name] || [];
+      const card = document.createElement('div');
+      card.className = `module-card layer-${layer}`;
+      card.innerHTML = `
+        <h3>${name} <span class="badge badge-${layer}">${layerNames[layer]}</span></h3>
+        <div class="desc">${mod.desc}</div>
+        <div class="meta">
+          <span><strong>${mod.loc.toLocaleString()}</strong> LOC</span>
+          <span><strong>${mod.files}</strong> files</span>
+          <span><strong>${modDeps.length}</strong> deps</span>
+        </div>
+        ${modDeps.length ? `<div class="deps">Depends on: ${modDeps.map(d => `<span class="dep-tag">${d}</span>`).join('')}</div>` : '<div class="deps" style="color: var(--accent2);">No external dependencies</div>'}
+      `;
+      grid.appendChild(card);
+    });
+  });
+})();
+
+// ============================================================
+// TREEMAP
+// ============================================================
+(function drawTreemap() {
+  const container = document.getElementById('treemap');
+  const w = container.clientWidth || 900;
+  const h = 400;
+
+  const svg = d3.select('#treemap')
+    .append('svg')
+    .attr('width', w)
+    .attr('height', h)
+    .attr('viewBox', `0 0 ${w} ${h}`);
+
+  const tooltip = d3.select('#tooltip');
+
+  const data = {
+    name: 'orchestrator',
+    children: Object.entries(modules).filter(([n]) => n !== 'routers').map(([name, mod]) => ({
+      name,
+      value: mod.loc,
+      layer: mod.layer,
+      files: mod.files,
+    })),
+  };
+
+  const root = d3.treemap()
+    .size([w, h])
+    .padding(3)
+    .round(true)(
+      d3.hierarchy(data).sum(d => d.value).sort((a, b) => b.value - a.value)
+    );
+
+  const cell = svg.selectAll('g')
+    .data(root.leaves())
+    .join('g')
+    .attr('transform', d => `translate(${d.x0},${d.y0})`);
+
+  cell.append('rect')
+    .attr('class', 'treemap-cell')
+    .attr('width', d => d.x1 - d.x0)
+    .attr('height', d => d.y1 - d.y0)
+    .attr('rx', 4)
+    .attr('fill', d => layerColors[d.data.layer])
+    .attr('fill-opacity', 0.35)
+    .on('mouseover', function(e, d) {
+      tooltip.style('display', 'block')
+        .html(`<strong>${d.data.name}</strong><br>${d.data.value.toLocaleString()} lines, ${d.data.files} files<br><span style="color:${layerColors[d.data.layer]}">${layerNames[d.data.layer]}</span>`);
+    })
+    .on('mousemove', function(e) {
+      tooltip.style('left', (e.pageX + 12) + 'px').style('top', (e.pageY - 10) + 'px');
+    })
+    .on('mouseout', () => tooltip.style('display', 'none'));
+
+  cell.append('text')
+    .attr('class', 'treemap-label')
+    .attr('x', 6).attr('y', 18)
+    .text(d => {
+      const w = d.x1 - d.x0;
+      return w > 50 ? d.data.name : '';
+    });
+
+  cell.append('text')
+    .attr('class', 'treemap-sublabel')
+    .attr('x', 6).attr('y', 32)
+    .text(d => {
+      const w = d.x1 - d.x0;
+      return w > 70 ? `${d.data.value.toLocaleString()} LOC` : '';
+    });
+})();
+
+// ============================================================
+// REQUEST FLOW DIAGRAM (SVG)
+// ============================================================
+(function drawFlowDiagram() {
+  const w = 1100, h = 280;
+  const svg = d3.select('#flow-diagram')
+    .append('svg')
+    .attr('viewBox', `0 0 ${w} ${h}`)
+    .attr('width', '100%')
+    .attr('style', 'max-width: 1200px;');
+
+  svg.append('defs').append('marker')
+    .attr('id', 'flow-arrow')
+    .attr('viewBox', '0 0 10 6')
+    .attr('refX', 10).attr('refY', 3)
+    .attr('markerWidth', 10).attr('markerHeight', 7)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,0 L10,3 L0,6 Z')
+    .attr('fill', '#89b4fa');
+
+  const steps = [
+    { label: 'HTTP Request', sub: 'api/routers/*', color: '#f38ba8' },
+    { label: 'Dependencies', sub: 'api/deps.py', color: '#f38ba8' },
+    { label: 'WorkflowService', sub: 'workflow/service', color: '#89b4fa' },
+    { label: 'WorkflowEngine', sub: 'workflow/engine', color: '#89b4fa' },
+    { label: 'SessionState', sub: 'state/session', color: '#a6e3a1' },
+    { label: 'Repository', sub: 'db/repositories', color: '#f9e2af' },
+    { label: 'Database', sub: 'SQLite / ORM', color: '#f9e2af' },
+  ];
+
+  const boxW = 130, boxH = 68, gap = 18;
+  const totalW = steps.length * boxW + (steps.length - 1) * gap;
+  const startX = (w - totalW) / 2;
+  const y = 30;
+
+  steps.forEach((step, i) => {
+    const x = startX + i * (boxW + gap);
+
+    svg.append('rect')
+      .attr('x', x).attr('y', y)
+      .attr('width', boxW).attr('height', boxH)
+      .attr('rx', 10)
+      .attr('fill', step.color)
+      .attr('fill-opacity', 0.1)
+      .attr('stroke', step.color)
+      .attr('stroke-opacity', 0.4)
+      .attr('stroke-width', 1.5);
+
+    svg.append('text')
+      .attr('x', x + boxW / 2)
+      .attr('y', y + 28)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', '13px')
+      .attr('font-weight', '600')
+      .attr('fill', step.color)
+      .text(step.label);
+
+    svg.append('text')
+      .attr('x', x + boxW / 2)
+      .attr('y', y + 48)
+      .attr('text-anchor', 'middle')
+      .attr('font-size', '11px')
+      .attr('fill', '#7f849c')
+      .text(step.sub);
+
+    if (i < steps.length - 1) {
+      svg.append('line')
+        .attr('x1', x + boxW + 3)
+        .attr('y1', y + boxH / 2)
+        .attr('x2', x + boxW + gap - 3)
+        .attr('y2', y + boxH / 2)
+        .attr('stroke', '#89b4fa')
+        .attr('stroke-width', 2)
+        .attr('marker-end', 'url(#flow-arrow)');
+    }
+  });
+
+  // Side branch: Agent execution (hangs off WorkflowService)
+  const execX = startX + 2 * (boxW + gap);
+  const execY = y + boxH + 30;
+  const branchW = boxW + 30;
+
+  svg.append('line')
+    .attr('x1', execX + boxW / 2)
+    .attr('y1', y + boxH)
+    .attr('x2', execX + boxW / 2)
+    .attr('y2', execY)
+    .attr('stroke', '#cba6f7')
+    .attr('stroke-width', 2)
+    .attr('stroke-dasharray', '5,4');
+
+  svg.append('rect')
+    .attr('x', execX + (boxW - branchW) / 2).attr('y', execY)
+    .attr('width', branchW).attr('height', boxH)
+    .attr('rx', 10)
+    .attr('fill', '#cba6f7')
+    .attr('fill-opacity', 0.1)
+    .attr('stroke', '#cba6f7')
+    .attr('stroke-opacity', 0.4)
+    .attr('stroke-width', 1.5);
+
+  svg.append('text')
+    .attr('x', execX + boxW / 2)
+    .attr('y', execY + 28)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', '13px')
+    .attr('font-weight', '600')
+    .attr('fill', '#cba6f7')
+    .text('AgentExecutor');
+
+  svg.append('text')
+    .attr('x', execX + boxW / 2)
+    .attr('y', execY + 48)
+    .attr('text-anchor', 'middle')
+    .attr('font-size', '11px')
+    .attr('fill', '#7f849c')
+    .text('runners/executor (async)');
+
+  // Label the branch
+  svg.append('text')
+    .attr('x', execX + boxW / 2 + branchW / 2 + 12)
+    .attr('y', execY + boxH / 2 - 6)
+    .attr('font-size', '10px')
+    .attr('fill', '#4a4d5e')
+    .text('spawns background');
+
+  svg.append('text')
+    .attr('x', execX + boxW / 2 + branchW / 2 + 12)
+    .attr('y', execY + boxH / 2 + 8)
+    .attr('font-size', '10px')
+    .attr('fill', '#4a4d5e')
+    .text('agent tasks');
+})();
+</script>
+
+</body>
+</html>

@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from orchestrator.runners.claude_sdk import fetch_claude_models
-from orchestrator.runners.codex_server_common import fetch_codex_models
+from orchestrator.runners.agents.claude_sdk.agent import fetch_claude_models
+from orchestrator.runners.agents.codex.common import fetch_codex_models
 from orchestrator.runners.types import AgentConfigField, AgentOption, AgentQuota
 from orchestrator.config.enums import AgentRunnerType
 
@@ -281,16 +281,10 @@ _CLAUDE_SDK_CONFIG: list[AgentConfigField] = [
         ),
     ),
     AgentConfigField(
-        name="max_tokens",
-        field_type="number",
-        default=4096,
-        description="Maximum tokens per response turn",
-    ),
-    AgentConfigField(
-        name="max_iterations",
+        name="max_turns",
         field_type="number",
         default=50,
-        description="Maximum agentic loop iterations per run",
+        description="Maximum agentic turns per run",
     ),
 ]
 
@@ -321,8 +315,9 @@ class ToolDetector:
     ``quota=None``.
     """
 
-    def __init__(self, agents: list[Any] | None = None) -> None:
+    def __init__(self, agents: list[Any] | None = None, *, quota_timeout: float = 10.0) -> None:
         self._quota_cache: dict[str, _QuotaCacheEntry] = {}
+        self._quota_timeout = quota_timeout
         self._agents: dict[str, Any] = {}
         if agents:
             for agent in agents:
@@ -332,9 +327,10 @@ class ToolDetector:
     def _quota_cache_valid(self, entry: _QuotaCacheEntry) -> bool:
         """Return True if the cache entry is still fresh.
 
-        TTL is 60s for active agents, 300s for inactive ones.
+        TTL is 300s for active agents, 600s for inactive ones.
+        The usage API is aggressively rate-limited so we cache generously.
         """
-        ttl = 60.0 if entry.is_active else 300.0
+        ttl = 300.0 if entry.is_active else 600.0
         return (time.monotonic() - entry.cached_at) < ttl
 
     @staticmethod
@@ -353,7 +349,7 @@ class ToolDetector:
 
         Returns ``None`` immediately for unavailable options or when no
         matching agent with ``get_quota()`` is registered.  Calls
-        ``agent.get_quota()`` in a thread with a 3-second timeout; any
+        ``agent.get_quota()`` in a thread with a 10-second timeout; any
         exception (including ``asyncio.TimeoutError``) is swallowed and
         the last successful quota is returned instead.
 
@@ -382,7 +378,7 @@ class ToolDetector:
         try:
             quota: AgentQuota | None = await asyncio.wait_for(
                 asyncio.to_thread(agent.get_quota),
-                timeout=3.0,
+                timeout=self._quota_timeout,
             )
         except Exception:
             # Failure: preserve last successful quota, apply 5-min backoff
@@ -402,12 +398,8 @@ class ToolDetector:
         self._quota_cache[cache_key] = _QuotaCacheEntry(
             quota=quota,
             is_active=True,
-            last_success_quota=quota
-            if quota is not None
-            else (cached.last_success_quota if cached else None),
-            last_success_at=now_wall
-            if quota is not None
-            else (cached.last_success_at if cached else None),
+            last_success_quota=quota,
+            last_success_at=now_wall,
         )
         return self._quota_with_fetched_at(self._quota_cache[cache_key])
 
@@ -666,17 +658,17 @@ class ToolDetector:
         )
 
     def _detect_claude_sdk(self) -> AgentOption:
-        """Check if the anthropic SDK is importable for in-process Claude execution.
+        """Check if the Claude Agent SDK is importable for in-process execution.
 
-        Availability requires the anthropic package to be installed.  When
-        available, ``fetch_claude_models()`` is called to discover the models
-        exposed by the Anthropic API.  If successful, the ``model`` config
-        field is upgraded to a ``"select"`` with the available model IDs and
-        the first model set as the default value.  When model discovery fails
-        the field stays as a plain ``"string"``.
+        Availability requires the ``claude-agent-sdk`` package to be installed.
+        When available, ``fetch_claude_models()`` is called to discover the
+        models exposed by the Anthropic API.  If successful, the ``model``
+        config field is upgraded to a ``"select"`` with the available model IDs
+        and the first model set as the default value.  When model discovery
+        fails the field stays as a plain ``"string"``.
         """
         try:
-            import anthropic  # noqa: F401  # pyright: ignore[reportUnusedImport]
+            import claude_agent_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
 
             models = fetch_claude_models()
             config_schema = _claude_sdk_config_with_models(models)
@@ -685,12 +677,12 @@ class ToolDetector:
                 name="Claude SDK",
                 title="Claude SDK Agent",
                 description=(
-                    "In-process Claude agent using the Anthropic Python SDK. "
-                    "Runs entirely locally with no subprocess required — calls "
-                    "the Anthropic API directly via the Messages API with tool use."
+                    "In-process Claude agent using the Claude Agent SDK. "
+                    "Runs locally with built-in tools (Read, Write, Edit, Bash, etc.) "
+                    "and orchestrator callbacks exposed via an in-process MCP server."
                 ),
                 available=True,
-                detail="anthropic SDK installed",
+                detail="claude-agent-sdk installed",
                 config_schema=config_schema,
             )
         except ImportError:
@@ -699,13 +691,13 @@ class ToolDetector:
                 name="Claude SDK",
                 title="Claude SDK Agent",
                 description=(
-                    "In-process Claude agent using the Anthropic Python SDK. "
-                    "Runs entirely locally with no subprocess required — calls "
-                    "the Anthropic API directly via the Messages API with tool use."
+                    "In-process Claude agent using the Claude Agent SDK. "
+                    "Runs locally with built-in tools (Read, Write, Edit, Bash, etc.) "
+                    "and orchestrator callbacks exposed via an in-process MCP server."
                 ),
                 available=False,
-                detail="anthropic SDK not installed",
-                install_hint="Install with: pip install anthropic",
+                detail="claude-agent-sdk not installed",
+                install_hint="Install with: uv add claude-agent-sdk",
                 config_schema=_CLAUDE_SDK_CONFIG,
             )
 

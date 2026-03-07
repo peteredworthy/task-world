@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import pytest
 
+from orchestrator.runners.agents import discover as discover_agents
 from orchestrator.runners.codex_server import CodexServerAgent
-from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.config.enums import AgentRunnerType
+
+# Ensure agent factories are registered before tests run
+discover_agents()
 
 
 # ---------------------------------------------------------------------------
@@ -102,8 +105,8 @@ def test_executor_codex_create_agent_codex_server_agent_type_is_codex_server() -
 # ===========================================================================
 
 
-def test_executor_codex_create_agent_unsupported_type_raises() -> None:
-    """_create_agent raises AgentNotAvailableError for unsupported agent types."""
+def test_executor_codex_create_agent_user_managed_requires_service() -> None:
+    """_create_agent for USER_MANAGED raises ValueError without service kwarg."""
     executor = _make_executor()
-    with pytest.raises(AgentNotAvailableError):
+    with pytest.raises(ValueError, match="service"):
         executor._create_agent(AgentRunnerType.USER_MANAGED, {})
