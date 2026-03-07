@@ -121,6 +121,7 @@ def _run_to_response(run: Run) -> RunResponse:
                     ],
                     pending_action_type=task.pending_action_type,
                     pending_clarification_count=None,  # Will be populated by async route if needed
+                    parent_task_id=task.parent_task_id,
                 )
                 for task in step.tasks
             ],

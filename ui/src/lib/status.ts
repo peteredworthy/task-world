@@ -16,6 +16,7 @@ export function taskStatusColor(status: TaskStatus): string {
     case 'building': return 'bg-status-active/20 text-status-active';
     case 'verifying': return 'bg-accent-purple/20 text-accent-purple';
     case 'recovering': return 'bg-amber-500/20 text-amber-600';
+    case 'fan_out_running': return 'bg-status-active/20 text-status-active';
     case 'completed': return 'bg-status-completed/20 text-status-completed';
     case 'failed': return 'bg-status-failed/20 text-status-failed';
   }
@@ -72,6 +73,8 @@ export function statusHexColor(status: RunStatus | TaskStatus): string {
       return '#eab308';
     case 'recovering':
       return '#f59e0b';
+    case 'fan_out_running':
+      return '#22c55e';
     case 'failed':
       return '#ef4444';
     default:

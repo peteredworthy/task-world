@@ -30,6 +30,8 @@ interface TaskDetailCardProps {
   gradeSummary: GradeSummaryItem[];
   attemptsSummary: AttemptOutcome[];
   runId: string;
+  /** All tasks in the same step, used to find fan-out children */
+  stepTasks?: import('../../types').TaskSummary[];
 }
 
 function eventLabel(eventType: string, payload: Record<string, unknown>): string {
@@ -60,12 +62,12 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
 }
 
 function StatusIcon({ status }: { status: string }) {
-  if (status === 'building' || status === 'verifying' || status === 'recovering') {
+  if (status === 'building' || status === 'verifying' || status === 'recovering' || status === 'fan_out_running') {
     return (
       <span
         className={
           'inline-block h-2.5 w-2.5 rounded-full shrink-0 animate-pulse-dot ' +
-          (status === 'building' ? 'bg-status-active' : status === 'recovering' ? 'bg-amber-500' : 'bg-accent-purple')
+          (status === 'building' || status === 'fan_out_running' ? 'bg-status-active' : status === 'recovering' ? 'bg-amber-500' : 'bg-accent-purple')
         }
       />
     );
@@ -367,12 +369,13 @@ function AttemptCard({
     needsApiPrompt ? taskId : undefined,
   );
 
+  const isScript = att.agent_type === 'script';
   const durationMs = getMetric(att.metrics, 'duration_ms');
   const tokensRead = getMetric(att.metrics, 'tokens_read');
   const tokensWrite = getMetric(att.metrics, 'tokens_write');
   const totalTokens = tokensRead + tokensWrite;
   const hasAgentLogs = att.has_output || att.has_action_log;
-  const hasPrompts = Boolean(att.builder_prompt || att.verifier_prompt || att.outcome);
+  const hasPrompts = !isScript && Boolean(att.builder_prompt || att.verifier_prompt || att.outcome);
   const canSwitchAgentLogView = agentLogCapabilities.hasStructured && agentLogCapabilities.hasRaw;
   const hasBodyContent = Boolean(
     att.error
@@ -471,8 +474,8 @@ function AttemptCard({
             <AutoVerifyResults results={att.auto_verify_results} />
           )}
 
-          {/* Verifier feedback */}
-          {att.verifier_comment && (
+          {/* Verifier feedback (hidden for script tasks) */}
+          {!isScript && att.verifier_comment && (
             <div className="rounded bg-bg-card border border-border-hover px-2.5 py-2">
               <span className="text-[10px] font-semibold text-text-muted uppercase block mb-1">
                 Verifier Feedback
@@ -483,11 +486,11 @@ function AttemptCard({
             </div>
           )}
 
-          {/* Agent Logs / Conversation */}
+          {/* Agent Logs / Script Output */}
           {hasAgentLogs && (
             <div>
               <DisclosureHeader
-                label="Agent Log"
+                label={isScript ? 'Script Output' : 'Agent Log'}
                 open={agentLogOpen}
                 onToggle={() => setAgentLogOpen(!agentLogOpen)}
                 connected
@@ -574,6 +577,123 @@ function AttemptCard({
   );
 }
 
+/** Extract just the filename from a path. */
+function filenameFromPath(path: string): string {
+  const parts = path.split('/');
+  return parts[parts.length - 1] || path;
+}
+
+/** Compact list of fan-out child tasks nested under the parent. */
+function FanOutChildrenSection({
+  childTasks,
+  runId,
+}: {
+  childTasks: import('../../types').TaskSummary[];
+  runId: string;
+}) {
+  const [expandedChildId, setExpandedChildId] = useState<string | null>(null);
+  const completedCount = childTasks.filter(t => t.status === 'completed').length;
+  const failedCount = childTasks.filter(t => t.status === 'failed').length;
+
+  return (
+    <div>
+      <h4 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide mb-2">
+        Fan-out Progress
+        <span className="ml-2 text-text-muted font-mono normal-case">
+          {completedCount}/{childTasks.length} complete
+          {failedCount > 0 && <span className="text-status-failed ml-1">({failedCount} failed)</span>}
+        </span>
+      </h4>
+      <div className="space-y-1">
+        {childTasks.map(child => {
+          const isExpanded = expandedChildId === child.id;
+          return (
+            <FanOutChildRow
+              key={child.id}
+              child={child}
+              runId={runId}
+              isExpanded={isExpanded}
+              onToggle={() => setExpandedChildId(isExpanded ? null : child.id)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** A single row in the fan-out children list; expandable to show attempt details. */
+function FanOutChildRow({
+  child,
+  runId,
+  isExpanded,
+  onToggle,
+}: {
+  child: import('../../types').TaskSummary;
+  runId: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const { data: detail, isLoading } = useTask(runId, isExpanded ? child.id : undefined);
+
+  return (
+    <div className={`rounded border ${COLLAPSIBLE_BORDER_CLASS} overflow-hidden`}>
+      <button
+        onClick={onToggle}
+        className="w-full text-left px-2.5 py-1.5 hover:bg-bg-hover/30 transition-colors"
+        aria-expanded={isExpanded}
+      >
+        <div className="flex items-center gap-2">
+          <StatusIcon status={child.status} />
+          <span className="text-xs text-text-primary truncate flex-1 min-w-0" title={child.title || child.config_id}>
+            {detail?.fan_out_input ? filenameFromPath(detail.fan_out_input) : child.title || child.config_id}
+          </span>
+          {child.current_attempt > 1 && (
+            <span className="text-[10px] text-status-paused font-mono shrink-0">
+              x{child.current_attempt}
+            </span>
+          )}
+          <TaskStatusBadge status={child.status as TaskStatus} />
+          <svg
+            className={'h-3 w-3 text-text-muted shrink-0 transition-transform ' + (isExpanded ? 'rotate-90' : '')}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </button>
+      {isExpanded && (
+        <div className={`border-t ${COLLAPSIBLE_DIVIDER_CLASS} px-2.5 py-2 space-y-2`}>
+          {isLoading ? (
+            <div className="flex justify-center py-3">
+              <Spinner className="h-4 w-4" />
+            </div>
+          ) : detail ? (
+            detail.attempts.length === 0 ? (
+              <p className="text-xs text-text-muted italic">No attempts yet</p>
+            ) : (
+              detail.attempts.map((att, i) => (
+                <AttemptCard
+                  key={att.id}
+                  att={att}
+                  checklist={detail.checklist}
+                  isLatest={i === detail.attempts.length - 1}
+                  taskStatus={child.status}
+                  runId={runId}
+                  taskId={child.id}
+                />
+              ))
+            )
+          ) : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TaskDetailCard({
   taskId,
   taskTitle,
@@ -583,6 +703,7 @@ export function TaskDetailCard({
   gradeSummary,
   attemptsSummary,
   runId,
+  stepTasks,
 }: TaskDetailCardProps) {
   const [expanded, setExpanded] = useState(false);
   const { data: detail, isLoading } = useTask(runId, expanded ? taskId : undefined);
@@ -723,6 +844,13 @@ export function TaskDetailCard({
                   </p>
                 </div>
               )}
+
+              {/* Fan-out children — shown when this task is a fan-out parent */}
+              {(() => {
+                const childTasks = (stepTasks ?? []).filter(t => t.parent_task_id === taskId);
+                if (childTasks.length === 0) return null;
+                return <FanOutChildrenSection childTasks={childTasks} runId={runId} />;
+              })()}
 
               {/* Attempt History */}
               {detail.attempts.length === 0 ? (

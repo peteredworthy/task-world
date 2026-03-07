@@ -103,11 +103,11 @@ function TaskGroupCard({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
             {/* Status dot / icon */}
-            {currentStatus === 'building' || currentStatus === 'verifying' ? (
+            {currentStatus === 'building' || currentStatus === 'verifying' || currentStatus === 'fan_out_running' ? (
               <span
                 className={
                   'inline-block h-2 w-2 rounded-full shrink-0 animate-pulse-dot ' +
-                  (currentStatus === 'building' ? 'bg-status-active' : 'bg-accent-purple')
+                  (currentStatus === 'building' || currentStatus === 'fan_out_running' ? 'bg-status-active' : 'bg-accent-purple')
                 }
               />
             ) : currentStatus === 'completed' ? (
@@ -213,11 +213,11 @@ function ActiveTaskCard({
       <div className="px-3 py-2.5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2 min-w-0">
-            {status === 'building' || status === 'verifying' ? (
+            {status === 'building' || status === 'verifying' || status === 'fan_out_running' ? (
               <span
                 className={
                   'inline-block h-2 w-2 rounded-full shrink-0 animate-pulse-dot ' +
-                  (status === 'building' ? 'bg-status-active' : 'bg-accent-purple')
+                  (status === 'building' || status === 'fan_out_running' ? 'bg-status-active' : 'bg-accent-purple')
                 }
               />
             ) : status === 'completed' ? (
@@ -273,8 +273,9 @@ function StepSection({
 }) {
   const [expanded, setExpanded] = useState(() => defaultStepExpanded(step));
 
-  const totalTasks = step.tasks.length;
-  const doneTasks = step.tasks.filter(t => t.status === 'completed' || t.status === 'failed').length;
+  const topLevelTasks = step.tasks.filter(t => !t.parent_task_id);
+  const totalTasks = topLevelTasks.length;
+  const doneTasks = topLevelTasks.filter(t => t.status === 'completed' || t.status === 'failed').length;
 
   return (
     <div className={`rounded-lg border ${COLLAPSIBLE_BORDER_CLASS} bg-bg-elevated overflow-hidden`}>
@@ -360,9 +361,12 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
     return (
       <div className="space-y-3" role="feed" aria-label="Activity log">
         {allSteps.map((step, stepIdx) => {
-          // Collect task cards for this step (only tasks that have activity or a status)
+          // Collect task cards for this step (only top-level tasks; children are nested under parents)
           const stepTaskCards: ReactNode[] = [];
           for (const taskSummary of step.tasks) {
+            // Skip child tasks — they appear nested under their fan-out parent
+            if (taskSummary.parent_task_id) continue;
+
             const taskId = taskSummary.id;
             const taskTitle = taskSummary.title || taskSummary.config_id;
             const stepTitle = step.title || step.config_id;
@@ -381,6 +385,7 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
                   gradeSummary={taskSummary.grade_summary}
                   attemptsSummary={taskSummary.attempts_summary}
                   runId={run!.id}
+                  stepTasks={step.tasks}
                 />,
               );
             } else if (statusOnly || taskSummary.status !== 'pending') {
@@ -396,6 +401,7 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
                   gradeSummary={taskSummary.grade_summary}
                   attemptsSummary={taskSummary.attempts_summary}
                   runId={run!.id}
+                  stepTasks={step.tasks}
                 />,
               );
             }

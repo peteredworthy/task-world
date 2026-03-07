@@ -31,7 +31,7 @@ function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | nu
   if (run.status !== 'active') return { stuck: false, failedTask: null };
   for (const step of run.steps) {
     const failed = step.tasks.find(
-      t => t.status === 'failed' && t.current_attempt >= t.max_attempts,
+      t => !t.parent_task_id && t.status === 'failed' && t.current_attempt >= t.max_attempts,
     );
     if (failed) {
       return { stuck: true, failedTask: failed.title || failed.config_id };

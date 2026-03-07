@@ -97,6 +97,7 @@ class TaskSummary(ApiModel):
     attempts_summary: list[AttemptOutcome] = []
     pending_action_type: str | None = None  # "clarification" | "approval" | None
     pending_clarification_count: int | None = None
+    parent_task_id: str | None = None
 
 
 class StepSummary(ApiModel):

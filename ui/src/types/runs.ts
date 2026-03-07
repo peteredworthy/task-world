@@ -21,6 +21,7 @@ export interface TaskSummary {
   attempts_summary: AttemptOutcome[];
   pending_action_type: 'clarification' | 'approval' | null;
   pending_clarification_count: number | null;
+  parent_task_id: string | null;
 }
 
 export interface StepSummary {
