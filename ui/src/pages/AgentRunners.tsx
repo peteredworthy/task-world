@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { useAgents } from '../hooks/useApi';
 import { Spinner } from '../components/Spinner';
@@ -10,7 +10,16 @@ import {
   loadAgentFieldDefaults,
   saveAgentFieldDefault,
 } from '../components/agentRunnerConfigUtils';
+import { fetchRunnerProfiles, saveRunnerProfiles } from '../api/client';
 import type { AgentRunnerOption } from '../types/agentRunners';
+import type { ModelProfile, RunnerProfileDefaults } from '../types/modelProfiles';
+
+const MODEL_PROFILES: { key: ModelProfile; label: string }[] = [
+  { key: 'architect', label: 'Architect' },
+  { key: 'designer', label: 'Designer' },
+  { key: 'coder', label: 'Coder' },
+  { key: 'summarizer', label: 'Summarizer' },
+];
 
 export function AgentRunners() {
   const { data, isLoading, error } = useAgents();
@@ -130,6 +139,37 @@ function AgentRunnerCard({ agent }: { agent: AgentRunnerOption }) {
   const [restrictionsValue, setRestrictionsValue] = useState(initialRestrictions);
 
   const [showFullConfig, setShowFullConfig] = useState(false);
+  const [showModelProfiles, setShowModelProfiles] = useState(false);
+  const [profileModels, setProfileModels] = useState<Partial<Record<ModelProfile, string>>>({});
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSaveStatus, setProfileSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+
+  useEffect(() => {
+    fetchRunnerProfiles(agent.agent_type)
+      .then((data: RunnerProfileDefaults) => {
+        setProfileModels(data.profiles ?? {});
+      })
+      .catch(() => {
+        // ignore load errors; start empty
+      });
+  }, [agent.agent_type]);
+
+  const handleSaveProfiles = useCallback(() => {
+    setProfileSaving(true);
+    setProfileSaveStatus('idle');
+    saveRunnerProfiles(agent.agent_type, { runner_type: agent.agent_type, profiles: profileModels })
+      .then(() => {
+        setProfileSaveStatus('saved');
+        setTimeout(() => setProfileSaveStatus('idle'), 2000);
+      })
+      .catch(() => {
+        setProfileSaveStatus('error');
+      })
+      .finally(() => {
+        setProfileSaving(false);
+      });
+  }, [agent.agent_type, profileModels]);
+
   const [fullConfigValues, setFullConfigValues] = useState<Record<string, unknown>>(() => {
     const values: Record<string, unknown> = {};
     agent.config_schema.forEach((field) => {
@@ -276,6 +316,56 @@ function AgentRunnerCard({ agent }: { agent: AgentRunnerOption }) {
               />
             </div>
           )}
+
+          {/* Model Profiles — collapsible section */}
+          <div className="pt-2">
+            <button
+              onClick={() => setShowModelProfiles(!showModelProfiles)}
+              className="text-xs font-medium text-accent-purple hover:text-accent-purple/80 transition-colors"
+            >
+              {showModelProfiles ? '▼ Hide model profiles' : '▶ Model profiles'}
+            </button>
+
+            {showModelProfiles && (
+              <div className="mt-2 pt-2 border-t border-border/50 space-y-2">
+                <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide">
+                  Per-profile model overrides
+                </p>
+                {MODEL_PROFILES.map(({ key, label }) => (
+                  <div key={key}>
+                    <p className="text-[10px] text-text-muted mb-0.5">{label}</p>
+                    <input
+                      type="text"
+                      value={profileModels[key] ?? ''}
+                      onChange={(e) =>
+                        setProfileModels((prev) => ({
+                          ...prev,
+                          [key]: e.target.value,
+                        }))
+                      }
+                      placeholder="Runner default"
+                      className="w-full rounded border border-border bg-bg-elevated px-2 py-1 text-xs font-mono text-text-primary focus:outline-none focus:border-accent-purple/50"
+                    />
+                  </div>
+                ))}
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    onClick={handleSaveProfiles}
+                    disabled={profileSaving}
+                    className="px-3 py-1 rounded bg-accent-purple/20 border border-accent-purple/40 text-xs font-medium text-accent-purple hover:bg-accent-purple/30 transition-colors disabled:opacity-50"
+                  >
+                    {profileSaving ? 'Saving…' : 'Save'}
+                  </button>
+                  {profileSaveStatus === 'saved' && (
+                    <span className="text-xs text-green-400">Saved</span>
+                  )}
+                  {profileSaveStatus === 'error' && (
+                    <span className="text-xs text-red-400">Failed to save</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Other visible config fields (read-only summary) — only when not expanded */}
           {!showFullConfig && otherFields.length > 0 && (
