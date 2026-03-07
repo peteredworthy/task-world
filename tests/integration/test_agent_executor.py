@@ -439,12 +439,19 @@ async def test_executor_persists_builder_prompt_before_execution(
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    # Poll until the run is paused
+    # Poll until the run is paused AND the task has been started (has attempts).
+    # The monitor may pause the run before start_task commits in heavy-load scenarios,
+    # so we keep polling until both conditions are true.
     for _ in range(200):
         async with session_factory() as session:
             repo = RunRepository(session)
             run = await repo.get(run_id)
-            if run.status == RunStatus.PAUSED:
+            if (
+                run.status == RunStatus.PAUSED
+                and run.steps
+                and run.steps[0].tasks
+                and run.steps[0].tasks[0].attempts
+            ):
                 break
         await asyncio.sleep(0.05)
 

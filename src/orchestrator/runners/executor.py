@@ -870,8 +870,11 @@ class AgentRunnerExecutor:
             mcp_servers=mcp_servers,
         )
 
-        # Store the builder prompt BEFORE agent execution
-        await self._store_attempt_prompt(run.id, task_state.id, builder_prompt=context.prompt)
+        # Store the builder prompt BEFORE agent execution.
+        # Pass the existing session to avoid StaticPool concurrency issues.
+        await self._store_attempt_prompt(
+            run.id, task_state.id, builder_prompt=context.prompt, session=session
+        )
 
         # Define callbacks that use the service
         async def on_checklist_update(
@@ -1422,30 +1425,40 @@ class AgentRunnerExecutor:
         task_id: str,
         builder_prompt: str | None = None,
         verifier_prompt: str | None = None,
+        session: "AsyncSession | None" = None,
     ) -> None:
         """Store builder or verifier prompt on the current attempt.
 
         This should be called BEFORE agent execution so the prompt is
         available even if the agent crashes.
-        """
-        try:
-            async with self._session_factory() as session:
-                from orchestrator.db.repositories import RunRepository
 
-                repo = RunRepository(session)
-                run = await repo.get(run_id)
-                # Find the task and its latest attempt
-                for step in run.steps:
-                    for task in step.tasks:
-                        if task.id == task_id and task.attempts:
-                            attempt = task.attempts[-1]
-                            if builder_prompt is not None:
-                                attempt.builder_prompt = builder_prompt
-                            if verifier_prompt is not None:
-                                attempt.verifier_prompt = verifier_prompt
-                            await repo.save(run)
-                            await session.commit()
-                            return
+        If a session is provided, it is used directly (and committed) rather
+        than opening a new one.  This avoids StaticPool concurrency issues in
+        tests where all sessions share the same underlying connection.
+        """
+        from orchestrator.db.repositories import RunRepository
+
+        async def _do_store(s: "AsyncSession") -> None:
+            repo = RunRepository(s)
+            run = await repo.get(run_id)
+            for step in run.steps:
+                for task in step.tasks:
+                    if task.id == task_id and task.attempts:
+                        attempt = task.attempts[-1]
+                        if builder_prompt is not None:
+                            attempt.builder_prompt = builder_prompt
+                        if verifier_prompt is not None:
+                            attempt.verifier_prompt = verifier_prompt
+                        await repo.save(run)
+                        await s.commit()
+                        return
+
+        try:
+            if session is not None:
+                await _do_store(session)
+            else:
+                async with self._session_factory() as new_session:
+                    await _do_store(new_session)
         except Exception:
             logger.debug(f"Failed to store attempt prompt for {task_id}", exc_info=True)
 
