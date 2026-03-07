@@ -16,6 +16,55 @@ from orchestrator.agents.models import AgentConfigModel
 from orchestrator.agents.schemas import AgentSchema, CreateAgentRequest, UpdateAgentRequest
 from orchestrator.config.enums import ModelProfile
 
+_PLANNER_PROMPT = (
+    "You are a Planner agent. Your role is to break down high-level goals into "
+    "clear, actionable steps. Analyse the requirements, identify dependencies, "
+    "and produce a structured plan that builders can execute sequentially. "
+    "Favour clarity and completeness over brevity."
+)
+
+_BUILDER_PROMPT = (
+    "You are a Builder agent. Your role is to implement the requirements listed "
+    "in the task checklist. Write clean, idiomatic code that satisfies every "
+    "requirement. Mark each requirement done as you complete it, then submit "
+    "for verification when all are addressed."
+)
+
+_VERIFIER_PROMPT = (
+    "You are a Verifier agent. Your role is to review the builder's work and "
+    "grade each requirement objectively. Assign a letter grade (A–F) with a "
+    "brief reason. Be precise: pass only work that genuinely meets the bar. "
+    "If critical requirements fail, mark the task for revision."
+)
+
+_DEFAULT_AGENTS: list[tuple[str, ModelProfile, str]] = [
+    ("Planner", ModelProfile.ARCHITECT, _PLANNER_PROMPT),
+    ("Builder", ModelProfile.CODER, _BUILDER_PROMPT),
+    ("Verifier", ModelProfile.CODER, _VERIFIER_PROMPT),
+]
+
+
+async def seed_default_agents(session: AsyncSession) -> None:
+    """Insert the three factory-default agents if they do not already exist."""
+    now = datetime.now(timezone.utc)
+    for name, profile, prompt in _DEFAULT_AGENTS:
+        existing = await session.execute(
+            select(AgentConfigModel).where(AgentConfigModel.name == name)
+        )
+        if existing.scalar_one_or_none() is not None:
+            continue
+        model = AgentConfigModel(
+            id=str(uuid.uuid4()),
+            name=name,
+            system_prompt=prompt,
+            default_prompt=prompt,
+            model_profile=profile.value,
+            created_at=now,
+            updated_at=now,
+        )
+        session.add(model)
+    await session.commit()
+
 
 async def list_agents(session: AsyncSession) -> list[AgentSchema]:
     return await AgentService(session).list_agents()

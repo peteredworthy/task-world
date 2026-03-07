@@ -53,7 +53,7 @@ async def get_agent(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@router.patch("/{agent_id}", response_model=AgentSchema)
+@router.put("/{agent_id}", response_model=AgentSchema)
 async def update_agent(
     agent_id: str,
     req: UpdateAgentRequest,
