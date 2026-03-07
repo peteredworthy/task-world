@@ -17,6 +17,28 @@ from orchestrator.agents.schemas import AgentSchema, CreateAgentRequest, UpdateA
 from orchestrator.config.enums import ModelProfile
 
 
+async def list_agents(session: AsyncSession) -> list[AgentSchema]:
+    return await AgentService(session).list_agents()
+
+
+async def get_agent(session: AsyncSession, agent_id: str) -> AgentSchema:
+    return await AgentService(session).get_agent(agent_id)
+
+
+async def create_agent(session: AsyncSession, req: CreateAgentRequest) -> AgentSchema:
+    return await AgentService(session).create_agent(req)
+
+
+async def update_agent(
+    session: AsyncSession, agent_id: str, req: UpdateAgentRequest
+) -> AgentSchema:
+    return await AgentService(session).update_agent(agent_id, req)
+
+
+async def delete_agent(session: AsyncSession, agent_id: str) -> None:
+    return await AgentService(session).delete_agent(agent_id)
+
+
 def _to_schema(model: AgentConfigModel) -> AgentSchema:
     return AgentSchema(
         id=model.id,
