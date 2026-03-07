@@ -217,9 +217,15 @@ def test_ws_clarification_responded() -> None:
             assert create_resp.status_code == 200
             request_id = create_resp.json()["id"]
 
-            requested_msg = ws.receive_json()
-            requested_events = _extract_events(requested_msg)
-            assert any(e.get("event_type") == "clarification_requested" for e in requested_events)
+            # Drain messages until we find the clarification_requested event
+            # (earlier messages may be status-change broadcasts from setup)
+            for _ in range(5):
+                requested_msg = ws.receive_json()
+                requested_events = _extract_events(requested_msg)
+                if any(e.get("event_type") == "clarification_requested" for e in requested_events):
+                    break
+            else:
+                raise AssertionError("clarification_requested event not received within 5 messages")
 
             # Clarification response follows immediately; avoid throttle drops.
             time.sleep(0.11)
