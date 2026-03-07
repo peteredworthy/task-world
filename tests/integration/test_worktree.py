@@ -1,8 +1,6 @@
 """Integration tests for WorktreeManager."""
 
 import subprocess
-import tempfile
-from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -13,45 +11,43 @@ from orchestrator.git.worktree import WorktreeManager
 
 
 @pytest.fixture
-def git_repo() -> Generator[tuple[Path, Path], None, None]:
+def git_repo(tmp_path: Path) -> tuple[Path, Path]:
     """Create a temporary git repository and worktrees directory for testing.
 
-    Yields:
+    Returns:
         Tuple of (repo_path, worktrees_dir)
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        base = Path(tmpdir)
-        repo = base / "repo"
-        worktrees = base / "worktrees"
-        repo.mkdir()
-        worktrees.mkdir()
+    repo = tmp_path / "repo"
+    worktrees = tmp_path / "worktrees"
+    repo.mkdir()
+    worktrees.mkdir()
 
-        # Initialize git repo
-        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
+    # Initialize git repo
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
 
-        # Create initial commit
-        (repo / "README.md").write_text("# Test Repo\n")
-        subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", "Initial commit"],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
+    # Create initial commit
+    (repo / "README.md").write_text("# Test Repo\n")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial commit"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
 
-        yield repo, worktrees
+    return repo, worktrees
 
 
 def test_create_worktree(git_repo: tuple[Path, Path]) -> None:

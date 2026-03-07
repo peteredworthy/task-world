@@ -1,6 +1,7 @@
 """Shared test fixtures and configuration."""
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 from dotenv import load_dotenv
@@ -10,6 +11,28 @@ from orchestrator.workflow.events import WorkflowEvent
 # Load .env before test collection so that skipif conditions
 # (e.g. os.getenv("OPENAI_API_KEY")) see the values.
 load_dotenv()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Isolate git operations from the project repo and pre-commit state.
+
+    Under pytest-xdist (especially inside pre-commit hooks), git env vars
+    like ``GIT_INDEX_FILE``, ``GIT_DIR``, ``GIT_AUTHOR_NAME`` etc. leak
+    into subprocess calls, causing index errors or wrong author names.
+    Clearing them ensures each test's temp repo is fully self-contained.
+    """
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    for var in (
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+    ):
+        monkeypatch.delenv(var, raising=False)
 
 
 # ---------------------------------------------------------------------------
