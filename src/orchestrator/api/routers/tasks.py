@@ -6,10 +6,14 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from orchestrator.agents.resolution import get_agent_system_prompt, resolve_agent_name
 from orchestrator.api.deps import (
     get_current_user,
     get_routine_dirs,
     get_run_repository,
+    get_session,
     get_workflow_service,
 )
 from orchestrator.api.schemas.tasks import (
@@ -425,6 +429,7 @@ async def get_task_prompt(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     repo: Annotated[RunRepository, Depends(get_run_repository)],
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> PromptResponse:
     """Get the appropriate prompt for a task based on its current status.
 
@@ -469,6 +474,8 @@ async def get_task_prompt(
     task_config = None
     step_context: str | None = None
     mcp_servers: list[MCPServerConfig] | None = None
+    step_builder_agent: str | None = None
+    step_verifier_agent: str | None = None
     for step in routine_config.steps:
         if step_config_id is not None and step.id != step_config_id:
             continue
@@ -477,6 +484,8 @@ async def get_task_prompt(
                 task_config = task
                 step_context = step.step_context
                 mcp_servers = step.mcp_servers
+                step_builder_agent = step.builder_agent
+                step_verifier_agent = step.verifier_agent
                 break
         if task_config is not None:
             break
@@ -533,15 +542,35 @@ async def get_task_prompt(
             skip_reason=skip_reason,
             decisions=decisions,
         )
-        return PromptResponse(
-            system=prompt.system, user=prompt.user, phase="building", callback=callback
+        agent_name = resolve_agent_name(
+            "builder",
+            task_config.builder_agent,
+            step_builder_agent,
+            routine_config.builder_agent,
         )
+        agent_system_prompt = await get_agent_system_prompt(session, agent_name)
+        system = (
+            agent_system_prompt + "\n\n---\n\n" + prompt.system
+            if agent_system_prompt
+            else prompt.system
+        )
+        return PromptResponse(system=system, user=prompt.user, phase="building", callback=callback)
     else:
         # TaskStatus.VERIFYING
         prompt = generate_verifier_prompt(task_config, task_state, step_context=step_context)
-        return PromptResponse(
-            system=prompt.system, user=prompt.user, phase="verifying", callback=callback
+        agent_name = resolve_agent_name(
+            "verifier",
+            task_config.verifier_agent,
+            step_verifier_agent,
+            routine_config.verifier_agent,
         )
+        agent_system_prompt = await get_agent_system_prompt(session, agent_name)
+        system = (
+            agent_system_prompt + "\n\n---\n\n" + prompt.system
+            if agent_system_prompt
+            else prompt.system
+        )
+        return PromptResponse(system=system, user=prompt.user, phase="verifying", callback=callback)
 
 
 @router.get("/{run_id}/tasks/{task_id}/attempts/{attempt_num}/logs")
