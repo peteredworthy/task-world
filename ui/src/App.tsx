@@ -20,7 +20,7 @@ export default function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/runs/:runId" element={<RunDetail />} />
             <Route path="/routines" element={<RoutineLibrary />} />
-            <Route path="/agents" element={<AgentRunners />} />
+            <Route path="/agent-runners" element={<AgentRunners />} />
             <Route path="/history" element={<History />} />
             <Route path="/repos" element={<Repos />} />
             <Route path="*" element={<NotFound />} />

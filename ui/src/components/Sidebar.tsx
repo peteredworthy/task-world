@@ -7,7 +7,7 @@ import type { AgentRunnerOption, QuotaBucket } from '../types/agentRunners';
 const navItems = [
   { icon: '▣', label: 'Dashboard', path: '/' },
   { icon: '📁', label: 'Repositories', path: '/repos' },
-  { icon: '🤖', label: 'Agents', path: '/agents' },
+  { icon: '🤖', label: 'Agent Runners', path: '/agent-runners' },
   { icon: '📋', label: 'Routine Library', path: '/routines' },
   { icon: '⏱', label: 'History', path: '/history' },
 ];
