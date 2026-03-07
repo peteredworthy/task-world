@@ -43,6 +43,7 @@ from orchestrator.workflow.clarifications import (
 )
 from orchestrator.workflow.engine import Clock, WorkflowEngine
 from orchestrator.workflow.prompts import generate_builder_prompt, generate_recovery_prompt
+from orchestrator.workflow.templates import resolve_template
 from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import (
@@ -691,6 +692,279 @@ class WorkflowService:
         engine.transition_backward(run_id, target_step_index, reason)
         return await self._persist(state, run_id, buffer)
 
+    async def expand_fan_out_task(self, run_id: str, task_id: str) -> list[TaskState]:
+        """Expand a fan-out task into parallel child tasks.
+
+        1. Load run, find parent task and its TaskConfig
+        2. Resolve input_glob in the worktree
+        3. For each matching file, create a child TaskState
+        4. Add children to the step's task list
+        5. Set parent status to FAN_OUT_RUNNING
+        6. Persist and return children
+
+        Returns:
+            List of newly created child TaskState objects
+        """
+        import glob as glob_mod
+        import logging
+
+        from orchestrator.workflow.templates import derive_output_path
+
+        logger = logging.getLogger(__name__)
+
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(
+                run.status.value, "expand_fan_out_task (requires ACTIVE run)"
+            )
+
+        if run.routine_embedded is None:
+            raise InvalidTransitionError("no routine", "expand_fan_out_task (requires routine)")
+
+        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+
+        # Find the parent task state and its step
+        parent_task: TaskState | None = None
+        parent_step: StepState | None = None
+        step_config_id: str | None = None
+        for step in run.steps:
+            for task in step.tasks:
+                if task.id == task_id:
+                    parent_task = task
+                    parent_step = step
+                    step_config_id = step.config_id
+                    break
+            if parent_task is not None:
+                break
+
+        if parent_task is None or parent_step is None:
+            raise TaskNotFoundError(run_id, task_id)
+
+        # Find the task config with fan_out
+        task_config = find_task_config(routine_config, parent_task.config_id, step_config_id)
+        if task_config is None or task_config.fan_out is None:
+            raise InvalidTransitionError(
+                "no fan_out config",
+                "expand_fan_out_task (requires fan_out in task config)",
+            )
+
+        fan_out = task_config.fan_out
+        worktree_path = run.worktree_path
+        if not worktree_path:
+            raise InvalidTransitionError(
+                "no worktree", "expand_fan_out_task (requires worktree_path)"
+            )
+
+        # Resolve input_glob relative to worktree
+        pattern = str(Path(worktree_path) / fan_out.input_glob)
+        matched_files = sorted(glob_mod.glob(pattern, recursive=True))
+
+        if not matched_files:
+            logger.warning(
+                f"Run {run_id}: fan-out task {task_id}: no files matched "
+                f"glob '{fan_out.input_glob}' in {worktree_path}"
+            )
+
+        # Template variables from run config
+        variables: dict[str, str] = {k: str(v) for k, v in run.config.items() if v is not None}
+
+        # Create child tasks
+        children: list[TaskState] = []
+        for index, abs_path in enumerate(matched_files):
+            # Convert to relative path within worktree
+            rel_path = str(Path(abs_path).relative_to(worktree_path))
+            output_path = derive_output_path(fan_out.output_pattern, rel_path, variables)
+            input_name = Path(rel_path).name
+
+            from orchestrator.state.models import generate_id
+
+            child = TaskState(
+                id=generate_id(),
+                config_id=f"{parent_task.config_id}_fan_{index}",
+                title=f"{parent_task.title} [{input_name}]",
+                status=TaskStatus.PENDING,
+                max_attempts=fan_out.max_attempts,
+                has_verification=False,
+                parent_task_id=parent_task.id,
+                fan_out_index=index,
+                fan_out_input=rel_path,
+                fan_out_output=output_path,
+            )
+            children.append(child)
+
+        # Add children to the step's task list
+        parent_step.tasks.extend(children)
+
+        # Set parent to FAN_OUT_RUNNING
+        parent_task.status = TaskStatus.FAN_OUT_RUNNING
+
+        # Persist
+        await self._repo.save(run)
+        await self._session.commit()
+
+        logger.info(
+            f"Run {run_id}: expanded fan-out task {task_id} into "
+            f"{len(children)} children from glob '{fan_out.input_glob}'"
+        )
+
+        return children
+
+    async def complete_fan_out_parent(
+        self,
+        run_id: str,
+        task_id: str,
+        *,
+        all_passed: bool,
+        to_verifying: bool = False,
+    ) -> None:
+        """Transition a fan-out parent task after all children finish.
+
+        Args:
+            run_id: The run ID
+            task_id: The parent task ID (must be FAN_OUT_RUNNING)
+            all_passed: True if all children completed successfully
+            to_verifying: If True and all_passed, move to VERIFYING (for outer LLM verifier)
+        """
+        import logging
+        from orchestrator.workflow.transitions import (
+            check_run_completion,
+            check_step_progression,
+        )
+        from orchestrator.workflow.events import StepCompleted
+
+        logger = logging.getLogger(__name__)
+
+        run = await self._repo.get(run_id)
+        engine, state, buffer = self._build_engine(run)
+
+        parent_task = state.get_task(run_id, task_id)
+        if parent_task.status != TaskStatus.FAN_OUT_RUNNING:
+            raise InvalidTransitionError(
+                parent_task.status.value,
+                "complete_fan_out_parent (requires FAN_OUT_RUNNING)",
+            )
+
+        old_status = parent_task.status
+
+        if not all_passed:
+            parent_task.status = TaskStatus.FAILED
+            new_status = TaskStatus.FAILED
+            # Pause the run
+            engine.pause_run(run_id, reason="fan_out_child_failed")
+        elif to_verifying:
+            parent_task.status = TaskStatus.VERIFYING
+            new_status = TaskStatus.VERIFYING
+        else:
+            parent_task.status = TaskStatus.COMPLETED
+            new_status = TaskStatus.COMPLETED
+
+        buffer.emit(
+            TaskStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="task_status_changed",
+                task_id=task_id,
+                old_status=old_status,
+                new_status=new_status,
+            )
+        )
+
+        # Check step/run completion for terminal states
+        if new_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            updated_run = state.get_run(run_id)
+            prev_step_index = updated_run.current_step_index
+            step_changed = check_step_progression(updated_run)
+
+            if step_changed:
+                for i in range(prev_step_index, updated_run.current_step_index + 1):
+                    step = updated_run.steps[i]
+                    if step.completed:
+                        buffer.emit(
+                            StepCompleted(
+                                timestamp=self._clock.now(),
+                                run_id=run_id,
+                                event_type="step_completed",
+                                step_index=i,
+                                step_id=step.id,
+                            )
+                        )
+
+                old_run_status = updated_run.status
+                new_run_status = check_run_completion(updated_run, self._clock.now())
+                if new_run_status is not None:
+                    buffer.emit(
+                        RunStatusChanged(
+                            timestamp=self._clock.now(),
+                            run_id=run_id,
+                            event_type="run_status_changed",
+                            old_status=old_run_status,
+                            new_status=new_run_status,
+                        )
+                    )
+
+            state.update_run(updated_run)
+
+        await self._persist(state, run_id, buffer)
+
+        logger.info(
+            f"Run {run_id}: fan-out parent {task_id} transitioned "
+            f"from {old_status.value} to {new_status.value}"
+        )
+
+    async def reset_fan_out_children(self, run_id: str, parent_task_id: str) -> None:
+        """Reset all children of a fan-out parent to PENDING for re-execution.
+
+        Also sets the parent task status to FAN_OUT_RUNNING.
+        """
+        run = await self._repo.get(run_id)
+        for step in run.steps:
+            for task in step.tasks:
+                if task.parent_task_id == parent_task_id:
+                    task.status = TaskStatus.PENDING
+        # Find and update parent status
+        for step in run.steps:
+            for task in step.tasks:
+                if task.id == parent_task_id:
+                    task.status = TaskStatus.FAN_OUT_RUNNING
+                    break
+        await self._repo.save(run)
+        await self._session.commit()
+
+    async def update_child_task_state(
+        self,
+        run_id: str,
+        task_id: str,
+        updates: dict[str, Any],
+    ) -> None:
+        """Update a child task's state fields (outcome, error, status, auto_verify_results).
+
+        Loads the run, finds the task, applies the updates dict to the task's
+        latest attempt and/or the task itself, then persists.
+
+        Supported keys in ``updates``:
+        - ``outcome`` (str): set on latest attempt
+        - ``error`` (str): set on latest attempt
+        - ``completed_at`` (datetime): set on latest attempt
+        - ``auto_verify_results`` (list): set on latest attempt
+        - ``status`` (TaskStatus): set on the task itself
+        """
+        run = await self._repo.get(run_id)
+        for step in run.steps:
+            for t in step.tasks:
+                if t.id == task_id:
+                    # Apply attempt-level updates
+                    if t.attempts:
+                        attempt = t.attempts[-1]
+                        for key in ("outcome", "error", "completed_at", "auto_verify_results"):
+                            if key in updates:
+                                setattr(attempt, key, updates[key])
+                    # Apply task-level updates
+                    if "status" in updates:
+                        t.status = updates["status"]
+                    break
+        await self._repo.save(run)
+        await self._session.commit()
+
     async def start_task(self, run_id: str, task_id: str) -> TransitionResult:
         """Start building a task (PENDING -> BUILDING)."""
         run = await self._repo.get(run_id)
@@ -723,6 +997,213 @@ class WorkflowService:
             )
 
         return result
+
+    async def execute_script_task(self, run_id: str, task_id: str) -> TransitionResult:
+        """Execute a script-only task.
+
+        Runs the shell script from the task config, captures output, and
+        completes or fails the task based on the exit code. Script tasks
+        skip the verification phase entirely -- the script result IS the
+        verification.
+
+        Flow:
+        1. Start the task (PENDING -> BUILDING, creates an Attempt)
+        2. Resolve template variables in the script string
+        3. Run the script via asyncio.create_subprocess_shell in the worktree
+        4. If exit 0: mark task COMPLETED (attempt outcome="passed")
+        5. If non-zero: mark task FAILED, pause the run
+        """
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(
+                run.status.value, "execute_script_task (requires ACTIVE run)"
+            )
+
+        # Find the TaskConfig from the routine to get the script
+        if run.routine_embedded is None:
+            raise InvalidTransitionError("no routine", "execute_script_task (requires routine)")
+
+        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+
+        # Find the task state to get config_id
+        task_state: TaskState | None = None
+        for step in run.steps:
+            for task in step.tasks:
+                if task.id == task_id:
+                    task_state = task
+                    break
+            if task_state is not None:
+                break
+
+        if task_state is None:
+            raise TaskNotFoundError(run_id, task_id)
+
+        # Find matching task config
+        task_config: TaskConfig | None = None
+        for step_cfg in routine_config.steps:
+            for tc in step_cfg.tasks:
+                if tc.id == task_state.config_id:
+                    task_config = tc
+                    break
+            if task_config is not None:
+                break
+
+        if task_config is None or task_config.script is None:
+            raise InvalidTransitionError(
+                "no script config", "execute_script_task (requires script in task config)"
+            )
+
+        # 1. Start the task (creates an Attempt, moves to BUILDING)
+        engine, state, buffer = self._build_engine(run)
+        start_result = engine.start_task(run_id, task_id)
+        if not start_result.success:
+            await self._persist(state, run_id, buffer)
+            return start_result
+
+        # Tag the attempt as a script execution
+        task_in_state = state.get_task(run_id, task_id)
+        if task_in_state.attempts:
+            attempt = task_in_state.attempts[-1]
+            attempt.agent_type = AgentRunnerType.SCRIPT
+
+        await self._persist(state, run_id, buffer)
+
+        # 2. Resolve template variables in the script
+        template_vars: dict[str, str] = {k: str(v) for k, v in run.config.items() if v is not None}
+        worktree_path = run.worktree_path
+        resolved_script = resolve_template(
+            task_config.script,
+            variables=template_vars,
+            worktree_path=worktree_path,
+        )
+
+        # 3. Run the script
+        logger.info(f"Run {run_id}: executing script task {task_id}: {resolved_script!r}")
+
+        cwd = worktree_path or "."
+        try:
+            proc = await asyncio.create_subprocess_shell(
+                resolved_script,
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout_bytes, _ = await proc.communicate()
+            output = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+            exit_code = proc.returncode or 0
+        except Exception as e:
+            output = f"Failed to execute script: {e}"
+            exit_code = 1
+
+        # Re-load state for the next transition
+        run = await self._repo.get(run_id)
+        engine, state, buffer = self._build_engine(run)
+        task_in_state = state.get_task(run_id, task_id)
+
+        if exit_code == 0:
+            # 4a. Success: store output, mark COMPLETED
+            if task_in_state.attempts:
+                attempt = task_in_state.attempts[-1]
+                attempt.agent_output = output
+                attempt.outcome = "passed"
+                attempt.completed_at = self._clock.now()
+
+            # Transition: BUILDING -> VERIFYING -> COMPLETED
+            # Since script tasks have no verification, we go directly through
+            # submit_for_verification and complete_verification via the engine
+            from orchestrator.workflow.transitions import (
+                check_run_completion,
+                check_step_progression,
+            )
+
+            task_in_state.status = TaskStatus.COMPLETED
+            state.update_run(state.get_run(run_id))
+
+            # Emit task status changed event
+            buffer.emit(
+                TaskStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="task_status_changed",
+                    task_id=task_id,
+                    old_status=TaskStatus.BUILDING,
+                    new_status=TaskStatus.COMPLETED,
+                )
+            )
+
+            # Check step/run completion
+            updated_run = state.get_run(run_id)
+            prev_step_index = updated_run.current_step_index
+            step_changed = check_step_progression(updated_run)
+
+            if step_changed:
+                from orchestrator.workflow.events import StepCompleted
+
+                for i in range(prev_step_index, updated_run.current_step_index + 1):
+                    step = updated_run.steps[i]
+                    if step.completed:
+                        buffer.emit(
+                            StepCompleted(
+                                timestamp=self._clock.now(),
+                                run_id=run_id,
+                                event_type="step_completed",
+                                step_index=i,
+                                step_id=step.id,
+                            )
+                        )
+
+                old_run_status = updated_run.status
+                new_run_status = check_run_completion(updated_run, self._clock.now())
+                if new_run_status is not None:
+                    buffer.emit(
+                        RunStatusChanged(
+                            timestamp=self._clock.now(),
+                            run_id=run_id,
+                            event_type="run_status_changed",
+                            old_status=old_run_status,
+                            new_status=new_run_status,
+                        )
+                    )
+
+            state.update_run(updated_run)
+            await self._persist(state, run_id, buffer)
+
+            logger.info(f"Run {run_id}: script task {task_id} completed successfully")
+            return TransitionResult(success=True, new_status=TaskStatus.COMPLETED)
+        else:
+            # 4b. Failure: store output + exit code, mark FAILED, pause run
+            if task_in_state.attempts:
+                attempt = task_in_state.attempts[-1]
+                attempt.agent_output = output
+                attempt.error = f"Script exited with code {exit_code}"
+                attempt.outcome = "failed"
+                attempt.completed_at = self._clock.now()
+
+            task_in_state.status = TaskStatus.FAILED
+            state.update_run(state.get_run(run_id))
+
+            buffer.emit(
+                TaskStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="task_status_changed",
+                    task_id=task_id,
+                    old_status=TaskStatus.BUILDING,
+                    new_status=TaskStatus.FAILED,
+                )
+            )
+
+            # Pause the run
+            engine.pause_run(run_id, reason="script_failed", error_detail=output)
+
+            await self._persist(state, run_id, buffer)
+
+            logger.warning(f"Run {run_id}: script task {task_id} failed with exit code {exit_code}")
+            return TransitionResult(success=True, new_status=TaskStatus.FAILED)
 
     async def submit_for_verification(self, run_id: str, task_id: str) -> TransitionResult:
         """Submit task for verification (BUILDING -> VERIFYING).

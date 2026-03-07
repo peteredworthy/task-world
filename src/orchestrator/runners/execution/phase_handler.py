@@ -50,7 +50,7 @@ class PhaseHandler:
         phase: str,
         run: "Run",
         task_state: "TaskState",
-        service: "WorkflowService",
+        service: "WorkflowService | None",
         agent: "AgentRunner",
         context: ExecutionContext,
         req_desc_to_id: dict[str, str],
@@ -84,8 +84,10 @@ class PhaseHandler:
                 session=session,
             )
         elif phase == "verifying":
+            assert service is not None, "service is required for verifying phase"
             await self._execute_verifying(run, task_state, service, agent, context, req_desc_to_id)
         elif phase == "recovering":
+            assert service is not None, "service is required for recovering phase"
             await self._execute_recovering(run, task_state, service, agent, context)
         else:
             raise ValueError(f"Unknown phase: {phase}")
@@ -98,7 +100,7 @@ class PhaseHandler:
         self,
         run: "Run",
         task_state: "TaskState",
-        service: "WorkflowService",
+        service: "WorkflowService | None",
         agent: "AgentRunner",
         context: ExecutionContext,
         req_desc_to_id: dict[str, str],
@@ -117,12 +119,16 @@ class PhaseHandler:
         async def on_checklist_update(
             req_id: str, status: ChecklistStatus, note: str | None
         ) -> None:
+            if service is None:
+                return
             actual_id = req_id
             if req_id.lower().strip() in req_desc_to_id:
                 actual_id = req_desc_to_id[req_id.lower().strip()]
             await service.update_checklist_item(run.id, task_state.id, actual_id, status, note)
 
         async def on_submit() -> None:
+            if service is None:
+                return
             # The builder agent may have already called submit via REST/MCP
             # during execution.  Re-read the task to avoid a redundant call.
             current_task = await service.get_task(run.id, task_state.id)
@@ -157,6 +163,8 @@ class PhaseHandler:
 
         # Define escalation callback
         async def on_escalation(requirement_id: str, reason: str) -> None:
+            if service is None:
+                return
             await service.escalate_requirement(run.id, task_state.id, requirement_id, reason)
 
         # Execute the agent

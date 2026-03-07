@@ -692,6 +692,13 @@ class AgentRunnerExecutor:
             return (None, False)
 
         for task in step.tasks:
+            # Skip child tasks — they are managed by the fan-out executor
+            if task.parent_task_id is not None:
+                continue
+            # FAN_OUT_RUNNING tasks are handled by the fan-out executor,
+            # not by the normal task loop. Skip them.
+            if task.status == TaskStatus.FAN_OUT_RUNNING:
+                continue
             if task.status in (
                 TaskStatus.PENDING,
                 TaskStatus.BUILDING,
@@ -763,6 +770,41 @@ class AgentRunnerExecutor:
             raise AgentExecutionError(
                 agent_type.value, f"Task config not found: {task_state.config_id}"
             )
+
+        # Only intercept fan-out/script for initial execution, not for
+        # verification or recovery — those should fall through to their
+        # dedicated handlers below.
+        if task_state.status not in (TaskStatus.VERIFYING, TaskStatus.RECOVERING):
+            # Script tasks: run the script directly instead of spawning an agent
+            if task_config.script is not None:
+                logger.info(
+                    f"Run {run.id}: task {task_state.id} is a script task, "
+                    f"executing via service.execute_script_task()"
+                )
+                await service.execute_script_task(run.id, task_state.id)
+                return
+
+            # Fan-out tasks: expand and execute children in parallel
+            if task_config.fan_out is not None:
+                logger.info(
+                    f"Run {run.id}: task {task_state.id} is a fan-out task, "
+                    f"executing via _execute_fan_out()"
+                )
+                await self._execute_fan_out(
+                    run,
+                    task_state,
+                    task_config,
+                    service,
+                    agent_type,
+                    agent_config,
+                    step_context=step_context,
+                    step_id=step_id,
+                    available_tools=available_tools,
+                    mcp_servers=mcp_servers,
+                    summary_cache=summary_cache,
+                    session=session,
+                )
+                return
 
         # Apply profile-based model resolution when the task has a profile assigned.
         # Resolution order: runner profile defaults (DB) -> agent_config model -> None
@@ -915,6 +957,350 @@ class AgentRunnerExecutor:
             agent_type_value=agent_type.value,
             session=session,
         )
+
+    async def _execute_fan_out(
+        self,
+        run: Run,
+        parent_task: TaskState,
+        task_config: Any,  # TaskConfig from config/models.py
+        service: WorkflowService,
+        agent_type: AgentRunnerType,
+        agent_config: dict[str, Any],
+        step_context: str | None = None,
+        step_id: str | None = None,
+        available_tools: list[str] | None = None,
+        mcp_servers: list[Any] | None = None,
+        summary_cache: SummaryCache | None = None,
+        session: "AsyncSession | None" = None,
+    ) -> None:
+        """Execute a fan-out task: expand into children, run in parallel, aggregate.
+
+        Flow:
+        1. Expand fan-out task into children via service
+        2. Execute children concurrently (up to max_concurrent)
+        3. Each child: build prompt -> spawn agent -> auto_verify -> retry
+        4. All children complete -> parent VERIFYING or COMPLETED
+        5. Any child exhausts retries -> parent FAILED -> run pauses
+        """
+        from orchestrator.config.models import FanOutConfig
+
+        fan_out: FanOutConfig = task_config.fan_out
+        worktree_path = run.worktree_path
+        if not worktree_path:
+            raise AgentExecutionError(agent_type.value, "Cannot run fan-out without worktree_path")
+
+        # Check if children already exist from a previous expansion (e.g. after
+        # outer verification failure → revision back to BUILDING).
+        existing_children: list[TaskState] = []
+        for step in run.steps:
+            for task in step.tasks:
+                if task.parent_task_id == parent_task.id:
+                    existing_children.append(task)
+
+        if existing_children:
+            # Re-run existing children instead of expanding again.
+            # Reset them to PENDING so the executor can re-execute them.
+            logger.info(
+                f"Run {run.id}: fan-out task {parent_task.id} has "
+                f"{len(existing_children)} existing children, resetting for re-run"
+            )
+
+            # Get verifier feedback from the parent's most recent attempt
+            verifier_feedback: str | None = None
+            if parent_task.attempts:
+                latest_attempt = parent_task.attempts[-1]
+                verifier_feedback = getattr(latest_attempt, "verifier_comment", None)
+
+            # Reset children to PENDING and parent to FAN_OUT_RUNNING
+            await service.reset_fan_out_children(run.id, parent_task.id)
+
+            children = existing_children
+        else:
+            # 1. Expand: create child tasks (first time)
+            children = await service.expand_fan_out_task(run.id, parent_task.id)
+            verifier_feedback = None
+
+        if not children:
+            # No files matched — mark parent completed with no children
+            logger.warning(
+                f"Run {run.id}: fan-out task {parent_task.id} produced 0 children, "
+                f"marking as COMPLETED"
+            )
+            async with self._session_factory() as sess:
+                svc = await self._create_service(sess)
+                await svc.complete_fan_out_parent(run.id, parent_task.id, all_passed=True)
+                await sess.commit()
+            return
+
+        # 2. Execute children with semaphore
+        sem = asyncio.Semaphore(fan_out.max_concurrent)
+        child_results: dict[str, bool] = {}  # child_id -> passed
+
+        async def run_child(child: TaskState) -> None:
+            """Execute a single child task with retries."""
+            child_id = child.id
+            passed = False
+
+            for attempt_num in range(1, fan_out.max_attempts + 1):
+                try:
+                    # On the first attempt of a re-run (after outer verification
+                    # failure), prepend the outer verifier's feedback so the
+                    # agent knows what to fix.
+                    child_feedback = verifier_feedback if attempt_num == 1 else None
+                    async with sem:
+                        passed = await self._execute_fan_out_child(
+                            run=run,
+                            child=child,
+                            fan_out=fan_out,
+                            task_config=task_config,
+                            agent_type=agent_type,
+                            agent_config=agent_config,
+                            worktree_path=worktree_path,
+                            step_context=step_context,
+                            step_id=step_id,
+                            available_tools=available_tools,
+                            mcp_servers=mcp_servers,
+                            attempt_num=attempt_num,
+                            verifier_feedback=child_feedback,
+                        )
+
+                    if passed:
+                        break
+
+                    # Auto-verify failed — retry if attempts remain
+                    if attempt_num < fan_out.max_attempts:
+                        logger.info(
+                            f"Run {run.id}: child {child_id} attempt "
+                            f"{attempt_num}/{fan_out.max_attempts} failed, retrying"
+                        )
+                    else:
+                        logger.warning(
+                            f"Run {run.id}: child {child_id} exhausted "
+                            f"{fan_out.max_attempts} attempts"
+                        )
+                except Exception as e:
+                    logger.error(f"Run {run.id}: child {child_id} attempt {attempt_num} error: {e}")
+                    if attempt_num >= fan_out.max_attempts:
+                        break
+
+            child_results[child_id] = passed
+
+        # Run all children concurrently
+        await asyncio.gather(*[run_child(c) for c in children], return_exceptions=True)
+
+        # 3. Determine parent outcome
+        all_passed = all(child_results.get(c.id, False) for c in children)
+        any_failed = any(not child_results.get(c.id, True) for c in children)
+
+        # 4. Transition parent
+        async with self._session_factory() as sess:
+            svc = await self._create_service(sess)
+
+            if any_failed:
+                # Mark parent FAILED, which will pause the run
+                await svc.complete_fan_out_parent(run.id, parent_task.id, all_passed=False)
+                await sess.commit()
+                logger.warning(
+                    f"Run {run.id}: fan-out task {parent_task.id} FAILED "
+                    f"(children failed: "
+                    f"{[c.id for c in children if not child_results.get(c.id, True)]})"
+                )
+            elif all_passed:
+                # Check if parent has outer verifier (rubric)
+                has_outer_verifier = bool(task_config.verifier.rubric)
+                if has_outer_verifier:
+                    await svc.complete_fan_out_parent(
+                        run.id, parent_task.id, all_passed=True, to_verifying=True
+                    )
+                    await sess.commit()
+                    logger.info(
+                        f"Run {run.id}: fan-out task {parent_task.id} children "
+                        f"all passed, moving to VERIFYING for outer verification"
+                    )
+                else:
+                    await svc.complete_fan_out_parent(run.id, parent_task.id, all_passed=True)
+                    await sess.commit()
+                    logger.info(
+                        f"Run {run.id}: fan-out task {parent_task.id} COMPLETED "
+                        f"(all {len(children)} children passed)"
+                    )
+
+    async def _execute_fan_out_child(
+        self,
+        run: Run,
+        child: TaskState,
+        fan_out: Any,  # FanOutConfig
+        task_config: Any,  # TaskConfig (parent)
+        agent_type: AgentRunnerType,
+        agent_config: dict[str, Any],
+        worktree_path: str,
+        step_context: str | None = None,
+        step_id: str | None = None,
+        available_tools: list[str] | None = None,
+        mcp_servers: list[Any] | None = None,
+        attempt_num: int = 1,
+        verifier_feedback: str | None = None,
+    ) -> bool:
+        """Execute a single fan-out child task.
+
+        Builds the prompt, spawns agent, runs auto_verify.
+        Returns True if auto_verify passes, False otherwise.
+        """
+        from orchestrator.workflow.auto_verify import (
+            LocalAutoVerifyRunner,
+            run_auto_verify,
+        )
+        from orchestrator.workflow.templates import resolve_template
+
+        child_id = child.id
+        input_path = child.fan_out_input or ""
+        output_path = child.fan_out_output or ""
+
+        # Start the child task (PENDING -> BUILDING)
+        async with self._session_factory() as sess:
+            svc = await self._create_service(sess)
+            await svc.start_task(run.id, child_id)
+            await sess.commit()
+
+        # Read input file content
+        input_full = Path(worktree_path) / input_path
+        try:
+            item_content = input_full.read_text()
+        except (FileNotFoundError, OSError) as e:
+            item_content = f"[Error reading {input_path}: {e}]"
+
+        item_stem = Path(input_path).stem
+
+        # Resolve shared_context entries
+        shared_parts: list[str] = []
+        for ctx_entry in fan_out.shared_context:
+            resolved = resolve_template(ctx_entry, worktree_path=worktree_path)
+            shared_parts.append(resolved)
+
+        # Build per_item_prompt with variables
+        variables: dict[str, str] = {
+            "item_content": item_content,
+            "item_stem": item_stem,
+            "output_path": output_path,
+        }
+        # Add run config variables
+        for k, v in run.config.items():
+            if v is not None and k not in variables:
+                variables[k] = str(v)
+
+        prompt_body = resolve_template(
+            fan_out.per_item_prompt,
+            variables=variables,
+            worktree_path=worktree_path,
+        )
+
+        # Build full prompt
+        prompt_parts: list[str] = []
+        if verifier_feedback:
+            prompt_parts.append(
+                f"IMPORTANT - Previous verification feedback:\n{verifier_feedback}\n"
+            )
+        if shared_parts:
+            prompt_parts.append("## Shared Context\n" + "\n".join(shared_parts))
+        if step_context:
+            prompt_parts.append(f"## Step Context\n{step_context}")
+        prompt_parts.append(f"## Task\n{prompt_body}")
+        prompt_parts.append(f"\nInput file: {input_path}\nOutput file: {output_path}")
+
+        full_prompt = "\n\n".join(prompt_parts)
+
+        # Create agent and execute
+        agent = self._create_agent(agent_type, agent_config, run.id, phase="building")
+        context = ExecutionContext(
+            run_id=run.id,
+            task_id=child_id,
+            working_dir=worktree_path,
+            prompt=full_prompt,
+            requirements=[],
+            api_base_url=self._api_base_url,
+            step_id=step_id,
+            available_tools=available_tools,
+            mcp_servers=mcp_servers,
+        )
+
+        # Run the agent
+        try:
+            await self._phase_handler.execute_phase(
+                phase="building",
+                run=run,
+                task_state=child,
+                service=None,  # Children don't use service callbacks
+                agent=agent,
+                context=context,
+                req_desc_to_id={},
+                agent_type_value=agent_type.value,
+                session=None,
+            )
+        except Exception as e:
+            logger.error(f"Run {run.id}: child {child_id} agent error: {e}")
+            # Mark child as failed for this attempt
+            async with self._session_factory() as sess:
+                svc = await self._create_service(sess)
+                await svc.update_child_task_state(
+                    run.id,
+                    child_id,
+                    {
+                        "error": str(e),
+                        "outcome": "failed",
+                    },
+                )
+            return False
+
+        # Run auto_verify if configured
+        if fan_out.auto_verify is not None and fan_out.auto_verify.items:
+            auto_vars = {"output_path": output_path, "item_stem": item_stem}
+            runner = LocalAutoVerifyRunner()
+            cwd = Path(worktree_path)
+
+            results = await run_auto_verify(fan_out.auto_verify, runner, cwd, variables=auto_vars)
+            all_passed = all(r.passed for r in results)
+
+            # Store auto_verify results on the child's attempt
+            async with self._session_factory() as sess:
+                svc = await self._create_service(sess)
+                if all_passed:
+                    await svc.update_child_task_state(
+                        run.id,
+                        child_id,
+                        {
+                            "auto_verify_results": [r.model_dump() for r in results],
+                            "outcome": "passed",
+                            "completed_at": datetime.now(timezone.utc),
+                            "status": TaskStatus.COMPLETED,
+                        },
+                    )
+                else:
+                    await svc.update_child_task_state(
+                        run.id,
+                        child_id,
+                        {
+                            "auto_verify_results": [r.model_dump() for r in results],
+                            "outcome": "failed",
+                            "completed_at": datetime.now(timezone.utc),
+                        },
+                    )
+
+            return all_passed
+        else:
+            # No auto_verify: mark child as completed
+            async with self._session_factory() as sess:
+                svc = await self._create_service(sess)
+                await svc.update_child_task_state(
+                    run.id,
+                    child_id,
+                    {
+                        "outcome": "passed",
+                        "completed_at": datetime.now(timezone.utc),
+                        "status": TaskStatus.COMPLETED,
+                    },
+                )
+
+            return True
 
     async def _handle_verification(
         self,

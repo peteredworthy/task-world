@@ -20,7 +20,7 @@ from orchestrator.workflow.gates import GateResult, evaluate_checklist_gate
 from orchestrator.workflow.grades import GradeResult, evaluate_grades
 
 VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
-    TaskStatus.PENDING: {TaskStatus.BUILDING},
+    TaskStatus.PENDING: {TaskStatus.BUILDING, TaskStatus.FAN_OUT_RUNNING},
     TaskStatus.BUILDING: {TaskStatus.VERIFYING, TaskStatus.PENDING_USER_ACTION, TaskStatus.FAILED},
     TaskStatus.PENDING_USER_ACTION: {
         TaskStatus.BUILDING,
@@ -39,6 +39,11 @@ VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
         TaskStatus.COMPLETED,
         TaskStatus.FAILED,
         TaskStatus.PENDING_USER_ACTION,
+    },
+    TaskStatus.FAN_OUT_RUNNING: {
+        TaskStatus.VERIFYING,
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
     },
     TaskStatus.COMPLETED: set(),
     TaskStatus.FAILED: set(),
@@ -350,15 +355,23 @@ _TERMINAL_TASK_STATUSES = {TaskStatus.COMPLETED, TaskStatus.FAILED}
 
 
 def is_step_complete(step: StepState) -> bool:
-    """A step is complete when every task has reached a terminal status."""
+    """A step is complete when every non-child task has reached a terminal status.
+
+    Child tasks (parent_task_id set) are managed by the fan-out executor and
+    contribute to their parent's state, not directly to step completion.
+    FAN_OUT_RUNNING is non-terminal (parent still executing children).
+    """
     if not step.tasks:
         return True
-    return all(t.status in _TERMINAL_TASK_STATUSES for t in step.tasks)
+    top_level = [t for t in step.tasks if t.parent_task_id is None]
+    if not top_level:
+        return True
+    return all(t.status in _TERMINAL_TASK_STATUSES for t in top_level)
 
 
 def step_has_failure(step: StepState) -> bool:
-    """Return True if any task in the step has FAILED status."""
-    return any(t.status == TaskStatus.FAILED for t in step.tasks)
+    """Return True if any non-child task in the step has FAILED status."""
+    return any(t.status == TaskStatus.FAILED for t in step.tasks if t.parent_task_id is None)
 
 
 def check_step_progression(run: Run) -> bool:
