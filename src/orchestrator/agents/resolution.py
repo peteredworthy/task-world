@@ -11,7 +11,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.agents.models import AgentConfigModel
-from orchestrator.config.models import RoutineConfig, StepConfig, TaskConfig
 
 logger = logging.getLogger(__name__)
 
@@ -27,44 +26,33 @@ _SYSTEM_DEFAULTS: dict[Phase, str] = {
 
 def resolve_agent_name(
     phase: Phase,
-    task_config: TaskConfig | None = None,
-    step_config: StepConfig | None = None,
-    routine_config: RoutineConfig | None = None,
+    task_agent: str | None = None,
+    step_agent: str | None = None,
+    routine_agent: str | None = None,
 ) -> str:
     """Resolve the agent name for a given phase using cascading lookup.
 
     Resolution order (first non-None wins):
-        1. Task-level override
-        2. Step-level override
-        3. Routine-level override
+        1. Task-level override  (task_agent)
+        2. Step-level override  (step_agent)
+        3. Routine-level override (routine_agent)
         4. System default ("Planner", "Builder", or "Verifier")
 
     Args:
         phase: One of "planner", "builder", or "verifier".
-        task_config: Optional task-level config.
-        step_config: Optional step-level config.
-        routine_config: Optional routine-level config.
+        task_agent: Agent name from task config, or None if not set.
+        step_agent: Agent name from step config, or None if not set.
+        routine_agent: Agent name from routine config, or None if not set.
 
     Returns:
         The resolved agent name.
     """
-    attr = f"{phase}_agent"
-
-    if task_config is not None:
-        value = getattr(task_config, attr, None)
-        if value is not None:
-            return value
-
-    if step_config is not None:
-        value = getattr(step_config, attr, None)
-        if value is not None:
-            return value
-
-    if routine_config is not None:
-        value = getattr(routine_config, attr, None)
-        if value is not None:
-            return value
-
+    if task_agent is not None:
+        return task_agent
+    if step_agent is not None:
+        return step_agent
+    if routine_agent is not None:
+        return routine_agent
     return _SYSTEM_DEFAULTS[phase]
 
 
