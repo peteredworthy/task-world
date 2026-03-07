@@ -499,7 +499,7 @@ routine:
           auto_verify:
             items:
               - id: "vitest"
-                cmd: "cd ui && npx vitest run -q"
+                cmd: "cd ui && npx vitest run"
                 must: true
               - id: "build"
                 cmd: "cd ui && npx vite build"
@@ -811,7 +811,7 @@ routine:
           auto_verify:
             items:
               - id: "vitest"
-                cmd: "cd ui && npx vitest run -q"
+                cmd: "cd ui && npx vitest run"
                 must: true
               - id: "tsc"
                 cmd: "cd ui && npx tsc --noEmit"
@@ -914,7 +914,7 @@ routine:
                 cmd: "uv run pytest tests/integration/ -x --timeout=120 -q"
                 must: true
               - id: "frontend_tests"
-                cmd: "cd ui && npx vitest run -q"
+                cmd: "cd ui && npx vitest run"
                 must: true
               - id: "tsc"
                 cmd: "cd ui && npx tsc --noEmit"
