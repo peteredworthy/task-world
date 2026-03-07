@@ -70,3 +70,10 @@ class StepType(str, Enum):
 class Complexity(str, Enum):
     SIMPLE = "simple"
     STANDARD = "standard"
+
+
+class ModelProfile(str, Enum):
+    ARCHITECT = "architect"
+    DESIGNER = "designer"
+    CODER = "coder"
+    SUMMARIZER = "summarizer"

@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orchestrator.db.base import Base
@@ -216,6 +216,16 @@ class ClarificationRequestModel(Base):
         back_populates="request",
         uselist=False,
     )
+
+
+class RunnerProfileDefaultModel(Base):
+    __tablename__ = "runner_profile_defaults"
+    __table_args__ = (UniqueConstraint("runner_type", "profile", name="uq_runner_profile"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    runner_type: Mapped[str] = mapped_column(String, nullable=False)
+    profile: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class ClarificationResponseModel(Base):
