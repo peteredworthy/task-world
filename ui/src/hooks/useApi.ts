@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api, getConfig, validateRoutine } from '../api/client';
 import type { CreateRunRequest, RecoverRequest, SetGradeRequest, UpdateChecklistRequest } from '../types';
 
@@ -8,6 +8,7 @@ export function useRuns(params?: { status?: string; repo_name?: string; limit?: 
   return useQuery({
     queryKey: ['runs', params],
     queryFn: () => api.listRuns(params),
+    placeholderData: keepPreviousData,
     refetchInterval: (query) => {
       const runs = query.state.data?.runs;
       if (!runs?.length) return 10000;

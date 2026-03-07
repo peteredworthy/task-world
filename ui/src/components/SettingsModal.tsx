@@ -166,16 +166,12 @@ export function SettingsModal() {
               {globalConfig.data && (
                 <dl className="p-3 border border-border rounded-lg divide-y divide-border">
                   <div className="py-2 first:pt-0">
-                    <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">db_path</dt>
-                    <dd className="text-sm text-text-primary mt-1 break-all">{globalConfig.data.db_path}</dd>
-                  </div>
-                  <div className="py-2">
-                    <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">active_agent_types</dt>
-                    <dd className="text-sm text-text-primary mt-1">{globalConfig.data.active_agent_types.join(', ') || 'None'}</dd>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">agents_default_type</dt>
+                    <dd className="text-sm text-text-primary mt-1 break-all">{globalConfig.data.agents_default_type ?? 'Not set'}</dd>
                   </div>
                   <div className="py-2 last:pb-0">
-                    <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">max_recent_runs</dt>
-                    <dd className="text-sm text-text-primary mt-1">{globalConfig.data.max_recent_runs}</dd>
+                    <dt className="text-xs font-medium uppercase tracking-wide text-text-muted">dashboard_max_recent_runs</dt>
+                    <dd className="text-sm text-text-primary mt-1">{globalConfig.data.dashboard_max_recent_runs}</dd>
                   </div>
                 </dl>
               )}

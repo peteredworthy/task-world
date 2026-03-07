@@ -15,7 +15,7 @@ import { InspectorPanel } from '../components/detail/InspectorPanel';
 import type { TaskSummary, RunResponse } from '../types';
 
 export function Dashboard() {
-  const maxRecentRuns = useGlobalConfig().data?.max_recent_runs ?? 50;
+  const maxRecentRuns = useGlobalConfig().data?.dashboard_max_recent_runs ?? 50;
   const [statusFilter, setStatusFilter] = useState('');
   const [projectFilter, setProjectFilter] = useState('');
   const [recencyFilter, setRecencyFilter] = useState('');
@@ -80,9 +80,11 @@ export function Dashboard() {
     return () => clearTimeout(timer);
   }, [mutationError]);
 
-  const { data, isLoading, error, dataUpdatedAt } = useRuns(
-    statusFilter ? { status: statusFilter, limit: maxRecentRuns } : { limit: maxRecentRuns }
+  const runsParams = useMemo(
+    () => statusFilter ? { status: statusFilter, limit: maxRecentRuns } : { limit: maxRecentRuns },
+    [statusFilter, maxRecentRuns],
   );
+  const { data, isLoading, isPlaceholderData, error, dataUpdatedAt } = useRuns(runsParams);
   const { data: routinesData } = useRoutines();
   const routineNames = new Map(routinesData?.routines?.map(r => [r.id, r.name]) ?? []);
   const startRun = useStartRun();
@@ -189,7 +191,7 @@ export function Dashboard() {
           </div>
         </div>
 
-        {isLoading && (
+        {isLoading && !isPlaceholderData && (
           <div className="flex justify-center py-12">
             <Spinner />
           </div>
@@ -220,7 +222,7 @@ export function Dashboard() {
           </div>
         )}
 
-        {!isLoading && !error && runs.length === 0 && (
+        {!isLoading && !isPlaceholderData && !error && runs.length === 0 && (
           <EmptyState message="No runs found. Create one to get started." />
         )}
 

@@ -38,11 +38,12 @@ function renderModal() {
 }
 
 describe('SettingsModal', () => {
-  it('renders server db_path and active_agent_types from global config', () => {
+  it('renders server config from global config', () => {
     const config: GlobalConfig = {
-      db_path: '/tmp/orchestrator.db',
-      active_agent_types: ['cli_subprocess', 'openhands'],
-      max_recent_runs: 75,
+      dashboard_refresh_interval_seconds: 5,
+      dashboard_max_recent_runs: 75,
+      agents_openhands_url: null,
+      agents_default_type: 'cli_subprocess',
     };
 
     mockUseGlobalConfig.mockReturnValue({
@@ -59,7 +60,7 @@ describe('SettingsModal', () => {
     renderModal();
 
     expect(screen.getByText('Server')).toBeInTheDocument();
-    expect(screen.getByText('/tmp/orchestrator.db')).toBeInTheDocument();
-    expect(screen.getByText('cli_subprocess, openhands')).toBeInTheDocument();
+    expect(screen.getByText('cli_subprocess')).toBeInTheDocument();
+    expect(screen.getByText('75')).toBeInTheDocument();
   });
 });
