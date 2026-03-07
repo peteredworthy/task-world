@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field, model_validator
 
-from orchestrator.config.enums import Complexity, GateType, Priority, StepType
+from orchestrator.config.enums import Complexity, GateType, ModelProfile, Priority, StepType
 
 logger = logging.getLogger(__name__)
 
@@ -164,6 +164,7 @@ class TaskConfig(BaseModel):
     title: str
     task_context: str
     complexity: Complexity = Complexity.STANDARD
+    profile: ModelProfile | None = None
     model_overrides: dict[str, dict[str, str]] | None = None
     requirements: list[RequirementConfig] = Field(default_factory=lambda: [])
     auto_verify: AutoVerifyConfig = Field(default_factory=AutoVerifyConfig)

@@ -511,6 +511,7 @@ class AgentRunnerExecutor:
                             agent_type,
                             effective_config,
                             summary_cache=summary_cache,
+                            session=session,
                         )
                         await session.commit()
                     except GateBlockedError as e:
@@ -676,6 +677,7 @@ class AgentRunnerExecutor:
         agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
         summary_cache: SummaryCache | None = None,
+        session: "AsyncSession | None" = None,
     ) -> None:
         """Execute the agent for a single task.
 
@@ -727,6 +729,43 @@ class AgentRunnerExecutor:
             raise AgentExecutionError(
                 agent_type.value, f"Task config not found: {task_state.config_id}"
             )
+
+        # Apply profile-based model resolution when the task has a profile assigned.
+        # Resolution order: runner profile defaults (DB) -> agent_config model -> None
+        if task_config.profile is not None and session is not None:
+            from sqlalchemy import select as sa_select
+
+            from orchestrator.config.enums import ModelProfile
+            from orchestrator.db.models import RunnerProfileDefaultModel
+            from orchestrator.runners.profile_resolution import resolve_model_for_profile
+
+            rows = (
+                (
+                    await session.execute(
+                        sa_select(RunnerProfileDefaultModel).where(
+                            RunnerProfileDefaultModel.runner_type == agent_type.value
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            profile_defaults: dict[str, str] = {
+                row.profile: row.model
+                for row in rows
+                if row.profile in {p.value for p in ModelProfile}
+            }
+            resolved_model = resolve_model_for_profile(
+                task_config.profile,
+                profile_defaults,
+                fallback_model=agent_config.get("model"),
+            )
+            if resolved_model is not None and resolved_model != agent_config.get("model"):
+                logger.debug(
+                    f"Task {task_state.id}: resolved model '{resolved_model}' "
+                    f"from profile '{task_config.profile.value}'"
+                )
+                agent_config = {**agent_config, "model": resolved_model}
 
         phase = self._phase_for_task_status(task_state.status)
 
