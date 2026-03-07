@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
-import { AgentIcon } from '../../src/components/AgentIcon';
+import { AgentRunnerIcon as AgentIcon } from '../../src/components/AgentRunnerIcon';
 
 describe('AgentIcon', () => {
   describe('icon types', () => {
