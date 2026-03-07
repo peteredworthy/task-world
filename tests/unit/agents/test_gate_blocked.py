@@ -76,6 +76,7 @@ class _TestExecutor(AgentRunnerExecutor):
         task_id: str,
         builder_prompt: str | None = None,
         verifier_prompt: str | None = None,
+        session: object = None,
     ) -> None:
         return
 
