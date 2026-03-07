@@ -601,7 +601,7 @@ routine:
                 cmd: "uv run python -c \"from orchestrator.api.routers.agents import router; print('OK')\""
                 must: true
               - id: "router_has_endpoints"
-                cmd: "uv run python -c \"from orchestrator.api.routers.agents import router; methods = {r.methods for r in router.routes if hasattr(r, 'methods')}; assert len(methods) >= 4, f'Only {len(methods)} distinct method sets'; print('OK')\""
+                cmd: "uv run python -c \"from orchestrator.api.routers.agents import router; methods = {frozenset(r.methods) for r in router.routes if hasattr(r, 'methods')}; assert len(methods) >= 4, f'Only {len(methods)} distinct method sets'; print('OK')\""
                 must: true
 
         - id: "T-04"
