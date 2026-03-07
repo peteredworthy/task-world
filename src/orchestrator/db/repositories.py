@@ -154,6 +154,10 @@ def _to_domain(model: RunModel) -> Run:
                     max_attempts=task_model.max_attempts,
                     pending_action_type=task_model.pending_action_type,
                     pending_clarification_id=task_model.pending_clarification_id,
+                    parent_task_id=task_model.parent_task_id,
+                    fan_out_index=task_model.fan_out_index,
+                    fan_out_input=task_model.fan_out_input,
+                    fan_out_output=task_model.fan_out_output,
                 )
             )
 
@@ -292,6 +296,10 @@ def _to_model(run: Run) -> RunModel:
                     max_attempts=task.max_attempts,
                     pending_action_type=task.pending_action_type,
                     pending_clarification_id=task.pending_clarification_id,
+                    parent_task_id=task.parent_task_id,
+                    fan_out_index=task.fan_out_index,
+                    fan_out_input=task.fan_out_input,
+                    fan_out_output=task.fan_out_output,
                     attempts=attempts,
                 )
             )

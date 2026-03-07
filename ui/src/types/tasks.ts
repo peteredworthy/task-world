@@ -109,6 +109,12 @@ export interface TaskDetailResponse {
   attempts: AttemptSchema[];
   current_attempt: number;
   max_attempts: number;
+
+  // Fan-out fields
+  parent_task_id: string | null;
+  fan_out_index: number | null;
+  fan_out_input: string | null;
+  fan_out_output: string | null;
 }
 
 export interface TransitionResponse {

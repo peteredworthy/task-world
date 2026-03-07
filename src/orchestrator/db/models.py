@@ -125,6 +125,14 @@ class TaskModel(Base):
     pending_action_type: Mapped[str | None] = mapped_column(String, nullable=True)
     pending_clarification_id: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Fan-out fields
+    parent_task_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("tasks.id"), nullable=True, default=None
+    )
+    fan_out_index: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
+    fan_out_input: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    fan_out_output: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+
     # Relationships
     step: Mapped["StepModel"] = relationship("StepModel", back_populates="tasks")
     attempts: Mapped[list["AttemptModel"]] = relationship(

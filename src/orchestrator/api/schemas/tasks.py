@@ -115,6 +115,12 @@ class TaskDetailResponse(ApiModel):
     current_attempt: int
     max_attempts: int
 
+    # Fan-out fields
+    parent_task_id: str | None = None
+    fan_out_index: int | None = None
+    fan_out_input: str | None = None
+    fan_out_output: str | None = None
+
 
 class TransitionResponse(ApiModel):
     success: bool

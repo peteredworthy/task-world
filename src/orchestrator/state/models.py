@@ -106,6 +106,12 @@ class TaskState(BaseModel):
     pending_clarification_id: str | None = None
     has_verification: bool = True  # False if task has no auto_verify items and no verifier rubric
 
+    # Fan-out fields
+    parent_task_id: str | None = None
+    fan_out_index: int | None = None
+    fan_out_input: str | None = None
+    fan_out_output: str | None = None
+
 
 class HumanApproval(BaseModel):
     """Record of human gate approval."""

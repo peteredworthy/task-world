@@ -88,6 +88,18 @@ class AutoVerifyConfig(BaseModel):
     tail_lines: int = 20
 
 
+class FanOutConfig(BaseModel):
+    """Configuration for fan-out task execution."""
+
+    input_glob: str
+    output_pattern: str
+    per_item_prompt: str
+    shared_context: list[str] = Field(default_factory=list)
+    max_attempts: int = 4
+    max_concurrent: int = 4
+    auto_verify: AutoVerifyConfig | None = None
+
+
 class RubricItemConfig(BaseModel):
     """A single rubric question for verifier."""
 
@@ -175,6 +187,27 @@ class TaskConfig(BaseModel):
     retry: RetryConfig = Field(default_factory=RetryConfig)
     artifacts: list[ArtifactSpec] = Field(default_factory=lambda: [])
     context_from: list[ContextSource] = Field(default_factory=lambda: [])
+    fan_out: FanOutConfig | None = None
+    script: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_task_mode_exclusivity(self) -> "TaskConfig":
+        """Ensure fan_out, script, and task_context are mutually exclusive."""
+        if self.fan_out is not None:
+            if self.task_context != "":
+                raise ValueError(
+                    f"Task '{self.id}': 'fan_out' and 'task_context' are mutually exclusive."
+                )
+            if self.script is not None:
+                raise ValueError(
+                    f"Task '{self.id}': 'fan_out' and 'script' are mutually exclusive."
+                )
+        if self.script is not None:
+            if self.task_context != "":
+                raise ValueError(
+                    f"Task '{self.id}': 'script' and 'task_context' are mutually exclusive."
+                )
+        return self
 
     @model_validator(mode="after")
     def _warn_if_no_verification(self) -> "TaskConfig":
