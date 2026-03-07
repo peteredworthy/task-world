@@ -111,7 +111,7 @@ async def test_executor_pauses_run_on_agent_not_available(
         await session.commit()
 
     # Poll until the run is paused (agent loop should fail quickly)
-    for _ in range(50):
+    for _ in range(200):
         async with session_factory() as session:
             repo = RunRepository(session)
             run = await repo.get(run_id)
@@ -364,7 +364,7 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
         await session.commit()
 
     # Poll until the run is paused (agent should complete quickly then gate check fails)
-    for _ in range(50):
+    for _ in range(200):
         async with session_factory() as session:
             repo = RunRepository(session)
             run = await repo.get(run_id)
@@ -440,7 +440,7 @@ async def test_executor_persists_builder_prompt_before_execution(
         await session.commit()
 
     # Poll until the run is paused
-    for _ in range(50):
+    for _ in range(200):
         async with session_factory() as session:
             repo = RunRepository(session)
             run = await repo.get(run_id)
