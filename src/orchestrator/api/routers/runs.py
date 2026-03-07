@@ -23,7 +23,7 @@ from orchestrator.api.deps import (
     get_workflow_service,
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.review.test_runner import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
@@ -53,7 +53,13 @@ from orchestrator.api.schemas.steps import (
     HumanApprovalResponse,
     StepResponse,
 )
-from orchestrator.config.enums import AgentType, GateType, RoutineSource, RunStatus, TaskStatus
+from orchestrator.config.enums import (
+    AgentRunnerType,
+    GateType,
+    RoutineSource,
+    RunStatus,
+    TaskStatus,
+)
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db.event_store import EventStore
@@ -292,12 +298,12 @@ async def create_run(
         run.merge_strategy = request.merge_strategy
 
     if request.agent_type is not None:
-        run.agent_type = AgentType(request.agent_type)
+        run.agent_type = AgentRunnerType(request.agent_type)
 
     if request.agent_config:
         # Validate agent_config keys against the agent's known config schema
         if run.agent_type is not None:
-            from orchestrator.agents.detector import AGENT_CONFIG_FIELDS
+            from orchestrator.runners.detector import AGENT_CONFIG_FIELDS
 
             valid_fields = AGENT_CONFIG_FIELDS.get(run.agent_type, set())
             unknown = set(request.agent_config.keys()) - valid_fields
@@ -384,7 +390,7 @@ async def get_run(
 async def start_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
 ) -> RunResponse:
     """Start a run (DRAFT -> ACTIVE).
 
@@ -406,7 +412,7 @@ async def start_run(
 async def cancel_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
 ) -> RunResponse:
     """Cancel a run (ACTIVE/PAUSED -> FAILED)."""
     # Cancel any running agent first
@@ -419,7 +425,7 @@ async def cancel_run(
 async def pause_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
 ) -> RunResponse:
     """Pause a run (ACTIVE -> PAUSED)."""
     # Cancel any running agent first
@@ -432,7 +438,7 @@ async def pause_run(
 async def resume_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
     request: ResumeRunRequest | None = None,
 ) -> RunResponse:
     """Resume a run (PAUSED -> ACTIVE), optionally changing the agent.
@@ -442,7 +448,7 @@ async def resume_run(
     poll the /tasks/{id}/prompt endpoint to get work.
     """
     # Schema validator normalizes agent_type to a valid lowercase value
-    agent_type = AgentType(request.agent_type) if request and request.agent_type else None
+    agent_type = AgentRunnerType(request.agent_type) if request and request.agent_type else None
     agent_config = request.agent_config if request and request.agent_config else None
     resume_strategy = request.resume_strategy if request else None
 
@@ -470,7 +476,7 @@ async def recover_run(
 ) -> RecoverResponse:
     """Recover a FAILED run by rewinding to a target task and pausing."""
     # Schema validator normalizes agent_type to a valid lowercase value
-    agent_type = AgentType(body.agent_type) if body.agent_type else None
+    agent_type = AgentRunnerType(body.agent_type) if body.agent_type else None
     agent_config = body.agent_config if body.agent_config else None
     try:
         return await service.recover_run(
@@ -696,7 +702,7 @@ async def approve_step(
     approval: HumanApprovalRequest,
     repository: Annotated[RunRepository, Depends(get_run_repository)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
 ) -> StepResponse:
     """Human approval for a step gate.
 
@@ -1076,7 +1082,7 @@ async def merge_back_endpoint(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
     test_runner: Annotated[TestRunner, Depends(get_test_runner)],
     request: MergeBackRequest | None = None,
 ) -> MergeBackResponse:

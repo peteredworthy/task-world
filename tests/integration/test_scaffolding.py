@@ -264,8 +264,8 @@ class TestScaffoldingIntegration:
     async def test_scaffolding_copied_on_worktree_creation(self, tmp_path: Path) -> None:
         """Scaffolding is copied when worktree is created during run start."""
 
-        from orchestrator.agents.executor import AgentExecutor
-        from orchestrator.config.enums import AgentType, RoutineSource
+        from orchestrator.runners.executor import AgentRunnerExecutor
+        from orchestrator.config.enums import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
         from orchestrator.db.connection import create_engine, create_session_factory, init_db
         from orchestrator.db.event_store import EventStore
@@ -332,7 +332,7 @@ steps:
         )
 
         # Create executor
-        executor = AgentExecutor(
+        executor = AgentRunnerExecutor(
             session_factory=session_factory,
             global_config=global_config,
             spawn_agents=False,
@@ -359,7 +359,7 @@ steps:
             # For PROJECT routines, path is already relative to repo root
             run.routine_path = routine.path
             run.routine_commit = routine.commit
-            run.agent_type = AgentType.USER_MANAGED
+            run.agent_type = AgentRunnerType.USER_MANAGED
             run.worktree_enabled = True
 
             repo_db = RunRepository(session)
@@ -410,8 +410,8 @@ steps:
     @pytest.mark.asyncio
     async def test_scaffolding_optional_if_missing(self, tmp_path: Path) -> None:
         """Run should succeed even if routine has no scaffolding."""
-        from orchestrator.agents.executor import AgentExecutor
-        from orchestrator.config.enums import AgentType, RoutineSource
+        from orchestrator.runners.executor import AgentRunnerExecutor
+        from orchestrator.config.enums import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
         from orchestrator.db.connection import create_engine, create_session_factory, init_db
         from orchestrator.db.event_store import EventStore
@@ -472,7 +472,7 @@ steps:
         )
 
         # Create executor
-        executor = AgentExecutor(
+        executor = AgentRunnerExecutor(
             session_factory=session_factory,
             global_config=global_config,
             spawn_agents=False,
@@ -499,7 +499,7 @@ steps:
             # For PROJECT routines, path is already relative to repo root
             run.routine_path = routine.path
             run.routine_commit = routine.commit
-            run.agent_type = AgentType.USER_MANAGED
+            run.agent_type = AgentRunnerType.USER_MANAGED
             run.worktree_enabled = True
 
             repo_db = RunRepository(session)

@@ -1,7 +1,7 @@
 """Configuration models and enums."""
 
 from orchestrator.config.enums import (
-    AgentType,
+    AgentRunnerType,
     ChecklistStatus,
     GateType,
     Priority,
@@ -28,7 +28,7 @@ from orchestrator.config.models import (
 )
 
 __all__ = [
-    "AgentType",
+    "AgentRunnerType",
     "AutoVerifyConfig",
     "AutoVerifyItemConfig",
     "ChecklistStatus",

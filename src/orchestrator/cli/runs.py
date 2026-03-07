@@ -11,7 +11,7 @@ import click
 import httpx
 import websockets
 
-from orchestrator.config.enums import AgentType, RoutineSource, RunStatus
+from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
 from orchestrator.db.repositories import RunRepository
 from orchestrator.routines.discovery import discover_routines
@@ -175,7 +175,7 @@ def create_run(
             # Set agent if provided
             if agent:
                 try:
-                    run.agent_type = AgentType(agent)
+                    run.agent_type = AgentRunnerType(agent)
                 except ValueError:
                     click.echo(f"Error: Invalid agent type '{agent}'", err=True)
                     sys.exit(1)
@@ -379,7 +379,7 @@ def resume_run(
         if agent:
             # Validate agent type
             try:
-                AgentType(agent)  # Validate it's a valid enum value
+                AgentRunnerType(agent)  # Validate it's a valid enum value
                 request_body["agent_type"] = agent
             except ValueError:
                 click.echo(f"Error: Invalid agent type '{agent}'", err=True)

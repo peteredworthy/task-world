@@ -17,8 +17,8 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.agents.claude_sdk import ClaudeSDKAgent
-from orchestrator.agents.types import ExecutionContext, ExecutionResult
+from orchestrator.runners.claude_sdk import ClaudeSDKAgent
+from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config.enums import (
     ChecklistStatus,
     Priority,

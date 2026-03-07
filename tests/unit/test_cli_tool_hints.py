@@ -4,8 +4,8 @@ import json
 import tempfile
 from pathlib import Path
 
-from orchestrator.agents.cli import CLIAgent
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.models import MCPServerConfig
 
 

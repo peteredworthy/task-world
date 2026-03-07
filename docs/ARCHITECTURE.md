@@ -45,24 +45,31 @@ npm run dev   # starts on port 5173
 task-world/
 ├── src/orchestrator/          # Python backend (main application)
 │   ├── errors.py              # Root-level error definitions
-│   ├── agents/                # Agent implementations
-│   │   ├── interface.py       # Agent protocol definition
-│   │   ├── types.py           # ExecutionContext, ExecutionResult, AgentOption
-│   │   ├── executor.py        # Agent lifecycle management
-│   │   ├── detector.py        # Detects available agent tools; exposes all options (incl. Codex Server variants) via GET /api/agents
-│   │   ├── cli.py             # CLI subprocess agent with nudger
-│   │   ├── openhands.py       # OpenHands Local agent (in-process)
-│   │   ├── openhands_docker.py # OpenHands Docker agent (container)
+│   ├── agents/                # Agent configs (prompt + model profile, CRUD)
+│   │   ├── errors.py          # AgentNotFoundError, AgentNameConflictError, etc.
+│   │   ├── models.py          # AgentConfigModel ORM model
+│   │   ├── resolution.py      # Cascading agent resolution (task→step→routine→default)
+│   │   ├── schemas.py         # AgentSchema, CreateAgentRequest, UpdateAgentRequest
+│   │   └── service.py         # AgentService CRUD + seed_default_agents()
+│   ├── runners/               # Agent runner implementations (execution backends)
+│   │   ├── interface.py       # AgentRunner protocol definition
+│   │   ├── types.py           # ExecutionContext, ExecutionResult, AgentRunnerOption, etc.
+│   │   ├── executor.py        # Runner lifecycle management
+│   │   ├── detector.py        # Detects available runner backends; serves GET /api/agent-runners
+│   │   ├── profile_resolution.py # Model profile → model string resolution
+│   │   ├── cli.py             # CLI subprocess runner with nudger
+│   │   ├── openhands.py       # OpenHands Local runner (in-process)
+│   │   ├── openhands_docker.py # OpenHands Docker runner (container)
 │   │   ├── openhands_common.py # Shared OpenHands utilities
-│   │   ├── codex_server_common.py # Shared helpers for Codex Server agents: prompt assembly, tool allow-list, output normalization
-│   │   ├── codex_server.py    # CodexServerAgent: local managed-process variant (stdio/loopback, no bearer auth)
-│   │   ├── codex_server_remote.py # CodexServerRemoteAgent: remote bearer-authenticated HTTPS variant
-│   │   ├── user_managed.py    # External/manual agent
-│   │   ├── monitor.py         # Dead agent detection/recovery
-│   │   ├── nudger.py          # Stuck agent nudging (timeout, nudge, kill)
-│   │   ├── action_log.py      # Structured agent activity log
-│   │   ├── mock.py            # Mock agent for testing
-│   │   └── parsers/           # Per-agent output stream parsers
+│   │   ├── codex_server_common.py # Shared helpers for Codex Server runners
+│   │   ├── codex_server.py    # CodexServerRunner: local managed-process variant
+│   │   ├── claude_sdk.py      # Claude SDK runner (in-process Anthropic API)
+│   │   ├── user_managed.py    # External/manual runner
+│   │   ├── monitor.py         # Dead runner detection/recovery
+│   │   ├── nudger.py          # Stuck runner nudging (timeout, nudge, kill)
+│   │   ├── action_log.py      # Structured runner activity log
+│   │   ├── mock.py            # Mock runner for testing
+│   │   └── parsers/           # Per-runner output stream parsers
 │   │       ├── base.py        # Base stream parser protocol
 │   │       ├── claude_parser.py
 │   │       ├── codex_parser.py
@@ -74,7 +81,8 @@ task-world/
 │   │   ├── errors.py          # Exception handlers
 │   │   ├── websocket.py       # WebSocket connection manager
 │   │   ├── routers/           # API endpoints
-│   │   │   ├── agents.py      # GET /api/agents
+│   │   │   ├── agents.py      # GET/POST/PUT/DELETE /api/agents (agent CRUD)
+│   │   │   ├── runners.py     # GET /api/agent-runners (runner discovery + profile defaults)
 │   │   │   ├── routines.py    # /api/routines CRUD + validate
 │   │   │   ├── runs.py        # /api/runs CRUD + lifecycle
 │   │   │   ├── tasks.py       # Task operations, checklist, grades
@@ -280,7 +288,16 @@ Each task goes through:
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/config` | Global configuration |
-| GET | `/api/agents` | List available agent backends as `AgentOption[]`; includes OpenHands (local/Docker), CLI (claude/codex), Codex Server (local), Codex Server Remote, and User Managed |
+| GET | `/api/agent-runners` | List available agent runner backends as `AgentRunnerOption[]`; includes OpenHands (local/Docker), CLI (claude/codex), Codex Server (local), Codex Server Remote, and User Managed |
+| GET | `/api/agent-runners/local-models` | Discover models from a local OpenAI-compatible LLM server |
+| GET | `/api/agent-runners/{type}/profiles` | Get per-profile model defaults for a runner type |
+| PUT | `/api/agent-runners/{type}/profiles` | Set per-profile model defaults for a runner type |
+| GET | `/api/agents` | List all agent configs (name + system_prompt + model_profile) |
+| POST | `/api/agents` | Create an agent config |
+| GET | `/api/agents/{id}` | Get agent config by ID |
+| PUT | `/api/agents/{id}` | Update agent config |
+| DELETE | `/api/agents/{id}` | Delete agent config |
+| POST | `/api/agents/{id}/reset-prompt` | Reset system_prompt to default_prompt |
 
 ### Routines
 
@@ -445,7 +462,7 @@ When adding new modules, API routes, or CLI commands, update this file and `AGEN
 
 > **BLOCKED** — neither `codex_server` (local) nor `codex_server_remote` may be enabled in production until all conditions below are resolved.
 
-Both Codex Server agent variants (`codex_server.py` and `codex_server_remote.py`) are present in the codebase and exposed through `GET /api/agents`. They are **not production-ready**. The following runtime risk items from `docs/codex-server/context/open-risks.md` remain open and are blocking:
+Both Codex Server agent variants (`codex_server.py` and `codex_server_remote.py`) are present in the codebase and exposed through `GET /api/agent-runners`. They are **not production-ready**. The following runtime risk items from `docs/codex-server/context/open-risks.md` remain open and are blocking:
 
 | Risk ID | Description | Blocking Variant |
 |---------|-------------|-----------------|

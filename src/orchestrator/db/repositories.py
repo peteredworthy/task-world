@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from orchestrator.config.enums import (
-    AgentType,
+    AgentRunnerType,
     ChecklistStatus,
     Priority,
     RoutineSource,
@@ -25,7 +25,7 @@ from orchestrator.db.models import (
     TaskModel,
 )
 from orchestrator.state.errors import RunNotFoundError
-from orchestrator.agents.action_log import ActionLog
+from orchestrator.runners.action_log import ActionLog
 from orchestrator.state.models import (
     Attempt,
     AttemptMetrics,
@@ -114,8 +114,8 @@ def _to_domain(model: RunModel) -> Run:
                         ),
                         grade_snapshot=grade_snapshot,
                         auto_verify_results=att_model.auto_verify_results or [],
-                        agent_type=AgentType(att_model.agent_type)
-                        if att_model.agent_type
+                        agent_type=AgentRunnerType(att_model.runner_type)
+                        if att_model.runner_type
                         else None,
                         agent_model=att_model.agent_model,
                         agent_settings=att_model.agent_settings or {},
@@ -206,8 +206,8 @@ def _to_domain(model: RunModel) -> Run:
         routine_embedded=model.routine_embedded,
         routine_path=model.routine_path,
         routine_commit=model.routine_commit,
-        agent_type=AgentType(model.agent_type) if model.agent_type else None,
-        agent_config=model.agent_config or {},
+        agent_type=AgentRunnerType(model.runner_type) if model.runner_type else None,
+        agent_config=model.runner_config or {},
         verifier_model=model.verifier_model,
         worktree_enabled=bool(model.worktree_enabled),
         worktree_path=model.worktree_path,
@@ -223,7 +223,7 @@ def _to_domain(model: RunModel) -> Run:
         updated_at=_ensure_utc(model.updated_at),
         started_at=_ensure_utc_optional(model.started_at),
         completed_at=_ensure_utc_optional(model.completed_at),
-        agent_started_at=_ensure_utc_optional(model.agent_started_at),
+        agent_started_at=_ensure_utc_optional(model.runner_started_at),
         total_tokens_read=model.total_tokens_read,
         total_tokens_write=model.total_tokens_write,
         total_tokens_cache=model.total_tokens_cache,
@@ -265,7 +265,7 @@ def _to_model(run: Run) -> RunModel:
                         num_actions=att.metrics.num_actions,
                         grade_snapshot=snapshot_json,
                         auto_verify_results=auto_verify_json,
-                        agent_type=att.agent_type.value if att.agent_type else None,
+                        runner_type=att.agent_type.value if att.agent_type else None,
                         agent_model=att.agent_model,
                         agent_settings=att.agent_settings if att.agent_settings else None,
                         agent_output=att.agent_output,
@@ -329,8 +329,8 @@ def _to_model(run: Run) -> RunModel:
         routine_embedded=run.routine_embedded,
         routine_path=run.routine_path,
         routine_commit=run.routine_commit,
-        agent_type=run.agent_type.value if run.agent_type else None,
-        agent_config=run.agent_config,
+        runner_type=run.agent_type.value if run.agent_type else None,
+        runner_config=run.agent_config,
         verifier_model=run.verifier_model,
         worktree_enabled=run.worktree_enabled,
         worktree_path=run.worktree_path,
@@ -346,7 +346,7 @@ def _to_model(run: Run) -> RunModel:
         updated_at=run.updated_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
-        agent_started_at=run.agent_started_at,
+        runner_started_at=run.agent_started_at,
         total_tokens_read=run.total_tokens_read,
         total_tokens_write=run.total_tokens_write,
         total_tokens_cache=run.total_tokens_cache,

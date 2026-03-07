@@ -2,8 +2,8 @@
 
 import json
 
-from orchestrator.agents.action_log import ActionEntryKind
-from orchestrator.agents.parsers.claude_parser import ClaudeStreamParser
+from orchestrator.runners.action_log import ActionEntryKind
+from orchestrator.runners.parsers.claude_parser import ClaudeStreamParser
 
 
 def _make_line(event: dict) -> str:

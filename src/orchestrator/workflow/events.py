@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from orchestrator.config.enums import AgentType, RunStatus, TaskStatus
+from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
 
 
 @dataclass
@@ -92,8 +92,8 @@ class RunStepBackward(WorkflowEvent):
 class AgentChangedEvent(WorkflowEvent):
     """Emitted when agent is switched on resume."""
 
-    old_agent: AgentType = AgentType.CLI_SUBPROCESS
-    new_agent: AgentType = AgentType.CLI_SUBPROCESS
+    old_agent: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS
+    new_agent: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS
     old_agent_config: dict[str, Any] = field(default_factory=lambda: {})
     new_agent_config: dict[str, Any] = field(default_factory=lambda: {})
     reason: str = "user_changed_on_resume"
@@ -103,7 +103,7 @@ class AgentChangedEvent(WorkflowEvent):
 class AgentDiedEvent(WorkflowEvent):
     """Emitted when a managed agent process dies."""
 
-    agent_type: AgentType = AgentType.CLI_SUBPROCESS
+    agent_type: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS
     exit_code: int | None = None
     reason: str = "agent_process_died"
 

@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from orchestrator.agents.action_log import (
+from orchestrator.runners.action_log import (
     ActionEntryKind,
     ActionLog,
     ActionLogEntry,

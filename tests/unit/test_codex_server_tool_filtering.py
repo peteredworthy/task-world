@@ -2,8 +2,8 @@
 
 import logging
 
-from orchestrator.agents.codex_server_common import build_dynamic_tool_specs
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.codex_server_common import build_dynamic_tool_specs
+from orchestrator.runners.types import ExecutionContext
 
 
 def _make_context(**overrides) -> ExecutionContext:

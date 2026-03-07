@@ -3,10 +3,10 @@
 import re
 from datetime import timedelta
 
-from orchestrator.agents.cli import CLIAgent
-from orchestrator.agents.nudger import NudgerConfig
-from orchestrator.agents.types import ExecutionContext
-from orchestrator.config.enums import AgentType
+from orchestrator.runners.cli import CLIAgent
+from orchestrator.runners.nudger import NudgerConfig
+from orchestrator.runners.types import ExecutionContext
+from orchestrator.config.enums import AgentRunnerType
 
 
 def _make_context(
@@ -27,7 +27,7 @@ def _make_context(
 
 def test_cli_agent_info() -> None:
     agent = CLIAgent(command="claude")
-    assert agent.info.agent_type == AgentType.CLI_SUBPROCESS
+    assert agent.info.agent_type == AgentRunnerType.CLI_SUBPROCESS
     assert agent.info.name == "claude"
 
 

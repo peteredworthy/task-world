@@ -1,21 +1,21 @@
 """Tests for agent types and protocol."""
 
-from orchestrator.agents.errors import (
+from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.agents.interface import Agent
-from orchestrator.agents.types import (
+from orchestrator.runners.interface import AgentRunner
+from orchestrator.runners.types import (
     AgentConfigField,
-    AgentInfo,
+    AgentRunnerInfo,
     AgentOption,
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
 )
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 
 
 def test_execution_context_validation() -> None:
@@ -80,25 +80,27 @@ def test_execution_result_failure() -> None:
 
 
 def test_agent_info() -> None:
-    info = AgentInfo(agent_type=AgentType.CLI_SUBPROCESS, name="claude", version="1.0.0")
-    assert info.agent_type == AgentType.CLI_SUBPROCESS
+    info = AgentRunnerInfo(
+        agent_type=AgentRunnerType.CLI_SUBPROCESS, name="claude", version="1.0.0"
+    )
+    assert info.agent_type == AgentRunnerType.CLI_SUBPROCESS
     assert info.name == "claude"
     assert info.version == "1.0.0"
 
 
 def test_agent_info_no_version() -> None:
-    info = AgentInfo(agent_type=AgentType.OPENHANDS_LOCAL, name="openhands_local")
+    info = AgentRunnerInfo(agent_type=AgentRunnerType.OPENHANDS_LOCAL, name="openhands_local")
     assert info.version is None
 
 
 def test_agent_type_claude_sdk_in_enum() -> None:
-    assert AgentType.CLAUDE_SDK == "claude_sdk"
-    assert AgentType.CLAUDE_SDK in AgentType
+    assert AgentRunnerType.CLAUDE_SDK == "claude_sdk"
+    assert AgentRunnerType.CLAUDE_SDK in AgentRunnerType
 
 
 def test_agent_option() -> None:
     opt = AgentOption(
-        agent_type=AgentType.CLI_SUBPROCESS,
+        agent_type=AgentRunnerType.CLI_SUBPROCESS,
         name="Claude CLI",
         available=True,
         detail="Found at /usr/local/bin/claude",
@@ -109,7 +111,7 @@ def test_agent_option() -> None:
 
 def test_agent_option_unavailable() -> None:
     opt = AgentOption(
-        agent_type=AgentType.OPENHANDS_LOCAL,
+        agent_type=AgentRunnerType.OPENHANDS_LOCAL,
         name="OpenHands",
         available=False,
         detail="Server not reachable",
@@ -123,8 +125,8 @@ class _FakeAgent:
     """Minimal concrete agent for protocol check."""
 
     @property
-    def info(self) -> AgentInfo:
-        return AgentInfo(agent_type=AgentType.CLI_SUBPROCESS, name="fake")
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(agent_type=AgentRunnerType.CLI_SUBPROCESS, name="fake")
 
     async def execute(
         self,
@@ -143,7 +145,7 @@ class _FakeAgent:
 
 def test_agent_protocol_runtime_check() -> None:
     agent = _FakeAgent()
-    assert isinstance(agent, Agent)
+    assert isinstance(agent, AgentRunner)
 
 
 def test_agent_error_hierarchy() -> None:
@@ -179,7 +181,7 @@ def test_agent_cancelled_error() -> None:
 
 def test_callback_type_aliases_exist() -> None:
     """Verify callback type aliases are importable."""
-    from orchestrator.agents.types import ChecklistUpdateCallback, SubmitCallback
+    from orchestrator.runners.types import ChecklistUpdateCallback, SubmitCallback
 
     # They're type aliases, so just verify they exist
     assert ChecklistUpdateCallback is not None
@@ -232,7 +234,7 @@ def test_agent_option_with_config_schema() -> None:
         AgentConfigField(name="max_iterations", field_type="number", default=100),
     ]
     opt = AgentOption(
-        agent_type=AgentType.OPENHANDS_LOCAL,
+        agent_type=AgentRunnerType.OPENHANDS_LOCAL,
         name="OpenHands",
         available=True,
         config_schema=schema,
@@ -244,7 +246,7 @@ def test_agent_option_with_config_schema() -> None:
 
 def test_agent_option_config_schema_defaults_to_empty() -> None:
     opt = AgentOption(
-        agent_type=AgentType.CLI_SUBPROCESS,
+        agent_type=AgentRunnerType.CLI_SUBPROCESS,
         name="claude",
         available=True,
     )

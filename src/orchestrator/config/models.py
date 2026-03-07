@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field, model_validator
 
-from orchestrator.config.enums import Complexity, GateType, Priority, StepType
+from orchestrator.config.enums import Complexity, GateType, ModelProfile, Priority, StepType
 
 logger = logging.getLogger(__name__)
 
@@ -162,8 +162,12 @@ class TaskConfig(BaseModel):
 
     id: str
     title: str
-    task_context: str
+    task_context: str = ""
     complexity: Complexity = Complexity.STANDARD
+    profile: ModelProfile | None = None
+    planner_agent: str | None = None
+    builder_agent: str | None = None
+    verifier_agent: str | None = None
     model_overrides: dict[str, dict[str, str]] | None = None
     requirements: list[RequirementConfig] = Field(default_factory=lambda: [])
     auto_verify: AutoVerifyConfig = Field(default_factory=AutoVerifyConfig)
@@ -274,6 +278,9 @@ class StepConfig(BaseModel):
     file: str | None = None
     title: str | None = None
     step_context: str | None = None
+    planner_agent: str | None = None
+    builder_agent: str | None = None
+    verifier_agent: str | None = None
     gate: GateConfig | None = None
     tasks: list[TaskConfig] = Field(default_factory=lambda: [])
     transitions: StepTransitions | None = None
@@ -375,6 +382,9 @@ class RoutineConfig(BaseModel):
     description: str | None = None
     inputs: list[RoutineInputConfig] = Field(default_factory=lambda: [])
     steps: list[StepConfig]
+    planner_agent: str | None = None
+    builder_agent: str | None = None
+    verifier_agent: str | None = None
     env_files: list[EnvFileConfig] = Field(default_factory=lambda: [])
     clarifications: ClarificationsConfig | None = None
     strict_validation: bool = False

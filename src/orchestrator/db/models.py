@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orchestrator.db.base import Base
@@ -28,9 +28,9 @@ class RunModel(Base):
     routine_path: Mapped[str | None] = mapped_column(String, nullable=True)
     routine_commit: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    # Agent configuration
-    agent_type: Mapped[str | None] = mapped_column(String, nullable=True)
-    agent_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    # Runner configuration
+    runner_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    runner_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     verifier_model: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Worktree
@@ -55,7 +55,7 @@ class RunModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    agent_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    runner_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Aggregate metrics
     total_tokens_read: Mapped[int] = mapped_column(Integer, default=0)
@@ -157,8 +157,8 @@ class AttemptModel(Base):
     grade_snapshot: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
     auto_verify_results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
 
-    # Agent snapshot
-    agent_type: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Runner snapshot
+    runner_type: Mapped[str | None] = mapped_column(String, nullable=True)
     agent_model: Mapped[str | None] = mapped_column(String, nullable=True)
     agent_settings: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
@@ -216,6 +216,16 @@ class ClarificationRequestModel(Base):
         back_populates="request",
         uselist=False,
     )
+
+
+class RunnerProfileDefaultModel(Base):
+    __tablename__ = "runner_profile_defaults"
+    __table_args__ = (UniqueConstraint("runner_type", "profile", name="uq_runner_profile"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    runner_type: Mapped[str] = mapped_column(String, nullable=False)
+    profile: Mapped[str] = mapped_column(String, nullable=False)
+    model: Mapped[str] = mapped_column(String, nullable=False)
 
 
 class ClarificationResponseModel(Base):

@@ -60,11 +60,116 @@ uv run orchestrator run start <id> --agent <type>
 ### Core Flow
 
 ```
-User creates Run → Selects Agent → Start (create worktree, acquire lock)
+User creates Run → Selects Agent Runner → Start (create worktree, acquire lock)
   → Builder Phase (fresh context) → submit → Gates check
   → Verifier Phase (fresh context) → grade each requirement → complete-verification
   → Pass: next task | Revision: back to Builder (fresh context, attempt++)
 ```
+
+### Agent Runners
+
+An **Agent Runner** is the execution backend that performs work inside a run's worktree. The user selects a runner when creating (or resuming) a run. Runners are discovered at runtime by `ToolDetector` in `src/orchestrator/runners/detector.py`.
+
+Available runner types (`AgentRunnerType` enum in `src/orchestrator/config/enums.py`):
+
+| Type | Name | Notes |
+|---|---|---|
+| `openhands_local` | OpenHands (local) | In-process via openhands-ai SDK |
+| `openhands_docker` | OpenHands (Docker) | Isolated Docker container |
+| `cli_subprocess` | Claude CLI / Codex CLI | Subprocess via stdin/stdout |
+| `codex_server` | Codex Server (local) | Managed `codex app-server` process (stdio/JSON-RPC) |
+| `claude_sdk` | Claude SDK | In-process via Anthropic Python SDK |
+| `user_managed` | User Managed | External agent via REST or MCP; always available |
+
+All runners satisfy the `AgentRunner` protocol (`src/orchestrator/runners/interface.py`): `execute()`, `cancel()`, and optional `get_quota()`.
+
+**API endpoints** (prefix `/api/agent-runners`):
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/agent-runners` | List available runners with availability and config schema |
+| `GET` | `/api/agent-runners/local-models` | Discover models from a local OpenAI-compatible server |
+| `GET` | `/api/agent-runners/{type}/profiles` | Get per-profile model defaults for a runner type |
+| `PUT` | `/api/agent-runners/{type}/profiles` | Set per-profile model defaults for a runner type |
+
+### Model Profiles
+
+A **Model Profile** is a named cognitive role that maps to a specific model on a given runner. Profiles let routines declare what *kind* of intelligence a task requires without hard-coding a model string.
+
+Four profiles (`ModelProfile` enum in `src/orchestrator/config/enums.py`):
+
+| Profile | Intended use |
+|---|---|
+| `architect` | High-level planning, design decisions, broad context |
+| `designer` | UX/API design, interface contracts |
+| `coder` | Implementation, code changes, debugging |
+| `summarizer` | Distillation, note-taking, lightweight analysis |
+
+**Per-runner defaults** — each runner stores a `profile → model` mapping in the database (`RunnerProfileDefaultModel`). When a task specifies a profile, resolution proceeds:
+
+1. Runner profile defaults (`GET /api/agent-runners/{type}/profiles`)
+2. Runner built-in default model (from `agent_config`)
+3. `None` (no model override)
+
+Resolution logic lives in `src/orchestrator/runners/profile_resolution.py`.
+
+### Agents
+
+An **Agent** (distinct from an Agent Runner) is a named configuration combining a **system prompt** and a **model profile**. Agents are stored in the database and selected per-phase in routine YAML. They control *what instructions* the runner receives and *which model profile* applies.
+
+**Factory defaults** (seeded automatically on first startup):
+
+| Name | Profile | Role |
+|---|---|---|
+| `Planner` | `architect` | Breaks goals into actionable steps |
+| `Builder` | `coder` | Implements requirements from the checklist |
+| `Verifier` | `coder` | Grades completed work objectively |
+
+**CRUD API** (prefix `/api/agents`):
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/agents` | List all agent configs |
+| `POST` | `/api/agents` | Create a new agent config (409 if name exists) |
+| `GET` | `/api/agents/{id}` | Get agent by ID |
+| `PUT` | `/api/agents/{id}` | Update agent (name, system_prompt, model_profile) |
+| `DELETE` | `/api/agents/{id}` | Delete agent |
+| `POST` | `/api/agents/{id}/reset-prompt` | Reset system_prompt to default_prompt |
+
+Each agent record has: `id`, `name`, `system_prompt`, `default_prompt`, `model_profile`, `created_at`, `updated_at`.
+
+**Cascading resolution** — when a task needs an agent for a phase, the orchestrator walks this priority chain (first non-`None` wins):
+
+```
+task-level builder_agent / verifier_agent
+    ↓
+step-level builder_agent / verifier_agent
+    ↓
+routine-level builder_agent / verifier_agent
+    ↓
+system default ("Builder" / "Verifier")
+```
+
+Resolution logic: `src/orchestrator/agents/resolution.py`.
+
+**Routine YAML schema** — agent overrides are optional at every level:
+
+```yaml
+# Routine level
+builder_agent: "CustomBuilder"     # optional — overrides system default for all tasks
+verifier_agent: "CustomVerifier"   # optional
+
+steps:
+  - title: "Step 1"
+    builder_agent: "StepBuilder"   # optional — overrides routine-level for this step
+    verifier_agent: null
+    tasks:
+      - title: "Task A"
+        builder_agent: "TaskBuilder"  # optional — overrides step-level for this task
+        verifier_agent: null
+```
+
+All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_agent` and `verifier_agent` string fields (agent name, not ID). Omit or set `null` to inherit from the level above.
 
 ## UI/UX Constraints
 

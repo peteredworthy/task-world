@@ -1,1 +1,1 @@
-"""Agent integrations for the orchestrator."""
+"""Agent concept: prompt templates paired with model profiles."""

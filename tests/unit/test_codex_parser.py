@@ -2,8 +2,8 @@
 
 import json
 
-from orchestrator.agents.action_log import ActionEntryKind
-from orchestrator.agents.parsers.codex_parser import CodexStreamParser
+from orchestrator.runners.action_log import ActionEntryKind
+from orchestrator.runners.parsers.codex_parser import CodexStreamParser
 
 
 def _make_line(event: dict) -> str:

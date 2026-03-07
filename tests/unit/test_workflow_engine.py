@@ -514,10 +514,10 @@ def test_cancel_run_from_draft_raises() -> None:
 
 def test_start_task_populates_agent_snapshot() -> None:
     """start_task populates agent_type, agent_model, agent_settings on new attempt."""
-    from orchestrator.config.enums import AgentType
+    from orchestrator.config.enums import AgentRunnerType
 
     run = _make_run(status=RunStatus.ACTIVE)
-    run.agent_type = AgentType.CLI_SUBPROCESS
+    run.agent_type = AgentRunnerType.CLI_SUBPROCESS
     run.agent_config = {
         "model": "claude-sonnet-4-5-20250514",
         "temperature": 0.7,
@@ -536,7 +536,7 @@ def test_start_task_populates_agent_snapshot() -> None:
     assert len(task.attempts) == 1
 
     attempt = task.attempts[0]
-    assert attempt.agent_type == AgentType.CLI_SUBPROCESS
+    assert attempt.agent_type == AgentRunnerType.CLI_SUBPROCESS
     assert attempt.agent_model == "claude-sonnet-4-5-20250514"
     assert attempt.agent_settings["model"] == "claude-sonnet-4-5-20250514"
     assert attempt.agent_settings["temperature"] == 0.7
@@ -548,10 +548,10 @@ def test_start_task_populates_agent_snapshot() -> None:
 
 def test_complete_verification_revision_populates_agent_snapshot() -> None:
     """complete_verification revision creates new attempt with agent snapshot."""
-    from orchestrator.config.enums import AgentType
+    from orchestrator.config.enums import AgentRunnerType
 
     run = _make_run(status=RunStatus.ACTIVE)
-    run.agent_type = AgentType.OPENHANDS_LOCAL
+    run.agent_type = AgentRunnerType.OPENHANDS_LOCAL
     run.agent_config = {
         "model": "gpt-4o",
         "temperature": 0.5,
@@ -582,12 +582,12 @@ def test_complete_verification_revision_populates_agent_snapshot() -> None:
 
     # Check first attempt
     first_attempt = task.attempts[0]
-    assert first_attempt.agent_type == AgentType.OPENHANDS_LOCAL
+    assert first_attempt.agent_type == AgentRunnerType.OPENHANDS_LOCAL
     assert first_attempt.agent_model == "gpt-4o"
 
     # Check second attempt (revision)
     second_attempt = task.attempts[1]
-    assert second_attempt.agent_type == AgentType.OPENHANDS_LOCAL
+    assert second_attempt.agent_type == AgentRunnerType.OPENHANDS_LOCAL
     assert second_attempt.agent_model == "gpt-4o"
     assert second_attempt.agent_settings["model"] == "gpt-4o"
     assert second_attempt.agent_settings["temperature"] == 0.5

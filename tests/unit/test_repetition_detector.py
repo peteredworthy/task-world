@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from orchestrator.agents.repetition_detector import (
+from orchestrator.runners.repetition_detector import (
     ActionBudget,
     ActionBudgetConfig,
     ReasoningDetectorConfig,

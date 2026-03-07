@@ -4,13 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
-import type { AgentOption, AgentQuota, QuotaBucket } from '../types/agents';
+import type { AgentRunnerOption, AgentRunnerQuota, QuotaBucket } from '../types/agentRunners';
 
 afterEach(() => {
   cleanup();
 });
 
-function makeQuota(overrides: Partial<AgentQuota> = {}): AgentQuota {
+function makeQuota(overrides: Partial<AgentRunnerQuota> = {}): AgentRunnerQuota {
   return {
     balance_usd: 10.00,
     balance_pct: null,
@@ -23,7 +23,7 @@ function makeQuota(overrides: Partial<AgentQuota> = {}): AgentQuota {
   };
 }
 
-function makeAgent(overrides: Partial<AgentOption> = {}): AgentOption {
+function makeAgent(overrides: Partial<AgentRunnerOption> = {}): AgentRunnerOption {
   return {
     agent_type: 'test_agent',
     name: 'Test Agent',
@@ -56,7 +56,7 @@ describe('Sidebar quota section', () => {
     // Initiate a never-resolving fetch so the agents query stays in loading state
     void queryClient.fetchQuery({
       queryKey: ['agents'],
-      queryFn: (): Promise<AgentOption[]> => new Promise(() => {}),
+      queryFn: (): Promise<AgentRunnerOption[]> => new Promise(() => {}),
     });
 
     const { container } = renderSidebar(queryClient);
@@ -66,7 +66,7 @@ describe('Sidebar quota section', () => {
 
   it('hides section when all agents have null quota', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
       makeAgent({ agent_type: 'agent1', name: 'Agent One', quota: null }),
       makeAgent({ agent_type: 'agent2', name: 'Agent Two', quota: null }),
     ]);
@@ -99,7 +99,7 @@ describe('Sidebar quota section', () => {
 
   it('renders one row per agent with non-null quota', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
       makeAgent({ agent_type: 'agent1', name: 'Agent Alpha', quota: makeQuota({ balance_usd: 5.00 }) }),
       makeAgent({ agent_type: 'agent2', name: 'Agent Beta', quota: makeQuota({ balance_usd: 10.00 }) }),
       makeAgent({ agent_type: 'agent3', name: 'Agent Gamma', quota: null }),
@@ -114,7 +114,7 @@ describe('Sidebar quota section', () => {
 
   it('excludes unavailable agents even with non-null quota', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Available Agent',
@@ -142,7 +142,7 @@ describe('Sidebar quota section', () => {
       { label: '7-day weekly', remaining_pct: 39, remaining_usd: null, resets_at: '2026-02-22T19:00:00+00:00' },
       { label: '5-hour session', remaining_pct: 68, remaining_usd: null, resets_at: null },
     ];
-    queryClient.setQueryData<AgentOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Claude',
@@ -170,7 +170,7 @@ describe('Sidebar quota section', () => {
 
   it('agent without breakdown has no chevron and is not expandable', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Static Agent',
@@ -223,7 +223,7 @@ describe('Sidebar quota section', () => {
 
   it('has no manual refresh button in any state', () => {
     const queryClient = new QueryClient();
-    queryClient.setQueryData<AgentOption[]>(['agents'], [
+    queryClient.setQueryData<AgentRunnerOption[]>(['agents'], [
       makeAgent({
         agent_type: 'agent1',
         name: 'Agent One',

@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from orchestrator.agents.codex_server_common import (
+from orchestrator.runners.codex_server_common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     build_codex_server_prompt,
     build_dynamic_tool_specs,
@@ -19,7 +19,7 @@ from orchestrator.agents.codex_server_common import (
     normalize_codex_metrics,
     normalize_codex_output_lines,
 )
-from orchestrator.agents.types import ExecutionContext
+from orchestrator.runners.types import ExecutionContext
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +331,7 @@ def test_fetch_codex_models_returns_empty_when_codex_not_installed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """fetch_codex_models() returns [] when codex binary is not in PATH."""
-    monkeypatch.setattr("orchestrator.agents.codex_server_common.shutil.which", lambda name: None)
+    monkeypatch.setattr("orchestrator.runners.codex_server_common.shutil.which", lambda name: None)
     result = fetch_codex_models()
     assert result == []
 
@@ -372,10 +372,10 @@ def test_fetch_codex_models_returns_model_ids_on_success(
             pass
 
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+        "orchestrator.runners.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
     )
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common._sp.Popen",
+        "orchestrator.runners.codex_server_common._sp.Popen",
         lambda *a, **kw: _FakeProc(),
     )
 
@@ -420,10 +420,10 @@ def test_fetch_codex_models_all_hidden_models_returns_all(
             pass
 
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+        "orchestrator.runners.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
     )
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common._sp.Popen",
+        "orchestrator.runners.codex_server_common._sp.Popen",
         lambda *a, **kw: _FakeProc(),
     )
 
@@ -468,10 +468,10 @@ def test_fetch_codex_models_filters_hidden_models(
             pass
 
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+        "orchestrator.runners.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
     )
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common._sp.Popen",
+        "orchestrator.runners.codex_server_common._sp.Popen",
         lambda *a, **kw: _FakeProc(),
     )
 
@@ -508,10 +508,10 @@ def test_fetch_codex_models_empty_models_list(
             pass
 
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+        "orchestrator.runners.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
     )
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common._sp.Popen",
+        "orchestrator.runners.codex_server_common._sp.Popen",
         lambda *a, **kw: _FakeProc(),
     )
 
@@ -524,10 +524,10 @@ def test_fetch_codex_models_returns_empty_on_subprocess_error(
 ) -> None:
     """fetch_codex_models() returns [] (not raises) when Popen fails."""
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
+        "orchestrator.runners.codex_server_common.shutil.which", lambda name: "/usr/bin/codex"
     )
     monkeypatch.setattr(
-        "orchestrator.agents.codex_server_common._sp.Popen",
+        "orchestrator.runners.codex_server_common._sp.Popen",
         lambda *a, **kw: (_ for _ in ()).throw(OSError("spawn failed")),
     )
 

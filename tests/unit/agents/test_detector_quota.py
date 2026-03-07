@@ -7,8 +7,8 @@ import time
 
 import pytest
 
-from orchestrator.agents.detector import ToolDetector
-from orchestrator.agents.types import AgentQuota
+from orchestrator.runners.detector import ToolDetector
+from orchestrator.runners.types import AgentQuota
 
 
 class _AgentStub:
@@ -200,8 +200,10 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     docker-detection latency that makes a wall-clock bound on detect_all()
     unreliable in CI.
     """
-    from orchestrator.agents.types import AgentOption as _AO
-    from orchestrator.config.enums import AgentType
+    import time
+
+    from orchestrator.runners.types import AgentOption as _AO
+    from orchestrator.config.enums import AgentRunnerType
 
     AGENT_NAMES = ["agent-alpha", "agent-beta", "agent-gamma"]
     SLEEP_S = 0.5
@@ -218,7 +220,7 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     detector = ToolDetector(agents=stubs)
 
     fake_options = [
-        _AO(agent_type=AgentType.USER_MANAGED, name=n, available=True) for n in AGENT_NAMES
+        _AO(agent_type=AgentRunnerType.USER_MANAGED, name=n, available=True) for n in AGENT_NAMES
     ]
 
     start = time.monotonic()

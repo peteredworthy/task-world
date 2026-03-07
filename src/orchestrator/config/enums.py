@@ -35,7 +35,7 @@ class Priority(str, Enum):
     NICE = "nice"
 
 
-class AgentType(str, Enum):
+class AgentRunnerType(str, Enum):
     OPENHANDS_LOCAL = "openhands_local"
     OPENHANDS_DOCKER = "openhands_docker"
     CLI_SUBPROCESS = "cli_subprocess"
@@ -70,3 +70,10 @@ class StepType(str, Enum):
 class Complexity(str, Enum):
     SIMPLE = "simple"
     STANDARD = "standard"
+
+
+class ModelProfile(str, Enum):
+    ARCHITECT = "architect"
+    DESIGNER = "designer"
+    CODER = "coder"
+    SUMMARIZER = "summarizer"

@@ -34,13 +34,19 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
-    from orchestrator.agents.monitor import AgentMonitor
+    from orchestrator.runners.monitor import AgentMonitor
     from orchestrator.db.repositories import RunRepository
 
     await init_db(app.state.engine)
 
     # Recover active runs on startup - check for dead agents and pause them
     session_factory = app.state.session_factory
+
+    # Seed factory-default agents (Planner, Builder, Verifier) if not present
+    from orchestrator.agents.service import seed_default_agents
+
+    async with session_factory() as _seed_session:
+        await seed_default_agents(_seed_session)
     global_config = app.state.global_config
 
     # Create agent_monitor instance with session_factory (no bound session).
@@ -67,7 +73,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # re-spawning, these runs are orphaned: the agent finishes but nobody
         # handles the next phase (verification, next task, run completion).
         if hasattr(app.state, "agent_executor"):
-            from orchestrator.config.enums import AgentType as _AT
+            from orchestrator.config.enums import AgentRunnerType as _AT
 
             executor = app.state.agent_executor
             async with session_factory() as session:
@@ -265,9 +271,9 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if hasattr(app.state, "agent_executor"):
         from asyncio import Task as _AsyncTask
 
-        from orchestrator.agents.executor import AgentExecutor
+        from orchestrator.runners.executor import AgentRunnerExecutor
 
-        executor: AgentExecutor = app.state.agent_executor
+        executor: AgentRunnerExecutor = app.state.agent_executor
         pending_tasks: list[_AsyncTask[Any]] = []
         for run_id in list(executor._running_tasks):  # pyright: ignore[reportPrivateUsage]
             task = executor._running_tasks.pop(run_id, None)  # pyright: ignore[reportPrivateUsage]
@@ -365,11 +371,11 @@ def create_app(
     require_ws_auth = get_require_ws_auth(auth_config)
 
     # Agent tool detector
-    from orchestrator.agents.claude_sdk import ClaudeSDKAgent
-    from orchestrator.agents.cli import ClaudeCliQuotaAgent
-    from orchestrator.agents.codex_server import CodexServerAgent
-    from orchestrator.agents.detector import ToolDetector
-    from orchestrator.agents.openhands import OpenHandsAgent
+    from orchestrator.runners.claude_sdk import ClaudeSDKAgent
+    from orchestrator.runners.cli import ClaudeCliQuotaAgent
+    from orchestrator.runners.codex_server import CodexServerAgent
+    from orchestrator.runners.detector import ToolDetector
+    from orchestrator.runners.openhands import OpenHandsAgent
 
     app.state.tool_detector = ToolDetector(
         agents=[OpenHandsAgent(), CodexServerAgent(), ClaudeCliQuotaAgent(), ClaudeSDKAgent()]
@@ -398,15 +404,15 @@ def create_app(
 
     # Agent executor for spawning managed agents (created here so it's available
     # in tests that don't run the lifespan)
-    from orchestrator.agents.executor import AgentExecutor
+    from orchestrator.runners.executor import AgentRunnerExecutor
 
     # Disable agent spawning for in-memory SQLite (tests), unless explicitly enabled
     if spawn_agents is None:
         spawn_agents = db_path != ":memory:"
 
-    # Note: agent_monitor will be set in lifespan if available, but AgentExecutor
+    # Note: agent_monitor will be set in lifespan if available, but AgentRunnerExecutor
     # can lazy-initialize it if needed. This avoids circular dependencies.
-    app.state.agent_executor = AgentExecutor(
+    app.state.agent_executor = AgentRunnerExecutor(
         session_factory=app.state.session_factory,
         global_config=global_cfg,
         lock_manager=app.state.lock_manager,
@@ -419,10 +425,12 @@ def create_app(
     register_error_handlers(app)
 
     # Register routers with auth dependency
-    from orchestrator.api.routers.agents import router as agents_router
+    from orchestrator.api.routers.agents import router as agent_configs_router
+    from orchestrator.api.routers.runners import router as agents_router
     from orchestrator.api.routers.clarifications import router as clarifications_router
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.envfiles import router as envfiles_router
+    from orchestrator.api.routers.model_profiles import router as model_profiles_router
     from orchestrator.api.routers.repos import router as repos_router
     from orchestrator.api.routers.review import router as review_router
     from orchestrator.api.routers.routines import router as routines_router
@@ -430,10 +438,12 @@ def create_app(
     from orchestrator.api.routers.tasks import router as tasks_router
 
     auth_deps = [Depends(require_auth)]
+    app.include_router(agent_configs_router, dependencies=auth_deps)
     app.include_router(agents_router, dependencies=auth_deps)
     app.include_router(clarifications_router, dependencies=auth_deps)
     app.include_router(config_router, dependencies=auth_deps)
     app.include_router(envfiles_router, dependencies=auth_deps)
+    app.include_router(model_profiles_router, dependencies=auth_deps)
     app.include_router(repos_router, dependencies=auth_deps)
     app.include_router(review_router, dependencies=auth_deps)
     app.include_router(routines_router, dependencies=auth_deps)

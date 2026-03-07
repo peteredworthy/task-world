@@ -9,7 +9,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from orchestrator.agents.executor import AgentExecutor
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.deps import (
     get_agent_executor,
     get_event_emitter,
@@ -37,7 +37,7 @@ from orchestrator.api.schemas.review import (
     TestRunResult as TestRunResultSchema,
     TestSummary as TestSummarySchema,
 )
-from orchestrator.config.enums import AgentType
+from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
 from orchestrator.git.branch_ops import get_branch_status, revert_back_merge
@@ -703,7 +703,7 @@ async def agent_resolve_conflicts(
     body: AgentResolveConflictsRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
 ) -> dict[str, str]:
     """Dispatch the run's agent to resolve merge conflicts."""
     run = await service.get_run(run_id)
@@ -717,15 +717,15 @@ async def agent_resolve_conflicts(
     agent_type_str: str | None = body.agent_type
     agent_config_override: dict[str, Any] | None = body.agent_config
 
-    agent_type: AgentType | None
+    agent_type: AgentRunnerType | None
     if agent_type_str:
-        valid_agent_types = [e.value for e in AgentType]
+        valid_agent_types = [e.value for e in AgentRunnerType]
         if agent_type_str not in valid_agent_types:
             raise HTTPException(
                 status_code=422,
                 detail=f"Invalid agent_type '{agent_type_str}'. Valid options: {', '.join(valid_agent_types)}",
             )
-        agent_type = AgentType(agent_type_str)
+        agent_type = AgentRunnerType(agent_type_str)
     else:
         agent_type = run.agent_type
 
@@ -849,7 +849,7 @@ async def compute_readiness(
     run: Run,
     repo_path: Path,
     test_runner: TestRunner,
-    executor: AgentExecutor,
+    executor: AgentRunnerExecutor,
 ) -> MergeReadiness:
     """Evaluate all four merge readiness gates and return aggregate result.
 
@@ -1024,7 +1024,7 @@ async def get_merge_readiness(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
     test_runner: Annotated[TestRunner, Depends(get_test_runner)],
-    executor: Annotated[AgentExecutor, Depends(get_agent_executor)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_agent_executor)],
 ) -> MergeReadiness:
     """Return merge readiness by evaluating all four gates.
 

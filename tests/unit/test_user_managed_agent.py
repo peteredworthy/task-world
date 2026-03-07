@@ -4,14 +4,14 @@ import asyncio
 
 import pytest
 
-from orchestrator.agents.errors import AgentCancelledError, AgentTimeoutError
-from orchestrator.agents.types import (
+from orchestrator.runners.errors import AgentCancelledError, AgentTimeoutError
+from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     ExecutionContext,
     SubmitCallback,
 )
-from orchestrator.agents.user_managed import UserManagedAgent
-from orchestrator.config.enums import AgentType, ChecklistStatus
+from orchestrator.runners.user_managed import UserManagedAgent
+from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.workflow.service import SubmitEventRegistry
 
 
@@ -40,7 +40,7 @@ def test_user_managed_agent_info() -> None:
     # Create a minimal mock service with the needed interface
     service = _FakeService()
     agent = UserManagedAgent(service=service)  # type: ignore[arg-type]
-    assert agent.info.agent_type == AgentType.USER_MANAGED
+    assert agent.info.agent_type == AgentRunnerType.USER_MANAGED
     assert agent.info.name == "User Managed"
 
 
