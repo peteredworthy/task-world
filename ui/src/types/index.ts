@@ -12,3 +12,4 @@ export type * from './branches';
 export type * from './envFiles';
 export type * from './config';
 export type * from './review';
+export type * from './modelProfiles';

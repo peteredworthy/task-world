@@ -14,6 +14,7 @@ import type {
   EnvSnapshot,
   GlobalConfig,
   GuidanceResponse,
+  ModelProfileInfo,
   PendingAction,
   ProjectRoutineResponse,
   ProjectRoutinesListResponse,
@@ -29,6 +30,7 @@ import type {
   RoutineListResponse,
   RunListResponse,
   RunResponse,
+  RunnerProfileDefaults,
   SetGradeRequest,
   TaskDetailResponse,
   TransitionResponse,
@@ -592,6 +594,21 @@ export const api = {
   removeRepo(name: string): Promise<void> {
     return fetchApi('/api/repos/' + name, { method: 'DELETE' });
   },
+
+  fetchModelProfiles(): Promise<ModelProfileInfo[]> {
+    return fetchApi('/api/model-profiles');
+  },
+
+  fetchRunnerProfiles(runnerType: string): Promise<RunnerProfileDefaults> {
+    return fetchApi('/api/agent-runners/' + encodeURIComponent(runnerType) + '/profiles');
+  },
+
+  saveRunnerProfiles(runnerType: string, profiles: RunnerProfileDefaults): Promise<RunnerProfileDefaults> {
+    return fetchApi('/api/agent-runners/' + encodeURIComponent(runnerType) + '/profiles', {
+      method: 'PUT',
+      body: JSON.stringify(profiles),
+    });
+  },
 };
 
 export function recoverRun(runId: string, data: RecoverRequest): Promise<RecoverResponse> {
@@ -652,4 +669,16 @@ export function getConfig(): Promise<GlobalConfig> {
 
 export function validateRoutine(yamlContent: string): Promise<ValidationResult> {
   return api.validateRoutine(yamlContent);
+}
+
+export function fetchModelProfiles(): Promise<ModelProfileInfo[]> {
+  return api.fetchModelProfiles();
+}
+
+export function fetchRunnerProfiles(runnerType: string): Promise<RunnerProfileDefaults> {
+  return api.fetchRunnerProfiles(runnerType);
+}
+
+export function saveRunnerProfiles(runnerType: string, profiles: RunnerProfileDefaults): Promise<RunnerProfileDefaults> {
+  return api.saveRunnerProfiles(runnerType, profiles);
 }
