@@ -77,12 +77,16 @@ async def test_git_at_scheme_not_rejected(client: AsyncClient) -> None:
 
 async def test_agents_file_url_rejected(client: AsyncClient) -> None:
     """file:// base_url should be rejected with 422."""
-    resp = await client.get("/api/agents/local-models", params={"base_url": "file:///etc/passwd"})
+    resp = await client.get(
+        "/api/agent-runners/local-models", params={"base_url": "file:///etc/passwd"}
+    )
     assert resp.status_code == 422
     assert "http://" in resp.json()["detail"]
 
 
 async def test_agents_ftp_url_rejected(client: AsyncClient) -> None:
     """ftp:// base_url should be rejected with 422."""
-    resp = await client.get("/api/agents/local-models", params={"base_url": "ftp://example.com"})
+    resp = await client.get(
+        "/api/agent-runners/local-models", params={"base_url": "ftp://example.com"}
+    )
     assert resp.status_code == 422

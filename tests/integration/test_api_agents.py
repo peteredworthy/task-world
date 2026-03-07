@@ -60,7 +60,7 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
 
 async def test_list_agents(client: AsyncClient) -> None:
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
     # OpenHands (local), OpenHands (Docker), claude, codex, User Managed (at minimum)
@@ -89,7 +89,7 @@ async def test_list_agents(client: AsyncClient) -> None:
 
 async def test_list_agents_has_both_openhands_types(client: AsyncClient) -> None:
     """Both OPENHANDS_LOCAL and OPENHANDS_DOCKER entries are present."""
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 
@@ -100,7 +100,7 @@ async def test_list_agents_has_both_openhands_types(client: AsyncClient) -> None
 
 async def test_list_agents_includes_config_schema(client: AsyncClient) -> None:
     """All agent options include config_schema in JSON response."""
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 
@@ -118,7 +118,7 @@ async def test_list_agents_includes_config_schema(client: AsyncClient) -> None:
 
 async def test_list_agents_includes_codex_server(client: AsyncClient) -> None:
     """GET /api/agents always includes a codex_server entry."""
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 
@@ -134,7 +134,7 @@ async def test_list_agents_includes_codex_server(client: AsyncClient) -> None:
 
 async def test_codex_server_unavailable_has_install_hint(client: AsyncClient) -> None:
     """When codex_server is unavailable, the response includes an actionable install_hint."""
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 
@@ -148,7 +148,7 @@ async def test_codex_server_unavailable_has_install_hint(client: AsyncClient) ->
 
 async def test_codex_server_has_stable_shape(client: AsyncClient) -> None:
     """codex_server entry has stable response shape."""
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 
@@ -174,7 +174,7 @@ async def test_codex_server_has_stable_shape(client: AsyncClient) -> None:
 
 async def test_codex_server_config_fields(client: AsyncClient) -> None:
     """codex_server exposes model, restrictions, and callback_channel config fields."""
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 
@@ -199,7 +199,7 @@ async def test_codex_server_config_fields(client: AsyncClient) -> None:
 
 async def test_get_agents_returns_200(client: AsyncClient) -> None:
     """GET /api/agents returns HTTP 200."""
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
 
 
@@ -209,7 +209,7 @@ async def test_every_agent_has_quota_key(client: AsyncClient) -> None:
     The value may be null (None) when no quota-capable agent is registered,
     but the key itself must always be present in the serialised response.
     """
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 
@@ -232,7 +232,7 @@ async def test_non_null_quota_has_required_fields(client: AsyncClient) -> None:
         "supports_quota",
     }
 
-    response = await client.get("/api/agents")
+    response = await client.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 
@@ -257,7 +257,7 @@ async def test_at_least_one_agent_has_non_null_quota(
     A non-null result confirms that quota data flows correctly through the
     GET /api/agents endpoint all the way to the JSON response.
     """
-    response = await client_with_quota.get("/api/agents")
+    response = await client_with_quota.get("/api/agent-runners")
     assert response.status_code == 200
     data: list[dict[str, Any]] = response.json()
 

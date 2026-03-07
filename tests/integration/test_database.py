@@ -29,7 +29,7 @@ def _make_run(run_id: str = "run-1", repo_name: str = "proj-1") -> RunModel:
         id=run_id,
         repo_name=repo_name,
         status="draft",
-        agent_config={},
+        runner_config={},
         config={},
         created_at=now,
         updated_at=now,
@@ -190,8 +190,8 @@ async def test_run_fields_roundtrip(session: AsyncSession) -> None:
         routine_id="routine-1",
         routine_sha="abc123",
         routine_source="local",
-        agent_type="openhands_local",
-        agent_config={"key": "val"},
+        runner_type="openhands_local",
+        runner_config={"key": "val"},
         worktree_enabled=True,
         worktree_path="/tmp/wt",
         delete_worktree_on_completion=False,
@@ -211,8 +211,8 @@ async def test_run_fields_roundtrip(session: AsyncSession) -> None:
     loaded = result.scalar_one()
     assert loaded.routine_id == "routine-1"
     assert loaded.routine_sha == "abc123"
-    assert loaded.agent_type == "openhands_local"
-    assert loaded.agent_config == {"key": "val"}
+    assert loaded.runner_type == "openhands_local"
+    assert loaded.runner_config == {"key": "val"}
     assert loaded.worktree_enabled is True
     assert loaded.worktree_path == "/tmp/wt"
     assert loaded.config == {"feature": "auth"}
