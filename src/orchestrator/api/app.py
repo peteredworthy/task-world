@@ -419,6 +419,7 @@ def create_app(
     register_error_handlers(app)
 
     # Register routers with auth dependency
+    from orchestrator.api.routers.agents import router as agent_configs_router
     from orchestrator.api.routers.runners import router as agents_router
     from orchestrator.api.routers.clarifications import router as clarifications_router
     from orchestrator.api.routers.config import router as config_router
@@ -431,6 +432,7 @@ def create_app(
     from orchestrator.api.routers.tasks import router as tasks_router
 
     auth_deps = [Depends(require_auth)]
+    app.include_router(agent_configs_router, dependencies=auth_deps)
     app.include_router(agents_router, dependencies=auth_deps)
     app.include_router(clarifications_router, dependencies=auth_deps)
     app.include_router(config_router, dependencies=auth_deps)

@@ -1,0 +1,108 @@
+"""CRUD service for Agent configs."""
+
+import uuid
+from datetime import datetime, timezone
+
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from orchestrator.agents.errors import (
+    AgentNameConflictError,
+    AgentNoDefaultPromptError,
+    AgentNotFoundError,
+)
+from orchestrator.agents.models import AgentConfigModel
+from orchestrator.agents.schemas import AgentSchema, CreateAgentRequest, UpdateAgentRequest
+from orchestrator.config.enums import ModelProfile
+
+
+def _to_schema(model: AgentConfigModel) -> AgentSchema:
+    return AgentSchema(
+        id=model.id,
+        name=model.name,
+        system_prompt=model.system_prompt,
+        default_prompt=model.default_prompt,
+        model_profile=ModelProfile(model.model_profile),
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+class AgentService:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def list_agents(self) -> list[AgentSchema]:
+        result = await self._session.execute(
+            select(AgentConfigModel).order_by(AgentConfigModel.name)
+        )
+        return [_to_schema(m) for m in result.scalars().all()]
+
+    async def get_agent(self, agent_id: str) -> AgentSchema:
+        model = await self._session.get(AgentConfigModel, agent_id)
+        if model is None:
+            raise AgentNotFoundError(agent_id)
+        return _to_schema(model)
+
+    async def create_agent(self, req: CreateAgentRequest) -> AgentSchema:
+        now = datetime.now(timezone.utc)
+        model = AgentConfigModel(
+            id=str(uuid.uuid4()),
+            name=req.name,
+            system_prompt=req.system_prompt,
+            default_prompt=req.default_prompt,
+            model_profile=req.model_profile.value,
+            created_at=now,
+            updated_at=now,
+        )
+        self._session.add(model)
+        try:
+            await self._session.flush()
+        except IntegrityError:
+            await self._session.rollback()
+            raise AgentNameConflictError(req.name)
+        await self._session.commit()
+        await self._session.refresh(model)
+        return _to_schema(model)
+
+    async def update_agent(self, agent_id: str, req: UpdateAgentRequest) -> AgentSchema:
+        model = await self._session.get(AgentConfigModel, agent_id)
+        if model is None:
+            raise AgentNotFoundError(agent_id)
+        if req.name is not None:
+            model.name = req.name
+        if req.system_prompt is not None:
+            model.system_prompt = req.system_prompt
+        if req.default_prompt is not None:
+            model.default_prompt = req.default_prompt
+        if req.model_profile is not None:
+            model.model_profile = req.model_profile.value
+        model.updated_at = datetime.now(timezone.utc)
+        try:
+            await self._session.flush()
+        except IntegrityError:
+            await self._session.rollback()
+            raise AgentNameConflictError(req.name or "")
+        await self._session.commit()
+        await self._session.refresh(model)
+        return _to_schema(model)
+
+    async def delete_agent(self, agent_id: str) -> None:
+        model = await self._session.get(AgentConfigModel, agent_id)
+        if model is None:
+            raise AgentNotFoundError(agent_id)
+        await self._session.delete(model)
+        await self._session.commit()
+
+    async def reset_prompt(self, agent_id: str) -> AgentSchema:
+        model = await self._session.get(AgentConfigModel, agent_id)
+        if model is None:
+            raise AgentNotFoundError(agent_id)
+        if not model.default_prompt:
+            raise AgentNoDefaultPromptError(agent_id)
+        model.system_prompt = model.default_prompt
+        model.updated_at = datetime.now(timezone.utc)
+        await self._session.commit()
+        await self._session.refresh(model)
+        return _to_schema(model)
