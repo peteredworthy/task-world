@@ -114,6 +114,7 @@ class AgentQuota(BaseModel):
     label: str = ""
     supports_quota: bool = True
     breakdown: list[QuotaBucket] | None = None  # per-bucket detail for expanded view
+    fetched_at: str | None = None  # ISO 8601 timestamp of last successful fetch
 
     def __init__(self, **data: Any) -> None:
         super().__init__(**data)

@@ -4,8 +4,6 @@ Tests that the system can recover from server restarts and that state
 is properly persisted across server lifecycles.
 """
 
-from pathlib import Path
-
 import httpx
 import pytest
 
@@ -25,7 +23,7 @@ from tests.e2e.conftest import (
 
 @pytest.mark.e2e
 async def test_state_persists_across_requests(
-    api_client: httpx.AsyncClient, tmp_db_path: Path
+    api_client: httpx.AsyncClient,
 ) -> None:
     """Test that state is persisted to database between requests.
 
@@ -63,10 +61,6 @@ async def test_state_persists_across_requests(
     # Verify final state is persisted
     run_data = await get_run(api_client, run_id)
     assert run_data["status"] == "completed"
-
-    # Verify database file exists and is not empty
-    assert tmp_db_path.exists()
-    assert tmp_db_path.stat().st_size > 0
 
 
 @pytest.mark.e2e

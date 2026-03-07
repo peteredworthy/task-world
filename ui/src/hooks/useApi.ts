@@ -104,6 +104,8 @@ export function useAgents() {
   return useQuery({
     queryKey: ['agents'],
     queryFn: () => api.listAgents(),
+    refetchInterval: 60_000,
+    staleTime: 30_000,
   });
 }
 

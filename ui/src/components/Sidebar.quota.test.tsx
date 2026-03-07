@@ -18,6 +18,7 @@ function makeQuota(overrides: Partial<AgentQuota> = {}): AgentQuota {
     label: 'Test quota',
     supports_quota: true,
     breakdown: null,
+    fetched_at: null,
     ...overrides,
   };
 }
@@ -182,6 +183,42 @@ describe('Sidebar quota section', () => {
     const row = screen.getByText('Static Agent').closest('button');
     // No aria-expanded on non-expandable rows
     expect(row).not.toHaveAttribute('aria-expanded');
+  });
+
+  it('shows staleness text when fetched_at is older than 90 seconds', () => {
+    const queryClient = new QueryClient();
+    // 5 minutes ago
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    queryClient.setQueryData<AgentOption[]>(['agents'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Stale Agent',
+        quota: makeQuota({ balance_usd: 5.00, fetched_at: fiveMinAgo }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    expect(screen.getByText('Stale Agent')).toBeInTheDocument();
+    expect(screen.getByText('updated 5m ago')).toBeInTheDocument();
+  });
+
+  it('does not show staleness text when fetched_at is less than 90 seconds old', () => {
+    const queryClient = new QueryClient();
+    // 30 seconds ago
+    const thirtySecAgo = new Date(Date.now() - 30 * 1000).toISOString();
+    queryClient.setQueryData<AgentOption[]>(['agents'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Fresh Agent',
+        quota: makeQuota({ balance_usd: 5.00, fetched_at: thirtySecAgo }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    expect(screen.getByText('Fresh Agent')).toBeInTheDocument();
+    expect(screen.queryByText(/updated/)).not.toBeInTheDocument();
   });
 
   it('has no manual refresh button in any state', () => {

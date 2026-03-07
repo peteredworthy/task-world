@@ -74,6 +74,16 @@ User creates Run → Selects Agent → Start (create worktree, acquire lock)
 
 **Modals for destructive actions.** Any action that deletes, resets, or irreversibly modifies data must open a full overlay modal — centred on screen, dark backdrop, clear title, description of what will happen, optional reason/note field if useful, and Cancel + confirm buttons in the footer.
 
+## Database
+
+**Never delete `orchestrator.db` without an explicit user request.** The database contains run history, events, and state that cannot be recovered. If a schema change causes errors, add an Alembic migration and run `alembic upgrade head` — do not drop and recreate. Even when the user explicitly asks to wipe the database, **back it up first** (`cp orchestrator.db orchestrator.db.bak`).
+
+- Schema migrations: `src/orchestrator/db/migrations/versions/`
+- Create a migration: `uv run alembic -c alembic.ini revision -m "description"`
+- Apply migrations: `uv run alembic -c alembic.ini upgrade head`
+- `init_db()` runs Alembic migrations for file-based DBs, `create_all` only for in-memory (tests)
+- `*.db` is in `.gitignore` — database files are never tracked and cannot be restored from git
+
 ## Non-Negotiable Design Constraints
 
 **No mocking in tests.** Never use `patch`, `MagicMock`, or monkeypatching. Use real objects with dependency injection -- real git repos, real SQLite (in-memory), real files.

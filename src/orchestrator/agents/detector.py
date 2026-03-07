@@ -4,6 +4,7 @@ import asyncio
 import shutil
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 from orchestrator.agents.claude_sdk import fetch_claude_models
@@ -19,6 +20,9 @@ class _QuotaCacheEntry:
     quota: AgentQuota | None
     cached_at: float = field(default_factory=time.monotonic)
     is_active: bool = False
+    last_success_quota: AgentQuota | None = None
+    last_success_at: float | None = None  # wall-clock time.time() of last success
+    retry_after: float = 0.0  # monotonic time before which no retry should be attempted
 
 
 # --- Config schemas for each agent type ---
@@ -333,6 +337,17 @@ class ToolDetector:
         ttl = 60.0 if entry.is_active else 300.0
         return (time.monotonic() - entry.cached_at) < ttl
 
+    @staticmethod
+    def _quota_with_fetched_at(entry: _QuotaCacheEntry) -> AgentQuota | None:
+        """Return a copy of the entry's quota stamped with ``fetched_at``."""
+        quota = entry.quota
+        if quota is None:
+            return None
+        fetched_at: str | None = None
+        if entry.last_success_at is not None:
+            fetched_at = datetime.fromtimestamp(entry.last_success_at, tz=timezone.utc).isoformat()
+        return quota.model_copy(update={"fetched_at": fetched_at})
+
     async def _fetch_quota_for_option(self, option: AgentOption) -> AgentQuota | None:
         """Fetch quota for one agent option, consulting the cache first.
 
@@ -340,7 +355,10 @@ class ToolDetector:
         matching agent with ``get_quota()`` is registered.  Calls
         ``agent.get_quota()`` in a thread with a 3-second timeout; any
         exception (including ``asyncio.TimeoutError``) is swallowed and
-        results in ``None``.
+        the last successful quota is returned instead.
+
+        After a failure, a 5-minute backoff is applied before the next
+        fetch attempt, returning the stale-but-good value in the interim.
         """
         if not option.available:
             return None
@@ -351,8 +369,15 @@ class ToolDetector:
 
         cache_key = option.name
         cached = self._quota_cache.get(cache_key)
+
+        # 1. Fresh cache → return immediately
         if cached is not None and self._quota_cache_valid(cached):
-            return cached.quota
+            return self._quota_with_fetched_at(cached)
+
+        # 2. Within retry backoff → return stale value without fetching
+        now_mono = time.monotonic()
+        if cached is not None and now_mono < cached.retry_after:
+            return self._quota_with_fetched_at(cached)
 
         try:
             quota: AgentQuota | None = await asyncio.wait_for(
@@ -360,13 +385,31 @@ class ToolDetector:
                 timeout=3.0,
             )
         except Exception:
-            quota = None
+            # Failure: preserve last successful quota, apply 5-min backoff
+            last_success_quota = cached.last_success_quota if cached else None
+            last_success_at = cached.last_success_at if cached else None
+            self._quota_cache[cache_key] = _QuotaCacheEntry(
+                quota=last_success_quota,
+                is_active=True,
+                last_success_quota=last_success_quota,
+                last_success_at=last_success_at,
+                retry_after=time.monotonic() + 300.0,
+            )
+            return self._quota_with_fetched_at(self._quota_cache[cache_key])
 
+        # Success: update all fields
+        now_wall = time.time()
         self._quota_cache[cache_key] = _QuotaCacheEntry(
             quota=quota,
             is_active=True,
+            last_success_quota=quota
+            if quota is not None
+            else (cached.last_success_quota if cached else None),
+            last_success_at=now_wall
+            if quota is not None
+            else (cached.last_success_at if cached else None),
         )
-        return quota
+        return self._quota_with_fetched_at(self._quota_cache[cache_key])
 
     async def detect_all(self) -> list[AgentOption]:
         """Detect all available agent backends and attach cached quota info."""

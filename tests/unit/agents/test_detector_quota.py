@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 import pytest
 
@@ -94,7 +95,7 @@ async def test_quota_none_when_get_quota_returns_none() -> None:
 
 
 async def test_exception_in_get_quota_yields_none() -> None:
-    """Exceptions from get_quota() are swallowed and result in quota=None."""
+    """Exceptions from get_quota() are swallowed and result in quota=None on first failure (no prior success)."""
     stub = _RaisingAgentStub(name="User Managed")
     detector = ToolDetector(agents=[stub])
 
@@ -107,7 +108,7 @@ async def test_exception_in_get_quota_yields_none() -> None:
 
 @pytest.mark.timeout(35)
 async def test_slow_get_quota_times_out_and_yields_none() -> None:
-    """A get_quota() that exceeds 3 seconds results in quota=None (not a hang).
+    """A get_quota() that exceeds 3 seconds results in quota=None on first failure (no prior success).
 
     detect_all() is allowed to take up to 30s in total (docker detection can
     consume up to 10s); this test only verifies that the quota is None when
@@ -152,8 +153,6 @@ async def test_quota_refetched_after_ttl_expiry() -> None:
     Time is simulated by directly manipulating the cached_at field on the
     _QuotaCacheEntry — no patching or MagicMock required.
     """
-    import time
-
     call_count = 0
 
     class _CountingStubExpiry:
@@ -201,8 +200,6 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     docker-detection latency that makes a wall-clock bound on detect_all()
     unreliable in CI.
     """
-    import time
-
     from orchestrator.agents.types import AgentOption as _AO
     from orchestrator.config.enums import AgentType
 
@@ -238,3 +235,129 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     )
 
     assert all(q is not None and q.balance_usd == 1.0 for q in quotas)
+
+
+async def test_failure_preserves_last_successful_quota() -> None:
+    """After a successful fetch, a subsequent failure returns the stale quota with fetched_at."""
+    call_count = 0
+
+    class _FailSecondTimeStub:
+        name = "User Managed"
+
+        def get_quota(self) -> AgentQuota | None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return AgentQuota(balance_usd=42.0)
+            raise RuntimeError("rate limited")
+
+    detector = ToolDetector(agents=[_FailSecondTimeStub()])
+
+    # First call succeeds
+    options1 = await detector.detect_all()
+    um1 = next(o for o in options1 if o.name == "User Managed")
+    assert um1.quota is not None
+    assert um1.quota.balance_usd == 42.0
+    assert um1.quota.fetched_at is not None
+
+    # Expire the cache so second call attempts a fetch
+    cache_entry = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry.cached_at = time.monotonic() - 400
+
+    # Second call fails — should return stale quota
+    options2 = await detector.detect_all()
+    um2 = next(o for o in options2 if o.name == "User Managed")
+    assert um2.quota is not None
+    assert um2.quota.balance_usd == 42.0
+    assert um2.quota.fetched_at is not None
+
+
+async def test_retry_backoff_after_failure() -> None:
+    """After a failure, a second call within 5min doesn't re-call get_quota()."""
+    call_count = 0
+
+    class _FailOnceStub:
+        name = "User Managed"
+
+        def get_quota(self) -> AgentQuota | None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return AgentQuota(balance_usd=10.0)
+            raise RuntimeError("rate limited")
+
+    detector = ToolDetector(agents=[_FailOnceStub()])
+
+    # First call succeeds
+    await detector.detect_all()
+    assert call_count == 1
+
+    # Expire cache to trigger fetch
+    cache_entry = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry.cached_at = time.monotonic() - 400
+
+    # Second call fails, sets retry_after
+    await detector.detect_all()
+    assert call_count == 2
+
+    # Third call: cache is stale but within retry_after backoff — should NOT call get_quota
+    cache_entry2 = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry2.cached_at = time.monotonic() - 400  # expire cache again
+    # retry_after should still be in the future (set ~300s from now)
+
+    await detector.detect_all()
+    assert call_count == 2  # no additional call
+
+
+async def test_fetched_at_set_on_success() -> None:
+    """A successful fetch populates fetched_at as an ISO 8601 string."""
+    from datetime import datetime
+
+    stub = _AgentStub(name="User Managed", quota=AgentQuota(balance_usd=5.0))
+    detector = ToolDetector(agents=[stub])
+
+    options = await detector.detect_all()
+    um = next(o for o in options if o.name == "User Managed")
+
+    assert um.quota is not None
+    assert um.quota.fetched_at is not None
+    # Verify it parses as ISO 8601
+    parsed = datetime.fromisoformat(um.quota.fetched_at)
+    assert parsed is not None
+
+
+async def test_fetched_at_preserved_after_failure() -> None:
+    """fetched_at reflects the last success time, not the failure time."""
+    call_count = 0
+    success_time_before: float = 0
+
+    class _TimedFailStub:
+        name = "User Managed"
+
+        def get_quota(self) -> AgentQuota | None:
+            nonlocal call_count, success_time_before
+            call_count += 1
+            if call_count == 1:
+                success_time_before = time.time()
+                return AgentQuota(balance_usd=7.0)
+            raise RuntimeError("rate limited")
+
+    detector = ToolDetector(agents=[_TimedFailStub()])
+
+    # First call succeeds
+    options1 = await detector.detect_all()
+    um1 = next(o for o in options1 if o.name == "User Managed")
+    assert um1.quota is not None
+    fetched_at_1 = um1.quota.fetched_at
+    assert fetched_at_1 is not None
+
+    # Expire cache
+    cache_entry = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry.cached_at = time.monotonic() - 400
+
+    # Second call fails
+    options2 = await detector.detect_all()
+    um2 = next(o for o in options2 if o.name == "User Managed")
+    assert um2.quota is not None
+    # fetched_at should be the same as after the first (successful) call
+    assert um2.quota.fetched_at == fetched_at_1

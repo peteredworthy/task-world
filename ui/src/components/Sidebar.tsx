@@ -48,6 +48,21 @@ function formatBucketValue(bucket: QuotaBucket): string {
   return '';
 }
 
+function formatStaleness(isoStr: string | null | undefined): string | null {
+  if (!isoStr) return null;
+  try {
+    const fetchedMs = new Date(isoStr).getTime();
+    const ageMs = Date.now() - fetchedMs;
+    if (ageMs < 90_000) return null; // <90s → not stale
+    const mins = Math.round(ageMs / 60_000);
+    if (mins < 60) return `updated ${mins}m ago`;
+    const hrs = Math.round(mins / 60);
+    return `updated ${hrs}h ago`;
+  } catch {
+    return null;
+  }
+}
+
 interface AgentQuotaRowProps {
   agent: AgentOption;
 }
@@ -55,6 +70,7 @@ interface AgentQuotaRowProps {
 function AgentQuotaRow({ agent }: AgentQuotaRowProps) {
   const [expanded, setExpanded] = useState(false);
   const hasBreakdown = (agent.quota?.breakdown?.length ?? 0) > 0;
+  const staleness = formatStaleness(agent.quota?.fetched_at);
 
   return (
     <div>
@@ -63,7 +79,10 @@ function AgentQuotaRow({ agent }: AgentQuotaRowProps) {
         className={`w-full flex items-center justify-between py-1 px-1.5 rounded transition-colors ${hasBreakdown ? 'hover:bg-bg-hover cursor-pointer' : 'cursor-default'}`}
         aria-expanded={hasBreakdown ? expanded : undefined}
       >
-        <span className="text-text-secondary text-[12px] truncate mr-2">{agent.name}</span>
+        <div className="flex flex-col items-start min-w-0 mr-2">
+          <span className="text-text-secondary text-[12px] truncate max-w-full">{agent.name}</span>
+          {staleness && <span className="text-text-muted text-[10px]">{staleness}</span>}
+        </div>
         <div className="flex items-center gap-1 shrink-0">
           <AgentQuotaBadge quota={agent.quota!} />
           {hasBreakdown && (

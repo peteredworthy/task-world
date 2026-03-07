@@ -11,6 +11,7 @@ function makeQuota(overrides: Partial<AgentQuota> = {}): AgentQuota {
     label: 'Test quota',
     supports_quota: true,
     breakdown: null,
+    fetched_at: null,
     ...overrides,
   };
 }

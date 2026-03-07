@@ -24,6 +24,7 @@ export interface AgentQuota {
   label: string;
   supports_quota: boolean;
   breakdown: QuotaBucket[] | null;
+  fetched_at: string | null;
 }
 
 export interface AgentOption {

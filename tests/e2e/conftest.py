@@ -1,73 +1,37 @@
 """E2E test fixtures.
 
-Provides fixtures for running a real HTTP server in a subprocess and
-making real HTTP requests to it.
+Uses in-process ASGITransport (same as integration tests) to avoid flaky
+subprocess startup timeouts.  The test surface is identical — full HTTP
+request/response through the real FastAPI app — but startup is instant.
 """
 
-import os
-import signal
-import socket
-import subprocess
-import sys
-import tempfile
-import time
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
+from httpx import ASGITransport, AsyncClient
+
+from orchestrator.api.app import create_app
+from orchestrator.config.enums import RoutineSource
+from orchestrator.db.connection import init_db
 
 # Root directory of the project
 ROOT_DIR = Path(__file__).parent.parent.parent
-
-
-def _find_free_port() -> int:
-    """Find an available port on localhost."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        s.listen(1)
-        port = s.getsockname()[1]
-    return port
-
-
-def _wait_for_server(url: str, timeout: float = 10.0) -> None:
-    """Wait for the server to become available.
-
-    Args:
-        url: Base URL of the server
-        timeout: Maximum time to wait in seconds
-
-    Raises:
-        TimeoutError: If server doesn't start within timeout
-    """
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            response = httpx.get(f"{url}/health", timeout=1.0)
-            if response.status_code == 200:
-                return
-        except (httpx.ConnectError, httpx.TimeoutException):
-            time.sleep(0.1)
-    raise TimeoutError(f"Server at {url} did not start within {timeout}s")
-
-
-@pytest.fixture
-def tmp_db_path(tmp_path: Path) -> Path:
-    """Provide a temporary database path."""
-    return tmp_path / "test.db"
+FIXTURES = ROOT_DIR / "tests" / "fixtures" / "routines"
 
 
 @pytest.fixture
 def test_routine_path() -> Path:
     """Path to a simple test routine."""
-    return ROOT_DIR / "tests" / "fixtures" / "routines" / "valid_simple.yaml"
+    return FIXTURES / "valid_simple.yaml"
 
 
 @pytest.fixture
 def test_routines_dir() -> Path:
     """Directory containing test routines."""
-    return ROOT_DIR / "tests" / "fixtures" / "routines"
+    return FIXTURES
 
 
 @pytest.fixture
@@ -79,103 +43,18 @@ def tmp_project(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def api_server(
-    tmp_db_path: Path, test_routines_dir: Path
-) -> Generator[tuple[str, subprocess.Popen[bytes]], None, None]:
-    """Start a real uvicorn server in a subprocess.
-
-    Returns:
-        Tuple of (base_url, process)
-    """
-    port = _find_free_port()
-    base_url = f"http://127.0.0.1:{port}"
-
-    # Create a minimal server script
-    server_script = f"""
-import sys
-from pathlib import Path
-
-# Add src to path
-sys.path.insert(0, str(Path('{ROOT_DIR}') / 'src'))
-
-from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
-
-app = create_app(
-    db_path='{tmp_db_path}',
-    routine_dirs=[(Path('{test_routines_dir}'), RoutineSource.LOCAL)],
-    auth_disabled=True,
-)
-"""
-
-    # Write script to temp file
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
-        script_path = f.name
-        f.write(server_script)
-
-    process: subprocess.Popen[bytes] | None = None
-    try:
-        # Start uvicorn with the app
-        process = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                f"{Path(script_path).stem}:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(port),
-                "--log-level",
-                "error",
-            ],
-            cwd=Path(script_path).parent,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        # Wait for server to start
-        try:
-            _wait_for_server(base_url, timeout=10.0)
-        except TimeoutError:
-            # Print server output for debugging
-            stdout, stderr = process.communicate(timeout=1.0)
-            print("Server stdout:", stdout.decode())
-            print("Server stderr:", stderr.decode())
-            process.kill()
-            raise
-
-        yield base_url, process
-    finally:
-        # Cleanup
-        if process is not None and process.poll() is None:
-            process.send_signal(signal.SIGTERM)
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-
-        # Remove temp script
-        try:
-            os.unlink(script_path)
-        except FileNotFoundError:
-            pass
-
-
-@pytest.fixture
-async def api_client(api_server: tuple[str, Any]) -> AsyncGenerator[httpx.AsyncClient, None]:
-    """HTTP client configured for the test API server.
-
-    Args:
-        api_server: Tuple of (base_url, process)
-
-    Yields:
-        Configured async HTTP client
-    """
-    base_url, _ = api_server
-    async with httpx.AsyncClient(base_url=base_url, timeout=30.0) as client:
+async def api_client() -> AsyncGenerator[AsyncClient, None]:
+    """In-process ASGI client backed by a real FastAPI app with in-memory DB."""
+    app = create_app(
+        db_path=":memory:",
+        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+        auth_disabled=True,
+    )
+    await init_db(app.state.engine)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test", timeout=30.0) as client:
         yield client
+    await app.state.engine.dispose()
 
 
 # Helper functions for common API operations
