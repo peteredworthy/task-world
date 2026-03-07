@@ -162,7 +162,7 @@ class TaskConfig(BaseModel):
 
     id: str
     title: str
-    task_context: str
+    task_context: str = ""
     complexity: Complexity = Complexity.STANDARD
     profile: ModelProfile | None = None
     planner_agent: str | None = None
