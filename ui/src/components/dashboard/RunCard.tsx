@@ -7,7 +7,7 @@ import { outcomeColor, outcomeLabel } from '../../lib/outcome';
 import { RunStatusBadge } from '../StatusBadge';
 import { StepTimeline } from './StepTimeline';
 import { CompactGradeRow } from '../CompactGradeRow';
-import { AgentIcon } from '../AgentIcon';
+import { AgentRunnerIcon } from '../AgentRunnerIcon';
 import { useTransitionBack } from '../../hooks/useApi';
 
 interface RunCardProps {
@@ -763,7 +763,7 @@ function CollapsedRow(props: RunCardProps) {
             <>
               <span className="text-border-hover">|</span>
               <span className="flex items-center gap-1.5">
-                <AgentIcon icon={run.agent_icon} className="h-3.5 w-3.5" />
+                <AgentRunnerIcon icon={run.agent_icon} className="h-3.5 w-3.5" />
                 <span className="truncate">{run.agent_type_display}</span>
               </span>
             </>
@@ -888,7 +888,7 @@ function ExpandedView(props: RunCardProps) {
             value={run.agent_type_display}
             title={`Agent: ${run.agent_type_display}`}
             icon={
-              run.agent_icon !== 'none' ? <AgentIcon icon={run.agent_icon} className="h-4 w-4 shrink-0 text-text-muted" /> : undefined
+              run.agent_icon !== 'none' ? <AgentRunnerIcon icon={run.agent_icon} className="h-4 w-4 shrink-0 text-text-muted" /> : undefined
             }
           />
           <MetaPill

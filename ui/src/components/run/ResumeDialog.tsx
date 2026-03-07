@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAgents, useResumeRun } from '../../hooks/useApi';
 import { Spinner } from '../Spinner';
-import { AgentIcon } from '../AgentIcon';
+import { AgentRunnerIcon } from '../AgentRunnerIcon';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { AgentRunnerConfigForm } from '../AgentRunnerConfigForm';
 import { buildDefaultAgentConfig } from '../agentRunnerConfigUtils';
@@ -176,7 +176,7 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
                 Current Agent
               </label>
               <div className="flex items-center gap-3 px-4 py-3 bg-bg-card border border-border rounded-lg">
-                <AgentIcon icon={run.agent_icon} className="h-5 w-5" />
+                <AgentRunnerIcon icon={run.agent_icon} className="h-5 w-5" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-text-primary truncate">
                     {run.agent_type_display}

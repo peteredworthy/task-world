@@ -1,9 +1,9 @@
-interface AgentIconProps {
+interface AgentRunnerIconProps {
   icon: string;
   className?: string;
 }
 
-export function AgentIcon({ icon, className = 'h-4 w-4' }: AgentIconProps) {
+export function AgentRunnerIcon({ icon, className = 'h-4 w-4' }: AgentRunnerIconProps) {
   const baseClass = `${className} shrink-0`;
 
   switch (icon) {
