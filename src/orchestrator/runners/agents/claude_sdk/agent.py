@@ -500,8 +500,14 @@ class ClaudeSDKAgent:
 
             full_prompt = build_claude_sdk_prompt(context, is_verifier=is_verifier)
 
-            # Build environment for SDK (pass credentials)
-            sdk_env: dict[str, str] = {}
+            # Build environment for SDK (pass credentials, strip nesting guard)
+            sdk_env: dict[str, str] = {
+                # The claude CLI refuses to start when CLAUDECODE is set
+                # (nested session detection). The orchestrator server may
+                # itself be running inside a Claude Code terminal, so we
+                # must clear this to allow the SDK subprocess to launch.
+                "CLAUDECODE": "",
+            }
             if self._api_key:
                 sdk_env["ANTHROPIC_API_KEY"] = self._api_key
             elif self._auth_token:
