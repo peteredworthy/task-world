@@ -1,0 +1,2103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orchestration Architecture Directions</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #242838;
+    --border: #2e3347;
+    --text: #e1e4ed;
+    --text-dim: #8b90a5;
+    --accent: #7c6ef0;
+    --accent-light: #9d92f8;
+    --green: #34d399;
+    --red: #f87171;
+    --amber: #fbbf24;
+    --blue: #60a5fa;
+    --pink: #f472b6;
+    --cyan: #22d3ee;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.6;
+    overflow: hidden;
+  }
+
+  .slides-container {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .slide {
+    width: 100vw;
+    height: 100vh;
+    padding: 48px 80px;
+    display: none;
+    flex-direction: column;
+    position: absolute;
+    top: 0;
+    left: 0;
+    overflow-y: auto;
+  }
+
+  .slide.active {
+    display: flex;
+  }
+
+  .slide-number {
+    position: fixed;
+    bottom: 24px;
+    right: 40px;
+    color: var(--text-dim);
+    font-size: 14px;
+    z-index: 100;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .nav-hint {
+    position: fixed;
+    bottom: 24px;
+    left: 40px;
+    color: var(--text-dim);
+    font-size: 13px;
+    z-index: 100;
+    opacity: 0.6;
+  }
+
+  h1 {
+    font-size: 42px;
+    font-weight: 700;
+    margin-bottom: 12px;
+    background: linear-gradient(135deg, var(--accent-light), var(--cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    line-height: 1.2;
+  }
+
+  h2 {
+    font-size: 32px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+
+  h3 {
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--accent-light);
+  }
+
+  h4 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: var(--text);
+  }
+
+  .subtitle {
+    font-size: 20px;
+    color: var(--text-dim);
+    margin-bottom: 32px;
+  }
+
+  p { margin-bottom: 12px; color: var(--text-dim); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; flex: 1; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; flex: 1; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 16px; flex: 1; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    transition: border-color 0.2s;
+  }
+
+  .card:hover {
+    border-color: var(--accent);
+  }
+
+  .card.highlight {
+    border-color: var(--accent);
+    box-shadow: 0 0 20px rgba(124, 110, 240, 0.1);
+  }
+
+  .tag {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-right: 6px;
+    margin-bottom: 4px;
+  }
+
+  .tag-green { background: rgba(52, 211, 153, 0.15); color: var(--green); }
+  .tag-red { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+  .tag-amber { background: rgba(251, 191, 36, 0.15); color: var(--amber); }
+  .tag-blue { background: rgba(96, 165, 250, 0.15); color: var(--blue); }
+  .tag-purple { background: rgba(124, 110, 240, 0.15); color: var(--accent-light); }
+  .tag-pink { background: rgba(244, 114, 182, 0.15); color: var(--pink); }
+  .tag-cyan { background: rgba(34, 211, 238, 0.15); color: var(--cyan); }
+
+  ul { list-style: none; padding: 0; }
+  ul li {
+    padding: 5px 0;
+    padding-left: 20px;
+    position: relative;
+    color: var(--text-dim);
+    font-size: 15px;
+  }
+  ul li::before {
+    content: '>';
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: bold;
+  }
+
+  .diagram {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 13px;
+    line-height: 1.8;
+    white-space: pre;
+    overflow-x: auto;
+    color: var(--text-dim);
+  }
+
+  .diagram .hl { color: var(--accent-light); }
+  .diagram .g { color: var(--green); }
+  .diagram .r { color: var(--red); }
+  .diagram .a { color: var(--amber); }
+  .diagram .b { color: var(--blue); }
+  .diagram .p { color: var(--pink); }
+  .diagram .c { color: var(--cyan); }
+
+  .pro-con { display: flex; gap: 16px; margin-top: 12px; }
+  .pro-con > div { flex: 1; }
+
+  .effort-bar {
+    height: 8px;
+    border-radius: 4px;
+    background: var(--surface2);
+    margin-top: 8px;
+    margin-bottom: 4px;
+    overflow: hidden;
+  }
+
+  .effort-bar .fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+  }
+
+  .effort-low .fill { width: 25%; background: var(--green); }
+  .effort-med .fill { width: 50%; background: var(--amber); }
+  .effort-high .fill { width: 80%; background: var(--red); }
+
+  .effort-label { font-size: 12px; color: var(--text-dim); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-dim);
+  }
+
+  tr:hover td { background: rgba(124, 110, 240, 0.04); }
+
+  .check { color: var(--green); }
+  .cross { color: var(--red); }
+  .partial { color: var(--amber); }
+
+  .section-divider {
+    width: 60px;
+    height: 3px;
+    background: linear-gradient(90deg, var(--accent), transparent);
+    margin: 8px 0 20px;
+    border-radius: 2px;
+  }
+
+  .flex-center {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+  }
+
+  .flow-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+    flex-wrap: wrap;
+  }
+
+  .flow-node {
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+
+  .flow-arrow {
+    color: var(--text-dim);
+    font-size: 18px;
+  }
+
+  .node-purple { background: rgba(124,110,240,0.12); border-color: rgba(124,110,240,0.3); color: var(--accent-light); }
+  .node-green { background: rgba(52,211,153,0.12); border-color: rgba(52,211,153,0.3); color: var(--green); }
+  .node-blue { background: rgba(96,165,250,0.12); border-color: rgba(96,165,250,0.3); color: var(--blue); }
+  .node-amber { background: rgba(251,191,36,0.12); border-color: rgba(251,191,36,0.3); color: var(--amber); }
+  .node-pink { background: rgba(244,114,182,0.12); border-color: rgba(244,114,182,0.3); color: var(--pink); }
+  .node-red { background: rgba(248,113,113,0.12); border-color: rgba(248,113,113,0.3); color: var(--red); }
+  .node-cyan { background: rgba(34,211,238,0.12); border-color: rgba(34,211,238,0.3); color: var(--cyan); }
+  .node-dim { background: rgba(139,144,165,0.08); border-color: rgba(139,144,165,0.2); color: var(--text-dim); }
+  .node-dashed { border-style: dashed; }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    padding: 12px 16px;
+    background: rgba(124, 110, 240, 0.06);
+    border-radius: 0 8px 8px 0;
+    margin: 12px 0;
+    font-size: 14px;
+  }
+
+  .callout-amber {
+    border-left-color: var(--amber);
+    background: rgba(251, 191, 36, 0.06);
+  }
+
+  .wireframe {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    font-size: 12px;
+  }
+
+  .wire-header {
+    background: var(--surface2);
+    border-radius: 6px;
+    padding: 8px 12px;
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .wire-step {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+    margin: 6px 0;
+  }
+
+  .wire-step-badge {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .wire-step-content {
+    flex: 1;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+  }
+
+  .wire-phase {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    margin-right: 4px;
+    font-weight: 500;
+  }
+
+  .mini-badge {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+
+  .spacer { flex: 1; }
+  .mt-auto { margin-top: auto; }
+  .mt-16 { margin-top: 16px; }
+  .mt-8 { margin-top: 8px; }
+  .mb-16 { margin-bottom: 16px; }
+  .mb-8 { margin-bottom: 8px; }
+  .text-sm { font-size: 14px; }
+  .text-xs { font-size: 12px; }
+</style>
+</head>
+<body>
+
+<div class="slides-container" id="slides">
+
+<!-- ==================== SLIDE 1: TITLE ==================== -->
+<div class="slide active" data-slide="1">
+  <div style="flex:1; display:flex; flex-direction:column; justify-content:center; max-width: 800px;">
+    <p style="color:var(--accent-light); font-size:14px; text-transform:uppercase; letter-spacing:2px; margin-bottom:16px;">Architecture Research</p>
+    <h1 style="font-size:52px; margin-bottom:16px;">Making the Orchestrator<br>More Adaptable</h1>
+    <p style="font-size:18px; line-height:1.7;">
+      Three directions for evolving beyond the fixed builder/verifier paradigm &mdash;
+      adding flexible phases, smarter failure recovery, and optional workflow stages
+      without drowning in complexity.
+    </p>
+    <div style="margin-top:40px; display:flex; gap:12px;">
+      <span class="tag tag-purple">3 Options Compared</span>
+      <span class="tag tag-blue">UX Wireframes</span>
+      <span class="tag tag-amber">Effort Estimates</span>
+      <span class="tag tag-green">Use Cases</span>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 2: THE PROBLEM ==================== -->
+<div class="slide" data-slide="2">
+  <h2>What's showing cracks</h2>
+  <div class="section-divider"></div>
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Structural symmetries that aren't unified</h3>
+      <div class="card mb-16">
+        <h4>Step-level validation</h4>
+        <p class="text-sm">Checks combined results of all tasks in a step. If any task fails, the step fails. No way for the validator to say "task 2 was the problem, only re-run that."</p>
+        <div class="flow-row mt-8">
+          <span class="flow-node node-green">Task 1 OK</span>
+          <span class="flow-node node-red">Task 2 Fail</span>
+          <span class="flow-node node-green">Task 3 OK</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-red">Step Fails</span>
+        </div>
+      </div>
+      <div class="card mb-16">
+        <h4>Fan-out child validation</h4>
+        <p class="text-sm">Each child verified independently. Parent gets composite result. Similar pattern, different code paths, different behavior.</p>
+        <div class="flow-row mt-8">
+          <span class="flow-node node-green">Child 1 OK</span>
+          <span class="flow-node node-red">Child 2 Fail</span>
+          <span class="flow-node node-green">Child 3 OK</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-red">Parent Fails</span>
+        </div>
+      </div>
+      <div class="card">
+        <h4>The gap</h4>
+        <p class="text-sm">A step-level verifier can't identify which task failed and trigger a targeted retry. It's all-or-nothing at the step boundary, even though the fan-out pattern already supports per-child retry.</p>
+      </div>
+    </div>
+    <div>
+      <h3>Phase rigidity</h3>
+      <div class="card mb-16">
+        <h4>Current: fixed two-phase pipeline</h4>
+        <div class="flow-row" style="margin:16px 0;">
+          <span class="flow-node node-green">Build</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-purple">Verify</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-dim">Done</span>
+        </div>
+        <p class="text-sm">Every task follows this path. Recovery exists but as an exception handler, not a first-class phase.</p>
+      </div>
+      <div class="card mb-16">
+        <h4>Wanted: flexible phase chains</h4>
+        <div class="flow-row" style="margin:16px 0;">
+          <span class="flow-node node-blue">Plan</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-green">Build</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-purple">Verify</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-cyan">Summarize</span>
+        </div>
+        <div class="flow-row">
+          <span class="flow-node node-green">Build</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-amber">Gap Check</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-pink">Fix Gaps</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-purple">Verify</span>
+        </div>
+        <p class="text-sm mt-8">Planning before building. Summarization after. Gap analysis that spawns targeted fix agents. Steps with only one phase (script-only, or verify-only for manual work).</p>
+      </div>
+      <div class="card">
+        <h4>Optional/conditional steps</h4>
+        <p class="text-sm">A bug-fix routine triggered regularly should skip the "design" step for simple bugs but include it for complex ones. Currently no way to mark steps as conditional.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 3: DEPTH QUESTION ==================== -->
+<div class="slide" data-slide="3">
+  <h2>Should depth be unbounded?</h2>
+  <div class="section-divider"></div>
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Arguments for recursive nesting</h3>
+      <div class="card mb-16">
+        <h4>Temporal's model</h4>
+        <p class="text-sm">Child workflows can nest arbitrarily. A workflow can spawn child workflows that spawn grandchild workflows. Maximum flexibility.</p>
+      </div>
+      <div class="card mb-16">
+        <h4>Prefect's subflows</h4>
+        <p class="text-sm">"Infinitely-nested subflow structures for modularity." Any flow can call another flow. Complex conditions become simple if-statements.</p>
+      </div>
+      <div class="callout">
+        <strong>The appeal:</strong> A routine could decompose a task into sub-tasks, which decompose further. An architect agent plans, a splitter breaks work into pieces, builders execute, a synthesizer combines.
+      </div>
+    </div>
+    <div>
+      <h3>Arguments against</h3>
+      <div class="card mb-16">
+        <h4>Temporal's own guidance</h4>
+        <p class="text-sm" style="color:var(--amber);">"Do not use Child Workflows to organize code. Flatten hierarchies where possible."</p>
+        <p class="text-sm">Costs multiply at each level. Default limit: 2,000 incomplete activities per execution. Debugging nested failures is painful.</p>
+      </div>
+      <div class="card mb-16">
+        <h4>UI complexity explodes</h4>
+        <p class="text-sm">Zapier caps conditional nesting at 3 levels. n8n's sub-workflow UI becomes confusing past 2 levels. Each level needs its own progress tracking, error display, and retry controls.</p>
+      </div>
+      <div class="card mb-16">
+        <h4>DevEx suffers</h4>
+        <p class="text-sm">Routine authors must reason about arbitrary depth. "Where does my variable resolve?" becomes ambiguous. Testing nested routines requires exponentially more scenarios.</p>
+      </div>
+      <div class="callout callout-amber">
+        <strong>Assessment:</strong> Unbounded depth is theoretically elegant but practically harmful. Every successful system either caps depth or discourages nesting. The current 4-level hierarchy (routine &rarr; step &rarr; task &rarr; fan-out child) is a good ceiling. The opportunity is making each level more flexible, not adding more levels.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 4: OPTION A OVERVIEW ==================== -->
+<div class="slide" data-slide="4">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:4px;">
+    <span class="tag tag-green" style="font-size:14px; padding:5px 14px;">Option A</span>
+    <h2>Configurable Phase Pipelines</h2>
+  </div>
+  <p class="subtitle">Replace the hardcoded build&rarr;verify with a per-task phase sequence</p>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Core idea</h3>
+      <p>Each task defines an ordered list of <strong>phases</strong>. A phase has a type (build, verify, plan, summarize, gap-check, script, human-review) and can be optional or conditional. The engine walks the phase list instead of hardcoded BUILDING&rarr;VERIFYING transitions.</p>
+
+      <div class="diagram mt-16" style="font-size:12px; line-height:1.7;">
+<span class="hl">tasks:</span>
+  - id: T-01
+    title: "Implement auth module"
+    <span class="g">phases:</span>
+      - <span class="b">type: plan</span>
+        profile: ARCHITECT
+        prompt: "Design the auth approach"
+      - <span class="g">type: build</span>
+        prompt: "Implement based on plan"
+      - <span class="p">type: verify</span>
+        rubric: [...]
+      - <span class="c">type: summarize</span>
+        profile: SUMMARIZER
+        prompt: "Write changelog entry"
+
+  - id: T-02
+    title: "Fix typo in README"
+    <span class="g">phases:</span>
+      - <span class="g">type: build</span>
+      - <span class="a">type: auto-verify</span>  <span class="r"># no LLM verify needed</span></div>
+
+      <div class="callout mt-16">
+        <strong>Key insight:</strong> Builder and verifier are just phase types. The current system is a special case where every task has phases: [build, verify]. Making this explicit lets you add planning, summarization, or gap-check phases without new state machine branches.
+      </div>
+    </div>
+    <div>
+      <h3>What changes</h3>
+      <ul>
+        <li>TaskConfig gains a <code>phases</code> list (defaults to [build, verify] for backward compat)</li>
+        <li>TaskStatus becomes phase-aware: the engine tracks <code>current_phase_index</code></li>
+        <li>Each phase type has a prompt template and an agent profile</li>
+        <li>Phase output is passed as context to the next phase</li>
+        <li>Transitions are between phases within a task, not just build&rarr;verify</li>
+        <li>Verify phase can loop back to any earlier phase (not just build)</li>
+      </ul>
+
+      <h3 class="mt-16">Effort estimate</h3>
+      <div class="effort-bar effort-med"><div class="fill"></div></div>
+      <span class="effort-label">Medium &mdash; ~2 weeks of focused work</span>
+
+      <div class="mt-16">
+        <h4>Files impacted</h4>
+        <table>
+          <tr><td>config/models.py</td><td><span class="tag tag-amber">Modify</span> Add PhaseConfig</td></tr>
+          <tr><td>config/enums.py</td><td><span class="tag tag-amber">Modify</span> Add PhaseType enum</td></tr>
+          <tr><td>state/models.py</td><td><span class="tag tag-amber">Modify</span> TaskState.current_phase_index</td></tr>
+          <tr><td>workflow/engine.py</td><td><span class="tag tag-red">Major</span> Phase-aware transitions</td></tr>
+          <tr><td>workflow/transitions.py</td><td><span class="tag tag-red">Major</span> Generalize phase flow</td></tr>
+          <tr><td>workflow/prompts.py</td><td><span class="tag tag-amber">Modify</span> Per-phase prompts</td></tr>
+          <tr><td>runners/executor.py</td><td><span class="tag tag-amber">Modify</span> Dispatch by phase type</td></tr>
+          <tr><td>db/models.py</td><td><span class="tag tag-green">Minor</span> Phase index column</td></tr>
+          <tr><td>UI components</td><td><span class="tag tag-amber">Modify</span> Phase indicators</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 5: OPTION A UX ==================== -->
+<div class="slide" data-slide="5">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px;">
+    <span class="tag tag-green" style="font-size:14px; padding:5px 14px;">Option A</span>
+    <h2>UI: Phase Pipeline Visualization</h2>
+  </div>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Task detail &mdash; phase progress</h3>
+      <div class="wireframe">
+        <div class="wire-header">
+          <span class="mini-badge" style="background:rgba(52,211,153,0.2);color:var(--green);">T1</span>
+          Implement auth module
+          <span style="margin-left:auto;" class="tag tag-purple">Verifying</span>
+        </div>
+        <p class="text-xs" style="color:var(--text-dim);margin-bottom:10px;">Phase 3 of 4</p>
+        <div style="display:flex; align-items:center; gap:6px; margin-bottom:16px;">
+          <div style="display:flex; align-items:center; gap:4px;">
+            <span class="mini-badge" style="background:rgba(96,165,250,0.2);color:var(--blue);">P</span>
+            <span class="text-xs" style="color:var(--green);">Plan</span>
+          </div>
+          <span style="color:var(--border);">&mdash;</span>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <span class="mini-badge" style="background:rgba(52,211,153,0.2);color:var(--green);">B</span>
+            <span class="text-xs" style="color:var(--green);">Build</span>
+          </div>
+          <span style="color:var(--border);">&mdash;</span>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <span class="mini-badge" style="background:rgba(124,110,240,0.3);color:var(--accent-light);border:1px solid var(--accent);">V</span>
+            <span class="text-xs" style="color:var(--accent-light);">Verify</span>
+          </div>
+          <span style="color:var(--border);">&mdash;</span>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <span class="mini-badge" style="background:rgba(139,144,165,0.1);color:var(--text-dim);">S</span>
+            <span class="text-xs" style="color:var(--text-dim);">Summarize</span>
+          </div>
+        </div>
+
+        <div style="border:1px solid var(--border); border-radius:8px; padding:12px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span class="text-xs" style="color:var(--accent-light); font-weight:600;">Verify Phase &mdash; Attempt 1</span>
+            <span class="tag tag-purple" style="font-size:10px;">In Progress</span>
+          </div>
+          <p class="text-xs" style="margin:0;">Reviewing implementation against design plan and requirements...</p>
+        </div>
+
+        <div style="border:1px solid var(--border); border-radius:8px; padding:12px; opacity:0.6;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <span class="text-xs" style="color:var(--green); font-weight:600;">Build Phase &mdash; Attempt 1</span>
+            <span class="tag tag-green" style="font-size:10px;">Passed</span>
+          </div>
+          <p class="text-xs" style="margin:0;">Implemented OAuth2 PKCE flow with refresh token rotation</p>
+        </div>
+      </div>
+
+      <h3 class="mt-16">Step timeline enhancement</h3>
+      <div class="wireframe">
+        <div style="display:flex; gap:8px; align-items:center; padding:8px 0;">
+          <div style="text-align:center;">
+            <div class="mini-badge" style="background:var(--green);color:white;width:36px;height:36px;font-size:12px;border-radius:8px;">S1</div>
+            <div class="text-xs" style="color:var(--green);margin-top:4px;">3/3</div>
+          </div>
+          <span style="color:var(--border);">&mdash;</span>
+          <div style="text-align:center;">
+            <div class="mini-badge" style="background:rgba(52,211,153,0.2);color:var(--green);width:36px;height:36px;font-size:12px;border-radius:8px;border:2px solid var(--green);box-shadow:0 0 8px rgba(52,211,153,0.3);">S2</div>
+            <div class="text-xs" style="color:var(--green);margin-top:4px;">1/2</div>
+            <div style="display:flex; gap:2px; justify-content:center; margin-top:2px;">
+              <div style="width:6px;height:6px;border-radius:2px;background:var(--green);"></div>
+              <div style="width:6px;height:6px;border-radius:2px;background:var(--accent);"></div>
+              <div style="width:6px;height:6px;border-radius:2px;background:rgba(139,144,165,0.3);"></div>
+            </div>
+          </div>
+          <span style="color:var(--border);">&mdash;</span>
+          <div style="text-align:center;">
+            <div class="mini-badge" style="background:rgba(139,144,165,0.1);color:var(--text-dim);width:36px;height:36px;font-size:12px;border-radius:8px;border:1px solid var(--border);">S3</div>
+            <div class="text-xs" style="color:var(--text-dim);margin-top:4px;">0/1</div>
+          </div>
+        </div>
+        <p class="text-xs" style="margin-top:8px; color:var(--text-dim);">The colored dots beneath S2 show per-phase progress within the active task: <span style="color:var(--green);">build</span> done, <span style="color:var(--accent-light);">verify</span> in progress, <span style="color:var(--text-dim);">summarize</span> pending.</p>
+      </div>
+    </div>
+    <div>
+      <h3>Use cases enabled</h3>
+      <div class="card mb-16">
+        <h4>Bug-fix routine with conditional planning</h4>
+        <div class="flow-row">
+          <span class="flow-node node-blue node-dashed">Plan (optional)</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-green">Build</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-purple">Verify</span>
+        </div>
+        <p class="text-sm mt-8">The plan phase runs only if complexity &gt; threshold. Simple typo fixes skip straight to build.</p>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Research + summarize workflow</h4>
+        <div class="flow-row">
+          <span class="flow-node node-green">Research</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-cyan">Summarize</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-purple">Verify accuracy</span>
+        </div>
+        <p class="text-sm mt-8">No traditional "build" phase. Research gathers info, summarizer distills, verifier checks facts.</p>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Design review gate</h4>
+        <div class="flow-row">
+          <span class="flow-node node-blue">Design</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-amber">Human Review</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-green">Build</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-purple">Verify</span>
+        </div>
+        <p class="text-sm mt-8">Architect designs, human approves approach, then builder implements.</p>
+      </div>
+
+      <div class="card">
+        <h4>Script-only step (no agent)</h4>
+        <div class="flow-row">
+          <span class="flow-node node-amber">Script: run migrations</span>
+        </div>
+        <p class="text-sm mt-8">Single phase, no builder or verifier. Just run a script and check exit code.</p>
+      </div>
+
+      <h3 class="mt-16">Tradeoffs</h3>
+      <div class="pro-con">
+        <div>
+          <h4 style="color:var(--green);">Pros</h4>
+          <ul>
+            <li>Backward compatible (default: [build, verify])</li>
+            <li>No new hierarchy levels</li>
+            <li>Each phase is simple and testable</li>
+            <li>Natural fit for existing UI patterns</li>
+            <li>Routine YAML stays readable</li>
+          </ul>
+        </div>
+        <div>
+          <h4 style="color:var(--red);">Cons</h4>
+          <ul>
+            <li>Engine rewrite for phase-aware transitions</li>
+            <li>Doesn't address step-level validation gaps</li>
+            <li>Phase ordering still linear per-task</li>
+            <li>More config surface for routine authors</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 6: OPTION B OVERVIEW ==================== -->
+<div class="slide" data-slide="6">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:4px;">
+    <span class="tag tag-blue" style="font-size:14px; padding:5px 14px;">Option B</span>
+    <h2>Gap Analyzer + Targeted Retry</h2>
+  </div>
+  <p class="subtitle">Add a step-level validation agent that can identify failures and spawn fix agents</p>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Core idea</h3>
+      <p>After all tasks in a step complete, an optional <strong>step verifier</strong> examines the combined output and produces a <strong>gap report</strong>. Instead of failing the whole step, it can:</p>
+      <ul>
+        <li><strong>Retry specific tasks</strong> with targeted feedback</li>
+        <li><strong>Spawn fix-up tasks</strong> for gaps between tasks (integration issues)</li>
+        <li><strong>Pass</strong> if the combined output meets the step's goal</li>
+      </ul>
+
+      <div class="diagram mt-16" style="font-size:12px; line-height:1.7;">
+<span class="hl">steps:</span>
+  - id: S-01
+    title: "Implement feature"
+    tasks: [T-01, T-02, T-03]
+    <span class="a">step_verifier:</span>
+      <span class="b">prompt:</span> "Review all task outputs as a whole.
+              Identify integration gaps."
+      <span class="g">actions:</span>
+        - retry_task     <span class="r"># re-run a specific task with feedback</span>
+        - spawn_fix      <span class="r"># create a new task targeting the gap</span>
+        - pass           <span class="r"># combined output is acceptable</span>
+        - fail           <span class="r"># unrecoverable</span>
+      <span class="p">max_iterations: 3</span></div>
+
+      <div class="diagram mt-16" style="font-size:12px; line-height:1.7;"><span class="hl">Step Verifier Gap Report (LLM output):</span>
+{
+  "assessment": "T-01 and T-03 work individually but the
+                 API contract between them doesn't match",
+  "actions": [
+    {
+      "type": "spawn_fix",
+      "title": "Align API contract between auth and UI",
+      "context": "auth module exports /api/v2/token but UI
+                  calls /api/auth/token. Reconcile the paths.",
+      "depends_on": ["T-01", "T-03"]
+    }
+  ]
+}</div>
+    </div>
+    <div>
+      <h3>What changes</h3>
+      <ul>
+        <li>StepConfig gains an optional <code>step_verifier</code> block</li>
+        <li>After all tasks complete, engine runs the step verifier</li>
+        <li>Step verifier can return structured actions (retry, spawn-fix, pass, fail)</li>
+        <li>Spawned fix-up tasks are added to the step and executed</li>
+        <li>Step verifier re-runs after fix-up tasks complete (up to max_iterations)</li>
+        <li>Fan-out parent verification becomes a special case of this pattern</li>
+      </ul>
+
+      <h3 class="mt-16">Effort estimate</h3>
+      <div class="effort-bar effort-med"><div class="fill"></div></div>
+      <span class="effort-label">Medium &mdash; ~2 weeks, mostly engine + executor</span>
+
+      <div class="mt-16">
+        <h4>Files impacted</h4>
+        <table>
+          <tr><td>config/models.py</td><td><span class="tag tag-amber">Modify</span> StepVerifierConfig</td></tr>
+          <tr><td>state/models.py</td><td><span class="tag tag-amber">Modify</span> StepState gap report fields</td></tr>
+          <tr><td>workflow/engine.py</td><td><span class="tag tag-red">Major</span> Step verification loop</td></tr>
+          <tr><td>workflow/transitions.py</td><td><span class="tag tag-amber">Modify</span> Step completion logic</td></tr>
+          <tr><td>runners/executor.py</td><td><span class="tag tag-red">Major</span> Step verifier agent + spawn logic</td></tr>
+          <tr><td>workflow/prompts.py</td><td><span class="tag tag-amber">Modify</span> Step verifier prompts</td></tr>
+          <tr><td>db/models.py</td><td><span class="tag tag-green">Minor</span> Gap report storage</td></tr>
+          <tr><td>UI components</td><td><span class="tag tag-amber">Modify</span> Gap report display</td></tr>
+        </table>
+      </div>
+
+      <h3 class="mt-16">Relationship to fan-out</h3>
+      <div class="callout">
+        Fan-out parent verification is already a proto-step-verifier: it checks all children and decides pass/fail. This option generalizes that pattern so any step can have composite verification with targeted retry, not just fan-out parents.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 7: OPTION B UX ==================== -->
+<div class="slide" data-slide="7">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px;">
+    <span class="tag tag-blue" style="font-size:14px; padding:5px 14px;">Option B</span>
+    <h2>UI: Gap Report + Targeted Fix-up</h2>
+  </div>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Step completion with gap analysis</h3>
+      <div class="wireframe">
+        <div class="wire-header">
+          <span class="mini-badge" style="background:rgba(251,191,36,0.2);color:var(--amber);">S2</span>
+          Implement auth feature
+          <span style="margin-left:auto;" class="tag tag-amber">Verifying Step</span>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-bottom:12px;">
+          <div style="flex:1;border:1px solid rgba(52,211,153,0.3);border-radius:6px;padding:8px;">
+            <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+              <span style="color:var(--green);">&#10003;</span>
+              <span class="text-xs" style="font-weight:600;">T-01 Auth API</span>
+            </div>
+            <p class="text-xs" style="margin:0;color:var(--text-dim);">OAuth2 endpoints implemented</p>
+          </div>
+          <div style="flex:1;border:1px solid rgba(52,211,153,0.3);border-radius:6px;padding:8px;">
+            <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+              <span style="color:var(--green);">&#10003;</span>
+              <span class="text-xs" style="font-weight:600;">T-02 Auth UI</span>
+            </div>
+            <p class="text-xs" style="margin:0;color:var(--text-dim);">Login/signup forms built</p>
+          </div>
+          <div style="flex:1;border:1px solid rgba(52,211,153,0.3);border-radius:6px;padding:8px;">
+            <div style="display:flex;align-items:center;gap:4px;margin-bottom:4px;">
+              <span style="color:var(--green);">&#10003;</span>
+              <span class="text-xs" style="font-weight:600;">T-03 Token Store</span>
+            </div>
+            <p class="text-xs" style="margin:0;color:var(--text-dim);">Secure storage layer done</p>
+          </div>
+        </div>
+
+        <div style="border:2px solid var(--amber);border-radius:8px;padding:12px;background:rgba(251,191,36,0.04);">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+            <span style="color:var(--amber); font-size:16px;">&#9888;</span>
+            <span class="text-xs" style="font-weight:600;color:var(--amber);">Gap Report &mdash; Iteration 1 of 3</span>
+          </div>
+          <p class="text-xs" style="margin-bottom:8px;">The auth API (T-01) uses <code>/api/v2/token</code> but the UI (T-02) calls <code>/api/auth/token</code>. Token store (T-03) expects tokens from the API path.</p>
+
+          <div style="display:flex; gap:6px;">
+            <div style="flex:1; border:1px dashed var(--amber); border-radius:6px; padding:8px;">
+              <p class="text-xs" style="margin:0; color:var(--amber); font-weight:600; margin-bottom:4px;">Fix-up spawned:</p>
+              <div style="display:flex;align-items:center;gap:4px;">
+                <span class="mini-badge" style="background:rgba(244,114,182,0.2);color:var(--pink);">F1</span>
+                <span class="text-xs">Align API contract between auth and UI</span>
+              </div>
+              <span class="tag tag-pink mt-8" style="font-size:10px;">Building...</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h3 class="mt-16">After fix-up completes</h3>
+      <div class="wireframe">
+        <div class="wire-header">
+          <span class="mini-badge" style="background:rgba(52,211,153,0.2);color:var(--green);">S2</span>
+          Implement auth feature
+          <span style="margin-left:auto;" class="tag tag-green">Passed</span>
+        </div>
+        <div style="border:1px solid rgba(52,211,153,0.2);border-radius:8px;padding:12px;background:rgba(52,211,153,0.04);">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+            <span style="color:var(--green);">&#10003;</span>
+            <span class="text-xs" style="font-weight:600;color:var(--green);">Step Verified &mdash; Iteration 2</span>
+          </div>
+          <p class="text-xs" style="margin:0;">All tasks integrate correctly. API paths aligned, UI calls correct endpoints, token store works end-to-end.</p>
+        </div>
+        <div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">
+          <span class="tag tag-green" style="font-size:10px;">T-01 &#10003;</span>
+          <span class="tag tag-green" style="font-size:10px;">T-02 &#10003;</span>
+          <span class="tag tag-green" style="font-size:10px;">T-03 &#10003;</span>
+          <span class="tag tag-pink" style="font-size:10px;">F-01 Fix-up &#10003;</span>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h3>Use cases enabled</h3>
+      <div class="card mb-16">
+        <h4>Multi-task integration validation</h4>
+        <p class="text-sm">3 tasks build separate components. Step verifier checks they integrate. Spawns fix-up for mismatched interfaces rather than failing and re-running everything.</p>
+        <span class="tag tag-green">High value</span>
+        <span class="tag tag-blue">Common scenario</span>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Recurring bug-fix routine</h4>
+        <p class="text-sm">Bug fix routine runs daily. Step verifier checks the fix doesn't break existing tests. If it does, spawns a targeted "fix regression" task instead of re-running the whole bug fix.</p>
+        <span class="tag tag-green">High value</span>
+        <span class="tag tag-amber">Your use case</span>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Document generation pipeline</h4>
+        <p class="text-sm">Multiple tasks generate doc sections. Step verifier checks for consistency (terminology, style, cross-references). Spawns fix-ups for inconsistencies in specific sections.</p>
+        <span class="tag tag-blue">Medium value</span>
+      </div>
+
+      <div class="card">
+        <h4>Fan-out unification</h4>
+        <p class="text-sm">Fan-out parent verification becomes a step-verifier on a synthetic "fan-out step." Same gap report UI, same retry/spawn semantics. Reduces special-case code.</p>
+        <span class="tag tag-purple">Architecture win</span>
+      </div>
+
+      <h3 class="mt-16">Tradeoffs</h3>
+      <div class="pro-con">
+        <div>
+          <h4 style="color:var(--green);">Pros</h4>
+          <ul>
+            <li>Directly addresses the step-validation gap</li>
+            <li>Targeted retry saves agent costs</li>
+            <li>Gap report is actionable and visible</li>
+            <li>Unifies fan-out and step validation patterns</li>
+            <li>Doesn't change the hierarchy depth</li>
+          </ul>
+        </div>
+        <div>
+          <h4 style="color:var(--red);">Cons</h4>
+          <ul>
+            <li>Dynamically spawning tasks adds runtime complexity</li>
+            <li>Step verifier LLM must produce structured JSON</li>
+            <li>Fix-up task ordering can be ambiguous</li>
+            <li>Doesn't help with phase flexibility</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 8: OPTION C OVERVIEW ==================== -->
+<div class="slide" data-slide="8">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:4px;">
+    <span class="tag tag-purple" style="font-size:14px; padding:5px 14px;">Option C</span>
+    <h2>Optional Steps + Conditional Wiring</h2>
+  </div>
+  <p class="subtitle">Make steps skippable, repeatable, and conditionally triggered</p>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Core idea</h3>
+      <p>Steps gain a <strong>condition</strong> field that determines if they run. Combined with the existing backward-transition system, this enables adaptive routines that adjust their workflow based on input or intermediate results.</p>
+
+      <div class="diagram mt-16" style="font-size:12px; line-height:1.7;">
+<span class="hl">steps:</span>
+  - id: S-01
+    title: "Triage bug"
+    tasks: [T-classify]
+    <span class="r"># always runs, outputs: severity, complexity</span>
+
+  - id: S-02
+    title: "Design solution"
+    <span class="a">condition:</span>
+      <span class="b">when: "{{complexity}} == 'high'"</span>
+    tasks: [T-design]
+    <span class="r"># skipped for simple bugs</span>
+
+  - id: S-03
+    title: "Implement fix"
+    tasks: [T-fix]
+
+  - id: S-04
+    title: "Write regression test"
+    <span class="a">condition:</span>
+      <span class="b">when: "{{severity}} in ['critical', 'high']"</span>
+    tasks: [T-test]
+    <span class="r"># only for serious bugs</span>
+
+  - id: S-05
+    title: "Update changelog"
+    <span class="a">condition:</span>
+      <span class="b">when: "always"</span>
+      <span class="p">repeat_for: "{{bug_ids}}"</span>
+    <span class="r"># runs once per bug in batch mode</span></div>
+
+      <div class="callout mt-16">
+        <strong>Key insight:</strong> This doesn't change the engine's core state machine. It adds a thin evaluation layer <em>between</em> steps that checks conditions and decides whether to execute or skip. The existing transition system already supports backward jumps; this adds forward skips.
+      </div>
+    </div>
+    <div>
+      <h3>Condition types</h3>
+      <div class="card mb-16">
+        <h4>Variable-based</h4>
+        <p class="text-sm"><code>when: "{{complexity}} == 'high'"</code></p>
+        <p class="text-sm">Evaluates against run variables (inputs or task outputs). Most common case.</p>
+      </div>
+      <div class="card mb-16">
+        <h4>Output-based</h4>
+        <p class="text-sm"><code>when: "steps.S-01.has_failures"</code></p>
+        <p class="text-sm">Checks results from previous steps. Enables error-handling steps.</p>
+      </div>
+      <div class="card mb-16">
+        <h4>Repeat-for (batch)</h4>
+        <p class="text-sm"><code>repeat_for: "{{bug_ids}}"</code></p>
+        <p class="text-sm">Run the step N times, once per item. Like fan-out but at the step level. Each iteration gets <code>{{item}}</code> in scope.</p>
+      </div>
+      <div class="card mb-16">
+        <h4>Manual gate</h4>
+        <p class="text-sm"><code>when: "manual"</code></p>
+        <p class="text-sm">Pauses and asks the user whether to run this step. Good for expensive or risky steps.</p>
+      </div>
+
+      <h3 class="mt-16">Effort estimate</h3>
+      <div class="effort-bar effort-low"><div class="fill"></div></div>
+      <span class="effort-label">Low &mdash; ~1 week, mostly config + step progression logic</span>
+
+      <div class="mt-16">
+        <h4>Files impacted</h4>
+        <table>
+          <tr><td>config/models.py</td><td><span class="tag tag-green">Minor</span> StepCondition field</td></tr>
+          <tr><td>workflow/transitions.py</td><td><span class="tag tag-amber">Modify</span> Skip logic in step progression</td></tr>
+          <tr><td>workflow/engine.py</td><td><span class="tag tag-green">Minor</span> Evaluate conditions on advance</td></tr>
+          <tr><td>state/models.py</td><td><span class="tag tag-green">Minor</span> StepState.skipped flag</td></tr>
+          <tr><td>workflow/prompts.py</td><td><span class="tag tag-green">Minor</span> Variable resolution</td></tr>
+          <tr><td>UI components</td><td><span class="tag tag-green">Minor</span> Skipped step display</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 9: OPTION C UX ==================== -->
+<div class="slide" data-slide="9">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px;">
+    <span class="tag tag-purple" style="font-size:14px; padding:5px 14px;">Option C</span>
+    <h2>UI: Conditional Step Timeline</h2>
+  </div>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Step timeline with skipped/conditional steps</h3>
+      <div class="wireframe" style="padding:20px;">
+        <div style="display:flex; gap:8px; align-items:flex-start;">
+          <div style="text-align:center;">
+            <div class="mini-badge" style="background:var(--green);color:white;width:40px;height:40px;font-size:12px;border-radius:8px;">S1</div>
+            <div class="text-xs" style="color:var(--green);margin-top:4px;">Triage</div>
+            <div class="text-xs" style="color:var(--green);">&#10003;</div>
+          </div>
+          <span style="color:var(--border); margin-top:12px;">&mdash;</span>
+          <div style="text-align:center;">
+            <div class="mini-badge" style="background:rgba(139,144,165,0.08);color:var(--text-dim);width:40px;height:40px;font-size:12px;border-radius:8px;border:1px dashed var(--border);text-decoration:line-through;">S2</div>
+            <div class="text-xs" style="color:var(--text-dim);margin-top:4px;">Design</div>
+            <div class="text-xs" style="color:var(--text-dim);font-style:italic;">skipped</div>
+          </div>
+          <span style="color:var(--border); margin-top:12px;">&mdash;</span>
+          <div style="text-align:center;">
+            <div class="mini-badge" style="background:rgba(52,211,153,0.2);color:var(--green);width:40px;height:40px;font-size:12px;border-radius:8px;border:2px solid var(--green);box-shadow:0 0 8px rgba(52,211,153,0.3);">S3</div>
+            <div class="text-xs" style="color:var(--green);margin-top:4px;">Fix</div>
+            <div class="text-xs" style="color:var(--accent-light);">building</div>
+          </div>
+          <span style="color:var(--border); margin-top:12px;">&mdash;</span>
+          <div style="text-align:center;">
+            <div class="mini-badge" style="background:rgba(251,191,36,0.1);color:var(--amber);width:40px;height:40px;font-size:12px;border-radius:8px;border:1px dashed var(--amber);">S4</div>
+            <div class="text-xs" style="color:var(--amber);margin-top:4px;">Test</div>
+            <div class="text-xs" style="color:var(--amber);">if critical</div>
+          </div>
+          <span style="color:var(--border); margin-top:12px;">&mdash;</span>
+          <div style="text-align:center;">
+            <div class="mini-badge" style="background:rgba(139,144,165,0.1);color:var(--text-dim);width:40px;height:40px;font-size:12px;border-radius:8px;border:1px solid var(--border);">S5</div>
+            <div class="text-xs" style="color:var(--text-dim);margin-top:4px;">Changelog</div>
+          </div>
+        </div>
+
+        <div style="margin-top:16px; padding:10px; background:var(--surface2); border-radius:6px;">
+          <p class="text-xs" style="margin:0;"><strong>S2 skipped:</strong> complexity = "low" (condition: complexity == "high")</p>
+          <p class="text-xs" style="margin:4px 0 0;"><strong>S4 pending:</strong> will evaluate: severity in ["critical", "high"] &mdash; current: severity = "critical" <span style="color:var(--green);">&rarr; will run</span></p>
+        </div>
+      </div>
+
+      <h3 class="mt-16">Batch mode: repeat-for</h3>
+      <div class="wireframe">
+        <div class="wire-header">
+          <span class="mini-badge" style="background:rgba(124,110,240,0.2);color:var(--accent-light);">S3</span>
+          Fix bugs
+          <span style="margin-left:auto;" class="tag tag-blue">Batch: 3 items</span>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <div style="flex:1; border:1px solid var(--border); border-radius:6px; padding:8px;">
+            <div class="text-xs" style="font-weight:600;margin-bottom:4px;">Iteration 1</div>
+            <span class="text-xs" style="color:var(--text-dim);">BUG-401</span>
+            <span class="tag tag-green" style="font-size:10px;margin-left:4px;">Done</span>
+          </div>
+          <div style="flex:1; border:1px solid var(--green); border-radius:6px; padding:8px;">
+            <div class="text-xs" style="font-weight:600;margin-bottom:4px;">Iteration 2</div>
+            <span class="text-xs" style="color:var(--text-dim);">BUG-422</span>
+            <span class="tag tag-green" style="font-size:10px;margin-left:4px;">Building</span>
+          </div>
+          <div style="flex:1; border:1px solid var(--border); border-radius:6px; padding:8px; opacity:0.5;">
+            <div class="text-xs" style="font-weight:600;margin-bottom:4px;">Iteration 3</div>
+            <span class="text-xs" style="color:var(--text-dim);">BUG-435</span>
+            <span class="tag tag-purple" style="font-size:10px;margin-left:4px;">Pending</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div>
+      <h3>Use cases enabled</h3>
+      <div class="card mb-16">
+        <h4>Adaptive bug-fix routine</h4>
+        <p class="text-sm">Triage classifies severity/complexity. Design step skipped for simple bugs. Regression test only for critical. Same routine handles trivial and complex bugs.</p>
+        <span class="tag tag-green">High value</span>
+        <span class="tag tag-amber">Your use case</span>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Batch processing</h4>
+        <p class="text-sm">A single routine processes a list of items. Each item goes through the same steps. Failed items don't block successful ones.</p>
+        <span class="tag tag-green">High value</span>
+        <span class="tag tag-blue">Common scenario</span>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Error-handling steps</h4>
+        <p class="text-sm">A cleanup/rollback step that only runs if a previous step failed. <code>when: "steps.S-03.has_failures"</code></p>
+        <span class="tag tag-blue">Medium value</span>
+      </div>
+
+      <div class="card">
+        <h4>Manual gates for expensive steps</h4>
+        <p class="text-sm">A human decides at runtime whether to run the expensive "full integration test" step or skip to deploy.</p>
+        <span class="tag tag-blue">Medium value</span>
+      </div>
+
+      <h3 class="mt-16">Tradeoffs</h3>
+      <div class="pro-con">
+        <div>
+          <h4 style="color:var(--green);">Pros</h4>
+          <ul>
+            <li>Smallest change of the three options</li>
+            <li>No new concepts &mdash; extends existing step model</li>
+            <li>Backward compatible (no condition = always run)</li>
+            <li>YAML stays simple and readable</li>
+            <li>repeat_for covers a real gap cleanly</li>
+            <li>Skipped steps are easy to show in UI</li>
+          </ul>
+        </div>
+        <div>
+          <h4 style="color:var(--red);">Cons</h4>
+          <ul>
+            <li>Doesn't address phase rigidity</li>
+            <li>Doesn't address step-level validation gaps</li>
+            <li>Condition evaluation needs a safe expression parser</li>
+            <li>repeat_for blurs the line with fan-out</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 10: DYNAMISM PROBLEM ==================== -->
+<div class="slide" data-slide="10">
+  <h2>The dynamism problem</h2>
+  <div class="section-divider"></div>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>The tension</h3>
+      <div class="card mb-16">
+        <h4>Static routines protect quality</h4>
+        <p class="text-sm">Requirements can't be removed mid-run. Steps can't be skipped by a lazy agent. The routine is a contract: the AI must deliver what was specified, verified the way it was specified.</p>
+        <div class="flow-row mt-8">
+          <span class="flow-node node-green">Routine defined</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-dim">Frozen at start</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-green">Executed as-is</span>
+        </div>
+        <p class="text-sm mt-8" style="color:var(--green);">This is a feature, not a bug. It prevents the AI from negotiating away its own accountability.</p>
+      </div>
+
+      <div class="card mb-16">
+        <h4>But static routines block useful adaptation</h4>
+        <ul>
+          <li>A task discovers the work is bigger than expected &mdash; can't subdivide</li>
+          <li>Builder realizes a shared utility is needed &mdash; can't create a prep task</li>
+          <li>Bug fix reveals a second related bug &mdash; can't add it to scope</li>
+          <li>Task needs a specialized sub-agent (e.g., security reviewer) &mdash; no way to invoke one through orchestration</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4>The current workaround</h4>
+        <p class="text-sm">Use one routine to build another routine. The builder routine creates a YAML file, then a second run executes it. This works but has a full-restart penalty &mdash; no shared worktree, no context carry-over, no single run view.</p>
+      </div>
+    </div>
+
+    <div>
+      <h3>The tool escape hatch problem</h3>
+      <div class="card mb-16" style="border-color:var(--red);">
+        <h4 style="color:var(--red);">What happens when agents go around the orchestrator</h4>
+        <p class="text-sm">If a builder task can spawn sub-agents via tools (shell commands, MCP calls), those sub-agents:</p>
+        <ul>
+          <li>Have no verification &mdash; their output isn't graded</li>
+          <li>Have no retry &mdash; if they fail, the parent must handle it</li>
+          <li>Have no visibility &mdash; no UI tracking, no activity events</li>
+          <li>Have no cost tracking &mdash; tokens aren't attributed</li>
+          <li>Have no worktree isolation &mdash; they operate on shared state</li>
+        </ul>
+        <p class="text-sm mt-8" style="color:var(--red);">This is effectively running untracked work inside a tracked system. The orchestration value proposition breaks down.</p>
+      </div>
+
+      <div class="callout">
+        <strong>The core question:</strong> How do you let a running task add work to the orchestration graph without letting it remove or weaken existing work?
+      </div>
+
+      <h3 class="mt-16">Design principles</h3>
+      <div class="card">
+        <ul>
+          <li><strong>Append-only:</strong> Add tasks, steps, phases &mdash; never remove or modify existing ones</li>
+          <li><strong>Orchestrated:</strong> New work goes through the same verification pipeline</li>
+          <li><strong>Visible:</strong> Everything shows up in the UI and activity log</li>
+          <li><strong>Bounded:</strong> Limits on how much work can be dynamically added</li>
+          <li><strong>Attributable:</strong> Clear trail of what requested the expansion and why</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 11: OPTION D OVERVIEW ==================== -->
+<div class="slide" data-slide="11">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:4px;">
+    <span class="tag tag-cyan" style="font-size:14px; padding:5px 14px;">Option D</span>
+    <h2>Orchestrated Expansion</h2>
+  </div>
+  <p class="subtitle">Tasks can request new work via the orchestrator, not via tool escape hatches</p>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Core idea</h3>
+      <p>Give running tasks an <strong>expansion API</strong> &mdash; a set of orchestrator-managed actions that let a task request additional work. The orchestrator creates, tracks, and verifies the new work exactly like statically-defined work. The requesting task blocks until expansions complete.</p>
+
+      <div class="diagram mt-16" style="font-size:12px; line-height:1.7;">
+<span class="hl">Expansion actions (available to builder agents):</span>
+
+<span class="g">add_subtask</span>     Create a child task under the current task
+               (like dynamic fan-out, but for a single item)
+
+<span class="b">add_peer_task</span>   Add a new task to the current step
+               (runs in parallel with other tasks)
+
+<span class="a">add_next_step</span>   Insert a new step after the current one
+               (for work discovered to be prerequisite)
+
+<span class="p">request_agent</span>   Spawn a specialist sub-agent as a tracked
+               subtask with its own verification
+
+<span class="hl">NOT available:</span>
+
+<span class="r">remove_task</span>     Cannot remove existing tasks
+<span class="r">remove_step</span>     Cannot remove existing steps
+<span class="r">modify_req</span>      Cannot weaken requirements
+<span class="r">skip_verify</span>     Cannot bypass verification</div>
+
+      <div class="callout mt-16">
+        <strong>Key constraint:</strong> Expansions are <em>append-only mutations to the orchestration graph</em>. The original contract (requirements, verification, steps) is immutable. New work is additive and subject to the same quality controls.
+      </div>
+    </div>
+
+    <div>
+      <h3>How it works mechanically</h3>
+
+      <div class="card mb-16">
+        <h4>1. Agent calls expansion API</h4>
+        <p class="text-sm">Builder agent, during its build phase, calls <code>POST /tasks/{id}/expand</code> with a structured expansion request. This is an MCP tool or REST callback &mdash; same mechanism as <code>submit_for_verification</code>.</p>
+      </div>
+
+      <div class="card mb-16">
+        <h4>2. Orchestrator validates &amp; creates</h4>
+        <p class="text-sm">Engine checks budget limits (max expansions per task, per step, per run). Creates the new TaskState/StepState with full config including requirements and verification. Records the expansion provenance (which task requested it, why).</p>
+      </div>
+
+      <div class="card mb-16">
+        <h4>3. Parent task pauses or continues</h4>
+        <p class="text-sm">Two modes: <strong>blocking</strong> (parent waits for expansion to complete, like fan-out) or <strong>fire-and-forget</strong> (peer task runs in parallel, parent continues). Blocking expansions use existing FAN_OUT_RUNNING mechanics.</p>
+      </div>
+
+      <div class="card mb-16">
+        <h4>4. Expansion gets full orchestration</h4>
+        <p class="text-sm">The new task goes through build &rarr; verify (or whatever phase pipeline is configured). Gets its own attempts, grades, retry budget. Shows up in the UI as a child or peer with an "expanded" badge.</p>
+      </div>
+
+      <div class="card">
+        <h4>5. Budget enforcement</h4>
+        <div class="diagram" style="font-size:11px; line-height:1.6; padding:12px;">
+<span class="hl">expansion_limits:</span>
+  max_subtasks_per_task: 5
+  max_peer_tasks_per_step: 3
+  max_inserted_steps: 2
+  max_total_expansions: 10
+  require_human_approval: false  <span class="r"># or true for high-stakes</span></div>
+      </div>
+
+      <h3 class="mt-16">Effort estimate</h3>
+      <div class="effort-bar effort-med"><div class="fill"></div></div>
+      <span class="effort-label">Medium &mdash; ~2 weeks. Builds heavily on existing fan-out infrastructure.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 12: OPTION D UX + STACKING ==================== -->
+<div class="slide" data-slide="12">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px;">
+    <span class="tag tag-cyan" style="font-size:14px; padding:5px 14px;">Option D</span>
+    <h2>UI: Expansion Tracking &amp; Stacking with A/B/C</h2>
+  </div>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Expansion in the task detail view</h3>
+      <div class="wireframe">
+        <div class="wire-header">
+          <span class="mini-badge" style="background:rgba(52,211,153,0.2);color:var(--green);">T1</span>
+          Implement payment module
+          <span style="margin-left:auto;" class="tag tag-amber">Waiting on expansion</span>
+        </div>
+
+        <div style="border:1px solid var(--border); border-radius:8px; padding:10px; margin-bottom:10px;">
+          <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+            <span class="text-xs" style="font-weight:600;">Build Phase &mdash; Attempt 1</span>
+            <span class="tag tag-amber" style="font-size:10px;">Paused</span>
+          </div>
+          <p class="text-xs" style="margin:0; color:var(--text-dim);">Discovered Stripe webhook handling needs isolated implementation. Requesting specialist sub-agent.</p>
+        </div>
+
+        <div style="border:2px solid var(--cyan); border-radius:8px; padding:12px; background:rgba(34,211,238,0.04);">
+          <div style="display:flex; align-items:center; gap:6px; margin-bottom:8px;">
+            <span style="color:var(--cyan); font-size:14px;">+</span>
+            <span class="text-xs" style="font-weight:600; color:var(--cyan);">Expansion &mdash; 1 subtask spawned</span>
+            <span style="margin-left:auto;" class="text-xs" style="color:var(--text-dim);">Budget: 1/5 subtasks used</span>
+          </div>
+
+          <div style="border:1px solid rgba(34,211,238,0.3); border-radius:6px; padding:8px; display:flex; align-items:center; gap:8px;">
+            <span class="mini-badge" style="background:rgba(34,211,238,0.2);color:var(--cyan);">E1</span>
+            <div style="flex:1;">
+              <div class="text-xs" style="font-weight:600;">Stripe webhook handler</div>
+              <div class="text-xs" style="color:var(--text-dim);">Requested by T1 &mdash; blocking</div>
+            </div>
+            <div style="display:flex; gap:3px;">
+              <span class="wire-phase" style="background:rgba(52,211,153,0.15);color:var(--green);">build</span>
+              <span class="wire-phase" style="background:rgba(124,110,240,0.15);color:var(--accent-light);">verify</span>
+            </div>
+            <span class="tag tag-green" style="font-size:10px;">Building</span>
+          </div>
+
+          <p class="text-xs" style="margin:8px 0 0; color:var(--text-dim);">T1 will resume after E1 completes verification.</p>
+        </div>
+      </div>
+
+      <h3 class="mt-16">Peer expansion in step view</h3>
+      <div class="wireframe">
+        <div class="wire-header">
+          <span class="mini-badge" style="background:rgba(52,211,153,0.2);color:var(--green);">S2</span>
+          Implement feature &mdash; 3 tasks + 1 expanded
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:100px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+            <div class="text-xs" style="font-weight:600;">T-01 Auth</div>
+            <span class="tag tag-green" style="font-size:10px;">Done</span>
+          </div>
+          <div style="flex:1; min-width:100px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+            <div class="text-xs" style="font-weight:600;">T-02 Payments</div>
+            <span class="tag tag-green" style="font-size:10px;">Building</span>
+          </div>
+          <div style="flex:1; min-width:100px; border:1px solid var(--border); border-radius:6px; padding:8px;">
+            <div class="text-xs" style="font-weight:600;">T-03 Email</div>
+            <span class="tag tag-purple" style="font-size:10px;">Pending</span>
+          </div>
+          <div style="flex:1; min-width:100px; border:1px dashed var(--cyan); border-radius:6px; padding:8px; background:rgba(34,211,238,0.03);">
+            <div class="text-xs" style="font-weight:600; color:var(--cyan);">+ Shared utils</div>
+            <div class="text-xs" style="color:var(--text-dim);">Added by T-02</div>
+            <span class="tag tag-cyan" style="font-size:10px;">Building</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <h3>How D stacks with A, B, C</h3>
+
+      <div class="card mb-16">
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <span class="tag tag-cyan">D</span>
+          <span class="tag tag-green">A</span>
+          <span style="color:var(--green); font-weight:600;">Excellent synergy</span>
+        </div>
+        <h4>Expansion + Phase Pipelines</h4>
+        <p class="text-sm">Dynamically spawned tasks inherit the phase pipeline system. A builder can request a specialist sub-agent that runs plan &rarr; build &rarr; verify. The expansion API specifies which phases the new task needs. This means <code>request_agent</code> is just <code>add_subtask</code> with a specific agent profile and phase list.</p>
+      </div>
+
+      <div class="card mb-16">
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <span class="tag tag-cyan">D</span>
+          <span class="tag tag-blue">B</span>
+          <span style="color:var(--green); font-weight:600;">Complementary</span>
+        </div>
+        <h4>Expansion + Gap Analyzer</h4>
+        <p class="text-sm">The step verifier's <code>spawn_fix</code> action (Option B) is a <em>specific case</em> of orchestrated expansion (Option D). With D, the fix-up spawning in B gets a proper API and budget system instead of being a special step-verifier-only mechanism. B focuses on <em>when</em> to expand (after composite verification), D provides the <em>how</em>.</p>
+      </div>
+
+      <div class="card mb-16">
+        <div style="display:flex; gap:8px; margin-bottom:8px;">
+          <span class="tag tag-cyan">D</span>
+          <span class="tag tag-purple">C</span>
+          <span style="color:var(--amber); font-weight:600;">Independent</span>
+        </div>
+        <h4>Expansion + Conditional Steps</h4>
+        <p class="text-sm">Orthogonal. C controls which <em>static</em> steps run. D adds <em>new</em> steps/tasks at runtime. An <code>add_next_step</code> expansion creates a step that could itself have conditions (though this is an edge case). No conflict.</p>
+      </div>
+
+      <div class="card">
+        <h4>The anti-pattern it replaces</h4>
+        <div class="flow-row" style="margin:8px 0;">
+          <span class="flow-node node-red" style="font-size:12px;">Agent shells out to sub-agent</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-red" style="font-size:12px;">Untracked work</span>
+        </div>
+        <p class="text-sm" style="color:var(--text-dim);">Becomes:</p>
+        <div class="flow-row">
+          <span class="flow-node node-cyan" style="font-size:12px;">Agent calls expand API</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-green" style="font-size:12px;">Tracked, verified, visible</span>
+        </div>
+        <p class="text-sm mt-8">The agent still decides <em>what</em> to subdivide. The orchestrator ensures the subdivided work meets the same quality bar.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 13: OPTION D SAFETY ==================== -->
+<div class="slide" data-slide="13">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:4px;">
+    <span class="tag tag-cyan" style="font-size:14px; padding:5px 14px;">Option D</span>
+    <h2>Safety Model: Append-Only Doesn't Mean Unlimited</h2>
+  </div>
+  <div class="section-divider"></div>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>What the AI can do</h3>
+      <div class="card mb-16">
+        <h4>Add subtasks to itself</h4>
+        <p class="text-sm">Builder discovers work needs subdivision. Creates tracked children that go through build/verify. Parent blocks until children complete. Just like fan-out, but triggered at runtime instead of from YAML glob pattern.</p>
+        <div class="diagram mt-8" style="font-size:11px; line-height:1.6; padding:12px;">
+<span class="c">POST /tasks/T-01/expand</span>
+{
+  "type": "add_subtask",
+  "title": "Handle Stripe webhooks",
+  "context": "Implement idempotent webhook...",
+  "requirements": [
+    {"desc": "Verify signature", "priority": "critical"},
+    {"desc": "Handle retry dedup", "priority": "expected"}
+  ],
+  "blocking": true
+}</div>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Add peer tasks to the current step</h4>
+        <p class="text-sm">Builder realizes shared prep work is needed. Adds a task that other tasks in the step can depend on. Non-blocking &mdash; runs in parallel.</p>
+      </div>
+
+      <div class="card">
+        <h4>Insert a step after the current one</h4>
+        <p class="text-sm">Builder discovers prerequisite work. Inserts a new step between current and next. All existing steps remain, the new one is additive. Useful for "I need to refactor X before the integration step can work."</p>
+      </div>
+    </div>
+
+    <div>
+      <h3>What the AI cannot do</h3>
+      <div class="card mb-16" style="border-color:var(--red);">
+        <h4 style="color:var(--red);">Immutable contract</h4>
+        <ul>
+          <li>Cannot remove any existing task or step</li>
+          <li>Cannot modify requirements on existing tasks</li>
+          <li>Cannot lower priority of requirements (critical &rarr; nice)</li>
+          <li>Cannot skip verification on existing or new tasks</li>
+          <li>Cannot expand beyond the budget limits</li>
+          <li>Cannot expand during verification phase (only during build)</li>
+        </ul>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Budget prevents runaway growth</h4>
+        <table>
+          <tr><td>Subtasks per task</td><td style="text-align:right;">Default: 5</td></tr>
+          <tr><td>Peer tasks per step</td><td style="text-align:right;">Default: 3</td></tr>
+          <tr><td>Inserted steps per run</td><td style="text-align:right;">Default: 2</td></tr>
+          <tr><td>Total expansions per run</td><td style="text-align:right;">Default: 10</td></tr>
+        </table>
+        <p class="text-sm mt-8">Configurable per routine. High-trust routines get larger budgets. Expansion beyond budget returns 429 (Too Many Requests) with a clear message.</p>
+      </div>
+
+      <div class="card">
+        <h4>Optional: human approval gate</h4>
+        <p class="text-sm">For high-stakes routines, expansions can require human approval before executing. The expansion request is visible in the UI with the AI's justification. Human approves or rejects.</p>
+        <div class="flow-row mt-8">
+          <span class="flow-node node-cyan" style="font-size:12px;">Agent requests</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-amber" style="font-size:12px;">Human reviews</span>
+          <span class="flow-arrow">&rarr;</span>
+          <span class="flow-node node-green" style="font-size:12px;">Approved &amp; tracked</span>
+        </div>
+      </div>
+
+      <h3 class="mt-16">Preventing laziness via expansion</h3>
+      <div class="callout callout-amber">
+        <strong>Risk:</strong> Could an agent create a subtask that duplicates its own work, effectively delegating instead of doing?<br><br>
+        <strong>Mitigation:</strong> The <em>parent task's requirements still must be met</em>. Expansion adds work, it doesn't transfer the parent's obligations. The parent's verifier still grades the parent's requirements. If the agent creates a subtask but doesn't integrate the result, it fails verification.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 14: OPTION D USE CASES ==================== -->
+<div class="slide" data-slide="14">
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:20px;">
+    <span class="tag tag-cyan" style="font-size:14px; padding:5px 14px;">Option D</span>
+    <h2>Use Cases &amp; Implementation</h2>
+  </div>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Scenarios where dynamic expansion helps</h3>
+
+      <div class="card mb-16">
+        <h4>Routine-building routine</h4>
+        <p class="text-sm">Currently: build a routine YAML in run 1, then start a new run 2 to execute it. <strong>With expansion:</strong> The builder task creates subtasks for each piece of the generated routine, all within the same run. The parent task's verifier checks the combined output.</p>
+        <span class="tag tag-green">High value</span>
+        <span class="tag tag-amber">Current pain point</span>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Specialist sub-agent</h4>
+        <p class="text-sm">Builder is implementing a feature but discovers a security-sensitive component. Calls <code>request_agent(profile: "security_reviewer")</code> which creates a subtask with VERIFIER-only phase and the security specialist profile. Result feeds back into the parent's build context.</p>
+        <span class="tag tag-green">High value</span>
+        <span class="tag tag-blue">New capability</span>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Dynamic work splitting</h4>
+        <p class="text-sm">Builder analyzes a large migration task, determines it should be split into per-table subtasks. Creates N subtasks dynamically (like fan-out but the input list isn't known from a glob pattern). Each subtask gets build+verify.</p>
+        <span class="tag tag-green">High value</span>
+        <span class="tag tag-purple">Generalizes fan-out</span>
+      </div>
+
+      <div class="card">
+        <h4>Discovered prerequisite</h4>
+        <p class="text-sm">During step 3, builder realizes the database schema needs a migration before the feature can work. Calls <code>add_next_step</code> to insert a "run migration" step after the current one. Original step 4 (integration tests) moves to step 5.</p>
+        <span class="tag tag-blue">Medium value</span>
+      </div>
+    </div>
+
+    <div>
+      <h3>Implementation details</h3>
+
+      <div class="card mb-16">
+        <h4>Files impacted</h4>
+        <table>
+          <tr><td>api/routers/tasks.py</td><td><span class="tag tag-amber">Modify</span> <code>POST /expand</code> endpoint</td></tr>
+          <tr><td>schemas/tasks.py</td><td><span class="tag tag-amber">Modify</span> ExpansionRequest/Response</td></tr>
+          <tr><td>workflow/engine.py</td><td><span class="tag tag-red">Major</span> Expansion validation &amp; creation</td></tr>
+          <tr><td>workflow/service.py</td><td><span class="tag tag-amber">Modify</span> Expansion persistence</td></tr>
+          <tr><td>state/models.py</td><td><span class="tag tag-amber">Modify</span> Expansion tracking fields</td></tr>
+          <tr><td>config/models.py</td><td><span class="tag tag-green">Minor</span> ExpansionLimits config</td></tr>
+          <tr><td>runners/executor.py</td><td><span class="tag tag-amber">Modify</span> Include expand tool in agent prompt</td></tr>
+          <tr><td>workflow/prompts.py</td><td><span class="tag tag-green">Minor</span> Expansion callback instructions</td></tr>
+          <tr><td>db/models.py</td><td><span class="tag tag-amber">Modify</span> Expansion provenance columns</td></tr>
+          <tr><td>UI components</td><td><span class="tag tag-amber">Modify</span> Expansion badges &amp; tracking</td></tr>
+        </table>
+      </div>
+
+      <div class="card mb-16">
+        <h4>Builds on existing infrastructure</h4>
+        <ul>
+          <li><strong>Fan-out mechanics:</strong> Blocking subtask expansion reuses FAN_OUT_RUNNING state + parent/child task linking</li>
+          <li><strong>Callback pattern:</strong> Expansion is an API call just like submit_for_verification &mdash; same MCP tool / REST callback pattern</li>
+          <li><strong>Step insertion:</strong> Reuses existing step reindexing from backward transitions</li>
+          <li><strong>Provenance:</strong> Existing EventModel can track expansion events</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4>Effort estimate</h4>
+        <div class="effort-bar effort-med"><div class="fill"></div></div>
+        <span class="effort-label">Medium &mdash; ~2 weeks. Heavy reuse of fan-out and callback infrastructure.</span>
+
+        <h4 class="mt-8">Tradeoffs</h4>
+        <div class="pro-con">
+          <div>
+            <h4 style="color:var(--green);">Pros</h4>
+            <ul>
+              <li>Replaces untracked tool escape hatches</li>
+              <li>Generalizes fan-out to runtime</li>
+              <li>Append-only preserves quality guarantees</li>
+              <li>Budget prevents runaway expansion</li>
+            </ul>
+          </div>
+          <div>
+            <h4 style="color:var(--red);">Cons</h4>
+            <ul>
+              <li>Agents must learn the expand API</li>
+              <li>Run state becomes less predictable</li>
+              <li>UI must handle dynamic graph changes</li>
+              <li>Harder to estimate run cost upfront</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 15: COMPARISON ==================== -->
+<div class="slide" data-slide="15">
+  <h2>Side-by-side comparison</h2>
+  <div class="section-divider"></div>
+
+  <div style="flex:1; overflow-y:auto;">
+    <table style="margin-bottom:24px; font-size:13px;">
+      <thead>
+        <tr>
+          <th style="width:18%;">Dimension</th>
+          <th style="width:5%; text-align:center;">Now</th>
+          <th style="width:19%;"><span class="tag tag-green">A</span> Phases</th>
+          <th style="width:19%;"><span class="tag tag-blue">B</span> Gap Analyzer</th>
+          <th style="width:19%;"><span class="tag tag-purple">C</span> Conditions</th>
+          <th style="width:20%;"><span class="tag tag-cyan">D</span> Expansion</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Flexible phases</strong></td>
+          <td class="cross" style="text-align:center;">&#10007;</td>
+          <td><span class="check">&#10003;</span> Per-task pipelines</td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="partial">~</span> Expanded tasks can have custom phases (with A)</td>
+        </tr>
+        <tr>
+          <td><strong>Step-level validation</strong></td>
+          <td class="cross" style="text-align:center;">&#10007;</td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="check">&#10003;</span> Gap report</td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="cross">&#10007;</span></td>
+        </tr>
+        <tr>
+          <td><strong>Targeted retry</strong></td>
+          <td class="partial" style="text-align:center;">~</td>
+          <td><span class="partial">~</span> Per-phase</td>
+          <td><span class="check">&#10003;</span> Per-task + fix-ups</td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="partial">~</span> Via B's spawn using D's API</td>
+        </tr>
+        <tr>
+          <td><strong>Conditional steps</strong></td>
+          <td class="cross" style="text-align:center;">&#10007;</td>
+          <td><span class="partial">~</span> Phases only</td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="check">&#10003;</span> Full conditions</td>
+          <td><span class="cross">&#10007;</span></td>
+        </tr>
+        <tr>
+          <td><strong>Runtime dynamism</strong></td>
+          <td class="cross" style="text-align:center;">&#10007;</td>
+          <td><span class="cross">&#10007;</span> Static</td>
+          <td><span class="partial">~</span> Step verifier spawns</td>
+          <td><span class="cross">&#10007;</span> Static</td>
+          <td><span class="check">&#10003;</span> Full append-only expansion</td>
+        </tr>
+        <tr>
+          <td><strong>Sub-agent support</strong></td>
+          <td class="cross" style="text-align:center;">&#10007;</td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="cross">&#10007;</span></td>
+          <td><span class="check">&#10003;</span> Tracked specialist agents</td>
+        </tr>
+        <tr>
+          <td><strong>Work subdivision</strong></td>
+          <td class="partial" style="text-align:center;">~</td>
+          <td><span class="cross">&#10007;</span> Static fan-out</td>
+          <td><span class="cross">&#10007;</span> Static fan-out</td>
+          <td><span class="partial">~</span> repeat_for</td>
+          <td><span class="check">&#10003;</span> Runtime fan-out</td>
+        </tr>
+        <tr>
+          <td><strong>Quality guarantee</strong></td>
+          <td class="check" style="text-align:center;">&#10003;</td>
+          <td><span class="check">&#10003;</span></td>
+          <td><span class="check">&#10003;</span></td>
+          <td><span class="check">&#10003;</span></td>
+          <td><span class="check">&#10003;</span> Append-only + budgets</td>
+        </tr>
+        <tr>
+          <td><strong>Effort</strong></td>
+          <td style="text-align:center;">&mdash;</td>
+          <td><span class="partial">~2w</span></td>
+          <td><span class="partial">~2w</span></td>
+          <td><span class="check">~1w</span></td>
+          <td><span class="partial">~2w</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="grid-4">
+      <div class="card">
+        <h3 style="font-size:16px;">Best for: expressive tasks</h3>
+        <span class="tag tag-green">A</span>
+        <p class="text-sm">Tasks that need planning, summarization, or custom review phases.</p>
+      </div>
+      <div class="card">
+        <h3 style="font-size:16px;">Best for: integration gaps</h3>
+        <span class="tag tag-blue">B</span>
+        <p class="text-sm">Multi-task steps where the whole is more than the sum of parts.</p>
+      </div>
+      <div class="card">
+        <h3 style="font-size:16px;">Best for: adaptive routines</h3>
+        <span class="tag tag-purple">C</span>
+        <p class="text-sm">Same routine handles varied inputs. Optional steps, batch mode.</p>
+      </div>
+      <div class="card">
+        <h3 style="font-size:16px;">Best for: emergent work</h3>
+        <span class="tag tag-cyan">D</span>
+        <p class="text-sm">Work that can't be predicted at routine authoring time.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 16: COMBINING ==================== -->
+<div class="slide" data-slide="16">
+  <h2>Combined implementation strategy</h2>
+  <div class="section-divider"></div>
+  <p style="max-width:700px; margin-bottom:20px;">All four options are <strong>orthogonal</strong> and can be combined. Here's a phased rollout ordered by value-to-effort ratio and dependency order:</p>
+
+  <div class="grid-4" style="flex:1;">
+    <div class="card highlight">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <span class="tag tag-purple">Phase 1</span>
+        <span class="text-xs" style="color:var(--text-dim);">~1 week</span>
+      </div>
+      <h3 style="font-size:18px;">Conditional Steps (C)</h3>
+      <p class="text-sm">Highest value/effort. Enables adaptive routines immediately. Purely additive.</p>
+
+      <div class="diagram mt-16" style="font-size:10px; line-height:1.5; padding:12px;">
+<span class="g">1.</span> StepCondition config
+<span class="g">2.</span> Condition evaluator
+<span class="g">3.</span> Skip logic in progression
+<span class="g">4.</span> StepState.skipped + DB
+<span class="g">5.</span> UI: skipped step display
+<span class="g">6.</span> repeat_for expansion</div>
+
+      <div class="flow-row mt-8">
+        <span class="flow-node node-green" style="font-size:11px;">Low risk</span>
+        <span class="flow-node node-green" style="font-size:11px;">Start here</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <span class="tag tag-cyan">Phase 2</span>
+        <span class="text-xs" style="color:var(--text-dim);">~2 weeks</span>
+      </div>
+      <h3 style="font-size:18px;">Expansion (D)</h3>
+      <p class="text-sm">Unlocks runtime dynamism. Prerequisite for B's spawn_fix to work cleanly. Replaces tool escape hatches.</p>
+
+      <div class="diagram mt-16" style="font-size:10px; line-height:1.5; padding:12px;">
+<span class="c">1.</span> Expansion API endpoint
+<span class="c">2.</span> Budget / limit system
+<span class="c">3.</span> Subtask + peer creation
+<span class="c">4.</span> Step insertion
+<span class="c">5.</span> Provenance tracking
+<span class="c">6.</span> UI: expansion badges</div>
+
+      <div class="flow-row mt-8">
+        <span class="flow-node node-amber" style="font-size:11px;">Med risk</span>
+        <span class="flow-node node-green" style="font-size:11px;">High value</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <span class="tag tag-blue">Phase 3</span>
+        <span class="text-xs" style="color:var(--text-dim);">~2 weeks</span>
+      </div>
+      <h3 style="font-size:18px;">Gap Analyzer (B)</h3>
+      <p class="text-sm">Step-level validation. Uses D's expansion API for spawn_fix. Unifies fan-out verification.</p>
+
+      <div class="diagram mt-16" style="font-size:10px; line-height:1.5; padding:12px;">
+<span class="b">1.</span> StepVerifierConfig
+<span class="b">2.</span> Step verifier prompts
+<span class="b">3.</span> Gap report schema
+<span class="b">4.</span> Action dispatcher
+<span class="b">5.</span> <span class="c">Uses D's expand API</span>
+<span class="b">6.</span> UI: gap report display</div>
+
+      <div class="flow-row mt-8">
+        <span class="flow-node node-amber" style="font-size:11px;">Med risk</span>
+        <span class="flow-node node-blue" style="font-size:11px;">Needs D</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <span class="tag tag-green">Phase 4</span>
+        <span class="text-xs" style="color:var(--text-dim);">~2 weeks</span>
+      </div>
+      <h3 style="font-size:18px;">Phase Pipelines (A)</h3>
+      <p class="text-sm">Most expressive. D's expanded tasks can use custom phase lists. Highest engine change.</p>
+
+      <div class="diagram mt-16" style="font-size:10px; line-height:1.5; padding:12px;">
+<span class="p">1.</span> PhaseConfig + PhaseType
+<span class="p">2.</span> Phase-aware transitions
+<span class="p">3.</span> current_phase_index
+<span class="p">4.</span> Per-phase prompts
+<span class="p">5.</span> Context passing
+<span class="p">6.</span> UI: phase indicators</div>
+
+      <div class="flow-row mt-8">
+        <span class="flow-node node-red" style="font-size:11px;">Higher risk</span>
+        <span class="flow-node node-green" style="font-size:11px;">Most flexible</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap:16px; margin-top:16px;">
+    <div class="callout" style="flex:2;">
+      <strong>Dependency graph:</strong> C is independent. D is independent but should come before B (B's spawn_fix becomes a consumer of D's expansion API &mdash; without D, B needs its own bespoke spawning mechanism). A is independent but benefits from D (expanded tasks can specify custom phases).
+      <div class="flow-row mt-8">
+        <span class="flow-node node-purple" style="font-size:12px;">C: Conditions</span>
+        <span class="flow-node node-cyan" style="font-size:12px;">D: Expansion</span>
+        <span class="flow-arrow">&rarr;</span>
+        <span class="flow-node node-blue" style="font-size:12px;">B: Gap Analyzer</span>
+        <span style="color:var(--text-dim); margin:0 8px;">|</span>
+        <span class="flow-node node-green" style="font-size:12px;">A: Phases</span>
+      </div>
+    </div>
+    <div class="callout" style="flex:1;">
+      <strong>Total:</strong> ~7 weeks for all four. Each phase ships independently. Stop after Phase 2 (C+D) for the best value-to-effort ratio.
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 17: DEPTH RECOMMENDATION ==================== -->
+<div class="slide" data-slide="17">
+  <h2>Recommendation: keep the ceiling, widen the floor</h2>
+  <div class="section-divider"></div>
+
+  <div class="grid-2" style="flex:1;">
+    <div>
+      <h3>Don't add depth, add flexibility at each level</h3>
+
+      <div class="diagram" style="font-size:13px; line-height:2; margin:20px 0;">
+<span class="hl">Current hierarchy (keep this):</span>
+
+  <span class="b">Routine</span>
+    <span class="c">└── Step</span>        <span class="a">+ conditions, repeat_for</span>   <span class="r">(Option C)</span>
+        <span class="g">└── Task</span>      <span class="a">+ phase pipelines</span>          <span class="r">(Option A)</span>
+            <span class="p">└── Child</span>  <span class="r">(fan-out, unchanged)</span>
+
+<span class="hl">New cross-cutting capabilities:</span>
+
+  <span class="b">Step Verifier</span>  <span class="a">+ gap analysis, spawn fix-ups</span>  <span class="r">(Option B)</span>
+  <span class="c">Expansion API</span>  <span class="a">+ append-only runtime growth</span>  <span class="r">(Option D)</span>
+</div>
+
+      <div class="card mb-16">
+        <h4>Why not unbounded depth?</h4>
+        <ul>
+          <li>Each level has distinct semantics (ordering, parallelism, verification)</li>
+          <li>Flattening these into a generic "node" loses useful constraints</li>
+          <li>The UI benefits from knowing what level it's displaying</li>
+          <li>Routine authors benefit from a clear mental model</li>
+          <li>Temporal and Prefect both warn against deep nesting in practice</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h4>What each level means</h4>
+        <table>
+          <tr><td><strong>Routine</strong></td><td>The goal. A reusable workflow template.</td></tr>
+          <tr><td><strong>Step</strong></td><td>An ordered phase of work. Steps run sequentially.</td></tr>
+          <tr><td><strong>Task</strong></td><td>A unit of agent work. Tasks in a step run in parallel.</td></tr>
+          <tr><td><strong>Child</strong></td><td>A fan-out item. Children are mechanical repetitions.</td></tr>
+        </table>
+        <p class="text-sm mt-8">These distinctions are <em>useful</em>. They constrain the system in ways that make it predictable. A generic recursive node would lose these semantics.</p>
+      </div>
+    </div>
+    <div>
+      <h3>The combined system</h3>
+
+      <div class="wireframe" style="padding:20px;">
+        <div class="wire-header" style="background:rgba(96,165,250,0.1);">
+          Bug Fix Routine &mdash; BUG-401
+        </div>
+
+        <div class="wire-step">
+          <div class="wire-step-badge" style="background:var(--green);color:white;">S1</div>
+          <div class="wire-step-content">
+            <div style="display:flex; justify-content:space-between;">
+              <span class="text-xs" style="font-weight:600;">Triage</span>
+              <span class="tag tag-green" style="font-size:10px;">Done</span>
+            </div>
+            <p class="text-xs" style="margin:4px 0 0; color:var(--text-dim);">Result: severity=critical, complexity=low</p>
+          </div>
+        </div>
+
+        <div class="wire-step">
+          <div class="wire-step-badge" style="background:var(--surface2);color:var(--text-dim);border:1px dashed var(--border);">S2</div>
+          <div class="wire-step-content" style="border-style:dashed; opacity:0.5;">
+            <div style="display:flex; justify-content:space-between;">
+              <span class="text-xs" style="font-weight:600;">Design</span>
+              <span class="tag tag-purple" style="font-size:10px;">Skipped</span>
+            </div>
+            <p class="text-xs" style="margin:4px 0 0; color:var(--text-dim);">complexity != "high"</p>
+          </div>
+        </div>
+
+        <div class="wire-step">
+          <div class="wire-step-badge" style="background:rgba(52,211,153,0.2);color:var(--green);border:2px solid var(--green);">S3</div>
+          <div class="wire-step-content" style="border-color:var(--green);">
+            <div style="display:flex; justify-content:space-between;">
+              <span class="text-xs" style="font-weight:600;">Fix (2 tasks)</span>
+              <span class="tag tag-green" style="font-size:10px;">Active</span>
+            </div>
+            <div style="display:flex; gap:4px; margin-top:6px;">
+              <span class="wire-phase" style="background:rgba(96,165,250,0.15);color:var(--blue);">plan</span>
+              <span class="wire-phase" style="background:rgba(52,211,153,0.15);color:var(--green);border:1px solid var(--green);">build</span>
+              <span class="wire-phase" style="background:rgba(139,144,165,0.1);color:var(--text-dim);">verify</span>
+            </div>
+            <div style="margin-top:6px;border:1px solid var(--amber);border-radius:4px;padding:4px 8px;">
+              <p class="text-xs" style="margin:0;color:var(--amber);">Step verifier will check integration after tasks complete</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="wire-step">
+          <div class="wire-step-badge" style="background:rgba(251,191,36,0.1);color:var(--amber);border:1px dashed var(--amber);">S4</div>
+          <div class="wire-step-content" style="border-style:dashed; border-color:var(--amber);">
+            <div style="display:flex; justify-content:space-between;">
+              <span class="text-xs" style="font-weight:600;">Regression Test</span>
+              <span class="tag tag-amber" style="font-size:10px;">If critical</span>
+            </div>
+            <p class="text-xs" style="margin:4px 0 0; color:var(--green);">severity = "critical" &rarr; will run</p>
+          </div>
+        </div>
+
+        <div class="wire-step">
+          <div class="wire-step-badge" style="background:var(--surface2);color:var(--text-dim);border:1px solid var(--border);">S5</div>
+          <div class="wire-step-content">
+            <div style="display:flex; justify-content:space-between;">
+              <span class="text-xs" style="font-weight:600;">Changelog</span>
+              <span class="tag tag-purple" style="font-size:10px;">Pending</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="callout mt-16">
+        <strong>This wireframe shows all three options working together.</strong> S2 is conditionally skipped (Option C). S3's tasks have a plan&rarr;build&rarr;verify phase pipeline (Option A). S3 has a step verifier that will check integration (Option B). S4 will conditionally run based on triage results (Option C).
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== SLIDE 18: SUMMARY ==================== -->
+<div class="slide" data-slide="18">
+  <h2>Summary</h2>
+  <div class="section-divider"></div>
+
+  <div style="max-width:900px;">
+    <div class="card mb-16">
+      <h3>The diagnosis</h3>
+      <p>The system has structural symmetries (step vs fan-out validation) implemented as separate code paths, hardcoded phases that limit expressiveness, no way to adapt routines to varied inputs, and a static-only execution model that forces agents to bypass orchestration when they discover emergent work.</p>
+    </div>
+
+    <div class="card mb-16">
+      <h3>The prescription</h3>
+      <p>Four orthogonal improvements that keep the 4-level hierarchy but make each level more flexible and the whole system more dynamic:</p>
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:12px; margin-top:12px;">
+        <div>
+          <span class="tag tag-purple">C: Conditions</span>
+          <p class="text-sm"><strong>Adaptive routines</strong><br>Skip, repeat, gate. ~1 week. Start here.</p>
+        </div>
+        <div>
+          <span class="tag tag-cyan">D: Expansion</span>
+          <p class="text-sm"><strong>Runtime dynamism</strong><br>Append-only growth. ~2 weeks. High value.</p>
+        </div>
+        <div>
+          <span class="tag tag-blue">B: Gap Analyzer</span>
+          <p class="text-sm"><strong>Step validation</strong><br>Targeted retry + fix-ups. ~2 weeks. Uses D.</p>
+        </div>
+        <div>
+          <span class="tag tag-green">A: Phases</span>
+          <p class="text-sm"><strong>Phase pipelines</strong><br>Configurable per task. ~2 weeks. Engine change.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3>On unbounded depth</h3>
+        <p class="text-sm" style="margin-bottom:0;">Don't do it. Temporal and Prefect both discourage it. The 4-level hierarchy has useful semantic distinctions. Option D gives the <em>feeling</em> of dynamic depth (agents can subdivide work) without the <em>cost</em> (new work is always a leaf at the current level, never a new nesting level).</p>
+      </div>
+      <div class="card">
+        <h3>On dynamism</h3>
+        <p class="text-sm" style="margin-bottom:0;">The key insight is <strong>append-only mutation</strong>. Let agents add work but never remove or weaken existing obligations. The orchestrator creates, tracks, and verifies all work &mdash; dynamic or static &mdash; through the same pipeline. This preserves the quality guarantee while enabling runtime adaptation.</p>
+      </div>
+    </div>
+
+    <div class="card mt-16">
+      <h3>Recommended first move: C + D (~3 weeks)</h3>
+      <p class="text-sm" style="margin-bottom:0;">Conditional steps (C) and orchestrated expansion (D) together give the best value/effort ratio. C makes routines adaptive to input. D makes execution adaptive to discovery. Neither touches the core engine transition logic. Both are backward compatible. Both address your specific use case of routines triggered with different bugs where the AI needs to dynamically subdivide work.</p>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<div class="slide-number" id="slideNumber">1 / 18</div>
+<div class="nav-hint">Arrow keys or click to navigate</div>
+
+<script>
+  const slides = document.querySelectorAll('.slide');
+  let current = 0;
+
+  function showSlide(n) {
+    slides[current].classList.remove('active');
+    current = Math.max(0, Math.min(n, slides.length - 1));
+    slides[current].classList.add('active');
+    document.getElementById('slideNumber').textContent = `${current + 1} / ${slides.length}`;
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') {
+      e.preventDefault();
+      showSlide(current + 1);
+    } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      showSlide(current - 1);
+    } else if (e.key === 'Home') {
+      showSlide(0);
+    } else if (e.key === 'End') {
+      showSlide(slides.length - 1);
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.clientX > window.innerWidth / 2) {
+      showSlide(current + 1);
+    } else {
+      showSlide(current - 1);
+    }
+  });
+</script>
+
+</body>
+</html>
