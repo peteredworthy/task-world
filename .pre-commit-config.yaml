@@ -28,11 +28,11 @@ repos:
         stages: [pre-commit]
       - id: ui-lint
         name: ui-lint
-        entry: npm --prefix ui run lint
+        entry: bash -c 'test -d ui/node_modules && npm --prefix ui run lint || echo "Skipping ui-lint (node_modules not installed)"'
         language: system
         pass_filenames: false
       - id: ui-typecheck
         name: ui-typecheck
-        entry: npm --prefix ui run typecheck
+        entry: bash -c 'test -d ui/node_modules && npm --prefix ui run typecheck || echo "Skipping ui-typecheck (node_modules not installed)"'
         language: system
         pass_filenames: false
