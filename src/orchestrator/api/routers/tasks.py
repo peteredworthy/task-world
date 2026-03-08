@@ -151,6 +151,10 @@ async def get_task(
         ],
         current_attempt=task.current_attempt,
         max_attempts=task.max_attempts,
+        parent_task_id=task.parent_task_id,
+        fan_out_index=task.fan_out_index,
+        fan_out_input=task.fan_out_input,
+        fan_out_output=task.fan_out_output,
     )
 
 
