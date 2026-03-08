@@ -639,3 +639,88 @@ def test_cleanup_expired_refuses_empty_run_set(git_repo: tuple[Path, Path]) -> N
     assert removed == 0
     assert wt1.path.exists()
     assert wt2.path.exists()
+
+
+# -- Worktree setup script tests --
+
+
+def test_worktree_setup_script_runs_on_create(git_repo: tuple[Path, Path]) -> None:
+    """Test that .worktree-setup is executed after worktree creation."""
+    repo, worktrees = git_repo
+
+    # Create a setup script that writes a marker file
+    setup_script = repo / ".worktree-setup"
+    setup_script.write_text(
+        '#!/usr/bin/env bash\nset -euo pipefail\necho "setup-ran" > "$1/.setup-marker"\n'
+    )
+    setup_script.chmod(0o755)
+
+    manager = WorktreeManager(repo, worktrees)
+    wt = manager.create("setup-test")
+
+    marker = wt.path / ".setup-marker"
+    assert marker.exists(), "Setup script should have created .setup-marker"
+    assert marker.read_text().strip() == "setup-ran"
+
+
+def test_worktree_setup_script_receives_both_args(git_repo: tuple[Path, Path]) -> None:
+    """Test that .worktree-setup receives worktree path and main repo path."""
+    repo, worktrees = git_repo
+
+    setup_script = repo / ".worktree-setup"
+    setup_script.write_text(
+        '#!/usr/bin/env bash\nset -euo pipefail\necho "$1" > "$1/.arg1"\necho "$2" > "$1/.arg2"\n'
+    )
+    setup_script.chmod(0o755)
+
+    manager = WorktreeManager(repo, worktrees)
+    wt = manager.create("args-test")
+
+    arg1 = (wt.path / ".arg1").read_text().strip()
+    arg2 = (wt.path / ".arg2").read_text().strip()
+    # arg1 is the worktree path (may not be resolved yet)
+    assert Path(arg1).resolve() == wt.path
+    assert Path(arg2).resolve() == repo.resolve()
+
+
+def test_worktree_setup_script_failure_does_not_block(git_repo: tuple[Path, Path]) -> None:
+    """Test that a failing setup script doesn't prevent worktree creation."""
+    repo, worktrees = git_repo
+
+    setup_script = repo / ".worktree-setup"
+    setup_script.write_text("#!/usr/bin/env bash\nexit 1\n")
+    setup_script.chmod(0o755)
+
+    manager = WorktreeManager(repo, worktrees)
+    wt = manager.create("fail-test")
+
+    # Worktree should still be created and usable
+    assert wt.path.exists()
+    assert (wt.path / ".git").exists()
+
+
+def test_worktree_no_setup_script(git_repo: tuple[Path, Path]) -> None:
+    """Test that missing .worktree-setup is handled gracefully."""
+    repo, worktrees = git_repo
+
+    # No setup script — should work fine (baseline behavior)
+    manager = WorktreeManager(repo, worktrees)
+    wt = manager.create("no-setup-test")
+    assert wt.path.exists()
+
+
+def test_worktree_setup_runs_on_ensure_exists(git_repo: tuple[Path, Path]) -> None:
+    """Test that .worktree-setup runs when ensure_exists recreates a worktree."""
+    repo, worktrees = git_repo
+
+    setup_script = repo / ".worktree-setup"
+    setup_script.write_text(
+        '#!/usr/bin/env bash\nset -euo pipefail\necho "setup-ran" > "$1/.setup-marker"\n'
+    )
+    setup_script.chmod(0o755)
+
+    manager = WorktreeManager(repo, worktrees)
+    wt = manager.ensure_exists("ensure-test")
+
+    marker = wt.path / ".setup-marker"
+    assert marker.exists(), "Setup script should have run via ensure_exists"

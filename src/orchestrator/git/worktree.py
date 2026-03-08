@@ -52,6 +52,39 @@ class WorktreeManager:
                         max_n = max(max_n, int(m.group(1)))
         return max_n + 1
 
+    def _run_worktree_setup(self, worktree_path: Path) -> None:
+        """Run the project's worktree setup script if it exists.
+
+        Looks for ``.worktree-setup`` in the main repo root and executes it
+        with ``<worktree-path> <main-repo-path>`` as arguments.  Failures are
+        logged but do **not** prevent the worktree from being used.
+        """
+        setup_script = self._repo / ".worktree-setup"
+        if not setup_script.exists():
+            return
+
+        cmd = [str(setup_script), str(worktree_path), str(self._repo)]
+        logger.info("Running worktree setup: %s", " ".join(cmd))
+        try:
+            subprocess.run(
+                cmd,
+                cwd=self._repo,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning("Worktree setup script timed out after 120s")
+        except subprocess.CalledProcessError as e:
+            logger.warning(
+                "Worktree setup script failed (exit %d): %s",
+                e.returncode,
+                e.stderr.strip() if e.stderr else "(no output)",
+            )
+        except OSError as e:
+            logger.warning("Could not run worktree setup script: %s", e)
+
     def create(self, run_id: str, base_branch: str = "main") -> WorktreeInfo:
         """
         Create a new worktree for a run.
@@ -109,6 +142,8 @@ class WorktreeManager:
         main_venv = self._repo / ".venv"
         if main_venv.exists():
             (worktree_path / ".venv").symlink_to(main_venv.resolve())
+
+        self._run_worktree_setup(worktree_path)
 
         # Get commit SHA
         cmd = ["git", "rev-parse", "HEAD"]
@@ -255,6 +290,8 @@ class WorktreeManager:
         main_venv = self._repo / ".venv"
         if main_venv.exists() and not (new_path / ".venv").exists():
             (new_path / ".venv").symlink_to(main_venv.resolve())
+
+        self._run_worktree_setup(new_path)
 
         result = subprocess.run(
             ["git", "rev-parse", "HEAD"],
