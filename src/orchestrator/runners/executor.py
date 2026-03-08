@@ -1083,6 +1083,16 @@ class AgentRunnerExecutor:
                     if attempt_num >= fan_out.max_attempts:
                         break
 
+            # After all retries, transition child to appropriate terminal status
+            if not passed:
+                async with self._session_factory() as sess:
+                    svc = await self._create_service(sess)
+                    await svc.update_child_task_state(
+                        run.id,
+                        child_id,
+                        {"status": TaskStatus.FAILED},
+                    )
+
             child_results[child_id] = passed
 
         # Run all children concurrently
@@ -1247,6 +1257,7 @@ class AgentRunnerExecutor:
                     {
                         "error": str(e),
                         "outcome": "failed",
+                        "completed_at": datetime.now(timezone.utc),
                     },
                 )
             return False

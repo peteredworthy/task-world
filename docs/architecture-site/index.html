@@ -338,7 +338,7 @@
 
 <header>
   <h1>Task-World Backend Architecture</h1>
-  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 modules, ~32K lines of Python</p>
+  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 modules, ~35K lines of Python</p>
   <nav>
     <a href="#overview">Overview</a>
     <a href="#layers">Layer Diagram</a>
@@ -357,8 +357,8 @@
   <h2>Overview</h2>
   <div class="stats-grid">
     <div class="stat-card"><div class="value">19</div><div class="label">Modules</div></div>
-    <div class="stat-card"><div class="value">165</div><div class="label">Python Files</div></div>
-    <div class="stat-card"><div class="value">~32K</div><div class="label">Lines of Code</div></div>
+    <div class="stat-card"><div class="value">203</div><div class="label">Python Files</div></div>
+    <div class="stat-card"><div class="value">~35K</div><div class="label">Lines of Code</div></div>
     <div class="stat-card"><div class="value">7</div><div class="label">Architecture Layers</div></div>
     <div class="stat-card"><div class="value">0</div><div class="label">Circular Dependencies</div></div>
     <div class="stat-card"><div class="value">786</div><div class="label">Total Tests</div></div>
@@ -444,8 +444,8 @@
           <tr>
             <td><strong>Runners/Executor Coupling</strong></td>
             <td><span class="severity-low">Low</span></td>
-            <td>AgentRunnerExecutor directly calls workflow service methods (submit, complete_verification), binding execution to workflow.</td>
-            <td>Callback-based design already partially abstracts this. Could further decouple with an event bus.</td>
+            <td>AgentRunnerExecutor directly calls workflow service methods (submit, complete_verification), binding execution to workflow. Partially addressed by decomposition into execution/ sub-package (phase_handler, attempt_store, event_broadcaster).</td>
+            <td>Callback-based design already partially abstracts this. Registry-based agent factory further decouples agent creation from executor. Could further decouple with an event bus.</td>
           </tr>
           <tr>
             <td><strong>config Circular Risk</strong></td>
@@ -483,8 +483,8 @@
   </div>
   <div class="module-grid" style="grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));">
     <div class="module-card" style="border-left: 3px solid var(--accent);">
-      <h3>Protocol-Based Agents</h3>
-      <div class="desc">All agent types (CLI, Claude SDK, CodexServer, OpenHands, UserManaged) implement a single <code>AgentRunner</code> protocol. The executor dispatches polymorphically &mdash; adding a new agent requires only implementing the protocol.</div>
+      <h3>Registry-Based Agent Architecture</h3>
+      <div class="desc">All agent types implement the <code>AgentRunner</code> protocol and self-register via <code>agent_factory.register()</code>. Each agent lives in its own sub-package under <code>runners/agents/</code> with agent, factory, config, and parser modules. Auto-discovery via <code>pkgutil.iter_modules</code> loads all agents at startup &mdash; adding a new agent requires only creating a new sub-package.</div>
     </div>
     <div class="module-card" style="border-left: 3px solid var(--accent2);">
       <h3>Event-Driven State Machine</h3>
@@ -531,7 +531,7 @@ const modules = {
   git:         { loc: 2605, files: 10, layer: 'infra',       desc: 'Low-level git operations: WorktreeManager, branch ops, diff computation, conflict detection, and commit utilities.' },
   envfiles:    { loc: 908,  files: 9,  layer: 'infra',       desc: 'Environment file management: snapshots, lifecycle (create/cleanup), resolution, and security (encryption).' },
   workflow:    { loc: 5288, files: 17, layer: 'orchestration', desc: 'State machine engine: transitions, gates, grades, locks, events, clarifications, auto-verify, prompts, and completion logic.' },
-  runners:     { loc: 9899, files: 26, layer: 'execution',   desc: 'Agent integrations and execution: CLI, Claude SDK, CodexServer, OpenHands agents. Executor, monitor, parsers, and action logging.' },
+  runners:     { loc: 11514, files: 58, layer: 'execution',   desc: 'Agent integrations and execution. Decomposed into sub-packages: agents/ (claude_cli, claude_sdk, codex, openhands, user_managed, mock) with registry-based auto-discovery, execution/ (phase_handler, attempt_store, event_broadcaster), and shared utilities (monitor, parsers, quota, action_log).' },
   agents:      { loc: 348,  files: 6,  layer: 'execution',   desc: 'Agent configuration CRUD. Manages agent profiles, seeding defaults (Planner, Builder, Verifier), and name resolution.' },
   api:         { loc: 6604, files: 30, layer: 'api',         desc: 'FastAPI application: routers, schemas, dependency injection, auth, error handlers, and WebSocket real-time events.' },
   cli:         { loc: 1447, files: 7,  layer: 'integration', desc: 'Command-line interface: run, agent, routine, and repo commands. Approval workflows for human-in-the-loop.' },
@@ -1065,7 +1065,7 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     .attr('text-anchor', 'middle')
     .attr('font-size', '11px')
     .attr('fill', '#7f849c')
-    .text('runners/executor (async)');
+    .text('runners/execution (async)');
 
   // Label the branch
   svg.append('text')

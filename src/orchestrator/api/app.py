@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from orchestrator.api.auth import (
     AuthConfig,
@@ -575,3 +576,8 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
                 await self.app(scope, receive, send)
 
         app.mount("/mcp", _McpAuthMiddleware(mcp_asgi))  # type: ignore[arg-type]
+
+    # Serve architecture documentation site as static files
+    _docs_dir = Path(__file__).resolve().parent.parent.parent.parent / "docs" / "architecture-site"
+    if _docs_dir.is_dir():
+        app.mount("/docs", StaticFiles(directory=str(_docs_dir), html=True), name="docs")
