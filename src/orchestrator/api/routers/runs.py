@@ -1112,15 +1112,16 @@ async def merge_back_endpoint(
 
     repo_path = config.paths.get_repos_path() / run.repo_name
 
-    # Pre-flight readiness check — enforce gates server-side
+    # Pre-flight readiness check — only hard-block on "fail" gates.
+    # "pending" gates (e.g. no test run recorded) are warnings, not blockers.
     readiness = await compute_readiness(run, repo_path, test_runner, executor)
-    if not readiness.ready:
-        failed_gates = [g.model_dump() for g in readiness.gates if g.status != "pass"]
+    failed_gates = [g for g in readiness.gates if g.status == "fail"]
+    if failed_gates:
         raise HTTPException(
             status_code=409,
             detail={
                 "message": "Merge readiness gates not met",
-                "gates": failed_gates,
+                "gates": [g.model_dump() for g in failed_gates],
             },
         )
 
