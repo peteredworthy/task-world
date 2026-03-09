@@ -4,6 +4,7 @@ import asyncio
 import json
 import signal
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +14,8 @@ import websockets
 
 from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db.event_journal import resolve_default_journal_path
+from orchestrator.db.journal_replay import replay_journal_to_repository
 from orchestrator.db.repositories import RunRepository
 from orchestrator.routines.discovery import discover_routines
 from orchestrator.state.factory import create_run_from_routine
@@ -313,6 +316,117 @@ def watch_run(ctx: click.Context, run_id: str, url: str) -> None:
         click.echo("\nStopped watching.")
 
     asyncio.run(_watch())
+
+
+def _parse_iso_timestamp(raw: str) -> datetime:
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+@runs.command("replay-journal")
+@click.option(
+    "--journal",
+    "journal_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to JSONL journal (defaults to DB-adjacent .orchestrator/state/history.jsonl)",
+)
+@click.option(
+    "--run-id",
+    "run_ids",
+    multiple=True,
+    help="Replay only selected run IDs (repeatable)",
+)
+@click.option(
+    "--since",
+    default=None,
+    help="Replay only entries at/after this ISO-8601 timestamp (example: 2026-03-09T10:00:00Z)",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Parse and evaluate replay without writing DB changes"
+)
+@click.pass_context
+def replay_journal(
+    ctx: click.Context,
+    journal_path: Path | None,
+    run_ids: tuple[str, ...],
+    since: str | None,
+    dry_run: bool,
+) -> None:
+    """Replay JSONL journal entries onto a restored DB."""
+
+    async def _replay() -> None:
+        db_path = ctx.obj["db"]
+        as_json = ctx.obj["json"]
+
+        selected_journal = journal_path or resolve_default_journal_path(db_path)
+        if selected_journal is None:
+            click.echo(
+                "Error: Could not resolve journal path. Provide --journal explicitly.",
+                err=True,
+            )
+            sys.exit(1)
+        if not selected_journal.exists():
+            click.echo(f"Error: Journal file not found: {selected_journal}", err=True)
+            sys.exit(1)
+
+        since_dt: datetime | None = None
+        if since:
+            try:
+                since_dt = _parse_iso_timestamp(since)
+            except ValueError:
+                click.echo(f"Error: Invalid --since timestamp: {since}", err=True)
+                sys.exit(1)
+
+        engine = create_engine(db_path)
+        await init_db(engine)
+        session_factory = create_session_factory(engine)
+
+        async with session_factory() as session:
+            repository = RunRepository(session)
+            summary = await replay_journal_to_repository(
+                repository,
+                journal_path=selected_journal,
+                run_ids=set(run_ids) if run_ids else None,
+                since=since_dt,
+                dry_run=dry_run,
+            )
+            if dry_run:
+                await session.rollback()
+            else:
+                await session.commit()
+
+        await engine.dispose()
+
+        result = {
+            "journal_path": str(summary.journal_path),
+            "parsed_entries": summary.parsed_entries,
+            "replayed_events": summary.replayed_events,
+            "updated_runs": summary.updated_runs,
+            "missing_runs": summary.missing_runs,
+            "dry_run": dry_run,
+        }
+
+        if as_json:
+            click.echo(json.dumps(result, indent=2))
+            return
+
+        click.echo(f"Journal: {result['journal_path']}")
+        click.echo(
+            f"Parsed {summary.parsed_entries} entries; "
+            f"replayed {summary.replayed_events} events into {summary.updated_runs} run(s)."
+        )
+        if summary.missing_runs:
+            click.echo(
+                f"Skipped {summary.missing_runs} run(s) absent from current DB backup.",
+                err=True,
+            )
+        if dry_run:
+            click.echo("Dry-run mode: no DB changes were written.")
+
+    asyncio.run(_replay())
 
 
 @runs.command("pause")

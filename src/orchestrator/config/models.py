@@ -304,6 +304,13 @@ class MCPServerConfig(BaseModel):
         return self
 
 
+class StepCondition(BaseModel):
+    """Condition for step execution."""
+
+    when: str | None = None
+    repeat_for: str | None = None
+
+
 class StepConfig(BaseModel):
     """A step within a routine."""
 
@@ -322,6 +329,7 @@ class StepConfig(BaseModel):
     available_tools: list[str] | None = None
     mcp_servers: list[MCPServerConfig] | None = None
     step_auto_verify: list[AutoVerifyItemConfig] = Field(default_factory=lambda: [])
+    condition: StepCondition | None = None
 
     @model_validator(mode="before")
     @classmethod

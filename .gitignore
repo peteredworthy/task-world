@@ -19,6 +19,7 @@ venv/
 
 # Database
 *.db
+*.bak
 
 # IDE
 .idea/

@@ -47,7 +47,7 @@ async def _make_run(
     session_factory: async_sessionmaker[AsyncSession],
     worktree_path: str,
     agent_command: str = "true",
-) -> str:
+) -> tuple[str, AgentRunnerExecutor]:
     """Create a run with the given worktree_path and a simple CLI agent."""
     async with session_factory() as session:
         from orchestrator.db.event_store import EventStore
@@ -93,7 +93,7 @@ async def _make_run(
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    return run_id
+    return run_id, executor
 
 
 async def _poll_until_paused(
@@ -127,21 +127,23 @@ async def test_failing_tests_block_task_start(
     (task_world / "config.yaml").write_text("test_command: 'exit 1'\n")
 
     # The agent command doesn't matter; health check fires before agent execution.
-    run_id = await _make_run(session_factory, str(tmp_path), agent_command="true")
+    run_id, executor = await _make_run(session_factory, str(tmp_path), agent_command="true")
+    try:
+        pause_reason = await _poll_until_paused(session_factory, run_id)
 
-    pause_reason = await _poll_until_paused(session_factory, run_id)
+        assert pause_reason == "health_check_failed", (
+            f"Expected pause_reason='health_check_failed', got {pause_reason!r}"
+        )
 
-    assert pause_reason == "health_check_failed", (
-        f"Expected pause_reason='health_check_failed', got {pause_reason!r}"
-    )
-
-    # Also verify last_error contains useful context
-    async with session_factory() as session:
-        repo = RunRepository(session)
-        run = await repo.get(run_id)
-    assert run.last_error is not None
-    assert "health check failed" in run.last_error.lower()
-    assert "exit 1" in run.last_error
+        # Also verify last_error contains useful context
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            run = await repo.get(run_id)
+        assert run.last_error is not None
+        assert "health check failed" in run.last_error.lower()
+        assert "exit 1" in run.last_error
+    finally:
+        await executor.cancel_run(run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -163,18 +165,20 @@ async def test_passing_tests_allow_task_start(
     # 'true' always exits 0
     (task_world / "config.yaml").write_text("test_command: 'true'\n")
 
-    run_id = await _make_run(session_factory, str(tmp_path), agent_command="true")
+    run_id, executor = await _make_run(session_factory, str(tmp_path), agent_command="true")
+    try:
+        # Give the executor a moment to run the health check and proceed.
+        # Short timeout: health check passes quickly, so if the run pauses at all
+        # it happens fast (for a non-health-check reason).
+        pause_reason = await _poll_until_paused(session_factory, run_id, timeout_iters=30)
 
-    # Give the executor a moment to run the health check and proceed.
-    # Short timeout: health check passes quickly, so if the run pauses at all
-    # it happens fast (for a non-health-check reason).
-    pause_reason = await _poll_until_paused(session_factory, run_id, timeout_iters=30)
-
-    # If the run paused, it must NOT be because of a health check failure
-    if pause_reason is not None:
-        assert pause_reason != "health_check_failed", (
-            "Passing health check should not block run; got pause_reason='health_check_failed'"
-        )
+        # If the run paused, it must NOT be because of a health check failure
+        if pause_reason is not None:
+            assert pause_reason != "health_check_failed", (
+                "Passing health check should not block run; got pause_reason='health_check_failed'"
+            )
+    finally:
+        await executor.cancel_run(run_id)
 
 
 # ---------------------------------------------------------------------------

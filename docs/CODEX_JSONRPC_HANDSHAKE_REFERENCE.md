@@ -50,7 +50,7 @@
 │            "method": "account/login/start",                           │
 │            "params": {                                                │
 │              "type": "apiKey",                                        │
-│              "apiKey": "sk-..."                                       │
+│              "apiKey": "<example-api-key>"                            │
 │            }                                                          │
 │          }                                                            │
 │                                                                       │
@@ -650,4 +650,3 @@ if self._cancelled:
 | Tool response | ✅ | Echo req_id in response |
 | Conversation context | ✅ | Persists across turns in same thread |
 | Cancellation | ✅ | Via `turn/interrupt` + flag checking |
-

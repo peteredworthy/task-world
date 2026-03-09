@@ -79,7 +79,7 @@ The protocol has **four required steps** (lines 396-476):
   "method": "account/login/start",
   "params": {
     "type": "apiKey",
-    "apiKey": "sk-..."
+    "apiKey": "<example-api-key>"
   }
 }
 ```

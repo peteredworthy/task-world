@@ -1208,10 +1208,9 @@ class WorkflowService:
     async def submit_for_verification(self, run_id: str, task_id: str) -> TransitionResult:
         """Submit task for verification (BUILDING -> VERIFYING).
 
-        After the engine transitions to VERIFYING, runs auto-verify commands
-        if configured in the run's routine_embedded. If any must-items fail,
-        the task is transitioned back to BUILDING (revision) and the results
-        are stored in the current attempt.
+        Runs task-level auto-verify once before the checklist gate. If must-items
+        fail, the transition is blocked and the task stays in BUILDING with
+        actionable feedback on the current attempt.
 
         Raises:
             GateBlockedError: If the checklist gate does not pass.
@@ -1228,8 +1227,6 @@ class WorkflowService:
         # items as DONE so the gate check succeeds. This prevents agents from
         # needing to explicitly call on_checklist_update() when auto-verify
         # already confirms the work was done.
-        # Results are cached here so the post-engine block can reuse them
-        # without running the same commands a second time.
         task = state.get_task(run_id, task_id)
         step_config_id_pre = None
         for step in run.steps:
@@ -1240,11 +1237,8 @@ class WorkflowService:
             if step_config_id_pre is not None:
                 break
 
-        cached_av_results: list[AutoVerifyResult] | None = (
-            None  # Pre-gate results reused by post-engine block
-        )
-        pre_av_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
-        if pre_av_config is not None and self._auto_verify_runner is not None:
+        auto_verify_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
+        if auto_verify_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
             if project_path is not None:
                 # Auto-commit any uncommitted changes before running auto-verify
@@ -1254,16 +1248,56 @@ class WorkflowService:
                         f"Auto-commit builder changes for task {task_id}",
                     )
 
-                pre_av_results = await run_auto_verify(
-                    pre_av_config,
+                av_results = await run_auto_verify(
+                    auto_verify_config,
                     self._auto_verify_runner,
                     project_path,
                     variables=run.config,
                 )
-                all_must_passed_pre, _ = evaluate_auto_verify(pre_av_config, pre_av_results)
-                cached_av_results = pre_av_results  # Cache for post-engine reuse
 
-                if all_must_passed_pre:
+                # Store results in the current attempt (success or failure).
+                if task.attempts:
+                    task.attempts[-1].auto_verify_results = [r.model_dump() for r in av_results]
+
+                all_must_passed, failing_must_ids = evaluate_auto_verify(
+                    auto_verify_config, av_results
+                )
+
+                # Emit exactly one auto-verify event per submit attempt.
+                buffer.emit(
+                    AutoVerifyCompleted(
+                        timestamp=self._clock.now(),
+                        run_id=run_id,
+                        event_type="auto_verify_completed",
+                        task_id=task_id,
+                        passed=all_must_passed,
+                        failing_must_items=failing_must_ids,
+                        results=[r.model_dump() for r in av_results],
+                    )
+                )
+
+                # Crash detection happens before any phase transition.
+                if has_crashes(av_results):
+                    crash_lines: list[str] = []
+                    for av in av_results:
+                        if av.crashed:
+                            crash_lines.append(
+                                f"- [{av.item_id}] command `{av.cmd}` CRASHED\n"
+                                f"  Error: {av.crash_error or '(unknown)'}"
+                            )
+                    crash_detail = "Validation script(s) crashed during auto-verify:\n" + "\n".join(
+                        crash_lines
+                    )
+                    await self._persist(state, run_id, buffer)
+                    self._notify_submit(task_id)
+                    await self.trigger_recovery(run_id, task_id, crash_detail)
+                    return TransitionResult(
+                        success=True,
+                        new_status=TaskStatus.RECOVERING,
+                        error="Auto-verify script crashed; recovery triggered",
+                    )
+
+                if all_must_passed:
                     # Auto-verify confirms work is done — mark OPEN checklist items as DONE
                     # so the checklist gate passes without requiring explicit self-reporting.
                     for item in task.checklist:
@@ -1271,15 +1305,10 @@ class WorkflowService:
                             item.status = ChecklistStatus.DONE
                 else:
                     # must:true items failed — block immediately instead of
-                    # falling through to the engine gate. Store results and
-                    # feedback on the current attempt so the builder can revise.
-                    _, failing_must_ids = evaluate_auto_verify(pre_av_config, pre_av_results)
+                    # falling through to the engine gate.
                     if task.attempts:
-                        task.attempts[-1].auto_verify_results = [
-                            r.model_dump() for r in pre_av_results
-                        ]
                         failing_lines: list[str] = []
-                        for av in pre_av_results:
+                        for av in av_results:
                             if av.item_id not in failing_must_ids:
                                 continue
                             output = av.output.strip() if av.output else ""
@@ -1294,17 +1323,6 @@ class WorkflowService:
                                 + "\n".join(failing_lines)
                             )
 
-                    buffer.emit(
-                        AutoVerifyCompleted(
-                            timestamp=self._clock.now(),
-                            run_id=run_id,
-                            event_type="auto_verify_completed",
-                            task_id=task_id,
-                            passed=False,
-                            failing_must_items=failing_must_ids,
-                            results=[r.model_dump() for r in pre_av_results],
-                        )
-                    )
                     await self._persist(state, run_id, buffer)
                     self._notify_submit(task_id)
                     return TransitionResult(
@@ -1335,165 +1353,6 @@ class WorkflowService:
                 worktree_path, f"Auto-commit builder changes for task {task_id}"
             )
             task.attempts[-1].end_commit = get_head_commit(worktree_path)
-
-        # --- Auto-verify phase ---
-        # Find which step contains this task to resolve config correctly
-        step_config_id = None
-        for step in run.steps:
-            for t in step.tasks:
-                if t.id == task_id:
-                    step_config_id = step.config_id
-                    break
-            if step_config_id is not None:
-                break
-
-        auto_verify_config = resolve_auto_verify_config(run, task.config_id, step_config_id)
-
-        if auto_verify_config is not None and self._auto_verify_runner is not None:
-            project_path = _resolve_working_path(run)
-            if project_path is not None:
-                # Reuse pre-gate results when available (same commands already ran);
-                # this avoids running stateful commands a second time.
-                if cached_av_results is not None:
-                    av_results = cached_av_results
-                else:
-                    av_results = await run_auto_verify(
-                        auto_verify_config,
-                        self._auto_verify_runner,
-                        project_path,
-                        variables=run.config,
-                    )
-
-                # Store results in the current attempt
-                if task.attempts:
-                    task.attempts[-1].auto_verify_results = [r.model_dump() for r in av_results]
-
-                all_must_passed, failing_must_ids = evaluate_auto_verify(
-                    auto_verify_config, av_results
-                )
-
-                # Emit auto-verify event
-                buffer.emit(
-                    AutoVerifyCompleted(
-                        timestamp=self._clock.now(),
-                        run_id=run_id,
-                        event_type="auto_verify_completed",
-                        task_id=task_id,
-                        passed=all_must_passed,
-                        failing_must_items=failing_must_ids,
-                        results=[r.model_dump() for r in av_results],
-                    )
-                )
-
-                # --- Recovery triggers ---
-                # 1) Crash detection: if any verification script crashed,
-                #    trigger recovery instead of normal retry/fail flow.
-                if has_crashes(av_results):
-                    crash_lines: list[str] = []
-                    for av in av_results:
-                        if av.crashed:
-                            crash_lines.append(
-                                f"- [{av.item_id}] command `{av.cmd}` CRASHED\n"
-                                f"  Error: {av.crash_error or '(unknown)'}"
-                            )
-                    crash_detail = "Validation script(s) crashed during auto-verify:\n" + "\n".join(
-                        crash_lines
-                    )
-                    await self._persist(state, run_id, buffer)
-                    self._notify_submit(task_id)
-                    await self.trigger_recovery(run_id, task_id, crash_detail)
-                    return TransitionResult(
-                        success=True,
-                        new_status=TaskStatus.RECOVERING,
-                        error="Auto-verify script crashed; recovery triggered",
-                    )
-
-                if not all_must_passed:
-                    # Store actionable feedback on the completed attempt so the
-                    # next builder prompt can include concrete remediation details.
-                    if task.attempts:
-                        failing_lines: list[str] = []
-                        for av in av_results:
-                            if av.item_id not in failing_must_ids:
-                                continue
-                            output = av.output.strip() if av.output else ""
-                            snippet = output if output else "(no command output)"
-                            failing_lines.append(
-                                f"- [{av.item_id}] command `{av.cmd}` failed (exit {av.exit_code})\n"
-                                f"  Output:\n{snippet}"
-                            )
-                        if failing_lines:
-                            task.attempts[-1].verifier_comment = (
-                                "Auto-verify failed. Fix the following and resubmit:\n"
-                                + "\n".join(failing_lines)
-                            )
-
-                    # Must-items failed: check max_attempts before retrying
-                    run_obj = state.get_run(run_id)
-                    old_status = task.status
-
-                    # 2) Max attempts exceeded: trigger recovery instead of failing
-                    if task.current_attempt >= task.max_attempts:
-                        max_attempts_msg = (
-                            f"All {task.max_attempts} revision attempts exhausted. "
-                            f"Auto-verify still failing on: "
-                            f"{', '.join(failing_must_ids)}."
-                        )
-                        if task.attempts and task.attempts[-1].verifier_comment:
-                            max_attempts_msg += (
-                                f"\n\nLast failure details:\n{task.attempts[-1].verifier_comment}"
-                            )
-                        await self._persist(state, run_id, buffer)
-                        self._notify_submit(task_id)
-                        await self.trigger_recovery(run_id, task_id, max_attempts_msg)
-                        return TransitionResult(
-                            success=True,
-                            new_status=TaskStatus.RECOVERING,
-                            error=f"Max attempts ({task.max_attempts}) exhausted; recovery triggered",
-                        )
-
-                    # Finalize the failing attempt before creating a new one
-                    if task.attempts:
-                        task.attempts[-1].outcome = "failed"
-                        task.attempts[-1].completed_at = self._clock.now()
-
-                    rev_result = transition_to_building(task, self._clock.now())
-                    if rev_result.success:
-                        # Populate agent snapshot on the newly created attempt
-                        if task.attempts:
-                            attempt = task.attempts[-1]
-                            attempt.agent_type = run_obj.agent_type
-                            attempt.agent_model = run_obj.agent_config.get("model")
-                            attempt.agent_settings = self._sanitize_agent_config(
-                                run_obj.agent_config
-                            )
-                            # Capture start_commit for git tracking: revision starts
-                            # from where the previous attempt ended.
-                            if len(task.attempts) >= 2:
-                                prev_end = task.attempts[-2].end_commit
-                                if prev_end:
-                                    attempt.start_commit = prev_end
-
-                        buffer.emit(
-                            TaskStatusChanged(
-                                timestamp=self._clock.now(),
-                                run_id=run_id,
-                                event_type="task_status_changed",
-                                task_id=task_id,
-                                old_status=old_status,
-                                new_status=rev_result.new_status,
-                            )
-                        )
-                        state.update_run(run_obj)
-                    await self._persist(state, run_id, buffer)
-                    self._notify_submit(task_id)
-                    # Return with the revision status
-                    return TransitionResult(
-                        success=True,
-                        new_status=TaskStatus.BUILDING,
-                        gate_result=result.gate_result,
-                        error="Auto-verify must-items failed",
-                    )
 
         await self._persist(state, run_id, buffer)
         self._notify_submit(task_id)

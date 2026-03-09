@@ -116,6 +116,8 @@ task-world/
 │   │   ├── models.py          # ORM models
 │   │   ├── repositories.py    # RunRepository (CRUD)
 │   │   ├── event_store.py     # Event persistence
+│   │   ├── event_journal.py   # External JSONL event journal (append-only)
+│   │   ├── journal_replay.py  # Replay JSONL journal onto DB snapshots
 │   │   ├── recovery.py        # State recovery from events
 │   │   └── migrations/        # Alembic migrations
 │   ├── envfiles/              # Environment file management
@@ -418,6 +420,7 @@ orchestrator run list --status active
 orchestrator run create <routine> --project <path> --config '<json>'
 orchestrator run start <id> --agent <type>
 orchestrator run agents <run-id>
+orchestrator runs replay-journal --since 2026-03-09T10:00:00Z
 
 # Development server
 orchestrator serve --reload

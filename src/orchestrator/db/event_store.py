@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -9,9 +10,16 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.db.event_journal import (
+    JsonlEventJournal,
+    make_journal_entry,
+    resolve_default_journal_path_from_session,
+)
 from orchestrator.db.models import EventModel
 from orchestrator.time_utils import ensure_utc, format_utc_datetime
 from orchestrator.workflow.events import WorkflowEvent
+
+logger = logging.getLogger(__name__)
 
 
 def _serialize_event(event: WorkflowEvent) -> dict[str, Any]:
@@ -32,33 +40,61 @@ def _serialize_event(event: WorkflowEvent) -> dict[str, Any]:
 class EventStore:
     """Persistent storage for workflow events."""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, journal: JsonlEventJournal | None = None) -> None:
         self._session = session
+        if journal is not None:
+            self._journal = journal
+        else:
+            journal_path = resolve_default_journal_path_from_session(session)
+            self._journal = JsonlEventJournal(journal_path) if journal_path is not None else None
 
     async def append(self, event: WorkflowEvent) -> None:
         """Persist a single event."""
+        payload = _serialize_event(event)
         model = EventModel(
             run_id=event.run_id,
             event_type=event.event_type,
             timestamp=event.timestamp,
-            payload=_serialize_event(event),
+            payload=payload,
         )
         self._session.add(model)
         await self._session.flush()
+        await self._append_journal_entries(
+            [
+                make_journal_entry(
+                    run_id=event.run_id,
+                    event_type=event.event_type,
+                    timestamp=event.timestamp,
+                    payload=payload,
+                )
+            ]
+        )
 
     async def append_batch(self, events: Sequence[WorkflowEvent]) -> None:
         """Persist a batch of events."""
+        serialized_payloads = [_serialize_event(event) for event in events]
         models = [
             EventModel(
                 run_id=event.run_id,
                 event_type=event.event_type,
                 timestamp=event.timestamp,
-                payload=_serialize_event(event),
+                payload=serialized_payloads[idx],
             )
-            for event in events
+            for idx, event in enumerate(events)
         ]
         self._session.add_all(models)
         await self._session.flush()
+        await self._append_journal_entries(
+            [
+                make_journal_entry(
+                    run_id=event.run_id,
+                    event_type=event.event_type,
+                    timestamp=event.timestamp,
+                    payload=serialized_payloads[idx],
+                )
+                for idx, event in enumerate(events)
+            ]
+        )
 
     async def get_events_for_run(self, run_id: str) -> list[dict[str, Any]]:
         """Get all events for a run in order."""
@@ -109,3 +145,13 @@ class EventStore:
             }
             for e in result.scalars()
         ]
+
+    async def _append_journal_entries(self, entries: list[dict[str, Any]]) -> None:
+        if self._journal is None or not entries:
+            return
+        try:
+            await self._journal.append_events(entries)
+        except Exception as exc:
+            # Journal is durability hardening; DB event persistence remains source
+            # of truth for online operation when filesystem is unavailable.
+            logger.warning("Failed to append to event journal: %s", exc)

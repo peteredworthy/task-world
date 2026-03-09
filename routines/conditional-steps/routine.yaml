@@ -1,0 +1,806 @@
+routine:
+  id: "conditional-steps"
+  name: "Conditional Step Execution"
+  description: |
+    Implement conditional step execution, optional step wiring, and step-level
+    repeat_for in the orchestrator. Steps can be conditionally skipped or repeated
+    so a single routine template serves multiple workflows.
+
+  inputs:
+    - name: feature
+      required: false
+      default: "conditional-steps"
+      description: "Feature name used for documentation directory (docs/{{feature}}/)"
+
+  steps:
+    # ── Step 1: Safe Condition Evaluator ──────────────────────────────
+    - id: "S-01"
+      title: "Safe Condition Evaluator"
+      step_context: |
+        Build the ConditionEvaluator class — a safe expression parser and evaluator
+        using recursive descent. This is the highest-risk component so it is built
+        and tested first in complete isolation.
+      tasks:
+        - id: "T-01"
+          title: "Create ConditionEvaluator Module with Core Types"
+          task_context: |
+            Create the new module with ConditionEvalError, StepOutcome, and the
+            ConditionEvaluator class skeleton.
+
+            - Create src/orchestrator/workflow/condition_evaluator.py
+            - Define ConditionEvalError(Exception) with a message
+            - Define StepOutcome(BaseModel) with 5 boolean fields: has_failures,
+              all_passed, any_completed, completed, skipped
+            - Define ConditionEvaluator with evaluate(expression, variables,
+              step_outcomes) -> bool | None
+            - No external dependencies — pure Python + Pydantic only
+            - No eval(), exec(), or ast.literal_eval()
+          requirements:
+            - id: "R1"
+              desc: "ConditionEvalError, StepOutcome, and ConditionEvaluator are importable from orchestrator.workflow.condition_evaluator"
+              priority: critical
+            - id: "R2"
+              desc: "StepOutcome has exactly 5 boolean fields: has_failures, all_passed, any_completed, completed, skipped"
+              priority: critical
+            - id: "R3"
+              desc: "ConditionEvaluator.evaluate() accepts (expression, variables, step_outcomes) and returns bool | None"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "imports_work"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import ConditionEvaluator, ConditionEvalError, StepOutcome; print('OK')\""
+                must: true
+              - id: "step_outcome_fields"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import StepOutcome; o = StepOutcome(has_failures=False, all_passed=True, any_completed=True, completed=True, skipped=False); assert all(hasattr(o, f) for f in ['has_failures','all_passed','any_completed','completed','skipped']); print('OK')\""
+                must: true
+              - id: "no_eval"
+                cmd: "! grep -qE 'eval\\(|exec\\(|literal_eval' src/orchestrator/workflow/condition_evaluator.py"
+                must: true
+          artifacts:
+            - path: "src/orchestrator/workflow/condition_evaluator.py"
+              required: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Implement Tokenizer and Recursive Descent Parser"
+          task_context: |
+            Implement the tokenizer and recursive descent parser for condition
+            expressions.
+
+            Grammar:
+              expr     -> or_expr
+              or_expr  -> and_expr ("or" and_expr)*
+              and_expr -> not_expr ("and" not_expr)*
+              not_expr -> "not" not_expr | compare
+              compare  -> primary (("==" | "!=" | "in" | "not" "in") primary)?
+              primary  -> STRING | NUMBER | BOOL | LIST | VARIABLE | "(" expr ")"
+
+            Variable resolution:
+            - {{var_name}} from variables dict
+            - steps.S-XX.property from step_outcomes dict
+            - Unknown variables resolve to empty string (falsy), not error
+
+            Keywords: always -> True, never -> False, manual -> None
+
+            Operators: ==, !=, in, not in, and, or, not
+          requirements:
+            - id: "R1"
+              desc: "Expressions like {{complexity}} == 'high' evaluate correctly with variable substitution"
+              priority: critical
+            - id: "R2"
+              desc: "Boolean operators (and, or, not) work with correct precedence — and binds tighter than or"
+              priority: critical
+            - id: "R3"
+              desc: "steps.S-01.has_failures resolves from step_outcomes dict"
+              priority: critical
+            - id: "R4"
+              desc: "Keywords always/never/manual return True/False/None respectively"
+              priority: critical
+            - id: "R5"
+              desc: "Membership operators in and not in work with list literals"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "always_keyword"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import ConditionEvaluator; e = ConditionEvaluator(); assert e.evaluate('always', {}, {}) is True; print('OK')\""
+                must: true
+              - id: "never_keyword"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import ConditionEvaluator; e = ConditionEvaluator(); assert e.evaluate('never', {}, {}) is False; print('OK')\""
+                must: true
+              - id: "manual_keyword"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import ConditionEvaluator; e = ConditionEvaluator(); assert e.evaluate('manual', {}, {}) is None; print('OK')\""
+                must: true
+              - id: "variable_comparison"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import ConditionEvaluator; e = ConditionEvaluator(); assert e.evaluate(\\\"{{complexity}} == 'high'\\\", {'complexity': 'high'}, {}) is True; print('OK')\""
+                must: true
+              - id: "step_outcome_access"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import ConditionEvaluator, StepOutcome; e = ConditionEvaluator(); outcomes = {'S-01': StepOutcome(has_failures=True, all_passed=False, any_completed=True, completed=True, skipped=False)}; assert e.evaluate('steps.S-01.has_failures', {}, outcomes) is True; print('OK')\""
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Implement Safety Constraints"
+          task_context: |
+            Add safety constraints to the evaluator to prevent abuse.
+
+            - Max expression length: 500 characters (raise ConditionEvalError)
+            - Max parse depth: 10 levels (raise ConditionEvalError)
+            - Reject attribute access beyond allowed steps.{id}.{property} pattern
+            - Reject function call attempts
+            - Malformed expressions raise ConditionEvalError with descriptive messages
+            - Allowed properties: has_failures, all_passed, any_completed, completed, skipped
+          requirements:
+            - id: "R1"
+              desc: "Expressions longer than 500 characters raise ConditionEvalError"
+              priority: critical
+            - id: "R2"
+              desc: "Deeply nested expressions (>10 levels) raise ConditionEvalError"
+              priority: critical
+            - id: "R3"
+              desc: "Arbitrary attribute access like steps.S-01.__class__ raises ConditionEvalError"
+              priority: critical
+            - id: "R4"
+              desc: "Function call attempts like exec('code') raise ConditionEvalError"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "length_limit"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import ConditionEvaluator, ConditionEvalError; e = ConditionEvaluator(); exec(\\\"try:\\n e.evaluate('a' * 501, {}, {})\\n assert False, 'Should have raised'\\nexcept ConditionEvalError:\\n print('OK')\\\")\""
+                must: true
+              - id: "bad_attribute"
+                cmd: "uv run python -c \"from orchestrator.workflow.condition_evaluator import ConditionEvaluator, ConditionEvalError; e = ConditionEvaluator(); exec(\\\"try:\\n e.evaluate('steps.S-01.__class__', {}, {})\\n assert False, 'Should have raised'\\nexcept ConditionEvalError:\\n print('OK')\\\")\""
+                must: true
+              - id: "no_eval_exec"
+                cmd: "! grep -qE 'eval\\(|exec\\(|literal_eval' src/orchestrator/workflow/condition_evaluator.py"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-04"
+          title: "Write Comprehensive Unit Tests for Evaluator"
+          task_context: |
+            Create thorough unit tests for the condition evaluator.
+
+            Create tests/unit/test_condition_evaluator.py covering:
+            - String comparison (==, !=)
+            - Variable substitution with {{var}}
+            - Output-based conditions: steps.S-01.has_failures, .all_passed,
+              .any_completed, .completed, .skipped
+            - Boolean operators with operator precedence
+            - Membership operators: in, not in with lists
+            - Literal keywords: always, never, manual
+            - Edge cases: empty expression, unknown variable (falsy), deeply nested parens
+            - Safety: expressions >500 chars rejected, disallowed attribute access
+            - Syntax errors: malformed expressions raise ConditionEvalError
+
+            No mocking — test the real evaluator with real inputs.
+          requirements:
+            - id: "R1"
+              desc: "tests/unit/test_condition_evaluator.py exists with tests for all expression types"
+              priority: critical
+            - id: "R2"
+              desc: "Tests cover adversarial inputs (code injection, extreme nesting)"
+              priority: critical
+            - id: "R3"
+              desc: "All tests pass and no existing tests broken"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "evaluator_tests_pass"
+                cmd: "uv run pytest tests/unit/test_condition_evaluator.py -v --tb=short"
+                must: true
+              - id: "existing_unit_tests"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+          artifacts:
+            - path: "tests/unit/test_condition_evaluator.py"
+              required: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 2: Data Model Extensions ─────────────────────────────────
+    - id: "S-02"
+      title: "Data Model Extensions"
+      step_context: |
+        Extend all data models (config, state, DB, events) to represent conditional
+        steps. All model changes are grouped into one step to avoid multiple migrations.
+      tasks:
+        - id: "T-01"
+          title: "Add StepCondition Model and StepConfig.condition Field"
+          task_context: |
+            Add the StepCondition Pydantic model and the optional condition field
+            to StepConfig for backward-compatible conditional step config.
+
+            - Add StepCondition(BaseModel) to src/orchestrator/config/models.py
+              with fields: when: str | None = None, repeat_for: str | None = None
+            - Add condition: StepCondition | None = None to StepConfig
+            - Verify existing routines without condition still parse identically
+          requirements:
+            - id: "R1"
+              desc: "StepCondition model exists with when and repeat_for optional string fields"
+              priority: critical
+            - id: "R2"
+              desc: "StepConfig has optional condition field that defaults to None"
+              priority: critical
+            - id: "R3"
+              desc: "Existing routines without condition blocks parse without errors"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "step_condition_import"
+                cmd: "uv run python -c \"from orchestrator.config.models import StepCondition; c = StepCondition(when='always'); assert c.when == 'always'; assert c.repeat_for is None; print('OK')\""
+                must: true
+              - id: "step_config_condition"
+                cmd: "uv run python -c \"from orchestrator.config.models import StepConfig; s = StepConfig(id='S-01', title='Test', tasks=[]); assert s.condition is None; print('OK')\""
+                must: true
+              - id: "existing_routines_parse"
+                cmd: "uv run orchestrator --json routines validate routines/demo-task.yaml"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Add Skip Fields to StepState and StepModel with Migration"
+          task_context: |
+            Add skipped and skip_reason fields to runtime state and DB models.
+
+            - Add skipped: bool = False and skip_reason: str | None = None to
+              StepState in src/orchestrator/state/models.py
+            - Add skipped and skip_reason columns to StepModel in
+              src/orchestrator/db/models.py
+            - Create Alembic migration with safe defaults (skipped=False,
+              skip_reason=None for existing rows)
+          requirements:
+            - id: "R1"
+              desc: "StepState has skipped (bool, default False) and skip_reason (str | None) fields"
+              priority: critical
+            - id: "R2"
+              desc: "StepModel has skipped and skip_reason DB columns"
+              priority: critical
+            - id: "R3"
+              desc: "Alembic migration applies cleanly with safe defaults for existing data"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "step_state_fields"
+                cmd: "uv run python -c \"from orchestrator.state.models import StepState; s = StepState(step_id='S-01', title='T'); assert s.skipped is False; assert s.skip_reason is None; print('OK')\""
+                must: true
+              - id: "step_model_columns"
+                cmd: "uv run python -c \"from orchestrator.db.models import StepModel; assert hasattr(StepModel, 'skipped'); assert hasattr(StepModel, 'skip_reason'); print('OK')\""
+                must: true
+              - id: "pyright_state"
+                cmd: "uv run pyright src/orchestrator/state/models.py src/orchestrator/db/models.py --outputjson 2>&1 && echo 'OK' || echo 'FAIL'"
+                must: false
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Add StepSkipped Event and Update Factory"
+          task_context: |
+            Add the StepSkipped event type and verify the factory preserves conditions.
+
+            - Add StepSkipped event class to src/orchestrator/workflow/events.py
+              with fields: step_index, step_id, condition, reason
+            - Verify create_run_from_routine() preserves condition field on steps
+              (no expansion at creation time per clarification Q4)
+            - Write unit tests for StepCondition, StepConfig with condition,
+              StepState skip fields, StepSkipped event serialization
+          requirements:
+            - id: "R1"
+              desc: "StepSkipped event class exists and is serializable with step_index, step_id, condition, reason fields"
+              priority: critical
+            - id: "R2"
+              desc: "create_run_from_routine() preserves condition blocks without expanding repeat_for"
+              priority: critical
+            - id: "R3"
+              desc: "Unit tests pass for all new model behavior"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "step_skipped_event"
+                cmd: "uv run python -c \"from orchestrator.workflow.events import StepSkipped; e = StepSkipped(step_index=0, step_id='S-01', condition='never', reason='condition false'); print('OK')\""
+                must: true
+              - id: "unit_tests_pass"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 3: Engine Wiring ─────────────────────────────────────────
+    - id: "S-03"
+      title: "Engine Wiring"
+      step_context: |
+        Wire condition evaluation into the workflow engine so steps are actually
+        skipped or paused based on their conditions. This is the core integration
+        that makes conditional steps functional at runtime.
+      tasks:
+        - id: "T-01"
+          title: "Implement Condition Evaluation in Step Progression"
+          task_context: |
+            Modify check_step_progression() to evaluate condition.when when advancing.
+
+            In src/orchestrator/workflow/transitions.py:
+            - After advancing current_step_index, evaluate next step's condition.when
+            - Build StepOutcome objects from completed/skipped steps
+            - Gather run config variables for the evaluator
+            - Handle results: True (proceed), False (skip + advance), None (manual
+              gate pause), ConditionEvalError (pause with error)
+            - Emit StepSkipped events when steps are skipped
+            - Steps without conditions behave exactly as before (no regression)
+          requirements:
+            - id: "R1"
+              desc: "check_step_progression() evaluates condition.when and skips steps when condition is False"
+              priority: critical
+            - id: "R2"
+              desc: "Manual gate (when: manual) pauses run with pause_reason=manual_gate"
+              priority: critical
+            - id: "R3"
+              desc: "ConditionEvalError pauses the run with error details instead of crashing"
+              priority: critical
+            - id: "R4"
+              desc: "Steps without conditions execute normally (backward compatible)"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "unit_tests"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+              - id: "pyright_transitions"
+                cmd: "uv run pyright src/orchestrator/workflow/transitions.py --outputjson 2>&1 && echo 'OK' || echo 'WARN'"
+                must: false
+          retry:
+            max_attempts: 3
+
+        - id: "T-02"
+          title: "Implement Chain-Skip and Edge Cases"
+          task_context: |
+            Handle multiple consecutive false conditions and the all-steps-skipped case.
+
+            - Chain-skip loop: continue evaluating/skipping until a non-skipped step
+              or end of steps
+            - All-steps-skipped: complete the run with no work done, emit warning
+            - Each skipped step gets its own StepSkipped event
+            - Step index tracking accounts for skipped steps correctly
+          requirements:
+            - id: "R1"
+              desc: "Multiple consecutive false-condition steps are all skipped, engine lands on next non-false step"
+              priority: critical
+            - id: "R2"
+              desc: "If every step's condition is false, run completes gracefully without errors"
+              priority: critical
+            - id: "R3"
+              desc: "Each skipped step emits its own StepSkipped event"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "unit_tests"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Update Persistence and Write Integration Tests"
+          task_context: |
+            Ensure WorkflowService persists skip state and write integration tests.
+
+            - Update WorkflowService to save/load skipped and skip_reason from DB
+            - Create tests/integration/test_conditional_steps.py with tests:
+              * Condition true -> step executes normally
+              * Condition false -> step skipped, next step starts
+              * Manual gate -> run pauses with manual_gate reason
+              * Output-based condition referencing step 1 failure state
+              * Condition syntax error -> run paused with error
+              * Chain-skip across multiple false conditions
+          requirements:
+            - id: "R1"
+              desc: "skipped and skip_reason fields persist to DB and survive state reconstruction"
+              priority: critical
+            - id: "R2"
+              desc: "Integration tests cover conditional skip, manual gate, error handling, and chain-skip"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "conditional_integration_tests"
+                cmd: "uv run pytest tests/integration/test_conditional_steps.py -v --tb=short"
+                must: true
+              - id: "all_integration_tests"
+                cmd: "uv run pytest tests/integration/ -v --tb=short -q"
+                must: true
+          artifacts:
+            - path: "tests/integration/test_conditional_steps.py"
+              required: true
+          retry:
+            max_attempts: 3
+
+    # ── Step 4: Runtime Repeat-For Expansion ──────────────────────────
+    - id: "S-04"
+      title: "Runtime Repeat-For Expansion"
+      step_context: |
+        Implement runtime expansion of repeat_for steps. When the engine reaches
+        a step with condition.repeat_for, it resolves the variable to a list,
+        creates N step copies, and optionally evaluates when conditions per copy.
+      tasks:
+        - id: "T-01"
+          title: "Implement Repeat-For Expansion Logic"
+          task_context: |
+            Add repeat-for expansion to the workflow engine.
+
+            In src/orchestrator/workflow/engine.py:
+            - Detect condition.repeat_for on the current step
+            - Resolve variable from run config first, then prior step outputs
+            - Validate resolved value is a list (pause run with error if not)
+            - Create N StepState copies with: ID {original_id}-{index}, title
+              {original_title} [{index + 1}/{count}], injected item and item_index
+            - Replace original step in run's step list
+            - Persist expanded steps to DB immediately
+            - create_run_from_routine() must NOT expand repeat_for (deferred to runtime)
+          requirements:
+            - id: "R1"
+              desc: "Step with repeat_for produces N step copies with correct item and item_index variables"
+              priority: critical
+            - id: "R2"
+              desc: "Step copy IDs follow {parent_id}-{index} pattern"
+              priority: critical
+            - id: "R3"
+              desc: "Expanded steps are persisted to DB immediately after expansion"
+              priority: critical
+            - id: "R4"
+              desc: "repeat_for resolves variables from run config and prior step outputs"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "unit_tests"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-02"
+          title: "Handle Edge Cases and Repeat-For + When Combo"
+          task_context: |
+            Handle edge cases for repeat_for expansion.
+
+            - Empty list: mark step as skipped with skip_reason="empty list"
+            - Variable not found: pause run with error
+            - Non-list value: pause run with error "expected list"
+            - repeat_for + when combo: expand first, then evaluate when per copy.
+              Copies whose condition is False are skipped. No agent/LLM work starts
+              until a copy's condition passes.
+          requirements:
+            - id: "R1"
+              desc: "Empty list marks step as skipped with reason 'empty list'"
+              priority: critical
+            - id: "R2"
+              desc: "Missing variable pauses run with descriptive error"
+              priority: critical
+            - id: "R3"
+              desc: "Non-list value pauses run with descriptive error"
+              priority: critical
+            - id: "R4"
+              desc: "repeat_for + when combo: expand first, evaluate when per copy, skip copies with false condition"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "unit_tests"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Write Repeat-For Tests"
+          task_context: |
+            Write comprehensive tests for repeat-for expansion.
+
+            Unit tests (tests/unit/):
+            - List from run config -> N step copies with correct item and item_index
+            - List from prior step output -> N step copies
+            - Empty list -> skipped step
+            - Variable not found -> run paused
+            - Non-list value -> run paused
+            - repeat_for + when combo -> expand first, evaluate per copy
+
+            Integration tests in tests/integration/test_conditional_steps.py:
+            - repeat_for with run config list -> correct number of copies
+            - repeat_for with prior step output list -> runtime expansion
+          requirements:
+            - id: "R1"
+              desc: "Unit tests cover all repeat-for scenarios including edge cases"
+              priority: critical
+            - id: "R2"
+              desc: "Integration tests verify end-to-end repeat-for through the API"
+              priority: critical
+            - id: "R3"
+              desc: "All existing tests continue to pass"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "conditional_tests"
+                cmd: "uv run pytest tests/integration/test_conditional_steps.py -v --tb=short"
+                must: true
+              - id: "all_tests"
+                cmd: "uv run pytest tests/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 5: API Surface & Manual Gate Skip ────────────────────────
+    - id: "S-05"
+      title: "API Surface & Manual Gate Skip"
+      step_context: |
+        Add the skip-step endpoint for manual gates and expose all conditional step
+        data through the API schema.
+      tasks:
+        - id: "T-01"
+          title: "Add API Schemas for Conditional Steps"
+          task_context: |
+            Add StepConditionSchema and extend StepSummary with skip and condition fields.
+
+            - Add StepConditionSchema(BaseModel) to src/orchestrator/api/schemas/runs.py
+              with when: str | None = None, repeat_for: str | None = None
+            - Add skipped: bool = False, skip_reason: str | None = None,
+              condition: StepConditionSchema | None = None to StepSummary
+            - Update RunResponse serialization to populate skip data and condition
+            - Backward compatible: runs without conditions still serialize correctly
+          requirements:
+            - id: "R1"
+              desc: "StepSummary includes skipped, skip_reason, and condition fields"
+              priority: critical
+            - id: "R2"
+              desc: "GET /runs/{id} response includes skip data on each step"
+              priority: critical
+            - id: "R3"
+              desc: "Steps without conditions show condition: null (backward compatible)"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "schema_fields"
+                cmd: "uv run python -c \"from orchestrator.api.schemas.runs import StepSummary; fields = StepSummary.model_fields; assert 'skipped' in fields; assert 'skip_reason' in fields; assert 'condition' in fields; print('OK')\""
+                must: true
+              - id: "pyright_schemas"
+                cmd: "uv run pyright src/orchestrator/api/schemas/runs.py --outputjson 2>&1 && echo 'OK' || echo 'WARN'"
+                must: false
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Add Skip-Step API Endpoint"
+          task_context: |
+            Add POST /runs/{id}/steps/{step_id}/skip endpoint for manual gates.
+
+            In src/orchestrator/api/routers/runs.py:
+            - Validate run is paused at manual gate (pause_reason="manual_gate")
+            - Validate step_id matches the current gated step
+            - Mark step as skipped=True, skip_reason="manual_skip"
+            - Emit StepSkipped event
+            - Advance to next step (evaluating its condition)
+            - Resume the run
+            - Return 200 with updated run state
+            - Return 409 for invalid skip attempts (not paused, not manual gate,
+              wrong step_id)
+            - Return 404 for invalid step ID
+          requirements:
+            - id: "R1"
+              desc: "POST /runs/{id}/steps/{step_id}/skip endpoint exists and works for manual gate paused runs"
+              priority: critical
+            - id: "R2"
+              desc: "Returns 409 when run is not paused at a manual gate or step_id doesn't match"
+              priority: critical
+            - id: "R3"
+              desc: "Skipping advances to next step and resumes the run"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "integration_tests"
+                cmd: "uv run pytest tests/integration/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-03"
+          title: "Write API Integration Tests"
+          task_context: |
+            Write integration tests for the API surface and skip-step endpoint.
+
+            Add tests to tests/integration/test_conditional_steps.py:
+            - GET run response includes skipped, skip_reason, condition on steps
+            - Skipped steps have StepSkipped event in activity
+            - Skip-step endpoint works for manual gate paused runs
+            - Skip-step returns 409 when not at manual gate
+            - Skip-step returns 409 when step_id doesn't match current gated step
+          requirements:
+            - id: "R1"
+              desc: "Integration tests cover skip-step endpoint success and error cases"
+              priority: critical
+            - id: "R2"
+              desc: "Integration tests verify API response schema includes skip data"
+              priority: critical
+            - id: "R3"
+              desc: "All existing tests continue to pass"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "conditional_tests"
+                cmd: "uv run pytest tests/integration/test_conditional_steps.py -v --tb=short"
+                must: true
+              - id: "all_tests"
+                cmd: "uv run pytest tests/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 6: Frontend Display ──────────────────────────────────────
+    - id: "S-06"
+      title: "Frontend Display"
+      step_context: |
+        Render conditional step state in the UI so users can see which steps were
+        skipped, why, and interact with manual gates.
+      tasks:
+        - id: "T-01"
+          title: "Update TypeScript Types and Step State Utils"
+          task_context: |
+            Add conditional step fields to TypeScript types and update step state utils.
+
+            - Update ui/src/types/runs.ts: add skipped: boolean, skip_reason: string | null,
+              condition: { when: string | null; repeat_for: string | null } | null
+              to StepSummary type
+            - Update ui/src/lib/stepTimelineUtils.ts:
+              * getStepState() returns 'skipped' when step.skipped is true
+              * Add stepBadgeClasses entry for 'skipped' (dashed border, dimmed opacity)
+            - Missing condition field (older runs) must not break rendering
+          requirements:
+            - id: "R1"
+              desc: "StepSummary TypeScript type includes skipped, skip_reason, and condition fields"
+              priority: critical
+            - id: "R2"
+              desc: "getStepState() correctly identifies and returns 'skipped' for skipped steps"
+              priority: critical
+            - id: "R3"
+              desc: "Skipped steps get distinct visual classes (dashed border, dimmed opacity)"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "type_has_skipped"
+                cmd: "grep -q 'skipped:' ui/src/types/runs.ts"
+                must: true
+              - id: "type_has_skip_reason"
+                cmd: "grep -q 'skip_reason:' ui/src/types/runs.ts"
+                must: true
+              - id: "type_has_condition"
+                cmd: "grep -q 'condition:' ui/src/types/runs.ts"
+                must: true
+              - id: "step_state_skipped"
+                cmd: "grep -q 'skipped' ui/src/lib/stepTimelineUtils.ts"
+                must: true
+              - id: "dashed_border_class"
+                cmd: "grep -qE 'dashed|border-dashed' ui/src/lib/stepTimelineUtils.ts"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Update StepTimeline and ActivityFeed Components"
+          task_context: |
+            Render skipped steps and conditional step info in the UI.
+
+            Update ui/src/components/dashboard/StepTimeline.tsx:
+            - Render skipped steps with skipped badge classes
+            - Show "Skipped" badge text on skipped steps
+            - Add tooltip with skip_reason on skipped steps
+            - Show condition expression text on pending conditional steps
+            - Render repeat_for iterations as sub-items under parent step
+
+            Update ui/src/components/dashboard/ActivityFeed.tsx:
+            - Handle StepSkipped event type with skip icon and reason text
+          requirements:
+            - id: "R1"
+              desc: "Skipped steps rendered with dashed border, dimmed opacity, and 'Skipped' badge"
+              priority: critical
+            - id: "R2"
+              desc: "Tooltip on skipped steps shows skip_reason"
+              priority: expected
+            - id: "R3"
+              desc: "Pending conditional steps show condition expression text"
+              priority: expected
+            - id: "R4"
+              desc: "StepSkipped events appear in activity feed"
+              priority: critical
+            - id: "R5"
+              desc: "repeat_for iterations render as sub-items under parent step"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "build_check"
+                cmd: "cd ui && npx vite build"
+                must: true
+              - id: "skipped_badge_text"
+                cmd: "grep -qi 'skipped' ui/src/components/dashboard/StepTimeline.tsx"
+                must: true
+              - id: "step_skipped_event"
+                cmd: "grep -qi 'StepSkipped\\|step_skipped\\|stepskipped' ui/src/components/dashboard/ActivityFeed.tsx"
+                must: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-03"
+          title: "Add Manual Gate UI"
+          task_context: |
+            Add manual gate interaction UI.
+
+            When run is paused at manual gate (pause_reason === "manual_gate"):
+            - Show "Execute Step" button calling POST /runs/{id}/resume
+            - Show "Skip Step" button calling POST /runs/{id}/steps/{step_id}/skip
+            - Handle API errors with error toast
+            - Style: Execute = primary button, Skip = secondary/outline button
+          requirements:
+            - id: "R1"
+              desc: "Manual gate paused runs show both 'Execute Step' and 'Skip Step' buttons"
+              priority: critical
+            - id: "R2"
+              desc: "'Execute Step' calls resume endpoint and 'Skip Step' calls skip-step endpoint"
+              priority: critical
+            - id: "R3"
+              desc: "API errors show user-visible error feedback"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "execute_button"
+                cmd: "grep -q 'Execute Step' ui/src/components/dashboard/RunDetail.tsx"
+                must: true
+              - id: "skip_button"
+                cmd: "grep -q 'Skip Step' ui/src/components/dashboard/RunDetail.tsx"
+                must: true
+              - id: "manual_gate_check"
+                cmd: "grep -q 'manual_gate' ui/src/components/dashboard/RunDetail.tsx"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-04"
+          title: "Write Frontend Tests"
+          task_context: |
+            Add frontend tests for all conditional step rendering.
+
+            Add tests covering:
+            - Skipped step renders with dashed border class
+            - Skipped step shows skip reason in tooltip
+            - Pending conditional step shows condition text
+            - repeat_for iterations render as sub-items
+            - Manual gate shows execute and skip buttons
+
+            Use Vitest + Testing Library for real component rendering.
+          requirements:
+            - id: "R1"
+              desc: "Frontend tests cover skipped step rendering, condition display, and manual gate UI"
+              priority: critical
+            - id: "R2"
+              desc: "All frontend tests pass"
+              priority: critical
+            - id: "R3"
+              desc: "TypeScript type check and ESLint pass"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "vitest_pass"
+                cmd: "cd ui && npx vitest run"
+                must: true
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "eslint_check"
+                cmd: "cd ui && npx eslint src/ --quiet"
+                must: false
+          retry:
+            max_attempts: 2

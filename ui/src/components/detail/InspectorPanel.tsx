@@ -15,6 +15,7 @@ import {
   PRIORITY_ORDER,
   PRIORITY_LABELS,
   getMetric,
+  getLatestAttemptContext,
   isGradeFailing,
   COLLAPSIBLE_BORDER_CLASS,
   COLLAPSIBLE_DIVIDER_CLASS,
@@ -506,6 +507,10 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
     const taskGroup = groups.find((group): group is TaskEventGroup => group.kind === 'task' && group.task_id === task.id);
     return taskGroup?.events ?? [];
   }, [activityData?.events, task.id]);
+  const latestAttemptContext = useMemo(
+    () => getLatestAttemptContext(detail?.attempts ?? [], task.status),
+    [detail?.attempts, task.status],
+  );
 
   return (
     <div
@@ -592,47 +597,46 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
               </div>
             )}
 
-            {detail.attempts.length > 0 && (() => {
-              const latest = detail.attempts[detail.attempts.length - 1];
-              if (latest.outcome === 'passed') return null;
-              const hasError = Boolean(latest.error);
-              const hasAutoVerify = Boolean(latest.auto_verify_results && latest.auto_verify_results.length > 0);
-              if (!hasError && !hasAutoVerify) return null;
-              const hasAutoVerifyFailure = hasAutoVerify && latest.auto_verify_results!.some(r => !r.passed);
-              const isFailure = hasError || hasAutoVerifyFailure || latest.outcome === 'failed';
-              if (!isFailure) {
-                // All auto-verify checks passed, verification still in progress — show neutral
-                return hasAutoVerify ? (
-                  <div className="rounded-lg border border-border-default bg-bg-secondary px-3 py-2.5">
-                    <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
-                      Auto-verify checks
-                    </h4>
-                    <AutoVerifyResults results={latest.auto_verify_results!} />
-                  </div>
-                ) : null;
-              }
-              return (
-                <div className="rounded-lg border-2 border-status-failed/30 bg-status-failed/5 px-3 py-2.5">
-                  <h4 className="text-xs font-semibold text-status-failed uppercase tracking-wide mb-1.5">
-                    Why this failed
+            {latestAttemptContext.latest
+              && latestAttemptContext.latest.outcome !== 'passed'
+              && !latestAttemptContext.showFailureCard
+              && latestAttemptContext.hasAutoVerify
+              && !latestAttemptContext.hasFailure
+              && (
+                <div className="rounded-lg border border-border-default bg-bg-secondary px-3 py-2.5">
+                  <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
+                    Auto-verify checks
                   </h4>
-                  {hasError && (
-                    <p className="text-sm text-status-failed mb-2 whitespace-pre-wrap break-words">{latest.error}</p>
-                  )}
-                  {hasAutoVerify && (
-                    <AutoVerifyResults results={latest.auto_verify_results!} />
-                  )}
+                  <AutoVerifyResults results={latestAttemptContext.latest.auto_verify_results ?? []} />
                 </div>
-              );
-            })()}
+              )}
 
-            {detail.attempts.length > 0 && detail.attempts[detail.attempts.length - 1].verifier_comment && (
+            {latestAttemptContext.showFailureCard && latestAttemptContext.latest && (
+              <div className="rounded-lg border-2 border-status-failed/30 bg-status-failed/5 px-3 py-2.5">
+                <h4 className="text-xs font-semibold text-status-failed uppercase tracking-wide mb-1.5">
+                  Why this failed
+                </h4>
+                <p className="text-[11px] text-text-muted mb-1.5">
+                  Attempt #{latestAttemptContext.latest.attempt_num}
+                </p>
+                {latestAttemptContext.hasError && (
+                  <p className="text-sm text-status-failed mb-2 whitespace-pre-wrap break-words">
+                    {latestAttemptContext.latest.error}
+                  </p>
+                )}
+                {latestAttemptContext.hasAutoVerify && (
+                  <AutoVerifyResults results={latestAttemptContext.latest.auto_verify_results ?? []} />
+                )}
+              </div>
+            )}
+
+            {latestAttemptContext.showFeedbackCard && latestAttemptContext.latest?.verifier_comment && (
               <div className="rounded-lg border-2 border-accent-purple/30 bg-accent-purple/5 px-3 py-2.5">
                 <h4 className="text-xs font-semibold text-accent-purple uppercase tracking-wide mb-1.5">
-                  Verifier Feedback
+                  {latestAttemptContext.feedbackTitle}
                 </h4>
                 <p className="text-sm text-text-secondary whitespace-pre-wrap break-words">
-                  {detail.attempts[detail.attempts.length - 1].verifier_comment}
+                  {latestAttemptContext.latest.verifier_comment}
                 </p>
               </div>
             )}
