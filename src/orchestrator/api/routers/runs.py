@@ -152,7 +152,7 @@ def _run_to_response(run: Run) -> RunResponse:
         for step in run.steps
     ]
 
-    # Single pass over all attempts to sum actual cost and find model hint.
+    # Compute cost and model hint.
     actual_cost_usd = 0.0
     model_hint: str | None = None
 
@@ -161,6 +161,7 @@ def _run_to_response(run: Run) -> RunResponse:
     if isinstance(raw_model, str) and raw_model:
         model_hint = raw_model
 
+    # Sum actual cost from action logs (only when loaded — skipped for list queries)
     for step in run.steps:
         for task in step.tasks:
             for attempt in task.attempts:

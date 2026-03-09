@@ -315,9 +315,18 @@ class ToolDetector:
     ``quota=None``.
     """
 
-    def __init__(self, agents: list[Any] | None = None, *, quota_timeout: float = 10.0) -> None:
+    def __init__(
+        self,
+        agents: list[Any] | None = None,
+        *,
+        quota_timeout: float = 10.0,
+        detection_cache_ttl: float = 300.0,
+    ) -> None:
         self._quota_cache: dict[str, _QuotaCacheEntry] = {}
         self._quota_timeout = quota_timeout
+        self._detection_cache_ttl = detection_cache_ttl
+        self._detection_cache: list[AgentOption] | None = None
+        self._detection_cached_at: float = 0.0
         self._agents: dict[str, Any] = {}
         if agents:
             for agent in agents:
@@ -404,15 +413,29 @@ class ToolDetector:
         return self._quota_with_fetched_at(self._quota_cache[cache_key])
 
     async def detect_all(self) -> list[AgentOption]:
-        """Detect all available agent backends and attach cached quota info."""
-        options: list[AgentOption] = []
-        options.append(self._detect_openhands_local())
-        options.append(await self._detect_openhands_docker())
-        options.extend(self._detect_cli_tools())
-        options.append(self._detect_codex_server())
-        options.append(self._detect_claude_sdk())
-        options.append(self._detect_user_managed())
+        """Detect all available agent backends and attach cached quota info.
 
+        Detection results (available backends, model lists) are cached for
+        ``detection_cache_ttl`` seconds (default 300) because the underlying
+        checks spawn subprocesses and make network calls that can take 10-20s.
+        Quota information is refreshed independently via its own cache.
+        """
+        now = time.monotonic()
+        if (
+            self._detection_cache is None
+            or (now - self._detection_cached_at) >= self._detection_cache_ttl
+        ):
+            options: list[AgentOption] = []
+            options.append(self._detect_openhands_local())
+            options.append(await self._detect_openhands_docker())
+            options.extend(self._detect_cli_tools())
+            options.append(self._detect_codex_server())
+            options.append(self._detect_claude_sdk())
+            options.append(self._detect_user_managed())
+            self._detection_cache = options
+            self._detection_cached_at = now
+
+        options = self._detection_cache
         quotas: list[AgentQuota | None] = list(
             await asyncio.gather(*[self._fetch_quota_for_option(opt) for opt in options])
         )

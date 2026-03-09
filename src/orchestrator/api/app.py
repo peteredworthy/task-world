@@ -264,7 +264,75 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning(f"Worktree cleanup failed: {e}")
 
+    # Start periodic stale-run sweeper: detects runs stuck in ACTIVE with no
+    # running executor task and pauses them. This is defense-in-depth against
+    # edge cases where the executor loop exits without pausing the run.
+    import asyncio as _asyncio
+
+    stale_run_sweeper: _asyncio.Task[None] | None = None
+    if hasattr(app.state, "runner_executor"):
+
+        async def _sweep_stale_runs() -> None:
+            executor = app.state.runner_executor
+            while True:
+                await _asyncio.sleep(60)  # Check every 60 seconds
+                try:
+                    async with session_factory() as session:
+                        repo = RunRepository(session)
+                        active_runs = await repo.list_by_status(
+                            RunStatus.ACTIVE, include_action_logs=False
+                        )
+                    for run in active_runs:
+                        if not executor.is_running(run.id):
+                            logger.warning(
+                                f"Stale run sweeper: run {run.id} is ACTIVE but has no "
+                                f"executor task — pausing"
+                            )
+                            try:
+                                async with session_factory() as session:
+                                    from orchestrator.db.repositories import RunRepository as _RRS
+                                    from orchestrator.db.event_store import EventStore as _ESS
+                                    from orchestrator.workflow.event_logger import (
+                                        PersistentEventEmitter as _PEES,
+                                    )
+                                    from orchestrator.workflow.service import (
+                                        WorkflowService as _WSS,
+                                    )
+
+                                    repo_s = _RRS(session)
+                                    event_store_s = _ESS(session)
+                                    emitter_s = _PEES(event_store_s)
+                                    svc = _WSS(
+                                        session=session,
+                                        repo=repo_s,
+                                        event_store=event_store_s,
+                                        event_emitter=emitter_s,
+                                        submit_event_registry=app.state.submit_event_registry,
+                                        lock_manager=getattr(app.state, "lock_manager", None),
+                                    )
+                                    await svc.pause_run(run.id, reason="no_executor_running")
+                                    await session.commit()
+                                    logger.info(f"Stale run sweeper: paused run {run.id}")
+                            except Exception as e:
+                                logger.warning(
+                                    f"Stale run sweeper: failed to pause run {run.id}: {e}"
+                                )
+                except _asyncio.CancelledError:
+                    return
+                except Exception as e:
+                    logger.warning(f"Stale run sweeper: error: {e}")
+
+        stale_run_sweeper = _asyncio.create_task(_sweep_stale_runs())
+
     yield
+
+    # Cancel stale-run sweeper
+    if stale_run_sweeper is not None:
+        stale_run_sweeper.cancel()
+        try:
+            await stale_run_sweeper
+        except _asyncio.CancelledError:
+            pass
 
     # Cancel all running agent background tasks before disposing the engine.
     # Without this, background sessions try to rollback on a closed connection

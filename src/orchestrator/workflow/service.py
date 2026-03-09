@@ -1621,11 +1621,11 @@ class WorkflowService:
 
     async def list_runs(self, limit: int | None = None) -> list[Run]:
         """List all runs, optionally limited to the most recent N runs."""
-        return await self._repo.list_all(limit=limit)
+        return await self._repo.list_all(limit=limit, include_action_logs=False)
 
     async def list_runs_recent(self, hours: int) -> list[Run]:
         """List runs created within the last N hours."""
-        return await self._repo.list_recent(hours)
+        return await self._repo.list_recent(hours, include_action_logs=False)
 
     async def list_repo_names(self) -> list[str]:
         """List unique repository names across all runs."""
@@ -1633,15 +1633,17 @@ class WorkflowService:
 
     async def list_runs_by_repo(self, repo_name: str) -> list[Run]:
         """List runs for a repository."""
-        return await self._repo.list_by_repo(repo_name)
+        return await self._repo.list_by_repo(repo_name, include_action_logs=False)
 
     async def list_runs_by_status(self, status: RunStatus) -> list[Run]:
         """List runs filtered by status."""
-        return await self._repo.list_by_status(status)
+        return await self._repo.list_by_status(status, include_action_logs=False)
 
     async def list_runs_by_repo_and_status(self, repo_name: str, status: RunStatus) -> list[Run]:
         """List runs filtered by both repository and status."""
-        return await self._repo.list_by_repo_and_status(repo_name, status)
+        return await self._repo.list_by_repo_and_status(
+            repo_name, status, include_action_logs=False
+        )
 
     async def get_task(self, run_id: str, task_id: str) -> TaskState:
         """Get a task by run ID and task ID."""

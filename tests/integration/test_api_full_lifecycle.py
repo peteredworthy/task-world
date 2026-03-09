@@ -877,12 +877,19 @@ async def test_embedded_routine_persists_across_requests(
         "routine_embedded should persist through entire lifecycle to completion"
     )
 
-    # 6. Verify via list endpoint as well
+    # 6. Verify via list endpoint — routine_embedded is deferred for
+    # performance, so the list response returns null for this field.
     list_resp = await client.get("/api/runs")
     assert list_resp.status_code == 200
     runs = list_resp.json()["runs"]
     matching = [r for r in runs if r["id"] == run_id]
     assert len(matching) == 1
-    assert matching[0]["routine_embedded"] == EMBEDDED_ROUTINE_PERSIST, (
-        "routine_embedded should appear in list endpoint"
+    assert matching[0]["routine_embedded"] is None, (
+        "routine_embedded should be null in list endpoint (deferred for performance)"
+    )
+    # But the detail endpoint should still return the full embedded routine.
+    detail_resp = await client.get(f"/api/runs/{run_id}")
+    assert detail_resp.status_code == 200
+    assert detail_resp.json()["routine_embedded"] == EMBEDDED_ROUTINE_PERSIST, (
+        "routine_embedded should appear in detail endpoint"
     )

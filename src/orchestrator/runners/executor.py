@@ -1548,9 +1548,35 @@ class AgentRunnerExecutor:
             asyncio.create_task(self._attempt_store.persist_agent_metadata(run_id, {"pid": None}))
 
         task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, clean_config))
+        task.add_done_callback(lambda t: self._on_agent_loop_done(run_id, t))
         self._running_tasks[run_id] = task
         logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
         return True
+
+    def _on_agent_loop_done(self, run_id: str, task: asyncio.Task[None]) -> None:
+        """Callback when an executor task finishes.
+
+        If the task raised an exception that wasn't caught by _run_agent_loop's
+        own handlers (shouldn't happen, but defense-in-depth), schedule a
+        pause so the run doesn't stay stuck as ACTIVE forever.
+        """
+        exc = task.exception() if not task.cancelled() else None
+        if exc is not None:
+            logger.error(f"Run {run_id}: executor task died with unhandled exception: {exc}")
+            asyncio.ensure_future(self._emergency_pause(run_id, str(exc)))
+
+    async def _emergency_pause(self, run_id: str, error_msg: str) -> None:
+        """Last-resort pause for runs whose executor task crashed."""
+        try:
+            async with self._session_factory() as session:
+                service = await self._create_service(session)
+                run = await service.get_run(run_id)
+                if run.status == RunStatus.ACTIVE:
+                    await service.pause_run(run_id, reason="executor_crash")
+                    await session.commit()
+                    logger.info(f"Run {run_id}: emergency-paused after executor crash")
+        except Exception:
+            logger.exception(f"Run {run_id}: failed to emergency-pause")
 
     async def cancel_run(self, run_id: str) -> None:
         """Cancel a running agent for a run."""

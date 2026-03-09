@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from orchestrator.config.enums import (
     AgentRunnerType,
@@ -63,15 +63,37 @@ def _ensure_utc_optional(dt: datetime | None) -> datetime | None:
     return _core_ensure_utc_optional(dt)
 
 
-def _eager_run_query() -> Any:  # noqa: ANN401
-    """Build a select query with all relationships eagerly loaded."""
-    return select(RunModel).options(
-        selectinload(RunModel.steps).selectinload(StepModel.tasks).selectinload(TaskModel.attempts)
+def _eager_run_query(*, include_action_logs: bool = True) -> Any:  # noqa: ANN401
+    """Build a select query with all relationships eagerly loaded.
+
+    Args:
+        include_action_logs: If False, defers loading of large text/JSON
+            columns (action_log_json, builder/verifier prompts, agent_output,
+            routine_embedded) that are not needed for list/summary views.
+    """
+    attempt_load = selectinload(TaskModel.attempts)
+    if not include_action_logs:
+        attempt_load = (
+            attempt_load.defer(AttemptModel.action_log_json)
+            .defer(AttemptModel.builder_prompt)
+            .defer(AttemptModel.verifier_prompt)
+            .defer(AttemptModel.agent_output)
+        )
+    query = select(RunModel).options(
+        selectinload(RunModel.steps).selectinload(StepModel.tasks).options(attempt_load)
     )
+    if not include_action_logs:
+        query = query.options(defer(RunModel.routine_embedded))
+    return query
 
 
-def _to_domain(model: RunModel) -> Run:
-    """Convert ORM model to domain Pydantic model."""
+def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
+    """Convert ORM model to domain Pydantic model.
+
+    When action_logs_loaded is False, deferred columns (action_log_json,
+    builder_prompt, verifier_prompt, agent_output, routine_embedded) are
+    not available and will be set to None.
+    """
     steps: list[StepState] = []
     for step_model in model.steps:
         tasks: list[TaskState] = []
@@ -87,9 +109,9 @@ def _to_domain(model: RunModel) -> Run:
                     )
                     for item in snapshot_data
                 ]
-                # Deserialize action_log from JSON if present
+                # Deserialize action_log from JSON if present and loaded
                 action_log = None
-                if att_model.action_log_json:
+                if action_logs_loaded and att_model.action_log_json:
                     try:
                         action_log = ActionLog.model_validate(att_model.action_log_json)
                     except Exception:
@@ -101,8 +123,8 @@ def _to_domain(model: RunModel) -> Run:
                         attempt_num=att_model.attempt_num,
                         started_at=_ensure_utc_optional(att_model.started_at),
                         completed_at=_ensure_utc_optional(att_model.completed_at),
-                        builder_prompt=att_model.builder_prompt,
-                        verifier_prompt=att_model.verifier_prompt,
+                        builder_prompt=att_model.builder_prompt if action_logs_loaded else None,
+                        verifier_prompt=att_model.verifier_prompt if action_logs_loaded else None,
                         verifier_comment=att_model.verifier_comment,
                         outcome=att_model.outcome,
                         metrics=AttemptMetrics(
@@ -119,7 +141,7 @@ def _to_domain(model: RunModel) -> Run:
                         else None,
                         agent_model=att_model.agent_model,
                         agent_settings=att_model.agent_settings or {},
-                        agent_output=att_model.agent_output,
+                        agent_output=att_model.agent_output if action_logs_loaded else None,
                         error=att_model.error,
                         action_log=action_log,
                         start_commit=att_model.start_commit,
@@ -207,7 +229,7 @@ def _to_domain(model: RunModel) -> Run:
         routine_id=model.routine_id,
         routine_sha=model.routine_sha,
         routine_source=RoutineSource(model.routine_source) if model.routine_source else None,
-        routine_embedded=model.routine_embedded,
+        routine_embedded=model.routine_embedded if action_logs_loaded else None,
         routine_path=model.routine_path,
         routine_commit=model.routine_commit,
         agent_type=AgentRunnerType(model.runner_type) if model.runner_type else None,
@@ -382,45 +404,69 @@ class RunRepository:
             raise RunNotFoundError(run_id)
         return _to_domain(model)
 
-    async def list_all(self, limit: int | None = None) -> list[Run]:
+    async def list_all(
+        self, limit: int | None = None, *, include_action_logs: bool = True
+    ) -> list[Run]:
         """List all runs, optionally limited to the most recent N runs."""
-        query = _eager_run_query().order_by(RunModel.created_at.desc())
+        query = _eager_run_query(include_action_logs=include_action_logs).order_by(
+            RunModel.created_at.desc()
+        )
         if limit is not None:
             query = query.limit(limit)
         result = await self._session.execute(query)
-        return [_to_domain(m) for m in result.scalars().all()]
+        return [
+            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+        ]
 
-    async def list_by_repo(self, repo_name: str) -> list[Run]:
+    async def list_by_repo(self, repo_name: str, *, include_action_logs: bool = True) -> list[Run]:
         """List runs filtered by repository name."""
         result = await self._session.execute(
-            _eager_run_query().where(RunModel.repo_name == repo_name)
+            _eager_run_query(include_action_logs=include_action_logs).where(
+                RunModel.repo_name == repo_name
+            )
         )
-        return [_to_domain(m) for m in result.scalars().all()]
+        return [
+            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+        ]
 
-    async def list_by_status(self, status: RunStatus) -> list[Run]:
+    async def list_by_status(
+        self, status: RunStatus, *, include_action_logs: bool = True
+    ) -> list[Run]:
         """List runs filtered by status."""
         result = await self._session.execute(
-            _eager_run_query().where(RunModel.status == status.value)
+            _eager_run_query(include_action_logs=include_action_logs).where(
+                RunModel.status == status.value
+            )
         )
-        return [_to_domain(m) for m in result.scalars().all()]
+        return [
+            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+        ]
 
-    async def list_by_repo_and_status(self, repo_name: str, status: RunStatus) -> list[Run]:
+    async def list_by_repo_and_status(
+        self, repo_name: str, status: RunStatus, *, include_action_logs: bool = True
+    ) -> list[Run]:
         """List runs filtered by both repository name and status."""
         result = await self._session.execute(
-            _eager_run_query().where(
+            _eager_run_query(include_action_logs=include_action_logs).where(
                 RunModel.repo_name == repo_name,
                 RunModel.status == status.value,
             )
         )
-        return [_to_domain(m) for m in result.scalars().all()]
+        return [
+            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+        ]
 
-    async def list_recent(self, hours: int) -> list[Run]:
+    async def list_recent(self, hours: int, *, include_action_logs: bool = True) -> list[Run]:
         """List runs created within the last N hours."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         result = await self._session.execute(
-            _eager_run_query().where(RunModel.created_at >= cutoff)
+            _eager_run_query(include_action_logs=include_action_logs).where(
+                RunModel.created_at >= cutoff
+            )
         )
-        return [_to_domain(m) for m in result.scalars().all()]
+        return [
+            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+        ]
 
     async def list_repo_names(self) -> list[str]:
         """Return unique repo_name values from all runs."""
