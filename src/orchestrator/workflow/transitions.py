@@ -483,6 +483,30 @@ def check_step_progression(
 
                             # Continue to next iteration to process the first copy
                             continue
+                        else:
+                            # Empty list: mark step as skipped with reason "empty list"
+                            step.skipped = True
+                            step.skip_reason = "empty list"
+                            step.completed = True
+                            changed = True
+                            if clock is not None and emitter is not None:
+                                emitter.emit(
+                                    StepSkipped(
+                                        timestamp=clock.now(),
+                                        run_id=run.id,
+                                        step_index=run.current_step_index,
+                                        step_id=step.id,
+                                        condition=f"repeat_for '{repeat_for_expr}'",
+                                        reason="empty list",
+                                    )
+                                )
+                            # Move to next step
+                            if run.current_step_index < len(run.steps) - 1:
+                                run.current_step_index += 1
+                            else:
+                                # At last step, advance past it
+                                run.current_step_index += 1
+                            continue
 
                     except ValueError as e:
                         run.status = RunStatus.PAUSED
@@ -530,7 +554,14 @@ def check_step_progression(
                     # Evaluate the condition for the current step
                     try:
                         evaluator = ConditionEvaluator()
-                        variables = run_config or {}
+                        variables = dict(run_config or {})
+
+                        # If step has injected_vars (from repeat_for expansion), merge them into variables
+                        if step.condition is not None and "injected_vars" in step.condition:
+                            injected = step.condition.get("injected_vars", {})
+                            if isinstance(injected, dict):
+                                variables.update(cast(dict[str, Any], injected))
+
                         step_outcomes = _build_step_outcomes(run)
                         result = evaluator.evaluate(condition.when, variables, step_outcomes)
 
