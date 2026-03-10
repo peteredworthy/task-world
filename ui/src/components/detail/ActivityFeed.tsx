@@ -40,6 +40,10 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
       return payload.passed ? 'Grades passed' : 'Grades failed';
     case 'step_completed':
       return 'Step completed';
+    case 'step_skipped': {
+      const reason = payload.skip_reason as string | undefined;
+      return reason ? `Skipped: ${reason}` : 'Step skipped';
+    }
     case 'agent_error':
       return (payload.error_message as string) || 'Agent error';
     default:
@@ -49,6 +53,17 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
 
 function statusFromPayload(payload: Record<string, unknown>): string | null {
   return (payload.new_status as string) ?? null;
+}
+
+function eventDotColor(eventType: string): string {
+  switch (eventType) {
+    case 'step_skipped':
+      return 'bg-status-paused';
+    case 'agent_error':
+      return 'bg-status-failed';
+    default:
+      return 'bg-border';
+  }
 }
 
 function TaskGroupCard({
@@ -159,10 +174,11 @@ function TaskGroupCard({
       <div className="px-3 py-2 space-y-1">
         {group.events.map(ev => {
           const isError = ev.event_type === 'agent_error';
+          const isSkipped = ev.event_type === 'step_skipped';
           return (
             <div key={ev.id} className="flex items-center gap-2 text-xs">
-              <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (isError ? 'bg-status-failed' : 'bg-border')} />
-              <span className={isError ? 'text-status-failed font-medium' : 'text-text-secondary'}>
+              <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + eventDotColor(ev.event_type)} />
+              <span className={isError || isSkipped ? (isError ? 'text-status-failed font-medium' : 'text-status-paused font-medium') : 'text-text-secondary'}>
                 {eventLabel(ev.event_type, ev.payload)}
               </span>
               <span className="text-text-muted ml-auto text-[10px] whitespace-nowrap">
