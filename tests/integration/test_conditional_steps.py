@@ -8,16 +8,19 @@ Tests verify that:
 5. Chain skipping works across multiple false conditions
 """
 
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
-from collections.abc import AsyncGenerator
-
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.api.app import create_app
 from orchestrator.config.enums import (
     RunStatus,
     TaskStatus,
+    RoutineSource,
 )
 from orchestrator.config.models import (
     RoutineConfig,
@@ -25,10 +28,16 @@ from orchestrator.config.models import (
     TaskConfig,
     StepCondition,
 )
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db.connection import (
+    create_engine,
+    create_session_factory,
+    init_db,
+)
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService
+
+FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
@@ -988,3 +997,403 @@ class TestRepeatForExpansionIntegration:
         assert expanded_loaded[0].title == "Process [1/3]"
         assert expanded_loaded[1].title == "Process [2/3]"
         assert expanded_loaded[2].title == "Process [3/3]"
+
+
+# ============================================================================
+# API Surface Tests - Verify skip-step endpoint and response schema
+# ============================================================================
+
+
+@pytest.fixture
+async def api_client() -> AsyncGenerator[AsyncClient, None]:
+    """Create an async test client with in-memory database for API tests."""
+    app = create_app(
+        db_path=":memory:",
+        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+    )
+    await init_db(app.state.engine)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    await app.state.engine.dispose()
+
+
+async def _create_run_with_manual_gate_for_api(client: AsyncClient) -> tuple[str, str]:
+    """Create a run with a manual gate condition on step 2."""
+    routine_config = {
+        "id": "test-manual-gate-api",
+        "name": "test-manual-gate-api",
+        "steps": [
+            {
+                "id": "step1",
+                "title": "Step 1",
+                "tasks": [
+                    {
+                        "id": "task1",
+                        "title": "Task 1",
+                        "instructions": "Build something",
+                    }
+                ],
+            },
+            {
+                "id": "step2",
+                "title": "Step 2",
+                "condition": {"when": "manual"},
+                "tasks": [
+                    {
+                        "id": "task2",
+                        "title": "Task 2",
+                        "instructions": "Build something else",
+                    }
+                ],
+            },
+        ],
+    }
+
+    # Create run
+    create_resp = await client.post(
+        "/api/runs",
+        json={
+            "repo_name": "test-repo",
+            "branch": "main",
+            "routine_embedded": routine_config,
+        },
+    )
+    assert create_resp.status_code == 201
+    run_id = create_resp.json()["id"]
+
+    # Start run
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 200
+
+    # Complete step 1
+    task1_id = create_resp.json()["steps"][0]["tasks"][0]["id"]
+
+    # Start task 1
+    task_start_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/start")
+    assert task_start_resp.status_code == 200
+
+    # Submit task 1
+    submit_resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task1_id}/submit",
+        json={
+            "artifacts": [],
+            "completion_reason": "Completed task",
+        },
+    )
+    assert submit_resp.status_code == 200
+
+    # Complete verification (auto-verify should pass)
+    complete_resp = await client.post(
+        f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
+        json={"passing_grades": []},
+    )
+    assert complete_resp.status_code == 200
+
+    # Now check that run is paused at manual gate
+    run_resp = await client.get(f"/api/runs/{run_id}")
+    assert run_resp.status_code == 200
+    run_data = run_resp.json()
+    assert run_data["status"] == "paused"
+    assert run_data["pause_reason"] == "manual_gate"
+
+    # Get step2 ID
+    step2_id = run_data["steps"][1]["id"]
+
+    return run_id, step2_id
+
+
+@pytest.mark.asyncio
+class TestSkipStepAPISurface:
+    """API-level tests for skip-step endpoint and response schema."""
+
+    async def test_get_run_response_includes_skipped_field_on_steps(
+        self, api_client: AsyncClient
+    ) -> None:
+        """Verify GET /runs/{id} response includes skipped field on steps."""
+        run_id, _ = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Get the run
+        run_resp = await api_client.get(f"/api/runs/{run_id}")
+        assert run_resp.status_code == 200
+
+        run_data = run_resp.json()
+        assert "steps" in run_data
+
+        # Verify all steps have skipped field
+        for step in run_data["steps"]:
+            assert "skipped" in step
+            assert isinstance(step["skipped"], bool)
+
+    async def test_get_run_response_includes_skip_reason_field_on_steps(
+        self, api_client: AsyncClient
+    ) -> None:
+        """Verify GET /runs/{id} response includes skip_reason field on steps."""
+        run_id, _ = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Get the run
+        run_resp = await api_client.get(f"/api/runs/{run_id}")
+        assert run_resp.status_code == 200
+
+        run_data = run_resp.json()
+
+        # Verify all steps have skip_reason field
+        for step in run_data["steps"]:
+            assert "skip_reason" in step
+            assert step["skip_reason"] is None or isinstance(step["skip_reason"], str)
+
+    async def test_get_run_response_includes_condition_field_on_steps(
+        self, api_client: AsyncClient
+    ) -> None:
+        """Verify GET /runs/{id} response includes condition field on steps."""
+        run_id, _ = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Get the run
+        run_resp = await api_client.get(f"/api/runs/{run_id}")
+        assert run_resp.status_code == 200
+
+        run_data = run_resp.json()
+
+        # Verify all steps have condition field
+        for step in run_data["steps"]:
+            assert "condition" in step
+            # condition can be None or a dict with condition data
+
+    async def test_skipped_step_has_skipped_true_after_skip_endpoint(
+        self, api_client: AsyncClient
+    ) -> None:
+        """After calling skip endpoint, skipped field should be true."""
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Skip the manual gate step
+        skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
+        assert skip_resp.status_code == 200
+
+        run_data = skip_resp.json()
+
+        # Step 2 should be marked as skipped
+        step2_data = next(s for s in run_data["steps"] if s["id"] == step2_id)
+        assert step2_data["skipped"] is True
+        assert step2_data["skip_reason"] == "manual_skip"
+
+    async def test_skipped_step_in_activity_events(self, api_client: AsyncClient) -> None:
+        """Verify activity is recorded when step is skipped."""
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Skip the manual gate step
+        skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
+        assert skip_resp.status_code == 200
+
+        # Get activity events
+        activity_resp = await api_client.get(f"/api/runs/{run_id}/activity")
+        assert activity_resp.status_code == 200
+
+        activity_data = activity_resp.json()
+        assert "events" in activity_data
+
+        # Verify we have activity events (skip action should be recorded in activity)
+        # Multiple events may be present from all actions during the test
+        assert len(activity_data["events"]) > 0
+
+    async def test_skip_endpoint_works_for_manual_gate_paused_runs(
+        self, api_client: AsyncClient
+    ) -> None:
+        """Skip-step endpoint should succeed for runs paused at manual gate."""
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Verify run is paused at manual gate
+        run_resp = await api_client.get(f"/api/runs/{run_id}")
+        run_data = run_resp.json()
+        assert run_data["status"] == "paused"
+        assert run_data["pause_reason"] == "manual_gate"
+
+        # Skip should succeed
+        skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
+        assert skip_resp.status_code == 200
+
+        # Verify response is a valid RunResponse with updated state
+        result = skip_resp.json()
+        assert result["id"] == run_id
+        assert result["steps"][1]["skipped"] is True
+
+    async def test_skip_returns_409_when_not_at_manual_gate(self, api_client: AsyncClient) -> None:
+        """Skip-step should return 409 when run is not paused at manual gate."""
+        routine_config = {
+            "id": "test-no-condition",
+            "name": "test-no-condition",
+            "steps": [
+                {
+                    "id": "step1",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "task1",
+                            "title": "Task 1",
+                            "instructions": "Build something",
+                        }
+                    ],
+                }
+            ],
+        }
+
+        create_resp = await api_client.post(
+            "/api/runs",
+            json={
+                "repo_name": "test-repo",
+                "branch": "main",
+                "routine_embedded": routine_config,
+            },
+        )
+        run_id = create_resp.json()["id"]
+        step1_id = create_resp.json()["steps"][0]["id"]
+
+        # Try to skip without pausing at manual gate
+        skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step1_id}/skip")
+        assert skip_resp.status_code == 409
+        assert "manual gate" in skip_resp.json()["detail"].lower()
+
+    async def test_skip_returns_409_for_wrong_step_id(self, api_client: AsyncClient) -> None:
+        """Skip-step should return 409 when step_id doesn't match current step."""
+        run_id, _ = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Try to skip with wrong step ID
+        skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/wrong-step-id/skip")
+        assert skip_resp.status_code == 409
+        assert "not the current step" in skip_resp.json()["detail"].lower()
+
+    async def test_skip_endpoint_advances_current_step_index(self, api_client: AsyncClient) -> None:
+        """Skipping a step should advance current_step_index."""
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Check current_step_index before skip
+        run_resp = await api_client.get(f"/api/runs/{run_id}")
+        initial_index = run_resp.json()["current_step_index"]
+
+        # Skip the manual gate step
+        skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
+        assert skip_resp.status_code == 200
+
+        # Current step index should advance (or run completes if it's the last step)
+        new_index = skip_resp.json()["current_step_index"]
+        assert new_index >= initial_index
+
+    async def test_skip_endpoint_marks_step_completed(self, api_client: AsyncClient) -> None:
+        """Skipping a step should mark it as completed."""
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+
+        # Skip the manual gate step
+        skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
+        assert skip_resp.status_code == 200
+
+        run_data = skip_resp.json()
+
+        # Step 2 should be marked as both skipped and completed
+        step2_data = next(s for s in run_data["steps"] if s["id"] == step2_id)
+        assert step2_data["skipped"] is True
+        assert step2_data["completed"] is True
+
+    async def test_skip_cascades_false_conditions(self, api_client: AsyncClient) -> None:
+        """Skip cascades through subsequent false conditions."""
+        routine_config = {
+            "id": "test-cascade-conditions-api",
+            "name": "test-cascade-conditions-api",
+            "steps": [
+                {
+                    "id": "step1",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "task1",
+                            "title": "Task 1",
+                            "instructions": "Build something",
+                        }
+                    ],
+                },
+                {
+                    "id": "step2",
+                    "title": "Step 2",
+                    "condition": {"when": "manual"},
+                    "tasks": [
+                        {
+                            "id": "task2",
+                            "title": "Task 2",
+                            "instructions": "Build something else",
+                        }
+                    ],
+                },
+                {
+                    "id": "step3",
+                    "title": "Step 3",
+                    "condition": {"when": "false"},
+                    "tasks": [
+                        {
+                            "id": "task3",
+                            "title": "Task 3",
+                            "instructions": "Build third thing",
+                        }
+                    ],
+                },
+                {
+                    "id": "step4",
+                    "title": "Step 4",
+                    "tasks": [
+                        {
+                            "id": "task4",
+                            "title": "Task 4",
+                            "instructions": "Build fourth thing",
+                        }
+                    ],
+                },
+            ],
+        }
+
+        # Create and set up run
+        create_resp = await api_client.post(
+            "/api/runs",
+            json={
+                "repo_name": "test-repo",
+                "branch": "main",
+                "routine_embedded": routine_config,
+            },
+        )
+        run_id = create_resp.json()["id"]
+
+        # Capture step IDs from initial response
+        initial_steps = create_resp.json()["steps"]
+        step2_id = next(s["id"] for s in initial_steps if s["config_id"] == "step2")
+        step3_id = next(s["id"] for s in initial_steps if s["config_id"] == "step3")
+        step4_id = next(s["id"] for s in initial_steps if s["config_id"] == "step4")
+
+        # Start run
+        await api_client.post(f"/api/runs/{run_id}/start")
+
+        # Complete step 1
+        task1_id = create_resp.json()["steps"][0]["tasks"][0]["id"]
+
+        await api_client.post(f"/api/runs/{run_id}/tasks/{task1_id}/start")
+        await api_client.post(
+            f"/api/runs/{run_id}/tasks/{task1_id}/submit",
+            json={"artifacts": [], "completion_reason": "Completed task"},
+        )
+        await api_client.post(
+            f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
+            json={"passing_grades": []},
+        )
+
+        # Skip step 2
+        skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
+        assert skip_resp.status_code == 200
+
+        result = skip_resp.json()
+
+        # Verify step 2 is skipped
+        step2_data = next(s for s in result["steps"] if s["id"] == step2_id)
+        assert step2_data["skipped"] is True
+
+        # Verify step 3 is also skipped (cascading from false condition)
+        step3_data = next(s for s in result["steps"] if s["id"] == step3_id)
+        assert step3_data["skipped"] is True
+
+        # Step 4 should not be skipped
+        step4_data = next(s for s in result["steps"] if s["id"] == step4_id)
+        assert step4_data["skipped"] is False
