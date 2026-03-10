@@ -20,6 +20,7 @@ from orchestrator.db.models import (
     AttemptModel,
     ClarificationRequestModel,
     ClarificationResponseModel,
+    ReplayCheckpointModel,
     RunModel,
     StepModel,
     TaskModel,
@@ -604,3 +605,75 @@ class RunRepository:
             created_at=_ensure_utc(model.created_at),
             responded_at=_ensure_utc_optional(model.responded_at),
         )
+
+
+class CheckpointRepository:
+    """Repository for replay checkpoint persistence."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get_checkpoint(self, journal_path: str) -> ReplayCheckpointModel | None:
+        """Get the checkpoint for a journal path, or None if not found."""
+        result = await self._session.execute(
+            select(ReplayCheckpointModel).where(ReplayCheckpointModel.journal_path == journal_path)
+        )
+        return result.scalar_one_or_none()
+
+    async def upsert_checkpoint(
+        self,
+        journal_path: str,
+        last_applied_sequence: int,
+        last_applied_timestamp: datetime,
+        backup_snapshot_id: str | None = None,
+    ) -> ReplayCheckpointModel:
+        """Create or update a checkpoint. Calls flush(), not commit()."""
+        result = await self._session.execute(
+            select(ReplayCheckpointModel).where(ReplayCheckpointModel.journal_path == journal_path)
+        )
+        checkpoint = result.scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+        if checkpoint:
+            checkpoint.last_applied_sequence = last_applied_sequence
+            checkpoint.last_applied_timestamp = last_applied_timestamp
+            checkpoint.updated_at = now
+            if backup_snapshot_id is not None:
+                checkpoint.backup_snapshot_id = backup_snapshot_id
+        else:
+            checkpoint = ReplayCheckpointModel(
+                journal_path=journal_path,
+                last_applied_sequence=last_applied_sequence,
+                last_applied_timestamp=last_applied_timestamp,
+                backup_snapshot_id=backup_snapshot_id,
+                updated_at=now,
+            )
+            self._session.add(checkpoint)
+        await self._session.flush()
+        await self._session.refresh(checkpoint)
+        return checkpoint
+
+    @staticmethod
+    async def upsert_checkpoint_in_session(
+        session: AsyncSession,
+        journal_path: str,
+        last_applied_sequence: int,
+        last_applied_timestamp: datetime,
+    ) -> None:
+        """Upsert a checkpoint within an existing session (for atomic batch commits)."""
+        result = await session.execute(
+            select(ReplayCheckpointModel).where(ReplayCheckpointModel.journal_path == journal_path)
+        )
+        checkpoint = result.scalar_one_or_none()
+        now = datetime.now(timezone.utc)
+        if checkpoint:
+            checkpoint.last_applied_sequence = last_applied_sequence
+            checkpoint.last_applied_timestamp = last_applied_timestamp
+            checkpoint.updated_at = now
+        else:
+            checkpoint = ReplayCheckpointModel(
+                journal_path=journal_path,
+                last_applied_sequence=last_applied_sequence,
+                last_applied_timestamp=last_applied_timestamp,
+                updated_at=now,
+            )
+            session.add(checkpoint)

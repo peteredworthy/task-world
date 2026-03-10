@@ -77,10 +77,12 @@ def make_journal_entry(
     event_type: str,
     timestamp: datetime,
     payload: dict[str, Any],
+    sequence_number: int = 0,
 ) -> dict[str, Any]:
     """Build a normalized JSONL record."""
     return {
         "schema_version": 1,
+        "sequence_number": sequence_number,
         "logged_at": format_utc_datetime(datetime.now(timezone.utc)),
         "run_id": run_id,
         "event_type": event_type,
@@ -96,10 +98,50 @@ class JsonlEventJournal:
 
     def __init__(self, path: Path) -> None:
         self._path = path
+        self._sequence_counters: dict[str, int] = {}
 
     @property
     def path(self) -> Path:
         return self._path
+
+    async def _get_next_sequence(self, journal_path: str) -> int:
+        """Get next sequence number, initializing from file if needed."""
+        if journal_path not in self._sequence_counters:
+            self._sequence_counters[journal_path] = await self._scan_max_sequence(journal_path) + 1
+        seq = self._sequence_counters[journal_path]
+        self._sequence_counters[journal_path] = seq + 1
+        return seq
+
+    async def _scan_max_sequence(self, journal_path: str) -> int:
+        """Scan journal file for highest sequence_number.
+
+        Returns -1 if the file is empty or missing.  Entries written before
+        sequence numbers were introduced are treated as having sequence 0.
+        """
+        path = Path(journal_path)
+        if not path.exists():
+            return -1
+
+        def _scan() -> int:
+            max_seq = -1
+            try:
+                with open(path) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            seq = entry.get("sequence_number", 0)
+                            if seq > max_seq:
+                                max_seq = seq
+                        except json.JSONDecodeError:
+                            continue
+            except OSError:
+                pass
+            return max_seq
+
+        return await asyncio.to_thread(_scan)
 
     async def append_events(self, entries: list[dict[str, Any]]) -> None:
         """Append entries as JSONL lines atomically per journal path."""
@@ -113,13 +155,18 @@ class JsonlEventJournal:
                 return obj.value  # type: ignore[return-value]
             raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
-        lines = [
-            json.dumps(entry, default=_default_json, separators=(",", ":")) for entry in entries
-        ]
-        payload = "\n".join(lines) + "\n"
-
         lock = self._locks[self._path]
         async with lock:
+            journal_key = str(self._path)
+            for entry in entries:
+                seq = await self._get_next_sequence(journal_key)
+                entry["sequence_number"] = seq
+
+            lines = [
+                json.dumps(entry, default=_default_json, separators=(",", ":")) for entry in entries
+            ]
+            payload = "\n".join(lines) + "\n"
+
             await asyncio.to_thread(self._path.parent.mkdir, parents=True, exist_ok=True)
             async with aiofiles.open(self._path, "a") as f:
                 await f.write(payload)

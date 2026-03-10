@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import signal
 import sys
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
 from orchestrator.db.event_journal import resolve_default_journal_path
 from orchestrator.db.journal_replay import replay_journal_to_repository
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db.repositories import CheckpointRepository, RunRepository
 from orchestrator.routines.discovery import discover_routines
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.locks import InMemoryLockManager
@@ -347,6 +348,13 @@ def _parse_iso_timestamp(raw: str) -> datetime:
 @click.option(
     "--dry-run", is_flag=True, help="Parse and evaluate replay without writing DB changes"
 )
+@click.option(
+    "--from-checkpoint", is_flag=True, default=False, help="Resume from last saved checkpoint"
+)
+@click.option(
+    "--show-checkpoint", is_flag=True, default=False, help="Show current checkpoint info and exit"
+)
+@click.option("--batch-size", type=int, default=100, help="Events per transaction batch")
 @click.pass_context
 def replay_journal(
     ctx: click.Context,
@@ -354,6 +362,9 @@ def replay_journal(
     run_ids: tuple[str, ...],
     since: str | None,
     dry_run: bool,
+    from_checkpoint: bool,
+    show_checkpoint: bool,
+    batch_size: int,
 ) -> None:
     """Replay JSONL journal entries onto a restored DB."""
 
@@ -372,6 +383,46 @@ def replay_journal(
             click.echo(f"Error: Journal file not found: {selected_journal}", err=True)
             sys.exit(1)
 
+        # Preflight: check journal is readable
+        if not os.access(selected_journal, os.R_OK):
+            click.echo(f"Error: Journal file is not readable: {selected_journal}", err=True)
+            sys.exit(1)
+
+        engine = create_engine(db_path)
+        await init_db(engine)
+        session_factory = create_session_factory(engine)
+
+        # Handle --show-checkpoint: display checkpoint info and exit
+        if show_checkpoint:
+            async with session_factory() as session:
+                checkpoint_repo = CheckpointRepository(session)
+                checkpoint = await checkpoint_repo.get_checkpoint(str(selected_journal))
+            await engine.dispose()
+
+            if checkpoint is None:
+                if as_json:
+                    click.echo(json.dumps({"checkpoint": None}))
+                else:
+                    click.echo(f"No checkpoint found for journal: {selected_journal}")
+                return
+
+            cp_info = {
+                "journal_path": checkpoint.journal_path,
+                "last_applied_sequence": checkpoint.last_applied_sequence,
+                "last_applied_timestamp": checkpoint.last_applied_timestamp.isoformat()
+                if checkpoint.last_applied_timestamp
+                else None,
+                "updated_at": checkpoint.updated_at.isoformat() if checkpoint.updated_at else None,
+            }
+            if as_json:
+                click.echo(json.dumps({"checkpoint": cp_info}, indent=2))
+            else:
+                click.echo(f"Journal:  {cp_info['journal_path']}")
+                click.echo(f"Sequence: {cp_info['last_applied_sequence']}")
+                click.echo(f"Applied:  {cp_info['last_applied_timestamp']}")
+                click.echo(f"Updated:  {cp_info['updated_at']}")
+            return
+
         since_dt: datetime | None = None
         if since:
             try:
@@ -380,18 +431,38 @@ def replay_journal(
                 click.echo(f"Error: Invalid --since timestamp: {since}", err=True)
                 sys.exit(1)
 
-        engine = create_engine(db_path)
-        await init_db(engine)
-        session_factory = create_session_factory(engine)
+        # Preflight: validate checkpoint consistency when resuming
+        if from_checkpoint:
+            async with session_factory() as session:
+                checkpoint_repo = CheckpointRepository(session)
+                existing_cp = await checkpoint_repo.get_checkpoint(str(selected_journal))
+            if existing_cp is not None:
+                # Read max sequence from journal to validate consistency
+                from orchestrator.db.backup import scan_max_sequence
+
+                max_journal_seq = scan_max_sequence(selected_journal)
+                if existing_cp.last_applied_sequence > max_journal_seq:
+                    click.echo(
+                        f"Error: Checkpoint sequence ({existing_cp.last_applied_sequence}) "
+                        f"exceeds max journal sequence ({max_journal_seq}). "
+                        f"Journal may have been truncated.",
+                        err=True,
+                    )
+                    await engine.dispose()
+                    sys.exit(1)
 
         async with session_factory() as session:
             repository = RunRepository(session)
+            checkpoint_repo = CheckpointRepository(session) if from_checkpoint else None
             summary = await replay_journal_to_repository(
                 repository,
                 journal_path=selected_journal,
                 run_ids=set(run_ids) if run_ids else None,
                 since=since_dt,
                 dry_run=dry_run,
+                batch_size=batch_size,
+                from_checkpoint=from_checkpoint,
+                checkpoint_repo=checkpoint_repo,
             )
             if dry_run:
                 await session.rollback()
@@ -400,7 +471,7 @@ def replay_journal(
 
         await engine.dispose()
 
-        result = {
+        result: dict[str, Any] = {
             "journal_path": str(summary.journal_path),
             "parsed_entries": summary.parsed_entries,
             "replayed_events": summary.replayed_events,
@@ -408,6 +479,10 @@ def replay_journal(
             "missing_runs": summary.missing_runs,
             "dry_run": dry_run,
         }
+        if summary.checkpoint_sequence is not None:
+            result["checkpoint_sequence"] = summary.checkpoint_sequence
+        if summary.resumed_from_sequence is not None:
+            result["resumed_from_sequence"] = summary.resumed_from_sequence
 
         if as_json:
             click.echo(json.dumps(result, indent=2))
@@ -418,6 +493,10 @@ def replay_journal(
             f"Parsed {summary.parsed_entries} entries; "
             f"replayed {summary.replayed_events} events into {summary.updated_runs} run(s)."
         )
+        if summary.resumed_from_sequence is not None:
+            click.echo(f"Resumed from checkpoint sequence: {summary.resumed_from_sequence}")
+        if summary.checkpoint_sequence is not None:
+            click.echo(f"Checkpoint sequence: {summary.checkpoint_sequence}")
         if summary.missing_runs:
             click.echo(
                 f"Skipped {summary.missing_runs} run(s) absent from current DB backup.",

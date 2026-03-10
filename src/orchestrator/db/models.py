@@ -95,6 +95,10 @@ class StepModel(Base):
     # Human approval (stored as JSON)
     human_approval: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
+    # Conditional step fields
+    skipped: Mapped[bool] = mapped_column(Integer, default=0)
+    skip_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Relationships
     run: Mapped["RunModel"] = relationship("RunModel", back_populates="steps")
     tasks: Mapped[list["TaskModel"]] = relationship(
@@ -234,6 +238,17 @@ class RunnerProfileDefaultModel(Base):
     runner_type: Mapped[str] = mapped_column(String, nullable=False)
     profile: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class ReplayCheckpointModel(Base):
+    __tablename__ = "replay_checkpoints"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    journal_path: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    last_applied_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_applied_timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    backup_snapshot_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class ClarificationResponseModel(Base):

@@ -130,6 +130,8 @@ class StepState(BaseModel):
     tasks: list[TaskState] = Field(default_factory=lambda: [])
     completed: bool = False
     human_approval: HumanApproval | None = None
+    skipped: bool = False
+    skip_reason: str | None = None
 
 
 class TransitionTracker(BaseModel):
