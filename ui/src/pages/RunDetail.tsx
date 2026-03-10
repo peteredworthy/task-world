@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack } from '../hooks/useApi';
+import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack, useResumeRun, useSkipStep } from '../hooks/useApi';
 import { useBranchStatus } from '../hooks/useReview';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { usePendingActions } from '../hooks/usePendingActions';
@@ -40,6 +40,18 @@ function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | nu
   return { stuck: false, failedTask: null };
 }
 
+/** Find the current actionable step (skipping already completed steps). */
+function findActionableStep(run: RunResponse): { step: RunResponse['steps'][0]; index: number } | null {
+  let index = run.current_step_index;
+  while (index < run.steps.length && run.steps[index].completed) {
+    index++;
+  }
+  if (index < run.steps.length) {
+    return { step: run.steps[index], index };
+  }
+  return null;
+}
+
 function RunDetailInner({ runId }: { runId: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { data: run, isLoading, error } = useRun(runId);
@@ -63,6 +75,8 @@ function RunDetailInner({ runId }: { runId: string }) {
   const pauseRun = usePauseRun();
   const cancelRun = useCancelRun();
   const mergeBack = useMergeBack();
+  const resumeRun = useResumeRun();
+  const skipStep = useSkipStep(runId);
   const { data: branchStatus } = useBranchStatus(runId);
   const { isPruneMode, onTogglePruneMode, onOpenBackMergeModal } = useReviewMerge();
   const [showResumeDialog, setShowResumeDialog] = useState(false);
@@ -184,6 +198,7 @@ function RunDetailInner({ runId }: { runId: string }) {
                       agent_execution_error: 'Paused — agent execution error',
                       agent_exit_failure: 'Paused — agent exited with error',
                       gate_blocked: 'Paused — checklist gate not satisfied',
+                      manual_gate: 'Paused — waiting at manual gate',
                       recovery_loop: 'Paused — recovery loop detected',
                       unexpected_error: 'Paused — unexpected error',
                       agent_health_check_failed: 'Paused — agent health check failed',
@@ -310,6 +325,51 @@ function RunDetailInner({ runId }: { runId: string }) {
 
 
           <>
+          {/* Manual gate control panel */}
+          {run.status === 'paused' && run.pause_reason === 'manual_gate' && (() => {
+            const actionable = findActionableStep(run);
+            if (!actionable) return null;
+
+            return (
+              <div className="mb-6 rounded-md border border-accent-purple/40 bg-accent-purple/10 px-4 py-3 flex items-start gap-3">
+                <svg className="h-5 w-5 text-accent-purple shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-accent-purple">Manual gate: Step {actionable.index + 1}</p>
+                  <p className="text-xs text-text-secondary mt-0.5">Choose to execute or skip this step.</p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setMutationError(null);
+                        resumeRun.mutate(
+                          { runId: run.id },
+                          { onError: handleMutationError('resume') }
+                        );
+                      }}
+                      disabled={resumeRun.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-accent-purple rounded-md hover:bg-accent-purple/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      aria-label="Execute this step"
+                    >
+                      {resumeRun.isPending ? 'Executing...' : 'Execute Step'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMutationError(null);
+                        skipStep.mutate(actionable.step.id, { onError: handleMutationError('skip step') });
+                      }}
+                      disabled={skipStep.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-text-primary bg-bg-elevated border border-border rounded-md hover:bg-bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      aria-label="Skip this step"
+                    >
+                      {skipStep.isPending ? 'Skipping...' : 'Skip Step'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Mutation error banner */}
           {mutationError && (
             <div className="mb-6 rounded-md bg-status-failed/10 border border-status-failed/30 p-4 flex items-center justify-between">

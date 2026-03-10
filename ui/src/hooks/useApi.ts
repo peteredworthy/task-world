@@ -225,6 +225,16 @@ export function useTransitionBack(runId: string) {
   });
 }
 
+export function useSkipStep(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (stepId: string) => api.skipStep(runId, stepId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+    },
+  });
+}
+
 export function useBackMerge(runId: string) {
   const qc = useQueryClient();
   return useMutation({

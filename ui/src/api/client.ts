@@ -343,6 +343,12 @@ export const api = {
     });
   },
 
+  skipStep(runId: string, stepId: string): Promise<RunResponse> {
+    return fetchApi('/api/runs/' + runId + '/steps/' + stepId + '/skip', {
+      method: 'POST',
+    });
+  },
+
   getGuidance(runId: string): Promise<GuidanceResponse> {
     return fetchApi('/api/runs/' + runId + '/guidance');
   },
