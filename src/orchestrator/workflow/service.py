@@ -572,9 +572,9 @@ class WorkflowService:
         if run.worktree_path:
             restored = False
             if restore_commit:
-                restored = self._checkout_commit(run.worktree_path, restore_commit)
+                restored = self._checkout_on_branch(run.worktree_path, run.id, restore_commit)
             if not restored and run.source_branch:
-                self._checkout_commit(run.worktree_path, run.source_branch)
+                self._checkout_on_branch(run.worktree_path, run.id, run.source_branch)
 
         await self._repo.save(run)
         await self._session.commit()
@@ -625,11 +625,11 @@ class WorkflowService:
                 if len(task.attempts) >= 2:
                     attempt.start_commit = task.attempts[-2].start_commit
 
-            # Checkout start_commit in worktree if available
+            # Reset worktree to start_commit to undo the failed builder's changes.
             if len(task.attempts) >= 2:
                 prev_attempt = task.attempts[-2]
                 if prev_attempt.start_commit and run.worktree_path:
-                    self._checkout_commit(run.worktree_path, prev_attempt.start_commit)
+                    self._checkout_on_branch(run.worktree_path, run.id, prev_attempt.start_commit)
 
         elif task.status == TaskStatus.VERIFYING:
             # Clear grades and grade_reasons (keep checklist status from builder)
@@ -649,27 +649,25 @@ class WorkflowService:
                 attempt.agent_model = run.agent_config.get("model")
                 attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
 
-            # Checkout end_commit from builder attempt if available
-            if len(task.attempts) >= 2:
-                builder_attempt = task.attempts[-2]
-                if builder_attempt.end_commit and run.worktree_path:
-                    self._checkout_commit(run.worktree_path, builder_attempt.end_commit)
+            # No checkout needed — worktree is already at end_commit
+            # (submit_for_verification auto-commits and captures HEAD).
 
-    def _checkout_commit(self, worktree_path: str, commit_sha: str) -> bool:
-        """Checkout a git commit/ref in the worktree. Logs warning on failure."""
+    def _checkout_on_branch(self, worktree_path: str, run_id: str, commit_sha: str) -> bool:
+        """Move the run's branch to a commit without detaching HEAD."""
         import logging
         import subprocess
 
-        checkout = subprocess.run(
-            ["git", "checkout", commit_sha],
+        branch_name = f"orchestrator/run-{run_id}"
+        result = subprocess.run(
+            ["git", "checkout", "-B", branch_name, commit_sha],
             cwd=worktree_path,
             capture_output=True,
             text=True,
         )
-        if checkout.returncode != 0:
+        if result.returncode != 0:
             logging.getLogger(__name__).warning(
-                f"Failed to checkout commit {commit_sha} in {worktree_path}: "
-                f"{checkout.stderr.strip()}"
+                f"Failed to checkout -B {branch_name} {commit_sha} "
+                f"in {worktree_path}: {result.stderr.strip()}"
             )
             return False
         return True

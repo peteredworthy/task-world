@@ -670,44 +670,8 @@ class OpenHandsAgent:
             # Build prompt (with verifier flag if on_grade is provided)
             is_verifier = on_grade is not None
 
-            # If this is verifier mode and we have an end_commit, checkout that commit first
-            if is_verifier and context.end_commit:
-                import subprocess
-
-                logger = logging.getLogger(__name__)
-                logger.info(
-                    f"Verifier mode: checking out commit {context.end_commit} "
-                    f"in local workspace for run {context.run_id}"
-                )
-                try:
-                    # Checkout the specific commit in the worktree
-                    result = subprocess.run(
-                        ["git", "checkout", context.end_commit],
-                        cwd=context.working_dir,
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    if result.returncode != 0:
-                        error_msg = (
-                            f"Failed to checkout commit {context.end_commit}: "
-                            f"{result.stderr or result.stdout}"
-                        )
-                        logger.error(error_msg)
-                        raise AgentExecutionError("openhands_local", error_msg)
-                    logger.info(f"Successfully checked out commit {context.end_commit}")
-                except subprocess.TimeoutExpired as exc:
-                    raise AgentExecutionError(
-                        "openhands_local",
-                        f"Timeout checking out commit {context.end_commit}",
-                    ) from exc
-                except Exception as exc:
-                    if isinstance(exc, AgentExecutionError):
-                        raise
-                    raise AgentExecutionError(
-                        "openhands_local",
-                        f"Error checking out commit {context.end_commit}: {exc}",
-                    ) from exc
+            # No checkout needed for verifier mode — the worktree is already
+            # at end_commit (submit_for_verification auto-commits and captures HEAD).
 
             full_prompt = build_openhands_prompt(context, is_verifier=is_verifier)
 
