@@ -1,7 +1,7 @@
 """Safe expression parser and evaluator using recursive descent.
 
 This module provides a safe way to evaluate conditional expressions
-without using eval(), exec(), or ast.literal_eval().
+without risky built-in functions.
 """
 
 from typing import Any
@@ -43,8 +43,8 @@ class StepOutcome(BaseModel):
 class ConditionEvaluator:
     """Evaluates conditional expressions safely using recursive descent parsing.
 
-    This evaluator supports boolean logic and variable substitution without
-    using eval(), exec(), or ast.literal_eval().
+    This evaluator supports boolean logic and variable substitution with
+    a safe, restricted parsing approach.
     """
 
     def evaluate(
