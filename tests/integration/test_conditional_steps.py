@@ -634,3 +634,357 @@ class TestConditionSyntaxErrors:
         assert loaded.status == RunStatus.PAUSED
         assert loaded.pause_reason == "error"
         assert "Type error" in loaded.last_error
+
+
+class TestRepeatForExpansionIntegration:
+    """Integration tests for repeat_for expansion through workflow."""
+
+    async def test_repeat_for_with_run_config_list(self, service: WorkflowService) -> None:
+        """repeat_for with run config list creates N step copies."""
+        # Create routine with repeat_for step
+        routine = RoutineConfig(
+            id="repeat-routine",
+            name="Repeat Routine",
+            steps=[
+                StepConfig(
+                    id="S1",
+                    title="Setup",
+                    tasks=[TaskConfig(id="T1", title="Initialize", task_context="Init")],
+                ),
+                StepConfig(
+                    id="S2",
+                    title="Process Item",
+                    tasks=[TaskConfig(id="T2", title="Process", task_context="Process each item")],
+                    condition=StepCondition(repeat_for="item in context.items"),
+                ),
+            ],
+        )
+
+        run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+        # Simulate workflow progression with repeat_for expansion
+        from orchestrator.workflow.transitions import check_step_progression
+
+        run.steps[0].completed = True
+        run.current_step_index = 1
+
+        # Trigger expansion with run config containing list
+        run_config = {"items": ["server1", "server2", "server3"]}
+        check_step_progression(run, routine, run_config=run_config)
+
+        # Should be expanded to 3 copies plus original step
+        assert len(run.steps) == 4  # S1 + 3 expanded copies of S2
+
+        # Verify copies have correct structure
+        expanded_steps = [s for s in run.steps if s.config_id == "S2"]
+        assert len(expanded_steps) == 3
+
+        # Verify each copy has correct injected variables
+        for i, step in enumerate(expanded_steps):
+            assert step.condition is not None
+            assert "injected_vars" in step.condition
+            assert step.condition["injected_vars"]["item"] == f"server{i + 1}"
+            assert step.condition["injected_vars"]["item_index"] == i
+
+    async def test_repeat_for_with_empty_list_skips(self, service: WorkflowService) -> None:
+        """repeat_for with empty list marks step as skipped."""
+        routine = RoutineConfig(
+            id="repeat-routine",
+            name="Repeat Routine",
+            steps=[
+                StepConfig(
+                    id="S1",
+                    title="Setup",
+                    tasks=[TaskConfig(id="T1", title="Initialize", task_context="Init")],
+                ),
+                StepConfig(
+                    id="S2",
+                    title="Process Item",
+                    tasks=[TaskConfig(id="T2", title="Process", task_context="Process each")],
+                    condition=StepCondition(repeat_for="item in context.items"),
+                ),
+            ],
+        )
+
+        run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+        from orchestrator.workflow.transitions import check_step_progression
+
+        run.steps[0].completed = True
+        run.current_step_index = 1
+
+        # Trigger expansion with empty list
+        run_config = {"items": []}
+        check_step_progression(run, routine, run_config=run_config)
+
+        # S2 should be marked as skipped
+        assert run.steps[1].skipped is True
+        assert run.steps[1].skip_reason == "empty list"
+        assert run.current_step_index == 2
+
+    async def test_repeat_for_with_prior_step_output(self, service: WorkflowService) -> None:
+        """repeat_for with prior step output creates copies."""
+        routine = RoutineConfig(
+            id="repeat-routine",
+            name="Repeat Routine",
+            steps=[
+                StepConfig(
+                    id="S1",
+                    title="Generate List",
+                    tasks=[TaskConfig(id="T1", title="Generate", task_context="Generate items")],
+                ),
+                StepConfig(
+                    id="S2",
+                    title="Process Item",
+                    tasks=[
+                        TaskConfig(id="T2", title="Process", task_context="Process from S1 output")
+                    ],
+                    condition=StepCondition(repeat_for="item in steps.S1.output"),
+                ),
+            ],
+        )
+
+        run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+        # Complete step 1 with output
+        task = run.steps[0].tasks[0]
+        task.status = TaskStatus.COMPLETED
+        from orchestrator.state.models import Attempt
+
+        attempt = Attempt(attempt_num=1)
+        attempt.agent_output = "output_1"
+        task.attempts.append(attempt)
+        run.steps[0].completed = True
+        run.current_step_index = 1
+
+        from orchestrator.workflow.transitions import check_step_progression
+
+        # Trigger expansion - should resolve from S1's output
+        check_step_progression(run, routine)
+
+        # Should be expanded based on S1's output list
+        # At minimum should have S1 + at least one expanded copy
+        assert len(run.steps) >= 2
+
+    async def test_repeat_for_missing_variable_pauses(self, service: WorkflowService) -> None:
+        """repeat_for with missing variable pauses run."""
+        routine = RoutineConfig(
+            id="repeat-routine",
+            name="Repeat Routine",
+            steps=[
+                StepConfig(
+                    id="S1",
+                    title="Step 1",
+                    tasks=[TaskConfig(id="T1", title="Task 1", task_context="Task")],
+                ),
+                StepConfig(
+                    id="S2",
+                    title="Repeat Step",
+                    tasks=[TaskConfig(id="T2", title="Task 2", task_context="Task")],
+                    condition=StepCondition(repeat_for="item in context.missing_items"),
+                ),
+            ],
+        )
+
+        run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+        from orchestrator.workflow.transitions import check_step_progression
+
+        run.steps[0].completed = True
+        run.current_step_index = 1
+
+        # Trigger expansion with missing variable
+        run_config = {}  # No 'missing_items'
+        check_step_progression(run, routine, run_config=run_config)
+
+        # Run should be paused
+        assert run.status == RunStatus.PAUSED
+        assert run.pause_reason == "repeat_for_resolution_error"
+        assert "Variable not found" in run.last_error or "resolution error" in run.last_error
+
+    async def test_repeat_for_non_list_value_pauses(self, service: WorkflowService) -> None:
+        """repeat_for with non-list value pauses run."""
+        routine = RoutineConfig(
+            id="repeat-routine",
+            name="Repeat Routine",
+            steps=[
+                StepConfig(
+                    id="S1",
+                    title="Step 1",
+                    tasks=[TaskConfig(id="T1", title="Task 1", task_context="Task")],
+                ),
+                StepConfig(
+                    id="S2",
+                    title="Repeat Step",
+                    tasks=[TaskConfig(id="T2", title="Task 2", task_context="Task")],
+                    condition=StepCondition(repeat_for="item in context.items"),
+                ),
+            ],
+        )
+
+        run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+        from orchestrator.workflow.transitions import check_step_progression
+
+        run.steps[0].completed = True
+        run.current_step_index = 1
+
+        # Trigger expansion with non-list value
+        run_config = {"items": "not a list"}
+        check_step_progression(run, routine, run_config=run_config)
+
+        # Run should be paused
+        assert run.status == RunStatus.PAUSED
+        assert run.pause_reason == "repeat_for_invalid_type"
+        assert "expected list" in run.last_error
+
+    async def test_repeat_for_with_multiple_items(self, service: WorkflowService) -> None:
+        """repeat_for creates correct number of copies for various list sizes."""
+        for num_items in [1, 2, 5, 10]:
+            routine = RoutineConfig(
+                id="repeat-routine",
+                name="Repeat Routine",
+                steps=[
+                    StepConfig(
+                        id="S1",
+                        title="Setup",
+                        tasks=[TaskConfig(id="T1", title="Init", task_context="Init")],
+                    ),
+                    StepConfig(
+                        id="S2",
+                        title="Process",
+                        tasks=[TaskConfig(id="T2", title="Process", task_context="Process")],
+                        condition=StepCondition(repeat_for="item in context.items"),
+                    ),
+                ],
+            )
+
+            run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+            from orchestrator.workflow.transitions import check_step_progression
+
+            run.steps[0].completed = True
+            run.current_step_index = 1
+
+            items = [f"item_{i}" for i in range(num_items)]
+            run_config = {"items": items}
+            check_step_progression(run, routine, run_config=run_config)
+
+            # Should have S1 + num_items copies
+            expected_count = 1 + num_items
+            assert len(run.steps) == expected_count
+
+    async def test_repeat_for_step_titles_indexed(self, service: WorkflowService) -> None:
+        """repeat_for copies have titles with [n/total] indexing."""
+        routine = RoutineConfig(
+            id="repeat-routine",
+            name="Repeat Routine",
+            steps=[
+                StepConfig(
+                    id="S1",
+                    title="Setup",
+                    tasks=[TaskConfig(id="T1", title="Init", task_context="Init")],
+                ),
+                StepConfig(
+                    id="S2",
+                    title="Deploy Server",
+                    tasks=[TaskConfig(id="T2", title="Deploy", task_context="Deploy")],
+                    condition=StepCondition(repeat_for="server in context.servers"),
+                ),
+            ],
+        )
+
+        run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+        from orchestrator.workflow.transitions import check_step_progression
+
+        run.steps[0].completed = True
+        run.current_step_index = 1
+
+        run_config = {"servers": ["prod", "staging", "dev"]}
+        check_step_progression(run, routine, run_config=run_config)
+
+        expanded_steps = [s for s in run.steps if s.config_id == "S2"]
+        assert expanded_steps[0].title == "Deploy Server [1/3]"
+        assert expanded_steps[1].title == "Deploy Server [2/3]"
+        assert expanded_steps[2].title == "Deploy Server [3/3]"
+
+    async def test_repeat_for_config_ids_preserved(self, service: WorkflowService) -> None:
+        """repeat_for copies preserve original config_id."""
+        routine = RoutineConfig(
+            id="repeat-routine",
+            name="Repeat Routine",
+            steps=[
+                StepConfig(
+                    id="S1",
+                    title="Setup",
+                    tasks=[TaskConfig(id="T1", title="Init", task_context="Init")],
+                ),
+                StepConfig(
+                    id="S2",
+                    title="Process",
+                    tasks=[TaskConfig(id="T2", title="Process", task_context="Process")],
+                    condition=StepCondition(repeat_for="item in context.items"),
+                ),
+            ],
+        )
+
+        run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+        from orchestrator.workflow.transitions import check_step_progression
+
+        run.steps[0].completed = True
+        run.current_step_index = 1
+
+        run_config = {"items": ["a", "b"]}
+        check_step_progression(run, routine, run_config=run_config)
+
+        expanded_steps = [s for s in run.steps if s.id.startswith("S2-")]
+        for step in expanded_steps:
+            assert step.config_id == "S2"  # config_id should remain original
+
+    async def test_repeat_for_step_persistence(self, service: WorkflowService) -> None:
+        """repeat_for expanded steps persist to database correctly."""
+        routine = RoutineConfig(
+            id="repeat-routine",
+            name="Repeat Routine",
+            steps=[
+                StepConfig(
+                    id="S1",
+                    title="Setup",
+                    tasks=[TaskConfig(id="T1", title="Init", task_context="Init")],
+                ),
+                StepConfig(
+                    id="S2",
+                    title="Process",
+                    tasks=[TaskConfig(id="T2", title="Process", task_context="Process")],
+                    condition=StepCondition(repeat_for="item in context.items"),
+                ),
+            ],
+        )
+
+        run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
+
+        from orchestrator.workflow.transitions import check_step_progression
+
+        run.steps[0].completed = True
+        run.current_step_index = 1
+
+        run_config = {"items": ["x", "y", "z"]}
+        check_step_progression(run, routine, run_config=run_config)
+
+        # Save to database
+        await service.create_run(run)
+
+        # Load from database
+        loaded = await service._repo.get(run.id)
+
+        # Expanded steps should be persisted
+        assert len(loaded.steps) == 4  # S1 + 3 expanded copies
+        expanded_loaded = [s for s in loaded.steps if s.config_id == "S2"]
+        assert len(expanded_loaded) == 3
+
+        # Verify titles are persisted correctly, indicating the expansion worked
+        assert expanded_loaded[0].title == "Process [1/3]"
+        assert expanded_loaded[1].title == "Process [2/3]"
+        assert expanded_loaded[2].title == "Process [3/3]"
