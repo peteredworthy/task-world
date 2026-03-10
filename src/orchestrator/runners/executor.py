@@ -41,7 +41,6 @@ from orchestrator.workflow.summary_cache import SummaryCache
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from orchestrator.git.worktree import WorktreeManager
     from orchestrator.runners.monitor import AgentRunnerMonitor
     from orchestrator.api.websocket import ConnectionManager
     from orchestrator.config.global_config import GlobalConfig
@@ -200,37 +199,6 @@ class AgentRunnerExecutor:
             text=True,
             timeout=30,
         )
-
-    def _get_worktree_manager(self) -> "WorktreeManager | None":
-        """Create a WorktreeManager if global config is available."""
-        if self._global_config is None:
-            return None
-        from orchestrator.git.worktree import WorktreeManager
-
-        return WorktreeManager(
-            self._global_config.paths.get_repos_path(),
-            self._global_config.paths.get_worktrees_path(),
-        )
-
-    def _ensure_worktree_branch(self, run_id: str, working_dir: str) -> None:
-        """Ensure the worktree HEAD is on the run's branch."""
-        mgr = self._get_worktree_manager()
-        if mgr is None:
-            return
-        try:
-            mgr.ensure_branch(run_id, working_dir)
-        except Exception as e:
-            logger.warning(f"Run {run_id}: could not ensure branch: {e}")
-
-    def _worktree_checkout(self, run_id: str, commit: str, working_dir: str) -> None:
-        """Checkout a commit in the worktree, keeping HEAD on the run's branch."""
-        mgr = self._get_worktree_manager()
-        if mgr is None:
-            return
-        try:
-            mgr.checkout(run_id, commit, working_dir)
-        except Exception as e:
-            logger.warning(f"Run {run_id}: could not checkout {commit}: {e}")
 
     async def _run_project_health_check(self, project_dir: str) -> str | None:
         """Run the project test suite before the first task attempt.
@@ -969,9 +937,6 @@ class AgentRunnerExecutor:
             )
         working_dir = run.worktree_path
 
-        # Ensure the worktree is on its run branch before the builder starts.
-        self._ensure_worktree_branch(run.id, working_dir)
-
         # Resolve clarifications artifact path if configured
         from orchestrator.workflow.clarifications import (
             decisions_from_config,
@@ -1447,16 +1412,12 @@ class AgentRunnerExecutor:
         # Also build a map from description to ID for fuzzy matching
         req_desc_to_id = {item.desc.lower().strip(): item.req_id for item in task_state.checklist}
 
-        # Get the end_commit from the current attempt
+        # Pass end_commit for metadata — the worktree is already at this
+        # commit because submit_for_verification captures HEAD after
+        # auto-committing any leftover changes.
         end_commit = None
         if task_state.attempts:
-            current_attempt = task_state.attempts[-1]
-            end_commit = current_attempt.end_commit
-
-        # Checkout the builder's end commit so the verifier sees the correct
-        # files. Delegates to WorktreeManager to keep HEAD on the run's branch.
-        if end_commit and working_dir:
-            self._worktree_checkout(run.id, end_commit, working_dir)
+            end_commit = task_state.attempts[-1].end_commit
 
         context = ExecutionContext(
             run_id=run.id,
