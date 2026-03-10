@@ -3,9 +3,10 @@
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Protocol
 
 from orchestrator.config.enums import ChecklistStatus, Priority, RunStatus, TaskStatus
-from orchestrator.config.models import StepConfig
+from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.state.models import (
     Attempt,
     ChecklistItem,
@@ -15,9 +16,28 @@ from orchestrator.state.models import (
     TaskState,
     TransitionTracker,
 )
+from orchestrator.workflow.condition_evaluator import (
+    ConditionEvaluator,
+    ConditionEvalError,
+    StepOutcome,
+)
 from orchestrator.workflow.errors import GateBlockedError
+from orchestrator.workflow.events import StepSkipped, WorkflowEvent
 from orchestrator.workflow.gates import GateResult, evaluate_checklist_gate
 from orchestrator.workflow.grades import GradeResult, evaluate_grades
+
+
+class Clock(Protocol):
+    """Protocol for injectable clock."""
+
+    def now(self) -> datetime: ...
+
+
+class EventEmitter(Protocol):
+    """Protocol for injectable event emitter."""
+
+    def emit(self, event: WorkflowEvent) -> None: ...
+
 
 VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.PENDING: {TaskStatus.BUILDING, TaskStatus.FAN_OUT_RUNNING},
@@ -374,12 +394,31 @@ def step_has_failure(step: StepState) -> bool:
     return any(t.status == TaskStatus.FAILED for t in step.tasks if t.parent_task_id is None)
 
 
-def check_step_progression(run: Run) -> bool:
+def check_step_progression(
+    run: Run,
+    routine_config: RoutineConfig | None = None,
+    clock: Clock | None = None,
+    emitter: EventEmitter | None = None,
+    worktree_path: Path | None = None,
+    run_config: dict[str, Any] | None = None,
+) -> bool:
     """Check and advance step progression after a task status change.
 
     Marks the current step as completed if all its tasks are terminal,
     then advances ``current_step_index`` past any already-completed steps.
     Stops advancing if the completed step contains a failed task (fail-fast).
+
+    If routine_config is provided, evaluates step conditions and skips steps
+    when their conditions are False. Pauses the run if a manual gate (when: "manual")
+    is encountered or if condition evaluation raises an error.
+
+    Args:
+        run: The run state to progress.
+        routine_config: The routine config to look up step conditions (optional).
+        clock: Clock for generating event timestamps (optional).
+        emitter: Event emitter for emitting events (optional).
+        worktree_path: Path to worktree for artifact evaluation (optional).
+        run_config: Run configuration variables for condition evaluation (optional).
 
     Returns True if any step was newly marked completed.
     """
@@ -394,9 +433,142 @@ def check_step_progression(run: Run) -> bool:
             if step_has_failure(step):
                 break
             run.current_step_index += 1
+
+            # After advancing, evaluate the next step's condition if we have routine config
+            if routine_config is not None:
+                next_step = run.steps[run.current_step_index]
+                step_config = _find_step_config(routine_config, next_step.config_id)
+
+                if step_config is not None and step_config.condition is not None:
+                    condition = step_config.condition
+
+                    # Evaluate condition.when if present
+                    if condition.when is not None:
+                        # Special case: manual gate
+                        if condition.when == "manual":
+                            # Pause the run for manual gate
+                            run.status = RunStatus.PAUSED
+                            run.pause_reason = "manual_gate"
+                            if clock is not None and emitter is not None:
+                                from orchestrator.workflow.events import RunStatusChanged
+
+                                emitter.emit(
+                                    RunStatusChanged(
+                                        timestamp=clock.now(),
+                                        run_id=run.id,
+                                        event_type="run_status_changed",
+                                        old_status=RunStatus.ACTIVE,
+                                        new_status=RunStatus.PAUSED,
+                                    )
+                                )
+                            break
+
+                        # Evaluate the condition expression
+                        try:
+                            evaluator = ConditionEvaluator()
+                            variables = run_config or {}
+                            step_outcomes = _build_step_outcomes(run)
+                            result = evaluator.evaluate(condition.when, variables, step_outcomes)
+
+                            if result is False:
+                                # Skip this step and continue to next
+                                next_step.skipped = True
+                                next_step.skip_reason = (
+                                    f"Condition '{condition.when}' evaluated to false"
+                                )
+                                # Mark as completed so the while loop can continue advancing
+                                next_step.completed = True
+                                changed = True
+                                if clock is not None and emitter is not None:
+                                    emitter.emit(
+                                        StepSkipped(
+                                            timestamp=clock.now(),
+                                            run_id=run.id,
+                                            step_index=run.current_step_index,
+                                            step_id=next_step.id,
+                                            condition=condition.when,
+                                            reason="Condition evaluated to false",
+                                        )
+                                    )
+                                # Continue to next step in the while loop
+                                continue
+                            elif result is None:
+                                # Manual gate (None from evaluator)
+                                run.status = RunStatus.PAUSED
+                                run.pause_reason = "manual_gate"
+                                if clock is not None and emitter is not None:
+                                    from orchestrator.workflow.events import RunStatusChanged
+
+                                    emitter.emit(
+                                        RunStatusChanged(
+                                            timestamp=clock.now(),
+                                            run_id=run.id,
+                                            event_type="run_status_changed",
+                                            old_status=RunStatus.ACTIVE,
+                                            new_status=RunStatus.PAUSED,
+                                        )
+                                    )
+                                break
+                            # If result is True, proceed normally (don't skip)
+                        except ConditionEvalError as e:
+                            # Pause the run with error detail
+                            run.status = RunStatus.PAUSED
+                            run.pause_reason = "condition_eval_error"
+                            run.last_error = f"Condition evaluation error: {e.message}"
+                            if clock is not None and emitter is not None:
+                                from orchestrator.workflow.events import RunStatusChanged
+
+                                emitter.emit(
+                                    RunStatusChanged(
+                                        timestamp=clock.now(),
+                                        run_id=run.id,
+                                        event_type="run_status_changed",
+                                        old_status=RunStatus.ACTIVE,
+                                        new_status=RunStatus.PAUSED,
+                                    )
+                                )
+                            break
         else:
             break
     return changed
+
+
+def _find_step_config(routine_config: RoutineConfig, step_config_id: str) -> StepConfig | None:
+    """Find a step config by its config_id in the routine."""
+    for step in routine_config.steps:
+        if step.id == step_config_id:
+            return step
+    return None
+
+
+def _build_step_outcomes(run: Run) -> dict[str, StepOutcome]:
+    """Build StepOutcome objects for all completed/skipped steps in the run.
+
+    This provides context for condition evaluation about previous steps.
+    """
+    outcomes: dict[str, StepOutcome] = {}
+    for step in run.steps:
+        if step.completed or step.skipped:
+            has_failures = step_has_failure(step) if step.completed else False
+            all_passed = (
+                not has_failures
+                and all(
+                    t.status == TaskStatus.COMPLETED for t in step.tasks if t.parent_task_id is None
+                )
+                if step.completed
+                else False
+            )
+            any_completed = any(
+                t.status == TaskStatus.COMPLETED for t in step.tasks if t.parent_task_id is None
+            )
+            outcomes[step.config_id] = StepOutcome(
+                has_failures=has_failures,
+                all_passed=all_passed,
+                any_completed=any_completed,
+                completed=step.completed,
+                skipped=step.skipped,
+            )
+    return outcomes
 
 
 def check_run_completion(run: Run, now: datetime) -> RunStatus | None:

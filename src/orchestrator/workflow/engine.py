@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
+from orchestrator.config.models import RoutineConfig
 from orchestrator.state.models import Run
 from orchestrator.state.session import SessionStateManager
 from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
@@ -411,7 +412,24 @@ class WorkflowEngine:
 
             # --- Step and Run completion cascade ---
             prev_step_index = run.current_step_index
-            step_changed = check_step_progression(run)
+
+            # Load routine config if available for condition evaluation
+            routine_config = None
+            if run.routine_embedded is not None:
+                try:
+                    routine_config = RoutineConfig.model_validate(run.routine_embedded)
+                except Exception:
+                    # If routine config can't be loaded, continue without condition evaluation
+                    pass
+
+            step_changed = check_step_progression(
+                run,
+                routine_config=routine_config,
+                clock=self._clock,
+                emitter=self._emitter,
+                worktree_path=None,  # Engine doesn't have worktree path
+                run_config=run.config,
+            )
 
             if step_changed:
                 # Emit StepCompleted for each newly completed step
