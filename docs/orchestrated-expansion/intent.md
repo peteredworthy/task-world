@@ -12,11 +12,11 @@ Enable builder agents to dynamically expand the scope of a run during execution 
 
 ### In Scope
 
-- **Expansion API endpoint** — `POST /api/runs/{run_id}/tasks/{task_id}/expand` accepting `ExpansionRequest` with type, title, context, justification, requirements, blocking flag, and optional agent profile.
+- **Expansion API endpoint** — `POST /api/runs/{run_id}/tasks/{task_id}/expand` accepting `ExpansionRequest` with type, title, context, justification, requirements, blocking flag, optional agent profile, and a `tasks` array (for `add_next_step` to specify multiple tasks in the new step).
 - **Three expansion types:**
   - `add_subtask` — creates a child task under the requesting task. Blocking mode reuses fan-out infrastructure (`FAN_OUT_RUNNING` + `complete_fan_out_parent`). Non-blocking creates independent child.
   - `add_peer_task` — creates a new task in the current step, running in parallel. Always non-blocking from parent's perspective.
-  - `add_next_step` — inserts a new step immediately after the current step, shifting all subsequent step indices. Full build/verify for all tasks in the new step.
+  - `add_next_step` — inserts a new step immediately after the current step, shifting all subsequent step indices. Supports multiple tasks in the new step via a `tasks` array in the request. Full build/verify for all tasks in the new step.
 - **Budget and limits system** — `ExpansionLimits` model with `max_subtasks_per_task`, `max_peer_tasks_per_step`, `max_inserted_steps`, `max_total_expansions`, and `require_human_approval`. Configurable per routine in YAML. Exhausted budget → 429 response.
 - **Provenance tracking** — Every expansion records requesting task ID, justification, creation timestamp, expansion type, and approval mode. Stored on new task/step and emitted as `TaskExpanded` activity event.
 - **Expansion callback in agent prompts** — Builder prompt includes expansion instructions: when to use it, available types, that expansion adds work (doesn't transfer parent obligations), and remaining budget.
@@ -40,8 +40,8 @@ Enable builder agents to dynamically expand the scope of a run during execution 
 - [ ] `RoutineConfig` has `expansion_limits: ExpansionLimits` field (optional, defaults to `ExpansionLimits()`).
 - [ ] `Run` state model has `total_expansions: int = 0`.
 - [ ] `TaskState` has `expansion_justification: str | None`, `expanded_from_task_id: str | None`, and `expansions_requested: int = 0`.
-- [ ] `TaskModel` and `StepModel` have DB columns for expansion provenance (`expanded_from_task_id`, `expansion_justification`, `is_expansion: bool`). `RunModel` has `expansion_count` column.
-- [ ] `ExpansionRequest` and `ExpansionResponse` schemas exist in `src/orchestrator/api/schemas/tasks.py`.
+- [ ] `TaskModel` has DB columns: `expanded_from_task_id`, `expansion_justification`, `is_expansion`. `StepModel` has DB columns: `is_expansion`, `expanded_from_task_id` (Q1 decision — both model types track provenance). `RunModel` has `expansion_count` column.
+- [ ] `ExpansionRequest`, `ExpansionTaskSpec`, and `ExpansionResponse` schemas exist in `src/orchestrator/api/schemas/tasks.py`; `ExpansionRequest.tasks` is a `list[ExpansionTaskSpec]` used for `add_next_step` multi-task creation (Q2 decision).
 - [ ] `POST /api/runs/{run_id}/tasks/{task_id}/expand` endpoint is registered and handles all three expansion types.
 - [ ] Budget enforcement: endpoint returns 429 when any relevant limit is exhausted.
 - [ ] `add_subtask` with `blocking=True` transitions parent to `FAN_OUT_RUNNING` and resumes after child completes, reusing existing fan-out infrastructure.

@@ -16,8 +16,10 @@ Implement dynamic run expansion in four milestones: (1) data models and budget s
 - `TaskState` gains: `expansions_requested: int = 0`, `expanded_from_task_id: str | None = None`, `expansion_justification: str | None = None`
 - `Run` gains: `total_expansions: int = 0`
 - `TaskModel` gains: `expanded_from_task_id`, `expansion_justification`, `is_expansion` columns
+- `StepModel` gains: `is_expansion`, `expanded_from_task_id` columns (Q1 decision)
 - `RunModel` gains: `expansion_count` column
-- `ExpansionRequest` and `ExpansionResponse` schemas in `src/orchestrator/api/schemas/tasks.py`
+- `ExpansionRequest` and `ExpansionResponse` schemas in `src/orchestrator/api/schemas/tasks.py`; `ExpansionRequest` includes a `tasks: list[ExpansionTaskSpec]` array field for multi-task `add_next_step` (Q2 decision); `ExpansionTaskSpec` sub-schema defined in same file
+- `ExpansionResponse` includes `created_task_ids: list[str]` for `add_next_step`
 - `TaskExpanded` event type in `src/orchestrator/workflow/events.py`
 - DB migration (Alembic) covering all new columns; defaults ensure existing rows remain valid
 - Unit tests: `ExpansionLimits` defaults, serialization round-trip

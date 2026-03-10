@@ -41,21 +41,32 @@ Added to `RoutineConfig` as `expansion_limits: ExpansionLimits = Field(default_f
 
 #### `ExpansionRequest` / `ExpansionResponse` — `src/orchestrator/api/schemas/tasks.py`
 
+`add_next_step` supports multiple tasks via a `tasks` array (Q2 decision). Single-task types (`add_subtask`, `add_peer_task`) use top-level `title`/`context`/`requirements`. For `add_next_step`, the `tasks` array defines all tasks in the new step; top-level `title` becomes the step title.
+
 ```python
-class ExpansionRequest(ApiModel):
-    type: Literal["add_subtask", "add_peer_task", "add_next_step"]
+class ExpansionTaskSpec(ApiModel):
+    """Specification for a single task within an add_next_step expansion."""
     title: str
     context: str
-    justification: str
     requirements: list[dict] | None = None
+    agent_profile: str | None = None
+
+class ExpansionRequest(ApiModel):
+    type: Literal["add_subtask", "add_peer_task", "add_next_step"]
+    title: str          # Task title for add_subtask/add_peer_task; step title for add_next_step
+    context: str        # Task context for add_subtask/add_peer_task; ignored for add_next_step
+    justification: str
+    requirements: list[dict] | None = None  # For add_subtask/add_peer_task checklist
     blocking: bool = True
     agent_profile: str | None = None
+    tasks: list[ExpansionTaskSpec] | None = None  # Required for add_next_step (multiple tasks)
 
 class ExpansionResponse(ApiModel):
     status: Literal["created", "pending_approval"]
     expansion_type: str
-    created_task_id: str | None = None
-    created_step_id: str | None = None
+    created_task_id: str | None = None        # Set for add_subtask and add_peer_task
+    created_step_id: str | None = None        # Set for add_next_step
+    created_task_ids: list[str] | None = None # Set for add_next_step (all tasks in new step)
     total_expansions_used: int
     budget_remaining: dict[str, int]  # which limits remain
 ```
@@ -99,6 +110,16 @@ expanded_from_task_id = Column(String, ForeignKey("tasks.id"), nullable=True)
 expansion_justification = Column(String, nullable=True)
 is_expansion = Column(Boolean, default=False, nullable=False)
 ```
+
+#### `StepModel` — `src/orchestrator/db/models.py`
+
+Add columns (Alembic migration, Q1 decision):
+```python
+is_expansion = Column(Boolean, default=False, nullable=False)
+expanded_from_task_id = Column(String, ForeignKey("tasks.id"), nullable=True)
+```
+
+These record whether a step was dynamically inserted and which task requested the insertion.
 
 #### `RunModel` — `src/orchestrator/db/models.py`
 
@@ -153,7 +174,8 @@ async def expand_task(
 - Parent remains `BUILDING`; executor picks up peer on next cycle
 
 `add_next_step`:
-- Create `StepState` with tasks built from `request.requirements`
+- Create `StepState` with tasks built from `request.tasks` array (each `ExpansionTaskSpec` becomes a `TaskState`); `request.title` becomes the step title. `request.tasks` must have at least one entry — validation error if empty/missing.
+- Mark new `StepState` with `is_expansion=True` and `expanded_from_task_id=task_id`
 - Insert into `run.steps` at `current_step_index + 1`
 - Increment `order_index` of all steps at index > `current_step_index` by 1
 - Return `(None, new_step_state)`
@@ -201,14 +223,27 @@ New section added to builder callback instructions:
 
 If you discover work that is genuinely outside this task's scope, you may request expansion:
 
+# For add_subtask and add_peer_task:
 POST /api/runs/{run_id}/tasks/{task_id}/expand
 {
-  "type": "add_subtask" | "add_peer_task" | "add_next_step",
+  "type": "add_subtask" | "add_peer_task",
   "title": "Short descriptive title",
   "context": "Full task context for the new work",
   "justification": "Why this expansion is needed",
   "requirements": [{"id": "R1", "desc": "...", "must": true}],
   "blocking": true  # set false if parent can continue independently
+}
+
+# For add_next_step (supports multiple tasks in the new step):
+POST /api/runs/{run_id}/tasks/{task_id}/expand
+{
+  "type": "add_next_step",
+  "title": "Step title",
+  "justification": "Why this step is needed",
+  "tasks": [
+    {"title": "Task 1", "context": "...", "requirements": [...]},
+    {"title": "Task 2", "context": "..."}
+  ]
 }
 
 Types:
@@ -306,7 +341,7 @@ POST /expand                 require_human_approval=True
 - Task in `VERIFYING` → `ExpansionPhaseError`
 - Task in `PASSED` → `ExpansionPhaseError`
 - Task in `BUILDING` → allowed
-- Task in `FAN_OUT_RUNNING` → allowed (parent can still add subtasks while waiting)
+- Task in `FAN_OUT_RUNNING` → not applicable; an agent in `FAN_OUT_RUNNING` is not executing and cannot call the API (Q3 decision — no test case needed)
 
 **Step index reordering** (`tests/unit/test_expansion_step_insert.py`):
 - Insert step at index 1 of 3 → steps at index 2, 3 shift to 3, 4
