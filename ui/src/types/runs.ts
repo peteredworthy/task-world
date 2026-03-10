@@ -32,6 +32,9 @@ export interface StepSummary {
   tasks: TaskSummary[];
   has_approval_gate: boolean;
   approval_status: 'pending' | 'approved' | 'rejected' | null;
+  skipped: boolean;
+  skip_reason: string | null;
+  condition: { when: string | null; repeat_for: string | null } | null;
 }
 
 export interface EnvFileSpec {

@@ -39,11 +39,18 @@ from orchestrator.workflow.dry_run import (
     get_step_by_id,
     parse_dry_run_response,
 )
+from orchestrator.workflow.condition_evaluator import (
+    ConditionEvalError,
+    ConditionEvaluator,
+    StepOutcome,
+)
 
 __all__ = [
     "BuilderPrompt",
     "ChecklistGateEvaluated",
     "Clock",
+    "ConditionEvalError",
+    "ConditionEvaluator",
     "DEFAULT_GRADE_ORDER",
     "DefaultClock",
     "DryRunResult",
@@ -57,6 +64,7 @@ __all__ = [
     "LockManager",
     "LockTimeoutError",
     "NoOpEmitter",
+    "StepOutcome",
     "TaskLockedError",
     "RunStatusChanged",
     "TaskStatusChanged",

@@ -5,7 +5,7 @@ import { SettingsProvider } from './context/SettingsContext';
 import { SettingsModal } from './components/SettingsModal';
 import { Dashboard } from './pages/Dashboard';
 import { NotFound } from './pages/NotFound';
-import { RunDetail } from './pages/RunDetail';
+import { RunDetail } from './components/dashboard/RunDetail';
 import { RoutineLibrary } from './pages/RoutineLibrary';
 import { AgentRunners } from './pages/AgentRunners';
 import { Agents } from './pages/Agents';

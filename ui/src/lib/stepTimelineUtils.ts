@@ -1,8 +1,9 @@
-import type { StepSummary } from '../../types';
+import type { StepSummary } from '../types';
 
-export type StepState = 'completed' | 'active' | 'failed' | 'pending';
+export type StepState = 'completed' | 'active' | 'failed' | 'pending' | 'skipped';
 
 export function getStepState(step: StepSummary, isCurrent: boolean): StepState {
+  if (step.skipped) return 'skipped';
   const hasFailed = step.tasks.some(t => t.status === 'failed');
   if (hasFailed) return 'failed';
   if (step.completed) return 'completed';
@@ -18,6 +19,8 @@ export function stepBadgeClasses(state: StepState): string {
       return 'bg-status-active text-white animate-pulse-glow';
     case 'failed':
       return 'bg-status-failed text-white';
+    case 'skipped':
+      return 'bg-transparent border border-dashed border-border-hover text-text-muted opacity-60';
     case 'pending':
       return 'bg-transparent border border-border-hover text-text-muted';
   }

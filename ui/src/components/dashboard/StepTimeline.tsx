@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { useTransitionBack } from '../../hooks/useApi';
 import type { StepSummary } from '../../types';
-import { getStepState, stepBadgeClasses } from './stepTimelineUtils';
+import { getStepState, stepBadgeClasses } from '../../lib/stepTimelineUtils';
 
 interface StepTimelineProps {
   runId: string;
@@ -74,67 +74,81 @@ export function StepTimeline({
 
   return (
     <>
-      <div className="flex items-center gap-1" role="group" aria-label="Step progress">
+      <div className="flex items-center gap-1 flex-wrap" role="group" aria-label="Step progress">
         {steps.map((step, i) => {
           const total = step.tasks.length;
           const completed = step.tasks.filter(t => t.status === 'completed').length;
           const state = getStepState(step, i === currentStepIndex);
           const canRevert = showRevert && step.completed && i < currentStepIndex;
           const showPending = pendingCount > 0 && i === currentStepIndex;
+          const isSkipped = step.skipped;
+          const isPendingConditional = !step.completed && !isSkipped && step.condition?.when;
+          const hasRepeatFor = step.condition?.repeat_for;
 
           return (
-            <div key={step.id} className="flex items-center gap-1">
-              <div
-                className={
-                  'relative flex items-center justify-center rounded font-mono text-[10px] font-bold leading-none ' +
-                  'w-7 h-[22px] group/steptip ' +
-                  stepBadgeClasses(state)
-                }
-                tabIndex={0}
-                role="img"
-                aria-label={`Step ${i + 1}: ${completed}/${total} tasks, ${state}`}
-              >
-                S{i + 1}
-                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-bg-elevated border border-border rounded text-[10px] text-text-secondary whitespace-nowrap opacity-0 group-hover/steptip:opacity-100 pointer-events-none transition-opacity z-20">
-                  {`Step ${i + 1}: ${completed}/${total} tasks`}
+            <div key={step.id} className="flex flex-col items-center gap-1">
+              <div className="flex items-center gap-1">
+                <div
+                  className={
+                    'relative flex items-center justify-center rounded font-mono text-[10px] font-bold leading-none ' +
+                    'w-7 h-[22px] group/steptip ' +
+                    stepBadgeClasses(state)
+                  }
+                  tabIndex={0}
+                  role="img"
+                  aria-label={`Step ${i + 1}: ${completed}/${total} tasks, ${state}`}
+                >
+                  {isSkipped ? 'Skipped' : `S${i + 1}`}
+                  <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 px-2 py-1 bg-bg-elevated border border-border rounded text-[10px] text-text-secondary whitespace-nowrap opacity-0 group-hover/steptip:opacity-100 pointer-events-none transition-opacity z-20">
+                    {isSkipped && step.skip_reason
+                      ? `Step ${i + 1}: Skipped - ${step.skip_reason}`
+                      : isPendingConditional && step.condition?.when
+                        ? `Step ${i + 1}: Pending - when: ${step.condition.when}`
+                        : `Step ${i + 1}: ${completed}/${total} tasks`}
+                  </div>
+                  {showPending && (
+                    onPendingClick ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          onPendingClick();
+                        }}
+                        className="absolute top-0.5 right-0.5 inline-flex min-w-3.5 h-3.5 items-center justify-center rounded-full bg-status-paused text-[8px] font-bold text-bg-primary px-0.5 hover:bg-status-paused/80 transition-colors"
+                        aria-label={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'} - open now`}
+                        title={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
+                      >
+                        {pendingCount}
+                      </button>
+                    ) : (
+                      <span
+                        className="absolute top-0.5 right-0.5 inline-flex min-w-3.5 h-3.5 items-center justify-center rounded-full bg-status-paused text-[8px] font-bold text-bg-primary px-0.5"
+                        aria-label={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
+                        title={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
+                      >
+                        {pendingCount}
+                      </span>
+                    )
+                  )}
                 </div>
-                {showPending && (
-                  onPendingClick ? (
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onPendingClick();
-                      }}
-                      className="absolute top-0.5 right-0.5 inline-flex min-w-3.5 h-3.5 items-center justify-center rounded-full bg-status-paused text-[8px] font-bold text-bg-primary px-0.5 hover:bg-status-paused/80 transition-colors"
-                      aria-label={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'} - open now`}
-                      title={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
-                    >
-                      {pendingCount}
-                    </button>
-                  ) : (
-                    <span
-                      className="absolute top-0.5 right-0.5 inline-flex min-w-3.5 h-3.5 items-center justify-center rounded-full bg-status-paused text-[8px] font-bold text-bg-primary px-0.5"
-                      aria-label={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
-                      title={`${pendingCount} pending action${pendingCount === 1 ? '' : 's'}`}
-                    >
-                      {pendingCount}
-                    </span>
-                  )
+                {canRevert && (
+                  <button
+                    type="button"
+                    onClick={event => {
+                      event.stopPropagation();
+                      openConfirm(i);
+                    }}
+                    className="rounded border border-status-paused/40 px-2 py-0.5 text-[10px] font-semibold text-status-paused transition-colors hover:bg-status-paused/15"
+                    aria-label={`Revert to step ${i + 1}`}
+                  >
+                    Revert to this step
+                  </button>
                 )}
               </div>
-              {canRevert && (
-                <button
-                  type="button"
-                  onClick={event => {
-                    event.stopPropagation();
-                    openConfirm(i);
-                  }}
-                  className="rounded border border-status-paused/40 px-2 py-0.5 text-[10px] font-semibold text-status-paused transition-colors hover:bg-status-paused/15"
-                  aria-label={`Revert to step ${i + 1}`}
-                >
-                  Revert to this step
-                </button>
+              {hasRepeatFor && step.condition && (
+                <div className="text-[9px] text-text-muted italic max-w-xs text-center">
+                  for {step.condition.repeat_for}
+                </div>
               )}
             </div>
           );

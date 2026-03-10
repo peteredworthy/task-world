@@ -871,7 +871,24 @@ class WorkflowService:
         if new_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             updated_run = state.get_run(run_id)
             prev_step_index = updated_run.current_step_index
-            step_changed = check_step_progression(updated_run)
+
+            # Load routine config if available for condition evaluation
+            routine_config = None
+            if updated_run.routine_embedded is not None:
+                try:
+                    routine_config = RoutineConfig.model_validate(updated_run.routine_embedded)
+                except Exception:
+                    # If routine config can't be loaded, continue without condition evaluation
+                    pass
+
+            step_changed = check_step_progression(
+                updated_run,
+                routine_config=routine_config,
+                clock=self._clock,
+                emitter=buffer,
+                worktree_path=None,  # Service doesn't have worktree path at this level
+                run_config=updated_run.config,
+            )
 
             if step_changed:
                 for i in range(prev_step_index, updated_run.current_step_index + 1):
@@ -1136,7 +1153,24 @@ class WorkflowService:
             # Check step/run completion
             updated_run = state.get_run(run_id)
             prev_step_index = updated_run.current_step_index
-            step_changed = check_step_progression(updated_run)
+
+            # Load routine config if available for condition evaluation
+            routine_config = None
+            if updated_run.routine_embedded is not None:
+                try:
+                    routine_config = RoutineConfig.model_validate(updated_run.routine_embedded)
+                except Exception:
+                    # If routine config can't be loaded, continue without condition evaluation
+                    pass
+
+            step_changed = check_step_progression(
+                updated_run,
+                routine_config=routine_config,
+                clock=self._clock,
+                emitter=buffer,
+                worktree_path=Path(worktree_path) if worktree_path else None,
+                run_config=updated_run.config,
+            )
 
             if step_changed:
                 from orchestrator.workflow.events import StepCompleted
@@ -2278,7 +2312,23 @@ class WorkflowService:
         # Check step progression to advance to next task
         from orchestrator.workflow.transitions import check_step_progression, check_run_completion
 
-        check_step_progression(run)
+        # Load routine config if available for condition evaluation
+        routine_config = None
+        if run.routine_embedded is not None:
+            try:
+                routine_config = RoutineConfig.model_validate(run.routine_embedded)
+            except Exception:
+                # If routine config can't be loaded, continue without condition evaluation
+                pass
+
+        check_step_progression(
+            run,
+            routine_config=routine_config,
+            clock=self._clock,
+            emitter=None,  # Async emitter not compatible with sync protocol
+            worktree_path=None,  # Not available in this context
+            run_config=run.config,
+        )
         check_run_completion(run, self._clock.now())
 
         run.updated_at = self._clock.now()

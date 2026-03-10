@@ -100,6 +100,11 @@ class TaskSummary(ApiModel):
     parent_task_id: str | None = None
 
 
+class StepConditionSchema(ApiModel):
+    when: str | None = None
+    repeat_for: str | None = None
+
+
 class StepSummary(ApiModel):
     id: str
     config_id: str
@@ -108,6 +113,9 @@ class StepSummary(ApiModel):
     tasks: list[TaskSummary]
     has_approval_gate: bool = False
     approval_status: str | None = None  # "pending" | "approved" | "rejected" | None
+    skipped: bool = False
+    skip_reason: str | None = None
+    condition: StepConditionSchema | None = None
 
 
 class RunResponse(ApiModel):
@@ -184,7 +192,9 @@ class ResumeRunRequest(ApiModel):
 
     agent_type: str | None = None
     agent_config: dict[str, Any] | None = None
-    resume_strategy: str | None = None  # "continue" | "revert" | "continue_dirty" | "reset_worktree"
+    resume_strategy: str | None = (
+        None  # "continue" | "revert" | "continue_dirty" | "reset_worktree"
+    )
 
     @field_validator("agent_type", mode="before")
     @classmethod

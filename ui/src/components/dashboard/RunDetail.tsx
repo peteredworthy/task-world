@@ -1,30 +1,30 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack, useResumeRun } from '../hooks/useApi';
-import { useBranchStatus } from '../hooks/useReview';
-import { useActivityStream } from '../hooks/useActivityStream';
-import { usePendingActions } from '../hooks/usePendingActions';
-import { WebSocketProvider } from '../context/WebSocketContext';
-import { ReviewMergeProvider } from '../context/ReviewMergeContext';
-import { useReviewMerge } from '../context/useReviewMerge';
-import { useWebSocketStatus } from '../hooks/useWebSocketStatus';
-import { RunStatusBadge } from '../components/StatusBadge';
-import { ConnectionIndicator } from '../components/ConnectionIndicator';
-import { AgentGuidancePanel } from '../components/guidance/AgentGuidancePanel';
-import { ResumeDialog } from '../components/run/ResumeDialog';
-import { ClarificationModal } from '../components/detail/ClarificationModal';
-import { ApprovalModal } from '../components/detail/ApprovalModal';
-import { ApprovalReviewDialog } from '../components/detail/ApprovalReviewDialog';
-import { Spinner } from '../components/Spinner';
-import { RecoveryPanel } from '../components/detail/RecoveryPanel';
-import { StepApprovalBanner } from '../components/detail/StepApprovalBanner';
-import { BranchStatusPanel } from '../components/detail/BranchStatusPanel';
-import { EnvFilesPanel } from '../components/detail/EnvFilesPanel';
-import { getLastAgentError } from '../lib/activity';
-import { ApiError } from '../api/client';
-import { ReviewMergeTab } from '../components/review/ReviewMergeTab';
-import type { RunResponse } from '../types';
-import type { PendingAction } from '../types/clarifications';
+import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack, useResumeRun, useSkipStep } from '../../hooks/useApi';
+import { useBranchStatus } from '../../hooks/useReview';
+import { useActivityStream } from '../../hooks/useActivityStream';
+import { usePendingActions } from '../../hooks/usePendingActions';
+import { WebSocketProvider } from '../../context/WebSocketContext';
+import { ReviewMergeProvider } from '../../context/ReviewMergeContext';
+import { useReviewMerge } from '../../context/useReviewMerge';
+import { useWebSocketStatus } from '../../hooks/useWebSocketStatus';
+import { RunStatusBadge } from '../StatusBadge';
+import { ConnectionIndicator } from '../ConnectionIndicator';
+import { AgentGuidancePanel } from '../guidance/AgentGuidancePanel';
+import { ResumeDialog } from '../run/ResumeDialog';
+import { ClarificationModal } from '../detail/ClarificationModal';
+import { ApprovalModal } from '../detail/ApprovalModal';
+import { ApprovalReviewDialog } from '../detail/ApprovalReviewDialog';
+import { Spinner } from '../Spinner';
+import { RecoveryPanel } from '../detail/RecoveryPanel';
+import { StepApprovalBanner } from '../detail/StepApprovalBanner';
+import { BranchStatusPanel } from '../detail/BranchStatusPanel';
+import { EnvFilesPanel } from '../detail/EnvFilesPanel';
+import { getLastAgentError } from '../../lib/activity';
+import { ApiError } from '../../api/client';
+import { ReviewMergeTab } from '../review/ReviewMergeTab';
+import type { RunResponse } from '../../types';
+import type { PendingAction } from '../../types/clarifications';
 
 /** Detect if the run is stuck: active but a task has failed with no remaining attempts. */
 function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | null } {
@@ -38,6 +38,18 @@ function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | nu
     }
   }
   return { stuck: false, failedTask: null };
+}
+
+/** Find the current actionable step (skipping already completed steps). */
+function findActionableStep(run: RunResponse): { step: RunResponse['steps'][0]; index: number } | null {
+  let index = run.current_step_index;
+  while (index < run.steps.length && run.steps[index].completed) {
+    index++;
+  }
+  if (index < run.steps.length) {
+    return { step: run.steps[index], index };
+  }
+  return null;
 }
 
 function RunDetailInner({ runId }: { runId: string }) {
@@ -62,8 +74,9 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { status: wsStatus, reconnect: wsReconnect } = useWebSocketStatus();
   const pauseRun = usePauseRun();
   const cancelRun = useCancelRun();
-  const resumeRunMutation = useResumeRun();
   const mergeBack = useMergeBack();
+  const resumeRun = useResumeRun();
+  const skipStep = useSkipStep(runId);
   const { data: branchStatus } = useBranchStatus(runId);
   const { isPruneMode, onTogglePruneMode, onOpenBackMergeModal } = useReviewMerge();
   const [showResumeDialog, setShowResumeDialog] = useState(false);
@@ -185,10 +198,9 @@ function RunDetailInner({ runId }: { runId: string }) {
                       agent_execution_error: 'Paused — agent execution error',
                       agent_exit_failure: 'Paused — agent exited with error',
                       gate_blocked: 'Paused — checklist gate not satisfied',
+                      manual_gate: 'Paused — waiting at manual gate',
                       recovery_loop: 'Paused — recovery loop detected',
                       unexpected_error: 'Paused — unexpected error',
-                      health_check_dirty: 'Paused — tests failing with uncommitted changes',
-                      health_check_failed: 'Paused — health check failed',
                       agent_health_check_failed: 'Paused — agent health check failed',
                       agent_not_running_on_startup: 'Paused — agent was not running on startup',
                       recovered: 'Paused — recovered from failure',
@@ -313,6 +325,51 @@ function RunDetailInner({ runId }: { runId: string }) {
 
 
           <>
+          {/* Manual gate control panel */}
+          {run.status === 'paused' && run.pause_reason === 'manual_gate' && (() => {
+            const actionable = findActionableStep(run);
+            if (!actionable) return null;
+
+            return (
+              <div className="mb-6 rounded-md border border-accent-purple/40 bg-accent-purple/10 px-4 py-3 flex items-start gap-3">
+                <svg className="h-5 w-5 text-accent-purple shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-accent-purple">Manual gate: Step {actionable.index + 1}</p>
+                  <p className="text-xs text-text-secondary mt-0.5">Choose to execute or skip this step.</p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setMutationError(null);
+                        resumeRun.mutate(
+                          { runId: run.id },
+                          { onError: handleMutationError('resume') }
+                        );
+                      }}
+                      disabled={resumeRun.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-white bg-accent-purple rounded-md hover:bg-accent-purple/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      aria-label="Execute this step"
+                    >
+                      {resumeRun.isPending ? 'Executing...' : 'Execute Step'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMutationError(null);
+                        skipStep.mutate(actionable.step.id, { onError: handleMutationError('skip step') });
+                      }}
+                      disabled={skipStep.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-text-primary bg-bg-elevated border border-border rounded-md hover:bg-bg-muted disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      aria-label="Skip this step"
+                    >
+                      {skipStep.isPending ? 'Skipping...' : 'Skip Step'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Mutation error banner */}
           {mutationError && (
             <div className="mb-6 rounded-md bg-status-failed/10 border border-status-failed/30 p-4 flex items-center justify-between">
@@ -479,58 +536,6 @@ function RunDetailInner({ runId }: { runId: string }) {
                     {run.last_error}
                   </p>
                 )}
-              </div>
-            </div>
-          )}
-
-          {/* Dirty health check banner — tests failing with uncommitted changes */}
-          {run.status === 'paused' && run.pause_reason === 'health_check_dirty' && (
-            <div className="mb-6 rounded-md bg-amber-500/10 border border-amber-500/30 px-4 py-3">
-              <div className="flex items-start gap-3">
-                <svg className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                </svg>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-amber-300">
-                    Health check failed with uncommitted changes
-                  </p>
-                  <p className="text-xs text-text-secondary mt-0.5">
-                    The worktree has uncommitted changes and the test suite is failing. The agent may have been mid-task. You can continue anyway or discard the uncommitted changes and retry.
-                  </p>
-                  {run.last_error && (
-                    <p className="mt-1.5 text-xs text-text-secondary bg-bg-elevated rounded px-2 py-1 font-mono break-all max-h-24 overflow-y-auto">
-                      {run.last_error}
-                    </p>
-                  )}
-                  <div className="flex gap-2 mt-3">
-                    <button
-                      onClick={() => {
-                        setMutationError(null);
-                        resumeRunMutation.mutate(
-                          { runId: run.id, resumeStrategy: 'continue_dirty' },
-                          { onError: handleMutationError('resume') },
-                        );
-                      }}
-                      disabled={resumeRunMutation.isPending}
-                      className="px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {resumeRunMutation.isPending ? 'Resuming...' : 'Continue Anyway'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setMutationError(null);
-                        resumeRunMutation.mutate(
-                          { runId: run.id, resumeStrategy: 'reset_worktree' },
-                          { onError: handleMutationError('resume') },
-                        );
-                      }}
-                      disabled={resumeRunMutation.isPending}
-                      className="px-3 py-1.5 text-xs font-medium text-status-failed bg-status-failed/10 border border-status-failed/30 rounded-md hover:bg-status-failed/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                    >
-                      {resumeRunMutation.isPending ? 'Resetting...' : 'Discard Changes & Retry'}
-                    </button>
-                  </div>
-                </div>
               </div>
             </div>
           )}

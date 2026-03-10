@@ -80,6 +80,35 @@ class StepCompleted(WorkflowEvent):
 
 
 @dataclass
+class StepSkipped(WorkflowEvent):
+    """Emitted when a step is skipped due to a condition."""
+
+    step_index: int = 0
+    step_id: str = ""
+    condition: str | None = None
+    reason: str | None = None
+
+    def __init__(
+        self,
+        timestamp: datetime | None = None,
+        run_id: str = "",
+        event_type: str = "step_skipped",
+        step_index: int = 0,
+        step_id: str = "",
+        condition: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Initialize StepSkipped event."""
+        self.timestamp = timestamp or datetime.now(timezone.utc)
+        self.run_id = run_id
+        self.event_type = event_type
+        self.step_index = step_index
+        self.step_id = step_id
+        self.condition = condition
+        self.reason = reason
+
+
+@dataclass
 class RunStepBackward(WorkflowEvent):
     """Emitted when a run transitions backward to an earlier step."""
 
