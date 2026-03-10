@@ -90,8 +90,8 @@ class StepSkipped(WorkflowEvent):
 
     def __init__(
         self,
-        timestamp: datetime,
-        run_id: str,
+        timestamp: datetime | None = None,
+        run_id: str = "",
         event_type: str = "step_skipped",
         step_index: int = 0,
         step_id: str = "",
@@ -99,7 +99,7 @@ class StepSkipped(WorkflowEvent):
         reason: str | None = None,
     ) -> None:
         """Initialize StepSkipped event."""
-        self.timestamp = timestamp
+        self.timestamp = timestamp or datetime.now(timezone.utc)
         self.run_id = run_id
         self.event_type = event_type
         self.step_index = step_index
