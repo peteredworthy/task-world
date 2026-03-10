@@ -57,11 +57,17 @@ def create_step_state(
     """Create step state from step config."""
     tasks = [create_task_state(task_config, id_generator) for task_config in step_config.tasks]
 
+    # Preserve condition as dict (Pydantic model will be serialized to dict)
+    condition_dict = None
+    if step_config.condition is not None:
+        condition_dict = step_config.condition.model_dump()
+
     return StepState(
         id=id_generator(),
         config_id=step_config.id,
         title=step_config.title or step_config.id,
         tasks=tasks,
+        condition=condition_dict,  # Preserve condition without expansion
     )
 
 
