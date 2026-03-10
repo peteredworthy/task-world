@@ -164,6 +164,73 @@ class WorktreeManager:
             commit=result.stdout.strip(),
         )
 
+    def checkout(self, run_id: str, commit: str, worktree_path: str | Path) -> None:
+        """Checkout a commit in a worktree, keeping HEAD on the run's branch.
+
+        Uses ``git checkout -B <branch> <commit>`` so the branch pointer moves
+        to the target commit without detaching HEAD.  This prevents the agent
+        from accidentally committing to ``main`` or another shared branch.
+
+        Args:
+            run_id: Run identifier (used to derive the branch name).
+            commit: The commit SHA to check out.
+            worktree_path: Filesystem path of the worktree.
+
+        Raises:
+            GitCommandError: If the checkout fails.
+        """
+        branch_name = f"orchestrator/run-{run_id}"
+        cmd = ["git", "checkout", "-B", branch_name, commit]
+        try:
+            subprocess.run(
+                cmd,
+                cwd=str(worktree_path),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise GitCommandError(" ".join(cmd), e.returncode, e.stderr) from e
+
+    def ensure_branch(self, run_id: str, worktree_path: str | Path) -> None:
+        """Ensure a worktree's HEAD is on its run branch, not detached.
+
+        If HEAD is already on the correct branch this is a no-op.
+
+        Args:
+            run_id: Run identifier (used to derive the branch name).
+            worktree_path: Filesystem path of the worktree.
+
+        Raises:
+            GitCommandError: If the checkout fails.
+        """
+        branch_name = f"orchestrator/run-{run_id}"
+        # Check if already on the right branch
+        try:
+            result = subprocess.run(
+                ["git", "symbolic-ref", "--short", "HEAD"],
+                cwd=str(worktree_path),
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            if result.stdout.strip() == branch_name:
+                return
+        except subprocess.CalledProcessError:
+            pass  # Detached HEAD — need to re-attach
+
+        cmd = ["git", "checkout", branch_name]
+        try:
+            subprocess.run(
+                cmd,
+                cwd=str(worktree_path),
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise GitCommandError(" ".join(cmd), e.returncode, e.stderr) from e
+
     def ensure_exists(
         self,
         run_id: str,

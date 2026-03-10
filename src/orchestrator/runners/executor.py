@@ -41,6 +41,7 @@ from orchestrator.workflow.summary_cache import SummaryCache
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from orchestrator.git.worktree import WorktreeManager
     from orchestrator.runners.monitor import AgentRunnerMonitor
     from orchestrator.api.websocket import ConnectionManager
     from orchestrator.config.global_config import GlobalConfig
@@ -199,6 +200,37 @@ class AgentRunnerExecutor:
             text=True,
             timeout=30,
         )
+
+    def _get_worktree_manager(self) -> "WorktreeManager | None":
+        """Create a WorktreeManager if global config is available."""
+        if self._global_config is None:
+            return None
+        from orchestrator.git.worktree import WorktreeManager
+
+        return WorktreeManager(
+            self._global_config.paths.get_repos_path(),
+            self._global_config.paths.get_worktrees_path(),
+        )
+
+    def _ensure_worktree_branch(self, run_id: str, working_dir: str) -> None:
+        """Ensure the worktree HEAD is on the run's branch."""
+        mgr = self._get_worktree_manager()
+        if mgr is None:
+            return
+        try:
+            mgr.ensure_branch(run_id, working_dir)
+        except Exception as e:
+            logger.warning(f"Run {run_id}: could not ensure branch: {e}")
+
+    def _worktree_checkout(self, run_id: str, commit: str, working_dir: str) -> None:
+        """Checkout a commit in the worktree, keeping HEAD on the run's branch."""
+        mgr = self._get_worktree_manager()
+        if mgr is None:
+            return
+        try:
+            mgr.checkout(run_id, commit, working_dir)
+        except Exception as e:
+            logger.warning(f"Run {run_id}: could not checkout {commit}: {e}")
 
     async def _run_project_health_check(self, project_dir: str) -> str | None:
         """Run the project test suite before the first task attempt.
@@ -937,21 +969,8 @@ class AgentRunnerExecutor:
             )
         working_dir = run.worktree_path
 
-        # Ensure the worktree is on its named branch (not detached HEAD).
-        # Verification checkouts can leave HEAD detached; re-attach so the
-        # builder's commits land on the run's branch.
-        branch_name = f"orchestrator/run-{run.id}"
-        reattach = subprocess.run(
-            ["git", "checkout", branch_name],
-            cwd=working_dir,
-            capture_output=True,
-            text=True,
-        )
-        if reattach.returncode != 0:
-            logger.warning(
-                f"Could not re-attach HEAD to {branch_name} in {working_dir}: "
-                f"{reattach.stderr.strip()}"
-            )
+        # Ensure the worktree is on its run branch before the builder starts.
+        self._ensure_worktree_branch(run.id, working_dir)
 
         # Resolve clarifications artifact path if configured
         from orchestrator.workflow.clarifications import (
@@ -1434,28 +1453,10 @@ class AgentRunnerExecutor:
             current_attempt = task_state.attempts[-1]
             end_commit = current_attempt.end_commit
 
-        # Checkout the builder's end commit on the host worktree so the
-        # verifier (including Docker bind-mounts) sees the correct files.
-        # We reset the branch pointer to this commit rather than detaching HEAD,
-        # so the worktree stays on its named branch. This prevents HEAD from
-        # being left in a detached state after verification.
+        # Checkout the builder's end commit so the verifier sees the correct
+        # files. Delegates to WorktreeManager to keep HEAD on the run's branch.
         if end_commit and working_dir:
-            branch_name = f"orchestrator/run-{run.id}"
-            # Move the run's branch to end_commit rather than detaching HEAD.
-            # A detached HEAD risks the agent later checking out main (or
-            # another shared branch), whose commits would propagate to the
-            # project root.
-            result = subprocess.run(
-                ["git", "checkout", "-B", branch_name, end_commit],
-                cwd=working_dir,
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                logger.warning(
-                    f"Failed to checkout -B {branch_name} {end_commit} in {working_dir}: "
-                    f"{result.stderr.strip()}"
-                )
+            self._worktree_checkout(run.id, end_commit, working_dir)
 
         context = ExecutionContext(
             run_id=run.id,
