@@ -95,6 +95,10 @@ class StepModel(Base):
     # Human approval (stored as JSON)
     human_approval: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
+    # Conditional steps skip state
+    skipped: Mapped[bool] = mapped_column(Integer, default=0)
+    skip_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+
     # Relationships
     run: Mapped["RunModel"] = relationship("RunModel", back_populates="steps")
     tasks: Mapped[list["TaskModel"]] = relationship(
