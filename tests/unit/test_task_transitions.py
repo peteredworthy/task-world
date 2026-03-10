@@ -514,6 +514,220 @@ def test_step_progression_stops_on_failed_task() -> None:
     assert run.current_step_index == 0  # Stays on step 0, does NOT advance
 
 
+def test_step_progression_with_false_condition_on_next_step() -> None:
+    """When next step's condition is false, it should be skipped and progression continues."""
+    from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig, TaskConfig
+    from orchestrator.workflow.events import BufferingEmitter
+
+    # Create a routine with conditional step
+    routine = RoutineConfig(
+        id="test-routine",
+        name="Test",
+        steps=[
+            StepConfig(
+                id="S1",
+                title="Step 1",
+                tasks=[TaskConfig(id="T1", title="Task 1", task_context="Context")],
+            ),
+            StepConfig(
+                id="S2",
+                title="Step 2 (conditional)",
+                tasks=[TaskConfig(id="T2", title="Task 2", task_context="Context")],
+                condition=StepCondition(when="false"),
+            ),
+            StepConfig(
+                id="S3",
+                title="Step 3",
+                tasks=[TaskConfig(id="T3", title="Task 3", task_context="Context")],
+            ),
+        ],
+    )
+
+    run = Run(
+        id="run-1",
+        repo_name="proj-1",
+        source_branch="main",
+        status=RunStatus.ACTIVE,
+        current_step_index=0,
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S1",
+                tasks=[TaskState(id="t1", config_id="T1", status=TaskStatus.COMPLETED)],
+            ),
+            StepState(
+                id="step-2",
+                config_id="S2",
+                tasks=[TaskState(id="t2", config_id="T2", status=TaskStatus.PENDING)],
+            ),
+            StepState(
+                id="step-3",
+                config_id="S3",
+                tasks=[TaskState(id="t3", config_id="T3", status=TaskStatus.PENDING)],
+            ),
+        ],
+    )
+
+    emitter = BufferingEmitter()
+    from orchestrator.workflow.engine import DefaultClock
+
+    clock = DefaultClock()
+    changed = check_step_progression(run, routine_config=routine, clock=clock, emitter=emitter)
+
+    # Step 1 should be completed
+    assert run.steps[0].completed is True
+    # Step 2 should be skipped and marked completed
+    assert run.steps[1].skipped is True
+    assert run.steps[1].completed is True
+    # Should advance to step 3
+    assert run.current_step_index == 2
+    assert changed is True
+
+    # Check that a StepSkipped event was emitted for step 2
+    from orchestrator.workflow.events import StepSkipped
+
+    skipped_events = [e for e in emitter.events if isinstance(e, StepSkipped)]
+    assert len(skipped_events) == 1
+    assert skipped_events[0].step_index == 1
+    assert skipped_events[0].step_id == "step-2"
+
+
+def test_step_progression_multiple_consecutive_false_conditions() -> None:
+    """Multiple consecutive false-condition steps should all be skipped in sequence."""
+    from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig, TaskConfig
+    from orchestrator.workflow.events import BufferingEmitter, StepSkipped
+    from orchestrator.workflow.engine import DefaultClock
+
+    # Create a routine with multiple consecutive conditional steps
+    routine = RoutineConfig(
+        id="test-routine",
+        name="Test",
+        steps=[
+            StepConfig(
+                id="S1",
+                title="Step 1",
+                tasks=[TaskConfig(id="T1", title="Task 1", task_context="Context")],
+            ),
+            StepConfig(
+                id="S2",
+                title="Step 2 (false condition)",
+                tasks=[TaskConfig(id="T2", title="Task 2", task_context="Context")],
+                condition=StepCondition(when="false"),
+            ),
+            StepConfig(
+                id="S3",
+                title="Step 3 (false condition)",
+                tasks=[TaskConfig(id="T3", title="Task 3", task_context="Context")],
+                condition=StepCondition(when="false"),
+            ),
+            StepConfig(
+                id="S4",
+                title="Step 4 (false condition)",
+                tasks=[TaskConfig(id="T4", title="Task 4", task_context="Context")],
+                condition=StepCondition(when="false"),
+            ),
+            StepConfig(
+                id="S5",
+                title="Step 5",
+                tasks=[TaskConfig(id="T5", title="Task 5", task_context="Context")],
+            ),
+        ],
+    )
+
+    run = Run(
+        id="run-1",
+        repo_name="proj-1",
+        source_branch="main",
+        status=RunStatus.ACTIVE,
+        current_step_index=0,
+        steps=[StepState(id=f"step-{i + 1}", config_id=f"S{i + 1}", tasks=[]) for i in range(5)],
+    )
+
+    emitter = BufferingEmitter()
+    clock = DefaultClock()
+    changed = check_step_progression(run, routine_config=routine, clock=clock, emitter=emitter)
+
+    # All steps 1-4 should be completed
+    for i in range(4):
+        assert run.steps[i].completed is True
+
+    # Steps 2-4 should be skipped
+    for i in range(1, 4):
+        assert run.steps[i].skipped is True
+
+    # Should advance to step 5
+    assert run.current_step_index == 4
+    assert changed is True
+
+    # Check that StepSkipped events were emitted for steps 2, 3, 4
+    skipped_events = [e for e in emitter.events if isinstance(e, StepSkipped)]
+    assert len(skipped_events) == 3
+    assert [e.step_index for e in skipped_events] == [1, 2, 3]
+
+
+def test_step_progression_all_steps_skipped() -> None:
+    """When all steps have false conditions, they should all be skipped and run completes."""
+    from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig, TaskConfig
+    from orchestrator.workflow.events import BufferingEmitter, StepSkipped
+    from orchestrator.workflow.engine import DefaultClock
+
+    # Create a routine where all steps have false conditions
+    routine = RoutineConfig(
+        id="test-routine",
+        name="Test",
+        steps=[
+            StepConfig(
+                id="S1",
+                title="Step 1",
+                tasks=[TaskConfig(id="T1", title="Task 1", task_context="Context")],
+                condition=StepCondition(when="false"),
+            ),
+            StepConfig(
+                id="S2",
+                title="Step 2",
+                tasks=[TaskConfig(id="T2", title="Task 2", task_context="Context")],
+                condition=StepCondition(when="false"),
+            ),
+            StepConfig(
+                id="S3",
+                title="Step 3",
+                tasks=[TaskConfig(id="T3", title="Task 3", task_context="Context")],
+                condition=StepCondition(when="false"),
+            ),
+        ],
+    )
+
+    run = Run(
+        id="run-1",
+        repo_name="proj-1",
+        source_branch="main",
+        status=RunStatus.ACTIVE,
+        current_step_index=0,
+        steps=[StepState(id=f"step-{i + 1}", config_id=f"S{i + 1}", tasks=[]) for i in range(3)],
+    )
+
+    emitter = BufferingEmitter()
+    clock = DefaultClock()
+    changed = check_step_progression(run, routine_config=routine, clock=clock, emitter=emitter)
+
+    # All steps should be completed
+    for i in range(3):
+        assert run.steps[i].completed is True
+
+    # All steps should be skipped
+    for i in range(3):
+        assert run.steps[i].skipped is True
+
+    # current_step_index should advance past the last step
+    assert run.current_step_index >= len(run.steps)
+    assert changed is True
+
+    # Check that StepSkipped events were emitted for all steps
+    skipped_events = [e for e in emitter.events if isinstance(e, StepSkipped)]
+    assert len(skipped_events) == 3
+    assert [e.step_index for e in skipped_events] == [0, 1, 2]
+
+
 # --- check_run_completion ---
 
 
