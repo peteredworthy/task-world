@@ -819,6 +819,119 @@ async def approve_step(
     )
 
 
+@router.post("/{run_id}/steps/{step_id}/skip", response_model=RunResponse)
+async def skip_step(
+    run_id: str,
+    step_id: str,
+    repository: Annotated[RunRepository, Depends(get_run_repository)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
+    event_store: Annotated[EventStore, Depends(get_event_store)],
+) -> RunResponse:
+    """Skip a manual gate step.
+
+    Marks the step as skipped, advances to the next step (evaluating conditions),
+    and resumes the run. Only allowed when the run is paused at a manual gate.
+    """
+    # Get the run
+    run = await repository.get(run_id)
+
+    # Validate that the run is paused at a manual gate
+    if run.status != RunStatus.PAUSED or run.pause_reason != "manual_gate":
+        raise HTTPException(
+            status_code=409,
+            detail="Run must be paused at a manual gate to skip a step",
+        )
+
+    # Find the current actionable step (may not be at current_step_index if previous steps were already completed/skipped)
+    actionable_index = run.current_step_index
+    while actionable_index < len(run.steps) and run.steps[actionable_index].completed:
+        actionable_index += 1
+
+    # Validate step exists
+    if actionable_index >= len(run.steps):
+        raise HTTPException(
+            status_code=409,
+            detail="No more steps to process",
+        )
+
+    step = run.steps[actionable_index]
+
+    # Validate this is the step being skipped
+    if step.id != step_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Step {step_id} is not the current step ({step.id})",
+        )
+
+    # Mark the step as skipped
+    from datetime import datetime, timezone
+    from orchestrator.workflow.transitions import check_step_progression
+    from orchestrator.workflow.events import StepSkipped, BufferingEmitter
+
+    step.skipped = True
+    step.skip_reason = "manual_skip"
+    step.completed = True
+
+    # Create a buffering emitter to collect events
+    buffer = BufferingEmitter()
+
+    # Emit StepSkipped event
+    buffer.emit(
+        StepSkipped(
+            timestamp=datetime.now(timezone.utc),
+            run_id=run_id,
+            step_index=actionable_index,
+            step_id=step.id,
+            reason="manual_skip",
+        )
+    )
+
+    # Advance to next step (this will handle condition evaluation for subsequent steps)
+    run.current_step_index = actionable_index + 1
+
+    # Use check_step_progression to evaluate conditions on the next step
+    # This will handle cascading condition evaluations and potential pauses at other manual gates
+    routine_config = None
+    if run.routine_embedded is not None:
+        try:
+            routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        except ValidationError:
+            pass
+
+    # Get run config from service if available
+    run_config = getattr(run, "run_config", {})
+
+    check_step_progression(
+        run,
+        routine_config=routine_config,
+        clock=None,
+        emitter=buffer,
+        worktree_path=None,
+        run_config=run_config,
+    )
+
+    # Save the run
+    await repository.save(run)
+    await session.commit()
+
+    # Persist the buffered events
+    events = buffer.drain()
+    if events:
+        await event_store.append_batch(events)
+
+    # If the run is still paused (e.g., at another manual gate), don't resume it
+    # Otherwise, resume the run
+    if run.status != RunStatus.PAUSED:
+        await service.resume_run(run_id)
+    else:
+        # Just make sure the run is reloaded from the database
+        run = await repository.get(run_id)
+
+    return _run_to_response(run)
+
+
 @router.get("/{run_id}/guidance", response_model=GuidanceResponse)
 async def get_guidance(
     run_id: str,
