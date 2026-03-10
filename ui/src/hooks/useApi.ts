@@ -168,11 +168,19 @@ export function usePauseRun() {
 export function useResumeRun() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ runId, agentType, agentConfig }: {
+    mutationFn: ({ runId, agentType, agentConfig, resumeStrategy }: {
       runId: string;
       agentType?: string;
       agentConfig?: Record<string, unknown>;
-    }) => api.resumeRun(runId, agentType || agentConfig ? { agent_type: agentType, agent_config: agentConfig } : undefined),
+      resumeStrategy?: string;
+    }) => {
+      const hasPayload = agentType || agentConfig || resumeStrategy;
+      return api.resumeRun(runId, hasPayload ? {
+        agent_type: agentType,
+        agent_config: agentConfig,
+        resume_strategy: resumeStrategy,
+      } : undefined);
+    },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['runs'] }),
   });
 }

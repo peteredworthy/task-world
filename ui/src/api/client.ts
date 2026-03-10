@@ -317,7 +317,7 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/pause', { method: 'POST' });
   },
 
-  resumeRun(runId: string, payload?: { agent_type?: string; agent_config?: Record<string, unknown> }): Promise<RunResponse> {
+  resumeRun(runId: string, payload?: { agent_type?: string; agent_config?: Record<string, unknown>; resume_strategy?: string }): Promise<RunResponse> {
     return fetchApi('/api/runs/' + runId + '/resume', {
       method: 'POST',
       body: payload ? JSON.stringify(payload) : undefined,

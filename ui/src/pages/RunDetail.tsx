@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack } from '../hooks/useApi';
+import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack, useResumeRun } from '../hooks/useApi';
 import { useBranchStatus } from '../hooks/useReview';
 import { useActivityStream } from '../hooks/useActivityStream';
 import { usePendingActions } from '../hooks/usePendingActions';
@@ -62,6 +62,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { status: wsStatus, reconnect: wsReconnect } = useWebSocketStatus();
   const pauseRun = usePauseRun();
   const cancelRun = useCancelRun();
+  const resumeRunMutation = useResumeRun();
   const mergeBack = useMergeBack();
   const { data: branchStatus } = useBranchStatus(runId);
   const { isPruneMode, onTogglePruneMode, onOpenBackMergeModal } = useReviewMerge();
@@ -186,6 +187,8 @@ function RunDetailInner({ runId }: { runId: string }) {
                       gate_blocked: 'Paused — checklist gate not satisfied',
                       recovery_loop: 'Paused — recovery loop detected',
                       unexpected_error: 'Paused — unexpected error',
+                      health_check_dirty: 'Paused — tests failing with uncommitted changes',
+                      health_check_failed: 'Paused — health check failed',
                       agent_health_check_failed: 'Paused — agent health check failed',
                       agent_not_running_on_startup: 'Paused — agent was not running on startup',
                       recovered: 'Paused — recovered from failure',
@@ -476,6 +479,58 @@ function RunDetailInner({ runId }: { runId: string }) {
                     {run.last_error}
                   </p>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* Dirty health check banner — tests failing with uncommitted changes */}
+          {run.status === 'paused' && run.pause_reason === 'health_check_dirty' && (
+            <div className="mb-6 rounded-md bg-amber-500/10 border border-amber-500/30 px-4 py-3">
+              <div className="flex items-start gap-3">
+                <svg className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                </svg>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-amber-300">
+                    Health check failed with uncommitted changes
+                  </p>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    The worktree has uncommitted changes and the test suite is failing. The agent may have been mid-task. You can continue anyway or discard the uncommitted changes and retry.
+                  </p>
+                  {run.last_error && (
+                    <p className="mt-1.5 text-xs text-text-secondary bg-bg-elevated rounded px-2 py-1 font-mono break-all max-h-24 overflow-y-auto">
+                      {run.last_error}
+                    </p>
+                  )}
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => {
+                        setMutationError(null);
+                        resumeRunMutation.mutate(
+                          { runId: run.id, resumeStrategy: 'continue_dirty' },
+                          { onError: handleMutationError('resume') },
+                        );
+                      }}
+                      disabled={resumeRunMutation.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-md hover:bg-amber-500/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {resumeRunMutation.isPending ? 'Resuming...' : 'Continue Anyway'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMutationError(null);
+                        resumeRunMutation.mutate(
+                          { runId: run.id, resumeStrategy: 'reset_worktree' },
+                          { onError: handleMutationError('resume') },
+                        );
+                      }}
+                      disabled={resumeRunMutation.isPending}
+                      className="px-3 py-1.5 text-xs font-medium text-status-failed bg-status-failed/10 border border-status-failed/30 rounded-md hover:bg-status-failed/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {resumeRunMutation.isPending ? 'Resetting...' : 'Discard Changes & Retry'}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}

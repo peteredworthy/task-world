@@ -441,6 +441,7 @@ async def resume_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
+    repository: Annotated[RunRepository, Depends(get_run_repository)],
     request: ResumeRunRequest | None = None,
 ) -> RunResponse:
     """Resume a run (PAUSED -> ACTIVE), optionally changing the agent.
@@ -453,6 +454,16 @@ async def resume_run(
     agent_type = AgentRunnerType(request.agent_type) if request and request.agent_type else None
     agent_config = request.agent_config if request and request.agent_config else None
     resume_strategy = request.resume_strategy if request else None
+    skip_health_check = False
+
+    # Handle dirty-worktree resume strategies before changing run state
+    if resume_strategy in ("reset_worktree", "continue_dirty"):
+        current_run = await repository.get(run_id)
+        if resume_strategy == "reset_worktree" and current_run.worktree_path:
+            AgentRunnerExecutor._reset_worktree(current_run.worktree_path)
+            logger.info(f"API: Reset worktree for run {run_id}")
+        elif resume_strategy == "continue_dirty":
+            skip_health_check = True
 
     run = await service.resume_run(
         run_id,
@@ -463,7 +474,10 @@ async def resume_run(
 
     # Spawn agent if this is a managed agent type
     if run.agent_type is not None:
-        spawned = executor.spawn_for_run(run.id, run.agent_type, run.agent_config)
+        spawned = executor.spawn_for_run(
+            run.id, run.agent_type, run.agent_config,
+            skip_health_check=skip_health_check,
+        )
         if spawned:
             logger.info(f"API: Spawned {run.agent_type.value} agent for resumed run {run_id}")
 

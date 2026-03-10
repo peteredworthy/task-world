@@ -167,6 +167,39 @@ class AgentRunnerExecutor:
             lock_manager=self._lock_manager,
         )
 
+    @staticmethod
+    def _is_worktree_dirty(project_dir: str) -> bool:
+        """Check if the worktree has uncommitted changes."""
+        try:
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            return bool(result.stdout.strip())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _reset_worktree(project_dir: str) -> None:
+        """Discard all uncommitted changes in the worktree."""
+        subprocess.run(
+            ["git", "checkout", "."],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        subprocess.run(
+            ["git", "clean", "-fd"],
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
     async def _run_project_health_check(self, project_dir: str) -> str | None:
         """Run the project test suite before the first task attempt.
 
@@ -397,7 +430,11 @@ class AgentRunnerExecutor:
             logger.warning(f"Run {run_id}: unexpected error in agent health monitor: {e}")
 
     async def _run_agent_loop(
-        self, run_id: str, agent_type: AgentRunnerType, agent_config: dict[str, Any]
+        self,
+        run_id: str,
+        agent_type: AgentRunnerType,
+        agent_config: dict[str, Any],
+        skip_health_check: bool = False,
     ) -> None:
         """Main loop that runs agent for all tasks in a run.
 
@@ -417,7 +454,7 @@ class AgentRunnerExecutor:
         summary_cache = SummaryCache()
 
         # Run project health check before the first task attempt.
-        health_check_done = False
+        health_check_done = skip_health_check
 
         try:
             while True:
@@ -514,13 +551,23 @@ class AgentRunnerExecutor:
                         )
                         health_error = await self._run_project_health_check(run.worktree_path)
                         if health_error:
-                            logger.error(f"Run {run_id}: pre-run health check failed, pausing run")
+                            # Check if the worktree has uncommitted changes.
+                            # If dirty, the agent was mid-work — let the user decide.
+                            dirty = await asyncio.get_running_loop().run_in_executor(
+                                None,
+                                lambda: self._is_worktree_dirty(run.worktree_path or ""),
+                            )
+                            reason = "health_check_dirty" if dirty else "health_check_failed"
+                            logger.error(
+                                f"Run {run_id}: pre-run health check failed "
+                                f"(dirty={dirty}), pausing run"
+                            )
                             await self._broadcaster.emit_health_check_event(
                                 run_id, "failed", health_error
                             )
                             await service.pause_run(
                                 run_id,
-                                reason="health_check_failed",
+                                reason=reason,
                                 error_detail=health_error,
                             )
                             await session.commit()
@@ -1543,7 +1590,11 @@ class AgentRunnerExecutor:
         )
 
     def spawn_for_run(
-        self, run_id: str, agent_type: AgentRunnerType, agent_config: dict[str, Any]
+        self,
+        run_id: str,
+        agent_type: AgentRunnerType,
+        agent_config: dict[str, Any],
+        skip_health_check: bool = False,
     ) -> bool:
         """Spawn an agent for a run in the background.
 
@@ -1551,6 +1602,7 @@ class AgentRunnerExecutor:
             run_id: The run ID
             agent_type: The type of agent to spawn
             agent_config: Configuration for the agent
+            skip_health_check: If True, skip the pre-run health check
 
         Returns:
             True if an agent was spawned, False if spawning is disabled or
@@ -1577,7 +1629,9 @@ class AgentRunnerExecutor:
         if "pid" in agent_config:
             asyncio.create_task(self._attempt_store.persist_agent_metadata(run_id, {"pid": None}))
 
-        task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, clean_config))
+        task = asyncio.create_task(
+            self._run_agent_loop(run_id, agent_type, clean_config, skip_health_check=skip_health_check)
+        )
         task.add_done_callback(lambda t: self._on_agent_loop_done(run_id, t))
         self._running_tasks[run_id] = task
         logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
