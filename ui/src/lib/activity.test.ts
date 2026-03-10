@@ -47,6 +47,9 @@ function makeStep(overrides: Partial<StepSummary> = {}): StepSummary {
     tasks: [makeTask()],
     has_approval_gate: false,
     approval_status: null,
+    skipped: false,
+    skip_reason: null,
+    condition: null,
     ...overrides,
   };
 }

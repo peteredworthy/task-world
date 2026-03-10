@@ -16,6 +16,9 @@ function makeStep(stepId: string, completed: boolean): StepSummary {
     has_approval_gate: false,
     approval_status: null,
     tasks: [],
+    skipped: false,
+    skip_reason: null,
+    condition: null,
   };
 }
 
