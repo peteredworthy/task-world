@@ -183,7 +183,7 @@ class AgentRunnerExecutor:
             return False
 
     @staticmethod
-    def _reset_worktree(project_dir: str) -> None:
+    def reset_worktree(project_dir: str) -> None:
         """Discard all uncommitted changes in the worktree."""
         subprocess.run(
             ["git", "checkout", "."],
@@ -1441,26 +1441,21 @@ class AgentRunnerExecutor:
         # being left in a detached state after verification.
         if end_commit and working_dir:
             branch_name = f"orchestrator/run-{run.id}"
-            # First, reset the branch to the end_commit
-            reset_result = subprocess.run(
+            # Move the run's branch to end_commit rather than detaching HEAD.
+            # A detached HEAD risks the agent later checking out main (or
+            # another shared branch), whose commits would propagate to the
+            # project root.
+            result = subprocess.run(
                 ["git", "checkout", "-B", branch_name, end_commit],
                 cwd=working_dir,
                 capture_output=True,
                 text=True,
             )
-            if reset_result.returncode != 0:
-                # Fallback to plain checkout if branch reset fails
-                checkout = subprocess.run(
-                    ["git", "checkout", end_commit],
-                    cwd=working_dir,
-                    capture_output=True,
-                    text=True,
+            if result.returncode != 0:
+                logger.warning(
+                    f"Failed to checkout -B {branch_name} {end_commit} in {working_dir}: "
+                    f"{result.stderr.strip()}"
                 )
-                if checkout.returncode != 0:
-                    logger.warning(
-                        f"Failed to checkout end_commit {end_commit} in {working_dir}: "
-                        f"{checkout.stderr.strip()}"
-                    )
 
         context = ExecutionContext(
             run_id=run.id,
@@ -1630,7 +1625,9 @@ class AgentRunnerExecutor:
             asyncio.create_task(self._attempt_store.persist_agent_metadata(run_id, {"pid": None}))
 
         task = asyncio.create_task(
-            self._run_agent_loop(run_id, agent_type, clean_config, skip_health_check=skip_health_check)
+            self._run_agent_loop(
+                run_id, agent_type, clean_config, skip_health_check=skip_health_check
+            )
         )
         task.add_done_callback(lambda t: self._on_agent_loop_done(run_id, t))
         self._running_tasks[run_id] = task

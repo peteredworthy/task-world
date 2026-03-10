@@ -460,7 +460,7 @@ async def resume_run(
     if resume_strategy in ("reset_worktree", "continue_dirty"):
         current_run = await repository.get(run_id)
         if resume_strategy == "reset_worktree" and current_run.worktree_path:
-            AgentRunnerExecutor._reset_worktree(current_run.worktree_path)
+            AgentRunnerExecutor.reset_worktree(current_run.worktree_path)
             logger.info(f"API: Reset worktree for run {run_id}")
         elif resume_strategy == "continue_dirty":
             skip_health_check = True
@@ -475,7 +475,9 @@ async def resume_run(
     # Spawn agent if this is a managed agent type
     if run.agent_type is not None:
         spawned = executor.spawn_for_run(
-            run.id, run.agent_type, run.agent_config,
+            run.id,
+            run.agent_type,
+            run.agent_config,
             skip_health_check=skip_health_check,
         )
         if spawned:
