@@ -43,6 +43,7 @@ from orchestrator.api.schemas.runs import (
     ResumeRunRequest,
     RunListResponse,
     RunResponse,
+    StepConditionSchema,
     StepSummary,
     TaskSummary,
     get_agent_display_name,
@@ -91,66 +92,86 @@ def _run_to_response(run: Run) -> RunResponse:
             # Degrade gracefully — gate info won't be available.
             pass
 
-    steps = [
-        StepSummary(
-            id=step.id,
-            config_id=step.config_id,
-            title=step.title,
-            completed=step.completed,
-            tasks=[
-                TaskSummary(
-                    id=task.id,
-                    config_id=task.config_id,
-                    title=task.title,
-                    status=task.status.value,
-                    current_attempt=task.current_attempt,
-                    max_attempts=task.max_attempts,
-                    grade_summary=[
-                        GradeSummaryItem(
-                            grade=item.grade,
-                            priority=item.priority.value,
-                        )
-                        for item in task.checklist
-                    ],
-                    attempts_summary=[
-                        AttemptOutcome(
-                            attempt_num=att.attempt_num,
-                            outcome=att.outcome,
-                        )
-                        for att in task.attempts
-                    ],
-                    pending_action_type=task.pending_action_type,
-                    pending_clarification_count=None,  # Will be populated by async route if needed
-                    parent_task_id=task.parent_task_id,
-                )
-                for task in step.tasks
-            ],
-            has_approval_gate=(
-                routine_config is not None
-                and any(
-                    s.id == step.config_id
-                    and s.gate is not None
-                    and s.gate.type == GateType.HUMAN_APPROVAL
-                    for s in routine_config.steps
-                )
-            ),
-            approval_status=(
-                "approved"
-                if step.human_approval is not None
-                else "pending"
-                if routine_config is not None
-                and any(
-                    s.id == step.config_id
-                    and s.gate is not None
-                    and s.gate.type == GateType.HUMAN_APPROVAL
-                    for s in routine_config.steps
-                )
-                and not step.completed
-                else None
-            ),
+    steps: list[StepSummary] = []
+    for step in run.steps:
+        # Find the corresponding step config to get condition info
+        step_config = None
+        if routine_config is not None:
+            for s in routine_config.steps:
+                if s.id == step.config_id:
+                    step_config = s
+                    break
+
+        # Build condition schema if step has a condition
+        condition = None
+        if step_config is not None and step_config.condition is not None:
+            condition = StepConditionSchema(
+                when=step_config.condition.when,
+                repeat_for=step_config.condition.repeat_for,
+            )
+
+        steps.append(
+            StepSummary(
+                id=step.id,
+                config_id=step.config_id,
+                title=step.title,
+                completed=step.completed,
+                tasks=[
+                    TaskSummary(
+                        id=task.id,
+                        config_id=task.config_id,
+                        title=task.title,
+                        status=task.status.value,
+                        current_attempt=task.current_attempt,
+                        max_attempts=task.max_attempts,
+                        grade_summary=[
+                            GradeSummaryItem(
+                                grade=item.grade,
+                                priority=item.priority.value,
+                            )
+                            for item in task.checklist
+                        ],
+                        attempts_summary=[
+                            AttemptOutcome(
+                                attempt_num=att.attempt_num,
+                                outcome=att.outcome,
+                            )
+                            for att in task.attempts
+                        ],
+                        pending_action_type=task.pending_action_type,
+                        pending_clarification_count=None,  # Will be populated by async route if needed
+                        parent_task_id=task.parent_task_id,
+                    )
+                    for task in step.tasks
+                ],
+                has_approval_gate=(
+                    routine_config is not None
+                    and any(
+                        s.id == step.config_id
+                        and s.gate is not None
+                        and s.gate.type == GateType.HUMAN_APPROVAL
+                        for s in routine_config.steps
+                    )
+                ),
+                approval_status=(
+                    "approved"
+                    if step.human_approval is not None
+                    else "pending"
+                    if routine_config is not None
+                    and any(
+                        s.id == step.config_id
+                        and s.gate is not None
+                        and s.gate.type == GateType.HUMAN_APPROVAL
+                        for s in routine_config.steps
+                    )
+                    and not step.completed
+                    else None
+                ),
+                skipped=step.skipped,
+                skip_reason=step.skip_reason,
+                condition=condition,
+            )
         )
-        for step in run.steps
-    ]
 
     # Compute cost and model hint.
     actual_cost_usd = 0.0
