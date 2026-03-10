@@ -889,6 +889,23 @@ class AgentRunnerExecutor:
                 message="Cannot run agent without worktree_path set on run",
             )
         working_dir = run.worktree_path
+
+        # Ensure the worktree is on its named branch (not detached HEAD).
+        # Verification checkouts can leave HEAD detached; re-attach so the
+        # builder's commits land on the run's branch.
+        branch_name = f"orchestrator/run-{run.id}"
+        reattach = subprocess.run(
+            ["git", "checkout", branch_name],
+            cwd=working_dir,
+            capture_output=True,
+            text=True,
+        )
+        if reattach.returncode != 0:
+            logger.warning(
+                f"Could not re-attach HEAD to {branch_name} in {working_dir}: "
+                f"{reattach.stderr.strip()}"
+            )
+
         # Resolve clarifications artifact path if configured
         from orchestrator.workflow.clarifications import (
             decisions_from_config,
@@ -1372,18 +1389,31 @@ class AgentRunnerExecutor:
 
         # Checkout the builder's end commit on the host worktree so the
         # verifier (including Docker bind-mounts) sees the correct files.
+        # We reset the branch pointer to this commit rather than detaching HEAD,
+        # so the worktree stays on its named branch. This prevents HEAD from
+        # being left in a detached state after verification.
         if end_commit and working_dir:
-            checkout = subprocess.run(
-                ["git", "checkout", end_commit],
+            branch_name = f"orchestrator/run-{run.id}"
+            # First, reset the branch to the end_commit
+            reset_result = subprocess.run(
+                ["git", "checkout", "-B", branch_name, end_commit],
                 cwd=working_dir,
                 capture_output=True,
                 text=True,
             )
-            if checkout.returncode != 0:
-                logger.warning(
-                    f"Failed to checkout end_commit {end_commit} in {working_dir}: "
-                    f"{checkout.stderr.strip()}"
+            if reset_result.returncode != 0:
+                # Fallback to plain checkout if branch reset fails
+                checkout = subprocess.run(
+                    ["git", "checkout", end_commit],
+                    cwd=working_dir,
+                    capture_output=True,
+                    text=True,
                 )
+                if checkout.returncode != 0:
+                    logger.warning(
+                        f"Failed to checkout end_commit {end_commit} in {working_dir}: "
+                        f"{checkout.stderr.strip()}"
+                    )
 
         context = ExecutionContext(
             run_id=run.id,

@@ -117,26 +117,39 @@ class WorktreeManager:
         # Use short counter-based directory name
         worktree_path = self._worktree_dir / f"r{self._next_counter()}"
 
-        # Create worktree with new branch
-        cmd = [
-            "git",
-            "worktree",
-            "add",
-            "-b",
-            branch_name,
-            str(worktree_path),
-            base_branch,
-        ]
+        # Create the branch first, then the worktree. This ensures the
+        # worktree is attached to its own isolated branch from the start,
+        # preventing any possibility of commits propagating back to
+        # the base branch's working tree.
+        branch_cmd = ["git", "branch", branch_name, base_branch]
         try:
             subprocess.run(
-                cmd,
+                branch_cmd,
                 cwd=self._repo,
                 check=True,
                 capture_output=True,
                 text=True,
             )
         except subprocess.CalledProcessError as e:
-            raise GitCommandError(" ".join(cmd), e.returncode, e.stderr) from e
+            raise GitCommandError(" ".join(branch_cmd), e.returncode, e.stderr) from e
+
+        worktree_cmd = ["git", "worktree", "add", str(worktree_path), branch_name]
+        try:
+            subprocess.run(
+                worktree_cmd,
+                cwd=self._repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            # Clean up the branch if worktree creation fails
+            subprocess.run(
+                ["git", "branch", "-D", branch_name],
+                cwd=self._repo,
+                capture_output=True,
+            )
+            raise GitCommandError(" ".join(worktree_cmd), e.returncode, e.stderr) from e
 
         # Symlink .venv from main repo to avoid duplicating the virtual environment
         main_venv = self._repo / ".venv"
