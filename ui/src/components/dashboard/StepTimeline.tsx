@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ApiError } from '../../api/client';
 import { useTransitionBack } from '../../hooks/useApi';
 import type { StepSummary } from '../../types';
-import { getStepState, stepBadgeClasses } from './stepTimelineUtils';
+import { getStepState, stepBadgeClasses } from '../../lib/stepTimelineUtils';
 
 interface StepTimelineProps {
   runId: string;

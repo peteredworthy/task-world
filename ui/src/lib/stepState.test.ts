@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getStepState } from '../components/dashboard/stepTimelineUtils';
+import { getStepState } from './stepTimelineUtils';
 import type { StepSummary, TaskSummary } from '../types';
 import type { TaskStatus } from '../types';
 
