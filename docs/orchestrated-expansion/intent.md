@@ -2,7 +2,7 @@
 
 ## Original Request
 
-Give running tasks the ability to request additional work through the orchestrator, replacing untracked tool escape hatches (agents shelling out to sub-agents) with tracked, verified, visible work items. The key constraint is **append-only**: agents can add new tasks and steps but can never remove or weaken existing requirements. [S-01/T-02/R1, S-01/T-04/R1, S-03/T-02/R3, S-05/T-01/R1]
+Give running tasks the ability to request additional work through the orchestrator, replacing untracked tool escape hatches (agents shelling out to sub-agents) with tracked, verified, visible work items. The key constraint is **append-only**: agents can add new tasks and steps but can never remove or weaken existing requirements. [S-01/T-04/R4, S-01/T-02/R1, S-01/T-04/R1, S-03/T-02/R3, S-05/T-01/R1]
 
 ## Goal
 

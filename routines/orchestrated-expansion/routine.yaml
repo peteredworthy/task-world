@@ -161,6 +161,9 @@ routine:
             - id: "R3"
               desc: "ExpansionRequest with type=add_next_step and empty tasks raises ValidationError"
               priority: critical
+            - id: "R4"
+              desc: "ExpansionRequest.type only allows additive operations (add_subtask, add_peer_task, add_next_step) — no remove or modify type exists, enforcing the append-only invariant"
+              priority: critical
           auto_verify:
             items:
               - id: "schemas_importable"
@@ -171,6 +174,9 @@ routine:
                 must: true
               - id: "add_next_step_empty_tasks"
                 cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import ExpansionRequest; from pydantic import ValidationError; raised = False\ntry:\n  ExpansionRequest(type='add_next_step', title='t', context='c', justification='j', tasks=[])\nexcept ValidationError:\n  raised = True\nassert raised, 'Should have raised ValidationError'\nprint('OK')\""
+                must: true
+              - id: "no_remove_modify_types"
+                cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import ExpansionRequest; import typing; type_field = ExpansionRequest.model_fields['type']; allowed = typing.get_args(type_field.annotation); assert all(t.startswith('add_') for t in allowed), f'Non-additive types found: {allowed}'; assert 'remove' not in str(allowed).lower() and 'delete' not in str(allowed).lower() and 'modify' not in str(allowed).lower(); print('OK - only additive types:', allowed)\""
                 must: true
           retry:
             max_attempts: 2
