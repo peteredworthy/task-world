@@ -2,11 +2,11 @@
 
 ## Original Request
 
-Give running tasks the ability to request additional work through the orchestrator, replacing untracked tool escape hatches (agents shelling out to sub-agents) with tracked, verified, visible work items. The key constraint is **append-only**: agents can add new tasks and steps but can never remove or weaken existing requirements. [S-01/T-01/R1, S-01/T-02/R1]
+Give running tasks the ability to request additional work through the orchestrator, replacing untracked tool escape hatches (agents shelling out to sub-agents) with tracked, verified, visible work items. The key constraint is **append-only**: agents can add new tasks and steps but can never remove or weaken existing requirements. [S-01/T-02/R1, S-01/T-04/R1, S-03/T-02/R3, S-05/T-01/R1]
 
 ## Goal
 
-Enable builder agents to dynamically expand the scope of a run during execution — adding subtasks, peer tasks, or entirely new steps — while keeping all work visible in the UI, subject to the same build/verify pipeline, and bounded by configurable budget limits. [S-01/T-01/R1, S-01/T-01/R2] This replaces the common pattern of agents silently shelling out to sub-processes or doing all discovered work within a single task context. [S-06/T-01/R1, S-06/T-02/R1]
+Enable builder agents to dynamically expand the scope of a run during execution — adding subtasks, peer tasks, or entirely new steps — while keeping all work visible in the UI, subject to the same build/verify pipeline, and bounded by configurable budget limits. [S-01/T-01/R1, S-01/T-01/R2, S-05/T-01/R1, S-05/T-01/R3, S-07/T-02/R1] This replaces the common pattern of agents silently shelling out to sub-processes or doing all discovered work within a single task context. [S-06/T-01/R1, S-06/T-02/R1]
 
 ## Scope
 

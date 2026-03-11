@@ -267,8 +267,8 @@ routine:
               priority: critical
           auto_verify:
             items:
-              - id: "migration_file_exists"
-                cmd: "ls alembic/versions/*expansion* 2>/dev/null || ls alembic/versions/*add_expansion* 2>/dev/null"
+              - id: "migration_file_content"
+                cmd: "uv run python -c \"import glob; files = glob.glob('src/orchestrator/db/migrations/versions/*.py'); assert len(files) > 0, 'No migration files found in src/orchestrator/db/migrations/versions/'; content = ''.join(open(f).read() for f in files); assert 'is_expansion' in content, 'is_expansion column missing from migration'; assert 'expansion_count' in content, 'expansion_count column missing from migration'; assert 'expansion_justification' in content, 'expansion_justification column missing from migration'; print('OK')\""
                 must: true
               - id: "migration_applies"
                 cmd: "uv run alembic upgrade head"
@@ -658,8 +658,8 @@ routine:
               priority: critical
           auto_verify:
             items:
-              - id: "app_imports_clean"
-                cmd: "uv run python -c \"from orchestrator.api.app import app; print('OK')\""
+              - id: "expand_routes_registered"
+                cmd: "uv run python -c \"from orchestrator.api.app import app; routes = [str(getattr(r, 'path', '')) for r in app.routes]; expand_routes = [r for r in routes if 'expand' in r and ('task' in r or 'run' in r)]; assert len(expand_routes) >= 2, f'Expected at least 2 expand routes (expand + expand/approve), found: {expand_routes}'; print('OK - expand routes:', expand_routes)\""
                 must: true
               - id: "pyright_router"
                 cmd: "uv run pyright src/orchestrator/api/routers/tasks.py"
@@ -861,7 +861,7 @@ routine:
                 cmd: "uv run python -c \"from orchestrator.api.app import app; routes = [str(r.path) for r in app.routes]; print([r for r in routes if 'mcp' in r][:5]); print('OK')\""
                 must: true
               - id: "expand_task_in_mcp"
-                cmd: "grep -r 'expand_task' src/orchestrator/api/ --include='*.py' -l"
+                cmd: "uv run python -c \"from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS; names = [t['name'] for t in ORCHESTRATOR_TOOLS]; assert any('expand_task' in n for n in names), f'orchestrator_expand_task not in ORCHESTRATOR_TOOLS: {names}'; print('OK')\""
                 must: true
           retry:
             max_attempts: 3
@@ -913,10 +913,10 @@ routine:
           auto_verify:
             items:
               - id: "task_type_fields"
-                cmd: "grep -q 'is_expansion' ui/src/types/tasks.ts"
+                cmd: "node -e \"const {execSync}=require('child_process'),fs=require('fs'); const f='ui/src/types/_ts_assert_task.ts'; fs.writeFileSync(f,'import type {Task} from \\\"./tasks\\\"; const _a:(boolean|undefined)=(null as any as Task).is_expansion; const _b:(string|undefined)=(null as any as Task).expanded_from_task_id; const _c:(string|undefined)=(null as any as Task).expansion_justification;'); try{execSync('cd ui && npx tsc --noEmit',{stdio:\\\"inherit\\\"})}finally{fs.unlinkSync(f)}; console.log('OK');\""
                 must: true
               - id: "run_type_fields"
-                cmd: "grep -q 'expansion_count' ui/src/types/runs.ts && grep -q 'ExpansionLimits' ui/src/types/runs.ts"
+                cmd: "node -e \"const {execSync}=require('child_process'),fs=require('fs'); const f='ui/src/types/_ts_assert_run.ts'; fs.writeFileSync(f,'import type {Run,ExpansionLimits} from \\\"./runs\\\"; const _d:(number|undefined)=(null as any as Run).expansion_count; const _e:(ExpansionLimits|undefined)=(null as any as Run).expansion_limits;'); try{execSync('cd ui && npx tsc --noEmit',{stdio:\\\"inherit\\\"})}finally{fs.unlinkSync(f)}; console.log('OK');\""
                 must: true
               - id: "typescript_check"
                 cmd: "cd ui && npx tsc --noEmit"
@@ -944,11 +944,8 @@ routine:
               priority: critical
           auto_verify:
             items:
-              - id: "expanded_badge_text"
-                cmd: "grep -q 'Expanded' ui/src/components/detail/TaskDetailCard.tsx"
-                must: true
-              - id: "is_expansion_check"
-                cmd: "grep -q 'is_expansion' ui/src/components/detail/TaskDetailCard.tsx"
+              - id: "expanded_badge_conditional"
+                cmd: "node -e \"const fs=require('fs'); const code=fs.readFileSync('ui/src/components/detail/TaskDetailCard.tsx','utf8'); if(!/(task\\.is_expansion|is_expansion\\s*&&|is_expansion\\s*\\?)/.test(code)) throw new Error('is_expansion not used as conditional render in TaskDetailCard'); if(!/Expanded/.test(code)) throw new Error('Expanded badge text missing from TaskDetailCard'); if(!/(expanded_from_task_id)/.test(code)) throw new Error('expanded_from_task_id not referenced for provenance display'); console.log('OK');\""
                 must: true
               - id: "typescript_check"
                 cmd: "cd ui && npx tsc --noEmit"
@@ -988,10 +985,10 @@ routine:
           auto_verify:
             items:
               - id: "step_timeline_expansion"
-                cmd: "grep -q 'is_expansion' ui/src/components/dashboard/StepTimeline.tsx"
+                cmd: "node -e \"const fs=require('fs'); const code=fs.readFileSync('ui/src/components/dashboard/StepTimeline.tsx','utf8'); if(!/(step\\.is_expansion|is_expansion\\s*&&|is_expansion\\s*\\?)/.test(code)) throw new Error('is_expansion not used as conditional in StepTimeline'); console.log('OK');\""
                 must: true
               - id: "activity_feed_expansion"
-                cmd: "grep -qi 'task_expanded\\|TaskExpanded' ui/src/components/detail/ActivityFeed.tsx"
+                cmd: "node -e \"const fs=require('fs'); const code=fs.readFileSync('ui/src/components/detail/ActivityFeed.tsx','utf8'); if(!/task_expanded|TaskExpanded/i.test(code)) throw new Error('task_expanded event type not handled in ActivityFeed'); if(!/(expansion_type|justification)/.test(code)) throw new Error('expansion_type or justification not rendered in ActivityFeed task_expanded handler'); console.log('OK');\""
                 must: true
               - id: "typescript_check"
                 cmd: "cd ui && npx tsc --noEmit"
@@ -1026,11 +1023,11 @@ routine:
               priority: critical
           auto_verify:
             items:
-              - id: "expansion_count_in_run_detail"
-                cmd: "grep -q 'expansion_count' ui/src/components/detail/RunDetail.tsx || grep -q 'expansion_count' ui/src/components/dashboard/RunDetail.tsx"
+              - id: "expansion_count_conditional"
+                cmd: "node -e \"const fs=require('fs'); const paths=['ui/src/components/detail/RunDetail.tsx','ui/src/components/dashboard/RunDetail.tsx']; const code=paths.filter(p=>{try{fs.accessSync(p);return true}catch{return false}}).map(p=>fs.readFileSync(p,'utf8')).join(''); if(!code) throw new Error('RunDetail.tsx not found in expected paths'); if(!/(run\\.expansion_count|expansion_count\\s*&&|expansion_count\\s*\\?)/.test(code)) throw new Error('expansion_count not used conditionally in RunDetail'); console.log('OK');\""
                 must: true
               - id: "approve_reject_buttons"
-                cmd: "grep -qi 'expansion_approval\\|approve.*expand\\|expand.*approve' ui/src/components/detail/RunDetail.tsx || grep -qi 'expansion_approval\\|approve.*expand\\|expand.*approve' ui/src/components/dashboard/RunDetail.tsx"
+                cmd: "node -e \"const fs=require('fs'); const paths=['ui/src/components/detail/RunDetail.tsx','ui/src/components/dashboard/RunDetail.tsx']; const code=paths.filter(p=>{try{fs.accessSync(p);return true}catch{return false}}).map(p=>fs.readFileSync(p,'utf8')).join(''); if(!/(approve|Approve)/.test(code)) throw new Error('Approve button not found in RunDetail'); if(!/(reject|Reject)/.test(code)) throw new Error('Reject button not found in RunDetail'); if(!/(expansion_approval|expand.*approve|approve.*expand)/i.test(code)) throw new Error('Expansion approval handler not found in RunDetail'); console.log('OK');\""
                 must: true
               - id: "typescript_check"
                 cmd: "cd ui && npx tsc --noEmit"
