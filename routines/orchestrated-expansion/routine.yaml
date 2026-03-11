@@ -1,0 +1,1096 @@
+routine:
+  id: "orchestrated-expansion"
+  name: "Orchestrated Expansion (Option D)"
+  description: |
+    Implement dynamic run expansion so builder agents can request additional work
+    (subtasks, peer tasks, or new steps) through the orchestrator. Replaces
+    untracked tool escape hatches with tracked, verified, visible work items.
+    Append-only: agents can add but never remove existing requirements.
+
+  inputs:
+    - name: feature
+      required: false
+      default: "orchestrated-expansion"
+      description: "Feature name used for documentation directory (docs/{{feature}}/)"
+
+  steps:
+    # ── Step 1: Data Models (M1 Core) ────────────────────────────────
+    - id: "S-01"
+      title: "Data Models (M1 Core)"
+      step_context: |
+        Extend all data models to represent expansion state and limits. Defines the
+        complete data shape — config models, runtime state fields, DB columns, API
+        schemas, and the TaskExpanded event type. No logic yet; this step establishes
+        a stable foundation all subsequent steps build upon.
+      tasks:
+        - id: "T-01"
+          title: "Add ExpansionLimits to Config Models"
+          task_context: |
+            Add ExpansionLimits Pydantic model and wire it into RoutineConfig.
+
+            - Add ExpansionLimits class to src/orchestrator/config/models.py with:
+              max_subtasks_per_task: int = 5
+              max_peer_tasks_per_step: int = 3
+              max_inserted_steps: int = 2
+              max_total_expansions: int = 10
+              require_human_approval: bool = False
+            - Add expansion_limits: ExpansionLimits = Field(default_factory=ExpansionLimits)
+              to RoutineConfig (optional, defaults to ExpansionLimits())
+
+            Constraints: No logic changes — data model definitions only.
+            Field defaults must match exactly: 5, 3, 2, 10, False.
+          requirements:
+            - id: "R1"
+              desc: "ExpansionLimits importable from orchestrator.config.models with all five fields and correct defaults (5, 3, 2, 10, False)"
+              priority: critical
+            - id: "R2"
+              desc: "RoutineConfig has optional expansion_limits field that defaults to ExpansionLimits() when omitted"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "expansion_limits_defaults"
+                cmd: "uv run python -c \"from orchestrator.config.models import ExpansionLimits; e = ExpansionLimits(); assert e.max_subtasks_per_task == 5; assert e.max_peer_tasks_per_step == 3; assert e.max_inserted_steps == 2; assert e.max_total_expansions == 10; assert e.require_human_approval == False; print('OK')\""
+                must: true
+              - id: "routine_config_expansion_limits"
+                cmd: "uv run python -c \"from orchestrator.config.models import RoutineConfig; r = RoutineConfig(id='x', name='y', steps=[]); assert r.expansion_limits is not None; print('OK')\""
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Add Expansion Fields to State Models"
+          task_context: |
+            Add expansion tracking fields to TaskState and Run in runtime state models.
+
+            In src/orchestrator/state/models.py:
+            - Add to TaskState: expansions_requested: int = 0,
+              expanded_from_task_id: str | None = None,
+              expansion_justification: str | None = None
+            - Add to Run: total_expansions: int = 0
+
+            All new fields must have defaults so existing construction still works.
+          requirements:
+            - id: "R1"
+              desc: "TaskState has expansions_requested (int=0), expanded_from_task_id (str|None), expansion_justification (str|None)"
+              priority: critical
+            - id: "R2"
+              desc: "Run has total_expansions: int = 0"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "task_state_fields"
+                cmd: "uv run python -c \"from orchestrator.state.models import TaskState; t = TaskState(id='x', title='y'); assert t.expansions_requested == 0; assert t.expanded_from_task_id is None; assert t.expansion_justification is None; print('OK')\""
+                must: true
+              - id: "run_total_expansions"
+                cmd: "uv run python -c \"from orchestrator.state.models import Run; r = Run(id='x', routine_id='r', steps=[]); assert r.total_expansions == 0; print('OK')\""
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Add DB Columns to TaskModel, StepModel, RunModel"
+          task_context: |
+            Add new SQLAlchemy ORM columns to the three existing DB models.
+
+            In src/orchestrator/db/models.py:
+            - TaskModel: expanded_from_task_id (String, FK tasks.id use_alter=True, nullable),
+              expansion_justification (String, nullable),
+              is_expansion (Boolean, default False, not null)
+            - StepModel: is_expansion (Boolean, default False, not null),
+              expanded_from_task_id (String, FK tasks.id use_alter=True, nullable)
+            - RunModel: expansion_count (Integer, default 0, not null)
+
+            Use use_alter=True on self-referencing FKs. Do not delete or change
+            existing columns.
+          requirements:
+            - id: "R1"
+              desc: "TaskModel has expanded_from_task_id, expansion_justification, is_expansion DB columns"
+              priority: critical
+            - id: "R2"
+              desc: "StepModel has is_expansion, expanded_from_task_id DB columns"
+              priority: critical
+            - id: "R3"
+              desc: "RunModel has expansion_count column (Integer, default 0)"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "task_model_columns"
+                cmd: "uv run python -c \"from orchestrator.db.models import TaskModel; assert hasattr(TaskModel, 'expanded_from_task_id'); assert hasattr(TaskModel, 'expansion_justification'); assert hasattr(TaskModel, 'is_expansion'); print('OK')\""
+                must: true
+              - id: "step_model_columns"
+                cmd: "uv run python -c \"from orchestrator.db.models import StepModel; assert hasattr(StepModel, 'is_expansion'); assert hasattr(StepModel, 'expanded_from_task_id'); print('OK')\""
+                must: true
+              - id: "run_model_expansion_count"
+                cmd: "uv run python -c \"from orchestrator.db.models import RunModel; assert hasattr(RunModel, 'expansion_count'); print('OK')\""
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-04"
+          title: "Add Expansion Schemas to tasks.py"
+          task_context: |
+            Add ExpansionTaskSpec, ExpansionRequest, and ExpansionResponse Pydantic schemas
+            in src/orchestrator/api/schemas/tasks.py.
+
+            ExpansionTaskSpec fields: title: str, context: str,
+              requirements: list[str] | None = None, agent_profile: str | None = None
+
+            ExpansionRequest fields:
+              type: Literal["add_subtask", "add_peer_task", "add_next_step"]
+              title: str, context: str, justification: str
+              requirements: list[str] | None = None
+              blocking: bool = False
+              agent_profile: str | None = None
+              tasks: list[ExpansionTaskSpec] | None = None
+            Validator: if type == "add_next_step", tasks must be non-empty.
+
+            ExpansionResponse fields:
+              status: str, expansion_type: str
+              created_task_id: str | None = None
+              created_step_id: str | None = None
+              created_task_ids: list[str] | None = None
+              total_expansions_used: int
+              budget_remaining: dict[str, int]
+          requirements:
+            - id: "R1"
+              desc: "ExpansionRequest, ExpansionTaskSpec, ExpansionResponse importable from orchestrator.api.schemas.tasks"
+              priority: critical
+            - id: "R2"
+              desc: "ExpansionRequest.type is Literal — invalid values rejected by Pydantic"
+              priority: critical
+            - id: "R3"
+              desc: "ExpansionRequest with type=add_next_step and empty tasks raises ValidationError"
+              priority: critical
+            - id: "R4"
+              desc: "ExpansionRequest.type only allows additive operations (add_subtask, add_peer_task, add_next_step) — no remove or modify type exists, enforcing the append-only invariant"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "schemas_importable"
+                cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import ExpansionRequest, ExpansionTaskSpec, ExpansionResponse; print('OK')\""
+                must: true
+              - id: "invalid_type_rejected"
+                cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import ExpansionRequest; from pydantic import ValidationError; raised = False\ntry:\n  ExpansionRequest(type='invalid', title='t', context='c', justification='j')\nexcept ValidationError:\n  raised = True\nassert raised, 'Should have raised ValidationError'\nprint('OK')\""
+                must: true
+              - id: "add_next_step_empty_tasks"
+                cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import ExpansionRequest; from pydantic import ValidationError; raised = False\ntry:\n  ExpansionRequest(type='add_next_step', title='t', context='c', justification='j', tasks=[])\nexcept ValidationError:\n  raised = True\nassert raised, 'Should have raised ValidationError'\nprint('OK')\""
+                must: true
+              - id: "no_remove_modify_types"
+                cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import ExpansionRequest; import typing; type_field = ExpansionRequest.model_fields['type']; allowed = typing.get_args(type_field.annotation); assert all(t.startswith('add_') for t in allowed), f'Non-additive types found: {allowed}'; assert 'remove' not in str(allowed).lower() and 'delete' not in str(allowed).lower() and 'modify' not in str(allowed).lower(); print('OK - only additive types:', allowed)\""
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-05"
+          title: "Add TaskExpanded Event"
+          task_context: |
+            Add TaskExpanded event class to src/orchestrator/workflow/events.py.
+
+            Fields: requesting_task_id: str, expansion_type: str,
+              created_task_id: str | None = None, created_step_id: str | None = None,
+              justification: str, blocking: bool = False, approved: bool = True
+
+            Follow the existing event definition pattern in events.py (dataclass
+            vs Pydantic, inheritance, registration if applicable).
+          requirements:
+            - id: "R1"
+              desc: "TaskExpanded is importable from orchestrator.workflow.events with all required fields"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "task_expanded_importable"
+                cmd: "uv run python -c \"from orchestrator.workflow.events import TaskExpanded; e = TaskExpanded(requesting_task_id='t1', expansion_type='add_subtask', justification='j'); assert hasattr(e, 'approved'); assert e.approved == True; print('OK')\""
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-06"
+          title: "Write Unit Tests for Expansion Models"
+          task_context: |
+            Create tests/unit/test_expansion_models.py with unit tests for the
+            new model definitions.
+
+            Tests to include:
+            - ExpansionLimits default values (5, 3, 2, 10, False)
+            - ExpansionLimits serialization round-trip (model_dump → model_validate)
+            - ExpansionRequest valid types (add_subtask, add_peer_task, add_next_step)
+            - ExpansionRequest invalid type raises ValidationError
+            - ExpansionRequest with type=add_next_step and empty tasks raises ValidationError
+            - No DB or server required — pure unit tests.
+          requirements:
+            - id: "R1"
+              desc: "tests/unit/test_expansion_models.py exists and tests pass"
+              priority: critical
+            - id: "R2"
+              desc: "All existing unit tests continue to pass (no regressions)"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "expansion_model_tests"
+                cmd: "uv run pytest tests/unit/test_expansion_models.py -v --tb=short"
+                must: true
+              - id: "unit_tests_no_regression"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+          artifacts:
+            - path: "tests/unit/test_expansion_models.py"
+              required: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 2: DB Migration (M1 Remaining) ──────────────────────────
+    - id: "S-02"
+      title: "DB Migration (M1 Remaining)"
+      step_context: |
+        Create and apply the Alembic migration that adds all six new expansion columns
+        from Step 1 to the live database schema. Deliberately isolated so the migration
+        is reviewable on its own.
+      tasks:
+        - id: "T-01"
+          title: "Generate and Write Alembic Migration"
+          task_context: |
+            Run alembic revision --autogenerate and trim to the six new expansion columns.
+
+            Migration adds:
+            - tasks: expanded_from_task_id (VARCHAR, FK tasks.id, nullable),
+              expansion_justification (VARCHAR, nullable),
+              is_expansion (BOOLEAN, NOT NULL default False)
+            - steps: is_expansion (BOOLEAN, NOT NULL default False),
+              expanded_from_task_id (VARCHAR, FK tasks.id, nullable)
+            - runs: expansion_count (INTEGER, NOT NULL default 0)
+
+            Use batch_alter_table for SQLite FK compatibility.
+            Write full downgrade() function that drops all six columns in reverse order.
+          requirements:
+            - id: "R1"
+              desc: "Alembic migration file exists in alembic/versions/ adding exactly the six expansion columns"
+              priority: critical
+            - id: "R2"
+              desc: "Migration applies cleanly on a fresh DB (alembic upgrade head succeeds)"
+              priority: critical
+            - id: "R3"
+              desc: "Migration downgrade removes all six columns (alembic downgrade -1 succeeds)"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "migration_file_content"
+                cmd: "uv run python -c \"import glob; files = glob.glob('src/orchestrator/db/migrations/versions/*.py'); assert len(files) > 0, 'No migration files found in src/orchestrator/db/migrations/versions/'; content = ''.join(open(f).read() for f in files); assert 'is_expansion' in content, 'is_expansion column missing from migration'; assert 'expansion_count' in content, 'expansion_count column missing from migration'; assert 'expansion_justification' in content, 'expansion_justification column missing from migration'; print('OK')\""
+                must: true
+              - id: "migration_applies"
+                cmd: "uv run alembic upgrade head"
+                must: true
+              - id: "migration_downgrade"
+                cmd: "uv run alembic downgrade -1 && uv run alembic upgrade head"
+                must: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-02"
+          title: "Validate Migration with Tests"
+          task_context: |
+            Verify the migration applied correctly: inspect DB schema for new columns,
+            confirm existing rows are valid, run all tests for no regressions.
+
+            - Apply to seeded DB: uv run python scripts/seed_db.py, then alembic upgrade head
+            - Confirm new columns exist with correct defaults
+            - Run round-trip: downgrade -1 then upgrade head again
+            - Run full test suite to confirm no regressions
+          requirements:
+            - id: "R1"
+              desc: "Migration applies cleanly to a seeded DB without data loss"
+              priority: critical
+            - id: "R2"
+              desc: "uv run pytest tests/unit/ tests/integration/ passes after migration"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "integration_tests_pass"
+                cmd: "uv run pytest tests/unit/ tests/integration/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 3: Expansion Engine — add_subtask ────────────────────────
+    - id: "S-03"
+      title: "Expansion Engine — add_subtask (M2 Core)"
+      step_context: |
+        Implement WorkflowEngine.expand_task() for the add_subtask expansion type
+        (blocking and non-blocking), budget enforcement, provenance recording, and
+        the WorkflowService.expand_task() wrapper with DB persistence and event emission.
+      tasks:
+        - id: "T-01"
+          title: "Define ExpansionBudgetError and ExpansionPhaseError"
+          task_context: |
+            Add two new exception classes for the expansion engine.
+
+            Location: src/orchestrator/workflow/errors.py (or wherever existing
+            exceptions live).
+
+            ExpansionBudgetError(Exception): message: str, limit_type: str
+              (values: "total", "subtask", "peer", "inserted_steps")
+            ExpansionPhaseError(Exception): message: str
+
+            Export both. Do not modify existing error classes.
+          requirements:
+            - id: "R1"
+              desc: "ExpansionBudgetError and ExpansionPhaseError importable from orchestrator.workflow.errors"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "error_classes_importable"
+                cmd: "uv run python -c \"from orchestrator.workflow.errors import ExpansionBudgetError, ExpansionPhaseError; e = ExpansionBudgetError('msg', 'total'); p = ExpansionPhaseError('msg'); print('OK')\""
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Implement expand_task() in WorkflowEngine for add_subtask"
+          task_context: |
+            Add expand_task() method to WorkflowEngine handling add_subtask.
+
+            Method signature: expand_task(run, task_id, request, expansion_limits)
+
+            Guards (in order):
+            1. Phase check: task must be BUILDING → ExpansionPhaseError otherwise
+            2. Total budget: run.total_expansions >= max_total_expansions → ExpansionBudgetError(limit_type="total")
+            3. Per-task subtask limit: task.expansions_requested >= max_subtasks_per_task → ExpansionBudgetError(limit_type="subtask")
+            4. Nested fan-out guard: if blocking=True and task has parent_task_id → ExpansionPhaseError
+
+            add_subtask blocking=True: call existing expand_fan_out_task() → parent FAN_OUT_RUNNING
+            add_subtask blocking=False: add child to step's tasks, parent stays BUILDING
+            Child TaskState: parent_task_id=task_id (blocking), expanded_from_task_id=task_id,
+              expansion_justification=request.justification, is_expansion=True
+
+            Increment task.expansions_requested += 1 and run.total_expansions += 1 only on success.
+            Return (child_task, None)
+          requirements:
+            - id: "R1"
+              desc: "WorkflowEngine.expand_task() exists and handles add_subtask blocking: parent transitions to FAN_OUT_RUNNING"
+              priority: critical
+            - id: "R2"
+              desc: "add_subtask non-blocking: child created with provenance, parent stays BUILDING"
+              priority: critical
+            - id: "R3"
+              desc: "Phase check rejects VERIFYING tasks with ExpansionPhaseError"
+              priority: critical
+            - id: "R4"
+              desc: "Budget checks reject when limits exceeded with correct ExpansionBudgetError.limit_type"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "engine_expand_task_exists"
+                cmd: "uv run python -c \"from orchestrator.workflow.engine import WorkflowEngine; assert hasattr(WorkflowEngine, 'expand_task'); print('OK')\""
+                must: true
+              - id: "pyright_engine"
+                cmd: "uv run pyright src/orchestrator/workflow/engine.py"
+                must: false
+          retry:
+            max_attempts: 3
+
+        - id: "T-03"
+          title: "Implement expand_task() in WorkflowService"
+          task_context: |
+            Add WorkflowService.expand_task() to load run, call engine, persist, and emit events.
+
+            Steps:
+            1. Load run from DB; raise TaskNotFoundError if task not in run
+            2. Load expansion_limits from routine config (default to ExpansionLimits() if not set)
+            3. If require_human_approval=True: create pending approval record stub,
+               return ExpansionResponse(status="pending_approval", ...)
+            4. Otherwise: call engine.expand_task(run, task_id, request, expansion_limits)
+            5. Persist new TaskModel with is_expansion=True, expanded_from_task_id, expansion_justification
+            6. Update RunModel.expansion_count += 1
+            7. Emit TaskExpanded event
+            8. Return ExpansionResponse(status="created", created_task_id=...,
+               total_expansions_used=..., budget_remaining=...)
+
+            budget_remaining dict must include keys for all limit types.
+          requirements:
+            - id: "R1"
+              desc: "WorkflowService.expand_task() persists new TaskModel with is_expansion=True and provenance fields"
+              priority: critical
+            - id: "R2"
+              desc: "RunModel.expansion_count incremented in DB"
+              priority: critical
+            - id: "R3"
+              desc: "TaskExpanded event emitted with correct fields"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "service_expand_task_exists"
+                cmd: "uv run python -c \"from orchestrator.workflow.service import WorkflowService; assert hasattr(WorkflowService, 'expand_task'); print('OK')\""
+                must: true
+              - id: "pyright_service"
+                cmd: "uv run pyright src/orchestrator/workflow/service.py"
+                must: false
+          retry:
+            max_attempts: 3
+
+        - id: "T-04"
+          title: "Write Unit Tests for Budget, Phase Errors, and add_subtask"
+          task_context: |
+            Create unit tests for budget/phase errors and subtask creation.
+
+            tests/unit/test_expansion_budget.py:
+            - Total budget exhausted → ExpansionBudgetError(limit_type="total")
+            - Per-task subtask limit exhausted → ExpansionBudgetError(limit_type="subtask")
+            - Blocking subtask from child task → ExpansionPhaseError
+            - Task in VERIFYING status → ExpansionPhaseError
+            - Task in BUILDING status → no error
+
+            tests/unit/test_expansion_subtask.py:
+            - add_subtask blocking: child has correct provenance; parent transitions to FAN_OUT_RUNNING
+            - add_subtask non-blocking: child created; parent remains BUILDING
+            - Counters incremented after each expansion
+
+            Tests operate on WorkflowEngine directly (no DB or HTTP).
+          requirements:
+            - id: "R1"
+              desc: "tests/unit/test_expansion_budget.py exists with all budget/phase error cases"
+              priority: critical
+            - id: "R2"
+              desc: "tests/unit/test_expansion_subtask.py exists with subtask creation and provenance tests"
+              priority: critical
+            - id: "R3"
+              desc: "All unit tests pass"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "budget_tests_pass"
+                cmd: "uv run pytest tests/unit/test_expansion_budget.py -v --tb=short"
+                must: true
+              - id: "subtask_tests_pass"
+                cmd: "uv run pytest tests/unit/test_expansion_subtask.py -v --tb=short"
+                must: true
+              - id: "unit_no_regression"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+          artifacts:
+            - path: "tests/unit/test_expansion_budget.py"
+              required: true
+            - path: "tests/unit/test_expansion_subtask.py"
+              required: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 4: Expansion Engine — add_peer_task + add_next_step ─────
+    - id: "S-04"
+      title: "Expansion Engine — add_peer_task + add_next_step + Human Approval"
+      step_context: |
+        Complete the expansion engine with the remaining two expansion types and
+        implement full human approval mode. add_next_step introduces step index
+        reordering requiring atomic DB update.
+      tasks:
+        - id: "T-01"
+          title: "Extend expand_task() for add_peer_task"
+          task_context: |
+            Add add_peer_task handling to WorkflowEngine.expand_task().
+
+            add_peer_task branch:
+            - Phase check: BUILDING only → ExpansionPhaseError
+            - Total budget check → ExpansionBudgetError(limit_type="total")
+            - Count existing peer tasks in current step (is_expansion=True, no parent_task_id);
+              if count >= max_peer_tasks_per_step → ExpansionBudgetError(limit_type="peer")
+            - Create peer TaskState with: expanded_from_task_id=task_id, no parent_task_id,
+              is_expansion=True, expansion_justification=request.justification
+            - Add peer to run.steps[current_step_index].tasks; parent stays BUILDING
+            - Increment run.total_expansions += 1 on success
+            - Return (peer_task, None)
+
+            Peer task must NOT have parent_task_id set — it is a sibling.
+          requirements:
+            - id: "R1"
+              desc: "add_peer_task creates peer in current step with correct provenance (is_expansion=True, no parent_task_id)"
+              priority: critical
+            - id: "R2"
+              desc: "max_peer_tasks_per_step exhausted → ExpansionBudgetError(limit_type='peer')"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "peer_task_tests"
+                cmd: "uv run pytest tests/unit/test_expansion_peer.py -v --tb=short"
+                must: true
+          artifacts:
+            - path: "tests/unit/test_expansion_peer.py"
+              required: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-02"
+          title: "Extend expand_task() for add_next_step"
+          task_context: |
+            Add add_next_step handling to WorkflowEngine.expand_task().
+
+            add_next_step branch:
+            - Validate request.tasks is non-empty (≥1 element) → raise validation error if empty
+            - Count previously inserted steps in run.steps (is_expansion=True);
+              if count >= max_inserted_steps → ExpansionBudgetError(limit_type="inserted_steps")
+            - Build StepState from request.tasks array: each ExpansionTaskSpec → TaskState
+              with provenance (expanded_from_task_id=task_id, is_expansion=True,
+              expansion_justification=request.justification)
+            - Set StepState.is_expansion=True, StepState.expanded_from_task_id=task_id
+            - Insert new StepState at current_step_index + 1
+            - Shift order_index on ALL steps with index > current_step_index ATOMICALLY
+              (update before inserting)
+            - Increment run.total_expansions += 1
+            - Return (None, new_step)
+          requirements:
+            - id: "R1"
+              desc: "add_next_step inserts step at current_step_index+1 with correct tasks and provenance"
+              priority: critical
+            - id: "R2"
+              desc: "Steps originally after insertion point have order_index shifted by 1"
+              priority: critical
+            - id: "R3"
+              desc: "max_inserted_steps exhausted → ExpansionBudgetError(limit_type='inserted_steps')"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "step_insert_tests"
+                cmd: "uv run pytest tests/unit/test_expansion_step_insert.py -v --tb=short"
+                must: true
+          artifacts:
+            - path: "tests/unit/test_expansion_step_insert.py"
+              required: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-03"
+          title: "Complete Human Approval Mode in WorkflowService"
+          task_context: |
+            Fully implement human approval mode in WorkflowService.
+
+            In expand_task() when require_human_approval=True:
+            - Serialize ExpansionRequest as request.model_dump_json()
+            - Create pending action record: pending_action_type="expansion_approval",
+              store serialized payload
+            - Return ExpansionResponse(status="pending_approval", ...) without calling engine
+            - Emit TaskExpanded event with approved=False
+
+            Implement approve_expansion(run_id, task_id, action: Literal["approve","reject"]):
+            - Fetch pending action of type "expansion_approval" for task; raise 404 if not found
+            - action="approve": deserialize stored request, call engine.expand_task(),
+              persist, emit TaskExpanded(approved=True), return ExpansionResponse(status="created")
+            - action="reject": delete pending action, emit rejection event, return {"status": "rejected"}
+          requirements:
+            - id: "R1"
+              desc: "expand_task with require_human_approval=True returns status=pending_approval and creates persistent pending action"
+              priority: critical
+            - id: "R2"
+              desc: "approve_expansion(action='approve') executes stored expansion and returns status=created"
+              priority: critical
+            - id: "R3"
+              desc: "approve_expansion(action='reject') discards pending action and returns status=rejected"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "approve_expansion_exists"
+                cmd: "uv run python -c \"from orchestrator.workflow.service import WorkflowService; assert hasattr(WorkflowService, 'approve_expansion'); print('OK')\""
+                must: true
+          retry:
+            max_attempts: 3
+
+        - id: "T-04"
+          title: "Write Unit Tests for Peer, Step Insert, and Approval"
+          task_context: |
+            Write unit tests for peer tasks, step insertion, and human approval.
+
+            tests/unit/test_expansion_peer.py:
+            - Peer task created with correct provenance (is_expansion=True, no parent_task_id)
+            - Parent task remains BUILDING after peer creation
+
+            tests/unit/test_expansion_step_insert.py:
+            - Insert at index 1 of 3-step run → steps at indices 2 and 3 shift to 3 and 4
+            - Insert at last position → no shift needed
+            - Insert multiple times → indices remain consistent
+            - add_next_step with empty tasks → validation error (not budget error)
+
+            Extend tests/unit/test_expansion_budget.py:
+            - max_peer_tasks_per_step exhausted → ExpansionBudgetError(limit_type="peer")
+            - max_inserted_steps exhausted → ExpansionBudgetError(limit_type="inserted_steps")
+          requirements:
+            - id: "R1"
+              desc: "All peer, step insert, and budget extension tests pass"
+              priority: critical
+            - id: "R2"
+              desc: "No regressions in any unit tests"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "all_expansion_unit_tests"
+                cmd: "uv run pytest tests/unit/test_expansion_peer.py tests/unit/test_expansion_step_insert.py tests/unit/test_expansion_budget.py -v --tb=short"
+                must: true
+              - id: "unit_no_regression"
+                cmd: "uv run pytest tests/unit/ -v --tb=short -q"
+                must: true
+          retry:
+            max_attempts: 2
+
+    # ── Step 5: API Endpoint + Integration Tests (M2 Final) ──────────
+    - id: "S-05"
+      title: "API Endpoint + Integration Tests (M2 Final)"
+      step_context: |
+        Expose the expansion engine via REST endpoints and write the full integration
+        test suite. This completes Milestone 2 by connecting engine logic to the API
+        layer and verifying end-to-end behavior of every expansion type.
+      tasks:
+        - id: "T-01"
+          title: "Add expand_task and approve_expansion Routes"
+          task_context: |
+            Add POST endpoints to src/orchestrator/api/routers/tasks.py.
+
+            IMPORTANT: Register expand/approve BEFORE expand to avoid path shadowing.
+
+            POST /{run_id}/tasks/{task_id}/expand/approve (FIRST):
+            - Body: { "action": "approve" | "reject" } (Literal type)
+            - Calls service.approve_expansion(run_id, task_id, action)
+            - Returns ExpansionResponse or {"status": "rejected"}
+            - Missing pending approval → 404
+
+            POST /{run_id}/tasks/{task_id}/expand (SECOND):
+            - Body: ExpansionRequest (Pydantic validation automatic)
+            - Calls service.expand_task(run_id, task_id, request)
+            - Returns ExpansionResponse on success
+            - Maps: TaskNotFoundError → 404, ExpansionBudgetError → 429, ExpansionPhaseError → 409
+          requirements:
+            - id: "R1"
+              desc: "POST .../expand endpoint registered and returns ExpansionResponse for valid requests"
+              priority: critical
+            - id: "R2"
+              desc: "POST .../expand/approve endpoint registered and handles approve/reject actions"
+              priority: critical
+            - id: "R3"
+              desc: "ExpansionBudgetError returns 429, ExpansionPhaseError returns 409"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "expand_routes_registered"
+                cmd: "uv run python -c \"from orchestrator.api.app import app; routes = [str(getattr(r, 'path', '')) for r in app.routes]; expand_routes = [r for r in routes if 'expand' in r and ('task' in r or 'run' in r)]; assert len(expand_routes) >= 2, f'Expected at least 2 expand routes (expand + expand/approve), found: {expand_routes}'; print('OK - expand routes:', expand_routes)\""
+                must: true
+              - id: "pyright_router"
+                cmd: "uv run pyright src/orchestrator/api/routers/tasks.py"
+                must: false
+          retry:
+            max_attempts: 3
+
+        - id: "T-02"
+          title: "Register Exception Handlers for Expansion Errors"
+          task_context: |
+            Register ExpansionBudgetError and ExpansionPhaseError exception handlers.
+
+            Find the exception handler registration point (likely error_handlers.py or app.py;
+            search for GateBlockedError handler for pattern reference).
+
+            ExpansionBudgetError handler:
+            - Status: 429
+            - Body: { "detail": "<message>", "limit_type": "<limit_type>" }
+
+            ExpansionPhaseError handler:
+            - Status: 409
+            - Body: { "detail": "<message>" }
+
+            Follow existing centralized handler pattern.
+          requirements:
+            - id: "R1"
+              desc: "ExpansionBudgetError raised in service returns 429 response with detail and limit_type fields"
+              priority: critical
+            - id: "R2"
+              desc: "ExpansionPhaseError raised in service returns 409 response with detail field"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "handlers_registered"
+                cmd: "uv run python -c \"from orchestrator.api.app import app; handlers = [type(h).__name__ for h in getattr(app, 'exception_handlers', {}).keys()]; print('Handlers:', handlers); print('OK')\""
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Write Full Integration Test Suite"
+          task_context: |
+            Create tests/integration/test_expansion.py covering all expansion types,
+            budget exhaustion, phase checks, provenance, and human approval.
+
+            Tests to include:
+            - add_subtask blocking: parent transitions to FAN_OUT_RUNNING; child has correct fields
+            - add_subtask non-blocking: child created; parent still BUILDING
+            - add_peer_task: peer in current step; parent unaffected; no parent_task_id on peer
+            - add_next_step: step inserted at correct position; existing step order_index shifted;
+              all tasks from request.tasks created
+            - Budget exhaustion (total): 429 response
+            - Budget exhaustion (subtask): 429 with limit_type="subtask"
+            - Budget exhaustion (peer): 429 with limit_type="peer"
+            - Budget exhaustion (inserted_steps): 429 with limit_type="inserted_steps"
+            - Phase check: expanding VERIFYING task returns 409
+            - Provenance: TaskExpanded event in activity feed includes justification,
+              requesting_task_id, expansion type
+            - Human approval: pending_approval returned; approve triggers expansion;
+              reject cancels it
+            - Task not in run: 404
+            - add_next_step with empty tasks: 422
+
+            Use HTTP client, not service/engine directly.
+          requirements:
+            - id: "R1"
+              desc: "Integration tests cover all three expansion types with correct response shapes"
+              priority: critical
+            - id: "R2"
+              desc: "All budget exhaustion cases return 429 with correct limit_type"
+              priority: critical
+            - id: "R3"
+              desc: "Human approval flow tested end-to-end"
+              priority: critical
+            - id: "R4"
+              desc: "No regressions in existing integration tests"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "expansion_integration_tests"
+                cmd: "uv run pytest tests/integration/test_expansion.py -v --tb=short"
+                must: true
+              - id: "integration_no_regression"
+                cmd: "uv run pytest tests/integration/ -v --tb=short -q"
+                must: true
+          artifacts:
+            - path: "tests/integration/test_expansion.py"
+              required: true
+          retry:
+            max_attempts: 3
+
+    # ── Step 6: Executor + Prompt Integration (M3) ───────────────────
+    - id: "S-06"
+      title: "Executor + Prompt Integration (M3)"
+      step_context: |
+        Close the agent-facing loop: agents learn about the expansion API through their
+        builder prompt, the executor correctly discovers dynamically added tasks mid-step,
+        and expand_task is registered as an MCP tool.
+      tasks:
+        - id: "T-01"
+          title: "Add Expansion Section to Builder Prompt"
+          task_context: |
+            Extend src/orchestrator/workflow/prompts.py to inject an "Expansion API
+            (Optional)" section into the builder prompt.
+
+            - Add expansion_limits parameter (or derive from routine_config.expansion_limits);
+              default to ExpansionLimits() if not set
+            - Compute budget string: "Expansions used: {used}/{total}. Remaining:
+              subtasks {s_used}/{s_max}, peer tasks {p_used}/{p_max},
+              inserted steps {i_used}/{i_max}."
+            - Add "Expansion API (Optional)" section with:
+              * Brief description of three expansion types and use cases
+              * Example POST .../expand payloads for each type
+              * The computed budget status line
+              * Warning: "IMPORTANT: Expansion adds work and does not transfer your
+                existing task obligations."
+            - Old routines without expansion_limits: use defaults, no error raised
+          requirements:
+            - id: "R1"
+              desc: "Builder prompt includes 'Expansion API' section when expansion_limits configured"
+              priority: critical
+            - id: "R2"
+              desc: "Budget string reflects correct used/remaining values at prompt-generation time"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "prompt_tests"
+                cmd: "uv run pytest tests/unit/test_expansion_prompt.py -v --tb=short"
+                must: true
+          artifacts:
+            - path: "tests/unit/test_expansion_prompt.py"
+              required: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Refresh Task List in Executor After Each Completion"
+          task_context: |
+            Modify src/orchestrator/runners/executor.py so the step-task execution
+            loop re-queries the task list after each task completes, picking up
+            dynamically added peer tasks.
+
+            - Locate the step-task execution loop (around L743-L747 per plan)
+            - After each task reaches terminal state: call service.get_step_tasks()
+              (or equivalent) to refresh task list
+            - Rebuild pending as [t for t in refreshed_tasks if t.status == PENDING]
+            - Filter by PENDING status only — do not re-execute already-completed tasks
+            - Wrap DB refresh in try/except: on error, log warning and use last-known list
+            - Blocking subtask (FAN_OUT_RUNNING) path does NOT need changes
+          requirements:
+            - id: "R1"
+              desc: "Executor discovers peer tasks added mid-step (PENDING status) after each task completes"
+              priority: critical
+            - id: "R2"
+              desc: "Already-completed tasks are not re-executed after task list refresh"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "executor_tests"
+                cmd: "uv run pytest tests/unit/test_expansion_executor.py -v --tb=short"
+                must: true
+          artifacts:
+            - path: "tests/unit/test_expansion_executor.py"
+              required: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Register expand_task as MCP Tool"
+          task_context: |
+            Register expand_task as an MCP tool alongside submit_for_verification
+            and update_checklist.
+
+            - Find MCP tool registration location (search for submit_for_verification
+              and update_checklist in src/orchestrator/api/ to find the file)
+            - Register expand_task tool with input schema matching ExpansionRequest fields
+            - Implementation: forward to POST .../expand endpoint or call service directly
+            - Map errors to MCP error responses:
+              * HTTP 429 → MCP error with code BUDGET_EXHAUSTED and message from response
+              * HTTP 409 → MCP error with code PHASE_ERROR
+              * HTTP 422 → MCP error with code VALIDATION_ERROR
+            - Return ExpansionResponse as MCP tool result on success
+
+            Error codes must be string constants (not numbers).
+            Follow exact registration pattern used by existing MCP tools.
+          requirements:
+            - id: "R1"
+              desc: "GET /mcp/tools response includes expand_task with correct input schema"
+              priority: critical
+            - id: "R2"
+              desc: "MCP expand_task call returns ExpansionResponse on success"
+              priority: critical
+            - id: "R3"
+              desc: "Budget exhaustion returns MCP error with code BUDGET_EXHAUSTED"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "mcp_tool_registered"
+                cmd: "uv run python -c \"from orchestrator.api.app import app; routes = [str(r.path) for r in app.routes]; print([r for r in routes if 'mcp' in r][:5]); print('OK')\""
+                must: true
+              - id: "expand_task_in_mcp"
+                cmd: "uv run python -c \"from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS; names = [t['name'] for t in ORCHESTRATOR_TOOLS]; assert any('expand_task' in n for n in names), f'orchestrator_expand_task not in ORCHESTRATOR_TOOLS: {names}'; print('OK')\""
+                must: true
+          retry:
+            max_attempts: 3
+
+    # ── Step 7: Frontend Display (M4) ────────────────────────────────
+    - id: "S-07"
+      title: "Frontend Display (M4)"
+      step_context: |
+        Render expansion state throughout the UI so users can see what was expanded,
+        why, by whom, and the budget usage. Adds expansion-aware TypeScript types,
+        component updates, and frontend tests.
+      tasks:
+        - id: "T-01"
+          title: "Add Expansion Fields to TypeScript Types"
+          task_context: |
+            Update ui/src/types/tasks.ts and ui/src/types/runs.ts with expansion fields.
+
+            tasks.ts task type — add optional:
+              expanded_from_task_id?: string
+              expansion_justification?: string
+              is_expansion?: boolean
+
+            runs.ts step type — add optional:
+              is_expansion?: boolean
+              expanded_from_task_id?: string
+
+            runs.ts — add ExpansionLimits interface:
+              max_subtasks_per_task: number
+              max_peer_tasks_per_step: number
+              max_inserted_steps: number
+              max_total_expansions: number
+              require_human_approval: boolean
+
+            runs.ts run type — add optional:
+              expansion_count?: number
+              expansion_limits?: ExpansionLimits
+
+            All new fields must be optional (?) — existing runs must not break.
+          requirements:
+            - id: "R1"
+              desc: "Task type in tasks.ts includes expanded_from_task_id?, expansion_justification?, is_expansion?"
+              priority: critical
+            - id: "R2"
+              desc: "Run type in runs.ts includes expansion_count?, expansion_limits?; ExpansionLimits interface defined"
+              priority: critical
+            - id: "R3"
+              desc: "npx tsc --noEmit passes after type additions"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "task_type_fields"
+                cmd: "node -e \"const {execSync}=require('child_process'),fs=require('fs'); const f='ui/src/types/_ts_assert_task.ts'; fs.writeFileSync(f,'import type {Task} from \\\"./tasks\\\"; const _a:(boolean|undefined)=(null as any as Task).is_expansion; const _b:(string|undefined)=(null as any as Task).expanded_from_task_id; const _c:(string|undefined)=(null as any as Task).expansion_justification;'); try{execSync('cd ui && npx tsc --noEmit',{stdio:\\\"inherit\\\"})}finally{fs.unlinkSync(f)}; console.log('OK');\""
+                must: true
+              - id: "run_type_fields"
+                cmd: "node -e \"const {execSync}=require('child_process'),fs=require('fs'); const f='ui/src/types/_ts_assert_run.ts'; fs.writeFileSync(f,'import type {Run,ExpansionLimits} from \\\"./runs\\\"; const _d:(number|undefined)=(null as any as Run).expansion_count; const _e:(ExpansionLimits|undefined)=(null as any as Run).expansion_limits;'); try{execSync('cd ui && npx tsc --noEmit',{stdio:\\\"inherit\\\"})}finally{fs.unlinkSync(f)}; console.log('OK');\""
+                must: true
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Add Expanded Badge and Provenance to TaskDetailCard"
+          task_context: |
+            Update ui/src/components/detail/TaskDetailCard.tsx.
+
+            - After task title: render "Expanded" badge (cyan/teal accent) when
+              task.is_expansion === true
+            - Provenance section (when task.expanded_from_task_id is set):
+              show "Requested by Task {expanded_from_task_id}" and task.expansion_justification
+            - Badge and provenance absent for non-expansion tasks
+            - Use existing CSS utility classes — do not introduce new CSS files
+          requirements:
+            - id: "R1"
+              desc: "'Expanded' badge renders for tasks with is_expansion=true"
+              priority: critical
+            - id: "R2"
+              desc: "Provenance section shows requesting task ID and justification when expanded_from_task_id is set"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "expanded_badge_conditional"
+                cmd: "node -e \"const fs=require('fs'); const code=fs.readFileSync('ui/src/components/detail/TaskDetailCard.tsx','utf8'); if(!/(task\\.is_expansion|is_expansion\\s*&&|is_expansion\\s*\\?)/.test(code)) throw new Error('is_expansion not used as conditional render in TaskDetailCard'); if(!/Expanded/.test(code)) throw new Error('Expanded badge text missing from TaskDetailCard'); if(!/(expanded_from_task_id)/.test(code)) throw new Error('expanded_from_task_id not referenced for provenance display'); console.log('OK');\""
+                must: true
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Add Peer Task Visual Indicator, StepTimeline '+', and ActivityFeed Event"
+          task_context: |
+            Update step view, StepTimeline, and ActivityFeed components.
+
+            Step view component (find where tasks in a step are rendered):
+            - For tasks where is_expansion=true AND parent_task_id is undefined:
+              apply dashed border style and "Added by T-{id}" label
+            - Regular tasks and subtasks (parent_task_id set) are unaffected
+
+            ui/src/components/dashboard/StepTimeline.tsx:
+            - Conditionally render "+" prefix or small badge for steps with is_expansion=true
+            - Regular steps unaffected
+
+            ui/src/components/detail/ActivityFeed.tsx:
+            - Add handler for event.type === "task_expanded" (or "TaskExpanded")
+            - Render: expansion type (human-readable), requesting task ID, justification text
+            - If approved=false: show "Pending approval"; otherwise show nothing/Approved
+            - Follow existing event renderer pattern
+          requirements:
+            - id: "R1"
+              desc: "Peer expansion tasks rendered with dashed border and 'Added by T-{id}' label"
+              priority: critical
+            - id: "R2"
+              desc: "Steps with is_expansion=true show '+' indicator in StepTimeline"
+              priority: critical
+            - id: "R3"
+              desc: "task_expanded events render in ActivityFeed with expansion type and justification"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "step_timeline_expansion"
+                cmd: "node -e \"const fs=require('fs'); const code=fs.readFileSync('ui/src/components/dashboard/StepTimeline.tsx','utf8'); if(!/(step\\.is_expansion|is_expansion\\s*&&|is_expansion\\s*\\?)/.test(code)) throw new Error('is_expansion not used as conditional in StepTimeline'); console.log('OK');\""
+                must: true
+              - id: "activity_feed_expansion"
+                cmd: "node -e \"const fs=require('fs'); const code=fs.readFileSync('ui/src/components/detail/ActivityFeed.tsx','utf8'); if(!/task_expanded|TaskExpanded/i.test(code)) throw new Error('task_expanded event type not handled in ActivityFeed'); if(!/(expansion_type|justification)/.test(code)) throw new Error('expansion_type or justification not rendered in ActivityFeed task_expanded handler'); console.log('OK');\""
+                must: true
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-04"
+          title: "Add Expansion Budget and Approval UI to RunDetail"
+          task_context: |
+            Update ui/src/components/detail/RunDetail.tsx (or ui/src/components/dashboard/RunDetail.tsx).
+
+            Budget display (in run metadata area):
+            - When run.expansion_count or run.expansion_limits is present:
+              render "Expansions: {expansion_count}/{max_total_expansions} used"
+            - Hide section when expansion_count=0 and expansion_limits absent
+
+            Pending expansion approvals (in pending actions area):
+            - When pending actions of type "expansion_approval" exist:
+              show task ID, expansion type from payload, Approve + Reject buttons
+            - Approve: POST .../expand/approve with action="approve"
+            - Reject: POST .../expand/approve with action="reject"
+            - On success: refresh run data or remove from local state
+
+            Use optional chaining throughout — do not crash on old runs.
+          requirements:
+            - id: "R1"
+              desc: "Expansion budget display shows count/max when expansion data present"
+              priority: critical
+            - id: "R2"
+              desc: "Pending expansion approval actions show with Approve/Reject buttons"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "expansion_count_conditional"
+                cmd: "node -e \"const fs=require('fs'); const paths=['ui/src/components/detail/RunDetail.tsx','ui/src/components/dashboard/RunDetail.tsx']; const code=paths.filter(p=>{try{fs.accessSync(p);return true}catch{return false}}).map(p=>fs.readFileSync(p,'utf8')).join(''); if(!code) throw new Error('RunDetail.tsx not found in expected paths'); if(!/(run\\.expansion_count|expansion_count\\s*&&|expansion_count\\s*\\?)/.test(code)) throw new Error('expansion_count not used conditionally in RunDetail'); console.log('OK');\""
+                must: true
+              - id: "approve_reject_buttons"
+                cmd: "node -e \"const fs=require('fs'); const paths=['ui/src/components/detail/RunDetail.tsx','ui/src/components/dashboard/RunDetail.tsx']; const code=paths.filter(p=>{try{fs.accessSync(p);return true}catch{return false}}).map(p=>fs.readFileSync(p,'utf8')).join(''); if(!/(approve|Approve)/.test(code)) throw new Error('Approve button not found in RunDetail'); if(!/(reject|Reject)/.test(code)) throw new Error('Reject button not found in RunDetail'); if(!/(expansion_approval|expand.*approve|approve.*expand)/i.test(code)) throw new Error('Expansion approval handler not found in RunDetail'); console.log('OK');\""
+                must: true
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-05"
+          title: "Write Frontend Tests and Final Validation"
+          task_context: |
+            Write frontend tests and validate everything passes.
+
+            Tests to add (use existing test setup — vitest + testing-library):
+
+            TaskDetailCard tests:
+            - "Expanded" badge renders when task.is_expansion=true
+            - Provenance section shows task ID and justification
+            - Badge absent for non-expansion tasks
+
+            StepTimeline tests:
+            - "+" indicator renders for steps with is_expansion=true
+            - Indicator absent for regular steps
+
+            ActivityFeed tests:
+            - task_expanded event renders with correct expansion type, requesting task, justification
+
+            After tests pass:
+            - Run npx vitest run — all tests pass including new ones
+            - Run npx tsc --noEmit — no TypeScript errors
+            - Run npm run lint (or npx eslint src/ --quiet) — no ESLint errors
+            - Run uv run pre-commit run --all-files — passes
+          requirements:
+            - id: "R1"
+              desc: "Frontend tests for TaskDetailCard expanded badge, StepTimeline + indicator, ActivityFeed task_expanded event all pass"
+              priority: critical
+            - id: "R2"
+              desc: "npx vitest run passes with no regressions"
+              priority: critical
+            - id: "R3"
+              desc: "npx tsc --noEmit and npm run lint pass"
+              priority: critical
+            - id: "R4"
+              desc: "uv run pre-commit run --all-files passes"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "vitest_pass"
+                cmd: "cd ui && npx vitest run"
+                must: true
+              - id: "typescript_check"
+                cmd: "cd ui && npx tsc --noEmit"
+                must: true
+              - id: "eslint_check"
+                cmd: "cd ui && npx eslint src/ --quiet"
+                must: false
+              - id: "pre_commit"
+                cmd: "uv run pre-commit run --all-files"
+                must: false
+          retry:
+            max_attempts: 2
