@@ -26,6 +26,16 @@ See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for:
 - **CLI commands** - All orchestrator commands
 - **Tech stack** - Python/FastAPI backend, React/Vite frontend
 
+## Working Directory Discipline
+
+**Always use `uv run` for Python commands.** Never use bare `python3` or `python` — they may not resolve the project's virtual environment or `pyproject.toml` correctly, especially in worktrees. Use `uv run python`, `uv run pytest`, etc.
+
+**Never `cd` outside your working directory.** If you are running in a worktree (`worktrees/rNN/`), stay there. Do not `cd` to the main project root, parent directories, or sibling worktrees. All source files, `pyproject.toml`, and dependencies are available in the worktree — use `uv run` to access them.
+
+**Interact with the orchestrator via API calls only.** Do not modify server code, restart the server, or touch `orchestrator.db` directly. Use `curl` to the orchestrator's REST API endpoints.
+
+**Do not run git operations on the main working tree.** Git commands should only operate on the current worktree's branch. Never run `git stash`, `git checkout`, or `git reset` from the main project root.
+
 ## Commands
 
 ```bash
