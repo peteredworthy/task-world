@@ -42,7 +42,7 @@ Implement the gap analyzer in four milestones: (1) data models and enums, (2) en
   - If `verifier_iterations >= max_iterations`: treat as `fail` regardless of verdict
   - Emits `StepVerificationCompleted`
   - Persists state
-- `check_step_progression()` in `transitions.py`: after all top-level tasks are terminal, if `step_verifier` configured and `verifying == False`, signal engine to call `start_step_verification()` instead of completing the step
+- `check_step_progression()` in `transitions.py`: **not modified for the step verifier path**. The executor directly calls `start_step_verification()` when `step_verifier` is configured and all tasks reach terminal state. `check_step_progression()` is only called (as today) to advance `current_step_index` when no `step_verifier` is configured.
 - `WorkflowService` methods: persist/load `verifying`, `verifier_iterations`, `gap_reports` from `StepModel`
 - Unit tests:
   - `start_step_verification` sets correct state

@@ -118,17 +118,14 @@ Migration: `alembic revision -m "add step_verifier columns"` — existing rows d
 
 #### `check_step_progression()` — `src/orchestrator/workflow/transitions.py`
 
-Current flow: all tasks terminal → mark step completed → advance `current_step_index`.
+**No changes required.** The existing completion logic (all tasks terminal → mark step completed → advance `current_step_index`) is only reached when `step_verifier` is NOT configured. The executor manages the step verification loop end-to-end for steps that have a `step_verifier`:
 
-New flow:
-1. (Unchanged) Check if all tasks in current step are terminal.
-2. If all terminal **and** step has `step_verifier` **and** `step.verifying == False`:
-   - Signal the engine to call `start_step_verification()` instead of completing.
-   - Do NOT advance `current_step_index` yet.
-3. If all terminal **and** no `step_verifier` (or `step.verifying == True` awaiting re-check after actions):
-   - Proceed with existing completion path.
+1. Executor detects all tasks terminal and `step_verifier` configured → calls `start_step_verification()` directly.
+2. Runs verifier, calls `complete_step_verification()` with gap report.
+3. If `retry/fix` actions: executor task loop re-runs newly-PENDING tasks; when all tasks terminal again, executor re-enters step verification.
+4. When verdict is `pass` or `fail`: engine clears `verifying`, then advances the step via the existing completion path.
 
-The `verifying == True` flag suppresses re-triggering verification while the loop is in progress. It is cleared by `complete_step_verification()` when verdict is `pass` or `fail`.
+`check_step_progression()` is called only in the NO-verifier branch (as shown in the interaction diagram below).
 
 **Important:** The fan-out parent verification path in the executor is a separate code path and must remain untouched. The new condition applies to `step_verifier`-configured steps only.
 
