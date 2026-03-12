@@ -59,16 +59,16 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_enum"
+            - id: "R1"
               text: |
                 R1 — A: StepVerdict importable from enums.py, all four values present with correct
                 string values ('pass','retry','fix','fail'). F: enum missing or wrong values.
-            - id: "R2_config"
+            - id: "R2"
               text: |
                 R2 — A: StepVerifierConfig importable, defaults match spec (max_iterations=3,
                 auto_verify=None), validator rejects max_iterations < 1. B: model exists but
                 validator missing. F: model missing.
-            - id: "R3_backward_compat"
+            - id: "R3"
               text: |
                 R3 — A: existing routine YAML files load without error after adding step_verifier
                 field (confirmed by loading at least one existing routine). F: field breaks
@@ -140,15 +140,15 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_gap_action"
+            - id: "R1"
               text: |
                 R1 — A: GapAction uses Literal type field, unknown type values cause Pydantic
                 validation error. B: model exists but type is bare str (accepts invalid values).
-            - id: "R2_gap_report"
+            - id: "R2"
               text: |
                 R2 — A: GapReport with unknown verdict string raises ValidationError (enum mismatch).
                 F: verdict accepts arbitrary strings.
-            - id: "R3_defaults"
+            - id: "R3"
               text: |
                 R3/R4 — A: all new fields have correct defaults (verifying=False, etc.);
                 mutable defaults use Field(default_factory=...). F: defaults wrong or missing.
@@ -202,12 +202,12 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_orm"
+            - id: "R1"
               text: |
                 R1/R2 — A: all five new ORM attributes exist on correct model classes;
                 boolean columns use Integer mapped type (matching existing pattern).
                 F: attributes missing from ORM models.
-            - id: "R3_migration"
+            - id: "R3"
               text: |
                 R3 — A: migration file in alembic/versions/ adds all 5 columns with correct
                 defaults; upgrade applies without error. F: migration missing or fails.
@@ -260,11 +260,11 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_events"
+            - id: "R1"
               text: |
                 R1/R2 — A: all three event types importable; event_type strings are exact
                 snake_case values specified. F: events missing or wrong event_type strings.
-            - id: "R3_tests"
+            - id: "R3"
               text: |
                 R3 — A: test file covers all six categories listed; both happy-path and
                 validation-error cases present. B: file exists but missing some categories.
@@ -324,11 +324,15 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_method"
+            - id: "R1"
               text: |
                 R1 — A: method is async, accepts (self, run_id, step_id) parameters.
                 F: method missing.
-            - id: "R2_R3_behavior"
+            - id: "R2"
+              text: |
+                R2/R3 — A: implementation sets verifying=True, increments counter, emits event,
+                persists state. Idempotent on second call. F: any of these behaviors missing.
+            - id: "R3"
               text: |
                 R2/R3 — A: implementation sets verifying=True, increments counter, emits event,
                 persists state. Idempotent on second call. F: any of these behaviors missing.
@@ -381,11 +385,21 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_method"
+            - id: "R1"
               text: |
                 R1 — A: method is async with correct signature (run_id, step_id, gap_report).
                 F: method missing.
-            - id: "R2_R3_R4"
+            - id: "R2"
+              text: |
+                R2/R3/R4 — A: all three verdict paths (pass, fail, max_iterations) implemented
+                correctly; step completion path reuses transitions.py functions without duplication.
+                F: any verdict path missing.
+            - id: "R3"
+              text: |
+                R2/R3/R4 — A: all three verdict paths (pass, fail, max_iterations) implemented
+                correctly; step completion path reuses transitions.py functions without duplication.
+                F: any verdict path missing.
+            - id: "R4"
               text: |
                 R2/R3/R4 — A: all three verdict paths (pass, fail, max_iterations) implemented
                 correctly; step completion path reuses transitions.py functions without duplication.
@@ -443,12 +457,12 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_retry"
+            - id: "R1"
               text: |
                 R1/R2/R3 — A: retry_task path handles all three sub-cases (COMPLETED→PENDING,
                 non-COMPLETED skipped, exhausted→pause). current_attempt not reset. F: any
                 sub-case missing.
-            - id: "R4_spawn_fix"
+            - id: "R4"
               text: |
                 R4 — A: spawn_fix creates new TaskState with spawned_by_gap_report=True,
                 checklist from requirements. New task appears in step.tasks. F: task not created.
@@ -517,16 +531,21 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_R2_persistence"
+            - id: "R1"
               text: |
                 R1/R2 — A: _to_domain and _to_model updated for all 5 new fields; boolean
                 columns coerce int→bool on read and bool→int on write; gap_reports uses
                 model_dump(mode="json") for serialization. F: any field missing.
-            - id: "R3_tests"
+            - id: "R2"
+              text: |
+                R1/R2 — A: _to_domain and _to_model updated for all 5 new fields; boolean
+                columns coerce int→bool on read and bool→int on write; gap_reports uses
+                model_dump(mode="json") for serialization. F: any field missing.
+            - id: "R3"
               text: |
                 R3 — A: all 8 engine test scenarios present with concrete assertions.
                 F: test file missing or fewer than 8 scenarios.
-            - id: "R4_transitions"
+            - id: "R4"
               text: |
                 R4 — A: zero diff to transitions.py confirmed. F: any changes to transitions.py.
         retry:
@@ -588,11 +607,15 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_R2_prompt"
+            - id: "R1"
               text: |
                 R1/R2 — A: function returns non-empty string with all five sections including
                 verdict schema block. F: function missing or incomplete sections.
-            - id: "R3_empty_auto_verify"
+            - id: "R2"
+              text: |
+                R1/R2 — A: function returns non-empty string with all five sections including
+                verdict schema block. F: function missing or incomplete sections.
+            - id: "R3"
               text: |
                 R3 — A: confirmed via test or manual check that empty auto_verify_results
                 omits the section header entirely. B: section header present but empty.
@@ -659,20 +682,20 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_method"
+            - id: "R1"
               text: |
                 R1 — A: _run_step_verification exists and implements the 7-step flow.
                 F: method missing.
-            - id: "R2_parse_error"
+            - id: "R2"
               text: |
                 R2 — A: JSON parse failure path creates fail-verdict GapReport; raw output
                 logged at WARNING before constructing the fallback report. F: parse error
                 crashes or swallowed silently.
-            - id: "R3_loop"
+            - id: "R3"
               text: |
                 R3 — A: `continue` (not `break`) used after _run_step_verification call.
                 F: `break` used, which would prevent retry tasks from running.
-            - id: "R5_fanout"
+            - id: "R5"
               text: |
                 R5 — A: inline fan-out check prevents verifier from running on fan-out
                 parent steps; existing fan-out code path unchanged. F: fan-out path modified.
@@ -742,11 +765,15 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_schemas"
+            - id: "R1"
               text: |
                 R1 — A: both schemas importable, use ApiModel base, GapReportSchema.verdict is str.
                 F: schemas missing or use wrong base class.
-            - id: "R2_R3_fields"
+            - id: "R2"
+              text: |
+                R2/R3 — A: all new fields have correct defaults; spawned_by_gap_report defaults
+                False so existing code building TaskSummary is unaffected. F: wrong defaults.
+            - id: "R3"
               text: |
                 R2/R3 — A: all new fields have correct defaults; spawned_by_gap_report defaults
                 False so existing code building TaskSummary is unaffected. F: wrong defaults.
@@ -794,12 +821,17 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_serialization"
+            - id: "R1"
               text: |
                 R1 — A: serialization populates all new step fields from StepModel; null
                 gap_reports returns []; malformed JSON logs warning and returns []. F: new
                 fields missing from API response.
-            - id: "R2_R3_defaults"
+            - id: "R2"
+              text: |
+                R2/R3 — A: pre-existing rows (null gap_reports) return [] without error;
+                spawned_by_gap_report correctly serialized. B: null handling works but
+                spawned_by_gap_report missing.
+            - id: "R3"
               text: |
                 R2/R3 — A: pre-existing rows (null gap_reports) return [] without error;
                 spawned_by_gap_report correctly serialized. B: null handling works but
@@ -855,12 +887,17 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_R2_scenarios"
+            - id: "R1"
               text: |
                 R1/R2 — A: all 8 scenarios present with concrete assertions (not just comments);
                 both Track A and Track B patterns used correctly. F: fewer than 8 scenarios or
                 scenarios without assertions.
-            - id: "R3_regression"
+            - id: "R2"
+              text: |
+                R1/R2 — A: all 8 scenarios present with concrete assertions (not just comments);
+                both Track A and Track B patterns used correctly. F: fewer than 8 scenarios or
+                scenarios without assertions.
+            - id: "R3"
               text: |
                 R3 — A: all existing integration tests pass. F: any pre-existing test broken.
         retry:
@@ -934,11 +971,15 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_R2_types"
+            - id: "R1"
               text: |
                 R1/R2 — A: both interfaces exported with correct field types; GapReport.verdict
                 is typed as the four-value union. StepSummary fields added. F: interfaces missing.
-            - id: "R4_typecheck"
+            - id: "R2"
+              text: |
+                R1/R2 — A: both interfaces exported with correct field types; GapReport.verdict
+                is typed as the four-value union. StepSummary fields added. F: interfaces missing.
+            - id: "R4"
               text: |
                 R4 — A: tsc passes clean. F: type errors introduced.
         retry:
@@ -986,12 +1027,12 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_state"
+            - id: "R1"
               text: |
                 R1 — A: getStepState returns 'verifying' correctly; badge class uses
                 animate-pulse with purple color. B: state returned but badge styling
                 doesn't match spec. F: 'verifying' state not handled.
-            - id: "R2_counter"
+            - id: "R2"
               text: |
                 R2 — A: iteration counter text rendered for verifying steps.
                 B: badge present but no counter. F: no verifying badge.
@@ -1044,12 +1085,17 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_R2_component"
+            - id: "R1"
               text: |
                 R1/R2 — A: component renders all required elements; verdict badge uses correct
                 color mapping. B: component exists but colors or action list incomplete.
                 F: component missing.
-            - id: "R4_integration"
+            - id: "R2"
+              text: |
+                R1/R2 — A: component renders all required elements; verdict badge uses correct
+                color mapping. B: component exists but colors or action list incomplete.
+                F: component missing.
+            - id: "R4"
               text: |
                 R4 — A: GapReportCard appears in run detail for steps that have gap_reports.
                 B: component exists but not integrated into detail view.
@@ -1108,16 +1154,16 @@ steps:
               must: true
         verifier:
           rubric:
-            - id: "R1_fixup"
+            - id: "R1"
               text: |
                 R1 — A: fix-up tasks visually distinct with dashed border and "Fix-up" badge.
                 F: no visual distinction.
-            - id: "R2_activity"
+            - id: "R2"
               text: |
                 R2 — A: all three event types handled with appropriate icons and content;
                 exact event_type strings match backend. B: handlers present but generic
                 (no specific icon or content). F: events not handled.
-            - id: "R3_tests"
+            - id: "R3"
               text: |
                 R3 — A: all three frontend test cases present and passing. F: tests missing.
         retry:
