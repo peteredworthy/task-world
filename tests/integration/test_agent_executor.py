@@ -363,8 +363,10 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    # Poll until the run is paused (agent should complete quickly then gate check fails)
-    for _ in range(200):
+    # Poll until the run is paused (agent should complete quickly then gate check fails).
+    # 500 iterations × 0.05s = 25s headroom; previous 200-iteration (10s) window was
+    # insufficient under heavy parallel test load (10 workers).
+    for _ in range(500):
         async with session_factory() as session:
             repo = RunRepository(session)
             run = await repo.get(run_id)
