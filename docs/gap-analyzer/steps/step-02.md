@@ -60,10 +60,43 @@ Wire step verification into the workflow engine so the verification loop runs an
 - [ ] Add `async def complete_step_verification(self, run_id: str, step_id: str, gap_report: GapReport) -> None` to `WorkflowEngine`
 - [ ] Append `gap_report` to `step.gap_reports`; emit `GapReportGenerated`
 - [ ] Check `step.verifier_iterations >= step_config.step_verifier.max_iterations` → pause run with reason `step_verifier_max_iterations` (regardless of verdict)
-- [ ] `verdict == PASS` → clear `step.verifying = False`; emit `StepVerificationCompleted`; call existing step completion path
-- [ ] `verdict == FAIL` → clear `step.verifying = False`; emit `StepVerificationCompleted`; pause run with reason `step_verifier_failed`
+- [ ] `verdict == PASS`:
+  - Set `step.verifying = False`
+  - Emit `StepVerificationCompleted(step_id=step_id, total_iterations=step.verifier_iterations, final_verdict="pass")`
+  - Call the existing step completion path (same as the no-verifier case). Use:
+    ```python
+    routine_config = None
+    if run.routine_embedded is not None:
+        try:
+            routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        except Exception:
+            pass
+    prev_step_index = run.current_step_index
+    step_changed = check_step_progression(
+        run,
+        routine_config=routine_config,
+        clock=self._clock,
+        emitter=self._emitter,
+        worktree_path=None,
+        run_config=run.config,
+    )
+    if step_changed:
+        for i in range(prev_step_index, run.current_step_index + 1):
+            s = run.steps[i]
+            if s.completed:
+                self._emitter.emit(StepCompleted(...))
+        old_run_status = run.status
+        new_run_status = check_run_completion(run, self._clock.now())
+        if new_run_status is not None:
+            self._emitter.emit(RunStatusChanged(...))
+    ```
+    This is the identical pattern to `complete_verification()` at engine.py lines 418–463. Do NOT copy/duplicate it — import `check_step_progression` and `check_run_completion` from `transitions.py` (they are already imported at top of engine.py).
+- [ ] `verdict == FAIL`:
+  - Set `step.verifying = False`
+  - Emit `StepVerificationCompleted(step_id=step_id, total_iterations=step.verifier_iterations, final_verdict="fail")`
+  - Call `self.pause_run(run_id, reason="step_verifier_failed")`
 - [ ] `verdict in (RETRY, FIX)` → dispatch actions (see Task 3); leave `verifying=True`
-- [ ] Persist step state after all mutations
+- [ ] Persist step state after all mutations: `self._state.update_run(run)`
 
 **Dependencies**
 - [ ] Task 1 must be complete (`start_step_verification` exists)
@@ -97,44 +130,92 @@ Wire step verification into the workflow engine so the verification loop runs an
 - [ ] `retry_task` handler:
   - Look up task by `action.task_id`; if not found, log error and skip
   - If task status is not `COMPLETED`, log warning and skip (only COMPLETED tasks eligible per clarifications)
-  - If `task.current_attempt >= task.max_attempts`, treat as `FAIL` — pause run
-  - Reset task to `PENDING`; prepend `action.feedback` to next builder prompt context
+  - If `task.current_attempt >= task.max_attempts`, treat entire gap report as FAIL — pause run with reason `"step_verifier_failed"` and return
+  - Reset task to `PENDING`: set `task.status = TaskStatus.PENDING`
+  - **Do NOT reset `task.current_attempt`** — leave it at its current value; the next `start_task` call will increment it and the max_attempts check will apply correctly
+  - Store feedback for next builder invocation: set `task.gap_report_feedback = action.feedback` (this field is on `TaskState`; it will be injected into the builder prompt by `generate_builder_prompt` or the phase handler — see Step 3 Task 2)
 - [ ] `spawn_fix` handler:
-  - Create new `TaskState` with `spawned_by_gap_report=True`, `title=action.title`, `requirements` from `action.requirements`
-  - Add task to `step.tasks`; persist immediately
-- [ ] After dispatching all actions, persist step state
+  - Create new `TaskState`:
+    ```python
+    new_task = TaskState(
+        id=generate_id(),
+        config_id=f"gap_fix_{generate_id()[:8]}",
+        title=action.title or "Gap fix task",
+        status=TaskStatus.PENDING,
+        spawned_by_gap_report=True,
+        max_attempts=3,
+        checklist=[
+            ChecklistItem(
+                req_id=req.get("id", f"R{i+1}"),
+                desc=req.get("desc", ""),
+                priority=Priority(req.get("priority", "critical")),
+            )
+            for i, req in enumerate(action.requirements or [])
+        ],
+    )
+    ```
+  - Add task to `step.tasks` list; the task will be picked up by the executor loop automatically
+  - Persist immediately via `self._state.update_run(run)` (the service layer calls `repo.save()`)
+- [ ] After dispatching all actions for RETRY/FIX verdict, call `self._state.update_run(run)` to persist all mutations
 
 **Dependencies**
 - [ ] Task 2 must be complete (`complete_step_verification` skeleton exists)
+- [ ] Step 1 Task 2 must be complete (`spawned_by_gap_report` and `gap_report_feedback` fields on `TaskState`)
 
 **References**
 - `docs/gap-analyzer/plan.md` — M2 action dispatch specification
 - `docs/gap-analyzer/clarifications.md` — `retry_task` eligibility: COMPLETED tasks only; `spawn_fix` bespoke minimal (create TaskState directly)
+- Import required: `from orchestrator.state.models import TaskState, ChecklistItem, generate_id`
+- Import required: `from orchestrator.config.enums import Priority`
 
 **Constraints**
 - `retry_task` on a `FAILED` (not `COMPLETED`) task must be skipped, not error.
 - `spawn_fix` must set `spawned_by_gap_report=True` on the new `TaskState`.
+- `task.current_attempt` must NOT be reset on retry — only `task.status` is reset to `PENDING`.
 
 **Functionality (Expected Outcomes)**
-- [ ] `retry_task` on COMPLETED task resets it to PENDING with feedback
-- [ ] `retry_task` on non-COMPLETED task is skipped silently
-- [ ] `spawn_fix` adds new task to step with `spawned_by_gap_report=True`
+- [ ] `retry_task` on COMPLETED task: task status → PENDING, `gap_report_feedback` set
+- [ ] `retry_task` on non-COMPLETED task: skipped silently (no crash)
+- [ ] `retry_task` when `current_attempt >= max_attempts`: run paused with `step_verifier_failed`
+- [ ] `spawn_fix`: new task in step.tasks with `spawned_by_gap_report=True` and correct checklist
 
 **Final Verification (Proof of Completion)**
-- [ ] Unit test: `retry_task` on COMPLETED task → task reset to PENDING
+- [ ] Unit test: `retry_task` on COMPLETED task → task reset to PENDING, `gap_report_feedback` populated
 - [ ] Unit test: `retry_task` on non-COMPLETED task → skipped (no crash)
+- [ ] Unit test: `retry_task` on exhausted task (current_attempt >= max_attempts) → run paused
 - [ ] Unit test: `spawn_fix` → new task in step.tasks with `spawned_by_gap_report=True`
 
 ---
 
 ## Task 4: Update WorkflowService Persistence + Write Engine Unit Tests
 
-**Description**: Update `WorkflowService` in `src/orchestrator/workflow/service.py` to read and write `verifying`, `verifier_iterations`, and `gap_reports` from `StepModel`. Then write all engine unit tests in `tests/unit/test_gap_analyzer_engine.py`.
+**Description**: Update `repositories.py` (`_to_domain` and `_to_model`) to read and write all new step and task fields. Then write all engine unit tests in `tests/unit/test_gap_analyzer_engine.py`.
 
 **Implementation Plan (Do These Steps)**
-- [ ] In `WorkflowService`, update the step → `StepState` mapping to include `verifying`, `verifier_iterations`, `gap_reports`
-- [ ] In `WorkflowService`, update the `StepState` → `StepModel` write path to persist these fields
-- [ ] Serialize `gap_reports` as JSON for storage; deserialize back to `list[GapReport]` on load
+- [ ] In `src/orchestrator/db/repositories.py`, in `_to_domain()`, update the `StepState(...)` constructor call to include:
+  ```python
+  verifying=bool(step_model.verifying),
+  verifier_iterations=step_model.verifier_iterations or 0,
+  gap_reports=[GapReport(**d) for d in (step_model.gap_reports or [])],
+  ```
+  Import `GapReport` from `orchestrator.state.models` at top of file.
+- [ ] In `_to_domain()`, update `TaskState(...)` constructor to include:
+  ```python
+  spawned_by_gap_report=bool(task_model.spawned_by_gap_report),
+  gap_report_feedback=task_model.gap_report_feedback,
+  ```
+- [ ] In `_to_model()`, update `StepModel(...)` constructor to include:
+  ```python
+  verifying=int(step.verifying),
+  verifier_iterations=step.verifier_iterations,
+  gap_reports=[r.model_dump(mode="json") for r in step.gap_reports],
+  ```
+- [ ] In `_to_model()`, update `TaskModel(...)` constructor to include:
+  ```python
+  spawned_by_gap_report=int(task.spawned_by_gap_report),
+  gap_report_feedback=task.gap_report_feedback,
+  ```
+- [ ] Serialize `gap_reports`: use `r.model_dump(mode="json")` per report (handles `datetime` and `Enum` serialization). Deserialize with `GapReport(**d)` — `StepVerdict` is a `str, Enum` so string values coerce automatically.
 - [ ] Create `tests/unit/test_gap_analyzer_engine.py` with tests for:
   - `start_step_verification` sets `verifying=True`, increments `verifier_iterations`, emits `StepVerificationStarted`
   - `complete_step_verification` with `pass` → step completes, `verifying=False`, event emitted
@@ -154,13 +235,16 @@ Wire step verification into the workflow engine so the verification loop runs an
 
 **Constraints**
 - `gap_reports` serialization: store as JSON list of dicts; deserialize with `GapReport(**d)` on load.
+- `verifying` and `spawned_by_gap_report` are Integer columns — coerce to `bool` on read and `int` on write.
 - Confirm `check_step_progression()` diff is empty (file must be unchanged).
+- Do NOT modify `WorkflowService` methods — the persistence is in `repositories.py` (`_to_domain` / `_to_model`). The `_persist` / `_build_engine` cycle in `WorkflowService` calls `repo.save(run)` which calls `_to_model` — no extra wiring needed.
 
 **Functionality (Expected Outcomes)**
-- [ ] `WorkflowService` round-trips `verifying`, `verifier_iterations`, `gap_reports` through DB correctly
-- [ ] All 8 engine unit test scenarios pass
+- [ ] `repositories.py` round-trips `verifying`, `verifier_iterations`, `gap_reports` through DB correctly
+- [ ] `repositories.py` round-trips `spawned_by_gap_report`, `gap_report_feedback` through DB correctly
+- [ ] All engine unit test scenarios pass
 
 **Final Verification (Proof of Completion)**
 - [ ] `uv run pytest tests/unit/test_gap_analyzer_engine.py -v` — all tests pass
 - [ ] `uv run pytest tests/unit/ tests/integration/ -v` — no existing tests broken
-- [ ] `git diff src/orchestrator/workflow/transitions.py` is empty (no changes to transitions)
+- [ ] `uv run --no-pager git diff src/orchestrator/workflow/transitions.py` is empty (no changes to transitions)

@@ -164,7 +164,11 @@ Render step verification state and gap reports in the UI. Users should see when 
 - Existing `ActivityFeed.tsx` for event handler pattern
 
 **Constraints**
-- Activity feed event type strings must match exactly what the backend emits (check `src/orchestrator/workflow/events.py`).
+- Activity feed event type strings must match exactly what the backend emits. The values are (defined in Step 1 Task 4 of the backend):
+  - `"step_verification_started"` (for `StepVerificationStarted`)
+  - `"gap_report_generated"` (for `GapReportGenerated`)
+  - `"step_verification_completed"` (for `StepVerificationCompleted`)
+  Use these exact strings in the ActivityFeed switch/if-else.
 - Fix-up task dashed border: use Tailwind `border-dashed` class (or existing pattern).
 
 **Functionality (Expected Outcomes)**

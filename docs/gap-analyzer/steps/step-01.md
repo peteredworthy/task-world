@@ -26,8 +26,17 @@ Define all new types — enums, Pydantic models, DB columns, and event types —
 **Implementation Plan (Do These Steps)**
 - [ ] Add `StepVerdict` enum to `src/orchestrator/config/enums.py` with members: `PASS = "pass"`, `RETRY = "retry"`, `FIX = "fix"`, `FAIL = "fail"`
 - [ ] Add `StepVerifierConfig` to `src/orchestrator/config/models.py` with fields: `prompt: str`, `max_iterations: int = 3`, `auto_verify: AutoVerifyConfig | None = None`
-- [ ] Add `step_verifier: StepVerifierConfig | None = None` field to `StepConfig` (after existing fields)
-- [ ] Verify `StepVerifierConfig` with `max_iterations < 1` raises Pydantic validation error
+- [ ] Add `@field_validator("max_iterations")` to `StepVerifierConfig` that raises `ValueError("max_iterations must be >= 1")` if value < 1. Example pattern (from existing validators in models.py):
+  ```python
+  @field_validator("max_iterations")
+  @classmethod
+  def _validate_max_iterations(cls, v: int) -> int:
+      if v < 1:
+          raise ValueError("max_iterations must be >= 1")
+      return v
+  ```
+- [ ] Add `step_verifier: StepVerifierConfig | None = None` field to `StepConfig` (after `condition` field at end of existing fields)
+- [ ] Note: `_validate_file_exclusivity` in `StepConfig` does NOT need updating — the validator only errors on non-None values; `step_verifier=None` is safe
 
 **Dependencies**
 - None — this is the first task in the first step.
@@ -55,12 +64,19 @@ Define all new types — enums, Pydantic models, DB columns, and event types —
 
 ## Task 2: Add GapAction, GapReport, and StepState Fields
 
-**Description**: Add `GapAction` and `GapReport` Pydantic models to `src/orchestrator/state/models.py` and add `verifying`, `verifier_iterations`, `gap_reports` fields to `StepState`.
+**Description**: Add `GapAction` and `GapReport` Pydantic models to `src/orchestrator/state/models.py`, add `verifying`, `verifier_iterations`, `gap_reports` fields to `StepState`, and add `spawned_by_gap_report` and `gap_report_feedback` fields to `TaskState`.
 
 **Implementation Plan (Do These Steps)**
-- [ ] Add `GapAction` to `src/orchestrator/state/models.py` with fields: `type: str`, `task_id: str | None = None`, `feedback: str | None = None`, `title: str | None = None`, `context: str | None = None`, `requirements: list[dict] | None = None`
-- [ ] Add `GapReport` to `src/orchestrator/state/models.py` with fields: `id: str`, `iteration: int`, `assessment: str`, `verdict: StepVerdict`, `actions: list[GapAction] = []`, `timestamp: datetime`
+- [ ] Add `GapAction` to `src/orchestrator/state/models.py` with fields: `type: Literal["retry_task", "spawn_fix", "pass", "fail"]`, `task_id: str | None = None`, `feedback: str | None = None`, `title: str | None = None`, `context: str | None = None`, `requirements: list[dict] | None = None`
+  - Note: Use `from typing import Literal` — `type` field must use `Literal` not bare `str` so unknown action types fail validation immediately
+- [ ] Add `GapReport` to `src/orchestrator/state/models.py` with fields: `id: str = Field(default_factory=generate_id)`, `iteration: int`, `assessment: str`, `verdict: StepVerdict`, `actions: list[GapAction] = Field(default_factory=list)`, `timestamp: datetime = Field(default_factory=_utc_now)`
+  - Use `Field(default_factory=list)` not `= []` for mutable defaults (Pydantic v2 requirement)
 - [ ] Add `verifying: bool = False`, `verifier_iterations: int = 0`, `gap_reports: list[GapReport] = Field(default_factory=list)` to `StepState`
+- [ ] Add `spawned_by_gap_report: bool = False` to `TaskState` (after `fan_out_output` field)
+  - This field must be `False` by default so existing task creation code is unaffected
+- [ ] Add `gap_report_feedback: str | None = None` to `TaskState` (after `spawned_by_gap_report` field)
+  - This field stores feedback from a `retry_task` gap action, injected into the next builder prompt
+  - Must be cleared after each builder invocation (set back to `None`) once the feedback is used
 
 **Dependencies**
 - [ ] Task 1 must be complete (`StepVerdict` enum must exist)
@@ -85,13 +101,18 @@ Define all new types — enums, Pydantic models, DB columns, and event types —
 
 ## Task 3: Add DB Columns and Alembic Migration
 
-**Description**: Add `verifying` (Integer/bool, default 0) and `gap_reports` (JSON, default list) columns to `StepModel` in `src/orchestrator/db/models.py`, and create a corresponding Alembic migration.
+**Description**: Add `verifying`, `verifier_iterations`, and `gap_reports` columns to `StepModel`, and `spawned_by_gap_report` and `gap_report_feedback` columns to `TaskModel` in `src/orchestrator/db/models.py`. Create a single Alembic migration for all five new columns.
 
 **Implementation Plan (Do These Steps)**
-- [ ] Add `verifying = Column(Integer, default=0)` to `StepModel` in `src/orchestrator/db/models.py`
-- [ ] Add `gap_reports = Column(JSON, default=list)` to `StepModel`
+- [ ] Add to `StepModel` in `src/orchestrator/db/models.py`:
+  - `verifying: Mapped[bool] = mapped_column(Integer, default=0)`
+  - `verifier_iterations: Mapped[int] = mapped_column(Integer, default=0)`
+  - `gap_reports: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)`
+- [ ] Add to `TaskModel` in `src/orchestrator/db/models.py`:
+  - `spawned_by_gap_report: Mapped[bool] = mapped_column(Integer, default=0)`
+  - `gap_report_feedback: Mapped[str | None] = mapped_column(Text, nullable=True)`
 - [ ] Generate migration: `uv run alembic revision --autogenerate -m "add step_verifier columns"`
-- [ ] Inspect and confirm migration SQL uses `DEFAULT 0` and `DEFAULT '[]'` (or equivalent)
+- [ ] Inspect the generated migration file — confirm it adds all 5 columns with correct defaults
 - [ ] Test migration: `uv run alembic upgrade head`
 
 **Dependencies**
@@ -100,19 +121,21 @@ Define all new types — enums, Pydantic models, DB columns, and event types —
 **References**
 - `docs/gap-analyzer/plan.md` — M1 DB column spec
 - Architecture note (MEMORY.md): never run `rm orchestrator.db`; Alembic migrations only
+- Pattern: `StepModel.completed` uses `mapped_column(Integer, default=0)` — follow same pattern for boolean columns
 
 **Constraints**
-- Migration must be safe and additive — no data loss, existing rows default to `verifying=0`, `gap_reports=[]`.
+- Migration must be safe and additive — no data loss; existing rows default to `verifying=0`, `verifier_iterations=0`, `gap_reports=[]`, `spawned_by_gap_report=0`, `gap_report_feedback=NULL`.
 - Do not drop or rename any existing column.
 
 **Functionality (Expected Outcomes)**
-- [ ] `StepModel` has `verifying` and `gap_reports` attributes
+- [ ] `StepModel` has `verifying`, `verifier_iterations`, `gap_reports` attributes
+- [ ] `TaskModel` has `spawned_by_gap_report`, `gap_report_feedback` attributes
 - [ ] Alembic migration file exists in `alembic/versions/`
 - [ ] Migration applies cleanly on existing DB
 
 **Final Verification (Proof of Completion)**
 - [ ] `uv run alembic upgrade head` completes without error
-- [ ] `uv run python -c "from orchestrator.db.models import StepModel; print(StepModel.verifying)"` succeeds
+- [ ] `uv run python -c "from orchestrator.db.models import StepModel, TaskModel; print(StepModel.verifying, TaskModel.spawned_by_gap_report)"` succeeds
 
 ---
 
@@ -121,7 +144,35 @@ Define all new types — enums, Pydantic models, DB columns, and event types —
 **Description**: Add `StepVerificationStarted`, `GapReportGenerated`, `StepVerificationCompleted` event types to `src/orchestrator/workflow/events.py` and write unit tests in `tests/unit/test_gap_analyzer_models.py`.
 
 **Implementation Plan (Do These Steps)**
-- [ ] Add `StepVerificationStarted`, `GapReportGenerated`, `StepVerificationCompleted` dataclasses/classes to `src/orchestrator/workflow/events.py` with appropriate fields (e.g., `step_id`, `iteration`, `max_iterations`, `gap_report`, `verdict`)
+- [ ] Add to `src/orchestrator/workflow/events.py`, following the `@dataclass` pattern of existing events:
+  ```python
+  @dataclass
+  class StepVerificationStarted(WorkflowEvent):
+      """Emitted when step verification begins."""
+      step_id: str = ""
+      iteration: int = 0
+      max_iterations: int = 0
+      # event_type value: "step_verification_started"
+
+  @dataclass
+  class GapReportGenerated(WorkflowEvent):
+      """Emitted when a gap report is produced by the verifier."""
+      step_id: str = ""
+      iteration: int = 0
+      assessment: str = ""
+      verdict: str = ""
+      action_count: int = 0
+      # event_type value: "gap_report_generated"
+
+  @dataclass
+  class StepVerificationCompleted(WorkflowEvent):
+      """Emitted when step verification concludes (pass or fail)."""
+      step_id: str = ""
+      total_iterations: int = 0
+      final_verdict: str = ""
+      # event_type value: "step_verification_completed"
+  ```
+  - Note: `event_type` is set at instantiation time (e.g. `event_type="step_verification_started"`). These exact snake_case strings are what the frontend must match in the activity feed.
 - [ ] Create `tests/unit/test_gap_analyzer_models.py` with tests covering:
   - `GapReport` validation: valid data constructs; missing required fields raise errors
   - `GapAction` with all four types (`retry_task`, `spawn_fix`, `pass`, `fail`)
