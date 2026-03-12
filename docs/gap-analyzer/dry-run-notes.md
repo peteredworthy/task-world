@@ -142,21 +142,17 @@
 
 ## Persistence Mapping Audit
 
-New state model fields introduced:
+New state model fields introduced (gaps identified and fixed — all applied to step files):
 
 | State Field | DB Column | Repo Write | Repo Read | Migration |
 |---|---|---|---|---|
-| `StepState.verifying` | `StepModel.verifying` (Integer) | NOT SPECIFIED (must be in Step 2 Task 4) | NOT SPECIFIED (must be in Step 2 Task 4) | Step 1 Task 3 ✓ |
-| `StepState.verifier_iterations` | **MISSING** | **MISSING** | **MISSING** | **MISSING** |
-| `StepState.gap_reports` | `StepModel.gap_reports` (JSON) | NOT SPECIFIED (must be in Step 2 Task 4) | NOT SPECIFIED (must be in Step 2 Task 4) | Step 1 Task 3 ✓ |
-| `TaskState.spawned_by_gap_report` | **MISSING** | **MISSING** | **MISSING** | **MISSING** |
-| `TaskState.gap_report_feedback` | **MISSING** | **MISSING** | **MISSING** | **MISSING** |
+| `StepState.verifying` | `StepModel.verifying` (Integer, default=0) | `int(step.verifying)` — Step 2 Task 4 ✓ | `bool(step_model.verifying)` — Step 2 Task 4 ✓ | Step 1 Task 3 ✓ |
+| `StepState.verifier_iterations` | `StepModel.verifier_iterations` (Integer, default=0) — Step 1 Task 3 ✓ | `step.verifier_iterations` — Step 2 Task 4 ✓ | `step_model.verifier_iterations or 0` — Step 2 Task 4 ✓ | Step 1 Task 3 ✓ |
+| `StepState.gap_reports` | `StepModel.gap_reports` (JSON, default=list) | `[r.model_dump(mode="json") for r in step.gap_reports]` — Step 2 Task 4 ✓ | `[GapReport(**d) for d in (step_model.gap_reports or [])]` — Step 2 Task 4 ✓ | Step 1 Task 3 ✓ |
+| `TaskState.spawned_by_gap_report` | `TaskModel.spawned_by_gap_report` (Integer, default=0) — Step 1 Task 3 ✓ | `int(task.spawned_by_gap_report)` — Step 2 Task 4 ✓ | `bool(task_model.spawned_by_gap_report)` — Step 2 Task 4 ✓ | Step 1 Task 3 ✓ |
+| `TaskState.gap_report_feedback` | `TaskModel.gap_report_feedback` (Text, nullable) — Step 1 Task 3 ✓ | `task.gap_report_feedback` — Step 2 Task 4 ✓ | `task_model.gap_report_feedback` — Step 2 Task 4 ✓ | Step 1 Task 3 ✓ |
 
-**MISSING cells = gaps that will cause "works in unit tests, fails in integration" failures.**
-
-Fixes required:
-- Step 1 Task 3: add `verifier_iterations`, `spawned_by_gap_report`, `gap_report_feedback` columns to respective models + migration
-- Step 2 Task 4: explicitly reference `repositories.py` `_to_domain()` and `_to_model()` for all new fields
+**No MISSING cells.** All gaps resolved: Step 1 Task 3 adds DB columns + Alembic migration; Step 2 Task 4 adds `_to_domain()` and `_to_model()` mappings in `repositories.py`.
 
 ---
 
