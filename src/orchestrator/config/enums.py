@@ -82,11 +82,11 @@ class ModelProfile(str, Enum):
 
 
 class PhaseType(str, Enum):
-    BUILD = "build"
-    VERIFY = "verify"
-    PLAN = "plan"
-    SUMMARIZE = "summarize"
-    GAP_CHECK = "gap_check"
-    SCRIPT = "script"
-    AUTO_VERIFY = "auto_verify"
-    HUMAN_REVIEW = "human_review"
+    build = "build"
+    verify = "verify"
+    plan = "plan"
+    summarize = "summarize"
+    gap_check = "gap_check"
+    script = "script"
+    auto_verify = "auto_verify"
+    human_review = "human_review"
