@@ -1,4 +1,11 @@
-"""Integration tests for AgentRunnerExecutor error handling."""
+"""Integration tests for AgentRunnerExecutor error handling.
+
+These tests verify that the executor transitions runs to PAUSED when
+agents fail in various ways. Instead of polling the DB with sleeps,
+each test awaits the executor's background task directly so that
+assertions run immediately after the agent loop exits — no timing
+dependence.
+"""
 
 import asyncio
 from collections.abc import AsyncGenerator
@@ -16,6 +23,64 @@ from orchestrator.db.repositories import RunRepository
 from orchestrator.workflow.service import WorkflowService
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _await_agent_loop(executor: AgentRunnerExecutor, run_id: str) -> None:
+    """Wait for the executor's background agent-loop task to finish.
+
+    ``start_run_with_agent`` stores its ``asyncio.Task`` in
+    ``executor._running_tasks[run_id]``.  Awaiting it removes all timing
+    dependence — the test proceeds as soon as the loop exits rather than
+    polling with arbitrary sleeps.
+
+    Also cancels any remaining background tasks (e.g. health monitor) to
+    prevent them from accessing the in-memory DB after the test's engine
+    is disposed.
+    """
+    task = executor._running_tasks.get(run_id)
+    if task is not None:
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass  # Agent errors are expected — we inspect DB state below
+
+    # Cancel any lingering background tasks to avoid "no such table"
+    # errors when the in-memory DB is torn down.
+    for tid, t in list(executor._running_tasks.items()):
+        if not t.done():
+            t.cancel()
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
+
+
+def _make_service_args(session: AsyncSession) -> dict:
+    """Build the kwargs dict for constructing a WorkflowService."""
+    from orchestrator.db.event_store import EventStore
+    from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
+    from orchestrator.workflow.event_logger import PersistentEventEmitter
+
+    repo = RunRepository(session)
+    event_store = EventStore(session)
+    emitter = PersistentEventEmitter(event_store)
+    return dict(
+        session=session,
+        repo=repo,
+        event_store=event_store,
+        event_emitter=emitter,
+        auto_verify_runner=LocalAutoVerifyRunner(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
 
 
 @pytest.fixture
@@ -40,56 +105,30 @@ async def session_factory(app: FastAPI) -> async_sessionmaker[AsyncSession]:
 @pytest.fixture
 async def service(app: FastAPI) -> AsyncGenerator[WorkflowService, None]:
     """Create WorkflowService for tests."""
-    from orchestrator.db.event_store import EventStore
-    from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-    from orchestrator.workflow.event_logger import PersistentEventEmitter
-
     sf: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with sf() as session:
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        yield WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-        )
+        yield WorkflowService(**_make_service_args(session))
+
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
 
 
 async def test_executor_pauses_run_on_agent_not_available(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     """AgentNotAvailableError should pause the run."""
-    # Create executor with spawning enabled
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
 
-    # Create and start a run with a non-existent command
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
         from orchestrator.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
 
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        service = WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-        )
-
-        # Discover routines and create run
+        service = WorkflowService(**_make_service_args(session))
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -105,23 +144,13 @@ async def test_executor_pauses_run_on_agent_not_available(
 
         run = await service.create_run(run)
         run_id = run.id
-
-        # Start the run with the executor
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    # Poll until the run is paused (agent loop should fail quickly)
-    for _ in range(200):
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
-            if run.status == RunStatus.PAUSED:
-                break
-        await asyncio.sleep(0.05)
-    else:
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
+    await _await_agent_loop(executor, run_id)
+
+    async with session_factory() as session:
+        run = await RunRepository(session).get(run_id)
         assert run.status == RunStatus.PAUSED, (
             f"Run should be PAUSED when agent is not available, got {run.status.value}"
         )
@@ -131,62 +160,9 @@ async def test_executor_pauses_run_on_agent_execution_error(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:
     """AgentExecutionError should pause the run."""
-    # Create executor with spawning enabled
-    executor = AgentRunnerExecutor(
-        session_factory=session_factory,
-        spawn_agents=True,
-    )
-
-    # Create and start a run with a command that times out
-    async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
-        from orchestrator.routines.discovery import discover_routines
-        from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
-        from orchestrator.config.global_config import (
-            GlobalConfig,
-            NudgerConfig as GlobalNudgerConfig,
-        )
-
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        service = WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-        )
-
-        # Discover routines and create run
-        routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
-        routine = next(r for r in routines if r.config.id == "simple-routine")
-
-        run = create_run_from_routine(
-            routine=routine.config,
-            repo_name="test-project",
-            source_branch="main",
-            routine_source=RoutineSource.LOCAL,
-        )
-        run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        # This command will hang and be killed by the nudger
-        run.agent_config = {
-            "command": "python3",
-            "args": ["-c", "import time; time.sleep(300)"],
-            "poll_interval": 0.1,  # Fast polling for tests
-        }
-
-        run = await service.create_run(run)
-        run_id = run.id
-
-    # Create a new executor with aggressive nudger config
     from orchestrator.config.global_config import GlobalConfig, NudgerConfig as GlobalNudgerConfig
 
+    # Aggressive nudger config so the stuck agent is killed quickly
     global_config = GlobalConfig(
         nudger=GlobalNudgerConfig(
             check_interval_seconds=1,
@@ -200,39 +176,37 @@ async def test_executor_pauses_run_on_agent_execution_error(
         spawn_agents=True,
     )
 
-    # Start the run
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
+        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.state.factory import create_run_from_routine
 
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        service = WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
+        service = WorkflowService(**_make_service_args(session))
+        routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
+        routine = next(r for r in routines if r.config.id == "simple-routine")
+
+        run = create_run_from_routine(
+            routine=routine.config,
+            repo_name="test-project",
+            source_branch="main",
+            routine_source=RoutineSource.LOCAL,
         )
+        run.routine_embedded = routine.config.model_dump(mode="json")
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_config = {
+            "command": "python3",
+            "args": ["-c", "import time; time.sleep(300)"],
+            "poll_interval": 0.1,
+        }
+
+        run = await service.create_run(run)
+        run_id = run.id
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    # Poll until the run is paused (nudger should kill the stuck agent quickly)
-    for _ in range(500):
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
-            if run.status == RunStatus.PAUSED:
-                break
-        await asyncio.sleep(0.05)
-    else:
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
+    await _await_agent_loop(executor, run_id)
+
+    async with session_factory() as session:
+        run = await RunRepository(session).get(run_id)
         assert run.status == RunStatus.PAUSED, (
             f"Run should be PAUSED when agent execution fails, got {run.status.value}"
         )
@@ -248,25 +222,10 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
     )
 
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
         from orchestrator.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
 
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        service = WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-        )
-
+        service = WorkflowService(**_make_service_args(session))
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -288,17 +247,10 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    for _ in range(80):
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
-            if run.status == RunStatus.PAUSED:
-                break
-        await asyncio.sleep(0.05)
-    else:
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
+    await _await_agent_loop(executor, run_id)
+
+    async with session_factory() as session:
+        run = await RunRepository(session).get(run_id)
         assert run.status == RunStatus.PAUSED, (
             "Run should be PAUSED when subprocess exits non-zero to avoid retry loops"
         )
@@ -314,34 +266,16 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
     trigger a gate check that fails. The executor catches this error and pauses
     the run so the user can investigate.
     """
-    # Create executor with spawning enabled
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
 
-    # Create and start a run with a successful command that doesn't do anything useful
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
         from orchestrator.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
 
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        service = WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-        )
-
-        # Discover routines and create run
+        service = WorkflowService(**_make_service_args(session))
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -353,32 +287,17 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
         run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        # This command will succeed but doesn't mark checklist items as done
         run.agent_config = {"command": "echo", "args": ["hello"]}
 
         run = await service.create_run(run)
         run_id = run.id
-
-        # Start the run with the executor
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    # Poll until the run is paused (agent should complete quickly then gate check fails).
-    # 500 iterations × 0.05s = 25s headroom; previous 200-iteration (10s) window was
-    # insufficient under heavy parallel test load (10 workers).
-    for _ in range(500):
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
-            if run.status == RunStatus.PAUSED:
-                break
-        await asyncio.sleep(0.05)
-    else:
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
-        # Run should be PAUSED because the agent succeeded but the workflow
-        # couldn't progress (gate check failed due to incomplete checklist)
+    await _await_agent_loop(executor, run_id)
+
+    async with session_factory() as session:
+        run = await RunRepository(session).get(run_id)
         assert run.status == RunStatus.PAUSED, (
             f"Run should be PAUSED when agent fails to complete workflow, got {run.status.value}"
         )
@@ -388,34 +307,16 @@ async def test_executor_persists_builder_prompt_before_execution(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
     """Builder prompt should be persisted before agent execution starts."""
-    # Create executor with spawning enabled
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
 
-    # Create and start a run with a command that immediately fails
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
         from orchestrator.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
 
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        service = WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-        )
-
-        # Discover routines and create run
+        service = WorkflowService(**_make_service_args(session))
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -426,56 +327,32 @@ async def test_executor_persists_builder_prompt_before_execution(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.worktree_path = str(tmp_path)  # Set worktree for CLI agent to work
+        run.worktree_path = str(tmp_path)
         run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        # Use a command that exits immediately with error
         run.agent_config = {"command": "false"}
-        # Skip pre-run health check in tests
         (tmp_path / ".task-world").mkdir(exist_ok=True)
         (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")
 
         run = await service.create_run(run)
         run_id = run.id
-
-        # Start the run with the executor
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    # Poll until the run is paused AND the task has been started (has attempts).
-    # The monitor may pause the run before start_task commits in heavy-load scenarios,
-    # so we keep polling until both conditions are true.
-    for _ in range(200):
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
-            if (
-                run.status == RunStatus.PAUSED
-                and run.steps
-                and run.steps[0].tasks
-                and run.steps[0].tasks[0].attempts
-            ):
-                break
-        await asyncio.sleep(0.05)
+    await _await_agent_loop(executor, run_id)
 
-    # Verify the builder prompt was persisted
     async with session_factory() as session:
-        repo = RunRepository(session)
-        run = await repo.get(run_id)
-
-        # Get the first task's first attempt
+        run = await RunRepository(session).get(run_id)
+        assert run.status == RunStatus.PAUSED
         assert len(run.steps) > 0
         assert len(run.steps[0].tasks) > 0
         task = run.steps[0].tasks[0]
         assert len(task.attempts) > 0
         attempt = task.attempts[0]
 
-        # Verify builder prompt was stored
         assert attempt.builder_prompt is not None
         assert len(attempt.builder_prompt) > 0
-        # Verify it contains expected builder prompt content
         assert "builder phase" in attempt.builder_prompt.lower()
         assert "## Task" in attempt.builder_prompt
-        # Verify verifier prompt is not set for builder phase
         assert attempt.verifier_prompt is None
 
 
@@ -483,34 +360,16 @@ async def test_agent_metadata_persisted_immediately(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
     """Agent metadata (PID) should be persisted immediately when subprocess is created."""
-    # Create executor with spawning enabled
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
 
-    # Create and start a run with a slow command so we can check metadata while running
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
         from orchestrator.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
 
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        service = WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-        )
-
-        # Discover routines and create run
+        service = WorkflowService(**_make_service_args(session))
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -522,38 +381,24 @@ async def test_agent_metadata_persisted_immediately(
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
         run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        # Use a command that will sleep briefly so metadata is persisted before completion
-        run.agent_config = {"command": "sleep", "args": ["0.1"]}
-        # Set worktree path so agent can execute
+        # Use a command that exits immediately — the PID is persisted via
+        # the on_agent_metadata callback before the process terminates.
+        run.agent_config = {"command": "false"}
         run.worktree_path = str(tmp_path)
-        # Skip pre-run health check in tests
         (tmp_path / ".task-world").mkdir(exist_ok=True)
         (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")
 
         run = await service.create_run(run)
         run_id = run.id
-
-        # Start the run with the executor
         await executor.start_run_with_agent(run_id, service)
         await session.commit()
 
-    # Wait for agent to start and metadata callback to execute
-    # The agent loop should start executing the first task, which triggers the callback
-    for i in range(100):
-        await asyncio.sleep(0.05)
-        async with session_factory() as session:
-            repo = RunRepository(session)
-            run = await repo.get(run_id)
-            if "pid" in run.agent_config:
-                break
+    await _await_agent_loop(executor, run_id)
 
     async with session_factory() as session:
-        repo = RunRepository(session)
-        run = await repo.get(run_id)
-
-        # Verify that agent_config contains pid (metadata persisted immediately)
+        run = await RunRepository(session).get(run_id)
         assert "pid" in run.agent_config, (
-            f"Agent metadata (pid) should be persisted immediately when subprocess is created. "
+            f"Agent metadata (pid) should be persisted when subprocess is created. "
             f"Got agent_config: {run.agent_config}"
         )
         pid = run.agent_config.get("pid")
@@ -564,34 +409,16 @@ async def test_agent_death_detection_on_startup(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
 ) -> None:
     """On startup recovery, runs with dead agents should be paused."""
-    # First, create an executor and start a run, but don't wait for it to complete
     executor1 = AgentRunnerExecutor(
         session_factory=session_factory,
         spawn_agents=True,
     )
 
-    # Create and start a run with a fast-failing command
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
         from orchestrator.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
 
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        service = WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-        )
-
-        # Discover routines and create run
+        service = WorkflowService(**_make_service_args(session))
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -603,29 +430,20 @@ async def test_agent_death_detection_on_startup(
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
         run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        # Command that fails immediately
         run.agent_config = {"command": "false"}
-        # Set worktree path so agent can execute
         run.worktree_path = str(tmp_path)
-        # Skip pre-run health check in tests
         (tmp_path / ".task-world").mkdir(exist_ok=True)
         (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")
 
         run = await service.create_run(run)
         run_id = run.id
-
-        # Start the run
         await executor1.start_run_with_agent(run_id, service)
         await session.commit()
 
-    # Wait a bit for agent to fail
-    await asyncio.sleep(0.5)
+    await _await_agent_loop(executor1, run_id)
 
-    # Check that run was paused due to agent failure
     async with session_factory() as session:
-        repo = RunRepository(session)
-        run = await repo.get(run_id)
-        # Run should be PAUSED because agent exited with non-zero code
+        run = await RunRepository(session).get(run_id)
         assert run.status in (RunStatus.PAUSED, RunStatus.FAILED), (
             f"Run should be PAUSED or FAILED after agent fails, got {run.status.value}"
         )
