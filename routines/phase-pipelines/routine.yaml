@@ -80,7 +80,7 @@ steps:
               cmd: "uv run python -c \"from orchestrator.config.models import PhaseConfig; from orchestrator.config.enums import PhaseType; pc = PhaseConfig(type=PhaseType.build); d = pc.model_dump(); assert 'type' in d and 'prompt' in d and 'profile' in d and 'condition' in d and 'cmd' in d and 'retry_target' in d; print('OK')\""
               must: true
             - id: "phase_config_json_roundtrip"
-              cmd: "uv run python -c \"from orchestrator.config.models import PhaseConfig; from orchestrator.config.enums import PhaseType, ModelProfile; pc = PhaseConfig(type=PhaseType.plan, profile=ModelProfile.fast, retry_target=0); json_str = pc.model_dump_json(); pc2 = PhaseConfig.model_validate_json(json_str); assert pc2.type == PhaseType.plan; assert pc2.profile == ModelProfile.fast; print('OK')\""
+              cmd: "uv run python -c \"from orchestrator.config.models import PhaseConfig; from orchestrator.config.enums import PhaseType, ModelProfile; pc = PhaseConfig(type=PhaseType.plan, profile=ModelProfile.CODER, retry_target=0); json_str = pc.model_dump_json(); pc2 = PhaseConfig.model_validate_json(json_str); assert pc2.type == PhaseType.plan; assert pc2.profile == ModelProfile.CODER; print('OK')\""
               must: true
         verifier:
           rubric:
