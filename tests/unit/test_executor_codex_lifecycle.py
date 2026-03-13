@@ -180,7 +180,12 @@ class TestCheckAgentAliveCodexLocal:
 
     @pytest.mark.asyncio
     async def test_codex_server_dead_pid(self, db_setup: async_sessionmaker[AsyncSession]) -> None:
-        """CODEX_SERVER with a dead PID → dead."""
+        """CODEX_SERVER with a dead PID → still alive (per-task subprocess model).
+
+        CodexServerAgent spawns a new process per task, so the PID is stale
+        between tasks.  check_agent_alive always returns True; the executor's
+        own error handling catches real subprocess failures.
+        """
         monitor = AgentRunnerMonitor(db_setup)
         run = _create_test_run(
             run_id="r2",
@@ -188,11 +193,11 @@ class TestCheckAgentAliveCodexLocal:
             agent_config={"pid": 999999},
         )
         run.status = RunStatus.ACTIVE
-        assert await monitor.check_agent_alive(run) is False
+        assert await monitor.check_agent_alive(run) is True
 
     @pytest.mark.asyncio
     async def test_codex_server_no_pid(self, db_setup: async_sessionmaker[AsyncSession]) -> None:
-        """CODEX_SERVER with no PID in config → dead."""
+        """CODEX_SERVER with no PID in config → still alive (per-task subprocess model)."""
         monitor = AgentRunnerMonitor(db_setup)
         run = _create_test_run(
             run_id="r3",
@@ -200,7 +205,7 @@ class TestCheckAgentAliveCodexLocal:
             agent_config={},
         )
         run.status = RunStatus.ACTIVE
-        assert await monitor.check_agent_alive(run) is False
+        assert await monitor.check_agent_alive(run) is True
 
 
 # ===========================================================================

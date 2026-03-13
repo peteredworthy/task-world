@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -20,19 +19,6 @@ if TYPE_CHECKING:
     from orchestrator.workflow.locks import LockManager
 
 logger = logging.getLogger(__name__)
-
-
-def _is_process_alive(pid: int) -> bool:
-    """Check if a process with the given PID is alive.
-
-    Uses os.kill(pid, 0) which sends no signal but checks if the process exists.
-    Returns False if the process doesn't exist or we don't have permission to check it.
-    """
-    try:
-        os.kill(pid, 0)
-        return True
-    except (OSError, ProcessLookupError):
-        return False
 
 
 async def _is_container_running(container_id: str) -> bool:
@@ -205,14 +191,17 @@ class AgentRunnerMonitor:
             return False
 
         if run.agent_type == AgentRunnerType.CLI_SUBPROCESS:
-            # Check if PID from run metadata is still alive
-            pid = run.agent_config.get("pid")
-            if pid is None:
-                # PID not yet persisted — subprocess hasn't been spawned yet
-                # (e.g. pre-run health check is still running). Treat as alive
-                # so the health monitor doesn't kill the run prematurely.
-                return True
-            return _is_process_alive(pid)
+            # CLIAgent spawns a NEW subprocess per task (each execute() call
+            # creates a fresh `claude` process).  Between tasks the old PID is
+            # dead while the executor loop is still running.  PID-based health
+            # checking therefore causes false "agent died" events that pause
+            # the run mid-flight.
+            #
+            # Like OPENHANDS_LOCAL / CLAUDE_SDK / CODEX_SERVER, the executor's
+            # own try/except handles subprocess failures, so the health monitor
+            # should not interfere during normal operation.  On startup recovery,
+            # recover_active_runs_on_startup handles orphaned runs separately.
+            return True
 
         elif run.agent_type == AgentRunnerType.OPENHANDS_DOCKER:
             # Check if container from run metadata is still running
@@ -230,12 +219,17 @@ class AgentRunnerMonitor:
             return True
 
         elif run.agent_type == AgentRunnerType.CODEX_SERVER:
-            # Local variant: check if the server process PID is still alive.
-            # The PID is stored by the agent via the on_agent_metadata callback.
-            pid = run.agent_config.get("pid")
-            if pid is None:
-                return False
-            return _is_process_alive(int(pid))
+            # CodexServerAgent spawns a NEW subprocess per task (each execute()
+            # call creates a fresh codex app-server process).  Between tasks the
+            # old PID is dead while the executor loop is still running.  PID-based
+            # health checking therefore causes false "agent died" events that
+            # pause the run mid-flight.
+            #
+            # Like OPENHANDS_LOCAL / CLAUDE_SDK, the executor's own try/except
+            # handles subprocess failures, so the health monitor should not
+            # interfere during normal operation.  On startup recovery,
+            # recover_active_runs_on_startup handles orphaned runs separately.
+            return True
 
         elif run.agent_type == AgentRunnerType.USER_MANAGED:
             # Check if last activity was within timeout
@@ -294,19 +288,15 @@ class AgentRunnerMonitor:
         # are always considered dead on startup regardless of check_agent_alive
         # (which returns True for them during normal operation to avoid the
         # periodic health monitor killing them prematurely).
-        _IN_PROCESS_AGENT_TYPES = {AgentRunnerType.OPENHANDS_LOCAL, AgentRunnerType.CLAUDE_SDK}
+        _IN_PROCESS_AGENT_TYPES = {
+            AgentRunnerType.OPENHANDS_LOCAL,
+            AgentRunnerType.CLAUDE_SDK,
+            AgentRunnerType.CODEX_SERVER,  # per-task subprocess; cannot survive restart
+            AgentRunnerType.CLI_SUBPROCESS,  # per-task subprocess; cannot survive restart
+        }
 
         for run in active_runs:
             if run.agent_type in _IN_PROCESS_AGENT_TYPES:
-                agent_alive = False
-            elif (
-                run.agent_type == AgentRunnerType.CLI_SUBPROCESS
-                and run.agent_config.get("pid") is None
-            ):
-                # CLI subprocess with no PID on startup — the subprocess was
-                # never spawned (e.g. server died during pre-run health check).
-                # check_agent_alive returns True for no-PID during normal
-                # operation, but on restart the subprocess is definitely gone.
                 agent_alive = False
             else:
                 agent_alive = await self.check_agent_alive(run)

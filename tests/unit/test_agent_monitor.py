@@ -185,7 +185,9 @@ async def test_check_agent_alive_cli_subprocess_with_dead_pid(
     session_factory = db_setup
     monitor = AgentRunnerMonitor(session_factory)
 
-    # Use a PID that definitely doesn't exist
+    # CLI_SUBPROCESS spawns a new process per task so PID is stale between
+    # tasks.  check_agent_alive always returns True for this agent type;
+    # the executor's own try/except handles real subprocess failures.
     fake_pid = 999999
     run = _create_test_run(
         run_id="run4",
@@ -195,7 +197,7 @@ async def test_check_agent_alive_cli_subprocess_with_dead_pid(
     run.status = RunStatus.ACTIVE
 
     is_alive = await monitor.check_agent_alive(run)
-    assert is_alive is False
+    assert is_alive is True
 
 
 @pytest.mark.asyncio
