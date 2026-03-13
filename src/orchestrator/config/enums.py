@@ -79,3 +79,14 @@ class ModelProfile(str, Enum):
     DESIGNER = "designer"
     CODER = "coder"
     SUMMARIZER = "summarizer"
+
+
+class PhaseType(str, Enum):
+    BUILD = "build"
+    VERIFY = "verify"
+    PLAN = "plan"
+    SUMMARIZE = "summarize"
+    GAP_CHECK = "gap_check"
+    SCRIPT = "script"
+    AUTO_VERIFY = "auto_verify"
+    HUMAN_REVIEW = "human_review"
