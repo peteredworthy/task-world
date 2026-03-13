@@ -1,0 +1,1303 @@
+id: "phase-pipelines"
+name: "Configurable Phase Pipelines"
+description: |
+  Replace the hardcoded builder→verifier two-phase cycle with a configurable
+  per-task phase sequence. Task authors define arbitrary phase chains in routine
+  YAML; the existing two-phase cycle becomes a synthesized special case. New
+  phase types (plan, summarize, gap_check, script, auto_verify, human_review)
+  compose freely within a task. Existing routines without a phases field continue
+  working without modification.
+
+inputs:
+  - name: feature
+    required: false
+    default: "phase-pipelines"
+    description: "Feature name used for documentation directory (docs/{{feature}}/)"
+
+steps:
+  # ── Step 1: Config Models + Enums ────────────────────────────────────────
+  - id: "S-01"
+    title: "Config Models + Enums (M1)"
+    step_context: |
+      Define PhaseType, PhaseConfig, and the phases field on TaskConfig. This is
+      purely additive type/model work with no runtime effect — it unblocks every
+      subsequent step. All new types live in src/orchestrator/config/.
+
+    tasks:
+      - id: "T-01"
+        title: "Add PhaseType Enum"
+        task_context: |
+          Add PhaseType(str, Enum) to src/orchestrator/config/enums.py with all 8
+          phase type values: build, verify, plan, summarize, gap_check, script,
+          auto_verify, human_review.
+
+          Use the str,Enum mixin so values serialize to strings in JSON.
+
+          Verify: uv run python -c "from orchestrator.config.enums import PhaseType;
+          assert len(list(PhaseType)) == 8; print('OK')"
+        requirements:
+          - id: "R1"
+            desc: "PhaseType enum exists in config/enums.py with all 8 values (build, verify, plan, summarize, gap_check, script, auto_verify, human_review)"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "phase_type_importable"
+              cmd: "uv run python -c \"from orchestrator.config.enums import PhaseType; assert len(list(PhaseType)) == 8, f'Expected 8 values, got {len(list(PhaseType))}'; assert PhaseType.build.value == 'build'; assert PhaseType.human_review.value == 'human_review'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: PhaseType importable with all 8 values, str mixin works for JSON serialization. B: enum exists but fewer than 8 values or missing str mixin."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add PhaseConfig Model"
+        task_context: |
+          Add PhaseConfig(BaseModel) to src/orchestrator/config/models.py with all
+          required fields:
+            - type: PhaseType
+            - prompt: str | None = None
+            - profile: ModelProfile | None = None  (use ModelProfile from orchestrator.config.enums, NOT str)
+            - condition: str | None = None
+            - cmd: str | None = None
+            - retry_target: int | None = None
+
+          Import PhaseType from orchestrator.config.enums and add ModelProfile to
+          the existing enums import line.
+
+          Verify JSON round-trip works for all fields.
+        requirements:
+          - id: "R1"
+            desc: "PhaseConfig Pydantic model exists in config/models.py with all 6 fields and correct types"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "phase_config_importable"
+              cmd: "uv run python -c \"from orchestrator.config.models import PhaseConfig; from orchestrator.config.enums import PhaseType; pc = PhaseConfig(type=PhaseType.build); d = pc.model_dump(); assert 'type' in d and 'prompt' in d and 'profile' in d and 'condition' in d and 'cmd' in d and 'retry_target' in d; print('OK')\""
+              must: true
+            - id: "phase_config_json_roundtrip"
+              cmd: "uv run python -c \"from orchestrator.config.models import PhaseConfig; from orchestrator.config.enums import PhaseType, ModelProfile; pc = PhaseConfig(type=PhaseType.plan, profile=ModelProfile.fast, retry_target=0); json_str = pc.model_dump_json(); pc2 = PhaseConfig.model_validate_json(json_str); assert pc2.type == PhaseType.plan; assert pc2.profile == ModelProfile.fast; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 6 fields present with correct types and defaults, JSON round-trip works, ModelProfile used for profile field. B: fields present but profile is str instead of ModelProfile, or round-trip fails."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Extend TaskConfig with phases Field and Validators"
+        task_context: |
+          Add phases: list[PhaseConfig] | None = None to TaskConfig in
+          src/orchestrator/config/models.py.
+
+          CRITICAL: TaskConfig already has a @model_validator(mode="after"). Pydantic
+          only allows ONE mode="after" validator per class — adding a second one
+          silently overrides the first, breaking existing mutual exclusion checks.
+          You MUST extend the EXISTING validator body, not add a new method.
+
+          Add inside the EXISTING @model_validator(mode="after") body:
+          1. If self.phases is not None and self.fan_out is not None:
+             raise ValueError("phases and fan_out are mutually exclusive")
+          2. If self.phases is not None and self.script is not None:
+             raise ValueError("phases and script are mutually exclusive")
+          3. For each phase where phase.retry_target is not None:
+             validate retry_target < phase_index (using enumerate(self.phases))
+
+          Guard all checks with "if self.phases is not None".
+        requirements:
+          - id: "R1"
+            desc: "phases: list[PhaseConfig] | None = None field added to TaskConfig"
+            priority: critical
+          - id: "R2"
+            desc: "Validator rejects phases + fan_out co-existence with ValidationError"
+            priority: critical
+          - id: "R3"
+            desc: "Validator rejects phases + script co-existence with ValidationError"
+            priority: expected
+          - id: "R4"
+            desc: "Validator rejects retry_target >= phase_index with ValidationError"
+            priority: critical
+          - id: "R5"
+            desc: "Existing TaskConfig validator behavior preserved (fan_out+task_context, etc.) — new checks added inside existing validator body"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "phases_field_valid"
+              cmd: "uv run python -c \"from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; tc = TaskConfig(task_context='test', phases=[PhaseConfig(type=PhaseType.build)]); assert tc.phases is not None and len(tc.phases) == 1; print('OK')\""
+              must: true
+            - id: "phases_fanout_rejected"
+              cmd: "uv run python -c \"import sys; from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; from pydantic import ValidationError; caught=False; exec(\\\"try:\\n    TaskConfig(phases=[PhaseConfig(type=PhaseType.build)], fan_out='subtask')\\nexcept ValidationError:\\n    caught=True\\\"); sys.exit(0 if caught else 1)\""
+              must: true
+            - id: "retry_target_validation"
+              cmd: "uv run python -c \"import sys; from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; from pydantic import ValidationError; caught=False; exec(\\\"try:\\n    TaskConfig(task_context='x', phases=[PhaseConfig(type=PhaseType.build, retry_target=0)])\\nexcept ValidationError:\\n    caught=True\\\"); sys.exit(0 if caught else 1)\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: phases field added with correct type and None default. B: field exists but wrong type."
+            - id: "R2"
+              text: "R2 — A: phases+fan_out raises ValidationError. B: validation missing or wrong error type."
+            - id: "R3"
+              text: "R3 — A: phases+script raises ValidationError. B: validation not present."
+            - id: "R4"
+              text: "R4 — A: retry_target >= phase_index raises ValidationError. B: validation missing."
+            - id: "R5"
+              text: "R5 — A: existing validator checks still work (fan_out+task_context still rejected). B: existing checks broken by second validator override."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-04"
+        title: "Write Config Unit Tests"
+        task_context: |
+          Create tests/unit/test_phase_config.py covering all validation rules for
+          PhaseType, PhaseConfig, and the extended TaskConfig.
+
+          Tests to write:
+          - test_phase_type_values: all 8 PhaseType values exist
+          - test_phase_config_all_types: PhaseConfig accepts all 8 PhaseType values
+          - test_phase_config_json_roundtrip: all fields survive model_dump_json/model_validate_json
+          - test_task_config_phases_coexist_with_verifier: phases + verifier accepted
+          - test_task_config_phases_fan_out_rejected: phases + fan_out raises ValidationError
+          - test_retry_target_invalid_index: retry_target >= phase_index raises ValidationError
+          - test_retry_target_valid_index: retry_target < phase_index accepted
+
+          Use inline construction; do not import from tests/ fixtures that may not exist.
+        requirements:
+          - id: "R1"
+            desc: "tests/unit/test_phase_config.py exists with all 7 test cases passing"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "config_tests_pass"
+              cmd: "uv run pytest tests/unit/test_phase_config.py -v"
+              must: true
+            - id: "no_unit_regressions"
+              cmd: "uv run pytest tests/unit/ -v -x -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 7 tests present and passing, no unit regressions. B: some tests missing or failing."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+  # ── Step 2: State, DB, and Factory ───────────────────────────────────────
+  - id: "S-02"
+    title: "State, DB, and Factory (M2)"
+    step_context: |
+      Thread phase state through runtime models and persistence. TaskState gains
+      current_phase_index, phase_outputs, and phases_config; the DB gets new columns
+      via Alembic; the factory synthesizes phases_config from legacy task fields so
+      the engine drives progression without knowing whether phases were explicit or
+      synthesized.
+
+    tasks:
+      - id: "T-01"
+        title: "Extend TaskState with Phase Fields"
+        task_context: |
+          Add three new fields and a property to TaskState in
+          src/orchestrator/state/models.py.
+
+          Fields to add:
+            current_phase_index: int = 0
+            phase_outputs: dict[int, str] = Field(default_factory=dict)
+            phases_config: list[PhaseConfig] | None = None
+
+          Add current_phase_type property: returns
+          phases_config[current_phase_index].type.value if phases_config is not None
+          and index is in bounds, else None.
+
+          Note: phases_config is NOT persisted to DB (re-synthesized at runtime).
+          Only current_phase_index and phase_outputs are DB-backed.
+
+          DRY-RUN FIX: TaskState constructor uses id= and config_id=, not task_id=
+          or run_id=.
+        requirements:
+          - id: "R1"
+            desc: "TaskState has current_phase_index, phase_outputs, phases_config fields with correct defaults"
+            priority: critical
+          - id: "R2"
+            desc: "current_phase_type property returns PhaseType value string or None"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "task_state_fields"
+              cmd: "uv run python -c \"from orchestrator.state.models import TaskState; ts = TaskState(id='t', config_id='task1'); assert ts.current_phase_index == 0; assert ts.phase_outputs == {}; assert ts.phases_config is None; assert ts.current_phase_type is None; print('OK')\""
+              must: true
+            - id: "current_phase_type_property"
+              cmd: "uv run python -c \"from orchestrator.state.models import TaskState; from orchestrator.config.models import PhaseConfig; from orchestrator.config.enums import PhaseType; ts = TaskState(id='t', config_id='task1', phases_config=[PhaseConfig(type=PhaseType.plan), PhaseConfig(type=PhaseType.build)]); assert ts.current_phase_type == 'plan'; ts.current_phase_index = 1; assert ts.current_phase_type == 'build'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 3 fields present with correct types and defaults. B: fields present but wrong defaults."
+            - id: "R2"
+              text: "R2 — A: property returns correct type string when phases_config set, None otherwise; out-of-bounds returns None. B: property missing or incorrect."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add Phase Events"
+        task_context: |
+          Add PhaseStarted and PhaseCompleted event dataclasses to
+          src/orchestrator/workflow/events.py.
+
+          PhaseStarted fields: run_id: str, task_id: str, phase_index: int, phase_type: str
+          PhaseCompleted fields: run_id: str, task_id: str, phase_index: int, phase_type: str, output: str
+
+          CRITICAL: Use output: str on PhaseCompleted (NOT output_length: int as in some
+          plan docs). The full output string is needed for prior-phase prompt injection.
+
+          Follow the existing event dataclass pattern in the file. Export both from the module.
+        requirements:
+          - id: "R1"
+            desc: "PhaseStarted dataclass with run_id, task_id, phase_index, phase_type fields"
+            priority: critical
+          - id: "R2"
+            desc: "PhaseCompleted dataclass with run_id, task_id, phase_index, phase_type, output: str fields"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "events_importable"
+              cmd: "uv run python -c \"from orchestrator.workflow.events import PhaseStarted, PhaseCompleted; ps = PhaseStarted(run_id='r', task_id='t', phase_index=0, phase_type='plan'); pc = PhaseCompleted(run_id='r', task_id='t', phase_index=0, phase_type='plan', output='result'); assert pc.output == 'result'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: PhaseStarted importable with all 4 fields. B: importable but missing fields."
+            - id: "R2"
+              text: "R2 — A: PhaseCompleted importable with all 5 fields including output: str. B: has output_length: int instead of output: str."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Extend TaskModel and Create Alembic Migration"
+        task_context: |
+          Add current_phase_index and phase_outputs columns to TaskModel in
+          src/orchestrator/db/models.py, then generate and implement an Alembic migration.
+
+          TaskModel additions:
+            current_phase_index: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+            phase_outputs: Mapped[dict] = mapped_column(JSON, default=dict)
+            # Do NOT add server_default for JSON column — SQLite JSON server_default is unreliable
+
+          Generate migration: uv run alembic revision -m "add phase pipeline columns to tasks"
+
+          Implement upgrade():
+            op.add_column("tasks", sa.Column("current_phase_index", sa.Integer(), nullable=False, server_default="0"))
+            op.add_column("tasks", sa.Column("phase_outputs", sa.JSON(), nullable=True))
+
+          Implement downgrade():
+            op.drop_column("tasks", "current_phase_index")
+            op.drop_column("tasks", "phase_outputs")
+
+          Test: uv run alembic upgrade head && uv run alembic downgrade -1 && uv run alembic upgrade head
+        requirements:
+          - id: "R1"
+            desc: "current_phase_index Integer column added to tasks table via migration"
+            priority: critical
+          - id: "R2"
+            desc: "phase_outputs JSON column added to tasks table via migration"
+            priority: critical
+          - id: "R3"
+            desc: "Alembic migration is reversible (upgrade and downgrade both work)"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "migration_applies"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25 && uv run alembic upgrade head"
+              must: true
+            - id: "migration_reverses"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25 && uv run alembic downgrade -1 && uv run alembic upgrade head"
+              must: true
+            - id: "columns_exist"
+              cmd: "uv run python -c \"from orchestrator.db.models import TaskModel; cols = [c.name for c in TaskModel.__table__.columns]; assert 'current_phase_index' in cols, f'Missing current_phase_index in {cols}'; assert 'phase_outputs' in cols, f'Missing phase_outputs in {cols}'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: current_phase_index column added with server_default='0', migration cleanly applies. B: column added but no server_default causing existing-row issues."
+            - id: "R2"
+              text: "R2 — A: phase_outputs JSON column added with nullable=True. B: column missing or wrong type."
+            - id: "R3"
+              text: "R3 — A: downgrade removes both columns, upgrade re-adds them. B: downgrade fails or incomplete."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-04"
+        title: "Update repositories.py Read/Write Mapping"
+        task_context: |
+          Update src/orchestrator/db/repositories.py to map the new phase fields between
+          TaskModel and TaskState.
+
+          In _to_domain() (read path, around line 167), when constructing TaskState, add:
+            current_phase_index=task_model.current_phase_index
+            phase_outputs={int(k): v for k, v in (task_model.phase_outputs or {}).items()}
+          CRITICAL: JSON serializes dict[int,str] keys as strings — must coerce back to int
+          on read or task.phase_outputs[0] raises KeyError at runtime.
+
+          In _to_model() (write path, around line 310), when constructing TaskModel, add:
+            current_phase_index=task.current_phase_index
+            phase_outputs=task.phase_outputs
+
+          Note: phases_config is NOT persisted — it must be re-synthesized at runtime.
+        requirements:
+          - id: "R1"
+            desc: "repositories.py _to_domain() maps current_phase_index and phase_outputs with int-key coercion"
+            priority: critical
+          - id: "R2"
+            desc: "repositories.py _to_model() maps current_phase_index and phase_outputs to TaskModel"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "repo_mapping_correct"
+              cmd: "uv run python -c \"import inspect; from orchestrator.db import repositories; src = inspect.getsource(repositories); assert 'current_phase_index' in src, 'current_phase_index not in repositories.py'; assert 'phase_outputs' in src, 'phase_outputs not in repositories.py'; assert 'int(k)' in src, 'int(k) coercion missing from repositories.py'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: _to_domain() maps both fields with int-key coercion on phase_outputs. B: mapping present but missing int-key coercion."
+            - id: "R2"
+              text: "R2 — A: _to_model() maps both fields to TaskModel. B: only one field mapped."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-05"
+        title: "Implement Phase Synthesis in Factory + _with_phases Helper"
+        task_context: |
+          Implement _synthesize_phases in src/orchestrator/state/factory.py and add
+          WorkflowService._with_phases helper in src/orchestrator/workflow/service.py.
+
+          _synthesize_phases(task_config: TaskConfig) -> list[PhaseConfig] | None:
+          - fan_out task (task_config.fan_out is not None) → return None
+          - explicit phases set (task_config.phases is not None) → return list(task_config.phases)
+          - task_config.script set → return [PhaseConfig(type=PhaseType.script, cmd=task_config.script)]
+          - CHECK auto_verify.items BEFORE verifier.rubric (to avoid tasks with requirements
+            being classified as [build,verify] when they should be [build,auto_verify]):
+            - task_context + auto_verify items (bool(task_config.auto_verify.items)) →
+              [PhaseConfig(type=PhaseType.build), PhaseConfig(type=PhaseType.auto_verify)]
+            - task_context + verifier rubric (bool(task_config.verifier.rubric)) →
+              [PhaseConfig(type=PhaseType.build), PhaseConfig(type=PhaseType.verify)]
+            - task_context only → [PhaseConfig(type=PhaseType.build)]
+
+          Call _synthesize_phases when constructing TaskState; set phases_config on result.
+
+          WorkflowService._with_phases(run: Run, task: TaskState) -> TaskState in service.py:
+          - Parse routine from run.routine_embedded via RoutineConfig.model_validate(...)
+          - Find TaskConfig with id == task.config_id across all steps
+          - Call _synthesize_phases(task_config) and assign to task.phases_config
+          - Return task
+          - Call _with_phases() in WorkflowService.get_task() before returning
+          - Call _with_phases() in _execute_task() before phase dispatch
+
+          Write unit tests: tests/unit/test_phase_synthesis.py
+          Tests: test_synthesize_build_verify, test_synthesize_build_auto_verify
+          (use requirements=[] to prevent auto-rubric), test_synthesize_build_only,
+          test_synthesize_script, test_synthesize_explicit_phases,
+          test_fan_out_skips_synthesis, test_task_state_defaults
+        requirements:
+          - id: "R1"
+            desc: "_synthesize_phases correctly synthesizes phases for all 5 cases (fan_out, explicit, script, auto_verify, verify, build-only)"
+            priority: critical
+          - id: "R2"
+            desc: "auto_verify.items checked BEFORE verifier.rubric to produce correct [build, auto_verify] pipeline"
+            priority: critical
+          - id: "R3"
+            desc: "WorkflowService._with_phases(run, task) re-synthesizes phases_config from routine_embedded"
+            priority: critical
+          - id: "R4"
+            desc: "tests/unit/test_phase_synthesis.py with all 7 cases passing"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "synthesis_tests_pass"
+              cmd: "uv run pytest tests/unit/test_phase_synthesis.py -v"
+              must: true
+            - id: "with_phases_importable"
+              cmd: "uv run python -c \"from orchestrator.workflow.service import WorkflowService; assert hasattr(WorkflowService, '_with_phases'); print('OK')\""
+              must: true
+            - id: "no_unit_regressions"
+              cmd: "uv run pytest tests/unit/ -v -x -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all synthesis cases correct, fan_out → None, explicit → pass-through. B: one or more synthesis cases produce wrong pipeline."
+            - id: "R2"
+              text: "R2 — A: auto_verify check comes before verifier.rubric check in synthesis logic. B: order reversed causing [build,verify] instead of [build,auto_verify]."
+            - id: "R3"
+              text: "R3 — A: _with_phases parses routine_embedded and re-synthesizes phases_config. B: method missing or doesn't populate phases_config."
+            - id: "R4"
+              text: "R4 — A: all 7 tests pass. B: some tests missing or failing."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+  # ── Step 3: Engine Lifecycle ──────────────────────────────────────────────
+  - id: "S-03"
+    title: "Engine Lifecycle (M3)"
+    step_context: |
+      Wire phase advancement into the workflow engine. The state machine drives
+      phase progression: advancing through phases_config, skipping conditional phases,
+      looping verify failures to the correct retry target, and persisting phase state
+      across server restarts.
+
+    tasks:
+      - id: "T-01"
+        title: "Add advance_phase to WorkflowEngine"
+        task_context: |
+          Add async def advance_phase(run_id, task_id) to WorkflowEngine in
+          src/orchestrator/workflow/engine.py.
+
+          Logic:
+          - Load task state; assert phases_config is not None (RuntimeError if it is)
+          - Compute next_index = current_phase_index + 1
+          - Walk forward skipping phases where condition evaluates to false:
+            Use ConditionEvaluator().evaluate(phase.condition, variables, step_outcomes)
+            where variables = {str(i): output for i, output in task.phase_outputs.items()}
+            and step_outcomes = {}
+            Do NOT pass a StepOutcome object.
+          - If next_index >= len(phases_config):
+            CRITICAL — _complete_task does NOT exist in engine.py. BUILDING→COMPLETED
+            transition does not exist in VALID_TRANSITIONS. You must:
+            1. Add transition_to_completed_direct(task, now) to transitions.py:
+               sets task.status = TaskStatus.COMPLETED from BUILDING/VERIFYING/
+               PENDING_USER_ACTION, records task.attempts[-1].completed_at = now
+            2. Update VALID_TRANSITIONS: add TaskStatus.COMPLETED to BUILDING's set
+            3. Add _complete_phase_pipeline_task(run_id, task_id) to engine.py:
+               calls transition_to_completed_direct, emits TaskStatusChanged,
+               triggers check_step_progression + check_run_completion cascade
+          - Else: set task.current_phase_index = next_index, persist, emit
+            PhaseStarted(event_type="phase_started", ...)
+        requirements:
+          - id: "R1"
+            desc: "advance_phase increments current_phase_index and emits PhaseStarted event"
+            priority: critical
+          - id: "R2"
+            desc: "advance_phase skips phases where condition evaluates to false (using ConditionEvaluator with phase_outputs as variables)"
+            priority: critical
+          - id: "R3"
+            desc: "advance_phase completes task via _complete_phase_pipeline_task when pipeline exhausted"
+            priority: critical
+          - id: "R4"
+            desc: "transition_to_completed_direct added to transitions.py; BUILDING→COMPLETED added to VALID_TRANSITIONS"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "advance_phase_exists"
+              cmd: "uv run python -c \"from orchestrator.workflow.engine import WorkflowEngine; import inspect; src = inspect.getsource(WorkflowEngine); assert 'advance_phase' in src; print('OK')\""
+              must: true
+            - id: "transition_direct_exists"
+              cmd: "uv run python -c \"from orchestrator.workflow.transitions import transition_to_completed_direct; print('OK')\""
+              must: true
+            - id: "valid_transitions_updated"
+              cmd: "uv run python -c \"from orchestrator.workflow.transitions import VALID_TRANSITIONS; from orchestrator.config.enums import TaskStatus; assert TaskStatus.COMPLETED in VALID_TRANSITIONS[TaskStatus.BUILDING], f'COMPLETED not in BUILDING transitions: {VALID_TRANSITIONS[TaskStatus.BUILDING]}'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: advance_phase increments index and emits PhaseStarted with correct fields. B: method exists but missing PhaseStarted emission."
+            - id: "R2"
+              text: "R2 — A: ConditionEvaluator called with phase_outputs as string-keyed variables. B: condition evaluation missing or using wrong context."
+            - id: "R3"
+              text: "R3 — A: exhausted pipeline calls _complete_phase_pipeline_task which triggers completion cascade. B: task left in non-terminal state."
+            - id: "R4"
+              text: "R4 — A: transition_to_completed_direct in transitions.py; BUILDING→COMPLETED in VALID_TRANSITIONS. B: transition added to engine but not transitions.py."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add complete_phase to WorkflowEngine"
+        task_context: |
+          Add async def complete_phase(run_id, task_id, output) to WorkflowEngine in
+          src/orchestrator/workflow/engine.py.
+
+          Logic:
+          - Load task state
+          - Store output in phase_outputs[current_phase_index]
+          - Emit PhaseCompleted event
+          - Persist updated state (BEFORE calling advance_phase — so output is saved
+            even if advance fails)
+          - Call await self.advance_phase(run_id, task_id)
+        requirements:
+          - id: "R1"
+            desc: "complete_phase stores output in phase_outputs, emits PhaseCompleted, persists, then calls advance_phase"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "complete_phase_exists"
+              cmd: "uv run python -c \"from orchestrator.workflow.engine import WorkflowEngine; import inspect; src = inspect.getsource(WorkflowEngine); assert 'complete_phase' in src; assert 'PhaseCompleted' in src; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: complete_phase stores output, emits PhaseCompleted, persists before advancing. B: method missing persistence before advance_phase."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Update Verify Failure Path with retry_target"
+        task_context: |
+          Update the verify failure path to read retry_target from phase config instead
+          of always retrying the previous phase.
+
+          In src/orchestrator/workflow/engine.py (complete_verification method), after
+          transition_after_verification() returns and task is going back to BUILDING:
+          - If phases_config is set and current phase is verify type that failed:
+            - Read retry_target from phases_config[current_phase_index]
+            - Default to current_phase_index - 1 when retry_target is None
+            - Set task.current_phase_index = retry_target and persist
+            - Do NOT call advance_phase
+
+          CRITICAL: Do NOT modify start_task() for resume. start_task() only manages
+          the PENDING→BUILDING transition. The executor's phase dispatch loop handles
+          resume by starting at task.current_phase_index (persisted in DB).
+
+          The verify failure path must remain backward-compatible: if phases_config is
+          None, use the old hardcoded retry behavior unchanged.
+        requirements:
+          - id: "R1"
+            desc: "Verify failure with retry_target set → current_phase_index set to retry_target value"
+            priority: critical
+          - id: "R2"
+            desc: "Verify failure with no retry_target → current_phase_index set to current - 1"
+            priority: critical
+          - id: "R3"
+            desc: "Backward compat: phases_config=None uses old retry behavior unchanged"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "retry_target_logic"
+              cmd: "uv run python -c \"import inspect; from orchestrator.workflow import engine; src = inspect.getsource(engine); assert 'retry_target' in src, 'retry_target not referenced in engine.py'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: explicit retry_target sets current_phase_index correctly. B: retry_target read but not applied."
+            - id: "R2"
+              text: "R2 — A: None retry_target defaults to current-1. B: default missing or wrong value."
+            - id: "R3"
+              text: "R3 — A: phases_config=None path unchanged. B: backward compat broken."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-04"
+        title: "Add _with_phases to WorkflowService and Wire Engine"
+        task_context: |
+          Add WorkflowService._with_phases(run: Run, task: TaskState) -> TaskState to
+          src/orchestrator/workflow/service.py and call it in the right places.
+
+          _with_phases logic:
+          - Parse routine from run.routine_embedded via RoutineConfig.model_validate(...)
+          - Find the TaskConfig where id == task.config_id (search across all steps)
+          - Call _synthesize_phases(task_config) from state/factory.py
+          - Assign result to task.phases_config
+          - Return task
+
+          Call _with_phases in:
+          - WorkflowService.get_task(): call before returning task
+          - WorkflowService._execute_task() or equivalent: call before any
+            phases_config check (critical: phases_config is None after DB load until
+            re-synthesized)
+
+          This is the same _with_phases from the factory step — if already implemented
+          there, verify it exists and is called in both places.
+        requirements:
+          - id: "R1"
+            desc: "_with_phases called in get_task() before returning task state"
+            priority: critical
+          - id: "R2"
+            desc: "_with_phases called before any phases_config check in execute path"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "with_phases_called"
+              cmd: "uv run python -c \"import inspect; from orchestrator.workflow import service; src = inspect.getsource(service); assert '_with_phases' in src; assert src.count('_with_phases') >= 2, f'Expected _with_phases called at least 2 times, found {src.count(\"_with_phases\")}'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: _with_phases called in get_task before return. B: method defined but not called in get_task."
+            - id: "R2"
+              text: "R2 — A: _with_phases called before phases_config check in execute path. B: phases_config checked before re-synthesis, always None."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-05"
+        title: "Write Engine Unit Tests"
+        task_context: |
+          Create tests/unit/test_phase_engine.py covering all engine phase lifecycle
+          behaviors. Use mocked dependencies; do not require a running server.
+
+          Tests:
+          - test_advance_phase_increments_index: increments and emits PhaseStarted
+          - test_advance_phase_skips_false_condition: skips to next valid phase
+          - test_advance_phase_exhausts_pipeline: next_index >= len → _complete_task called
+          - test_complete_phase_stores_output: output stored, PhaseCompleted emitted, advance called
+          - test_verify_failure_with_retry_target: retry_target=1 → index set to 1
+          - test_verify_failure_default_retry: no retry_target → index set to current-1
+          - test_start_task_resumes_at_index: current_phase_index=2 → starts at phase 2
+          - test_final_phase_complete_reaches_completed: task reaches COMPLETED status
+        requirements:
+          - id: "R1"
+            desc: "tests/unit/test_phase_engine.py exists with all 8 test cases passing"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "engine_tests_pass"
+              cmd: "uv run pytest tests/unit/test_phase_engine.py -v"
+              must: true
+            - id: "no_regressions"
+              cmd: "uv run pytest tests/unit/ tests/integration/ -v -x -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 8 tests present and passing, no regressions. B: some tests missing or failing."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+  # ── Step 4: Executor, Prompts, and API ────────────────────────────────────
+  - id: "S-04"
+    title: "Executor, Prompts, and API Surface (M4)"
+    step_context: |
+      Connect the executor to the phase dispatch loop, generate phase-type-specific
+      prompts, and expose phase state through the API. Tasks with any phases_config
+      pipeline execute correctly end-to-end; the API returns current_phase_index,
+      current_phase_type, phase_count, and phase_outputs.
+
+    tasks:
+      - id: "T-01"
+        title: "Replace Executor Dispatch with Phase Loop"
+        task_context: |
+          Replace the hardcoded build/verify dispatch in src/orchestrator/runners/executor.py
+          with a phase dispatch loop for tasks with phases_config.
+
+          CRITICAL first step: call task = service._with_phases(run, task) immediately
+          after loading task and BEFORE checking task.phases_config. Without this,
+          phases_config is always None after DB load.
+
+          If task.phases_config is None: fall through to existing legacy path (full backward compat).
+
+          Phase dispatch loop starting at task.current_phase_index:
+          - Determine prompt using _get_phase_prompt() from prompts.py (Task 2)
+          - If phase.profile set: override agent config model for this phase
+
+          PhaseType handling (Option A preferred — do NOT route through PhaseHandler):
+          - agent phases (plan/build/summarize/gap_check): call agent.execute() directly,
+            capture task_state.attempts[-1].agent_output as output, call engine.complete_phase()
+          - PhaseType.verify in pipeline (CRITICAL double-transition prevention):
+            Run verifier, evaluate grades.
+            IF PASS: call engine.complete_phase(run_id, task_id, grade_summary) only
+            IF FAIL: call engine.complete_verification() as normal (retry_target logic
+            in engine handles index reset). Never call both.
+          - PhaseType.script: run phase.cmd via subprocess; exit 0 → complete_phase(stdout);
+            non-zero → phase failure
+          - PhaseType.auto_verify: run LocalAutoVerifyRunner; all pass → complete_phase(summary);
+            any fail → phase failure
+          - PhaseType.human_review: transition to PENDING_USER_ACTION; executor exits.
+            In routers/tasks.py submit handler: if phases_config set and current phase is
+            human_review, call engine.complete_phase instead of submit_for_verification.
+
+          After each complete_phase call, refresh task from service.
+        requirements:
+          - id: "R1"
+            desc: "_with_phases called before any phases_config check in executor"
+            priority: critical
+          - id: "R2"
+            desc: "Phase dispatch loop handles all PhaseType variants (agent, script, auto_verify, human_review, verify)"
+            priority: critical
+          - id: "R3"
+            desc: "Legacy path (phases_config=None) unchanged for backward compat"
+            priority: critical
+          - id: "R4"
+            desc: "Verify phase PASS calls complete_phase only; FAIL calls complete_verification only (no double-transition)"
+            priority: critical
+          - id: "R5"
+            desc: "human_review phase: submit handler in routers/tasks.py calls complete_phase instead of submit_for_verification when in pipeline human_review"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "executor_has_phase_loop"
+              cmd: "uv run python -c \"import inspect; from orchestrator.runners import executor; src = inspect.getsource(executor); assert 'phases_config' in src, 'phases_config not in executor'; assert 'complete_phase' in src, 'complete_phase not in executor'; print('OK')\""
+              must: true
+            - id: "executor_calls_with_phases"
+              cmd: "uv run python -c \"import inspect; from orchestrator.runners import executor; src = inspect.getsource(executor); assert '_with_phases' in src, '_with_phases not called in executor'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: _with_phases called before phases_config check. B: _with_phases missing, phases_config always None."
+            - id: "R2"
+              text: "R2 — A: all phase types handled in dispatch loop. B: some types missing or raise unhandled exception."
+            - id: "R3"
+              text: "R3 — A: legacy path unmodified. B: existing behavior changed."
+            - id: "R4"
+              text: "R4 — A: verify pass → complete_phase only; verify fail → complete_verification only. B: both called in some path (double-transition bug)."
+            - id: "R5"
+              text: "R5 — A: submit handler routes to complete_phase for human_review pipeline tasks. B: submit always calls submit_for_verification."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Add Phase Prompt Builders"
+        task_context: |
+          Add phase prompt builder functions to src/orchestrator/workflow/prompts.py.
+
+          Note: Existing functions return dataclass objects (BuilderPrompt, VerifierPrompt).
+          The NEW phase prompt builders return str directly.
+
+          Add:
+          _format_prior_outputs(prior_outputs: dict[int, str], phases_config: list[PhaseConfig]) -> str
+          - For each entry, include phase type label and output text truncated to 2000 chars
+
+          build_plan_phase_prompt(task_config, phase, prior_outputs, phases_config) -> str
+          build_summarize_phase_prompt(task_config, phase, prior_outputs, phases_config) -> str
+          build_gap_check_phase_prompt(task_config, phase, prior_outputs, phases_config) -> str
+
+          _get_phase_prompt(task_config, phase, prior_outputs, phases_config) -> str:
+          - If phase.prompt is set, return it directly (override)
+          - PhaseType.build: delegate to generate_builder_prompt + concatenate .system + "\n\n" + .user
+          - PhaseType.verify: delegate to existing verifier prompt generation similarly
+          - PhaseType.plan/summarize/gap_check: use new builders
+          - Unknown: raise ValueError
+
+          Truncate each prior output to 2000 chars.
+        requirements:
+          - id: "R1"
+            desc: "_format_prior_outputs, build_plan_phase_prompt, build_summarize_phase_prompt, build_gap_check_phase_prompt functions added to prompts.py"
+            priority: critical
+          - id: "R2"
+            desc: "_get_phase_prompt dispatcher function added; routes to correct builder by phase type"
+            priority: critical
+          - id: "R3"
+            desc: "Prior phase outputs injected into prompts with 2000-char truncation"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "prompt_builders_importable"
+              cmd: "uv run python -c \"from orchestrator.workflow.prompts import build_plan_phase_prompt, build_summarize_phase_prompt, build_gap_check_phase_prompt; print('OK')\""
+              must: true
+            - id: "get_phase_prompt_importable"
+              cmd: "uv run python -c \"from orchestrator.workflow.prompts import _get_phase_prompt; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 4 helper functions present and importable. B: some functions missing."
+            - id: "R2"
+              text: "R2 — A: _get_phase_prompt routes correctly by type including override via phase.prompt. B: dispatcher missing or routes incorrectly."
+            - id: "R3"
+              text: "R3 — A: prior outputs truncated to 2000 chars and injected into prompts. B: outputs included but not truncated."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Update API Schemas and Router Serialization"
+        task_context: |
+          Add phase fields to API schemas and populate them in routers.
+
+          In src/orchestrator/api/schemas/tasks.py:
+          Add to TaskDetailResponse:
+            current_phase_index: int = 0
+            current_phase_type: str | None = None
+            phase_count: int = 0
+            phase_outputs: dict[int, str] = Field(default_factory=dict)
+          Add to PromptResponse (DO NOT remove existing phase: str field):
+            phase_type: str | None = None
+
+          In src/orchestrator/api/routers/tasks.py (get_task handler):
+          - current_phase_index from task_state.current_phase_index
+          - current_phase_type from task_state.current_phase_type (property)
+          - phase_count: use len(task_state.phases_config) if set, else re-synthesize
+            from routine_embedded; if None result, use 0
+          - phase_outputs from task_state.phase_outputs
+          In prompt endpoint: populate phase_type from task_state.current_phase_type.
+        requirements:
+          - id: "R1"
+            desc: "TaskDetailResponse has current_phase_index, current_phase_type, phase_count, phase_outputs fields with defaults"
+            priority: critical
+          - id: "R2"
+            desc: "PromptResponse has new phase_type field alongside existing phase field"
+            priority: critical
+          - id: "R3"
+            desc: "GET /api/tasks/{id} returns all 4 new phase fields with correct values"
+            priority: critical
+          - id: "R4"
+            desc: "GET /api/tasks/{id}/prompt returns phase_type field"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "schemas_updated"
+              cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import TaskDetailResponse, PromptResponse; r = TaskDetailResponse.__fields__ if hasattr(TaskDetailResponse, '__fields__') else TaskDetailResponse.model_fields; assert 'current_phase_index' in r; assert 'current_phase_type' in r; assert 'phase_count' in r; assert 'phase_outputs' in r; pr = PromptResponse.__fields__ if hasattr(PromptResponse, '__fields__') else PromptResponse.model_fields; assert 'phase_type' in pr; assert 'phase' in pr; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 4 fields with defaults in TaskDetailResponse. B: fields missing or no defaults."
+            - id: "R2"
+              text: "R2 — A: phase_type added without removing existing phase field. B: phase field removed (breaking change)."
+            - id: "R3"
+              text: "R3 — A: router populates all 4 fields correctly in get_task. B: fields in schema but not populated."
+            - id: "R4"
+              text: "R4 — A: prompt endpoint populates phase_type. B: field in schema but always None."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-04"
+        title: "Write Integration Tests"
+        task_context: |
+          Create tests/integration/test_phase_pipelines.py with 10 end-to-end test cases.
+          Use the existing test server fixture; do not start a new server.
+
+          Each test must have explicit assertions (not just scenario names):
+          1. test_explicit_plan_build_verify_pipeline: 3-phase [plan,build,verify] task.
+             Assert: task.status=="completed", len(task.phase_outputs)==3,
+             task.phase_outputs[0] non-empty
+          2. test_script_phase_exit_zero: cmd="exit 0".
+             Assert: task.status=="completed"
+          3. test_script_phase_exit_nonzero: cmd="exit 1", max_attempts=1.
+             Assert: task.status=="failed"
+          4. test_auto_verify_phase_pass: all must=True commands exit 0.
+             Assert: task.status=="completed"
+          5. test_auto_verify_phase_fail: one must=True exits 1.
+             Assert: task goes to BUILDING or FAILED
+          6. test_conditional_phase_skipped: condition evaluates False.
+             Assert: phase skipped, task.status=="completed"
+          7. test_verify_retry_target: verify fails, retry_target=0.
+             Assert: task.current_phase_index==0
+          8. test_human_review_phase: Assert task.status=="pending_user_action",
+             then submit → advances
+          9. test_backward_compat_no_phases: task with task_context, no phases.
+             Assert: identical behavior to pre-feature baseline
+          10. test_get_task_includes_phase_fields: GET /api/tasks/{id} includes
+              current_phase_index, current_phase_type, phase_count, phase_outputs
+        requirements:
+          - id: "R1"
+            desc: "tests/integration/test_phase_pipelines.py with all 10 integration tests passing"
+            priority: critical
+          - id: "R2"
+            desc: "Backward compat test confirms existing routines work identically"
+            priority: critical
+          - id: "R3"
+            desc: "No integration test regressions"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "integration_tests_pass"
+              cmd: "uv run pytest tests/integration/test_phase_pipelines.py -v"
+              must: true
+            - id: "no_integration_regressions"
+              cmd: "uv run pytest tests/integration/ -v -x -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 10 test cases present with explicit assertions and passing. B: fewer than 10 tests or some failing."
+            - id: "R2"
+              text: "R2 — A: backward compat test confirms identical behavior with concrete assertions. B: test present but no assertions beyond status check."
+            - id: "R3"
+              text: "R3 — A: all existing integration tests still pass. B: regressions introduced."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-05"
+        title: "Pre-commit and Regression Check"
+        task_context: |
+          Run the full pre-commit suite and confirm all tests pass with no regressions.
+
+          Commands to run:
+            uv run pre-commit run --all-files
+            uv run pytest tests/unit/ tests/integration/ -v -q
+            uv run pyright src/orchestrator/ (check for type errors)
+
+          Fix any issues found. Common issues:
+          - Import errors from new modules
+          - Type errors from dict[int, str] JSON serialization
+          - Alembic migration not applied
+          - Missing __all__ exports
+
+          Confirm test counts: expect ~330 unit tests, ~235+ integration tests passing.
+        requirements:
+          - id: "R1"
+            desc: "uv run pre-commit run --all-files passes with no errors"
+            priority: critical
+          - id: "R2"
+            desc: "All unit and integration tests pass (no regressions from feature work)"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "all_tests_pass"
+              cmd: "uv run pytest tests/unit/ tests/integration/ -q"
+              must: true
+            - id: "precommit_passes"
+              cmd: "uv run pre-commit run --all-files"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: pre-commit clean. B: linting/type errors remain."
+            - id: "R2"
+              text: "R2 — A: all tests pass, no regressions. B: some tests fail."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 3
+
+  # ── Step 5: Frontend ──────────────────────────────────────────────────────
+  - id: "S-05"
+    title: "Frontend (M5)"
+    step_context: |
+      Render phase progress and phase-type context in the UI. Users see the full phase
+      pipeline for a task (which phases exist, active, complete), prior phase outputs,
+      mini phase dots in the step timeline tooltip, and PhaseStarted/PhaseCompleted
+      events in the activity feed.
+
+    tasks:
+      - id: "T-01"
+        title: "Update TypeScript Types"
+        task_context: |
+          Update ui/src/types/tasks.ts with new phase fields and PhaseType union.
+
+          Add PhaseType string literal union:
+            type PhaseType = 'build' | 'verify' | 'plan' | 'summarize' | 'gap_check' | 'script' | 'auto_verify' | 'human_review'
+
+          Add to TaskDetailResponse (ALL fields MUST be optional with ?):
+            current_phase_index?: number
+            phase_count?: number
+            current_phase_type?: string | null
+            phase_outputs?: Record<number, string>
+
+          All 4 fields must be optional to avoid breaking consumers of older API responses.
+        requirements:
+          - id: "R1"
+            desc: "PhaseType string literal union type exported from ui/src/types/tasks.ts"
+            priority: critical
+          - id: "R2"
+            desc: "TaskDetailResponse has 4 optional phase fields (current_phase_index?, phase_count?, current_phase_type?, phase_outputs?)"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "types_compile"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              must: true
+            - id: "phase_type_in_types"
+              cmd: "grep -q 'PhaseType' /Users/peter/code/task-world/worktrees/r25/ui/src/types/tasks.ts"
+              must: true
+            - id: "phase_fields_optional"
+              cmd: "grep -q 'current_phase_index?' /Users/peter/code/task-world/worktrees/r25/ui/src/types/tasks.ts"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: PhaseType exported with all 8 values. B: exported but fewer values."
+            - id: "R2"
+              text: "R2 — A: all 4 fields optional and correct types. B: fields non-optional (breaking)."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Create PhaseIndicator Component"
+        task_context: |
+          Create two new files:
+
+          ui/src/components/detail/phaseIndicatorUtils.ts:
+          - Phase type color map: build→blue, verify→purple, plan→indigo,
+            summarize→teal, gap_check→amber, script→gray, auto_verify→green,
+            human_review→orange
+          - getPhaseLabel(type: PhaseType): string helper
+          - PhaseStatus type: 'completed' | 'active' | 'pending'
+
+          ui/src/components/detail/PhaseIndicator.tsx:
+          - Props: phaseTypes: PhaseType[], currentPhaseIndex: number
+          - Renders horizontal badge chain
+          - Completed phases: solid background + checkmark icon
+          - Active phase: pulsing animation + colored border
+          - Pending phases: dimmed + outline only
+          - Returns null when phaseTypes.length <= 1
+
+          IMPORTANT: utilities MUST be in phaseIndicatorUtils.ts (not inline in
+          component) — React Fast Refresh requirement. Unknown PhaseType values
+          → render with gray/neutral styling (forward compatibility).
+        requirements:
+          - id: "R1"
+            desc: "phaseIndicatorUtils.ts created with color map, getPhaseLabel, PhaseStatus type"
+            priority: critical
+          - id: "R2"
+            desc: "PhaseIndicator.tsx renders horizontal badge chain with completed/active/pending states"
+            priority: critical
+          - id: "R3"
+            desc: "PhaseIndicator returns null when phaseTypes.length <= 1"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "utils_exports_contract"
+              cmd: "grep -q 'export.*getPhaseLabel' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/phaseIndicatorUtils.ts && grep -q 'PhaseStatus' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/phaseIndicatorUtils.ts"
+              must: true
+            - id: "types_compile_after_component"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: utils file has all 3 exports in separate .ts file. B: utils inline in component (Fast Refresh violation)."
+            - id: "R2"
+              text: "R2 — A: badge chain renders with correct visual states. B: component renders but state styling missing."
+            - id: "R3"
+              text: "R3 — A: single-phase or empty → null returned. B: always renders."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-03"
+        title: "Update TaskDetailCard and StepTimeline"
+        task_context: |
+          Update two existing components:
+
+          ui/src/components/detail/TaskDetailCard.tsx:
+          - Import PhaseIndicator from ./PhaseIndicator
+          - Render <PhaseIndicator> at top of card when phase_count > 1
+          - Add collapsible "Phase Outputs" section:
+            - Only render when phase_outputs has at least one entry
+            - Show each prior phase's output text with phase type label
+            - Use <details> or expandable component pattern consistent with existing UI
+          - Do NOT re-export utilities from this file (Fast Refresh)
+
+          ui/src/components/dashboard/StepTimeline.tsx:
+          - In step tooltip for active tasks, render mini phase dots below task badge
+          - One dot per phase in phase_count; dots colored by current_phase_type (active dot)
+          - Active phase dot pulses; others neutral
+          - Only when phase_count > 1
+          - Import color utilities from '../detail/phaseIndicatorUtils' (relative path)
+        requirements:
+          - id: "R1"
+            desc: "TaskDetailCard renders PhaseIndicator when phase_count > 1"
+            priority: critical
+          - id: "R2"
+            desc: "TaskDetailCard renders collapsible Phase Outputs section when phase_outputs has entries"
+            priority: critical
+          - id: "R3"
+            desc: "StepTimeline renders mini phase dots in tooltip for active tasks with phase_count > 1"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "taskdetailcard_imports_phase"
+              cmd: "grep -q 'PhaseIndicator' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/TaskDetailCard.tsx"
+              must: true
+            - id: "types_compile_components"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: PhaseIndicator imported and rendered conditionally on phase_count>1. B: imported but always rendered."
+            - id: "R2"
+              text: "R2 — A: collapsible section with correct label and output text. B: outputs shown but not collapsible."
+            - id: "R3"
+              text: "R3 — A: mini dots in tooltip with active pulse. B: dots missing from timeline."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-04"
+        title: "Update ActivityFeed with Phase Events"
+        task_context: |
+          Update ui/src/components/detail/ActivityFeed.tsx (the detail one, NOT
+          ui/src/components/dashboard/ActivityFeed.tsx).
+
+          Add cases for:
+          - PhaseStarted event: render "Phase {index + 1} started: {type}"
+          - PhaseCompleted event: render "Phase {index + 1} completed: {type} → Phase {index + 2}"
+
+          Use 1-based phase numbering in display ("Phase 1", "Phase 2") even though
+          the index is 0-based internally.
+
+          Unknown event types fall back to existing generic event renderer.
+        requirements:
+          - id: "R1"
+            desc: "ActivityFeed renders PhaseStarted events with human-readable label (1-based index)"
+            priority: critical
+          - id: "R2"
+            desc: "ActivityFeed renders PhaseCompleted events with arrow to next phase"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "activity_feed_has_phase_events"
+              cmd: "grep -q 'PhaseStarted\\|phase_started' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/ActivityFeed.tsx"
+              must: true
+            - id: "types_compile_feed"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: PhaseStarted renders with 1-based index and type. B: renders but 0-based or no type shown."
+            - id: "R2"
+              text: "R2 — A: PhaseCompleted shows arrow to next phase. B: renders but no arrow format."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-05"
+        title: "Write Frontend Tests and Final Checks"
+        task_context: |
+          Write frontend tests in ui/src/components/detail/__tests__/ (this directory
+          follows project convention — ui/src/__tests__/ does NOT exist).
+
+          Create (new files, do not add to existing):
+          ui/src/components/detail/__tests__/PhaseIndicator.test.tsx:
+          - test_all_phases_render: all phases in correct order
+          - test_completed_phases_have_checkmark: solid background + checkmark class
+          - test_active_phase_pulses: pulsing class and correct color
+          - test_pending_phases_are_dimmed: outline class
+          - test_single_phase_renders_nothing: phaseTypes.length<=1 → null
+
+          ui/src/components/detail/__tests__/TaskDetailCard.test.tsx (new):
+          - PhaseIndicator appears when phase_count > 1
+          - Phase outputs section renders collapsible text
+
+          ui/src/components/detail/__tests__/ActivityFeed.test.tsx (new):
+          - PhaseStarted event renders with type and index
+          - PhaseCompleted event renders with → Phase N+1
+
+          Run: cd ui && npx vitest run
+          Also: npx tsc --noEmit, npx eslint src/
+        requirements:
+          - id: "R1"
+            desc: "PhaseIndicator.test.tsx with all 5 test cases in ui/src/components/detail/__tests__/"
+            priority: critical
+          - id: "R2"
+            desc: "TaskDetailCard.test.tsx and ActivityFeed.test.tsx created with phase-related tests"
+            priority: critical
+          - id: "R3"
+            desc: "npx vitest run — all new and existing frontend tests pass"
+            priority: critical
+          - id: "R4"
+            desc: "npx tsc --noEmit clean; npx eslint src/ clean"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "phase_indicator_test_has_cases"
+              cmd: "grep -q 'test_single_phase_renders_nothing\\|single.phase.*null\\|phaseTypes.*length.*1\\|returns null' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/__tests__/PhaseIndicator.test.tsx"
+              must: true
+            - id: "frontend_tests_pass"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx vitest run"
+              must: true
+            - id: "tsc_clean"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              must: true
+            - id: "eslint_clean"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx eslint src/"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 5 PhaseIndicator test cases present and passing. B: some tests missing."
+            - id: "R2"
+              text: "R2 — A: both new test files present with phase-related assertions. B: test files missing or no phase assertions."
+            - id: "R3"
+              text: "R3 — A: all frontend tests pass including new ones. B: some tests failing."
+            - id: "R4"
+              text: "R4 — A: TypeScript and ESLint clean. B: type errors or lint warnings remain."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2
+
+      - id: "T-06"
+        title: "Final Execution Summary"
+        task_context: |
+          Produce a brief execution summary document at docs/phase-pipelines/execution-summary.md.
+
+          The summary should confirm:
+          1. All 18 items from the Definition of Complete in intent.md are satisfied
+          2. Which tests were added and their pass/fail counts
+          3. Any deviations from the plan (if any) with justification
+          4. Pre-commit status
+          5. Migration status (applied, reversible)
+
+          Format as a concise checklist mirroring the Definition of Complete items.
+        requirements:
+          - id: "R1"
+            desc: "docs/phase-pipelines/execution-summary.md created with all DoC items checked"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "summary_has_doc_items"
+              cmd: "grep -q 'PhaseType\\|Definition of Complete\\|pre-commit\\|migration' /Users/peter/code/task-world/worktrees/r25/docs/phase-pipelines/execution-summary.md"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: summary present with all 18 DoC items addressed. B: summary exists but incomplete."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+        retry:
+          max_attempts: 2

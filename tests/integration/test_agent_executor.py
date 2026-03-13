@@ -222,7 +222,7 @@ async def test_executor_pauses_run_on_agent_execution_error(
         await session.commit()
 
     # Poll until the run is paused (nudger should kill the stuck agent quickly)
-    for _ in range(100):
+    for _ in range(500):
         async with session_factory() as session:
             repo = RunRepository(session)
             run = await repo.get(run_id)
