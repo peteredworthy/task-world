@@ -75,11 +75,10 @@ class Complexity(str, Enum):
 
 
 class ModelProfile(str, Enum):
-    architect = "architect"
-    designer = "designer"
-    coder = "coder"
-    summarizer = "summarizer"
-    fast = "fast"
+    ARCHITECT = "architect"
+    DESIGNER = "designer"
+    CODER = "coder"
+    SUMMARIZER = "summarizer"
 
 
 class PhaseType(str, Enum):

@@ -23,6 +23,12 @@ steps:
       purely additive type/model work with no runtime effect — it unblocks every
       subsequent step. All new types live in src/orchestrator/config/.
 
+      IMPORTANT: Do NOT rename, remove, or change the casing of existing enum
+      members (e.g. ModelProfile.ARCHITECT, ModelProfile.CODER). Existing enums
+      have tests and consumers that depend on the current member names. New enums
+      you add (like PhaseType) can use whatever casing convention you choose, but
+      existing enums must stay exactly as they are.
+
     tasks:
       - id: "T-01"
         title: "Add PhaseType Enum"

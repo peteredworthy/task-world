@@ -17,6 +17,6 @@ class AgentConfigModel(Base):
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     default_prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    model_profile: Mapped[str] = mapped_column(String, nullable=False, default=ModelProfile.coder)
+    model_profile: Mapped[str] = mapped_column(String, nullable=False, default=ModelProfile.CODER)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
