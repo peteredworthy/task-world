@@ -78,6 +78,42 @@ Agents work faster and more accurately when the task instructions reference the 
 
 **Fix:** Add a one-line pointer: "See `src/orchestrator/engine.py:pause_run()` for the pattern to follow."
 
+### 8. Is the persistence layer complete for new state fields?
+
+Adding a field to a state model (`TaskState`, `StepState`, `Run`) is not enough. The field must also be:
+1. **Written** in the repository's `_state_to_model()` or equivalent conversion
+2. **Read** in the repository's `_model_to_state()` or equivalent conversion
+3. **Stored** via a DB column (with Alembic migration) if it must survive restarts
+4. **Converted** correctly when crossing serialization boundaries (e.g., a Pydantic model stored as JSON in a dict column deserializes as a `dict`, not the model)
+
+This is the most common source of "works in unit tests, fails in integration" bugs. Unit tests operate on in-memory state objects. Integration tests go through the DB round-trip, which silently drops fields that aren't mapped.
+
+**Common failure:** A new field is added to `TaskState` and `TaskModel`, unit tests pass (they create state objects directly), but integration tests don't actually verify the value survives an API round-trip because the repository never writes/reads it.
+
+**Fix:** For every new field on a state model, fill in the persistence mapping audit table in dry-run-notes.md. Any MISSING cell is a gap that must be addressed in the step file instructions before execution begins.
+
+| Check | What to verify |
+|---|---|
+| State field exists | `TaskState.my_field` defined with default |
+| DB column exists | `TaskModel.my_field = Column(...)` defined |
+| Repo write mapping | `_state_to_model()` includes `my_field=state.my_field` |
+| Repo read mapping | `_model_to_state()` includes `my_field=model.my_field` |
+| Migration exists | Alembic migration adds the column |
+| Serialization safe | If stored as JSON/dict, code handles `dict→Model` conversion on read |
+
+### 9. Do integration tests assert the right things, or just run?
+
+An auto_verify command of `uv run pytest tests/integration/test_foo.py -v` proves the tests execute without errors. It does NOT prove the tests catch implementation bugs. A test that makes one API call and asserts 200 will pass even if budget enforcement is completely broken.
+
+**Common failure:** The step file says "write integration tests for budget exhaustion." The agent writes a test that creates one expansion and asserts 200. The auto_verify runs the test and it passes. But the test never actually hits the budget limit, so the enforcement code path is untested.
+
+**Fix:** Step files for integration test tasks must specify what the tests must assert, not just what scenarios to cover. Be explicit about the verification logic:
+
+- BAD: "Test budget exhaustion returns 429"
+- GOOD: "Test must make `max_total_expansions + 1` expansion API calls sequentially, assert each of the first N returns 200, then assert call N+1 returns 429 with `limit_type` in the response body"
+
+The auto_verify can still be `pytest test_foo.py -v`, but the verifier rubric should check that the test code contains the assertion pattern described in the step file.
+
 ---
 
 ## How to Re-Engineer the Plan Based on Identified Risks
@@ -208,5 +244,9 @@ Use this checklist when simulating each task:
 - [ ] Async/infrastructure dependencies are resolved (client, fallback, test strategy)
 - [ ] Pattern references are provided for non-obvious implementation choices
 - [ ] Agent-specific method name variations are noted
+- [ ] Persistence mapping audit complete — every new state field traced through repo read, repo write, DB column, and migration
+- [ ] Integration test tasks specify assertion logic, not just scenario names
 
-For each identified risk, add the fix directly to the task instructions. Record the gap in the dry-run notes file for future plan audits.
+For each identified risk, add the fix directly to the task instructions — not in a separate "known issues" section. Then confirm the fix is applied in the gap's "Applied to step files" field.
+
+**The dry-run is not complete until every gap has "Applied to step files: YES."**

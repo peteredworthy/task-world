@@ -1,0 +1,2 @@
+Fix human approval step, can't see the text. Need to go to the wrong page to approve.
+For restarting a paused step offer 2 options - start from clean or continue from current state. Drop the running tests on the continue from current state.
