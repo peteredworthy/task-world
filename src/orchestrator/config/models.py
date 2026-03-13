@@ -207,10 +207,12 @@ class TaskConfig(BaseModel):
     context_from: list[ContextSource] = Field(default_factory=lambda: [])
     fan_out: FanOutConfig | None = None
     script: str | None = None
+    phases: list[PhaseConfig] | None = None
 
     @model_validator(mode="after")
-    def _validate_task_mode_exclusivity(self) -> "TaskConfig":
-        """Ensure fan_out, script, and task_context are mutually exclusive."""
+    def _validate_task_config(self) -> "TaskConfig":
+        """Validate task configuration: mode exclusivity, phases constraints, and verification."""
+        # Validate fan_out, script, and task_context are mutually exclusive.
         if self.fan_out is not None:
             if self.task_context != "":
                 raise ValueError(
@@ -225,18 +227,25 @@ class TaskConfig(BaseModel):
                 raise ValueError(
                     f"Task '{self.id}': 'script' and 'task_context' are mutually exclusive."
                 )
-        return self
 
-    @model_validator(mode="after")
-    def _warn_if_no_verification(self) -> "TaskConfig":
-        """Warn when task has no auto_verify items and no verifier rubric.
+        # Validate phases constraints.
+        if self.phases is not None:
+            if self.fan_out is not None:
+                raise ValueError(
+                    f"Task '{self.id}': 'phases' and 'fan_out' are mutually exclusive."
+                )
+            if self.script is not None:
+                raise ValueError(f"Task '{self.id}': 'phases' and 'script' are mutually exclusive.")
+            # Validate retry_target < phase_index for each phase.
+            for phase_index, phase in enumerate(self.phases):
+                if phase.retry_target is not None:
+                    if phase.retry_target >= phase_index:
+                        raise ValueError(
+                            f"Task '{self.id}': phase {phase_index} has retry_target={phase.retry_target}, "
+                            f"but retry_target must be less than the phase index."
+                        )
 
-        Also:
-        - If rubric is empty but requirements exist, auto-generate one rubric
-          item per requirement.
-        - If rubric is non-empty, warn for any rubric item whose id does not
-          match a requirement id (potential composite or mismatched item).
-        """
+        # Warn when task has no auto_verify items and no verifier rubric.
         has_auto_verify = bool(self.auto_verify.items)
 
         # Auto-generate rubric from requirements when rubric is empty.
