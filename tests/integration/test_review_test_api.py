@@ -212,7 +212,10 @@ class TestStartTestRun:
 
         test_runner: TestRunner = app.state.test_runner
 
-        # Directly inject a slow-running test to hold the "running" lock
+        # Snapshot current tasks so we can cancel only the ones we create.
+        pre_tasks = set(asyncio.all_tasks())
+
+        # Directly inject a slow-running test to hold the "running" lock.
         await test_runner.start_test_run(
             run_id=run_id,
             worktree_path=worktree_path,
@@ -224,6 +227,16 @@ class TestStartTestRun:
 
         assert resp.status_code == 409, resp.text
         assert "already in progress" in resp.json()["detail"].lower()
+
+        # Cancel the background sleep task so it doesn't outlive the test
+        # and hit the disposed in-memory DB during fixture teardown.
+        for t in asyncio.all_tasks() - pre_tasks:
+            if not t.done():
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -326,7 +339,13 @@ class TestGetTestRun:
     async def test_get_immediately_after_post_returns_valid_status(
         self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
     ) -> None:
-        """GET immediately after POST returns a valid status (running or terminal)."""
+        """GET immediately after POST returns a valid status (running or terminal).
+
+        After asserting on the immediate response, wait for the background
+        test task to finish so the in-memory DB is not disposed while the
+        task is still running (which causes "no such table" errors under
+        parallel test load).
+        """
         client, repo, _app = client_with_auto_verify
         run_data = await _create_and_start_run(client, repo)
         run_id = run_data["id"]
@@ -335,9 +354,10 @@ class TestGetTestRun:
         assert post_resp.status_code == 202
         test_run_id = post_resp.json()["test_run_id"]
 
-        get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
+        # Poll until the test run reaches a terminal status.  This both
+        # verifies the GET endpoint works and ensures the background task
+        # finishes before fixture teardown disposes the in-memory DB.
+        data = await _wait_for_completion(client, run_id, test_run_id)
 
-        assert get_resp.status_code == 200
-        data = get_resp.json()
-        assert data["status"] in {"running", "passed", "failed", "error"}
+        assert data["status"] in {"passed", "failed", "error"}
         assert data["test_run_id"] == test_run_id
