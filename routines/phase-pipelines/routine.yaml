@@ -137,13 +137,13 @@ steps:
         auto_verify:
           items:
             - id: "phases_field_valid"
-              cmd: "uv run python -c \"from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; tc = TaskConfig(task_context='test', phases=[PhaseConfig(type=PhaseType.build)]); assert tc.phases is not None and len(tc.phases) == 1; print('OK')\""
+              cmd: "uv run python -c \"from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; tc = TaskConfig(id='t1', title='Test', task_context='test', phases=[PhaseConfig(type=PhaseType.build)]); assert tc.phases is not None and len(tc.phases) == 1; print('OK')\""
               must: true
             - id: "phases_fanout_rejected"
-              cmd: "uv run python -c \"import sys; from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; from pydantic import ValidationError; caught=False; exec(\\\"try:\\n    TaskConfig(phases=[PhaseConfig(type=PhaseType.build)], fan_out='subtask')\\nexcept ValidationError:\\n    caught=True\\\"); sys.exit(0 if caught else 1)\""
+              cmd: "uv run python -c \"import sys; from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; from pydantic import ValidationError; caught=False; exec(\\\"try:\\n    TaskConfig(id='t1', title='Test', phases=[PhaseConfig(type=PhaseType.build)], fan_out='subtask')\\nexcept ValidationError:\\n    caught=True\\\"); sys.exit(0 if caught else 1)\""
               must: true
             - id: "retry_target_validation"
-              cmd: "uv run python -c \"import sys; from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; from pydantic import ValidationError; caught=False; exec(\\\"try:\\n    TaskConfig(task_context='x', phases=[PhaseConfig(type=PhaseType.build, retry_target=0)])\\nexcept ValidationError:\\n    caught=True\\\"); sys.exit(0 if caught else 1)\""
+              cmd: "uv run python -c \"import sys; from orchestrator.config.models import TaskConfig, PhaseConfig; from orchestrator.config.enums import PhaseType; from pydantic import ValidationError; caught=False; exec(\\\"try:\\n    TaskConfig(id='t1', title='Test', task_context='x', phases=[PhaseConfig(type=PhaseType.build, retry_target=0)])\\nexcept ValidationError:\\n    caught=True\\\"); sys.exit(0 if caught else 1)\""
               must: true
         verifier:
           rubric:
