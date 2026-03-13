@@ -6,7 +6,14 @@ from typing import Any, cast
 
 from pydantic import BaseModel, Field, model_validator
 
-from orchestrator.config.enums import Complexity, GateType, ModelProfile, Priority, StepType
+from orchestrator.config.enums import (
+    Complexity,
+    GateType,
+    ModelProfile,
+    PhaseType,
+    Priority,
+    StepType,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +133,17 @@ class RetryConfig(BaseModel):
     """Retry configuration."""
 
     max_attempts: int = 3
+
+
+class PhaseConfig(BaseModel):
+    """Configuration for a task phase."""
+
+    type: PhaseType
+    prompt: str | None = None
+    profile: ModelProfile | None = None
+    condition: str | None = None
+    cmd: str | None = None
+    retry_target: int | None = None
 
 
 class GateConfig(BaseModel):
