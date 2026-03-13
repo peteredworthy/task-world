@@ -22,7 +22,7 @@ class CreateAgentRequest(ApiModel):
     name: str = Field(..., min_length=1)
     system_prompt: str = Field(..., min_length=1)
     default_prompt: str = Field(default="")
-    model_profile: ModelProfile = ModelProfile.CODER
+    model_profile: ModelProfile = ModelProfile.coder
 
     @field_validator("model_profile", mode="before")
     @classmethod

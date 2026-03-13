@@ -8,10 +8,10 @@ from orchestrator.config.enums import ModelProfile
 router = APIRouter(prefix="/api/model-profiles", tags=["model-profiles"])
 
 _PROFILE_DESCRIPTIONS: dict[ModelProfile, str] = {
-    ModelProfile.ARCHITECT: "Planning and design tasks: system architecture, technical specs, and high-level design decisions.",
-    ModelProfile.DESIGNER: "UI/UX tasks: interface design, user experience, and visual layout decisions.",
-    ModelProfile.CODER: "Implementation tasks: writing, refactoring, and debugging code.",
-    ModelProfile.SUMMARIZER: "Documentation and context tasks: summarizing content, writing docs, and distilling context.",
+    ModelProfile.architect: "Planning and design tasks: system architecture, technical specs, and high-level design decisions.",
+    ModelProfile.designer: "UI/UX tasks: interface design, user experience, and visual layout decisions.",
+    ModelProfile.coder: "Implementation tasks: writing, refactoring, and debugging code.",
+    ModelProfile.summarizer: "Documentation and context tasks: summarizing content, writing docs, and distilling context.",
 }
 
 

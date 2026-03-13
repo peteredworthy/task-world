@@ -38,9 +38,9 @@ _VERIFIER_PROMPT = (
 )
 
 _DEFAULT_AGENTS: list[tuple[str, ModelProfile, str]] = [
-    ("Planner", ModelProfile.ARCHITECT, _PLANNER_PROMPT),
-    ("Builder", ModelProfile.CODER, _BUILDER_PROMPT),
-    ("Verifier", ModelProfile.CODER, _VERIFIER_PROMPT),
+    ("Planner", ModelProfile.architect, _PLANNER_PROMPT),
+    ("Builder", ModelProfile.coder, _BUILDER_PROMPT),
+    ("Verifier", ModelProfile.coder, _VERIFIER_PROMPT),
 ]
 
 
