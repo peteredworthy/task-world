@@ -86,7 +86,7 @@ class AgentRunnerExecutor:
         submit_event_registry: SubmitEventRegistry | None = None,
         runner_monitor: AgentRunnerMonitor | None = None,
         connection_manager: ConnectionManager | None = None,
-        api_base_url: str = "http://localhost:8000",
+        api_base_url: str | None = None,
         *,
         spawn_agents: bool = True,
     ) -> None:
@@ -95,7 +95,10 @@ class AgentRunnerExecutor:
         self._lock_manager = lock_manager
         self._submit_event_registry = submit_event_registry
         self._connection_manager = connection_manager
-        self._api_base_url = api_base_url
+        # Derive from config if not explicitly provided
+        if api_base_url is None and global_config is not None:
+            api_base_url = f"http://localhost:{global_config.server.port}"
+        self._api_base_url = api_base_url or "http://localhost:8000"
         self._spawn_agents = spawn_agents
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
         # Agent monitor is lazy-initialized if not provided, to avoid circular import
@@ -105,7 +108,9 @@ class AgentRunnerExecutor:
         # Extracted sub-components
         self._attempt_store = AttemptStore(session_factory)
         self._broadcaster = EventBroadcaster(session_factory, connection_manager)
-        self._phase_handler = PhaseHandler(self._attempt_store, self._broadcaster, api_base_url)
+        self._phase_handler = PhaseHandler(
+            self._attempt_store, self._broadcaster, self._api_base_url
+        )
 
     async def _get_runner_monitor(self) -> AgentRunnerMonitor | None:
         """Lazy-initialize agent monitor if not provided."""
@@ -306,7 +311,12 @@ class AgentRunnerExecutor:
                 repo_path = repos_dir / run.repo_name
 
                 if repo_path.is_dir():
-                    wt_mgr = WorktreeManager(repo_path, worktrees_dir)
+                    wt_mgr = WorktreeManager(
+                        repo_path,
+                        worktrees_dir,
+                        server_port=self._global_config.server.port,
+                        worktree_base_port=self._global_config.server.worktree_base_port,
+                    )
                     wt_info = wt_mgr.create(run.id, run.source_branch)
                     run = await service.set_worktree_path(run_id, str(wt_info.path))
                     logger.info(

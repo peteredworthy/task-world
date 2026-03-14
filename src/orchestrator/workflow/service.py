@@ -274,7 +274,12 @@ class WorkflowService:
         if not repo_path.is_dir():
             return None
 
-        return WorktreeManager(repo_path, worktrees_dir)
+        return WorktreeManager(
+            repo_path,
+            worktrees_dir,
+            server_port=self._global_config.server.port,
+            worktree_base_port=self._global_config.server.worktree_base_port,
+        )
 
     # --- Delegating to WorkflowEngine ---
 

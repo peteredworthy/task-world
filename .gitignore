@@ -49,3 +49,6 @@ ui/dist/
 # Local nested repos/worktrees (keep on disk, exclude from parent repo)
 repos/
 worktrees/
+
+# Worktree manifest (written by orchestrator into each worktree)
+.worktree-manifest.json

@@ -1041,13 +1041,13 @@ steps:
         auto_verify:
           items:
             - id: "types_compile"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              cmd: "cd /Users/peter/code/task-world/worktrees/r26/ui && npx tsc --noEmit"
               must: true
             - id: "phase_type_in_types"
-              cmd: "grep -q 'PhaseType' /Users/peter/code/task-world/worktrees/r25/ui/src/types/tasks.ts"
+              cmd: "grep -q 'PhaseType' /Users/peter/code/task-world/worktrees/r26/ui/src/types/tasks.ts"
               must: true
             - id: "phase_fields_optional"
-              cmd: "grep -q 'current_phase_index?' /Users/peter/code/task-world/worktrees/r25/ui/src/types/tasks.ts"
+              cmd: "grep -q 'current_phase_index?' /Users/peter/code/task-world/worktrees/r26/ui/src/types/tasks.ts"
               must: true
         verifier:
           rubric:

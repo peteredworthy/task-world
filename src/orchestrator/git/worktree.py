@@ -1,10 +1,11 @@
 """Git worktree management for run isolation."""
 
+import json
 import logging
 import re
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from orchestrator.git.errors import GitCommandError, WorktreeExistsError, WorktreeNotFoundError
@@ -24,16 +25,26 @@ class WorktreeInfo:
 class WorktreeManager:
     """Manages git worktrees for run isolation."""
 
-    def __init__(self, repo_path: Path, worktree_dir: Path):
+    def __init__(
+        self,
+        repo_path: Path,
+        worktree_dir: Path,
+        server_port: int = 8000,
+        worktree_base_port: int = 9000,
+    ):
         """
         Initialize the worktree manager.
 
         Args:
             repo_path: Path to the main git repository
             worktree_dir: Directory for worktrees (centralized, from global config)
+            server_port: Port the main server runs on (default 8000)
+            worktree_base_port: Base port for worktree servers (default 9000)
         """
         self._repo = repo_path
         self._worktree_dir = worktree_dir
+        self._server_port = server_port
+        self._worktree_base_port = worktree_base_port
 
     _COUNTER_RE = re.compile(r"^r(\d+)$")
 
@@ -51,6 +62,56 @@ class WorktreeManager:
                     if m:
                         max_n = max(max_n, int(m.group(1)))
         return max_n + 1
+
+    def _write_manifest(
+        self,
+        worktree_path: Path,
+        run_id: str,
+        branch: str,
+        worktree_number: int,
+    ) -> None:
+        """Write a `.worktree-manifest.json` into the worktree directory.
+
+        The manifest declares identity, assigned port, and main server URL so
+        that startup guards and agents can discover their configuration.
+        """
+        worktree_name = f"r{worktree_number}"
+        assigned_port = self._worktree_base_port + worktree_number
+        manifest = {
+            "is_worktree": True,
+            "worktree_number": worktree_number,
+            "worktree_name": worktree_name,
+            "main_repo_path": str(self._repo),
+            "main_server_url": f"http://localhost:{self._server_port}",
+            "assigned_port": assigned_port,
+            "run_id": run_id,
+            "branch": branch,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        manifest_path = worktree_path / ".worktree-manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+
+        # Ensure the manifest is git-ignored so it doesn't count as an
+        # untracked file (which would block non-force worktree deletion).
+        # Worktrees share the main repo's .git/info/exclude, not their own.
+        _entry = ".worktree-manifest.json"
+        exclude_file = self._repo / ".git" / "info" / "exclude"
+        try:
+            exclude_file.parent.mkdir(parents=True, exist_ok=True)
+            existing = exclude_file.read_text() if exclude_file.exists() else ""
+            if _entry not in existing:
+                with exclude_file.open("a") as f:
+                    f.write(f"{_entry}\n")
+        except OSError:
+            pass  # Best-effort; won't block worktree usage
+
+        logger.info("Wrote worktree manifest: %s (port=%d)", manifest_path, assigned_port)
+
+    @staticmethod
+    def _worktree_number_from_path(worktree_path: Path) -> int:
+        """Extract the worktree number from a path like ``worktrees/r27``."""
+        m = re.match(r"^r(\d+)$", worktree_path.name)
+        return int(m.group(1)) if m else 0
 
     def _run_worktree_setup(self, worktree_path: Path) -> None:
         """Run the project's worktree setup script if it exists.
@@ -142,6 +203,10 @@ class WorktreeManager:
         main_venv = self._repo / ".venv"
         if main_venv.exists():
             (worktree_path / ".venv").symlink_to(main_venv.resolve())
+
+        # Write manifest before setup script so it can read it
+        wt_number = self._worktree_number_from_path(worktree_path)
+        self._write_manifest(worktree_path, run_id, branch_name, wt_number)
 
         self._run_worktree_setup(worktree_path)
 
@@ -357,6 +422,10 @@ class WorktreeManager:
         main_venv = self._repo / ".venv"
         if main_venv.exists() and not (new_path / ".venv").exists():
             (new_path / ".venv").symlink_to(main_venv.resolve())
+
+        # Write manifest before setup script so it can read it
+        wt_number = self._worktree_number_from_path(new_path)
+        self._write_manifest(new_path, run_id, branch_name, wt_number)
 
         self._run_worktree_setup(new_path)
 

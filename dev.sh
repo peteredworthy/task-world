@@ -6,6 +6,25 @@ set -e
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
+# --- Worktree startup guard ---
+# If .git is a file (not a directory), we're in a worktree — refuse to run dev.sh
+if [ -f "$ROOT/.git" ]; then
+    echo ""
+    echo "  ERROR: dev.sh must not be run from a worktree."
+    echo "  This directory ($ROOT) is a git worktree, not the main repo."
+    if [ -f "$ROOT/.worktree-manifest.json" ]; then
+        ASSIGNED_PORT=$(python3 -c "import json; print(json.load(open('$ROOT/.worktree-manifest.json')).get('assigned_port','?'))" 2>/dev/null || echo "?")
+        MAIN_URL=$(python3 -c "import json; print(json.load(open('$ROOT/.worktree-manifest.json')).get('main_server_url','?'))" 2>/dev/null || echo "?")
+        echo "  Main server: $MAIN_URL"
+        echo "  Assigned port for this worktree: $ASSIGNED_PORT"
+        echo ""
+        echo "  If you need a server here, run:"
+        echo "    uv run uvicorn scripts.serve:app --port $ASSIGNED_PORT"
+    fi
+    echo ""
+    exit 1
+fi
+
 cleanup() {
   echo ""
   echo "Shutting down..."

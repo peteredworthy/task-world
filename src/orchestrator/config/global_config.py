@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 class ServerConfig(BaseModel):
     host: str = "0.0.0.0"
     port: int = 8000
+    worktree_base_port: int = 9000
 
 
 class DatabaseConfig(BaseModel):

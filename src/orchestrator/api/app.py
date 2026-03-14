@@ -142,7 +142,12 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                                 _wt_dir = global_config.paths.get_worktrees_path()
                                 _repo_path = _repos_dir / run.repo_name
                                 if _repo_path.is_dir() and run.source_branch:
-                                    _wt_mgr = _WTM(_repo_path, _wt_dir)
+                                    _wt_mgr = _WTM(
+                                        _repo_path,
+                                        _wt_dir,
+                                        server_port=global_config.server.port,
+                                        worktree_base_port=global_config.server.worktree_base_port,
+                                    )
                                     _wt_mgr.ensure_exists(
                                         run.id,
                                         run.source_branch,
@@ -255,7 +260,12 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         cwd=repo_dir,
                         capture_output=True,
                     )
-                    wt_mgr = WorktreeManager(repo_dir, worktrees_dir)
+                    wt_mgr = WorktreeManager(
+                        repo_dir,
+                        worktrees_dir,
+                        server_port=global_config.server.port,
+                        worktree_base_port=global_config.server.worktree_base_port,
+                    )
                     total_removed += wt_mgr.cleanup_expired(
                         all_run_ids, run_completed_at, retention
                     )
