@@ -208,6 +208,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                 human_approval=human_approval,
                 skipped=bool(step_model.skipped),
                 skip_reason=step_model.skip_reason,
+                condition=step_model.condition,
             )
         )
 
@@ -345,6 +346,7 @@ def _to_model(run: Run) -> RunModel:
                 human_approval=human_approval_json,
                 skipped=step.skipped,
                 skip_reason=step.skip_reason,
+                condition=step.condition,
                 tasks=tasks,
             )
         )

@@ -98,6 +98,7 @@ class StepModel(Base):
     # Conditional step fields
     skipped: Mapped[bool] = mapped_column(Integer, default=0)
     skip_reason: Mapped[str | None] = mapped_column(String, nullable=True)
+    condition: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     # Relationships
     run: Mapped["RunModel"] = relationship("RunModel", back_populates="steps")

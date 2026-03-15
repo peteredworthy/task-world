@@ -10,6 +10,7 @@ from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.state.models import (
     Attempt,
     ChecklistItem,
+    generate_id,
     GradeSnapshotItem,
     Run,
     StepState,
@@ -341,6 +342,22 @@ def transition_after_verification(task: TaskState, now: datetime) -> TransitionR
         task.attempts[-1].completed_at = now
         task.attempts[-1].outcome = "passed" if grade_result.passed else "revision_needed"
 
+    # Synthesize verifier_comment from grade results so builder gets feedback on retry.
+    # Only populate if not already set (e.g. by auto-verify or recovery agent).
+    if not grade_result.passed and task.attempts and not task.attempts[-1].verifier_comment:
+        lines: list[str] = []
+        if grade_result.failing_items:
+            lines.append("The following requirements did not meet the grade threshold:")
+            for item in grade_result.failing_items:
+                lines.append(f"  - {item}")
+        if grade_result.revision_guidance:
+            lines.append("")
+            lines.append("Verifier feedback:")
+            for g in grade_result.revision_guidance:
+                lines.append(f"  - {g}")
+        if lines:
+            task.attempts[-1].verifier_comment = "\n".join(lines)
+
     if grade_result.passed:
         task.status = TaskStatus.COMPLETED
         return TransitionResult(
@@ -528,7 +545,14 @@ def check_step_progression(
 
         # Before working on this step, check if its condition should skip it
         # (applies to all steps including the first one)
-        if not step.completed and not step.skipped and routine_config is not None:
+        # Skip condition evaluation if any task has already started (gate already passed)
+        any_task_started = any(t.status != TaskStatus.PENDING for t in step.tasks)
+        if (
+            not step.completed
+            and not step.skipped
+            and not any_task_started
+            and routine_config is not None
+        ):
             step_config = _find_step_config(routine_config, step.config_id)
             if step_config is not None and step_config.condition is not None:
                 condition = step_config.condition
@@ -554,7 +578,7 @@ def check_step_progression(
                     # Evaluate the condition for the current step
                     try:
                         evaluator = ConditionEvaluator()
-                        variables = dict(run_config or {})
+                        variables: dict[str, Any] = dict(run_config) if run_config else {}
 
                         # If step has injected_vars (from repeat_for expansion), merge them into variables
                         if step.condition is not None and "injected_vars" in step.condition:
@@ -1027,6 +1051,14 @@ def _create_repeat_step_copies(
 
         # Update title: {original_title} [{index + 1}/{count}]
         step_copy.title = f"{original_step.title} [{index + 1}/{count}]"
+
+        # Generate unique IDs for each task copy to avoid PK collisions
+        # when multiple copies are persisted to the DB.
+        for task in step_copy.tasks:
+            task.id = generate_id()
+            # Also regenerate attempt IDs to avoid collisions
+            for attempt in task.attempts:
+                attempt.id = generate_id()
 
         # Create injected variables dict in step condition if not present
         if step_copy.condition is None:

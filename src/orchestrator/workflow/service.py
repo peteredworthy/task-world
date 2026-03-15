@@ -472,6 +472,7 @@ class WorkflowService:
         agent_type: AgentRunnerType | None = None,
         agent_config: dict[str, object] | None = None,
         preserve_checklist: bool = False,
+        guidance: str | None = None,
     ) -> RecoverResponse:
         """Recover a run by rewinding to a target task and pausing.
 
@@ -530,6 +531,16 @@ class WorkflowService:
         target_task.status = TaskStatus.BUILDING
         target_task.pending_action_type = None
         target_task.pending_clarification_id = None
+        # Append user guidance to the last attempt's verifier_comment so the
+        # builder prompt picks it up via the reversed-attempt search.
+        if guidance and target_task.attempts:
+            prev = target_task.attempts[-1]
+            human_note = f"\n\n## Human Guidance\n{guidance}"
+            if prev.verifier_comment:
+                prev.verifier_comment += human_note
+            else:
+                prev.verifier_comment = human_note.strip()
+
         next_attempt_num = len(target_task.attempts) + 1
         target_task.current_attempt = next_attempt_num
         target_task.attempts.append(Attempt(attempt_num=next_attempt_num, started_at=now))

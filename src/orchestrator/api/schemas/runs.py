@@ -192,9 +192,7 @@ class ResumeRunRequest(ApiModel):
 
     agent_type: str | None = None
     agent_config: dict[str, Any] | None = None
-    resume_strategy: str | None = (
-        None  # "continue" | "revert" | "continue_dirty" | "reset_worktree"
-    )
+    resume_strategy: str | None = None  # "continue" | "reset_worktree"
 
     @field_validator("agent_type", mode="before")
     @classmethod
@@ -203,7 +201,7 @@ class ResumeRunRequest(ApiModel):
 
     @model_validator(mode="after")
     def validate_resume_strategy(self) -> "ResumeRunRequest":
-        valid = ("continue", "revert", "continue_dirty", "reset_worktree")
+        valid = ("continue", "reset_worktree")
         if self.resume_strategy is not None and self.resume_strategy not in valid:
             raise ValueError(f"resume_strategy must be one of {valid}")
         return self
@@ -217,6 +215,7 @@ class RecoverRequest(ApiModel):
     agent_type: str | None = None
     agent_config: dict[str, Any] | None = None
     preserve_checklist: bool = False
+    guidance: str | None = None
 
     @field_validator("agent_type", mode="before")
     @classmethod

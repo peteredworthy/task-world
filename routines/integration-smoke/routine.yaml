@@ -1,0 +1,228 @@
+routine:
+  id: "integration-smoke"
+  name: "Integration Smoke Test"
+  description: |
+    End-to-end smoke test exercising Conditions (C) and Fan-Out (D) features.
+    Creates seed files, runs fan-out processing, repeat-for expansion,
+    manual gate, variable-based conditional skip, and outcome-based cleanup.
+
+  inputs:
+    - name: project_name
+      required: false
+      default: "smoketest"
+      description: "Prefix for generated files"
+    - name: environments
+      required: false
+      default: '["dev", "staging"]'
+      description: "List of environments for repeat_for expansion"
+    - name: skip_review
+      required: false
+      default: "false"
+      description: "Set to 'true' to skip conditional review step S-05"
+
+  steps:
+    # ── S-01: Create Seed Files (baseline) ──────────────────────────────
+    - id: "S-01"
+      title: "Create Seed Files"
+      step_context: |
+        Create the seed data files that subsequent steps will process.
+        Generate one config JSON per environment in the data/ directory.
+      tasks:
+        - id: "T-01"
+          title: "Generate Config Files"
+          task_context: |
+            Create seed configuration files for the smoke test.
+
+            1. Create the data/ directory if it doesn't exist
+            2. Create data/config-dev.json with:
+               {"env": "dev", "project": "{{project_name}}", "debug": true}
+            3. Create data/config-staging.json with:
+               {"env": "staging", "project": "{{project_name}}", "debug": false}
+            4. Create data/manifest.json listing the config files:
+               {"configs": ["config-dev.json", "config-staging.json"], "project": "{{project_name}}"}
+          requirements:
+            - id: "R1"
+              desc: "data/config-dev.json exists with valid JSON containing env=dev"
+              priority: critical
+            - id: "R2"
+              desc: "data/config-staging.json exists with valid JSON containing env=staging"
+              priority: critical
+            - id: "R3"
+              desc: "data/manifest.json lists both config files"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "dev_config_exists"
+                cmd: "test -f data/config-dev.json"
+                must: true
+              - id: "staging_config_exists"
+                cmd: "test -f data/config-staging.json"
+                must: true
+              - id: "dev_config_valid"
+                cmd: "python3 -c \"import json; d=json.load(open('data/config-dev.json')); assert d['env']=='dev'\""
+                must: true
+              - id: "staging_config_valid"
+                cmd: "python3 -c \"import json; d=json.load(open('data/config-staging.json')); assert d['env']=='staging'\""
+                must: true
+              - id: "manifest_exists"
+                cmd: "test -f data/manifest.json"
+                must: false
+          artifacts:
+            - path: "data/config-dev.json"
+              required: true
+            - path: "data/config-staging.json"
+              required: true
+            - path: "data/manifest.json"
+              required: false
+
+    # ── S-02: Fan-Out Processing (Feature D) ────────────────────────────
+    - id: "S-02"
+      title: "Fan-Out Processing"
+      step_context: |
+        Process each config file from S-01 in parallel using fan-out.
+        Each child task reads its input config and produces a processed output.
+      tasks:
+        - id: "T-01"
+          title: "Process Config Files"
+          fan_out:
+            input_glob: "data/config-*.json"
+            output_pattern: "data/processed/{{item_stem}}-report.md"
+            per_item_prompt: |
+              Read the JSON config file and create a markdown report.
+
+              Input file: {{item_path}}
+
+              Create the output file at {{output_path}} with:
+              - A heading: "# Report: {{item_stem}}"
+              - The environment name from the JSON
+              - The project name from the JSON
+              - A "Status: OK" line at the end
+            max_attempts: 2
+            max_concurrent: 2
+            auto_verify:
+              items:
+                - id: "output_exists"
+                  cmd: "test -f {{output_path}}"
+                  must: true
+
+    # ── S-03: Repeat-For Expansion (Feature C) ──────────────────────────
+    - id: "S-03"
+      title: "Per-Environment Validation"
+      step_context: |
+        Run validation for each environment. This step expands at runtime
+        using repeat_for to create one copy per environment.
+      condition:
+        repeat_for: "env in context.environments"
+      tasks:
+        - id: "T-01"
+          title: "Validate Environment Config"
+          task_context: |
+            Validate the configuration for the {{env}} environment.
+
+            1. Check that data/config-{{env}}.json exists and contains valid JSON
+            2. Check that data/processed/config-{{env}}-report.md was created by fan-out
+            3. Create data/validated-{{env}}.txt with content "validated"
+          requirements:
+            - id: "R1"
+              desc: "Config file for this environment exists and is valid JSON"
+              priority: critical
+            - id: "R2"
+              desc: "Processed report for this environment exists"
+              priority: expected
+            - id: "R3"
+              desc: "Validation marker file created"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "config_valid"
+                cmd: "python3 -c \"import json; json.load(open('data/config-{{env}}.json'))\""
+                must: true
+              - id: "marker_created"
+                cmd: "test -f data/validated-{{env}}.txt"
+                must: true
+
+    # ── S-04: Review Checkpoint (Feature C — manual gate) ───────────────
+    - id: "S-04"
+      title: "Review Checkpoint"
+      step_context: |
+        Manual review gate. The run pauses here so the operator can inspect
+        the results from S-01 through S-03 before proceeding.
+      condition:
+        when: "manual"
+      tasks:
+        - id: "T-01"
+          title: "Review Gate Task"
+          task_context: |
+            This task executes after the manual gate is approved.
+            Create data/review-approved.txt with content "approved by operator".
+          requirements:
+            - id: "R1"
+              desc: "Review approval marker created"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "approval_marker"
+                cmd: "test -f data/review-approved.txt"
+                must: true
+
+    # ── S-05: Conditional Review (Feature C — variable condition) ───────
+    - id: "S-05"
+      title: "Conditional Review"
+      step_context: |
+        This step only runs when skip_review is not "true".
+        When skip_review is "true", the step is automatically skipped.
+      condition:
+        when: "{{skip_review}} != 'true'"
+      tasks:
+        - id: "T-01"
+          title: "Extended Review"
+          task_context: |
+            Perform extended review of all generated artifacts.
+
+            1. List all files in data/ directory
+            2. Create data/extended-review.md summarizing:
+               - Number of config files found
+               - Number of processed reports found
+               - Number of validation markers found
+            3. End with "Review: COMPLETE"
+          requirements:
+            - id: "R1"
+              desc: "Extended review summary created"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "review_created"
+                cmd: "test -f data/extended-review.md"
+                must: true
+
+    # ── S-06: Outcome-Based Cleanup (Feature C — step outcome ref) ──────
+    - id: "S-06"
+      title: "Outcome-Based Cleanup"
+      step_context: |
+        Only runs if S-01 succeeded. Creates a final summary of the smoke test.
+        If S-01 failed, this step is skipped.
+      condition:
+        when: "steps.S-01.all_passed"
+      tasks:
+        - id: "T-01"
+          title: "Final Summary"
+          task_context: |
+            Create the final smoke test summary.
+
+            1. Create data/smoke-test-summary.md with:
+               - Heading: "# Smoke Test Summary"
+               - List all data/ files that were created
+               - Note which steps completed successfully
+               - End with "Smoke test: PASSED"
+          requirements:
+            - id: "R1"
+              desc: "Final summary file created"
+              priority: critical
+            - id: "R2"
+              desc: "Summary indicates smoke test passed"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "summary_created"
+                cmd: "test -f data/smoke-test-summary.md"
+                must: true

@@ -475,16 +475,13 @@ async def resume_run(
     agent_type = AgentRunnerType(request.agent_type) if request and request.agent_type else None
     agent_config = request.agent_config if request and request.agent_config else None
     resume_strategy = request.resume_strategy if request else None
-    skip_health_check = False
 
-    # Handle dirty-worktree resume strategies before changing run state
-    if resume_strategy in ("reset_worktree", "continue_dirty"):
+    # Handle worktree reset before changing run state
+    if resume_strategy == "reset_worktree":
         current_run = await repository.get(run_id)
-        if resume_strategy == "reset_worktree" and current_run.worktree_path:
+        if current_run.worktree_path:
             AgentRunnerExecutor.reset_worktree(current_run.worktree_path)
             logger.info(f"API: Reset worktree for run {run_id}")
-        elif resume_strategy == "continue_dirty":
-            skip_health_check = True
 
     run = await service.resume_run(
         run_id,
@@ -499,7 +496,6 @@ async def resume_run(
             run.id,
             run.agent_type,
             run.agent_config,
-            skip_health_check=skip_health_check,
         )
         if spawned:
             logger.info(f"API: Spawned {run.agent_type.value} agent for resumed run {run_id}")
@@ -525,6 +521,7 @@ async def recover_run(
             agent_type=agent_type,
             agent_config=agent_config,
             preserve_checklist=body.preserve_checklist,
+            guidance=body.guidance,
         )
     except (RunNotFoundError, TaskNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -805,7 +802,24 @@ async def approve_step(
     await repository.save(run)
     await session.commit()
 
-    # Re-spawn agent if run is active and uses a managed agent type
+    # Resume run if it was paused waiting for this approval, then re-spawn agent
+    if run.status == RunStatus.PAUSED and run.pause_reason == "waiting_for_approval":
+        from orchestrator.db.event_store import EventStore
+        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow.service import WorkflowService
+
+        event_store = EventStore(session)
+        emitter = PersistentEventEmitter(event_store)
+        svc = WorkflowService(
+            session=session,
+            repo=repository,
+            event_store=event_store,
+            event_emitter=emitter,
+        )
+        run = await svc.resume_run(run_id)
+        await session.commit()
+        logger.info(f"API: Auto-resumed run {run_id} after step approval")
+
     if (
         run.status == RunStatus.ACTIVE
         and run.agent_type is not None
@@ -917,7 +931,7 @@ async def skip_step(
             pass
 
     # Get run config from service if available
-    run_config = getattr(run, "run_config", {})
+    run_config = run.config
 
     check_step_progression(
         run,

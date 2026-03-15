@@ -444,7 +444,6 @@ class AgentRunnerExecutor:
         run_id: str,
         agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
-        skip_health_check: bool = False,
     ) -> None:
         """Main loop that runs agent for all tasks in a run.
 
@@ -462,9 +461,6 @@ class AgentRunnerExecutor:
         # Run-scoped summary cache: summaries from earlier tasks are reused by
         # later tasks, avoiding redundant API calls during context_from lookups.
         summary_cache = SummaryCache()
-
-        # Run project health check before the first task attempt.
-        health_check_done = skip_health_check
 
         try:
             while True:
@@ -552,41 +548,6 @@ class AgentRunnerExecutor:
                         break
                     if was_recovering:
                         recovery_attempted.add(task_state.id)
-
-                    # Run project health check before the very first task attempt.
-                    if not health_check_done and run.worktree_path:
-                        health_check_done = True
-                        await self._broadcaster.emit_health_check_event(
-                            run_id, "started", "Running pre-run health check..."
-                        )
-                        health_error = await self._run_project_health_check(run.worktree_path)
-                        if health_error:
-                            # Check if the worktree has uncommitted changes.
-                            # If dirty, the agent was mid-work — let the user decide.
-                            dirty = await asyncio.get_running_loop().run_in_executor(
-                                None,
-                                lambda: self._is_worktree_dirty(run.worktree_path or ""),
-                            )
-                            reason = "health_check_dirty" if dirty else "health_check_failed"
-                            logger.error(
-                                f"Run {run_id}: pre-run health check failed "
-                                f"(dirty={dirty}), pausing run"
-                            )
-                            await self._broadcaster.emit_health_check_event(
-                                run_id, "failed", health_error
-                            )
-                            await service.pause_run(
-                                run_id,
-                                reason=reason,
-                                error_detail=health_error,
-                            )
-                            await session.commit()
-                            break
-                        await self._broadcaster.emit_health_check_event(
-                            run_id, "completed", "Health check passed"
-                        )
-                    elif not health_check_done:
-                        health_check_done = True  # No worktree_path, skip silently
 
                     try:
                         await self._execute_task(
@@ -1561,7 +1522,6 @@ class AgentRunnerExecutor:
         run_id: str,
         agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
-        skip_health_check: bool = False,
     ) -> bool:
         """Spawn an agent for a run in the background.
 
@@ -1569,7 +1529,6 @@ class AgentRunnerExecutor:
             run_id: The run ID
             agent_type: The type of agent to spawn
             agent_config: Configuration for the agent
-            skip_health_check: If True, skip the pre-run health check
 
         Returns:
             True if an agent was spawned, False if spawning is disabled or
@@ -1596,11 +1555,7 @@ class AgentRunnerExecutor:
         if "pid" in agent_config:
             asyncio.create_task(self._attempt_store.persist_agent_metadata(run_id, {"pid": None}))
 
-        task = asyncio.create_task(
-            self._run_agent_loop(
-                run_id, agent_type, clean_config, skip_health_check=skip_health_check
-            )
-        )
+        task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, clean_config))
         task.add_done_callback(lambda t: self._on_agent_loop_done(run_id, t))
         self._running_tasks[run_id] = task
         logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
