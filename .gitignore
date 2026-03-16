@@ -30,6 +30,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+server_output.log
 
 # Coverage
 htmlcov/
