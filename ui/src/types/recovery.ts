@@ -4,6 +4,7 @@ export interface RecoverRequest {
   agent_type?: string;
   agent_config?: Record<string, unknown>;
   preserve_checklist?: boolean;
+  guidance?: string;
 }
 
 export interface RecoverResponse {

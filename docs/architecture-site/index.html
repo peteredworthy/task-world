@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Task-World Backend Architecture</title>
+<title>Task-World Architecture</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
   :root {
@@ -69,6 +69,11 @@
   nav a:hover {
     background: var(--border);
     color: #fff;
+  }
+
+  nav a.external {
+    color: var(--accent2);
+    border-color: rgba(166,227,161,0.3);
   }
 
   main {
@@ -332,25 +337,153 @@
   }
 
   .tooltip strong { color: #fff; }
+
+  /* Project overview */
+  .overview-text {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    font-size: 0.92rem;
+    line-height: 1.7;
+  }
+  .overview-text p { margin-bottom: 0.8rem; }
+  .overview-text p:last-child { margin-bottom: 0; }
+  .overview-text strong { color: #fff; }
+  .overview-text code {
+    background: var(--surface2);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.84rem;
+  }
+
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+  .feature-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    font-size: 0.85rem;
+  }
+  .feature-item strong { color: #fff; display: block; margin-bottom: 0.2rem; }
+
+  /* State machine styles */
+  .sm-node { cursor: default; }
+  .sm-node rect { rx: 8; ry: 8; }
+  .sm-edge { fill: none; stroke-width: 1.5; }
+  .sm-label { font-size: 10px; fill: var(--text-dim); }
+  .sm-node-label { font-size: 12px; font-weight: 600; pointer-events: none; }
+
+  /* Suggested moves */
+  .move-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
+    margin-bottom: 0.75rem;
+  }
+  .move-card h4 {
+    color: #fff;
+    font-size: 0.92rem;
+    margin-bottom: 0.35rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .move-card .from-to {
+    font-size: 0.82rem;
+    color: var(--accent);
+    margin-bottom: 0.35rem;
+  }
+  .move-card .rationale {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+  }
+  .move-card .impact {
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+    padding: 0.3rem 0.6rem;
+    background: var(--surface2);
+    border-radius: 4px;
+    display: inline-block;
+  }
+  .impact-high { color: var(--accent4); }
+  .impact-medium { color: var(--accent3); }
+  .impact-low { color: var(--accent2); }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>Task-World Backend Architecture</h1>
+  <h1>Task-World Architecture</h1>
   <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 modules, ~35K lines of Python</p>
   <nav>
-    <a href="#overview">Overview</a>
-    <a href="#layers">Layer Diagram</a>
-    <a href="#dependencies">Dependency Graph</a>
-    <a href="#modules">Module Catalog</a>
-    <a href="#sizes">Code Distribution</a>
-    <a href="#concerns">Boundary Concerns</a>
-    <a href="#patterns">Key Patterns</a>
+    <a href="#project-overview">Project</a>
+    <a href="#overview">Stats</a>
+    <a href="#state-machine">State Machine</a>
+    <a href="#layers">Layers</a>
+    <a href="#dependencies">Dependencies</a>
+    <a href="#suggested-moves">Refactoring</a>
+    <a href="#modules">Modules</a>
+    <a href="#sizes">Sizes</a>
+    <a href="#concerns">Concerns</a>
+    <a href="#patterns">Patterns</a>
+    <a class="external" href="/api/docs" target="_blank">Swagger UI &nearr;</a>
+    <a class="external" href="/api/redoc" target="_blank">ReDoc &nearr;</a>
   </nav>
 </header>
 
 <main>
+
+<!-- PROJECT OVERVIEW -->
+<section id="project-overview">
+  <h2>What is Task-World?</h2>
+  <div class="overview-text">
+    <p><strong>Task-World</strong> is an AI agent orchestration platform that manages the full lifecycle of software engineering tasks &mdash; from planning through implementation to verification. It coordinates multiple AI agents (Claude CLI, Claude SDK, Codex, OpenHands) to build code, verify correctness, and iterate on feedback, all within isolated git worktrees.</p>
+    <p>The system decomposes work into <strong>routines</strong> (YAML-defined workflows) containing <strong>steps</strong> (sequential phases) and <strong>tasks</strong> (parallelizable units). Each task goes through a builder&rarr;verifier cycle with auto-verification, grading rubrics, and retry logic. A real-time dashboard provides visibility into runs, diffs, test results, and agent progress.</p>
+  </div>
+
+  <div class="feature-grid">
+    <div class="feature-item">
+      <strong>Multi-Agent Orchestration</strong>
+      Registry-based agent architecture with auto-discovery. Supports Claude CLI, Claude SDK, Codex Server, OpenHands, and user-managed agents.
+    </div>
+    <div class="feature-item">
+      <strong>Builder/Verifier Cycle</strong>
+      Tasks go through build&rarr;verify&rarr;grade cycles with configurable max attempts, auto-verification scripts, and LLM-based grading rubrics.
+    </div>
+    <div class="feature-item">
+      <strong>Git Worktree Isolation</strong>
+      Each run gets its own git worktree, providing filesystem isolation between concurrent agent executions with branch management.
+    </div>
+    <div class="feature-item">
+      <strong>YAML-Defined Routines</strong>
+      Declarative workflow definitions with step conditions, fan-out expansion, repeat-for loops, and embedded routine support.
+    </div>
+    <div class="feature-item">
+      <strong>Real-Time Dashboard</strong>
+      React frontend with WebSocket-driven live updates, diff review, test execution, conflict resolution, and activity timelines.
+    </div>
+    <div class="feature-item">
+      <strong>Auto-Verification</strong>
+      File existence checks, JSON validation, script execution, and LLM grading with critical/expected/nice priority levels.
+    </div>
+    <div class="feature-item">
+      <strong>Event-Sourced State</strong>
+      All state changes emit immutable events persisted to an event store. Enables audit trails, recovery, and real-time UI sync.
+    </div>
+    <div class="feature-item">
+      <strong>MCP Integration</strong>
+      Model Context Protocol server exposes tools to external agents for run status, task context, and clarification handling.
+    </div>
+  </div>
+</section>
 
 <!-- OVERVIEW STATS -->
 <section id="overview">
@@ -362,6 +495,60 @@
     <div class="stat-card"><div class="value">7</div><div class="label">Architecture Layers</div></div>
     <div class="stat-card"><div class="value">0</div><div class="label">Circular Dependencies</div></div>
     <div class="stat-card"><div class="value">786</div><div class="label">Total Tests</div></div>
+    <div class="stat-card"><div class="value">70+</div><div class="label">API Endpoints</div></div>
+    <div class="stat-card"><div class="value">6</div><div class="label">Agent Types</div></div>
+  </div>
+</section>
+
+<!-- STATE MACHINE -->
+<section id="state-machine">
+  <h2>Orchestrator State Machine <span>Run and task lifecycle</span></h2>
+  <p class="section-desc">The orchestrator uses an explicit state machine &mdash; no automatic progression. Every transition requires an API call from an agent or user.</p>
+
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Run Lifecycle</span>
+      <span>5 states, explicit transitions only</span>
+    </div>
+    <div class="diagram-body">
+      <div id="run-state-machine"></div>
+    </div>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Task Lifecycle</span>
+      <span>8 states &mdash; builder/verifier cycle with recovery paths</span>
+    </div>
+    <div class="diagram-body">
+      <div id="task-state-machine"></div>
+    </div>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Pause Reasons</span>
+      <span>Descriptive reasons for why a run was paused</span>
+    </div>
+    <div class="diagram-body" style="padding: 0;">
+      <table class="concerns-table">
+        <thead>
+          <tr><th>Reason</th><th>Trigger</th><th>Auto-Resume?</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>manual_pause</code></td><td>User clicks Pause</td><td>No &mdash; user must resume</td></tr>
+          <tr><td><code>server_shutdown</code></td><td>Server stops gracefully</td><td>Yes &mdash; auto-resumed on next startup</td></tr>
+          <tr><td><code>gate_blocked</code></td><td>Checklist gate failed (missing items)</td><td>No</td></tr>
+          <tr><td><code>manual_gate</code></td><td>Step condition is <code>"manual"</code></td><td>No &mdash; needs approval</td></tr>
+          <tr><td><code>agent_not_available</code></td><td>Agent runner not found or not running</td><td>No</td></tr>
+          <tr><td><code>agent_execution_error</code></td><td>Agent crashed during execution</td><td>No</td></tr>
+          <tr><td><code>unexpected_error</code></td><td>Unhandled exception in executor</td><td>No</td></tr>
+          <tr><td><code>recovery_loop</code></td><td>Too many recovery attempts</td><td>No</td></tr>
+          <tr><td><code>waiting_for_approval</code></td><td>Step gate requires human approval</td><td>No</td></tr>
+          <tr><td><code>step_auto_verify_failed</code></td><td>Step-level auto-verify script failed</td><td>No</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </section>
 
@@ -383,10 +570,10 @@
 <!-- DEPENDENCY GRAPH -->
 <section id="dependencies">
   <h2>Module Dependency Graph <span>Interactive &mdash; click a node to highlight its connections</span></h2>
-  <p class="section-desc">Force-directed graph showing cross-module imports. Arrow direction indicates "depends on". Node size reflects lines of code. Click a module to isolate its dependencies.</p>
+  <p class="section-desc">Containership-aware graph showing cross-module imports. Dashed boundaries indicate parent modules containing sub-modules. Arrow direction indicates "depends on". Node size reflects lines of code.</p>
   <div class="diagram-container">
     <div class="diagram-header">
-      <span>Cross-Module Import Graph</span>
+      <span>Cross-Module Import Graph (with containership)</span>
       <span id="graph-info">Click a node to focus</span>
     </div>
     <div class="diagram-body" style="padding: 0;">
@@ -394,6 +581,240 @@
     </div>
   </div>
   <div class="legend" id="dep-legend"></div>
+</section>
+
+<!-- SUGGESTED REFACTORING MOVES -->
+<section id="suggested-moves">
+  <h2>Consolidation Plan: 19 &rarr; 9 Modules <span>Aggressive simplification with clear boundaries</span></h2>
+  <p class="section-desc">The current 19 top-level modules include many &ldquo;phantom modules&rdquo; &mdash; tiny, single-consumer packages that inflate the dependency graph without providing meaningful boundaries. This plan absorbs 10 modules into their natural parents, producing 9 focused top-level packages with clean, obvious ownership.</p>
+
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Target architecture: 9 modules</span>
+      <span>Each module has a clear, distinct responsibility</span>
+    </div>
+    <div class="diagram-body" style="padding: 0;">
+      <table class="concerns-table">
+        <thead><tr><th>Target Module</th><th>Absorbs</th><th>Result LOC</th><th>Responsibility</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong><code>config</code></strong></td>
+            <td><code>+ routines</code></td>
+            <td>~1,260</td>
+            <td>All configuration: enums, models, global config, YAML routine loading &amp; discovery</td>
+          </tr>
+          <tr>
+            <td><strong><code>state</code></strong></td>
+            <td>&mdash;</td>
+            <td>~530</td>
+            <td>Core domain models: Run, StepState, TaskState, Attempt, ChecklistItem, SessionStateManager</td>
+          </tr>
+          <tr>
+            <td><strong><code>db</code></strong></td>
+            <td>&mdash;</td>
+            <td>~2,010</td>
+            <td>Persistence: SQLAlchemy ORM, repositories, event store, migrations</td>
+          </tr>
+          <tr>
+            <td><strong><code>git</code></strong></td>
+            <td><code>+ repos + cache + review</code></td>
+            <td>~3,220</td>
+            <td>All git &amp; repository operations: worktrees, branches, diffs, conflicts, repo discovery, test execution, diff caching</td>
+          </tr>
+          <tr>
+            <td><strong><code>envfiles</code></strong></td>
+            <td>&mdash;</td>
+            <td>~910</td>
+            <td>Environment file management: snapshots, lifecycle, resolution, encryption</td>
+          </tr>
+          <tr>
+            <td><strong><code>workflow</code></strong></td>
+            <td><code>+ artifacts</code></td>
+            <td>~5,430</td>
+            <td>State machine engine: transitions, gates, grades, locks, events, prompts, artifact registry</td>
+          </tr>
+          <tr>
+            <td><strong><code>runners</code></strong></td>
+            <td><code>+ scaffolding + agents</code></td>
+            <td>~12,040</td>
+            <td>Agent execution: all agent integrations, scaffolding, agent config CRUD, profiles, detection</td>
+          </tr>
+          <tr>
+            <td><strong><code>api</code></strong></td>
+            <td><code>+ metrics + mcp</code></td>
+            <td>~7,460</td>
+            <td>All external interfaces: FastAPI routers, schemas, WebSocket, MCP server, cost estimation</td>
+          </tr>
+          <tr>
+            <td><strong><code>cli</code></strong></td>
+            <td>&mdash;</td>
+            <td>~1,450</td>
+            <td>Command-line interface: run/agent/routine/repo commands, approval workflows</td>
+          </tr>
+          <tr style="background: rgba(243,139,168,0.05);">
+            <td><del><code>routers</code></del></td>
+            <td colspan="3" style="color: var(--accent4);">DELETE &mdash; 6 LOC dead shim, nothing imports it</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <h3 style="color: #fff; font-size: 1.1rem; margin: 1.5rem 0 1rem;">Phase 1: Zero-risk absorptions <span style="color: var(--accent2); font-size: 0.82rem; font-weight: 400;">&mdash; no external consumers, mechanical moves</span></h3>
+
+  <div class="move-card">
+    <h4>M1: Delete <code>routers</code></h4>
+    <div class="from-to"><code>orchestrator/routers/</code> &rarr; <del>deleted</del></div>
+    <div class="rationale">6 LOC legacy re-export shim. Nothing imports from it &mdash; verified via grep across the entire codebase. Pure dead code.</div>
+    <div class="impact impact-low">Zero risk &mdash; 0 files to update</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M2: Absorb <code>scaffolding</code> into <code>runners</code></h4>
+    <div class="from-to"><code>orchestrator/scaffolding/</code> &rarr; <code>orchestrator/runners/scaffolding/</code></div>
+    <div class="rationale">Scaffolding (template copying, .gitignore setup, workspace prep) is used exclusively by <code>runners/executor.py</code>. Zero external dependents. Already conceptually part of the execution pipeline.</div>
+    <div class="impact impact-low">Low risk &mdash; ~1 import path in executor.py</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M3: Absorb <code>cache</code> into <code>git</code></h4>
+    <div class="from-to"><code>orchestrator/cache/</code> &rarr; <code>orchestrator/git/cache.py</code></div>
+    <div class="rationale">88 LOC LRU cache used only by <code>git/cached_diff_ops.py</code> and <code>api/routers/review.py</code> (for git diff caching). It&rsquo;s a git implementation detail. The review router already depends on git &mdash; no new dependency edge.</div>
+    <div class="impact impact-low">Low risk &mdash; 2 import paths to update</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M4: Absorb <code>artifacts</code> into <code>workflow</code></h4>
+    <div class="from-to"><code>orchestrator/artifacts/</code> &rarr; <code>orchestrator/workflow/artifacts/</code></div>
+    <div class="rationale">146 LOC, self-contained artifact registry. Only consumed by <code>workflow/context_builder.py</code> and <code>runners/executor.py</code>. Both already depend on workflow. Artifacts are produced during the workflow lifecycle &mdash; they belong here.</div>
+    <div class="impact impact-low">Low risk &mdash; ~2 import paths to update</div>
+  </div>
+
+  <h3 style="color: #fff; font-size: 1.1rem; margin: 1.5rem 0 1rem;">Phase 2: Semantic consolidations <span style="color: var(--accent3); font-size: 0.82rem; font-weight: 400;">&mdash; single-consumer modules joining their natural parent</span></h3>
+
+  <div class="move-card">
+    <h4>M5: Absorb <code>review</code> into <code>git</code></h4>
+    <div class="from-to"><code>orchestrator/review/</code> &rarr; <code>orchestrator/git/review/</code></div>
+    <div class="rationale">261 LOC (test_runner.py + models.py) providing test execution in git worktrees. Only consumer is <code>api/routers/review.py</code>, which already imports from 5 git sub-modules. Consolidation reduces the API router&rsquo;s external dependency count from 2 (git + review) to 1 (git).</div>
+    <div class="impact impact-low">Low risk &mdash; ~3 import paths to update</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M6: Absorb <code>repos</code> into <code>git</code></h4>
+    <div class="from-to"><code>orchestrator/repos/</code> &rarr; <code>orchestrator/git/repos/</code></div>
+    <div class="rationale">268 LOC for git repository discovery and branch introspection. Self-contained (no dependencies beyond itself). Only consumed by <code>api/routers/repos.py</code>, <code>mcp/tools.py</code>, and <code>cli</code>. Semantically inseparable from git operations &mdash; it answers &ldquo;what git repos exist and what branches do they have?&rdquo;</div>
+    <div class="impact impact-low">Low risk &mdash; ~3 import paths to update</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M7: Absorb <code>metrics</code> into <code>api</code></h4>
+    <div class="from-to"><code>orchestrator/metrics/</code> &rarr; <code>orchestrator/api/metrics.py</code></div>
+    <div class="rationale">70 LOC cost estimation from token data. Only used by <code>api/routers/runs.py</code> to populate cost fields in responses. It&rsquo;s a presentation concern &mdash; transforming raw token counts into dollar amounts for the API consumer.</div>
+    <div class="impact impact-low">Low risk &mdash; 1 import path to update</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M8: Absorb <code>mcp</code> into <code>api</code></h4>
+    <div class="from-to"><code>orchestrator/mcp/</code> &rarr; <code>orchestrator/api/mcp/</code></div>
+    <div class="rationale">785 LOC MCP server mounted by <code>api/app.py</code>. It&rsquo;s an alternative API transport (like WebSocket) &mdash; it exposes workflow tools to external agents over SSE. Currently depends on workflow and repos (which will be in git). Keeping all external interfaces in <code>api</code> creates a single entry-point layer.</div>
+    <div class="impact impact-low">Low risk &mdash; 1 import in app.py to update</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M9: Absorb <code>agents</code> into <code>runners</code></h4>
+    <div class="from-to"><code>orchestrator/agents/</code> &rarr; <code>orchestrator/runners/profiles/</code></div>
+    <div class="rationale">348 LOC agent configuration CRUD (profiles, seeding Planner/Builder/Verifier defaults). Only consumed by <code>api/routers/agents.py</code> and <code>app.py</code> (for seeding). Runners already contains <code>runners/agents/</code> for agent implementations &mdash; the config/profiles layer belongs alongside them. Renaming to <code>profiles</code> avoids collision with the existing <code>runners/agents/</code> sub-package.</div>
+    <div class="impact impact-low">Low risk &mdash; ~3 import paths to update</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M10: Absorb <code>routines</code> into <code>config</code></h4>
+    <div class="from-to"><code>orchestrator/routines/</code> &rarr; <code>orchestrator/config/routines/</code></div>
+    <div class="rationale">555 LOC routine discovery and YAML loading. Already depends only on <code>config.enums</code> and <code>config.models</code>. Both modules answer &ldquo;what is the system configured to do?&rdquo; &mdash; config defines the schema, routines loads and discovers instances of that schema. Consumed by <code>api</code>, <code>cli</code>, and <code>app.py</code>. Merging eliminates the quasi-circular risk where config imports from routines for type references.</div>
+    <div class="impact impact-medium">Medium effort &mdash; ~14 import paths to update, but mechanical find-replace</div>
+  </div>
+
+  <h3 style="color: #fff; font-size: 1.1rem; margin: 1.5rem 0 1rem;">Phase 3: Internal cleanup <span style="color: var(--accent); font-size: 0.82rem; font-weight: 400;">&mdash; reduce fan-out within surviving modules</span></h3>
+
+  <div class="move-card">
+    <h4>M11: Extract <code>ReviewService</code> from API router</h4>
+    <div class="from-to">Business logic in <code>api/routers/review.py</code> &rarr; <code>git/review_service.py</code></div>
+    <div class="rationale">The review router directly imports from 5 git sub-modules, workflow.event_logger, and workflow.service. After M3+M5, all review-related code lives in git. Extracting a ReviewService (diff orchestration, prune coordination, test dispatch) reduces the router to thin HTTP handling with 1&ndash;2 imports.</div>
+    <div class="impact impact-medium">Medium effort &mdash; ~400 LOC to extract</div>
+  </div>
+
+  <div class="move-card">
+    <h4>M12: Extract <code>RunService</code> from API router</h4>
+    <div class="from-to">Business logic in <code>api/routers/runs.py</code> &rarr; <code>workflow/run_service.py</code></div>
+    <div class="rationale"><code>runs.py</code> is the widest router &mdash; it directly imports from 15+ modules to orchestrate run creation, lifecycle transitions, activity queries, and branch management. A RunService would encapsulate these operations and reduce the router to request/response mapping. This is the highest-impact single change for API boundary health.</div>
+    <div class="impact impact-high">High effort &mdash; largest refactor, highest payoff for API boundary cleanup</div>
+  </div>
+
+  <div class="diagram-container" style="margin-top: 1.5rem;">
+    <div class="diagram-header">
+      <span>Consolidation impact</span>
+      <span>Before vs after all phases</span>
+    </div>
+    <div class="diagram-body" style="padding: 0;">
+      <table class="concerns-table">
+        <thead><tr><th>Metric</th><th>Current (19 modules)</th><th>After Phase 1&ndash;2 (9 modules)</th><th>After Phase 3</th></tr></thead>
+        <tbody>
+          <tr><td>Top-level modules</td><td>19</td><td><strong>9</strong></td><td>9</td></tr>
+          <tr><td><code>api</code> external deps</td><td>15</td><td>7 (config, state, db, git, envfiles, workflow, runners)</td><td>5&ndash;6 (via services)</td></tr>
+          <tr><td><code>git</code> external deps</td><td>2 (cache, review)</td><td>0 (both absorbed)</td><td>0</td></tr>
+          <tr><td><code>runners</code> external deps</td><td>7 + scaffolding + agents ext.</td><td>5 (config, state, db, git, workflow)</td><td>5</td></tr>
+          <tr><td>Cross-module edges</td><td>~45</td><td>~25</td><td>~20</td></tr>
+          <tr><td>Circular risk</td><td>config &harr; routines/runners</td><td>Eliminated (routines in config)</td><td>Eliminated</td></tr>
+          <tr><td>Files to update (total)</td><td>&mdash;</td><td>~25 import paths</td><td>+~800 LOC extracted</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Target dependency graph</span>
+      <span>9 modules, clean layering, no phantom packages</span>
+    </div>
+    <div class="diagram-body">
+      <div id="target-dep-graph"></div>
+    </div>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Execution order</span>
+      <span>Recommended phasing</span>
+    </div>
+    <div class="diagram-body" style="padding: 0;">
+      <table class="concerns-table">
+        <thead><tr><th>Phase</th><th>Moves</th><th>Risk</th><th>Effort</th><th>Impact</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Phase 1</strong></td>
+            <td>M1 (delete routers), M2 (scaffolding&rarr;runners), M3 (cache&rarr;git), M4 (artifacts&rarr;workflow)</td>
+            <td><span class="severity-low">Zero/Low</span></td>
+            <td>~1 hour</td>
+            <td>19 &rarr; 15 modules</td>
+          </tr>
+          <tr>
+            <td><strong>Phase 2</strong></td>
+            <td>M5 (review&rarr;git), M6 (repos&rarr;git), M7 (metrics&rarr;api), M8 (mcp&rarr;api), M9 (agents&rarr;runners), M10 (routines&rarr;config)</td>
+            <td><span class="severity-low">Low</span></td>
+            <td>~2&ndash;3 hours</td>
+            <td>15 &rarr; 9 modules</td>
+          </tr>
+          <tr>
+            <td><strong>Phase 3</strong></td>
+            <td>M11 (ReviewService), M12 (RunService)</td>
+            <td><span class="severity-medium">Medium</span></td>
+            <td>~1 day</td>
+            <td>API fan-out drops from 15 to 5&ndash;6 deps</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </section>
 
 <!-- MODULE CATALOG -->
@@ -421,7 +842,7 @@
 <!-- BOUNDARY CONCERNS -->
 <section id="concerns">
   <h2>Boundary Concerns <span>Identified coupling and cohesion issues</span></h2>
-  <p class="section-desc">Areas where module boundaries could be tightened. No critical violations found &mdash; the architecture is well-structured with clean layering.</p>
+  <p class="section-desc">Areas where module boundaries could be tightened. See <a href="#suggested-moves" style="color: var(--accent);">Suggested Moves</a> for concrete refactoring proposals.</p>
   <div class="diagram-container">
     <div class="diagram-body" style="padding: 0;">
       <table class="concerns-table">
@@ -431,9 +852,9 @@
         <tbody>
           <tr>
             <td><strong>Wide API Router Dependencies</strong></td>
-            <td><span class="severity-medium">Medium</span></td>
-            <td><code>api/routers/runs.py</code> imports from 15+ modules, creating a wide dependency fan-out at the presentation layer.</td>
-            <td>Already mitigated by api.schemas acting as contracts. Consider a dedicated RunService to reduce direct module access.</td>
+            <td><span class="severity-high">High</span></td>
+            <td><code>api/routers/runs.py</code> imports from 15+ modules, creating a wide dependency fan-out at the presentation layer. <code>api/routers/review.py</code> imports from 8 modules including direct git sub-module access.</td>
+            <td>Extract RunService and ReviewService (see <a href="#suggested-moves" style="color: var(--accent);">M11, M12</a>). Absorb cache, review, metrics into their natural parents (M3, M5, M7).</td>
           </tr>
           <tr>
             <td><strong>WorkflowService Scope</strong></td>
@@ -442,28 +863,22 @@
             <td>Extract sub-services: VerificationService, RecoveryService, CompletionService.</td>
           </tr>
           <tr>
-            <td><strong>Runners/Executor Coupling</strong></td>
-            <td><span class="severity-low">Low</span></td>
-            <td>AgentRunnerExecutor directly calls workflow service methods (submit, complete_verification), binding execution to workflow. Partially addressed by decomposition into execution/ sub-package (phase_handler, attempt_store, event_broadcaster).</td>
-            <td>Callback-based design already partially abstracts this. Registry-based agent factory further decouples agent creation from executor. Could further decouple with an event bus.</td>
+            <td><strong>Phantom Top-Level Modules</strong></td>
+            <td><span class="severity-medium">Medium</span></td>
+            <td><code>scaffolding</code> (176 LOC), <code>cache</code> (88 LOC), <code>review</code> (261 LOC), <code>metrics</code> (70 LOC), <code>artifacts</code> (146 LOC), <code>repos</code> (268 LOC), <code>agents</code> (348 LOC), <code>routines</code> (555 LOC), and <code>mcp</code> (785 LOC) are top-level modules with 1&ndash;2 consumers each. They inflate the module count from 9 to 19.</td>
+            <td>Absorb into their natural parents (see <a href="#suggested-moves" style="color: var(--accent);">M1&ndash;M10</a>).</td>
           </tr>
           <tr>
             <td><strong>config Circular Risk</strong></td>
             <td><span class="severity-low">Low</span></td>
             <td><code>config</code> imports from <code>routines</code> and <code>runners</code> (for enum types), while both import from <code>config</code>. Currently not circular due to import structure.</td>
-            <td>Move shared types (enums) to a dedicated <code>types</code> module to prevent future circularity.</td>
-          </tr>
-          <tr>
-            <td><strong>Git Operations Scattered</strong></td>
-            <td><span class="severity-low">Low</span></td>
-            <td>Git ops accessed from workflow.service, api.routers.runs, and runners.executor through different entry points.</td>
-            <td>Consider a GitFacade to centralize all git operations behind a single interface.</td>
+            <td>Eliminated by absorbing <code>routines</code> into <code>config</code> (see <a href="#suggested-moves" style="color: var(--accent);">M10</a>).</td>
           </tr>
           <tr>
             <td><strong>State &rarr; Runners Dependency</strong></td>
             <td><span class="severity-low">Low</span></td>
             <td><code>state.models</code> imports ActionLog from <code>runners</code>, creating a dependency from domain models to execution layer.</td>
-            <td>Move ActionLog to <code>state</code> or a shared <code>types</code> module.</td>
+            <td>Move ActionLog to <code>state</code> or the proposed <code>types</code> module.</td>
           </tr>
         </tbody>
       </table>
@@ -519,26 +934,27 @@
 // ============================================================
 const modules = {
   config:      { loc: 705,  files: 5,  layer: 'foundation', desc: 'Runtime enums (RunStatus, TaskStatus, Priority), Pydantic models for routine/step/task YAML, and GlobalConfig for paths and settings.' },
-  cache:       { loc: 88,   files: 2,  layer: 'foundation', desc: 'Simple LRU cache utility used by git operations for memoizing expensive computations.' },
-  metrics:     { loc: 70,   files: 2,  layer: 'foundation', desc: 'Cost estimation from token usage data. Calculates USD costs using model pricing tables.' },
+  cache:       { loc: 88,   files: 2,  layer: 'foundation', desc: 'Simple LRU cache utility used by git operations for memoizing expensive diff computations.', parent: 'git' },
+  metrics:     { loc: 70,   files: 2,  layer: 'foundation', desc: 'Cost estimation from token usage data. Calculates USD costs using model pricing tables.', parent: 'api' },
   state:       { loc: 532,  files: 5,  layer: 'domain',     desc: 'In-memory runtime models: Run, StepState, TaskState, Attempt, ChecklistItem. SessionStateManager for state mutations.' },
-  routines:    { loc: 555,  files: 5,  layer: 'domain',     desc: 'Routine discovery and loading from YAML files. Handles file resolution, inheritance, and semantic versioning.' },
-  artifacts:   { loc: 146,  files: 3,  layer: 'domain',     desc: 'Structured output registry. Stores named artifacts (code snippets, configs) produced during task execution.' },
-  repos:       { loc: 268,  files: 4,  layer: 'domain',     desc: 'Git repository discovery and introspection. Lists repos, branches, and provides RepoInfo data classes.' },
-  review:      { loc: 261,  files: 3,  layer: 'domain',     desc: 'Code review models and test execution. Runs test commands in worktrees and provides diff/commit data.' },
-  scaffolding: { loc: 176,  files: 4,  layer: 'domain',     desc: 'Project setup: copies template files, ensures .gitignore, prepares workspace for new tasks.' },
+  routines:    { loc: 555,  files: 5,  layer: 'domain',     desc: 'Routine discovery and loading from YAML files. Handles file resolution, inheritance, and semantic versioning.', parent: 'config' },
+  artifacts:   { loc: 146,  files: 3,  layer: 'domain',     desc: 'Structured output registry. Stores named artifacts (code snippets, configs) produced during task execution.', parent: 'workflow' },
+  repos:       { loc: 268,  files: 4,  layer: 'domain',     desc: 'Git repository discovery and introspection. Lists repos, branches, and provides RepoInfo data classes.', parent: 'git' },
+  review:      { loc: 261,  files: 3,  layer: 'domain',     desc: 'Code review models and test execution. Runs test commands in worktrees and provides diff/commit data.', parent: 'git' },
+  scaffolding: { loc: 176,  files: 4,  layer: 'domain',     desc: 'Project setup: copies template files, ensures .gitignore, prepares workspace for new tasks.', parent: 'runners' },
   db:          { loc: 2012, files: 21, layer: 'infra',       desc: 'Persistence via SQLAlchemy ORM. RunModel, StepModel, TaskModel, AttemptModel. Repositories for querying and hydrating state.' },
   git:         { loc: 2605, files: 10, layer: 'infra',       desc: 'Low-level git operations: WorktreeManager, branch ops, diff computation, conflict detection, and commit utilities.' },
   envfiles:    { loc: 908,  files: 9,  layer: 'infra',       desc: 'Environment file management: snapshots, lifecycle (create/cleanup), resolution, and security (encryption).' },
   workflow:    { loc: 5288, files: 17, layer: 'orchestration', desc: 'State machine engine: transitions, gates, grades, locks, events, clarifications, auto-verify, prompts, and completion logic.' },
-  runners:     { loc: 11514, files: 58, layer: 'execution',   desc: 'Agent integrations and execution. Decomposed into sub-packages: agents/ (claude_cli, claude_sdk, codex, openhands, user_managed, mock) with registry-based auto-discovery, execution/ (phase_handler, attempt_store, event_broadcaster), and shared utilities (monitor, parsers, quota, action_log).' },
-  agents:      { loc: 348,  files: 6,  layer: 'execution',   desc: 'Agent configuration CRUD. Manages agent profiles, seeding defaults (Planner, Builder, Verifier), and name resolution.' },
+  runners:     { loc: 11514, files: 58, layer: 'execution',   desc: 'Agent integrations and execution. Contains agents/ (claude_cli, claude_sdk, codex, openhands, user_managed, mock), execution/ (phase_handler, attempt_store, event_broadcaster), scaffolding/, and shared utilities.' },
+  agents:      { loc: 348,  files: 6,  layer: 'execution',   desc: 'Agent configuration CRUD. Manages agent profiles, seeding defaults (Planner, Builder, Verifier), and name resolution.', parent: 'runners' },
   api:         { loc: 6604, files: 30, layer: 'api',         desc: 'FastAPI application: routers, schemas, dependency injection, auth, error handlers, and WebSocket real-time events.' },
   cli:         { loc: 1447, files: 7,  layer: 'integration', desc: 'Command-line interface: run, agent, routine, and repo commands. Approval workflows for human-in-the-loop.' },
-  mcp:         { loc: 785,  files: 4,  layer: 'integration', desc: 'Model Context Protocol server: exposes tools to external agents for run status, task context, and clarifications.' },
+  mcp:         { loc: 785,  files: 4,  layer: 'integration', desc: 'Model Context Protocol server: exposes tools to external agents for run status, task context, and clarifications.', parent: 'api' },
   routers:     { loc: 6,    files: 2,  layer: 'integration', desc: 'Legacy router shim (6 LOC). Re-exports from api.routers for backwards compatibility.' },
 };
 
+// Dependencies: source depends on targets
 const deps = {
   config: ['routines','runners'],
   state: ['config','envfiles','runners'],
@@ -553,6 +969,19 @@ const deps = {
   cli: ['config','db','repos','routines','runners','state','workflow'],
   mcp: ['config','repos','workflow'],
   routers: [],
+};
+
+// Containership: child → parent (proposed consolidation targets)
+const containership = {
+  scaffolding: 'runners',
+  agents: 'runners',
+  cache: 'git',
+  review: 'git',
+  repos: 'git',
+  metrics: 'api',
+  mcp: 'api',
+  artifacts: 'workflow',
+  routines: 'config',
 };
 
 const layerColors = {
@@ -578,6 +1007,266 @@ const layerNames = {
 const layerOrder = ['integration','api','execution','orchestration','infra','domain','foundation'];
 
 // ============================================================
+// RUN STATE MACHINE (SVG)
+// ============================================================
+(function drawRunStateMachine() {
+  const w = 900, h = 260;
+  const svg = d3.select('#run-state-machine')
+    .append('svg')
+    .attr('viewBox', `0 0 ${w} ${h}`)
+    .attr('width', '100%')
+    .attr('style', 'max-width: 1000px;');
+
+  svg.append('defs').append('marker')
+    .attr('id', 'sm-arrow')
+    .attr('viewBox', '0 0 10 6')
+    .attr('refX', 10).attr('refY', 3)
+    .attr('markerWidth', 8).attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,0 L10,3 L0,6 Z')
+    .attr('fill', '#89b4fa');
+
+  const states = [
+    { id: 'DRAFT',     x: 100,  y: 110, w: 110, h: 44, color: '#7f849c' },
+    { id: 'ACTIVE',    x: 310,  y: 110, w: 110, h: 44, color: '#a6e3a1' },
+    { id: 'PAUSED',    x: 420,  y: 200, w: 110, h: 44, color: '#f9e2af' },
+    { id: 'COMPLETED', x: 600,  y: 60,  w: 130, h: 44, color: '#89b4fa' },
+    { id: 'FAILED',    x: 600,  y: 160, w: 110, h: 44, color: '#f38ba8' },
+  ];
+
+  const edges = [
+    { from: 'DRAFT',  to: 'ACTIVE',    label: 'start_run()' },
+    { from: 'ACTIVE', to: 'PAUSED',    label: 'pause/error/shutdown', curved: true },
+    { from: 'PAUSED', to: 'ACTIVE',    label: 'resume_run()', curved: true },
+    { from: 'ACTIVE', to: 'COMPLETED', label: 'all steps done' },
+    { from: 'ACTIVE', to: 'FAILED',    label: 'cancel/failure' },
+  ];
+
+  const stateMap = {};
+  states.forEach(s => stateMap[s.id] = s);
+
+  // Draw edges first (behind nodes)
+  edges.forEach(e => {
+    const from = stateMap[e.from];
+    const to = stateMap[e.to];
+    const fx = from.x + from.w / 2, fy = from.y + from.h / 2;
+    const tx = to.x + to.w / 2, ty = to.y + to.h / 2;
+
+    if (e.from === 'ACTIVE' && e.to === 'PAUSED') {
+      // Curved right edge going down
+      svg.append('path')
+        .attr('d', `M${from.x + from.w},${fy + 10} Q${from.x + from.w + 40},${ty} ${tx},${to.y}`)
+        .attr('class', 'sm-edge').attr('stroke', '#4a4d5e').attr('marker-end', 'url(#sm-arrow)');
+      svg.append('text').attr('class', 'sm-label')
+        .attr('x', from.x + from.w + 22).attr('y', (fy + ty) / 2 + 8)
+        .attr('text-anchor', 'start').text(e.label);
+    } else if (e.from === 'PAUSED' && e.to === 'ACTIVE') {
+      // Curved left edge going up
+      svg.append('path')
+        .attr('d', `M${to.x + to.w / 2 - 20},${to.y + to.h} Q${to.x},${(fy + ty) / 2 + 20} ${from.x},${from.y + from.h / 2}`)
+        .attr('class', 'sm-edge').attr('stroke', '#4a4d5e').attr('marker-end', 'url(#sm-arrow)');
+      svg.append('text').attr('class', 'sm-label')
+        .attr('x', from.x - 8).attr('y', (fy + ty) / 2 + 6)
+        .attr('text-anchor', 'end').text(e.label);
+    } else {
+      // Straight line
+      const dx = tx - fx, dy = ty - fy;
+      const len = Math.sqrt(dx*dx + dy*dy);
+      const ox = (dx/len) * (to.w/2 + 6), oy = (dy/len) * (to.h/2 + 6);
+      svg.append('line')
+        .attr('x1', fx).attr('y1', fy)
+        .attr('x2', tx - ox).attr('y2', ty - oy)
+        .attr('class', 'sm-edge').attr('stroke', '#4a4d5e').attr('marker-end', 'url(#sm-arrow)');
+      // Label at midpoint
+      const mx = (fx + tx) / 2, my = (fy + ty) / 2;
+      svg.append('text').attr('class', 'sm-label')
+        .attr('x', mx).attr('y', my - 8)
+        .attr('text-anchor', 'middle').text(e.label);
+    }
+  });
+
+  // Draw nodes
+  states.forEach(s => {
+    const g = svg.append('g').attr('class', 'sm-node');
+    g.append('rect')
+      .attr('x', s.x).attr('y', s.y)
+      .attr('width', s.w).attr('height', s.h)
+      .attr('rx', 8)
+      .attr('fill', s.color).attr('fill-opacity', 0.12)
+      .attr('stroke', s.color).attr('stroke-opacity', 0.5).attr('stroke-width', 1.5);
+    g.append('text').attr('class', 'sm-node-label')
+      .attr('x', s.x + s.w / 2).attr('y', s.y + s.h / 2 + 4)
+      .attr('text-anchor', 'middle').attr('fill', s.color)
+      .text(s.id);
+  });
+
+  // Start indicator (filled circle before DRAFT)
+  svg.append('circle').attr('cx', 50).attr('cy', 132).attr('r', 8).attr('fill', '#7f849c');
+  svg.append('line').attr('x1', 58).attr('y1', 132).attr('x2', 95).attr('y2', 132)
+    .attr('stroke', '#4a4d5e').attr('stroke-width', 1.5).attr('marker-end', 'url(#sm-arrow)');
+})();
+
+// ============================================================
+// TASK STATE MACHINE (SVG)
+// ============================================================
+(function drawTaskStateMachine() {
+  const w = 1050, h = 440;
+  const svg = d3.select('#task-state-machine')
+    .append('svg')
+    .attr('viewBox', `0 0 ${w} ${h}`)
+    .attr('width', '100%')
+    .attr('style', 'max-width: 1100px;');
+
+  svg.append('defs').append('marker')
+    .attr('id', 'tsm-arrow')
+    .attr('viewBox', '0 0 10 6')
+    .attr('refX', 10).attr('refY', 3)
+    .attr('markerWidth', 8).attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,0 L10,3 L0,6 Z')
+    .attr('fill', '#89b4fa');
+
+  const states = [
+    { id: 'PENDING',              x: 50,   y: 180, w: 120, h: 40, color: '#7f849c' },
+    { id: 'BUILDING',             x: 260,  y: 180, w: 120, h: 40, color: '#a6e3a1' },
+    { id: 'PENDING_USER_ACTION',  x: 260,  y: 60,  w: 200, h: 40, color: '#f9e2af' },
+    { id: 'VERIFYING',            x: 510,  y: 180, w: 120, h: 40, color: '#cba6f7' },
+    { id: 'RECOVERING',           x: 510,  y: 310, w: 130, h: 40, color: '#fab387' },
+    { id: 'FAN_OUT_RUNNING',      x: 100,  y: 340, w: 170, h: 40, color: '#94e2d5' },
+    { id: 'COMPLETED',            x: 780,  y: 120, w: 130, h: 40, color: '#89b4fa' },
+    { id: 'FAILED',               x: 780,  y: 240, w: 100, h: 40, color: '#f38ba8' },
+  ];
+
+  const stateMap = {};
+  states.forEach(s => stateMap[s.id] = s);
+
+  function drawEdge(fromId, toId, label, opts = {}) {
+    const from = stateMap[fromId], to = stateMap[toId];
+    const fx = from.x + from.w / 2, fy = from.y + from.h / 2;
+    const tx = to.x + to.w / 2, ty = to.y + to.h / 2;
+
+    if (opts.path) {
+      svg.append('path')
+        .attr('d', opts.path)
+        .attr('class', 'sm-edge').attr('stroke', opts.color || '#4a4d5e')
+        .attr('marker-end', 'url(#tsm-arrow)');
+    } else {
+      const dx = tx - fx, dy = ty - fy;
+      const len = Math.sqrt(dx*dx + dy*dy);
+      const padX = (dx/len) * (to.w/2 + 4), padY = (dy/len) * (to.h/2 + 4);
+      svg.append('line')
+        .attr('x1', fx).attr('y1', fy)
+        .attr('x2', tx - padX).attr('y2', ty - padY)
+        .attr('class', 'sm-edge').attr('stroke', opts.color || '#4a4d5e')
+        .attr('marker-end', 'url(#tsm-arrow)');
+    }
+
+    if (label && opts.labelPos) {
+      svg.append('text').attr('class', 'sm-label')
+        .attr('x', opts.labelPos[0]).attr('y', opts.labelPos[1])
+        .attr('text-anchor', opts.labelAnchor || 'middle')
+        .text(label);
+    }
+  }
+
+  // Main flow: PENDING → BUILDING → VERIFYING → COMPLETED
+  drawEdge('PENDING', 'BUILDING', 'start', { labelPos: [190, 175] });
+  drawEdge('BUILDING', 'VERIFYING', 'submit', { labelPos: [440, 175] });
+  drawEdge('VERIFYING', 'COMPLETED', 'grades pass', { labelPos: [710, 145], color: '#89b4fa' });
+
+  // VERIFYING → FAILED
+  drawEdge('VERIFYING', 'FAILED', 'max attempts', { labelPos: [710, 225], color: '#f38ba8' });
+
+  // VERIFYING → BUILDING (revision loop)
+  svg.append('path')
+    .attr('d', 'M510,200 Q385,270 380,200')
+    .attr('class', 'sm-edge').attr('stroke', '#f9e2af').attr('marker-end', 'url(#tsm-arrow)');
+  svg.append('text').attr('class', 'sm-label')
+    .attr('x', 420).attr('y', 252).attr('text-anchor', 'middle').text('revision needed');
+
+  // BUILDING → PENDING_USER_ACTION (clarification)
+  drawEdge('BUILDING', 'PENDING_USER_ACTION', 'clarification', { labelPos: [230, 135], labelAnchor: 'end' });
+
+  // PENDING_USER_ACTION → BUILDING (resume)
+  svg.append('path')
+    .attr('d', 'M360,100 Q400,140 370,180')
+    .attr('class', 'sm-edge').attr('stroke', '#4a4d5e').attr('marker-end', 'url(#tsm-arrow)');
+  svg.append('text').attr('class', 'sm-label')
+    .attr('x', 405).attr('y', 130).attr('text-anchor', 'start').text('response');
+
+  // VERIFYING → PENDING_USER_ACTION (approval)
+  svg.append('path')
+    .attr('d', 'M570,180 Q530,110 460,80')
+    .attr('class', 'sm-edge').attr('stroke', '#4a4d5e').attr('marker-end', 'url(#tsm-arrow)');
+  svg.append('text').attr('class', 'sm-label')
+    .attr('x', 530).attr('y', 115).attr('text-anchor', 'start').text('needs approval');
+
+  // PENDING_USER_ACTION → COMPLETED (approved)
+  drawEdge('PENDING_USER_ACTION', 'COMPLETED', 'approved', { labelPos: [600, 65], color: '#89b4fa' });
+
+  // VERIFYING → RECOVERING
+  drawEdge('VERIFYING', 'RECOVERING', 'auto-verify crash', { labelPos: [460, 280], labelAnchor: 'end' });
+
+  // RECOVERING → BUILDING (retry)
+  svg.append('path')
+    .attr('d', 'M510,330 Q380,340 320,220')
+    .attr('class', 'sm-edge').attr('stroke', '#4a4d5e').attr('marker-end', 'url(#tsm-arrow)');
+  svg.append('text').attr('class', 'sm-label')
+    .attr('x', 395).attr('y', 310).attr('text-anchor', 'middle').text('retry');
+
+  // RECOVERING → COMPLETED / FAILED
+  drawEdge('RECOVERING', 'COMPLETED', 'skip', { labelPos: [720, 290], color: '#89b4fa',
+    path: `M640,320 Q720,280 810,160` });
+  drawEdge('RECOVERING', 'FAILED', 'abandon', { labelPos: [720, 330], color: '#f38ba8',
+    path: `M640,340 Q720,320 780,270` });
+
+  // PENDING → FAN_OUT_RUNNING
+  drawEdge('PENDING', 'FAN_OUT_RUNNING', 'fan-out', { labelPos: [100, 290] });
+
+  // FAN_OUT_RUNNING → VERIFYING
+  svg.append('path')
+    .attr('d', 'M270,360 Q450,360 530,220')
+    .attr('class', 'sm-edge').attr('stroke', '#4a4d5e').attr('marker-end', 'url(#tsm-arrow)');
+  svg.append('text').attr('class', 'sm-label')
+    .attr('x', 400).attr('y', 355).attr('text-anchor', 'middle').text('children done');
+
+  // Draw nodes (on top)
+  states.forEach(s => {
+    const g = svg.append('g').attr('class', 'sm-node');
+    const isTerminal = s.id === 'COMPLETED' || s.id === 'FAILED';
+    g.append('rect')
+      .attr('x', s.x).attr('y', s.y)
+      .attr('width', s.w).attr('height', s.h)
+      .attr('rx', 8)
+      .attr('fill', s.color).attr('fill-opacity', 0.12)
+      .attr('stroke', s.color).attr('stroke-opacity', 0.5)
+      .attr('stroke-width', isTerminal ? 2.5 : 1.5);
+    g.append('text').attr('class', 'sm-node-label')
+      .attr('x', s.x + s.w / 2).attr('y', s.y + s.h / 2 + 4)
+      .attr('text-anchor', 'middle').attr('fill', s.color)
+      .attr('font-size', s.id === 'PENDING_USER_ACTION' ? '11px' : '12px')
+      .text(s.id);
+  });
+
+  // Start indicator
+  svg.append('circle').attr('cx', 20).attr('cy', 200).attr('r', 7).attr('fill', '#7f849c');
+  svg.append('line').attr('x1', 27).attr('y1', 200).attr('x2', 46).attr('y2', 200)
+    .attr('stroke', '#4a4d5e').attr('stroke-width', 1.5).attr('marker-end', 'url(#tsm-arrow)');
+
+  // Terminal indicators (double border)
+  ['COMPLETED', 'FAILED'].forEach(id => {
+    const s = stateMap[id];
+    svg.append('rect')
+      .attr('x', s.x + 3).attr('y', s.y + 3)
+      .attr('width', s.w - 6).attr('height', s.h - 6)
+      .attr('rx', 6).attr('fill', 'none')
+      .attr('stroke', stateMap[id].color).attr('stroke-opacity', 0.3).attr('stroke-width', 1);
+  });
+})();
+
+// ============================================================
 // LAYER DIAGRAM (SVG)
 // ============================================================
 (function drawLayerDiagram() {
@@ -588,7 +1277,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     .attr('width', '100%')
     .attr('style', 'max-width: 1200px;');
 
-  // Define arrow marker
   svg.append('defs').append('marker')
     .attr('id', 'layer-arrow')
     .attr('viewBox', '0 0 10 6')
@@ -611,7 +1299,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     const color = layerColors[layer];
     const mods = Object.entries(modules).filter(([,m]) => m.layer === layer);
 
-    // Layer background
     svg.append('rect')
       .attr('x', lx).attr('y', y)
       .attr('width', lw).attr('height', layerH)
@@ -621,7 +1308,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
       .attr('stroke', color)
       .attr('stroke-opacity', 0.3);
 
-    // Layer label
     svg.append('text')
       .attr('x', lx - 16)
       .attr('y', y + layerH / 2)
@@ -632,7 +1318,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
       .attr('fill', color)
       .text(layerNames[layer]);
 
-    // Module pills inside layer
     const pillW = Math.min(120, (lw - 30) / mods.length - 10);
     const pillH = 36;
     const totalPillW = mods.length * (pillW + 10) - 10;
@@ -660,7 +1345,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
         .text(name);
     });
 
-    // Arrow between layers
     if (i < layers.length - 1) {
       const arrowY = y + layerH + gap / 2;
       svg.append('line')
@@ -674,7 +1358,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     }
   });
 
-  // "depends on" label
   const midY = startY + (layers.length * (layerH + gap)) / 2;
   svg.append('text')
     .attr('x', lx + lw + 30)
@@ -688,34 +1371,85 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
 })();
 
 // ============================================================
-// DEPENDENCY GRAPH (D3 Force)
+// DEPENDENCY GRAPH with CONTAINERSHIP (D3 Force)
 // ============================================================
 (function drawDepGraph() {
   const container = document.getElementById('dep-graph');
-  const w = container.clientWidth || 900;
-  const h = 550;
+  const w = 720;
+  const h = 620;
 
   const svg = d3.select('#dep-graph')
     .append('svg')
-    .attr('width', w)
-    .attr('height', h)
-    .attr('viewBox', `0 0 ${w} ${h}`);
+    .attr('width', '100%')
+    .attr('viewBox', `0 0 ${w} ${h}`)
+    .attr('style', 'max-width: 900px; margin: 0 auto; display: block;');
 
-  // Build nodes & links
+  // ── Fixed-position layout with containership groups ──
+  // Hand-positioned for clarity. Layers flow top-to-bottom.
+  // Children are placed inside their parent's bounding box.
+
+  // Fixed positions for every node (x, y center)
+  // Layout: 5 rows corresponding to architectural layers
+  //   Row 0 (y=55):  Integration  — cli
+  //   Row 1 (y=55):  API          — api [mcp, metrics]
+  //   Row 2 (y=195): Execution    — runners [scaffolding, agents]
+  //   Row 3 (y=335): Orchestration — workflow [artifacts]
+  //   Row 4 (y=465): Infra        — db, git [cache, review, repos], envfiles
+  //   Row 5 (y=570): Domain       — state, routines
+  //   Row 6 (y=570): Foundation   — config [routines]
+
+  const pos = {
+    // Row 1: API + Integration
+    api:         { x: 350, y: 58 },
+    mcp:         { x: 270, y: 58 },
+    metrics:     { x: 430, y: 58 },
+    cli:         { x: 620, y: 58 },
+
+    // Row 2: Execution
+    runners:     { x: 350, y: 195 },
+    scaffolding: { x: 255, y: 195 },
+    agents:      { x: 445, y: 195 },
+
+    // Row 3: Orchestration
+    workflow:    { x: 350, y: 335 },
+    artifacts:   { x: 275, y: 335 },
+
+    // Row 4: Infrastructure
+    git:         { x: 200, y: 465 },
+    cache:       { x: 130, y: 440 },
+    review:      { x: 130, y: 490 },
+    repos:       { x: 270, y: 440 },
+    db:          { x: 400, y: 465 },
+    envfiles:    { x: 560, y: 465 },
+
+    // Row 5: Domain + Foundation
+    state:       { x: 300, y: 570 },
+    routines:    { x: 500, y: 570 },
+    config:      { x: 440, y: 570 },
+  };
+
   const nodeNames = Object.keys(modules).filter(n => n !== 'routers');
   const nodes = nodeNames.map(name => ({
     id: name,
     loc: modules[name].loc,
     layer: modules[name].layer,
-    r: Math.max(12, Math.sqrt(modules[name].loc) * 0.7),
+    r: Math.max(10, Math.min(30, Math.sqrt(modules[name].loc) * 0.5)),
+    isChild: !!containership[name],
+    x: pos[name] ? pos[name].x : 450,
+    y: pos[name] ? pos[name].y : 300,
   }));
+  const nodeMap = {};
+  nodes.forEach(n => nodeMap[n.id] = n);
 
+  // Build links — skip internal containership edges
   const links = [];
   Object.entries(deps).forEach(([src, targets]) => {
+    if (src === 'routers') return;
     targets.forEach(tgt => {
-      if (nodeNames.includes(src) && nodeNames.includes(tgt)) {
-        links.push({ source: src, target: tgt });
-      }
+      if (tgt === 'routers') return;
+      if (!nodeMap[src] || !nodeMap[tgt]) return;
+      if (containership[tgt] === src) return; // parent→child is structural
+      links.push({ source: src, target: tgt });
     });
   });
 
@@ -723,117 +1457,178 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
   svg.append('defs').append('marker')
     .attr('id', 'arrow')
     .attr('viewBox', '0 0 10 6')
-    .attr('refX', 18).attr('refY', 3)
+    .attr('refX', 10).attr('refY', 3)
     .attr('markerWidth', 7).attr('markerHeight', 5)
     .attr('orient', 'auto')
     .append('path')
     .attr('d', 'M0,0 L10,3 L0,6 Z')
     .attr('fill', '#4a4d5e');
 
-  const simulation = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(links).id(d => d.id).distance(120))
-    .force('charge', d3.forceManyBody().strength(-350))
-    .force('center', d3.forceCenter(w / 2, h / 2))
-    .force('collision', d3.forceCollide().radius(d => d.r + 8))
-    .force('y', d3.forceY().y(d => {
-      const idx = layerOrder.indexOf(d.layer);
-      return 60 + idx * (h - 120) / (layerOrder.length - 1);
-    }).strength(0.15));
+  // ── Draw containership group boxes (behind everything) ──
+  const groups = [
+    { parent: 'api',      children: ['mcp','metrics'],           color: layerColors.api,       label: 'api' },
+    { parent: 'runners',  children: ['scaffolding','agents'],    color: layerColors.execution,  label: 'runners' },
+    { parent: 'workflow', children: ['artifacts'],               color: layerColors.orchestration, label: 'workflow' },
+    { parent: 'git',      children: ['cache','review','repos'],  color: layerColors.infra,     label: 'git' },
+    { parent: 'config',   children: ['routines'],                color: layerColors.foundation, label: 'config' },
+  ];
 
-  const link = svg.append('g')
-    .selectAll('line')
+  const groupG = svg.append('g');
+  groups.forEach(g => {
+    const allIds = [g.parent, ...g.children];
+    const allNodes = allIds.map(id => nodeMap[id]).filter(Boolean);
+    if (allNodes.length === 0) return;
+
+    // Compute bounding box
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    allNodes.forEach(n => {
+      minX = Math.min(minX, n.x - n.r);
+      maxX = Math.max(maxX, n.x + n.r);
+      minY = Math.min(minY, n.y - n.r);
+      maxY = Math.max(maxY, n.y + n.r);
+    });
+    const pad = 22;
+    const rx = minX - pad, ry = minY - pad;
+    const rw = maxX - minX + pad * 2, rh = maxY - minY + pad * 2;
+
+    groupG.append('rect')
+      .attr('x', rx).attr('y', ry)
+      .attr('width', rw).attr('height', rh)
+      .attr('rx', 12)
+      .attr('fill', g.color).attr('fill-opacity', 0.04)
+      .attr('stroke', g.color).attr('stroke-opacity', 0.25)
+      .attr('stroke-width', 1.5)
+      .attr('stroke-dasharray', '6,4');
+
+    // Group label (top-left inside the box)
+    groupG.append('text')
+      .attr('x', rx + 8).attr('y', ry + 13)
+      .attr('font-size', '10px').attr('font-weight', '600')
+      .attr('fill', g.color).attr('opacity', 0.5)
+      .text(g.label);
+  });
+
+  // ── Draw edges as curved paths ──
+  // Use quadratic bezier curves to reduce overlap
+  const linkG = svg.append('g');
+
+  function edgePath(src, tgt) {
+    const s = nodeMap[src], t = nodeMap[tgt];
+    if (!s || !t) return '';
+    const dx = t.x - s.x, dy = t.y - s.y;
+    const len = Math.sqrt(dx*dx + dy*dy) || 1;
+    // Shorten by target radius so arrow tip lands on circle edge
+    const endPad = t.r + 6;
+    const ex = t.x - (dx/len) * endPad;
+    const ey = t.y - (dy/len) * endPad;
+    const startPad = s.r + 2;
+    const sx = s.x + (dx/len) * startPad;
+    const sy = s.y + (dy/len) * startPad;
+    // Slight curve offset perpendicular to the line
+    const offset = Math.min(20, len * 0.08);
+    const mx = (sx + ex) / 2 - (ey - sy) / len * offset;
+    const my = (sy + ey) / 2 + (ex - sx) / len * offset;
+    return `M${sx},${sy} Q${mx},${my} ${ex},${ey}`;
+  }
+
+  const linkEls = linkG.selectAll('path')
     .data(links)
-    .join('line')
+    .join('path')
     .attr('class', 'link')
-    .attr('stroke', '#4a4d5e')
-    .attr('stroke-width', 1.5)
+    .attr('d', d => edgePath(d.source, d.target))
+    .attr('stroke', d => d.source === 'api' ? '#f38ba8' : '#4a4d5e')
+    .attr('stroke-width', 1.2)
     .attr('marker-end', 'url(#arrow)');
 
-  const node = svg.append('g')
-    .selectAll('g')
+  // ── Draw nodes ──
+  const nodeG = svg.append('g');
+  const nodeEls = nodeG.selectAll('g')
     .data(nodes)
     .join('g')
     .attr('class', 'node')
-    .call(d3.drag()
-      .on('start', (e, d) => { if (!e.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-      .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
-      .on('end', (e, d) => { if (!e.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; })
-    );
+    .attr('transform', d => `translate(${d.x},${d.y})`);
 
-  node.append('circle')
+  nodeEls.append('circle')
     .attr('r', d => d.r)
     .attr('fill', d => layerColors[d.layer])
-    .attr('fill-opacity', 0.2)
-    .attr('stroke', d => layerColors[d.layer]);
+    .attr('fill-opacity', d => d.isChild ? 0.35 : 0.2)
+    .attr('stroke', d => layerColors[d.layer])
+    .attr('stroke-width', d => d.isChild ? 1 : 2)
+    .attr('stroke-dasharray', d => d.isChild ? '3,2' : 'none');
 
-  node.append('text')
-    .attr('dy', d => d.r + 14)
+  // Module name
+  nodeEls.append('text')
+    .attr('dy', d => d.r + 13)
     .attr('text-anchor', 'middle')
+    .attr('font-size', '10px')
     .text(d => d.id);
 
-  // LOC label inside circle
-  node.append('text')
+  // LOC inside circle
+  nodeEls.append('text')
     .attr('dy', 4)
     .attr('text-anchor', 'middle')
     .attr('font-size', '8px')
     .attr('fill', '#7f849c')
-    .text(d => d.loc >= 500 ? (d.loc / 1000).toFixed(1) + 'k' : '');
+    .text(d => d.loc >= 300 ? (d.loc / 1000).toFixed(1) + 'k' : '');
 
-  // Click interaction
+  // ── Row labels (layer names on the left) ──
+  const rowLabels = [
+    { label: 'API / Integration', y: 58, color: layerColors.api },
+    { label: 'Execution', y: 195, color: layerColors.execution },
+    { label: 'Orchestration', y: 335, color: layerColors.orchestration },
+    { label: 'Infrastructure', y: 465, color: layerColors.infra },
+    { label: 'Domain / Foundation', y: 570, color: layerColors.foundation },
+  ];
+  rowLabels.forEach(r => {
+    svg.append('text')
+      .attr('x', 14).attr('y', r.y + 4)
+      .attr('font-size', '10px').attr('font-weight', '500')
+      .attr('fill', r.color).attr('opacity', 0.6)
+      .text(r.label);
+  });
+
+  // ── Click interaction ──
   let selectedNode = null;
 
-  node.on('click', function(e, d) {
+  nodeEls.on('click', function(e, d) {
     e.stopPropagation();
     if (selectedNode === d.id) {
-      // Deselect
       selectedNode = null;
-      node.classed('dimmed', false);
-      link.classed('dimmed', false).classed('highlighted', false);
+      nodeEls.classed('dimmed', false);
+      linkEls.classed('dimmed', false).classed('highlighted', false);
       d3.select('#graph-info').text('Click a node to focus');
       return;
     }
     selectedNode = d.id;
 
+    // Build connected set (include containership children/parent)
     const connected = new Set([d.id]);
+    Object.entries(containership).forEach(([child, parent]) => {
+      if (parent === d.id) connected.add(child);
+      if (child === d.id) connected.add(parent);
+    });
     links.forEach(l => {
-      const sid = typeof l.source === 'object' ? l.source.id : l.source;
-      const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      if (sid === d.id) connected.add(tid);
-      if (tid === d.id) connected.add(sid);
+      if (connected.has(l.source)) connected.add(l.target);
+      if (connected.has(l.target)) connected.add(l.source);
     });
 
-    node.classed('dimmed', n => !connected.has(n.id));
-    link.classed('dimmed', l => {
-      const sid = typeof l.source === 'object' ? l.source.id : l.source;
-      const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      return sid !== d.id && tid !== d.id;
-    });
-    link.classed('highlighted', l => {
-      const sid = typeof l.source === 'object' ? l.source.id : l.source;
-      const tid = typeof l.target === 'object' ? l.target.id : l.target;
-      return sid === d.id || tid === d.id;
-    });
+    nodeEls.classed('dimmed', n => !connected.has(n.id));
+    linkEls.classed('dimmed', l => l.source !== d.id && l.target !== d.id);
+    linkEls.classed('highlighted', l => l.source === d.id || l.target === d.id);
 
     const outDeps = deps[d.id] || [];
     const inDeps = Object.entries(deps).filter(([,v]) => v.includes(d.id)).map(([k]) => k);
-    d3.select('#graph-info').html(`<strong>${d.id}</strong> &mdash; depends on: ${outDeps.length}, depended by: ${inDeps.length}`);
+    const parentInfo = containership[d.id] ? ` (→ ${containership[d.id]})` : '';
+    const childInfo = Object.entries(containership).filter(([,p]) => p === d.id).map(([c]) => c);
+    const childStr = childInfo.length ? ` | contains: ${childInfo.join(', ')}` : '';
+    d3.select('#graph-info').html(`<strong>${d.id}</strong>${parentInfo} &mdash; out: ${outDeps.length}, in: ${inDeps.length}${childStr}`);
   });
 
   svg.on('click', () => {
     selectedNode = null;
-    node.classed('dimmed', false);
-    link.classed('dimmed', false).classed('highlighted', false);
+    nodeEls.classed('dimmed', false);
+    linkEls.classed('dimmed', false).classed('highlighted', false);
     d3.select('#graph-info').text('Click a node to focus');
-  });
-
-  simulation.on('tick', () => {
-    link
-      .attr('x1', d => d.source.x)
-      .attr('y1', d => d.source.y)
-      .attr('x2', d => d.target.x)
-      .attr('y2', d => d.target.y);
-
-    node.attr('transform', d => `translate(${d.x},${d.y})`);
   });
 
   // Legend
@@ -843,6 +1638,9 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     item.append('span').attr('class', 'legend-dot').style('background', layerColors[key]);
     item.append('span').text(name);
   });
+  const hullItem = legend.append('span').attr('class', 'legend-item');
+  hullItem.append('span').attr('class', 'legend-dot').style('background', 'none').style('border', '2px dashed #7f849c').style('width', '14px').style('height', '10px').style('border-radius', '3px');
+  hullItem.append('span').text('Proposed containership');
 })();
 
 // ============================================================
@@ -851,7 +1649,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
 (function drawModuleCatalog() {
   const grid = document.getElementById('module-grid');
 
-  // Group by layer
   layerOrder.slice().reverse().forEach(layer => {
     const mods = Object.entries(modules).filter(([,m]) => m.layer === layer);
     if (mods.length === 0) return;
@@ -860,6 +1657,7 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
 
     mods.forEach(([name, mod]) => {
       const modDeps = deps[name] || [];
+      const parentInfo = mod.parent ? `<span class="dep-tag" style="background: rgba(137,180,250,0.1); color: var(--accent);">contained in: ${mod.parent}</span> ` : '';
       const card = document.createElement('div');
       card.className = `module-card layer-${layer}`;
       card.innerHTML = `
@@ -870,7 +1668,7 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
           <span><strong>${mod.files}</strong> files</span>
           <span><strong>${modDeps.length}</strong> deps</span>
         </div>
-        ${modDeps.length ? `<div class="deps">Depends on: ${modDeps.map(d => `<span class="dep-tag">${d}</span>`).join('')}</div>` : '<div class="deps" style="color: var(--accent2);">No external dependencies</div>'}
+        ${modDeps.length || parentInfo ? `<div class="deps">${parentInfo}${modDeps.length ? 'Depends on: ' + modDeps.map(d => `<span class="dep-tag">${d}</span>`).join('') : ''}</div>` : '<div class="deps" style="color: var(--accent2);">No external dependencies</div>'}
       `;
       grid.appendChild(card);
     });
@@ -900,6 +1698,7 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
       value: mod.loc,
       layer: mod.layer,
       files: mod.files,
+      parent: mod.parent || null,
     })),
   };
 
@@ -923,8 +1722,9 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     .attr('fill', d => layerColors[d.data.layer])
     .attr('fill-opacity', 0.35)
     .on('mouseover', function(e, d) {
+      const parentStr = d.data.parent ? `<br><em>contained in ${d.data.parent}</em>` : '';
       tooltip.style('display', 'block')
-        .html(`<strong>${d.data.name}</strong><br>${d.data.value.toLocaleString()} lines, ${d.data.files} files<br><span style="color:${layerColors[d.data.layer]}">${layerNames[d.data.layer]}</span>`);
+        .html(`<strong>${d.data.name}</strong><br>${d.data.value.toLocaleString()} lines, ${d.data.files} files<br><span style="color:${layerColors[d.data.layer]}">${layerNames[d.data.layer]}</span>${parentStr}`);
     })
     .on('mousemove', function(e) {
       tooltip.style('left', (e.pageX + 12) + 'px').style('top', (e.pageY - 10) + 'px');
@@ -1026,7 +1826,7 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     }
   });
 
-  // Side branch: Agent execution (hangs off WorkflowService)
+  // Side branch: Agent execution
   const execX = startX + 2 * (boxW + gap);
   const execY = y + boxH + 30;
   const branchW = boxW + 30;
@@ -1067,7 +1867,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     .attr('fill', '#7f849c')
     .text('runners/execution (async)');
 
-  // Label the branch
   svg.append('text')
     .attr('x', execX + boxW / 2 + branchW / 2 + 12)
     .attr('y', execY + boxH / 2 - 6)
@@ -1081,6 +1880,125 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
     .attr('font-size', '10px')
     .attr('fill', '#4a4d5e')
     .text('agent tasks');
+})();
+
+// ============================================================
+// TARGET DEPENDENCY GRAPH (after consolidation)
+// ============================================================
+(function drawTargetDepGraph() {
+  const container = document.getElementById('target-dep-graph');
+  if (!container) return;
+
+  const w = 900, h = 380;
+  const svg = d3.select('#target-dep-graph')
+    .append('svg')
+    .attr('viewBox', `0 0 ${w} ${h}`)
+    .attr('width', '100%')
+    .attr('style', 'max-width: 1000px;');
+
+  svg.append('defs').append('marker')
+    .attr('id', 'target-arrow')
+    .attr('viewBox', '0 0 10 6')
+    .attr('refX', 10).attr('refY', 3)
+    .attr('markerWidth', 8).attr('markerHeight', 6)
+    .attr('orient', 'auto')
+    .append('path')
+    .attr('d', 'M0,0 L10,3 L0,6 Z')
+    .attr('fill', '#4a4d5e');
+
+  // 9 target modules in layered layout
+  const targetModules = [
+    // Layer 1: Foundation
+    { id: 'config',   x: 400, y: 320, w: 140, h: 40, color: '#94e2d5', sub: '+ routines' },
+    // Layer 2: Domain + Infra
+    { id: 'state',    x: 80,  y: 230, w: 100, h: 40, color: '#a6e3a1', sub: '' },
+    { id: 'db',       x: 230, y: 230, w: 80,  h: 40, color: '#f9e2af', sub: '' },
+    { id: 'git',      x: 400, y: 230, w: 160, h: 40, color: '#f9e2af', sub: '+ repos, cache, review' },
+    { id: 'envfiles', x: 620, y: 230, w: 110, h: 40, color: '#f9e2af', sub: '' },
+    // Layer 3: Orchestration + Execution
+    { id: 'workflow', x: 180, y: 140, w: 180, h: 40, color: '#89b4fa', sub: '+ artifacts' },
+    { id: 'runners',  x: 500, y: 140, w: 210, h: 40, color: '#cba6f7', sub: '+ scaffolding, agents' },
+    // Layer 4: Interfaces
+    { id: 'api',      x: 250, y: 50,  w: 180, h: 40, color: '#f38ba8', sub: '+ metrics, mcp' },
+    { id: 'cli',      x: 530, y: 50,  w: 80,  h: 40, color: '#fab387', sub: '' },
+  ];
+
+  const targetDeps = [
+    // config is foundation - depended on by everything (shown selectively)
+    ['state', 'config'], ['db', 'config'], ['git', 'config'], ['envfiles', 'config'],
+    // Domain/infra cross-deps
+    ['db', 'state'], ['workflow', 'state'], ['workflow', 'db'], ['workflow', 'git'], ['workflow', 'envfiles'],
+    // Execution
+    ['runners', 'config'], ['runners', 'state'], ['runners', 'workflow'], ['runners', 'git'],
+    // API
+    ['api', 'config'], ['api', 'state'], ['api', 'db'], ['api', 'git'], ['api', 'envfiles'],
+    ['api', 'workflow'], ['api', 'runners'],
+    // CLI
+    ['cli', 'config'], ['cli', 'workflow'], ['cli', 'runners'],
+  ];
+
+  const modMap = {};
+  targetModules.forEach(m => modMap[m.id] = m);
+
+  // Draw edges
+  targetDeps.forEach(([fromId, toId]) => {
+    const from = modMap[fromId], to = modMap[toId];
+    if (!from || !to) return;
+    const fx = from.x + from.w / 2, fy = from.y + from.h / 2;
+    const tx = to.x + to.w / 2, ty = to.y + to.h / 2;
+    const dx = tx - fx, dy = ty - fy;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    if (len === 0) return;
+    const padX = (dx/len) * (to.w/2 + 4), padY = (dy/len) * (to.h/2 + 4);
+
+    svg.append('line')
+      .attr('x1', fx).attr('y1', fy)
+      .attr('x2', tx - padX).attr('y2', ty - padY)
+      .attr('stroke', '#4a4d5e').attr('stroke-width', 1)
+      .attr('stroke-opacity', 0.35)
+      .attr('marker-end', 'url(#target-arrow)');
+  });
+
+  // Draw nodes
+  targetModules.forEach(m => {
+    svg.append('rect')
+      .attr('x', m.x).attr('y', m.y)
+      .attr('width', m.w).attr('height', m.h)
+      .attr('rx', 8)
+      .attr('fill', m.color).attr('fill-opacity', 0.12)
+      .attr('stroke', m.color).attr('stroke-opacity', 0.5).attr('stroke-width', 1.5);
+
+    svg.append('text')
+      .attr('x', m.x + m.w / 2).attr('y', m.y + (m.sub ? 16 : m.h / 2 + 4))
+      .attr('text-anchor', 'middle')
+      .attr('font-size', '13px').attr('font-weight', '600')
+      .attr('fill', m.color)
+      .text(m.id);
+
+    if (m.sub) {
+      svg.append('text')
+        .attr('x', m.x + m.w / 2).attr('y', m.y + 32)
+        .attr('text-anchor', 'middle')
+        .attr('font-size', '9px').attr('font-weight', '400')
+        .attr('fill', '#7f849c')
+        .text(m.sub);
+    }
+  });
+
+  // Layer labels
+  const layers = [
+    { label: 'Interfaces', y: 55, color: '#f38ba8' },
+    { label: 'Orchestration', y: 145, color: '#89b4fa' },
+    { label: 'Domain / Infra', y: 235, color: '#f9e2af' },
+    { label: 'Foundation', y: 325, color: '#94e2d5' },
+  ];
+  layers.forEach(l => {
+    svg.append('text')
+      .attr('x', 15).attr('y', l.y + 5)
+      .attr('font-size', '11px').attr('font-weight', '500')
+      .attr('fill', l.color).attr('opacity', 0.7)
+      .text(l.label);
+  });
 })();
 </script>
 

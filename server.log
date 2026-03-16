@@ -1,0 +1,251 @@
+Starting backend on http://localhost:8000 ...
+Starting frontend on http://localhost:5173 ...
+error: Failed to initialize cache at `/Users/peter/.cache/uv`
+  Caused by: failed to open file `/Users/peter/.cache/uv/sdists-v9/.git`: Operation not permitted (os error 1)
+
+> ui@0.0.0 dev
+> vite
+
+error when starting dev server:
+Error: listen EPERM: operation not permitted ::1:5173
+    at Server.setupListenHandle [as _listen2] (node:net:1918:21)
+    at listenInCluster (node:net:1997:12)
+    at GetAddrInfoReqWrap.callback (node:net:2206:7)
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:133:8)
+
+Shutting down...
+
+Shutting down...
+
+Shutting down...
+
+Shutting down...
+
+Shutting down...
+
+Shutting down...
+
+Shutting down...
+
+Shutting down...
+[03/14/26 12:26:44] INFO     Found uncommitted changes in            utils.py:60
+                             /Users/peter/code/task-world/worktrees/            
+                             r26, auto-committing                               
+                    INFO     Auto-committed uncommitted changes in   utils.py:80
+                             /Users/peter/code/task-world/worktrees/            
+                             r26                                                
+[03/14/26 12:26:45] INFO     Task                           phase_handler.py:215
+                             5ccfcc8f-c2ce-4488-ad6b-5878b3                     
+                             739cf3: builder execution                          
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             5ccfcc8f-c2ce-4488-ad6b-5878b3739cf                
+                             3 (T-01)                                           
+                    INFO     Task                               executor.py:1400
+                             5ccfcc8f-c2ce-4488-ad6b-5878b3739c                 
+                             f3: running verifier agent for                     
+                             rubric evaluation                                  
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 12:28:37] WARNING  Task                           phase_handler.py:265
+                             5ccfcc8f-c2ce-4488-ad6b-5878b3                     
+                             739cf3: verifier completing                        
+                             but 4 requirements have no                         
+                             grade -- auto-grading as A                         
+[03/14/26 12:28:38] INFO     Task                           phase_handler.py:344
+                             5ccfcc8f-c2ce-4488-ad6b-5878b3                     
+                             739cf3: verifier execution                         
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             ba4b56c9-65ed-4a0f-849f-b247f91e665                
+                             2 (T-02)                                           
+                    INFO     Task                           phase_handler.py:171
+                             ba4b56c9-65ed-4a0f-849f-b247f9                     
+                             1e6652: starting builder agent                     
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 12:31:12] INFO     Task                           phase_handler.py:215
+                             ba4b56c9-65ed-4a0f-849f-b247f9                     
+                             1e6652: builder execution                          
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             ba4b56c9-65ed-4a0f-849f-b247f91e665                
+                             2 (T-02)                                           
+                    INFO     Task                               executor.py:1400
+                             ba4b56c9-65ed-4a0f-849f-b247f91e66                 
+                             52: running verifier agent for                     
+                             rubric evaluation                                  
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 12:35:52] INFO     Task                           phase_handler.py:255
+                             ba4b56c9-65ed-4a0f-849f-b247f9                     
+                             1e6652: already transitioned                       
+                             to completed, skipping                             
+                             redundant                                          
+                             complete_verification                              
+                    INFO     Task                           phase_handler.py:344
+                             ba4b56c9-65ed-4a0f-849f-b247f9                     
+                             1e6652: verifier execution                         
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             f11fc177-6fc5-4acb-b0a6-d56e6a0fd8b                
+                             9 (T-03)                                           
+                    INFO     Task                           phase_handler.py:171
+                             f11fc177-6fc5-4acb-b0a6-d56e6a                     
+                             0fd8b9: starting builder agent                     
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 12:40:56] INFO     Found uncommitted changes in            utils.py:60
+                             /Users/peter/code/task-world/worktrees/            
+                             r26, auto-committing                               
+                    INFO     Auto-committed uncommitted changes in   utils.py:80
+                             /Users/peter/code/task-world/worktrees/            
+                             r26                                                
+[03/14/26 12:40:57] INFO     Task                           phase_handler.py:215
+                             f11fc177-6fc5-4acb-b0a6-d56e6a                     
+                             0fd8b9: builder execution                          
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             f11fc177-6fc5-4acb-b0a6-d56e6a0fd8b                
+                             9 (T-03)                                           
+                    INFO     Task                               executor.py:1400
+                             f11fc177-6fc5-4acb-b0a6-d56e6a0fd8                 
+                             b9: running verifier agent for                     
+                             rubric evaluation                                  
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 12:43:52] WARNING  Task                           phase_handler.py:265
+                             f11fc177-6fc5-4acb-b0a6-d56e6a                     
+                             0fd8b9: verifier completing                        
+                             but 3 requirements have no                         
+                             grade -- auto-grading as A                         
+[03/14/26 12:43:53] INFO     Task                           phase_handler.py:344
+                             f11fc177-6fc5-4acb-b0a6-d56e6a                     
+                             0fd8b9: verifier execution                         
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             d93f60e2-c830-4b21-8604-f59cd9601c1                
+                             e (T-04)                                           
+                    INFO     Task                           phase_handler.py:171
+                             d93f60e2-c830-4b21-8604-f59cd9                     
+                             601c1e: starting builder agent                     
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 12:48:29] INFO     Found uncommitted changes in            utils.py:60
+                             /Users/peter/code/task-world/worktrees/            
+                             r26, auto-committing                               
+                    INFO     Auto-committed uncommitted changes in   utils.py:80
+                             /Users/peter/code/task-world/worktrees/            
+                             r26                                                
+[03/14/26 12:48:30] INFO     Task                           phase_handler.py:215
+                             d93f60e2-c830-4b21-8604-f59cd9                     
+                             601c1e: builder execution                          
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             d93f60e2-c830-4b21-8604-f59cd9601c1                
+                             e (T-04)                                           
+                    INFO     Task                               executor.py:1400
+                             d93f60e2-c830-4b21-8604-f59cd9601c                 
+                             1e: running verifier agent for                     
+                             rubric evaluation                                  
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 12:50:23] WARNING  Task                           phase_handler.py:265
+                             d93f60e2-c830-4b21-8604-f59cd9                     
+                             601c1e: verifier completing                        
+                             but 2 requirements have no                         
+                             grade -- auto-grading as A                         
+[03/14/26 12:50:24] INFO     Task                           phase_handler.py:344
+                             d93f60e2-c830-4b21-8604-f59cd9                     
+                             601c1e: verifier execution                         
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             e4213ad9-5e23-4fd2-85a0-5f96219da29                
+                             a (T-05)                                           
+                    INFO     Task                           phase_handler.py:171
+                             e4213ad9-5e23-4fd2-85a0-5f9621                     
+                             9da29a: starting builder agent                     
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 12:54:40] INFO     Task                           phase_handler.py:215
+                             e4213ad9-5e23-4fd2-85a0-5f9621                     
+                             9da29a: builder execution                          
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             e4213ad9-5e23-4fd2-85a0-5f96219da29                
+                             a (T-05)                                           
+                    INFO     Task                               executor.py:1400
+                             e4213ad9-5e23-4fd2-85a0-5f96219da2                 
+                             9a: running verifier agent for                     
+                             rubric evaluation                                  
+[03/14/26 12:54:41] INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+[03/14/26 13:02:07] WARNING  Task                           phase_handler.py:265
+                             e4213ad9-5e23-4fd2-85a0-5f9621                     
+                             9da29a: verifier completing                        
+                             but 1 requirements have no                         
+                             grade -- auto-grading as A                         
+[03/14/26 13:02:08] INFO     Task                           phase_handler.py:344
+                             e4213ad9-5e23-4fd2-85a0-5f9621                     
+                             9da29a: verifier execution                         
+                             complete, success=True                             
+                    INFO     Run                                 executor.py:535
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: executing task                                  
+                             847c2d11-458b-489d-93d7-adb3d4fd68a                
+                             f (T-01)                                           
+[03/14/26 13:02:09] INFO     Task                           phase_handler.py:171
+                             847c2d11-458b-489d-93d7-adb3d4                     
+                             fd68af: starting builder agent                     
+                    INFO     Run                            attempt_store.py:177
+                             c7d1ba8e-8116-4d97-86f1-f14966                     
+                             95abbe: persisted agent                            
+                             metadata ['pid']                                   
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+[03/14/26 13:02:43] WARNING  Run                                 executor.py:662
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: agent loop cancelled (server                    
+                             shutdown?), pausing run                            
+[03/14/26 13:02:44] INFO     Run                                 executor.py:690
+                             c7d1ba8e-8116-4d97-86f1-f1496695abb                
+                             e: agent loop ended                                
+INFO:     Application shutdown complete.
+INFO:     Finished server process [69765]
+INFO:     Stopping reloader process [91337]

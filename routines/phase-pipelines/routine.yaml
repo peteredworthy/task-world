@@ -331,10 +331,10 @@ steps:
         auto_verify:
           items:
             - id: "migration_applies"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25 && uv run alembic upgrade head"
+              cmd: "uv run alembic upgrade head"
               must: true
             - id: "migration_reverses"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25 && uv run alembic downgrade -1 && uv run alembic upgrade head"
+              cmd: "uv run alembic downgrade -1 && uv run alembic upgrade head"
               must: true
             - id: "columns_exist"
               cmd: "uv run python -c \"from orchestrator.db.models import TaskModel; cols = [c.name for c in TaskModel.__table__.columns]; assert 'current_phase_index' in cols, f'Missing current_phase_index in {cols}'; assert 'phase_outputs' in cols, f'Missing phase_outputs in {cols}'; print('OK')\""
@@ -1041,13 +1041,13 @@ steps:
         auto_verify:
           items:
             - id: "types_compile"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r26/ui && npx tsc --noEmit"
+              cmd: "cd ui && npx tsc --noEmit"
               must: true
             - id: "phase_type_in_types"
-              cmd: "grep -q 'PhaseType' /Users/peter/code/task-world/worktrees/r26/ui/src/types/tasks.ts"
+              cmd: "grep -q 'PhaseType' ui/src/types/tasks.ts"
               must: true
             - id: "phase_fields_optional"
-              cmd: "grep -q 'current_phase_index?' /Users/peter/code/task-world/worktrees/r26/ui/src/types/tasks.ts"
+              cmd: "grep -q 'current_phase_index?' ui/src/types/tasks.ts"
               must: true
         verifier:
           rubric:
@@ -1097,10 +1097,10 @@ steps:
         auto_verify:
           items:
             - id: "utils_exports_contract"
-              cmd: "grep -q 'export.*getPhaseLabel' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/phaseIndicatorUtils.ts && grep -q 'PhaseStatus' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/phaseIndicatorUtils.ts"
+              cmd: "grep -q 'export.*getPhaseLabel' ui/src/components/detail/phaseIndicatorUtils.ts && grep -q 'PhaseStatus' ui/src/components/detail/phaseIndicatorUtils.ts"
               must: true
             - id: "types_compile_after_component"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              cmd: "cd ui && npx tsc --noEmit"
               must: true
         verifier:
           rubric:
@@ -1149,10 +1149,10 @@ steps:
         auto_verify:
           items:
             - id: "taskdetailcard_imports_phase"
-              cmd: "grep -q 'PhaseIndicator' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/TaskDetailCard.tsx"
+              cmd: "grep -q 'PhaseIndicator' ui/src/components/detail/TaskDetailCard.tsx"
               must: true
             - id: "types_compile_components"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              cmd: "cd ui && npx tsc --noEmit"
               must: true
         verifier:
           rubric:
@@ -1192,10 +1192,10 @@ steps:
         auto_verify:
           items:
             - id: "activity_feed_has_phase_events"
-              cmd: "grep -q 'PhaseStarted\\|phase_started' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/ActivityFeed.tsx"
+              cmd: "grep -q 'PhaseStarted\\|phase_started' ui/src/components/detail/ActivityFeed.tsx"
               must: true
             - id: "types_compile_feed"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              cmd: "cd ui && npx tsc --noEmit"
               must: true
         verifier:
           rubric:
@@ -1249,16 +1249,16 @@ steps:
         auto_verify:
           items:
             - id: "phase_indicator_test_has_cases"
-              cmd: "grep -q 'test_single_phase_renders_nothing\\|single.phase.*null\\|phaseTypes.*length.*1\\|returns null' /Users/peter/code/task-world/worktrees/r25/ui/src/components/detail/__tests__/PhaseIndicator.test.tsx"
+              cmd: "grep -q 'test_single_phase_renders_nothing\\|single.phase.*null\\|phaseTypes.*length.*1\\|returns null' ui/src/components/detail/__tests__/PhaseIndicator.test.tsx"
               must: true
             - id: "frontend_tests_pass"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx vitest run"
+              cmd: "cd ui && npx vitest run"
               must: true
             - id: "tsc_clean"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx tsc --noEmit"
+              cmd: "cd ui && npx tsc --noEmit"
               must: true
             - id: "eslint_clean"
-              cmd: "cd /Users/peter/code/task-world/worktrees/r25/ui && npx eslint src/"
+              cmd: "cd ui && npx eslint src/"
               must: true
         verifier:
           rubric:
@@ -1296,7 +1296,7 @@ steps:
         auto_verify:
           items:
             - id: "summary_has_doc_items"
-              cmd: "grep -q 'PhaseType\\|Definition of Complete\\|pre-commit\\|migration' /Users/peter/code/task-world/worktrees/r25/docs/phase-pipelines/execution-summary.md"
+              cmd: "grep -q 'PhaseType\\|Definition of Complete\\|pre-commit\\|migration' docs/phase-pipelines/execution-summary.md"
               must: true
         verifier:
           rubric:

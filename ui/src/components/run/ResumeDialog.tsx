@@ -19,6 +19,8 @@ interface DialogState {
   /** Structured config values, managed by AgentRunnerConfigForm */
   agentConfigValues: Record<string, unknown>;
   agentConfigError: string;
+  /** Worktree resume strategy: "continue" keeps changes, "reset_worktree" discards */
+  worktreeStrategy: 'continue' | 'reset_worktree';
   prevOpen: boolean;
 }
 
@@ -46,6 +48,7 @@ const INITIAL_STATE: DialogState = {
   selectedAgentIndex: '',
   agentConfigValues: {},
   agentConfigError: '',
+  worktreeStrategy: 'continue',
   prevOpen: false,
 };
 
@@ -87,11 +90,15 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
   const allAgents = agents ?? [];
   const selectedAgent = state.selectedAgentIndex !== '' ? allAgents[Number(state.selectedAgentIndex)] : null;
   const titleId = 'resume-dialog-title';
+  const hasWorktree = !!run.worktree_path;
 
   async function handleResumeWithCurrentAgent() {
     if (!run) return;
     try {
-      await resumeRun.mutateAsync({ runId: run.id });
+      await resumeRun.mutateAsync({
+        runId: run.id,
+        resumeStrategy: hasWorktree ? state.worktreeStrategy : undefined,
+      });
       onClose();
     } catch {
       // Error handled by mutation state
@@ -106,6 +113,7 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
         runId: run.id,
         agentType: selectedAgent.agent_type,
         agentConfig: state.agentConfigValues,
+        resumeStrategy: hasWorktree ? state.worktreeStrategy : undefined,
       });
       onClose();
     } catch {
@@ -170,6 +178,45 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
           </div>
         ) : (
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+            {/* Worktree Strategy — only shown when the run has a worktree */}
+            {hasWorktree && (
+              <div>
+                <label className="text-sm font-medium text-text-secondary mb-2 block">
+                  Worktree State
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setState(prev => ({ ...prev, worktreeStrategy: 'continue' }))}
+                    className={`
+                      px-3 py-2.5 rounded-lg text-left transition-all text-sm
+                      ${state.worktreeStrategy === 'continue'
+                        ? 'bg-bg-card border-2 border-accent-purple'
+                        : 'bg-bg-card border border-border hover:border-border-hover'
+                      }
+                    `}
+                  >
+                    <div className="font-medium text-text-primary">Continue as-is</div>
+                    <div className="text-xs text-text-muted mt-0.5">Keep uncommitted changes</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setState(prev => ({ ...prev, worktreeStrategy: 'reset_worktree' }))}
+                    className={`
+                      px-3 py-2.5 rounded-lg text-left transition-all text-sm
+                      ${state.worktreeStrategy === 'reset_worktree'
+                        ? 'bg-bg-card border-2 border-accent-purple'
+                        : 'bg-bg-card border border-border hover:border-border-hover'
+                      }
+                    `}
+                  >
+                    <div className="font-medium text-text-primary">Revert changes</div>
+                    <div className="text-xs text-text-muted mt-0.5">Discard uncommitted work</div>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Current Agent Info */}
             <div>
               <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">

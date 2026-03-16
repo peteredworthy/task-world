@@ -87,6 +87,31 @@ class AutoVerifyItemConfig(BaseModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _reject_worktree_paths(self) -> "AutoVerifyItemConfig":
+        """Reject commands that contain hardcoded worktree paths.
+
+        Auto-verify commands run with cwd set to the run's worktree, so all
+        paths should be relative.  Hardcoded worktree paths like
+        ``/path/to/worktrees/r25/src/...`` break when the worktree number
+        changes (e.g. after a server restart recreates the worktree).
+        """
+        raw = self.cmd
+        if re.search(r"/worktrees/r\d+", raw):
+            raise ValueError(
+                f"Auto-verify command must not contain hardcoded worktree paths — "
+                f"the worktree number can change between runs.  Auto-verify "
+                f"commands run with cwd set to the worktree root, so use "
+                f"relative paths instead.\n"
+                f"  Problematic command: {raw}\n"
+                f"Rewrite with relative paths. For example:\n"
+                f"  BAD:  grep -q 'foo' /path/to/worktrees/r25/src/main.py\n"
+                f"  GOOD: grep -q 'foo' src/main.py\n"
+                f"  BAD:  cd /path/to/worktrees/r25/ui && npx tsc --noEmit\n"
+                f"  GOOD: cd ui && npx tsc --noEmit"
+            )
+        return self
+
 
 class AutoVerifyConfig(BaseModel):
     """Auto-verification configuration."""

@@ -444,6 +444,7 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
   const [agentLogCapabilities, setAgentLogCapabilities] = useState({ hasStructured: false, hasRaw: false });
   const [retrying, setRetrying] = useState(false);
   const [retryError, setRetryError] = useState<string | null>(null);
+  const [retryGuidance, setRetryGuidance] = useState('');
   const recoverRun = useRecoverRun(runId);
   const resumeRun = useResumeRun();
   const canRetry = task.status === 'failed' && (runData?.status === 'failed' || runData?.status === 'paused');
@@ -452,7 +453,10 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
     setRetrying(true);
     setRetryError(null);
     recoverRun.mutate(
-      { target_task_id: task.id },
+      {
+        target_task_id: task.id,
+        guidance: retryGuidance.trim() || undefined,
+      },
       {
         onSuccess: () => {
           resumeRun.mutate(
@@ -460,6 +464,7 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
             {
               onSuccess: () => {
                 setRetrying(false);
+                setRetryGuidance('');
                 onClose();
               },
               onError: (err) => {
@@ -475,7 +480,7 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
         },
       },
     );
-  }, [recoverRun, resumeRun, runId, task.id, onClose]);
+  }, [recoverRun, resumeRun, runId, task.id, retryGuidance, onClose]);
   const isPromptable = task.status === 'building' || task.status === 'verifying';
   const latestAttempt = detail?.attempts[detail.attempts.length - 1];
   const isLatestPrompt = promptAttempt && latestAttempt && promptAttempt.id === latestAttempt.id;
@@ -546,7 +551,15 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
             Attempt {task.current_attempt} of {task.max_attempts}
           </p>
           {canRetry && (
-            <div className="mt-2 space-y-1">
+            <div className="mt-2 space-y-2">
+              <textarea
+                value={retryGuidance}
+                onChange={(e) => setRetryGuidance(e.target.value)}
+                placeholder="Optional: guidance for the agent on this retry..."
+                disabled={retrying}
+                rows={3}
+                className="w-full rounded-md border border-border-default bg-bg-surface px-2.5 py-1.5 text-xs text-text-primary placeholder:text-text-muted focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple disabled:opacity-50 resize-y"
+              />
               <button
                 type="button"
                 onClick={handleRetry}

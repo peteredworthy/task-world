@@ -261,6 +261,49 @@ If you need to supply credentials to a `codex app-server` subprocess, use the `O
 - **Frontend**: React 19, TypeScript, Vite 7, TailwindCSS 4, TanStack Query, React Router 7
 - **Dev tools**: uv (package mgmt), pytest + pytest-asyncio, pyright, ruff, Vitest
 
+## Debugging a Run
+
+When investigating a run by ID, use these data sources:
+
+**1. API (primary source of truth when server is running):**
+```bash
+# Run status, pause_reason, last_error, agent_type, worktree_path
+curl -s http://localhost:8000/api/runs/<run-id> | python3 -m json.tool
+
+# All tasks with status, attempts, grades
+curl -s http://localhost:8000/api/runs/<run-id>/tasks | python3 -m json.tool
+
+# Activity/event timeline
+curl -s http://localhost:8000/api/runs/<run-id>/activity | python3 -m json.tool
+
+# Pending actions (approvals, escalations)
+curl -s http://localhost:8000/api/runs/<run-id>/pending-actions | python3 -m json.tool
+```
+
+**2. Server logs** — `server.log` and `server_output.log` in the project root. Search for the run ID to find executor events, pause reasons, agent spawns, and errors.
+
+**3. Journal** — `.orchestrator/state/history.jsonl` contains every event (status changes, health checks, task transitions). Search by run ID:
+```bash
+grep <run-id> .orchestrator/state/history.jsonl | python3 -m json.tool
+```
+
+**4. Worktree state** — if the run has a `worktree_path`:
+```bash
+# Check for uncommitted agent work
+git -C <worktree_path> status --porcelain
+git -C <worktree_path> diff --stat
+
+# Check branch and last commit
+git -C <worktree_path> log --oneline -5
+```
+
+**5. Key fields on RunResponse:**
+- `status` — `queued`, `active`, `paused`, `completed`, `failed`
+- `pause_reason` — why it paused (`server_shutdown`, `gate_blocked`, `agent_execution_error`, `waiting_for_approval`, etc.)
+- `last_error` — detailed error message when paused due to failure
+- `worktree_path` — filesystem path to the run's worktree (null if no worktree)
+- `agent_type` — which agent runner is executing
+
 ## Documentation Maintenance
 
 When adding new modules, API routes, or CLI commands, update `docs/ARCHITECTURE.md` (directory map, API routes table) and the key modules table above in this file. Keep the directory map and route table in sync with the actual codebase.

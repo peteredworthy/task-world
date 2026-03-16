@@ -57,7 +57,11 @@ def set_restricted_permissions(path: Path) -> None:
     """
     if sys.platform == "win32":
         return
-    if path.is_dir():
-        os.chmod(path, 0o700)
-    else:
-        os.chmod(path, 0o600)
+    try:
+        if path.is_dir():
+            os.chmod(path, 0o700)
+        else:
+            os.chmod(path, 0o600)
+    except PermissionError:
+        # Silently ignore permission errors (e.g., in sandboxed environments)
+        pass

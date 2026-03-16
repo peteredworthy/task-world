@@ -398,7 +398,14 @@ def create_app(
     if routine_dirs is None and global_cfg.routines.dirs:
         routine_dirs = [(Path(d), RoutineSource.LOCAL) for d in global_cfg.routines.dirs]
 
-    app = FastAPI(title="Orchestrator", version="0.1.0", lifespan=_lifespan)
+    app = FastAPI(
+        title="Orchestrator",
+        version="0.1.0",
+        lifespan=_lifespan,
+        docs_url="/api/docs",
+        redoc_url="/api/redoc",
+        openapi_url="/api/openapi.json",
+    )
 
     # CORS
     # Default to common local frontend origins so localhost/127.0.0.1 host swaps

@@ -760,6 +760,17 @@ routine:
                       max_attempts: 2
             ```
 
+            Auto-verify path rules:
+            - All paths in auto_verify commands MUST be relative to the project root.
+              Auto-verify commands run with cwd set to the worktree root, so relative
+              paths resolve correctly. NEVER use absolute paths or hardcoded worktree
+              paths like /path/to/worktrees/r25/... — the worktree number changes
+              between runs and will break the check.
+            - BAD:  `grep -q 'foo' /home/user/project/worktrees/r25/src/main.py`
+            - GOOD: `grep -q 'foo' src/main.py`
+            - BAD:  `cd /home/user/project/worktrees/r25/ui && npx tsc --noEmit`
+            - GOOD: `cd ui && npx tsc --noEmit`
+
             Auto-verify exit code rules:
             - The exit code of the command determines pass/fail. Exit 0 = pass, non-zero = fail.
             - NEVER use shell pipes (|) in auto_verify commands. In a pipeline, the exit code
@@ -824,6 +835,12 @@ routine:
               - id: "intent_annotated"
                 cmd: "grep -q '\\[S-' docs/{{feature}}/intent.md"
                 must: true
+              - id: "no_existence_only_verify"
+                cmd: "uv run python -c \"import yaml,sys; r=yaml.safe_load(open('routines/{{feature}}/routine.yaml')); root=r.get('routine',r); ep=('test -f','test -d','grep -q','grep -c','ls '); weak=[f\\\"{s['id']}/{t['id']}\\\" for s in root['steps'] for t in s.get('tasks',[]) for items in [(t.get('auto_verify')or{}).get('items',[])] if items and all(any(c['cmd'].strip().startswith(p) for p in ep) for c in items)]; print(f'Tasks with ONLY existence-level auto_verify: {weak}',file=sys.stderr) if weak else None; sys.exit(1 if weak else 0)\""
+                must: true
+              - id: "no_worktree_paths"
+                cmd: "uv run python -c \"import yaml,sys; r=yaml.safe_load(open('routines/{{feature}}/routine.yaml')); root=r.get('routine',r); import re; bad=[f\\\"{s['id']}/{t['id']}/{c['id']}: {c['cmd']}\\\" for s in root['steps'] for t in s.get('tasks',[]) for c in (t.get('auto_verify')or{}).get('items',[]) if re.search(r'/worktrees/r\\d+',c['cmd'])]; sys.exit(1) if bad else sys.exit(0)\" 2>&1"
+                must: true
           verifier:
             rubric:
               - id: "R1"
@@ -838,10 +855,14 @@ routine:
                   B: passes with warnings only. F: validation fails.
               - id: "R3"
                 text: |
-                  R3 — A: every task has auto_verify commands that test behavior (not just file
-                  existence) using contract-level checks — e.g. import checks, API signature
-                  validation, schema field assertions. No shell pipes in commands. B: auto_verify
-                  present but some checks are existence-only. F: tasks missing auto_verify entirely.
+                  R3 — Evaluate EVERY task's auto_verify commands individually. In your
+                  grade_reason, list each task (S-XX/T-YY) and classify its strongest check:
+                  - contract-level: import/assertion, test run, type check, schema validation
+                  - existence-only: test -f, grep -q, grep -c, ls
+                  A: every task's strongest check is contract-level. No shell pipes.
+                  B: ANY task's strongest check is existence-only (even if paired with others).
+                  F: tasks missing auto_verify entirely.
+                  You MUST list every task and its classification — do not say "some tasks".
               - id: "R4"
                 text: |
                   R4 (intent-requirement traceability) — check three things:
