@@ -113,6 +113,39 @@ class WorktreeManager:
         m = re.match(r"^r(\d+)$", worktree_path.name)
         return int(m.group(1)) if m else 0
 
+    @staticmethod
+    def _create_worktree_venv(worktree_path: Path) -> None:
+        """Create an independent virtual environment in a worktree.
+
+        Runs ``uv sync`` which creates the ``.venv``, installs all dependencies,
+        and sets up the editable install pointing at the *worktree's* ``src/``.
+        With uv's global cache (hardlinks), this adds negligible disk overhead.
+        """
+        logger.info("Creating independent venv in %s", worktree_path)
+        try:
+            subprocess.run(
+                ["uv", "sync", "--frozen"],
+                cwd=worktree_path,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except FileNotFoundError:
+            logger.warning("uv not found; falling back to venv symlink")
+            main_venv = worktree_path.parent.parent / ".venv"
+            if main_venv.exists() and not (worktree_path / ".venv").exists():
+                (worktree_path / ".venv").symlink_to(main_venv.resolve())
+        except subprocess.TimeoutExpired:
+            logger.warning("uv sync timed out after 120s in %s", worktree_path)
+        except subprocess.CalledProcessError as e:
+            logger.warning(
+                "uv sync failed in %s (exit %d): %s",
+                worktree_path,
+                e.returncode,
+                e.stderr.strip() if e.stderr else "(no output)",
+            )
+
     def _run_worktree_setup(self, worktree_path: Path) -> None:
         """Run the project's worktree setup script if it exists.
 
@@ -199,10 +232,12 @@ class WorktreeManager:
         except subprocess.CalledProcessError as e:
             raise GitCommandError(" ".join(cmd), e.returncode, e.stderr) from e
 
-        # Symlink .venv from main repo to avoid duplicating the virtual environment
-        main_venv = self._repo / ".venv"
-        if main_venv.exists():
-            (worktree_path / ".venv").symlink_to(main_venv.resolve())
+        # Create an independent venv for the worktree.  A symlink to the main
+        # venv is NOT safe: `uv run` detects the project-root mismatch and
+        # re-syncs, overwriting the editable-install .pth to point at the
+        # worktree's src/.  That redirects the main server's imports into the
+        # worktree — breaking isolation completely.
+        self._create_worktree_venv(worktree_path)
 
         # Write manifest before setup script so it can read it
         wt_number = self._worktree_number_from_path(worktree_path)
@@ -418,10 +453,9 @@ class WorktreeManager:
         except subprocess.CalledProcessError as e:
             raise GitCommandError(" ".join(cmd), e.returncode, e.stderr) from e
 
-        # Symlink .venv from main repo to avoid duplicating the virtual environment
-        main_venv = self._repo / ".venv"
-        if main_venv.exists() and not (new_path / ".venv").exists():
-            (new_path / ".venv").symlink_to(main_venv.resolve())
+        # Create an independent venv (see create() for rationale)
+        if not (new_path / ".venv").exists():
+            self._create_worktree_venv(new_path)
 
         # Write manifest before setup script so it can read it
         wt_number = self._worktree_number_from_path(new_path)
