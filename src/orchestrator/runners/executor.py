@@ -654,7 +654,9 @@ class AgentRunnerExecutor:
                         await session.commit()
                         break
                     except AgentCancelledError:
-                        logger.info(f"Run {run_id}: agent cancelled")
+                        logger.info(f"Run {run_id}: agent cancelled — pausing run")
+                        await service.pause_run(run_id, reason="agent_cancelled")
+                        await session.commit()
                         break
                     except AgentNotAvailableError as e:
                         logger.error(f"Run {run_id}: agent not available: {e}")
@@ -735,6 +737,26 @@ class AgentRunnerExecutor:
                 await health_monitor_task
             except asyncio.CancelledError:
                 pass
+
+            # Safety net: if the run is still ACTIVE when the executor exits,
+            # pause it so the sweeper doesn't find an orphaned ACTIVE run.
+            # This catches any code path that exits via `break` without pausing.
+            try:
+                async with self._session_factory() as session:
+                    from orchestrator.db.repositories import RunRepository
+
+                    repo = RunRepository(session)
+                    run = await repo.get(run_id)
+                    if run.status == RunStatus.ACTIVE:
+                        logger.warning(
+                            f"Run {run_id}: executor exiting with run still ACTIVE — pausing (safety net)"
+                        )
+                        service = await self._create_service(session)
+                        await service.pause_run(run_id, reason="executor_exited")
+                        await session.commit()
+            except Exception:
+                logger.exception(f"Run {run_id}: safety-net pause failed — run may be left ACTIVE")
+
             self._running_tasks.pop(run_id, None)
             self._heartbeats.pop(run_id, None)
             logger.info(f"Run {run_id}: agent loop ended")

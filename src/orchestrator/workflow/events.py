@@ -31,6 +31,7 @@ class RunStatusChanged(WorkflowEvent):
 
     old_status: RunStatus = RunStatus.DRAFT
     new_status: RunStatus = RunStatus.DRAFT
+    pause_reason: str | None = None
 
 
 @dataclass

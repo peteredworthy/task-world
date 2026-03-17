@@ -180,6 +180,7 @@ class WorkflowEngine:
                 event_type="run_status_changed",
                 old_status=old_status,
                 new_status=RunStatus.PAUSED,
+                pause_reason=reason,
             )
         )
         return run
