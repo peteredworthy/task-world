@@ -8,11 +8,13 @@ creates the appropriate agent and runs it in the background.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import enum
 import logging
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
@@ -49,6 +51,53 @@ if TYPE_CHECKING:
     from orchestrator.workflow.service import SubmitEventRegistry, WorkflowService
 
 logger = logging.getLogger(__name__)
+
+
+class NoTaskReason(enum.Enum):
+    """Why _find_next_task returned no actionable task."""
+
+    ALL_COMPLETE = "all_complete"  # All steps are done
+    BLOCKED_BY_GATE = "blocked_by_gate"  # human_approval gate unsatisfied
+    PENDING_USER_ACTION = "pending_user_action"  # Waiting on user input
+    FAN_OUT_IN_PROGRESS = "fan_out_in_progress"  # Fan-out children running (crash recovery)
+    NO_ACTIONABLE_TASKS = "no_actionable_tasks"  # Step has tasks but none actionable
+
+
+@dataclasses.dataclass(frozen=True)
+class LoopAction:
+    """What the executor loop should do when _find_next_task returns no task."""
+
+    kind: Literal["pause", "complete", "fail"]
+    pause_reason: str | None = None  # for kind="pause"
+
+
+def resolve_no_task_action(run: Run, reason: NoTaskReason) -> LoopAction:
+    """Decide what the executor loop should do for a given NoTaskReason.
+
+    Pure function — no DB, no service, no side effects.  The only
+    external call is ``check_run_completion`` which mutates the Run
+    in-memory (sets status/completed_at) but performs no I/O.
+    """
+    if reason == NoTaskReason.BLOCKED_BY_GATE:
+        return LoopAction(kind="pause", pause_reason="awaiting_approval")
+    if reason == NoTaskReason.PENDING_USER_ACTION:
+        return LoopAction(kind="pause", pause_reason="awaiting_user_input")
+    if reason == NoTaskReason.FAN_OUT_IN_PROGRESS:
+        return LoopAction(kind="pause", pause_reason="fan_out_orphaned")
+    if reason == NoTaskReason.NO_ACTIONABLE_TASKS:
+        return LoopAction(kind="pause", pause_reason="no_actionable_tasks")
+    if reason == NoTaskReason.ALL_COMPLETE:
+        from orchestrator.workflow.transitions import check_run_completion
+
+        new_status = check_run_completion(run, datetime.now(timezone.utc))
+        if new_status == RunStatus.COMPLETED:
+            return LoopAction(kind="complete")
+        if new_status == RunStatus.FAILED:
+            return LoopAction(kind="fail")
+        # Still ACTIVE despite all steps done — shouldn't happen
+        return LoopAction(kind="pause", pause_reason="all_steps_complete_but_active")
+    # Defensive: unknown reason — pause rather than leave ACTIVE
+    return LoopAction(kind="pause", pause_reason=f"unknown_reason_{reason.value}")
 
 
 def resolve_verifier_config(
@@ -101,6 +150,12 @@ class AgentRunnerExecutor:
         self._api_base_url = api_base_url or "http://localhost:8000"
         self._spawn_agents = spawn_agents
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
+        # Heartbeat timestamps updated by the executor loop each iteration.
+        # Survives within a process lifetime — the sweeper checks these to
+        # distinguish "executor alive but between PIDs" from "executor gone".
+        self._heartbeats: dict[str, datetime] = {}
+        # How long without a heartbeat before the sweeper considers a run stale.
+        self.heartbeat_stale_seconds: float = 120.0
         # Agent monitor is lazy-initialized if not provided, to avoid circular import
         self._runner_monitor = runner_monitor
         self._lazy_runner_monitor_init = runner_monitor is None
@@ -481,41 +536,71 @@ class AgentRunnerExecutor:
                         )
                         break
 
-                    # Find the first pending or building task
-                    task_state, blocked_by_gate = self._find_next_task(run)
-                    if blocked_by_gate:
-                        # Step has an unsatisfied human_approval gate
-                        # Find the blocked step for logging/event
-                        blocked_step = None
-                        for step in run.steps:
-                            for task in step.tasks:
-                                if task.status in (
-                                    TaskStatus.PENDING,
-                                    TaskStatus.BUILDING,
-                                    TaskStatus.VERIFYING,
-                                ):
-                                    blocked_step = step
-                                    break
-                            if blocked_step is not None:
-                                break
+                    # Record heartbeat — the executor is alive and iterating,
+                    # even if no subprocess PID exists right now (e.g. between
+                    # tasks, during auto-verify, during fan-out coordination).
+                    self.heartbeat(run_id)
 
-                        step_id = blocked_step.id if blocked_step else ""
-                        logger.info(
-                            f"Run {run_id}: blocked by human_approval gate "
-                            f"on step {step_id}, waiting for approval"
-                        )
-                        event = ApprovalRequested(
-                            timestamp=datetime.now(timezone.utc),
-                            run_id=run_id,
-                            event_type="approval_requested",
-                            step_id=step_id,
-                        )
-                        await self._broadcaster.emit_log_event(event)
+                    # Find the first pending or building task
+                    task_state, no_task_reason = self._find_next_task(run)
+
+                    if no_task_reason is not None:
+                        action = resolve_no_task_action(run, no_task_reason)
+
+                        # Emit gate-blocked event (keeps existing behavior)
+                        if no_task_reason == NoTaskReason.BLOCKED_BY_GATE:
+                            blocked_step = None
+                            for step in run.steps:
+                                for task in step.tasks:
+                                    if task.status in (
+                                        TaskStatus.PENDING,
+                                        TaskStatus.BUILDING,
+                                        TaskStatus.VERIFYING,
+                                    ):
+                                        blocked_step = step
+                                        break
+                                if blocked_step is not None:
+                                    break
+
+                            step_id = blocked_step.id if blocked_step else ""
+                            logger.info(
+                                f"Run {run_id}: blocked by human_approval gate "
+                                f"on step {step_id}, pausing until approval"
+                            )
+                            event = ApprovalRequested(
+                                timestamp=datetime.now(timezone.utc),
+                                run_id=run_id,
+                                event_type="approval_requested",
+                                step_id=step_id,
+                            )
+                            await self._broadcaster.emit_log_event(event)
+                        elif no_task_reason == NoTaskReason.ALL_COMPLETE:
+                            logger.info(
+                                f"Run {run_id}: all steps complete, ensuring "
+                                f"run is in terminal state"
+                            )
+                        elif no_task_reason == NoTaskReason.FAN_OUT_IN_PROGRESS:
+                            logger.warning(
+                                f"Run {run_id}: fan-out task in progress but "
+                                f"no executor driving it — pausing for recovery"
+                            )
+                        else:
+                            logger.info(f"Run {run_id}: no task — {no_task_reason.value}")
+
+                        # Act on the decision
+                        if action.kind == "pause":
+                            await service.pause_run(run_id, reason=action.pause_reason or "unknown")
+                            await session.commit()
+                        elif action.kind in ("complete", "fail"):
+                            # resolve_no_task_action already called
+                            # check_run_completion which mutated run in-memory
+                            await repo.save(run)
+                            await session.commit()
+                            logger.info(f"Run {run_id}: safety-net completion → {run.status.value}")
                         break
-                    if task_state is None:
-                        logger.info(f"Run {run_id}: no pending tasks, checking run completion")
-                        # All tasks done - run will be marked complete by the workflow
-                        break
+
+                    # At this point no_task_reason is None, so task_state is set.
+                    assert task_state is not None  # type narrowing for pyright
 
                     # Apply deterministic recovery rule for Codex agents.
                     # For a healthy persisted session the config is passed
@@ -651,6 +736,7 @@ class AgentRunnerExecutor:
             except asyncio.CancelledError:
                 pass
             self._running_tasks.pop(run_id, None)
+            self._heartbeats.pop(run_id, None)
             logger.info(f"Run {run_id}: agent loop ended")
 
     def _is_step_gate_satisfied(self, run: Run, step: StepState) -> bool:
@@ -677,7 +763,7 @@ class AgentRunnerExecutor:
                 break
         return True
 
-    def _find_next_task(self, run: Run) -> tuple[TaskState | None, bool]:
+    def _find_next_task(self, run: Run) -> tuple[TaskState | None, NoTaskReason | None]:
         """Find the next task to execute.
 
         Looks for tasks in the current actionable step only.
@@ -690,9 +776,8 @@ class AgentRunnerExecutor:
         before the loop can move on.
 
         Returns:
-            A tuple of (task, blocked_by_gate). If the first executable task's
-            step has an unsatisfied human_approval gate, returns (None, True).
-            If no tasks remain, returns (None, False).
+            A tuple of (task, reason). If a task is found, returns (task, None).
+            If no task is found, returns (None, reason) explaining why.
         """
         step_index = run.current_step_index
 
@@ -701,21 +786,23 @@ class AgentRunnerExecutor:
             step_index += 1
 
         if step_index >= len(run.steps):
-            return (None, False)
+            return (None, NoTaskReason.ALL_COMPLETE)
 
         step = run.steps[step_index]
 
         # If the step is waiting on human input, do not move to future steps.
         if any(task.status == TaskStatus.PENDING_USER_ACTION for task in step.tasks):
-            return (None, False)
+            return (None, NoTaskReason.PENDING_USER_ACTION)
 
+        has_fan_out_running = False
         for task in step.tasks:
             # Skip child tasks — they are managed by the fan-out executor
             if task.parent_task_id is not None:
                 continue
             # FAN_OUT_RUNNING tasks are handled by the fan-out executor,
-            # not by the normal task loop. Skip them.
+            # not by the normal task loop. Track but skip them.
             if task.status == TaskStatus.FAN_OUT_RUNNING:
+                has_fan_out_running = True
                 continue
             if task.status in (
                 TaskStatus.PENDING,
@@ -724,9 +811,12 @@ class AgentRunnerExecutor:
                 TaskStatus.RECOVERING,
             ):
                 if not self._is_step_gate_satisfied(run, step):
-                    return (None, True)
-                return (task, False)
-        return (None, False)
+                    return (None, NoTaskReason.BLOCKED_BY_GATE)
+                return (task, None)
+
+        if has_fan_out_running:
+            return (None, NoTaskReason.FAN_OUT_IN_PROGRESS)
+        return (None, NoTaskReason.NO_ACTIONABLE_TASKS)
 
     async def _execute_task(
         self,
@@ -1598,6 +1688,33 @@ class AgentRunnerExecutor:
             self._running_tasks.pop(run_id, None)
             logger.info(f"Run {run_id}: agent cancelled")
 
+    def heartbeat(self, run_id: str) -> None:
+        """Record that the executor loop for *run_id* is alive right now.
+
+        Called each iteration of the agent loop — even during PID-less phases
+        like auto-verify, fan-out coordination, or test execution — so the
+        stale-run sweeper knows the executor is still making progress.
+        """
+        self._heartbeats[run_id] = datetime.now(timezone.utc)
+
+    def last_heartbeat(self, run_id: str) -> datetime | None:
+        """Return the last heartbeat timestamp, or None if never recorded."""
+        return self._heartbeats.get(run_id)
+
     def is_running(self, run_id: str) -> bool:
-        """Check if an agent is currently running for a run."""
-        return run_id in self._running_tasks
+        """Check if an executor is actively running for a run.
+
+        Returns True if the asyncio task exists in _running_tasks, OR if a
+        recent heartbeat was recorded (within heartbeat_stale_seconds).  This
+        prevents false negatives during PID-less phases where the executor
+        loop is alive but no subprocess is active.
+        """
+        if run_id in self._running_tasks:
+            return True
+        # Fallback: check heartbeat for recently-alive executors
+        last_hb = self._heartbeats.get(run_id)
+        if last_hb is not None:
+            age = (datetime.now(timezone.utc) - last_hb).total_seconds()
+            if age < self.heartbeat_stale_seconds:
+                return True
+        return False

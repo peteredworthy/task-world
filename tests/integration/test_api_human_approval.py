@@ -429,9 +429,11 @@ async def test_executor_stops_at_human_approval_gate(
         assert run.steps[0].tasks[0].status == TaskStatus.PENDING
 
         # The executor should detect the gate is unsatisfied
-        task, blocked = executor._find_next_task(run)
+        from orchestrator.runners.executor import NoTaskReason
+
+        task, reason = executor._find_next_task(run)
         assert task is None
-        assert blocked is True
+        assert reason == NoTaskReason.BLOCKED_BY_GATE
 
         # Verify the gate helper directly
         assert executor._is_step_gate_satisfied(run, run.steps[0]) is False
@@ -510,8 +512,10 @@ async def test_executor_proceeds_after_gate_approved(
         await session.commit()
 
         # Before approval: blocked
-        task, blocked = executor._find_next_task(run)
-        assert blocked is True
+        from orchestrator.runners.executor import NoTaskReason
+
+        task, reason = executor._find_next_task(run)
+        assert reason == NoTaskReason.BLOCKED_BY_GATE
         assert task is None
 
         # Approve the step
@@ -522,8 +526,8 @@ async def test_executor_proceeds_after_gate_approved(
         )
 
         # After approval: not blocked, task returned
-        task, blocked = executor._find_next_task(run)
-        assert blocked is False
+        task, reason = executor._find_next_task(run)
+        assert reason is None
         assert task is not None
         assert task.config_id == "T-01"
 
@@ -676,8 +680,8 @@ async def test_step_without_gate_not_blocked(
         await session.commit()
 
         # No gate - should not be blocked
-        task, blocked = executor._find_next_task(run)
-        assert blocked is False
+        task, reason = executor._find_next_task(run)
+        assert reason is None
         assert task is not None
         assert task.config_id == "T-01"
 
@@ -733,7 +737,9 @@ async def test_executor_does_not_start_future_step_when_current_waiting_for_user
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     executor = AgentRunnerExecutor(session_factory=session_factory, spawn_agents=False)
-    task, blocked = executor._find_next_task(run)
+    from orchestrator.runners.executor import NoTaskReason
+
+    task, reason = executor._find_next_task(run)
 
     assert task is None
-    assert blocked is False
+    assert reason == NoTaskReason.PENDING_USER_ACTION
