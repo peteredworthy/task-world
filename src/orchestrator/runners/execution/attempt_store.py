@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from orchestrator.db.models import RunModel
 from orchestrator.runners.action_log import ActionLog
 from orchestrator.runners.types import ExecutionMetrics
 
@@ -43,32 +44,27 @@ class AttemptStore:
                 from orchestrator.db.repositories import RunRepository
 
                 repo = RunRepository(session)
-                run = await repo.get(run_id)
-                # Find the task and its latest attempt
-                for step in run.steps:
-                    for task in step.tasks:
-                        if task.id == task_id and task.attempts:
-                            attempt = task.attempts[-1]
-                            if output_lines:
-                                # Append phase output (builder + verifier) and keep tail.
-                                new_text = "\n".join(output_lines)
-                                if attempt.agent_output:
-                                    combined = f"{attempt.agent_output}\n{new_text}"
-                                    attempt.agent_output = "\n".join(combined.splitlines()[-10000:])
-                                else:
-                                    attempt.agent_output = "\n".join(output_lines[-10000:])
-                            if error:
-                                attempt.error = error
-                            if action_log is not None:
-                                if attempt.action_log is None:
-                                    attempt.action_log = action_log
-                                else:
-                                    attempt.action_log = self._merge_action_logs(
-                                        attempt.action_log, action_log
+                merged_action_log = action_log
+                if action_log is not None:
+                    run = await repo.get(run_id)
+                    for step in run.steps:
+                        for task in step.tasks:
+                            if task.id == task_id and task.attempts:
+                                if task.attempts[-1].action_log is not None:
+                                    merged_action_log = self._merge_action_logs(
+                                        task.attempts[-1].action_log,
+                                        action_log,
                                     )
-                            await repo.save(run)
-                            await session.commit()
-                            return
+                                break
+                kwargs: dict[str, Any] = {
+                    "output_lines": output_lines,
+                    "error": error,
+                }
+                if action_log is not None:
+                    kwargs["action_log"] = merged_action_log
+                await repo.update_latest_attempt(task_id, **kwargs)
+                await session.commit()
+                return
         except Exception:
             logger.debug(f"Failed to store attempt output for {task_id}", exc_info=True)
 
@@ -93,18 +89,13 @@ class AttemptStore:
 
         async def _do_store(s: "AsyncSession") -> None:
             repo = RunRepository(s)
-            run = await repo.get(run_id)
-            for step in run.steps:
-                for task in step.tasks:
-                    if task.id == task_id and task.attempts:
-                        attempt = task.attempts[-1]
-                        if builder_prompt is not None:
-                            attempt.builder_prompt = builder_prompt
-                        if verifier_prompt is not None:
-                            attempt.verifier_prompt = verifier_prompt
-                        await repo.save(run)
-                        await s.commit()
-                        return
+            await repo.update_latest_attempt(
+                task_id,
+                builder_prompt=builder_prompt,
+                verifier_prompt=verifier_prompt,
+            )
+            await s.commit()
+            return
 
         try:
             if session is not None:
@@ -127,25 +118,9 @@ class AttemptStore:
                 from orchestrator.db.repositories import RunRepository
 
                 repo = RunRepository(session)
-                run = await repo.get(run_id)
-                for step in run.steps:
-                    for task in step.tasks:
-                        if task.id == task_id and task.attempts:
-                            attempt = task.attempts[-1]
-                            attempt.metrics.tokens_read += metrics.tokens_read
-                            attempt.metrics.tokens_write += metrics.tokens_write
-                            attempt.metrics.tokens_cache += metrics.tokens_cache
-                            attempt.metrics.duration_ms += metrics.duration_ms
-                            attempt.metrics.num_actions += metrics.num_actions
-                            # Accumulate into run totals
-                            run.total_tokens_read += metrics.tokens_read
-                            run.total_tokens_write += metrics.tokens_write
-                            run.total_tokens_cache += metrics.tokens_cache
-                            run.total_duration_ms += metrics.duration_ms
-                            run.total_num_actions += metrics.num_actions
-                            await repo.save(run)
-                            await session.commit()
-                            return
+                await repo.update_latest_attempt(task_id, metrics=metrics)
+                await session.commit()
+                return
         except Exception:
             logger.debug(f"Failed to store attempt metrics for {task_id}", exc_info=True)
 
@@ -165,14 +140,11 @@ class AttemptStore:
 
         try:
             async with self._session_factory() as session:
-                from orchestrator.db.repositories import RunRepository
-
-                repo = RunRepository(session)
-                run = await repo.get(run_id)
-                # Merge new metadata with existing config
-                run.agent_config = {**run.agent_config, **agent_metadata}
-                run.updated_at = datetime.now(timezone.utc)
-                await repo.save(run)
+                run_model = await session.get(RunModel, run_id)
+                if run_model is None:
+                    return
+                run_model.runner_config = {**(run_model.runner_config or {}), **agent_metadata}
+                run_model.updated_at = datetime.now(timezone.utc)
                 await session.commit()
                 logger.info(f"Run {run_id}: persisted agent metadata {list(agent_metadata.keys())}")
         except Exception as e:

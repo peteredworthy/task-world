@@ -1,5 +1,6 @@
 """Task API endpoints."""
 
+import glob as glob_mod
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -29,6 +30,7 @@ from orchestrator.api.schemas.tasks import (
     RejectTaskRequest,
     SetGradeRequest,
     TaskDetailResponse,
+    FanOutChildSummarySchema,
     ToolResultDetailSchema,
     ToolUseDetailSchema,
     TurnMetricsSchema,
@@ -52,9 +54,22 @@ from orchestrator.workflow.context_builder import TaskContextBuilder
 from orchestrator.workflow.errors import InvalidTransitionError
 from orchestrator.workflow.prompts import generate_builder_prompt, generate_verifier_prompt
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.service import find_task_config
 from orchestrator.workflow.summary_cache import SummaryCache
+from orchestrator.workflow.templates import derive_output_path
+from orchestrator.workflow.templates import resolve_template
 
 router = APIRouter(prefix="/api/runs", tags=["tasks"])
+
+
+def _infer_fan_out_child_status(parent_status: TaskStatus) -> str:
+    if parent_status in (TaskStatus.COMPLETED, TaskStatus.VERIFYING):
+        return TaskStatus.COMPLETED.value
+    if parent_status == TaskStatus.FAILED:
+        return TaskStatus.FAILED.value
+    if parent_status == TaskStatus.FAN_OUT_RUNNING:
+        return TaskStatus.BUILDING.value
+    return TaskStatus.PENDING.value
 
 
 def _looks_like_ndjson_agent_stream(output: str) -> bool:
@@ -100,6 +115,62 @@ async def get_task(
 ) -> TaskDetailResponse:
     """Get task detail with checklist and attempts."""
     task = await service.get_task(run_id, task_id)
+    run = await service.get_run(run_id)
+
+    persisted_fan_out_children: list[FanOutChildSummarySchema] = []
+    for step in run.steps:
+        for step_task in step.tasks:
+            if step_task.parent_task_id == task.id:
+                persisted_fan_out_children.append(
+                    FanOutChildSummarySchema(
+                        id=step_task.id,
+                        title=step_task.title,
+                        status=step_task.status.value,
+                        current_attempt=step_task.current_attempt,
+                        fan_out_input=step_task.fan_out_input,
+                        fan_out_output=step_task.fan_out_output,
+                        is_synthetic=False,
+                    )
+                )
+
+    fan_out_children = persisted_fan_out_children
+    if (
+        not fan_out_children
+        and task.status == TaskStatus.PENDING
+        and run.routine_embedded is not None
+        and run.worktree_path
+    ):
+        routine_config = RoutineConfig.model_validate(run.routine_embedded)
+        step_config_id: str | None = None
+        for step in run.steps:
+            if any(step_task.id == task.id for step_task in step.tasks):
+                step_config_id = step.config_id
+                break
+
+        task_config = find_task_config(routine_config, task.config_id, step_config_id)
+        if task_config is not None and task_config.fan_out is not None:
+            variables = {k: str(v) for k, v in run.config.items() if v is not None}
+            input_glob = resolve_template(task_config.fan_out.input_glob, variables=variables)
+            pattern = str(Path(run.worktree_path) / input_glob)
+            matched_files = sorted(glob_mod.glob(pattern, recursive=True))
+            inferred_status = _infer_fan_out_child_status(task.status)
+            fan_out_children = [
+                FanOutChildSummarySchema(
+                    id=None,
+                    title=f"{task.title} [{Path(abs_path).name}]",
+                    status=inferred_status,
+                    current_attempt=1 if inferred_status != TaskStatus.PENDING.value else 0,
+                    fan_out_input=str(Path(abs_path).relative_to(run.worktree_path)),
+                    fan_out_output=derive_output_path(
+                        task_config.fan_out.output_pattern,
+                        str(Path(abs_path).relative_to(run.worktree_path)),
+                        variables,
+                    ),
+                    is_synthetic=True,
+                )
+                for abs_path in matched_files
+            ]
+
     return TaskDetailResponse(
         id=task.id,
         config_id=task.config_id,
@@ -155,6 +226,7 @@ async def get_task(
         fan_out_index=task.fan_out_index,
         fan_out_input=task.fan_out_input,
         fan_out_output=task.fan_out_output,
+        fan_out_children=fan_out_children,
     )
 
 

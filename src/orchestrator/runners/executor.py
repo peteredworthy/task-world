@@ -167,6 +167,12 @@ class AgentRunnerExecutor:
             self._attempt_store, self._broadcaster, self._api_base_url
         )
 
+    async def _append_task_log(self, run_id: str, task_id: str, lines: list[str]) -> None:
+        """Persist lightweight log lines for tasks that do not stream agent output directly."""
+        if not lines:
+            return
+        await self._attempt_store.store_attempt_output(run_id, task_id, lines)
+
     async def _get_runner_monitor(self) -> AgentRunnerMonitor | None:
         """Lazy-initialize agent monitor if not provided."""
         if self._runner_monitor is not None:
@@ -372,8 +378,21 @@ class AgentRunnerExecutor:
                         server_port=self._global_config.server.port,
                         worktree_base_port=self._global_config.server.worktree_base_port,
                     )
-                    wt_info = wt_mgr.create(run.id, run.source_branch)
-                    run = await service.set_worktree_path(run_id, str(wt_info.path))
+                    try:
+                        wt_info = wt_mgr.create(run.id, run.source_branch)
+                    except Exception as e:
+                        logger.warning(f"Run {run_id}: worktree creation failed: {e}")
+                        raise
+
+                    try:
+                        run = await service.set_worktree_path(run_id, str(wt_info.path))
+                    except Exception as e:
+                        logger.error(
+                            f"Run {run_id}: worktree created at {wt_info.path} but failed "
+                            f"to save worktree_path to DB: {e}"
+                        )
+                        raise
+
                     logger.info(
                         f"Run {run_id}: created worktree at {wt_info.path} "
                         f"(branch={wt_info.branch})"
@@ -408,7 +427,7 @@ class AgentRunnerExecutor:
                         f"skipping worktree creation"
                     )
             except Exception as e:
-                logger.warning(f"Run {run_id}: worktree creation failed: {e}")
+                logger.warning(f"Run {run_id}: worktree setup failed: {e}")
 
         # Skip spawning if disabled (e.g., in tests)
         if not self._spawn_agents:
@@ -438,6 +457,7 @@ class AgentRunnerExecutor:
             if "pid" in run.agent_config:
                 await self._attempt_store.persist_agent_metadata(run_id, {"pid": None})
             task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, agent_config))
+            task.add_done_callback(lambda t: self._on_agent_loop_done(run_id, t))
             self._running_tasks[run_id] = task
             logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
 
@@ -916,6 +936,10 @@ class AgentRunnerExecutor:
 
             # Fan-out tasks: expand and execute children in parallel
             if task_config.fan_out is not None:
+                if task_state.status == TaskStatus.PENDING:
+                    await service.start_task(run.id, task_state.id)
+                    run = await service.get_run(run.id)
+                    task_state = await service.get_task(run.id, task_state.id)
                 logger.info(
                     f"Run {run.id}: task {task_state.id} is a fan-out task, "
                     f"executing via _execute_fan_out()"
@@ -1120,6 +1144,25 @@ class AgentRunnerExecutor:
         if not worktree_path:
             raise AgentExecutionError(agent_type.value, "Cannot run fan-out without worktree_path")
 
+        parent_task = await service.start_fan_out_parent(run.id, parent_task.id)
+        await self._attempt_store.store_attempt_prompt(
+            run.id,
+            parent_task.id,
+            builder_prompt=(
+                "Fan-out coordinator\n"
+                f"Input glob: {fan_out.input_glob}\n"
+                f"Output pattern: {fan_out.output_pattern}\n"
+                f"Max concurrent: {fan_out.max_concurrent}\n"
+                f"Max attempts per child: {fan_out.max_attempts}"
+            ),
+            session=session,
+        )
+        await self._append_task_log(
+            run.id,
+            parent_task.id,
+            [f"Starting fan-out execution for glob '{fan_out.input_glob}'."],
+        )
+
         # Check if children already exist from a previous expansion (e.g. after
         # outer verification failure → revision back to BUILDING).
         existing_children: list[TaskState] = []
@@ -1146,20 +1189,50 @@ class AgentRunnerExecutor:
             await service.reset_fan_out_children(run.id, parent_task.id)
 
             children = existing_children
+            await self._append_task_log(
+                run.id,
+                parent_task.id,
+                [f"Reusing {len(children)} persisted fan-out children for re-run."],
+            )
         else:
             # 1. Expand: create child tasks (first time)
             children = await service.expand_fan_out_task(run.id, parent_task.id)
             verifier_feedback = None
+            await self._append_task_log(
+                run.id,
+                parent_task.id,
+                [f"Expanded fan-out into {len(children)} persisted child tasks."],
+            )
 
         if not children:
-            # No files matched — mark parent completed with no children
+            # No files matched. If the parent has an outer verifier, still run
+            # it so the aggregate requirements can be graded instead of being
+            # silently ignored.
+            has_outer_verifier = bool(task_config.verifier.rubric)
             logger.warning(
                 f"Run {run.id}: fan-out task {parent_task.id} produced 0 children, "
-                f"marking as COMPLETED"
+                f"marking as {'VERIFYING' if has_outer_verifier else 'COMPLETED'}"
+            )
+            await self._append_task_log(
+                run.id,
+                parent_task.id,
+                [
+                    "No fan-out inputs matched; "
+                    + (
+                        "moving parent to VERIFYING."
+                        if has_outer_verifier
+                        else "completing parent."
+                    )
+                ],
             )
             async with self._session_factory() as sess:
                 svc = await self._create_service(sess)
-                await svc.complete_fan_out_parent(run.id, parent_task.id, all_passed=True)
+                await svc.complete_fan_out_parent(
+                    run.id,
+                    parent_task.id,
+                    all_passed=True,
+                    to_verifying=has_outer_verifier,
+                )
                 await sess.commit()
             return
 
@@ -1196,6 +1269,14 @@ class AgentRunnerExecutor:
                         )
 
                     if passed:
+                        await self._append_task_log(
+                            run.id,
+                            parent_task.id,
+                            [
+                                f"Child {child.fan_out_index}: passed on attempt {attempt_num} "
+                                f"for {child.fan_out_input}."
+                            ],
+                        )
                         break
 
                     # Auto-verify failed — retry if attempts remain
@@ -1209,8 +1290,24 @@ class AgentRunnerExecutor:
                             f"Run {run.id}: child {child_id} exhausted "
                             f"{fan_out.max_attempts} attempts"
                         )
+                        await self._append_task_log(
+                            run.id,
+                            parent_task.id,
+                            [
+                                f"Child {child.fan_out_index}: exhausted {fan_out.max_attempts} "
+                                f"attempts for {child.fan_out_input}."
+                            ],
+                        )
                 except Exception as e:
                     logger.error(f"Run {run.id}: child {child_id} attempt {attempt_num} error: {e}")
+                    await self._append_task_log(
+                        run.id,
+                        parent_task.id,
+                        [
+                            f"Child {child.fan_out_index}: attempt {attempt_num} raised "
+                            f"{type(e).__name__}: {e}"
+                        ],
+                    )
                     if attempt_num >= fan_out.max_attempts:
                         break
 
@@ -1241,6 +1338,11 @@ class AgentRunnerExecutor:
                 # Mark parent FAILED, which will pause the run
                 await svc.complete_fan_out_parent(run.id, parent_task.id, all_passed=False)
                 await sess.commit()
+                await self._append_task_log(
+                    run.id,
+                    parent_task.id,
+                    ["One or more fan-out children failed; parent marked FAILED."],
+                )
                 logger.warning(
                     f"Run {run.id}: fan-out task {parent_task.id} FAILED "
                     f"(children failed: "
@@ -1254,6 +1356,11 @@ class AgentRunnerExecutor:
                         run.id, parent_task.id, all_passed=True, to_verifying=True
                     )
                     await sess.commit()
+                    await self._append_task_log(
+                        run.id,
+                        parent_task.id,
+                        ["All fan-out children passed; parent moved to VERIFYING."],
+                    )
                     logger.info(
                         f"Run {run.id}: fan-out task {parent_task.id} children "
                         f"all passed, moving to VERIFYING for outer verification"
@@ -1261,6 +1368,11 @@ class AgentRunnerExecutor:
                 else:
                     await svc.complete_fan_out_parent(run.id, parent_task.id, all_passed=True)
                     await sess.commit()
+                    await self._append_task_log(
+                        run.id,
+                        parent_task.id,
+                        ["All fan-out children passed; parent marked COMPLETED."],
+                    )
                     logger.info(
                         f"Run {run.id}: fan-out task {parent_task.id} COMPLETED "
                         f"(all {len(children)} children passed)"
@@ -1297,10 +1409,11 @@ class AgentRunnerExecutor:
         input_path = child.fan_out_input or ""
         output_path = child.fan_out_output or ""
 
-        # Start the child task (PENDING -> BUILDING)
+        # Start the child task with a task-scoped DB update to avoid clobbering
+        # sibling child rows during concurrent fan-out execution.
         async with self._session_factory() as sess:
             svc = await self._create_service(sess)
-            await svc.start_task(run.id, child_id)
+            await svc.start_fan_out_child_task(run.id, child_id)
             await sess.commit()
 
         # Read input file content

@@ -104,6 +104,16 @@ class AttemptSchema(ApiModel):
     end_commit: str | None = None
 
 
+class FanOutChildSummarySchema(ApiModel):
+    id: str | None = None
+    title: str = ""
+    status: str
+    current_attempt: int = 0
+    fan_out_input: str | None = None
+    fan_out_output: str | None = None
+    is_synthetic: bool = False
+
+
 class TaskDetailResponse(ApiModel):
     id: str
     config_id: str
@@ -120,6 +130,7 @@ class TaskDetailResponse(ApiModel):
     fan_out_index: int | None = None
     fan_out_input: str | None = None
     fan_out_output: str | None = None
+    fan_out_children: list[FanOutChildSummarySchema] = []
 
 
 class TransitionResponse(ApiModel):

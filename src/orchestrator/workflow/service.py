@@ -806,14 +806,14 @@ class WorkflowService:
             )
             children.append(child)
 
-        # Add children to the step's task list
-        parent_step.tasks.extend(children)
-
-        # Set parent to FAN_OUT_RUNNING
-        parent_task.status = TaskStatus.FAN_OUT_RUNNING
-
-        # Persist
-        await self._repo.save(run)
+        # Persist children directly so concurrent child updates don't rewrite the full run graph.
+        await self._repo.create_fan_out_children(
+            parent_step.id,
+            children,
+            parent_status=TaskStatus.FAN_OUT_RUNNING,
+        )
+        if not children:
+            await self._repo.update_task_status(parent_task.id, TaskStatus.FAN_OUT_RUNNING)
         await self._session.commit()
 
         logger.info(
@@ -947,18 +947,83 @@ class WorkflowService:
 
         Also sets the parent task status to FAN_OUT_RUNNING.
         """
+        await self._repo.reset_fan_out_children(parent_task_id)
+        await self._session.commit()
+
+    async def start_fan_out_parent(self, run_id: str, task_id: str) -> TaskState:
+        """Ensure a fan-out parent has an active attempt and FAN_OUT_RUNNING status."""
         run = await self._repo.get(run_id)
-        for step in run.steps:
-            for task in step.tasks:
-                if task.parent_task_id == parent_task_id:
-                    task.status = TaskStatus.PENDING
-        # Find and update parent status
-        for step in run.steps:
-            for task in step.tasks:
-                if task.id == parent_task_id:
-                    task.status = TaskStatus.FAN_OUT_RUNNING
-                    break
-        await self._repo.save(run)
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(
+                run.status.value, "start_fan_out_parent (requires ACTIVE run)"
+            )
+
+        task = self._find_task(run, task_id)
+        if task.parent_task_id is not None:
+            raise InvalidTransitionError(task.status.value, "start_fan_out_parent (parent only)")
+
+        if task.status == TaskStatus.PENDING:
+            await self.start_task(run_id, task_id)
+            run = await self._repo.get(run_id)
+            task = self._find_task(run, task_id)
+
+        if task.status == TaskStatus.FAN_OUT_RUNNING:
+            return task
+
+        if task.status != TaskStatus.BUILDING:
+            raise InvalidTransitionError(
+                task.status.value,
+                "start_fan_out_parent (requires PENDING, BUILDING, or FAN_OUT_RUNNING)",
+            )
+
+        await self._repo.update_task_status(task_id, TaskStatus.FAN_OUT_RUNNING)
+        await self._event_emitter.emit_batch(
+            [
+                TaskStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="task_status_changed",
+                    task_id=task_id,
+                    old_status=TaskStatus.BUILDING,
+                    new_status=TaskStatus.FAN_OUT_RUNNING,
+                )
+            ]
+        )
+        await self._session.commit()
+        refreshed = await self._repo.get(run_id)
+        return self._find_task(refreshed, task_id)
+
+    async def start_fan_out_child_task(self, run_id: str, task_id: str) -> None:
+        """Create a new attempt for a persisted fan-out child task."""
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(
+                run.status.value, "start_fan_out_child_task (requires ACTIVE run)"
+            )
+
+        task = self._find_task(run, task_id)
+        if task.parent_task_id is None:
+            raise InvalidTransitionError(task.status.value, "start_fan_out_child_task (child only)")
+
+        next_attempt_num = task.current_attempt + 1
+        attempt = Attempt(attempt_num=next_attempt_num, started_at=self._clock.now())
+        attempt.agent_type = run.agent_type
+        attempt.agent_model = run.agent_config.get("model")
+        attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+
+        await self._repo.create_task_attempt(task_id, attempt, status=TaskStatus.BUILDING)
+        await self._event_emitter.emit_batch(
+            [
+                TaskStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="task_status_changed",
+                    task_id=task_id,
+                    old_status=task.status,
+                    new_status=TaskStatus.BUILDING,
+                )
+            ]
+        )
         await self._session.commit()
 
     async def update_child_task_state(
@@ -979,21 +1044,14 @@ class WorkflowService:
         - ``auto_verify_results`` (list): set on latest attempt
         - ``status`` (TaskStatus): set on the task itself
         """
-        run = await self._repo.get(run_id)
-        for step in run.steps:
-            for t in step.tasks:
-                if t.id == task_id:
-                    # Apply attempt-level updates
-                    if t.attempts:
-                        attempt = t.attempts[-1]
-                        for key in ("outcome", "error", "completed_at", "auto_verify_results"):
-                            if key in updates:
-                                setattr(attempt, key, updates[key])
-                    # Apply task-level updates
-                    if "status" in updates:
-                        t.status = updates["status"]
-                    break
-        await self._repo.save(run)
+        _ = await self._repo.get(run_id)
+        repo_updates: dict[str, Any] = {}
+        for key in ("outcome", "error", "completed_at", "auto_verify_results"):
+            if key in updates:
+                repo_updates[key] = updates[key]
+        if "status" in updates:
+            repo_updates["status"] = updates["status"]
+        await self._repo.update_latest_attempt(task_id, **repo_updates)
         await self._session.commit()
 
     async def start_task(self, run_id: str, task_id: str) -> TransitionResult:

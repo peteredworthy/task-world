@@ -25,7 +25,7 @@ from orchestrator.db.models import (
     StepModel,
     TaskModel,
 )
-from orchestrator.state.errors import RunNotFoundError
+from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
 from orchestrator.runners.action_log import ActionLog
 from orchestrator.state.models import (
     Attempt,
@@ -62,6 +62,9 @@ def _ensure_utc(dt: datetime) -> datetime:
 def _ensure_utc_optional(dt: datetime | None) -> datetime | None:
     """Like _ensure_utc but accepts and returns None for optional fields."""
     return _core_ensure_utc_optional(dt)
+
+
+_UNSET = object()
 
 
 def _eager_run_query(*, include_action_logs: bool = True) -> Any:  # noqa: ANN401
@@ -486,6 +489,201 @@ class RunRepository:
         """Upsert a run. Calls flush(), not commit()."""
         new_model = _to_model(run)
         await self._session.merge(new_model)
+        await self._session.flush()
+
+    async def _get_task_model(self, task_id: str) -> TaskModel:
+        """Load a task row with its attempts and owning run."""
+        result = await self._session.execute(
+            select(TaskModel)
+            .where(TaskModel.id == task_id)
+            .options(
+                selectinload(TaskModel.attempts),
+                selectinload(TaskModel.step).selectinload(StepModel.run),
+            )
+        )
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise TaskNotFoundError("unknown", task_id)
+        return model
+
+    async def create_task_attempt(
+        self,
+        task_id: str,
+        attempt: Attempt,
+        *,
+        status: TaskStatus = TaskStatus.BUILDING,
+    ) -> None:
+        """Append a new attempt to a single task without rewriting the full run."""
+        task_model = await self._get_task_model(task_id)
+        task_model.status = status.value
+        task_model.current_attempt = attempt.attempt_num
+        task_model.attempts.append(
+            AttemptModel(
+                id=attempt.id,
+                task_id=task_id,
+                attempt_num=attempt.attempt_num,
+                started_at=attempt.started_at,
+                completed_at=attempt.completed_at,
+                builder_prompt=attempt.builder_prompt,
+                verifier_prompt=attempt.verifier_prompt,
+                verifier_comment=attempt.verifier_comment,
+                outcome=attempt.outcome,
+                tokens_read=attempt.metrics.tokens_read,
+                tokens_write=attempt.metrics.tokens_write,
+                tokens_cache=attempt.metrics.tokens_cache,
+                duration_ms=attempt.metrics.duration_ms,
+                num_actions=attempt.metrics.num_actions,
+                grade_snapshot=None,
+                auto_verify_results=None,
+                runner_type=attempt.agent_type.value if attempt.agent_type else None,
+                agent_model=attempt.agent_model,
+                agent_settings=attempt.agent_settings if attempt.agent_settings else None,
+                agent_output=attempt.agent_output,
+                error=attempt.error,
+                action_log_json=attempt.action_log.model_dump(mode="json")
+                if attempt.action_log
+                else None,
+                start_commit=attempt.start_commit,
+                end_commit=attempt.end_commit,
+            )
+        )
+        task_model.step.run.updated_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def create_fan_out_children(
+        self,
+        step_id: str,
+        children: list[TaskState],
+        *,
+        parent_status: TaskStatus | None = None,
+    ) -> None:
+        """Persist new fan-out children without rewriting the whole run graph."""
+        result = await self._session.execute(
+            select(StepModel)
+            .where(StepModel.id == step_id)
+            .options(selectinload(StepModel.tasks), selectinload(StepModel.run))
+        )
+        step_model = result.scalar_one_or_none()
+        if step_model is None:
+            raise RunNotFoundError(step_id)
+
+        next_order_index = max((task.order_index for task in step_model.tasks), default=-1) + 1
+        for offset, child in enumerate(children):
+            checklist_json = [item.model_dump(mode="json") for item in child.checklist]
+            step_model.tasks.append(
+                TaskModel(
+                    id=child.id,
+                    step_id=step_id,
+                    config_id=child.config_id,
+                    title=child.title,
+                    complexity=child.complexity,
+                    order_index=next_order_index + offset,
+                    status=child.status.value,
+                    checklist=checklist_json,
+                    current_attempt=child.current_attempt,
+                    max_attempts=child.max_attempts,
+                    pending_action_type=child.pending_action_type,
+                    pending_clarification_id=child.pending_clarification_id,
+                    parent_task_id=child.parent_task_id,
+                    fan_out_index=child.fan_out_index,
+                    fan_out_input=child.fan_out_input,
+                    fan_out_output=child.fan_out_output,
+                    attempts=[],
+                )
+            )
+
+        if children and parent_status is not None:
+            parent_id = children[0].parent_task_id
+            for task_model in step_model.tasks:
+                if task_model.id == parent_id:
+                    task_model.status = parent_status.value
+                    break
+
+        step_model.run.updated_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def update_task_status(self, task_id: str, status: TaskStatus) -> None:
+        """Update one task's status without rewriting sibling tasks."""
+        task_model = await self._get_task_model(task_id)
+        task_model.status = status.value
+        task_model.step.run.updated_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def reset_fan_out_children(self, parent_task_id: str) -> None:
+        """Reset persisted fan-out children to PENDING and parent to FAN_OUT_RUNNING."""
+        result = await self._session.execute(
+            select(TaskModel)
+            .where((TaskModel.id == parent_task_id) | (TaskModel.parent_task_id == parent_task_id))
+            .options(selectinload(TaskModel.step).selectinload(StepModel.run))
+        )
+        tasks = result.scalars().all()
+        run_model = None
+        for task_model in tasks:
+            if task_model.id == parent_task_id:
+                task_model.status = TaskStatus.FAN_OUT_RUNNING.value
+                run_model = task_model.step.run
+            elif task_model.parent_task_id == parent_task_id:
+                task_model.status = TaskStatus.PENDING.value
+        if run_model is not None:
+            run_model.updated_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def update_latest_attempt(
+        self,
+        task_id: str,
+        *,
+        builder_prompt: Any = _UNSET,
+        verifier_prompt: Any = _UNSET,
+        output_lines: list[str] | None = None,
+        error: Any = _UNSET,
+        action_log: Any = _UNSET,
+        metrics: Any = _UNSET,
+        outcome: Any = _UNSET,
+        completed_at: Any = _UNSET,
+        auto_verify_results: Any = _UNSET,
+        status: TaskStatus | None = None,
+    ) -> None:
+        """Update a single task's latest attempt in place."""
+        task_model = await self._get_task_model(task_id)
+        attempt = task_model.attempts[-1] if task_model.attempts else None
+        if attempt is not None:
+            if builder_prompt is not _UNSET:
+                attempt.builder_prompt = builder_prompt
+            if verifier_prompt is not _UNSET:
+                attempt.verifier_prompt = verifier_prompt
+            if output_lines:
+                new_text = "\n".join(output_lines)
+                if attempt.agent_output:
+                    combined = f"{attempt.agent_output}\n{new_text}"
+                    attempt.agent_output = "\n".join(combined.splitlines()[-10000:])
+                else:
+                    attempt.agent_output = "\n".join(output_lines[-10000:])
+            if error is not _UNSET:
+                attempt.error = error
+            if action_log is not _UNSET:
+                attempt.action_log_json = (
+                    action_log.model_dump(mode="json") if action_log is not None else None
+                )
+            if metrics is not _UNSET:
+                attempt.tokens_read += metrics.tokens_read
+                attempt.tokens_write += metrics.tokens_write
+                attempt.tokens_cache += metrics.tokens_cache
+                attempt.duration_ms += metrics.duration_ms
+                attempt.num_actions += metrics.num_actions
+                task_model.step.run.total_tokens_read += metrics.tokens_read
+                task_model.step.run.total_tokens_write += metrics.tokens_write
+                task_model.step.run.total_tokens_cache += metrics.tokens_cache
+                task_model.step.run.total_duration_ms += metrics.duration_ms
+                task_model.step.run.total_num_actions += metrics.num_actions
+            if outcome is not _UNSET:
+                attempt.outcome = outcome
+            if completed_at is not _UNSET:
+                attempt.completed_at = completed_at
+            if auto_verify_results is not _UNSET:
+                attempt.auto_verify_results = auto_verify_results
+        if status is not None:
+            task_model.status = status.value
+        task_model.step.run.updated_at = datetime.now(timezone.utc)
         await self._session.flush()
 
     async def delete(self, run_id: str) -> None:
