@@ -91,7 +91,9 @@ def generate_builder_prompt(
         for key, value in config.items():
             resolved_step_context = resolved_step_context.replace(f"{{{{{key}}}}}", str(value))
 
-    requirements = [f"- {req.desc}" for req in task_config.requirements]
+    requirements = [
+        f"- {req.id} [{req.priority.value}]: {req.desc}" for req in task_config.requirements
+    ]
 
     # Get previous feedback if this is a revision
     previous_feedback: str | None = None
@@ -117,7 +119,10 @@ def generate_builder_prompt(
         "6. Once all requirements are addressed and changes are committed, submit your work for verification.\n\n"
         "## Important\n"
         "- You MUST update the checklist for each requirement before submitting.\n"
-        "- All CRITICAL requirements must be marked 'done' before submission will succeed.\n"
+        "- Requirements are tagged [critical], [expected], or [nice]. "
+        "CRITICAL requirements must pass with grade A; EXPECTED with B; NICE are advisory.\n"
+        "- Whether a requirement is optional is determined solely by its priority tag. "
+        "Do not treat a requirement as optional based on task instructions alone.\n"
         "- You MUST commit your changes to git before submitting for verification.\n"
         "- The verifier will review the committed code and grade each requirement.\n"
         "- If the verifier finds issues, you may be asked to revise (with feedback provided)."
@@ -209,7 +214,9 @@ def generate_verifier_prompt(
     If clarifications_path is provided, it is included after step_context
     but before requirements.
     """
-    requirements = [f"- {req.desc}" for req in task_config.requirements]
+    requirements = [
+        f"- {req.id} [{req.priority.value}]: {req.desc}" for req in task_config.requirements
+    ]
     rubric = [f"- [{item.id}] {item.text}" for item in task_config.verifier.rubric]
 
     template = task_config.verifier.submission_template
@@ -240,7 +247,12 @@ def generate_verifier_prompt(
         "- D: Poor - significant gaps in meeting the requirement\n"
         "- F: Failing - requirement not met\n\n"
         "## Important\n"
+        "- Requirements are tagged [critical], [expected], or [nice]. "
+        "CRITICAL requirements must achieve grade A to pass; EXPECTED must achieve B; "
+        "NICE are advisory and do not block.\n"
         "- You MUST grade every CRITICAL and EXPECTED requirement.\n"
+        "- Grade based strictly on the rubric text for each requirement. "
+        "Do not invent requirements or interpretations beyond what the rubric states.\n"
         "- Provide a clear reason for any grade below the passing threshold.\n"
         "- Include specific, actionable remediation guidance for failing items.\n"
         "- Be thorough but fair. Evaluate what was actually built, not style preferences."

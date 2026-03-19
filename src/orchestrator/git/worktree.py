@@ -107,6 +107,70 @@ class WorktreeManager:
 
         logger.info("Wrote worktree manifest: %s (port=%d)", manifest_path, assigned_port)
 
+    def _write_sandbox_settings(self, worktree_path: Path) -> None:
+        """Write a ``.claude/settings.local.json`` with absolute-path sandbox rules.
+
+        Write access is restricted to the worktree and ``/tmp``.  Read access
+        denies the main project's database and state directory so that agents
+        cannot directly inspect or manipulate orchestrator internals.
+        """
+        wt_abs = str(worktree_path.resolve())
+        repo_abs = str(self._repo.resolve())
+        denied_read_paths = [
+            f"{repo_abs}/orchestrator.db",
+            f"{repo_abs}/orchestrator.db-wal",
+            f"{repo_abs}/orchestrator.db-shm",
+            f"{repo_abs}/orchestrator.db-journal",
+            f"{repo_abs}/.orchestrator",
+        ]
+
+        settings = {
+            "permissions": {
+                "allow": [
+                    f"Read({wt_abs}/**)",
+                    f"Edit({wt_abs}/**)",
+                    f"Write({wt_abs}/**)",
+                    f"Glob({wt_abs}/**)",
+                    f"Grep({wt_abs}/**)",
+                ],
+                "deny": [f"Read({path})" for path in denied_read_paths],
+            },
+            "sandbox": {
+                "enabled": True,
+                "filesystem": {
+                    "allowWrite": [
+                        wt_abs,
+                        "/tmp",
+                    ],
+                    "denyRead": denied_read_paths,
+                },
+                "network": {
+                    "allowedDomains": [
+                        "localhost",
+                        "127.0.0.1",
+                    ],
+                },
+            },
+        }
+
+        settings_dir = worktree_path / ".claude"
+        settings_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = settings_dir / "settings.local.json"
+        settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+
+        # Git-ignore settings.local.json so it doesn't pollute the worktree
+        _entry = ".claude/settings.local.json"
+        exclude_file = self._repo / ".git" / "info" / "exclude"
+        try:
+            existing = exclude_file.read_text() if exclude_file.exists() else ""
+            if _entry not in existing:
+                with exclude_file.open("a") as f:
+                    f.write(f"{_entry}\n")
+        except OSError:
+            pass
+
+        logger.info("Wrote sandbox settings: %s", settings_path)
+
     @staticmethod
     def _worktree_number_from_path(worktree_path: Path) -> int:
         """Extract the worktree number from a path like ``worktrees/r27``."""
@@ -242,6 +306,11 @@ class WorktreeManager:
         # Write manifest before setup script so it can read it
         wt_number = self._worktree_number_from_path(worktree_path)
         self._write_manifest(worktree_path, run_id, branch_name, wt_number)
+
+        # Write sandbox settings with absolute paths so agents cannot escape
+        # the worktree (the project-level ./ path resolves ambiguously in
+        # worktrees due to git topology).
+        self._write_sandbox_settings(worktree_path)
 
         self._run_worktree_setup(worktree_path)
 
@@ -460,6 +529,7 @@ class WorktreeManager:
         # Write manifest before setup script so it can read it
         wt_number = self._worktree_number_from_path(new_path)
         self._write_manifest(new_path, run_id, branch_name, wt_number)
+        self._write_sandbox_settings(new_path)
 
         self._run_worktree_setup(new_path)
 

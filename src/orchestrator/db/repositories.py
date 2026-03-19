@@ -610,7 +610,12 @@ class RunRepository:
         await self._session.flush()
 
     async def reset_fan_out_children(self, parent_task_id: str) -> None:
-        """Reset persisted fan-out children to PENDING and parent to FAN_OUT_RUNNING."""
+        """Reset non-completed fan-out children to PENDING and parent to FAN_OUT_RUNNING.
+
+        Children that already completed successfully are preserved so their work
+        is not lost when resuming a fan-out after a pause.
+        """
+        terminal_statuses = {TaskStatus.COMPLETED.value}
         result = await self._session.execute(
             select(TaskModel)
             .where((TaskModel.id == parent_task_id) | (TaskModel.parent_task_id == parent_task_id))
@@ -623,7 +628,8 @@ class RunRepository:
                 task_model.status = TaskStatus.FAN_OUT_RUNNING.value
                 run_model = task_model.step.run
             elif task_model.parent_task_id == parent_task_id:
-                task_model.status = TaskStatus.PENDING.value
+                if task_model.status not in terminal_statuses:
+                    task_model.status = TaskStatus.PENDING.value
         if run_model is not None:
             run_model.updated_at = datetime.now(timezone.utc)
         await self._session.flush()

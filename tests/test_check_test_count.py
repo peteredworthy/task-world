@@ -8,7 +8,9 @@ Tests cover:
 - Handle project with no tests gracefully
 """
 
+import shutil
 import subprocess
+import sys
 import textwrap
 from pathlib import Path
 
@@ -16,13 +18,19 @@ import pytest
 
 SCRIPT = Path(__file__).parent.parent / "scripts" / "check_test_count.sh"
 
+# Resolve the pytest executable that is running this test suite so the shell
+# script can find it even when bare ``pytest`` is not on PATH.
+_PYTEST_BIN = shutil.which("pytest") or str(Path(sys.executable).parent / "pytest")
+
 
 def run_script(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+    env = {**__import__("os").environ, "PYTEST": _PYTEST_BIN}
     return subprocess.run(
         ["bash", str(SCRIPT)] + args,
         cwd=cwd,
         capture_output=True,
         text=True,
+        env=env,
     )
 
 

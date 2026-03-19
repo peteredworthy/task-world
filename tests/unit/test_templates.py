@@ -82,6 +82,67 @@ class TestResolveTemplate:
         result = resolve_template("{{x}} and {{x}}", {"x": "same"})
         assert result == "same and same"
 
+    # --- Two-pass resolution tests ---
+
+    def test_file_with_variable_in_path(self, tmp_path: Path) -> None:
+        """{{file:docs/{{feature}}/plan.md}} resolves variable first, then reads file."""
+        doc = tmp_path / "docs" / "auth" / "plan.md"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("Auth plan content")
+
+        result = resolve_template(
+            "Context: {{file:docs/{{feature}}/plan.md}}",
+            {"feature": "auth"},
+            worktree_path=str(tmp_path),
+        )
+        assert result == "Context: Auth plan content"
+
+    def test_file_with_multiple_variables_in_path(self, tmp_path: Path) -> None:
+        """Multiple variables inside a file: path are resolved."""
+        doc = tmp_path / "docs" / "v2" / "auth" / "spec.md"
+        doc.parent.mkdir(parents=True, exist_ok=True)
+        doc.write_text("v2 auth spec")
+
+        result = resolve_template(
+            "{{file:docs/{{version}}/{{feature}}/spec.md}}",
+            {"version": "v2", "feature": "auth"},
+            worktree_path=str(tmp_path),
+        )
+        assert result == "v2 auth spec"
+
+    def test_file_variable_not_found_leaves_placeholder(self) -> None:
+        """If the variable inside file: path is unknown, path stays unresolved."""
+        result = resolve_template(
+            "{{file:docs/{{feature}}/plan.md}}",
+            {},
+            worktree_path="/tmp/nonexistent",
+        )
+        # Variable not resolved → file path contains literal {{feature}}
+        assert "File not found" in result or "{{feature}}" in result
+
+    def test_plain_variable_and_file_mixed(self, tmp_path: Path) -> None:
+        """Plain variables and file references coexist correctly."""
+        doc = tmp_path / "readme.md"
+        doc.write_text("README")
+
+        result = resolve_template(
+            "Branch: {{branch}} | Docs: {{file:readme.md}}",
+            {"branch": "main"},
+            worktree_path=str(tmp_path),
+        )
+        assert result == "Branch: main | Docs: README"
+
+    def test_pass1_does_not_resolve_file_refs(self, tmp_path: Path) -> None:
+        """file: refs survive pass 1 even when there are no variables to resolve."""
+        doc = tmp_path / "data.txt"
+        doc.write_text("data content")
+
+        result = resolve_template(
+            "{{file:data.txt}}",
+            worktree_path=str(tmp_path),
+        )
+        assert result == "data content"
+
 
 class TestDeriveOutputPath:
     """Tests for derive_output_path()."""

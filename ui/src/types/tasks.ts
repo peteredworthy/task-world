@@ -100,6 +100,16 @@ export interface AttemptSchema {
   end_commit: string | null;
 }
 
+export interface FanOutChildSummary {
+  id: string | null;
+  title: string;
+  status: TaskStatus;
+  current_attempt: number;
+  fan_out_input: string | null;
+  fan_out_output: string | null;
+  is_synthetic: boolean;
+}
+
 export interface TaskDetailResponse {
   id: string;
   config_id: string;
@@ -115,6 +125,7 @@ export interface TaskDetailResponse {
   fan_out_index: number | null;
   fan_out_input: string | null;
   fan_out_output: string | null;
+  fan_out_children: FanOutChildSummary[];
 }
 
 export interface TransitionResponse {

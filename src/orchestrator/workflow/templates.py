@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-_PLACEHOLDER_RE = re.compile(r"\{\{(.+?)\}\}")
+# Matches innermost {{...}} only — no { or } inside the capture group.
+# This ensures nested patterns like {{file:docs/{{feature}}/plan.md}} resolve
+# inside-out: {{feature}} first, then {{file:...}} in the next pass.
+_INNER_RE = re.compile(r"\{\{([^{}]+)\}\}")
+
+# Broader pattern for detecting any placeholder (including nested).
+_ANY_PLACEHOLDER_RE = re.compile(r"\{\{.+?\}\}")
 
 
 def resolve_template(
@@ -22,19 +28,36 @@ def resolve_template(
     * ``{{item_content}}``, ``{{item_stem}}``, ``{{output_path}}`` -- aliases
       looked up in *variables*
 
-    Resolution is single-pass: if a substituted value itself contains
-    ``{{...}}`` markers they are **not** recursively expanded.
+    Resolution is two-pass so that nested patterns like
+    ``{{file:docs/{{feature}}/plan.md}}`` work correctly:
+
+    1. Resolve innermost non-``file:`` variables (e.g. ``{{feature}}`` inside
+       a ``{{file:...}}`` path)
+    2. Resolve ``{{file:...}}`` references (paths now have variables filled in)
     """
 
-    if not _PLACEHOLDER_RE.search(template):
+    if not _INNER_RE.search(template):
         return template
 
     vars_ = variables or {}
 
-    def _replace(match: re.Match[str]) -> str:
+    # Pass 1: resolve innermost plain variables only (leave {{file:...}} for pass 2)
+    def _replace_vars(match: re.Match[str]) -> str:
         key = match.group(1).strip()
+        if key.startswith("file:"):
+            return match.group(0)  # leave for pass 2
+        if key in vars_:
+            return vars_[key]
+        return match.group(0)
 
-        # {{file:some/path.md}} — read file contents
+    result = _INNER_RE.sub(_replace_vars, template)
+
+    # Pass 2: resolve {{file:...}} references (variables already substituted)
+    if "{{file:" not in result:
+        return result
+
+    def _replace_files(match: re.Match[str]) -> str:
+        key = match.group(1).strip()
         if key.startswith("file:"):
             rel_path = key[len("file:") :]
             if worktree_path:
@@ -45,15 +68,10 @@ def resolve_template(
                 return full.read_text()
             except (FileNotFoundError, IsADirectoryError, OSError):
                 return f"[File not found: {rel_path}]"
-
-        # Plain variable lookup
-        if key in vars_:
-            return vars_[key]
-
-        # Unknown placeholder — leave unchanged
+        # Leftover variable — leave unchanged
         return match.group(0)
 
-    return _PLACEHOLDER_RE.sub(_replace, template)
+    return _INNER_RE.sub(_replace_files, result)
 
 
 def derive_output_path(

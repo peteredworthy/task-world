@@ -198,6 +198,68 @@ class TestExpandFanOut:
         assert len(step_tasks) == 4  # 1 parent + 3 children
 
     @pytest.mark.asyncio
+    async def test_expand_fan_out_resolves_template_variables_in_glob(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        """input_glob with {{variable}} placeholders must resolve before globbing."""
+        feature_dir = tmp_path / "docs" / "my-feature"
+        feature_dir.mkdir(parents=True)
+        (feature_dir / "step-01-plan.md").write_text("Step 1 plan")
+        (feature_dir / "step-02-plan.md").write_text("Step 2 plan")
+
+        routine = RoutineConfig(
+            id="fan-out-template-glob",
+            name="Fan-out Template Glob",
+            inputs=[{"name": "feature", "required": True}],  # type: ignore[list-item]
+            steps=[
+                StepConfig(
+                    id="S-01",
+                    title="Process",
+                    tasks=[
+                        TaskConfig(
+                            id="T-01",
+                            title="Process Step Plans",
+                            fan_out={
+                                "input_glob": "docs/{{feature}}/step-*-plan.md",
+                                "output_pattern": "docs/{{feature}}/steps/{{item_stem}}.md",
+                                "per_item_prompt": "Convert {{item_content}} to {{output_path}}",
+                            },
+                            requirements=[RequirementConfig(id="R1", desc="Step files created")],
+                        )
+                    ],
+                )
+            ],
+        )
+        run = create_run_from_routine(
+            routine,
+            repo_name="proj-1",
+            source_branch="main",
+            config={"feature": "my-feature"},
+            routine_source=RoutineSource.LOCAL,
+            id_generator=iter(["run-glob-tmpl", "step-1", "task-1"]).__next__,
+        )
+        run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
+        run.status = RunStatus.ACTIVE
+        run.worktree_path = str(tmp_path)
+
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await repo.save(run)
+        await session.commit()
+
+        fan_out_task = run.steps[0].tasks[0]
+        children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+
+        assert len(children) == 2, (
+            f"Expected 2 children from docs/my-feature/step-*-plan.md, "
+            f"got {len(children)} — {{{{feature}}}} likely not resolved in input_glob"
+        )
+        assert children[0].fan_out_input == "docs/my-feature/step-01-plan.md"
+        assert children[1].fan_out_input == "docs/my-feature/step-02-plan.md"
+        # Output paths should also have {{feature}} resolved
+        assert "my-feature" in children[0].fan_out_output
+
+    @pytest.mark.asyncio
     async def test_expand_fan_out_empty_glob(self, session: AsyncSession, tmp_path: Path) -> None:
         """Expanding a fan-out with no matching files returns an empty list."""
         # Create the output dir but no matching files
@@ -433,8 +495,10 @@ class TestChildTaskStateManagement:
         assert updated_child.attempts[0].completed_at == now
 
     @pytest.mark.asyncio
-    async def test_reset_fan_out_children(self, session: AsyncSession, tmp_path: Path) -> None:
-        """reset_fan_out_children should set all children to PENDING and parent to FAN_OUT_RUNNING."""
+    async def test_reset_fan_out_children_preserves_completed(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        """reset_fan_out_children should only reset non-completed children; completed ones are preserved."""
         routine = _load_routine("fan-out-test")
         run = _make_fan_out_run(routine, str(tmp_path))
 
@@ -455,12 +519,16 @@ class TestChildTaskStateManagement:
         children = await service.expand_fan_out_task(run.id, fan_out_task.id)
         assert len(children) == 2
 
-        # Manually mark children as COMPLETED and parent as FAILED
+        # Mark first child as COMPLETED, second as FAILED, parent as FAILED
         reloaded = await repo.get(run.id)
+        child_ids = []
         for step in reloaded.steps:
             for t in step.tasks:
                 if t.parent_task_id == fan_out_task.id:
-                    t.status = TaskStatus.COMPLETED
+                    child_ids.append(t.id)
+            for i, t in enumerate(step.tasks):
+                if t.parent_task_id == fan_out_task.id:
+                    t.status = TaskStatus.COMPLETED if t.id == child_ids[0] else TaskStatus.FAILED
                 if t.id == fan_out_task.id:
                     t.status = TaskStatus.FAILED
         await repo.save(reloaded)
@@ -469,21 +537,24 @@ class TestChildTaskStateManagement:
         # Reset children
         await service.reset_fan_out_children(run.id, fan_out_task.id)
 
-        # Verify reset
+        # Verify: parent is FAN_OUT_RUNNING, completed child preserved, failed child reset
         reloaded = await repo.get(run.id)
         parent = None
-        child_statuses = []
+        child_status_map: dict[str, TaskStatus] = {}
         for step in reloaded.steps:
             for t in step.tasks:
                 if t.id == fan_out_task.id:
                     parent = t
                 if t.parent_task_id == fan_out_task.id:
-                    child_statuses.append(t.status)
+                    child_status_map[t.id] = t.status
 
         assert parent is not None
         assert parent.status == TaskStatus.FAN_OUT_RUNNING
-        assert all(s == TaskStatus.PENDING for s in child_statuses)
-        assert len(child_statuses) == 2
+        assert len(child_status_map) == 2
+        # First child was COMPLETED — should be preserved
+        assert child_status_map[child_ids[0]] == TaskStatus.COMPLETED
+        # Second child was FAILED — should be reset to PENDING
+        assert child_status_map[child_ids[1]] == TaskStatus.PENDING
 
 
 class TestFanOutRegression:
@@ -622,6 +693,143 @@ class TestFanOutRegression:
             assert parent.checklist[0].grade == "A"
 
     @pytest.mark.asyncio
+    async def test_concurrent_fan_out_children_no_clobbering(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        """Six concurrent children must all persist without clobbering each other.
+
+        Regression test for the bug where concurrent children used repo.save(run)
+        (full-run rewrite), causing later saves to overwrite earlier children's
+        state. The fix uses fine-grained per-task DB updates instead.
+        """
+        # Create 6 input files to trigger 6 concurrent children
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        for i in range(1, 7):
+            (output_dir / f"step-{i:02d}.md").write_text(f"content {i}")
+
+        routine = RoutineConfig(
+            id="fan-out-concurrency",
+            name="Fan-out Concurrency Stress",
+            steps=[
+                StepConfig(
+                    id="S-01",
+                    title="Process",
+                    tasks=[
+                        TaskConfig(
+                            id="T-01",
+                            title="Process All Files Concurrently",
+                            requirements=[RequirementConfig(id="R1", desc="All children complete")],
+                            fan_out={
+                                "input_glob": "output/step-*.md",
+                                "output_pattern": "output/processed/{{item_stem}}-result.md",
+                                "per_item_prompt": "Write the processed result to {{output_path}}",
+                                "max_attempts": 2,
+                                "max_concurrent": 6,  # all 6 run simultaneously
+                                "auto_verify": {
+                                    "items": [
+                                        {"id": "output_exists", "cmd": "test -f {{output_path}}"}
+                                    ]
+                                },
+                            },
+                            verifier={
+                                "rubric": [
+                                    {
+                                        "id": "R1",
+                                        "text": "All children completed successfully.",
+                                    }
+                                ]
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+        run = create_run_from_routine(
+            routine,
+            repo_name="proj-1",
+            source_branch="main",
+            routine_source=RoutineSource.LOCAL,
+            id_generator=iter(["run-concurrency", "step-1", "task-1"]).__next__,
+        )
+        run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
+        run.status = RunStatus.ACTIVE
+        run.worktree_path = str(tmp_path)
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_config = {"command": "test-agent", "model": "test-model"}
+
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            await repo.save(run)
+            await session.commit()
+
+        executor = _FanOutExecutor(session_factory)
+
+        # Execute the fan-out task (all 6 children run concurrently)
+        async with session_factory() as session:
+            service = WorkflowService(session)
+            persisted_run = await service.get_run(run.id)
+            parent_task = persisted_run.steps[0].tasks[0]
+            await executor._execute_task(
+                run=persisted_run,
+                task_state=parent_task,
+                service=service,
+                agent_type=AgentRunnerType.CLI_SUBPROCESS,
+                agent_config=run.agent_config,
+            )
+
+        # Verify: all 6 children persisted with correct state
+        async with session_factory() as session:
+            service = WorkflowService(session)
+            persisted_run = await service.get_run(run.id)
+            children = [
+                task
+                for step in persisted_run.steps
+                for task in step.tasks
+                if task.parent_task_id == parent_task.id
+            ]
+
+            # Core assertion: no children lost to clobbering
+            assert len(children) == 6, (
+                f"Expected 6 children but found {len(children)} — "
+                f"concurrent saves likely clobbered sibling rows"
+            )
+
+            # Each child has unique input/output and completed successfully
+            inputs = set()
+            outputs = set()
+            for child in children:
+                assert child.status == TaskStatus.COMPLETED, (
+                    f"Child {child.fan_out_index} status={child.status}, expected COMPLETED"
+                )
+                assert len(child.attempts) == 1
+                assert child.attempts[0].outcome == "passed"
+                assert child.attempts[0].auto_verify_results is not None
+                assert len(child.attempts[0].auto_verify_results) == 1
+                assert child.attempts[0].auto_verify_results[0]["passed"] is True
+                inputs.add(child.fan_out_input)
+                outputs.add(child.fan_out_output)
+
+            # All 6 inputs and outputs are distinct (no duplication/clobbering)
+            assert len(inputs) == 6, f"Duplicate inputs: {inputs}"
+            assert len(outputs) == 6, f"Duplicate outputs: {outputs}"
+
+            # Parent moved to VERIFYING (has outer rubric)
+            parent = await service.get_task(run.id, parent_task.id)
+            assert parent.status == TaskStatus.VERIFYING
+            assert parent.current_attempt == 1
+
+            # Output files actually created on disk
+            processed_dir = tmp_path / "output" / "processed"
+            assert processed_dir.exists()
+            result_files = sorted(processed_dir.glob("*.md"))
+            assert len(result_files) == 6, (
+                f"Expected 6 output files, found {len(result_files)}: {result_files}"
+            )
+
+    @pytest.mark.asyncio
     async def test_task_detail_does_not_synthesize_children_after_parent_execution(
         self,
         session: AsyncSession,
@@ -726,6 +934,161 @@ class TestFanOutRegression:
 
             detail = await get_task_detail(run.id, parent_task.id, service)
             assert detail.fan_out_children == []
+
+    @pytest.mark.asyncio
+    async def test_fan_out_pauses_cleanly_when_run_paused_mid_execution(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        """Children must not burn retries when the run is paused mid-fan-out.
+
+        Regression test: previously, if the run was paused while fan-out
+        children were executing, remaining children would hit
+        InvalidTransitionError(paused -> start_fan_out_child_task) and
+        exhaust all retry attempts.  The fix detects the paused state and
+        stops the fan-out cleanly, leaving the parent in FAN_OUT_RUNNING
+        so it can be resumed later.
+        """
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        for i in range(1, 5):
+            (output_dir / f"step-{i:02d}.md").write_text(f"content {i}")
+
+        routine = RoutineConfig(
+            id="fan-out-pause-test",
+            name="Fan-out Pause Resilience",
+            steps=[
+                StepConfig(
+                    id="S-01",
+                    title="Process",
+                    tasks=[
+                        TaskConfig(
+                            id="T-01",
+                            title="Process Files",
+                            requirements=[RequirementConfig(id="R1", desc="All done")],
+                            fan_out={
+                                "input_glob": "output/step-*.md",
+                                "output_pattern": "output/processed/{{item_stem}}-result.md",
+                                "per_item_prompt": "Write the processed result to {{output_path}}",
+                                "max_attempts": 4,
+                                "max_concurrent": 1,  # sequential so we can pause between children
+                                "auto_verify": {
+                                    "items": [
+                                        {"id": "output_exists", "cmd": "test -f {{output_path}}"}
+                                    ]
+                                },
+                            },
+                        )
+                    ],
+                )
+            ],
+        )
+        run = create_run_from_routine(
+            routine,
+            repo_name="proj-1",
+            source_branch="main",
+            routine_source=RoutineSource.LOCAL,
+            id_generator=iter(["run-pause", "step-1", "task-1"]).__next__,
+        )
+        run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
+        run.status = RunStatus.ACTIVE
+        run.worktree_path = str(tmp_path)
+        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_config = {"command": "test-agent", "model": "test-model"}
+
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            await repo.save(run)
+            await session.commit()
+
+        # Agent that pauses the run after the first child completes
+        children_started = 0
+
+        class _PausingAgent:
+            async def execute(
+                self,
+                context: ExecutionContext,
+                on_checklist_update: object = None,  # noqa: ARG002
+                on_submit: object = None,  # noqa: ARG002
+                on_output: object = None,  # noqa: ARG002
+                on_grade: object = None,  # noqa: ARG002
+                on_agent_metadata: object = None,  # noqa: ARG002
+                on_escalation: object = None,  # noqa: ARG002
+            ) -> ExecutionResult:
+                nonlocal children_started
+                children_started += 1
+                if children_started == 1:
+                    # First child: produce output normally
+                    match = re.search(r"^Output file: (.+)$", context.prompt, re.MULTILINE)
+                    assert match is not None
+                    output_rel = match.group(1).strip()
+                    output_path = Path(context.working_dir) / output_rel
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_text(f"processed {output_rel}")
+                    # Now pause the run so subsequent children can't start
+                    async with session_factory() as sess:
+                        svc = WorkflowService(sess)
+                        await svc.pause_run("run-pause", reason="test_pause")
+                        await sess.commit()
+                    return ExecutionResult(success=True, output_lines=[f"built {output_rel}"])
+                # Should never reach here — children should stop before executing
+                raise AssertionError("Agent called after run was paused")
+
+        class _PausingExecutor(AgentRunnerExecutor):
+            def __init__(self, sf: async_sessionmaker[AsyncSession]) -> None:
+                super().__init__(session_factory=sf, spawn_agents=False)
+                self._agent = _PausingAgent()
+
+            def _create_agent(self, *args: object, **kwargs: object) -> _PausingAgent:
+                return self._agent
+
+        executor = _PausingExecutor(session_factory)
+
+        async with session_factory() as session:
+            service = WorkflowService(session)
+            persisted_run = await service.get_run(run.id)
+            parent_task = persisted_run.steps[0].tasks[0]
+            await executor._execute_task(
+                run=persisted_run,
+                task_state=parent_task,
+                service=service,
+                agent_type=AgentRunnerType.CLI_SUBPROCESS,
+                agent_config=run.agent_config,
+            )
+
+        # Verify: parent stays in FAN_OUT_RUNNING (not FAILED)
+        async with session_factory() as session:
+            service = WorkflowService(session)
+            persisted_run = await service.get_run(run.id)
+            parent = None
+            completed_children = []
+            non_completed_children = []
+            for step in persisted_run.steps:
+                for t in step.tasks:
+                    if t.id == parent_task.id:
+                        parent = t
+                    elif t.parent_task_id == parent_task.id:
+                        if t.status == TaskStatus.COMPLETED:
+                            completed_children.append(t)
+                        else:
+                            non_completed_children.append(t)
+
+            assert parent is not None
+            assert parent.status == TaskStatus.FAN_OUT_RUNNING, (
+                f"Parent should stay FAN_OUT_RUNNING for resumption, got {parent.status}"
+            )
+
+            # First child completed successfully
+            assert len(completed_children) == 1
+            assert completed_children[0].attempts[0].outcome == "passed"
+
+            # Remaining children should NOT have burned through retries
+            for child in non_completed_children:
+                assert child.current_attempt <= 1, (
+                    f"Child {child.fan_out_index} has {child.current_attempt} "
+                    f"attempts — should not burn retries when run is paused"
+                )
 
 
 # ---------------------------------------------------------------------------

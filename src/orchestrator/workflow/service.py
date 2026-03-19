@@ -769,18 +769,19 @@ class WorkflowService:
                 "no worktree", "expand_fan_out_task (requires worktree_path)"
             )
 
-        # Resolve input_glob relative to worktree
-        pattern = str(Path(worktree_path) / fan_out.input_glob)
+        # Template variables from run config
+        variables: dict[str, str] = {k: str(v) for k, v in run.config.items() if v is not None}
+
+        # Resolve input_glob template variables (e.g. {{feature}}) before globbing
+        resolved_glob = resolve_template(fan_out.input_glob, variables=variables)
+        pattern = str(Path(worktree_path) / resolved_glob)
         matched_files = sorted(glob_mod.glob(pattern, recursive=True))
 
         if not matched_files:
             logger.warning(
                 f"Run {run_id}: fan-out task {task_id}: no files matched "
-                f"glob '{fan_out.input_glob}' in {worktree_path}"
+                f"glob '{resolved_glob}' in {worktree_path}"
             )
-
-        # Template variables from run config
-        variables: dict[str, str] = {k: str(v) for k, v in run.config.items() if v is not None}
 
         # Create child tasks
         children: list[TaskState] = []
@@ -853,6 +854,13 @@ class WorkflowService:
 
         parent_task = state.get_task(run_id, task_id)
         if parent_task.status != TaskStatus.FAN_OUT_RUNNING:
+            # Already transitioned (e.g. after resume) — skip silently
+            if parent_task.status in (TaskStatus.COMPLETED, TaskStatus.VERIFYING):
+                logger.info(
+                    f"Run {run_id}: fan-out parent {task_id} already "
+                    f"{parent_task.status.value}, skipping complete_fan_out_parent"
+                )
+                return
             raise InvalidTransitionError(
                 parent_task.status.value,
                 "complete_fan_out_parent (requires FAN_OUT_RUNNING)",
@@ -1044,7 +1052,11 @@ class WorkflowService:
         - ``auto_verify_results`` (list): set on latest attempt
         - ``status`` (TaskStatus): set on the task itself
         """
-        _ = await self._repo.get(run_id)
+        # NOTE: Do NOT load the full run here.  Loading via self._repo.get()
+        # pulls all child tasks into the session graph; if two children commit
+        # concurrently, the second commit can overwrite the first child's
+        # status with stale values.  update_latest_attempt loads only the
+        # target task model, which avoids this clobber.
         repo_updates: dict[str, Any] = {}
         for key in ("outcome", "error", "completed_at", "auto_verify_results"):
             if key in updates:

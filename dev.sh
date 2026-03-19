@@ -33,6 +33,26 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# --- Kill stale uvicorn processes on port 8000 ---
+# Two uvicorn processes sharing the same DB cause executor death loops:
+# requests get load-balanced between them, and one has no executor for the run.
+STALE_PIDS=$(lsof -ti :8000 2>/dev/null || true)
+if [ -n "$STALE_PIDS" ]; then
+  echo "Found existing process(es) on port 8000 (PIDs: $(echo $STALE_PIDS | tr '\n' ' '))"
+  echo "Killing to prevent duplicate-server executor death loop..."
+  echo "$STALE_PIDS" | xargs kill 2>/dev/null || true
+  # Wait briefly for processes to exit
+  sleep 1
+  # Force-kill any that didn't respond to SIGTERM
+  REMAINING=$(lsof -ti :8000 2>/dev/null || true)
+  if [ -n "$REMAINING" ]; then
+    echo "Force-killing remaining processes: $REMAINING"
+    echo "$REMAINING" | xargs kill -9 2>/dev/null || true
+    sleep 1
+  fi
+  echo "Port 8000 cleared."
+fi
+
 # Backend (FastAPI + uvicorn --reload)
 echo "Starting backend on http://localhost:8000 ..."
 cd "$ROOT"

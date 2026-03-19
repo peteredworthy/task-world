@@ -20,7 +20,7 @@ import {
   COLLAPSIBLE_BORDER_CLASS,
   COLLAPSIBLE_DIVIDER_CLASS,
 } from './sharedUtils';
-import type { AttemptSchema, ChecklistItemSchema, GradeSnapshotItem, TaskSummary } from '../../types';
+import type { AttemptSchema, ChecklistItemSchema, FanOutChildSummary, GradeSnapshotItem, TaskSummary } from '../../types';
 
 interface InspectorPanelProps {
   task: TaskSummary;
@@ -193,6 +193,151 @@ function AutoVerifyResults({ results }: { results: Record<string, unknown>[] }) 
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function filenameFromPath(path: string): string {
+  const parts = path.split('/');
+  return parts[parts.length - 1] || path;
+}
+
+function InspectorFanOutChildrenSection({
+  childTasks,
+  runId,
+}: {
+  childTasks: FanOutChildSummary[];
+  runId: string;
+}) {
+  const [expandedChildId, setExpandedChildId] = useState<string | null>(null);
+  const completedCount = childTasks.filter(t => t.status === 'completed').length;
+  const failedCount = childTasks.filter(t => t.status === 'failed').length;
+
+  return (
+    <div>
+      <h3 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wide mb-1.5">
+        Fan-out Progress
+        <span className="ml-2 text-text-muted font-mono normal-case">
+          {completedCount}/{childTasks.length} complete
+          {failedCount > 0 && <span className="text-status-failed ml-1">({failedCount} failed)</span>}
+        </span>
+      </h3>
+      <div className="space-y-1">
+        {childTasks.map(child => {
+          const rowKey = child.id ?? child.fan_out_input ?? child.title;
+          const isExpanded = expandedChildId === rowKey;
+          return (
+            <InspectorFanOutChildRow
+              key={rowKey}
+              child={child}
+              runId={runId}
+              isExpanded={isExpanded}
+              onToggle={() => setExpandedChildId(isExpanded ? null : rowKey)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function InspectorFanOutChildRow({
+  child,
+  runId,
+  isExpanded,
+  onToggle,
+}: {
+  child: FanOutChildSummary;
+  runId: string;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
+  const { data: detail, isLoading } = useTask(runId, isExpanded && child.id ? child.id : undefined);
+
+  return (
+    <div className={`rounded-md border ${COLLAPSIBLE_BORDER_CLASS} overflow-hidden`}>
+      <button
+        onClick={onToggle}
+        className="w-full text-left px-2 py-1.5 hover:bg-bg-hover/30 transition-colors"
+        aria-expanded={isExpanded}
+      >
+        <div className="flex items-center gap-2">
+          <TaskStatusBadge status={child.status} />
+          <span className="text-xs text-text-primary truncate flex-1 min-w-0" title={child.title}>
+            {detail?.fan_out_input ? filenameFromPath(detail.fan_out_input) : child.fan_out_input ? filenameFromPath(child.fan_out_input) : child.title}
+          </span>
+          {child.current_attempt > 1 && (
+            <span className="text-[10px] text-status-paused font-mono shrink-0">
+              x{child.current_attempt}
+            </span>
+          )}
+          <svg
+            className={'h-3 w-3 text-text-muted shrink-0 transition-transform ' + (isExpanded ? 'rotate-90' : '')}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </div>
+      </button>
+      {isExpanded && (
+        <div className={`border-t ${COLLAPSIBLE_DIVIDER_CLASS} p-2 space-y-2`}>
+          {child.fan_out_input && (
+            <div className="rounded border border-border bg-bg-card/40 px-2 py-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Input</div>
+              <div className="mt-0.5 break-all font-mono text-[11px] text-text-secondary">{child.fan_out_input}</div>
+            </div>
+          )}
+          {child.fan_out_output && (
+            <div className="rounded border border-border bg-bg-card/40 px-2 py-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Output</div>
+              <div className="mt-0.5 break-all font-mono text-[11px] text-text-secondary">{child.fan_out_output}</div>
+            </div>
+          )}
+          {child.is_synthetic && !child.id ? (
+            <div className="rounded border border-border bg-bg-card/40 px-2 py-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">History</div>
+              <p className="mt-0.5 text-xs text-text-muted italic">
+                Historical fan-out child reconstructed from routine inputs. Agent output and per-child grades were not persisted for this run.
+              </p>
+            </div>
+          ) : null}
+          {isLoading ? (
+            <div className="flex justify-center py-3">
+              <Spinner className="h-4 w-4" />
+            </div>
+          ) : detail ? (
+            detail.attempts.length === 0 ? (
+              <p className="text-xs text-text-muted italic">No attempts yet</p>
+            ) : (
+              detail.attempts.map((att, i) => (
+                <div
+                  key={att.id}
+                  className="rounded border border-border bg-bg-card/40 px-2 py-1.5"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-text-primary">
+                      Attempt #{att.attempt_num}
+                    </span>
+                    {att.outcome && (
+                      <span className={'text-[10px] font-semibold uppercase rounded px-1.5 py-0.5 bg-bg-card border border-border ' + outcomeColor(att.outcome)}>
+                        {outcomeLabel(att.outcome)}
+                      </span>
+                    )}
+                  </div>
+                  {i === detail.attempts.length - 1 && att.verifier_comment && (
+                    <p className="text-[11px] text-text-muted mt-1 whitespace-pre-wrap break-words">
+                      {att.verifier_comment}
+                    </p>
+                  )}
+                </div>
+              ))
+            )
+          ) : null}
+        </div>
+      )}
     </div>
   );
 }
@@ -512,6 +657,7 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
     const taskGroup = groups.find((group): group is TaskEventGroup => group.kind === 'task' && group.task_id === task.id);
     return taskGroup?.events ?? [];
   }, [activityData?.events, task.id]);
+  const fanOutChildren = detail?.fan_out_children ?? [];
   const latestAttemptContext = useMemo(
     () => getLatestAttemptContext(detail?.attempts ?? [], task.status),
     [detail?.attempts, task.status],
@@ -550,6 +696,11 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
           <p className="text-xs text-text-muted mt-1">
             Attempt {task.current_attempt} of {task.max_attempts}
           </p>
+          {fanOutChildren.length > 0 && (
+            <div className="mt-2 inline-flex items-center rounded border border-accent-cyan/30 bg-accent-cyan/10 px-2 py-0.5 text-[10px] font-mono text-accent-cyan">
+              {fanOutChildren.length} child{fanOutChildren.length === 1 ? '' : 'ren'}
+            </div>
+          )}
           {canRetry && (
             <div className="mt-2 space-y-2">
               <textarea
@@ -595,6 +746,10 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
                 </h3>
                 <ChecklistTable items={detail.checklist} variant="stacked" />
               </div>
+            )}
+
+            {fanOutChildren.length > 0 && (
+              <InspectorFanOutChildrenSection childTasks={fanOutChildren} runId={runId} />
             )}
 
             {task.status === 'recovering' && (

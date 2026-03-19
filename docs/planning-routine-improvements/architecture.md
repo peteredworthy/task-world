@@ -200,7 +200,7 @@ def resolve_template(template, variables=None, worktree_path=None):
 
 One new routine file is created, two engine files are modified, and tests are added/updated.
 
-**Source:** The new variant is based on `routines/idea-to-plan/routine.yaml` (the active 8-step version). The `examples/routines/idea_to_plan.yaml` file is an older copy.
+**Source:** The new variant is based on `routines/idea-to-plan/routine.yaml` (the active 8-step version).
 
 ## Testing Strategy
 

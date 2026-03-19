@@ -803,7 +803,10 @@ async def approve_step(
     await session.commit()
 
     # Resume run if it was paused waiting for this approval, then re-spawn agent
-    if run.status == RunStatus.PAUSED and run.pause_reason == "waiting_for_approval":
+    if run.status == RunStatus.PAUSED and run.pause_reason in (
+        "waiting_for_approval",
+        "awaiting_approval",
+    ):
         from orchestrator.db.event_store import EventStore
         from orchestrator.workflow.event_logger import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService

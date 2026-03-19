@@ -19,7 +19,7 @@ import {
   COLLAPSIBLE_BORDER_CLASS,
   COLLAPSIBLE_DIVIDER_CLASS,
 } from './sharedUtils';
-import type { ActivityEvent, GradeSummaryItem, AttemptOutcome } from '../../types';
+import type { ActivityEvent, FanOutChildSummary, GradeSummaryItem, AttemptOutcome } from '../../types';
 import type { TaskStatus, AttemptSchema, ChecklistItemSchema, GradeSnapshotItem } from '../../types';
 
 interface TaskDetailCardProps {
@@ -589,7 +589,7 @@ function FanOutChildrenSection({
   childTasks,
   runId,
 }: {
-  childTasks: import('../../types').TaskSummary[];
+  childTasks: FanOutChildSummary[];
   runId: string;
 }) {
   const [expandedChildId, setExpandedChildId] = useState<string | null>(null);
@@ -607,14 +607,15 @@ function FanOutChildrenSection({
       </h4>
       <div className="space-y-1">
         {childTasks.map(child => {
-          const isExpanded = expandedChildId === child.id;
+          const rowKey = child.id ?? child.fan_out_input ?? child.title;
+          const isExpanded = expandedChildId === rowKey;
           return (
             <FanOutChildRow
-              key={child.id}
+              key={rowKey}
               child={child}
               runId={runId}
               isExpanded={isExpanded}
-              onToggle={() => setExpandedChildId(isExpanded ? null : child.id)}
+              onToggle={() => setExpandedChildId(isExpanded ? null : rowKey)}
             />
           );
         })}
@@ -630,12 +631,12 @@ function FanOutChildRow({
   isExpanded,
   onToggle,
 }: {
-  child: import('../../types').TaskSummary;
+  child: FanOutChildSummary;
   runId: string;
   isExpanded: boolean;
   onToggle: () => void;
 }) {
-  const { data: detail, isLoading } = useTask(runId, isExpanded ? child.id : undefined);
+  const { data: detail, isLoading } = useTask(runId, isExpanded && child.id ? child.id : undefined);
 
   return (
     <div className={`rounded border ${COLLAPSIBLE_BORDER_CLASS} overflow-hidden`}>
@@ -646,8 +647,8 @@ function FanOutChildRow({
       >
         <div className="flex items-center gap-2">
           <StatusIcon status={child.status} />
-          <span className="text-xs text-text-primary truncate flex-1 min-w-0" title={child.title || child.config_id}>
-            {detail?.fan_out_input ? filenameFromPath(detail.fan_out_input) : child.title || child.config_id}
+          <span className="text-xs text-text-primary truncate flex-1 min-w-0" title={child.title}>
+            {detail?.fan_out_input ? filenameFromPath(detail.fan_out_input) : child.fan_out_input ? filenameFromPath(child.fan_out_input) : child.title}
           </span>
           {child.current_attempt > 1 && (
             <span className="text-[10px] text-status-paused font-mono shrink-0">
@@ -668,6 +669,26 @@ function FanOutChildRow({
       </button>
       {isExpanded && (
         <div className={`border-t ${COLLAPSIBLE_DIVIDER_CLASS} px-2.5 py-2 space-y-2`}>
+          {child.fan_out_input && (
+            <div className="rounded border border-border bg-bg-card/40 px-2 py-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Input</div>
+              <div className="mt-0.5 break-all font-mono text-[11px] text-text-secondary">{child.fan_out_input}</div>
+            </div>
+          )}
+          {child.fan_out_output && (
+            <div className="rounded border border-border bg-bg-card/40 px-2 py-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">Output</div>
+              <div className="mt-0.5 break-all font-mono text-[11px] text-text-secondary">{child.fan_out_output}</div>
+            </div>
+          )}
+          {child.is_synthetic && !child.id ? (
+            <div className="rounded border border-border bg-bg-card/40 px-2 py-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">History</div>
+              <p className="mt-0.5 text-xs text-text-muted italic">
+                Historical fan-out child reconstructed from routine inputs. Agent output and per-child grades were not persisted for this run.
+              </p>
+            </div>
+          ) : null}
           {isLoading ? (
             <div className="flex justify-center py-3">
               <Spinner className="h-4 w-4" />
@@ -684,7 +705,7 @@ function FanOutChildRow({
                   isLatest={i === detail.attempts.length - 1}
                   taskStatus={child.status}
                   runId={runId}
-                  taskId={child.id}
+                  taskId={child.id!}
                 />
               ))
             )
@@ -714,6 +735,20 @@ export function TaskDetailCard({
   );
 
   const attemptCount = attemptsSummary.length;
+  const persistedChildTasks = (stepTasks ?? [])
+    .filter(t => t.parent_task_id === taskId)
+    .map<FanOutChildSummary>(t => ({
+      id: t.id,
+      title: t.title || t.config_id,
+      status: t.status,
+      current_attempt: t.current_attempt,
+      fan_out_input: null,
+      fan_out_output: null,
+      is_synthetic: false,
+    }));
+  const detailChildTasks = detail?.fan_out_children ?? [];
+  const childTasks = detailChildTasks.length > 0 ? detailChildTasks : persistedChildTasks;
+  const childTaskCount = childTasks.length;
 
   return (
     <div className={`rounded-lg border ${COLLAPSIBLE_BORDER_CLASS} bg-bg-card overflow-hidden transition-colors`}>
@@ -732,6 +767,12 @@ export function TaskDetailCard({
           <span className="text-sm font-medium text-text-primary truncate flex-1 min-w-0" title={taskTitle}>
             {taskTitle}
           </span>
+
+          {childTaskCount > 0 && (
+            <span className="text-[10px] font-mono text-accent-cyan shrink-0 rounded border border-accent-cyan/30 bg-accent-cyan/10 px-1.5 py-0.5">
+              {childTaskCount} child{childTaskCount === 1 ? '' : 'ren'}
+            </span>
+          )}
 
           {/* Step title */}
           {stepTitle && (
@@ -858,11 +899,7 @@ export function TaskDetailCard({
               })()}
 
               {/* Fan-out children — shown when this task is a fan-out parent */}
-              {(() => {
-                const childTasks = (stepTasks ?? []).filter(t => t.parent_task_id === taskId);
-                if (childTasks.length === 0) return null;
-                return <FanOutChildrenSection childTasks={childTasks} runId={runId} />;
-              })()}
+              {childTaskCount > 0 && <FanOutChildrenSection childTasks={childTasks} runId={runId} />}
 
               {/* Attempt History */}
               {detail.attempts.length === 0 ? (

@@ -130,13 +130,18 @@ def _make_run_no_actionable() -> Run:
     return run
 
 
+# FAN_OUT_IN_PROGRESS is no longer reachable from _find_next_task because
+# FAN_OUT_RUNNING tasks are now returned as actionable (so the executor can
+# re-enter _execute_fan_out on resume).  It's kept in NoTaskReason for
+# resolve_no_task_action coverage but excluded from _find_next_task tests.
 REASON_FACTORIES: dict[NoTaskReason, Callable[[], Run]] = {
     NoTaskReason.ALL_COMPLETE: _make_run_all_complete,
     NoTaskReason.BLOCKED_BY_GATE: _make_run_gate_blocked,
     NoTaskReason.PENDING_USER_ACTION: _make_run_pending_user_action,
-    NoTaskReason.FAN_OUT_IN_PROGRESS: _make_run_fan_out_running,
     NoTaskReason.NO_ACTIONABLE_TASKS: _make_run_no_actionable,
 }
+
+_UNREACHABLE_REASONS = {NoTaskReason.FAN_OUT_IN_PROGRESS}
 
 
 # ---------------------------------------------------------------------------
@@ -148,10 +153,10 @@ class TestFindNextTaskReasons:
     """Pure tests: _find_next_task on in-memory Run objects."""
 
     def test_all_reasons_have_factory(self) -> None:
-        """Every NoTaskReason member must have a factory."""
-        assert set(REASON_FACTORIES) == set(NoTaskReason)
+        """Every reachable NoTaskReason member must have a factory."""
+        assert set(REASON_FACTORIES) | _UNREACHABLE_REASONS == set(NoTaskReason)
 
-    @pytest.mark.parametrize("reason", list(NoTaskReason))
+    @pytest.mark.parametrize("reason", [r for r in NoTaskReason if r not in _UNREACHABLE_REASONS])
     def test_returns_expected_reason(self, reason: NoTaskReason) -> None:
         run = REASON_FACTORIES[reason]()
         # We need a bare executor for _find_next_task (it's a method).
@@ -174,6 +179,18 @@ class TestFindNextTaskReasons:
         )
         task, reason = executor._find_next_task(run)
         assert task is not None
+        assert reason is None
+
+    def test_returns_task_when_fan_out_running(self) -> None:
+        """A FAN_OUT_RUNNING task should be returned so executor re-enters _execute_fan_out."""
+        run = _make_run_fan_out_running()
+        executor = AgentRunnerExecutor(
+            session_factory=None,  # type: ignore[arg-type]
+            spawn_agents=False,
+        )
+        task, reason = executor._find_next_task(run)
+        assert task is not None
+        assert task.status == TaskStatus.FAN_OUT_RUNNING
         assert reason is None
 
     def test_returns_task_when_building(self) -> None:
@@ -217,7 +234,9 @@ class TestResolveNoTaskAction:
     @pytest.mark.parametrize("reason", list(NoTaskReason))
     def test_action_never_leaves_run_active(self, reason: NoTaskReason) -> None:
         """The invariant: every reason produces a non-trivial action."""
-        run = REASON_FACTORIES[reason]()
+        # Use the factory if available, otherwise use a generic run
+        factory = REASON_FACTORIES.get(reason)
+        run = factory() if factory else _base_run()
         action = resolve_no_task_action(run, reason)
         assert action.kind in ("pause", "complete", "fail")
         if action.kind == "pause":
@@ -227,7 +246,8 @@ class TestResolveNoTaskAction:
 
     @pytest.mark.parametrize("reason", list(NoTaskReason))
     def test_action_matches_expected(self, reason: NoTaskReason) -> None:
-        run = REASON_FACTORIES[reason]()
+        factory = REASON_FACTORIES.get(reason)
+        run = factory() if factory else _base_run()
         action = resolve_no_task_action(run, reason)
         expected_kind, expected_pause_reason = EXPECTED_ACTIONS[reason]
         assert action.kind == expected_kind, (

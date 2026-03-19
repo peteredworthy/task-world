@@ -92,7 +92,8 @@ Templates support variable substitution with `{{feature}}`, `{{idea}}`, and othe
 
 ## See Also
 
-- `docs/plan-runner/idea_to_plan_detailed.md` - Detailed planning process documentation
+- `docs/plan-runner/idea_to_plan_process.md` - Planning process principles and guidance
+- `docs/plan-runner/step-files.md` - Step file format and verification guidance
 - `docs/plan-runner/routine-yaml-format.md` - Routine YAML format and validation guide
 - `docs/planner/templates/` - Additional reference templates
-- `examples/routines/idea_to_plan.yaml` - Example routine definition (deprecated, see routine.yaml)
+- `examples/routines/` - Other example routines demonstrating workflow features

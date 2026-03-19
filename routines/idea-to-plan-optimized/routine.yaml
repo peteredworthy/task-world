@@ -1,6 +1,6 @@
 routine:
-  id: "idea-to-plan"
-  name: "Idea to Implementation Plan"
+  id: "idea-to-plan-optimized"
+  name: "Idea to Implementation Plan (Optimized)"
   description: |
     Transform an initial idea into a structured, executable plan through an 8-stage
     workflow with human review gates. Produces step files and a validated routine
@@ -31,8 +31,19 @@ routine:
       tasks:
         - id: "T-01"
           title: "Generate Initial Artifacts"
+          profile: "architect"
+          context_from:
+            - artifact: "docs/plan-runner/idea_to_plan_stripped.md"
+              as: "context.process_checklist"
+              required: false
+            - artifact: "docs/plan-runner/idea_to_plan_detailed.md"
+              as: "context.process_detailed"
+              required: false
           task_context: |
             Create initial planning artifacts based on the idea and codebase context.
+
+            IMPORTANT: Do NOT read source code files. Focus only on the idea, codebase
+            context description, and the process reference documents provided below.
 
             IDEA:
             {{idea}}
@@ -40,14 +51,18 @@ routine:
             CODEBASE CONTEXT:
             {{codebase_context}}
 
+            PROCESS CHECKLIST (Stage 1):
+            {{context.process_checklist}}
+
+            PROCESS PRINCIPLES:
+            {{context.process_detailed}}
+
             Create these files in docs/{{feature}}/:
             1. intent.md
             2. plan.md
             3. architecture.md
 
-            Follow:
-            - docs/plan-runner/idea_to_plan_process.md (principles and guidance)
-            - docs/planner/templates/*.md (artifact structure)
+            Follow docs/planner/templates/*.md for artifact structure.
 
             Ensure content is specific to the project and actionable.
           requirements:
@@ -100,15 +115,16 @@ routine:
       tasks:
         - id: "T-01"
           title: "Gather Requirements and Update Docs"
+          profile: "architect"
           context_from:
             - artifact: "docs/{{feature}}/intent.md"
-              as: "intent"
+              as: "context.intent"
               required: true
             - artifact: "docs/{{feature}}/plan.md"
-              as: "plan"
+              as: "context.plan"
               required: true
             - artifact: "docs/{{feature}}/architecture.md"
-              as: "architecture"
+              as: "context.architecture"
               required: false
           task_context: |
             Review the planning artifacts and gather all open design questions from the human.
@@ -183,6 +199,7 @@ routine:
       tasks:
         - id: "T-01"
           title: "Create Step Plans"
+          profile: "architect"
           context_from:
             - artifact: "docs/{{feature}}/plan.md"
               as: "plan"
@@ -261,17 +278,38 @@ routine:
         Each task must be independently verifiable and keep the system runnable.
       tasks:
         - id: "T-01"
-          title: "Create Step Files"
-          task_context: |
-            Convert step plans into docs/{{feature}}/steps/step-XX.md files.
+          title: "Create Step Files (Fan-Out)"
+          profile: "coder"
+          fan_out:
+            input_glob: "docs/{{feature}}/step-*-plan.md"
+            output_pattern: "docs/{{feature}}/steps/{{item_stem}}.md"
+            per_item_prompt: |
+              Convert the following step plan into a step file following the step-files format guide.
 
-            Follow docs/plan-runner/step-files.md.
+              STEP PLAN:
+              {{item_content}}
 
-            Each task must be:
-            - Atomic (<5 files, <500 LOC)
-            - Independently verifiable
-            - Runnable in sequence
-            - Linked to relevant context
+              Create the output file at {{output_path}}.
+
+              Each task must be:
+              - Atomic (<5 files, <500 LOC)
+              - Independently verifiable
+              - Runnable in sequence
+              - Linked to relevant context
+
+              Follow the step-files format guide provided in shared context.
+            shared_context:
+              - "{{file:docs/{{feature}}/plan.md}}"
+              - "{{file:docs/{{feature}}/architecture.md}}"
+              - "{{file:docs/{{feature}}/clarifications.md}}"
+              - "{{file:docs/plan-runner/step-files.md}}"
+            max_concurrent: 4
+            max_turns: 25
+            auto_verify:
+              items:
+                - id: "step_file_exists"
+                  cmd: "test -f {{output_path}}"
+                  must: true
           requirements:
             - id: "R1"
               desc: "Create steps/step-XX.md for each step plan"
@@ -322,126 +360,118 @@ routine:
 
     - id: "S-05"
       title: "Dry Run & Failure Mode Analysis"
-      type: dry_run
       step_context: |
         Simulate execution, identify gaps, and analyze failure modes.
         Then harden the plan to minimize likelihood of failures.
-      dry_run:
-        target_steps: ["S-08"]
-        context_limit: 4000
-        report_path: "docs/{{feature}}/dry-run-notes.md"
       tasks:
         - id: "T-01"
-          title: "Simulate Execution and Analyze Failure Modes"
-          task_context: |
-            Simulate execution across generated tasks. For each step:
+          title: "Simulate Execution Per Step"
+          profile: "architect"
+          fan_out:
+            input_glob: "docs/{{feature}}/steps/step-[0-9][0-9].md"
+            output_pattern: "docs/{{feature}}/dry-run/{{item_stem}}-notes.md"
+            per_item_prompt: |
+              Simulate execution of the following step file. For each task in the step:
 
-            1. Walk through the tasks in order and capture:
-               - Assumptions being made
-               - Expected outputs
-               - Blockers and mitigation
+              1. Walk through the tasks and capture:
+                 - Assumptions being made
+                 - Expected outputs
+                 - Blockers and mitigation
 
-            2. Identify likely failure modes. For each task, check:
-               - Are file references correct? Open the file and confirm the method/class
-                 is there. Wrong file = agent edits the wrong place or wastes attempts.
-               - Are model/class names correct against the actual source (not architecture
-                 docs)? Wrong name = agent creates a duplicate.
-               - Does "create" vs "update" match file existence?
-               - Are format-dependent interfaces (YAML schemas, config shapes, API
-                 contracts) specified explicitly? Agents left to invent formats produce
-                 valid-but-incompatible ones.
-               - Will existing tests break from renames or restructuring?
-               - Are async/infrastructure dependencies resolved (client, fallback, test
-                 strategy)?
-               - Are existing code patterns referenced for the agent to follow?
-               - **Persistence layer complete?** For every new state model field, is
-                 there a DB column, repo write mapping, and repo read mapping? This is
-                 the #1 source of "works in unit tests, fails in integration" bugs.
-               - **Integration test assertions specified?** Do test tasks say what to
-                 assert (e.g. "make N+1 calls, assert last returns 429"), not just what
-                 scenarios to cover (e.g. "test budget exhaustion")?
+              2. Identify failure modes:
+                 - Are file references correct?
+                 - Are model/class names correct against actual source?
+                 - Does "create" vs "update" match file existence?
+                 - Are format-dependent interfaces specified explicitly?
+                 - Will existing tests break?
+                 - Are async/infrastructure dependencies resolved?
+                 - Persistence layer complete? (DB column, repo write, repo read for new fields)
+                 - Integration test assertions specified?
 
-            3. For each failure mode, propose a hardening action:
-               - Tighten the task instructions to prevent the failure
-               - Add fallback approaches
-               - Split overly complex tasks
-               - Add environment checks as early auto_verify commands
-               - Flag requirements that depend on external state
+              3. For each failure mode, propose a concrete hardening action.
 
-            4. **Apply fixes to step files.** For every gap identified, update the
-               affected step file directly — do not just document the gap. Each gap
-               entry must have "Applied to step files: YES" before the dry-run is
-               considered complete. A gap that is only proposed but not applied WILL
-               be missed during execution.
+              Do NOT modify the step file or any source code. Write analysis only.
 
-            5. **Persistence mapping audit.** If any step adds fields to state models
-               (TaskState, StepState, Run, etc.), fill in this table for each field:
+              STEP FILE:
+              {{item_content}}
 
-               | State Field | DB Column | Repo Write | Repo Read | Migration |
-               |---|---|---|---|---|
+              CORRESPONDING STEP PLAN:
+              {{file:docs/{{feature}}/{{item_stem}}.md}}
 
-               Any MISSING cell is a gap. Add instructions to the relevant step file.
-               Also check: Pydantic models stored as JSON in dict columns (e.g. in
-               run.config) will deserialize as dicts, not models. Any code that reads
-               them back must handle dict→model conversion.
-
-            Save notes to docs/{{feature}}/dry-run-notes.md with sections:
-            - Per-step simulation results
-            - Persistence mapping audit (table, or N/A if no new state fields)
-            - Failure mode analysis (table: step, failure mode, likelihood, hardening action)
-            - Plan changes recommended (with confirmation each is applied)
+              Save notes to {{output_path}}.
+            shared_context:
+              - "{{file:docs/{{feature}}/intent.md}}"
+              - "{{file:docs/{{feature}}/plan.md}}"
+              - "{{file:docs/{{feature}}/architecture.md}}"
+            max_concurrent: 4
+            max_turns: 20
+            auto_verify:
+              items:
+                - id: "dry_run_notes_exist"
+                  cmd: "test -f {{output_path}}"
+                  must: true
           requirements:
             - id: "R1"
-              desc: "Dry run simulation completes for every generated task"
+              desc: "Per-step dry-run notes created for each step file"
               priority: critical
             - id: "R2"
-              desc: "Gaps are documented with concrete remediation AND applied to step files"
+              desc: "Gaps identified with hardening actions applied to step files"
               priority: critical
             - id: "R3"
-              desc: "Failure modes identified per step with hardening actions"
+              desc: "Failure modes identified per step with concrete hardening actions"
               priority: critical
-            - id: "R4"
-              desc: "Persistence mapping audit complete for any new state model fields (no MISSING cells)"
-              priority: critical
-            - id: "R5"
-              desc: "Integration test tasks in step files specify assertion logic, not just scenario names"
-              priority: expected
-          auto_verify:
-            items:
-              - id: "dry_run_exists"
-                cmd: "test -f docs/{{feature}}/dry-run-notes.md"
-                must: true
           verifier:
             rubric:
               - id: "R1"
                 text: |
-                  R1 — A: simulation walks through each step in order and identifies at least one
-                  concrete assumption or risk per step. B: simulation covers steps but at a
-                  high level without step-specific analysis.
+                  R1 — A: dry-run notes exist for each step file and each identifies at least one
+                  concrete assumption or risk. B: notes exist but analysis is high-level without
+                  step-specific detail.
               - id: "R2"
                 text: |
-                  R2 — A: each identified gap has a specific remediation AND the gap entry shows
-                  "Applied to step files: YES" — meaning the fix was written into the step-XX.md
-                  task instructions, not just proposed in the dry-run notes. B: gaps have remediations
-                  but some are only proposed, not applied. F: gaps documented but none applied to
-                  step files — this is the exact failure mode this check exists to prevent.
+                  R2 — A: each identified gap has a specific, actionable remediation described
+                  in the notes. B: gaps have remediations but some are vague or generic.
+                  F: gaps documented but no remediations proposed.
               - id: "R3"
                 text: |
-                  R3 — A: failure mode table covers every step, each failure mode has a concrete
-                  hardening action that could be applied to the plan or routine. B: failure modes
-                  listed but hardening actions are vague or some steps are skipped.
-              - id: "R4"
-                text: |
-                  R4 — A: persistence mapping audit table is present and every cell is filled
-                  (no MISSING). If no new state fields exist, table says N/A with justification.
-                  B: table exists but one or two cells are uncertain. F: table missing, or has
-                  MISSING cells without corresponding step file fixes.
-              - id: "R5"
-                text: |
-                  R5 — A: integration test tasks in step files specify what the tests must assert
-                  (e.g. "make N calls, assert call N+1 returns 429"), not just scenario names
-                  (e.g. "test budget exhaustion"). B: most test tasks specify assertions but one
-                  or two are scenario-name-only.
+                  R3 — A: failure mode analysis covers each task in the step, each failure mode has
+                  a concrete hardening action. B: failure modes listed but hardening actions are vague.
+
+        - id: "T-02"
+          title: "Merge Dry Run Notes"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+          task_context: |
+            Merge all per-step dry-run notes from docs/{{feature}}/dry-run/ into a single
+            consolidated file at docs/{{feature}}/dry-run-notes.md.
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            The merged file must include:
+            - Per-step simulation results
+            - Persistence mapping audit (table, or N/A if no new state fields)
+            - Failure mode analysis (table: step, failure mode, likelihood, hardening action)
+            - Cross-step risk synthesis (dependencies and risks that span multiple steps)
+            - Plan changes recommended (with confirmation each is applied)
+          requirements:
+            - id: "R1"
+              desc: "Merged dry-run-notes.md contains all per-step simulation results"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "merged_notes_exist"
+                cmd: "test -f docs/{{feature}}/dry-run-notes.md"
+                must: true
       transitions:
         on_complete: "S-06"
 
@@ -453,15 +483,22 @@ routine:
       tasks:
         - id: "T-01"
           title: "Cross-Check All Artifacts"
+          profile: "coder"
           context_from:
             - artifact: "docs/{{feature}}/intent.md"
-              as: "intent"
+              as: "context.intent"
               required: true
             - artifact: "docs/{{feature}}/plan.md"
-              as: "plan"
+              as: "context.plan"
               required: true
             - artifact: "docs/{{feature}}/dry-run-notes.md"
-              as: "dry_run"
+              as: "context.dry_run"
+              required: false
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: false
+            - artifact: "docs/{{feature}}/clarifications.md"
+              as: "context.clarifications"
               required: false
           task_context: |
             Verify alignment across intent, plan, step files, and dry run output.
@@ -583,6 +620,7 @@ routine:
       tasks:
         - id: "T-01"
           title: "Human Final Approval"
+          profile: "summarizer"
           task_context: |
             You are running because the human has already approved the step gate above.
             Your only job is to acknowledge the approval and hand off to the next stage.
@@ -591,13 +629,6 @@ routine:
             - id: "R1"
               desc: "Human approval received — mark done and submit"
               priority: critical
-          verifier:
-            rubric:
-              - id: "R1"
-                text: |
-                  R1 — A: the agent acknowledged the human approval and submitted without
-                  making any code or document changes. F: the agent modified files or
-                  failed to submit.
 
     - id: "S-08"
       title: "Execution Ready"
@@ -607,6 +638,20 @@ routine:
       tasks:
         - id: "T-01"
           title: "Generate Summary"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/dry-run-notes.md"
+              as: "context.dry_run"
+              required: false
+            - artifact: "docs/{{feature}}/verification-report.md"
+              as: "context.verification_report"
+              required: false
           task_context: |
             Create docs/{{feature}}/plan-summary.md including:
             - Intent satisfaction summary
@@ -614,6 +659,18 @@ routine:
             - Key decisions
             - Risks and mitigations
             - Caveats for execution
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            DRY RUN NOTES:
+            {{context.dry_run}}
+
+            VERIFICATION REPORT:
+            {{context.verification_report}}
           requirements:
             - id: "R1"
               desc: "Create plan-summary.md with complete execution summary"
@@ -621,23 +678,37 @@ routine:
           auto_verify:
             items:
               - id: "summary_exists"
-                cmd: "test -f docs/{{feature}}/plan-summary.md"
+                cmd: "test -f docs/planning-routine-improvements/plan-summary.md"
                 must: true
-          verifier:
-            rubric:
-              - id: "R1"
-                text: |
-                  R1 — A: summary has all five sections (intent satisfaction, step list,
-                  decisions, risks, caveats) with specific content in each, and is accurate
-                  relative to generated artifacts (step counts, gap counts, decisions match
-                  the actual docs). B: summary covers most sections but one or two are
-                  perfunctory, or contains minor inaccuracies.
+              - id: "has_sections"
+                cmd: "grep -q 'Intent' docs/planning-routine-improvements/plan-summary.md && grep -q 'Risks' docs/planning-routine-improvements/plan-summary.md"
+                must: true
 
         - id: "T-02"
           title: "Create and Validate Routine YAML"
+          profile: "coder"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: false
           task_context: |
             Create the execution routine file for this feature:
             - routines/{{feature}}/routine.yaml
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN (M1 section):
+            {{context.plan}}
+
+            ARCHITECTURE (context_from injection section):
+            {{context.architecture}}
 
             The routine must encode the generated steps so another run can execute them.
 

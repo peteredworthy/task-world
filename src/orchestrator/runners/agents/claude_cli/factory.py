@@ -53,6 +53,7 @@ def create_cli_agent(
     # Build args based on command
     args = agent_config.get("args", [])
     parser = None
+    max_turns = agent_config.get("max_turns")
     if command == "claude" and not args:
         args = [
             "-p",
@@ -61,9 +62,11 @@ def create_cli_agent(
             "stream-json",
             "--verbose",
         ]
+        if max_turns:
+            args.extend(["--max-turns", str(max_turns)])
         parser = ClaudeStreamParser()
     elif command == "codex" and not args:
-        args = ["exec", "--dangerously-bypass-approvals-and-sandbox", "--json"]
+        args = ["exec", "--full-auto", "--json"]
         parser = CodexStreamParser()
 
     # Resolve nudger config

@@ -25,6 +25,19 @@ _needs_claude = pytest.mark.skipif(shutil.which("claude") is None, reason="claud
 _needs_codex = pytest.mark.skipif(shutil.which("codex") is None, reason="codex CLI not found")
 
 
+def _can_bind_socket() -> bool:
+    """Check if we can bind a socket (may be blocked by sandbox)."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind(("127.0.0.1", 0))
+            return True
+    except PermissionError:
+        return False
+
+
+_needs_socket = pytest.mark.skipif(not _can_bind_socket(), reason="socket.bind blocked (sandbox)")
+
+
 def _make_context(
     working_dir: str = "/tmp",
     api_base_url: str | None = None,
@@ -324,6 +337,7 @@ async def test_claude_simple_output(tmp_path: Path) -> None:
 # --- CLIAgent ↔ Workflow integration (real HTTP server) ---
 
 
+@_needs_socket
 async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state() -> None:
     """Full integration: CLIAgent subprocess parses enriched prompt, calls REST API,
     workflow state transitions from BUILDING to VERIFYING.

@@ -151,8 +151,6 @@ async def _mutate_run_for_reason(
             pass
         elif reason == NoTaskReason.PENDING_USER_ACTION:
             run.steps[0].tasks[0].status = TaskStatus.PENDING_USER_ACTION
-        elif reason == NoTaskReason.FAN_OUT_IN_PROGRESS:
-            run.steps[0].tasks[0].status = TaskStatus.FAN_OUT_RUNNING
         elif reason == NoTaskReason.NO_ACTIONABLE_TASKS:
             for task in run.steps[0].tasks:
                 task.status = TaskStatus.COMPLETED
@@ -189,11 +187,14 @@ async def session_factory(app: FastAPI) -> async_sessionmaker[AsyncSession]:
 # Expected post-loop states
 # ---------------------------------------------------------------------------
 
+# FAN_OUT_IN_PROGRESS is no longer reachable from _find_next_task because
+# FAN_OUT_RUNNING tasks are now returned as actionable tasks for re-execution.
+_UNREACHABLE_REASONS = {NoTaskReason.FAN_OUT_IN_PROGRESS}
+
 EXPECTED_POST_LOOP_STATE: dict[NoTaskReason, tuple[RunStatus, str | None]] = {
     NoTaskReason.ALL_COMPLETE: (RunStatus.COMPLETED, None),
     NoTaskReason.BLOCKED_BY_GATE: (RunStatus.PAUSED, "awaiting_approval"),
     NoTaskReason.PENDING_USER_ACTION: (RunStatus.PAUSED, "awaiting_user_input"),
-    NoTaskReason.FAN_OUT_IN_PROGRESS: (RunStatus.PAUSED, "fan_out_orphaned"),
     NoTaskReason.NO_ACTIONABLE_TASKS: (RunStatus.PAUSED, "no_actionable_tasks"),
 }
 
@@ -216,9 +217,9 @@ class TestExecutorLoopNeverLeavesActive:
     """Integration: real loop, real DB, no agents."""
 
     def test_all_reasons_covered(self) -> None:
-        assert set(EXPECTED_POST_LOOP_STATE) == set(NoTaskReason)
+        assert set(EXPECTED_POST_LOOP_STATE) | _UNREACHABLE_REASONS == set(NoTaskReason)
 
-    @pytest.mark.parametrize("reason", list(NoTaskReason))
+    @pytest.mark.parametrize("reason", [r for r in NoTaskReason if r not in _UNREACHABLE_REASONS])
     async def test_run_not_active_after_loop(
         self,
         reason: NoTaskReason,

@@ -207,6 +207,11 @@ function RunDetailInner({ runId }: { runId: string }) {
                       recovery_triggered: 'Paused — recovery triggered',
                       requirement_escalated: 'Paused — agent flagged an unfulfillable requirement',
                       waiting_for_approval: 'Paused — waiting for step approval',
+                      awaiting_approval: 'Paused — waiting for step approval',
+                      awaiting_user_input: 'Paused — waiting for user input',
+                      fan_out_orphaned: 'Paused — fan-out task needs recovery',
+                      all_steps_complete_but_active: 'Paused — all steps complete (investigating)',
+                      no_actionable_tasks: 'Paused — no actionable tasks in current step',
                       no_executor_running: 'Paused — no executor running (will auto-resume)',
                     } as Record<string, string>)[run.pause_reason] ?? `Paused (${run.pause_reason})`}
                   </div>

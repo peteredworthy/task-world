@@ -36,7 +36,7 @@ from orchestrator.workflow.events import (
 from orchestrator.runners.execution.attempt_store import AttemptStore
 from orchestrator.runners.execution.event_broadcaster import EventBroadcaster
 from orchestrator.runners.execution.phase_handler import PhaseHandler
-from orchestrator.workflow.errors import GateBlockedError
+from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.prompts import generate_builder_prompt
 from orchestrator.workflow.summary_cache import SummaryCache
 
@@ -836,28 +836,23 @@ class AgentRunnerExecutor:
         if any(task.status == TaskStatus.PENDING_USER_ACTION for task in step.tasks):
             return (None, NoTaskReason.PENDING_USER_ACTION)
 
-        has_fan_out_running = False
         for task in step.tasks:
             # Skip child tasks — they are managed by the fan-out executor
             if task.parent_task_id is not None:
                 continue
-            # FAN_OUT_RUNNING tasks are handled by the fan-out executor,
-            # not by the normal task loop. Track but skip them.
-            if task.status == TaskStatus.FAN_OUT_RUNNING:
-                has_fan_out_running = True
-                continue
+            # FAN_OUT_RUNNING tasks need to be returned so the executor can
+            # re-enter _execute_fan_out (which handles existing children).
+            # This is critical for resuming fan-out after a pause.
             if task.status in (
                 TaskStatus.PENDING,
                 TaskStatus.BUILDING,
                 TaskStatus.VERIFYING,
                 TaskStatus.RECOVERING,
+                TaskStatus.FAN_OUT_RUNNING,
             ):
                 if not self._is_step_gate_satisfied(run, step):
                     return (None, NoTaskReason.BLOCKED_BY_GATE)
                 return (task, None)
-
-        if has_fan_out_running:
-            return (None, NoTaskReason.FAN_OUT_IN_PROGRESS)
         return (None, NoTaskReason.NO_ACTIONABLE_TASKS)
 
     async def _execute_task(
@@ -1173,7 +1168,8 @@ class AgentRunnerExecutor:
 
         if existing_children:
             # Re-run existing children instead of expanding again.
-            # Reset them to PENDING so the executor can re-execute them.
+            # Reset only non-completed children to PENDING so already-finished
+            # work is preserved (e.g. when resuming after a pause).
             logger.info(
                 f"Run {run.id}: fan-out task {parent_task.id} has "
                 f"{len(existing_children)} existing children, resetting for re-run"
@@ -1185,26 +1181,36 @@ class AgentRunnerExecutor:
                 latest_attempt = parent_task.attempts[-1]
                 verifier_feedback = getattr(latest_attempt, "verifier_comment", None)
 
-            # Reset children to PENDING and parent to FAN_OUT_RUNNING
+            # Reset non-completed children to PENDING; completed ones are preserved
             await service.reset_fan_out_children(run.id, parent_task.id)
 
             children = existing_children
+            # Separate already-completed children from those that need re-running
+            completed_statuses = {TaskStatus.COMPLETED}
+            already_done = [c for c in children if c.status in completed_statuses]
+            children_to_run = [c for c in children if c.status not in completed_statuses]
             await self._append_task_log(
                 run.id,
                 parent_task.id,
-                [f"Reusing {len(children)} persisted fan-out children for re-run."],
+                [
+                    f"Reusing {len(children)} persisted fan-out children: "
+                    f"{len(already_done)} already completed, "
+                    f"{len(children_to_run)} to re-run."
+                ],
             )
         else:
             # 1. Expand: create child tasks (first time)
             children = await service.expand_fan_out_task(run.id, parent_task.id)
             verifier_feedback = None
+            children_to_run = children
+            already_done = []
             await self._append_task_log(
                 run.id,
                 parent_task.id,
                 [f"Expanded fan-out into {len(children)} persisted child tasks."],
             )
 
-        if not children:
+        if not children_to_run and not already_done:
             # No files matched. If the parent has an outer verifier, still run
             # it so the aggregate requirements can be graded instead of being
             # silently ignored.
@@ -1298,6 +1304,29 @@ class AgentRunnerExecutor:
                                 f"attempts for {child.fan_out_input}."
                             ],
                         )
+                except InvalidTransitionError as e:
+                    if e.from_status == RunStatus.PAUSED.value:
+                        # Run was paused mid-fan-out (e.g. agent killed, server
+                        # shutdown).  Don't burn retries — propagate so the
+                        # gather stops and the parent stays in FAN_OUT_RUNNING
+                        # for clean resumption later.
+                        logger.info(
+                            f"Run {run.id}: child {child_id} paused, "
+                            f"stopping fan-out for later resumption"
+                        )
+                        raise
+                    # Other transition errors are genuine failures
+                    logger.error(f"Run {run.id}: child {child_id} attempt {attempt_num} error: {e}")
+                    await self._append_task_log(
+                        run.id,
+                        parent_task.id,
+                        [
+                            f"Child {child.fan_out_index}: attempt {attempt_num} raised "
+                            f"{type(e).__name__}: {e}"
+                        ],
+                    )
+                    if attempt_num >= fan_out.max_attempts:
+                        break
                 except Exception as e:
                     logger.error(f"Run {run.id}: child {child_id} attempt {attempt_num} error: {e}")
                     await self._append_task_log(
@@ -1323,8 +1352,47 @@ class AgentRunnerExecutor:
 
             child_results[child_id] = passed
 
-        # Run all children concurrently
-        await asyncio.gather(*[run_child(c) for c in children], return_exceptions=True)
+        # Pre-populate results for already-completed children
+        for c in already_done:
+            child_results[c.id] = True
+
+        if not children_to_run:
+            # All children were already completed (e.g. pause after all finished
+            # but before parent transitioned).  Skip straight to outcome.
+            logger.info(
+                f"Run {run.id}: all {len(already_done)} fan-out children "
+                f"already completed, proceeding to parent outcome"
+            )
+            gather_results = []
+        else:
+            # Run remaining children concurrently.  If any child raises
+            # InvalidTransitionError (run paused), it propagates out of the
+            # gather as part of the results list.
+            gather_results = await asyncio.gather(
+                *[run_child(c) for c in children_to_run], return_exceptions=True
+            )
+
+        # Check if any child was interrupted by a run pause.  If so, leave
+        # the parent in FAN_OUT_RUNNING so startup recovery can resume it.
+        for result in gather_results:
+            if (
+                isinstance(result, InvalidTransitionError)
+                and result.from_status == RunStatus.PAUSED.value
+            ):
+                await self._append_task_log(
+                    run.id,
+                    parent_task.id,
+                    [
+                        "Fan-out interrupted: run was paused mid-execution. "
+                        "Children that completed are preserved; remaining "
+                        "children will resume when the run is resumed."
+                    ],
+                )
+                logger.info(
+                    f"Run {run.id}: fan-out task {parent_task.id} interrupted "
+                    f"by run pause, leaving in FAN_OUT_RUNNING for resumption"
+                )
+                return
 
         # 3. Determine parent outcome
         all_passed = all(child_results.get(c.id, False) for c in children)
@@ -1425,10 +1493,13 @@ class AgentRunnerExecutor:
 
         item_stem = Path(input_path).stem
 
-        # Resolve shared_context entries
+        # Resolve shared_context entries (pass run config so {{feature}} etc. resolve)
+        config_vars: dict[str, str] = {k: str(v) for k, v in run.config.items() if v is not None}
         shared_parts: list[str] = []
         for ctx_entry in fan_out.shared_context:
-            resolved = resolve_template(ctx_entry, worktree_path=worktree_path)
+            resolved = resolve_template(
+                ctx_entry, variables=config_vars, worktree_path=worktree_path
+            )
             shared_parts.append(resolved)
 
         # Build per_item_prompt with variables
@@ -1463,8 +1534,11 @@ class AgentRunnerExecutor:
 
         full_prompt = "\n\n".join(prompt_parts)
 
-        # Create agent and execute
-        agent = self._create_agent(agent_type, agent_config, run.id, phase="building")
+        # Create agent and execute (apply max_turns limit if configured)
+        child_agent_config = agent_config
+        if fan_out.max_turns is not None:
+            child_agent_config = {**agent_config, "max_turns": fan_out.max_turns}
+        agent = self._create_agent(agent_type, child_agent_config, run.id, phase="building")
         context = ExecutionContext(
             run_id=run.id,
             task_id=child_id,

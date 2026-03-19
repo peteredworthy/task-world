@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import select
 import shutil
 import subprocess as _sp
 from typing import Any, cast
@@ -783,10 +784,23 @@ def fetch_codex_models() -> list[str]:
             proc.stdin.write(json.dumps(msg) + "\n")
             proc.stdin.flush()
 
-        def _read_until_id(target_id: int, max_lines: int = 200) -> dict[str, Any] | None:
+        def _read_until_id(
+            target_id: int, max_lines: int = 200, timeout_secs: float = 15.0
+        ) -> dict[str, Any] | None:
             """Read stdout lines until a JSON-RPC response with the given id is found."""
             assert proc.stdout is not None
+            use_select = True
             for _ in range(max_lines):
+                if use_select:
+                    # Use select to avoid blocking indefinitely when the process
+                    # hangs (e.g. sandbox blocks socket.bind).
+                    try:
+                        ready, _, _ = select.select([proc.stdout], [], [], timeout_secs)
+                        if not ready:
+                            return None
+                    except (ValueError, OSError):
+                        # StringIO or non-selectable fd (e.g. in tests) — fall back
+                        use_select = False
                 line = proc.stdout.readline()
                 if not line:
                     return None

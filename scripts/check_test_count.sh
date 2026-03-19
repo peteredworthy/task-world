@@ -25,6 +25,9 @@
 
 set -euo pipefail
 
+# Allow overriding the pytest command (e.g. PYTEST="uv run pytest")
+PYTEST="${PYTEST:-pytest}"
+
 usage() {
     echo "Usage: $0 --snapshot <file>  # capture current test names to file" >&2
     echo "       $0 --compare <file>   # compare current tests with snapshot" >&2
@@ -34,7 +37,7 @@ usage() {
 collect_tests() {
     # Run pytest --collect-only and extract test node IDs
     # Output goes to stdout; errors to stderr
-    if ! pytest --collect-only -q --no-header 2>&1 | grep '::' | sed 's/ (.*)//' | sort; then
+    if ! $PYTEST --collect-only -q --no-header 2>&1 | grep '::' | sed 's/ (.*)//' | sort; then
         return 1
     fi
 }
@@ -45,7 +48,7 @@ collect_tests_safe() {
     local tmperr
     tmperr=$(mktemp)
 
-    if ! pytest --collect-only -q --no-header >"$tmpout" 2>"$tmperr"; then
+    if ! $PYTEST --collect-only -q --no-header >"$tmpout" 2>"$tmperr"; then
         echo "pytest --collect-only failed:" >&2
         cat "$tmperr" >&2
         cat "$tmpout" >&2

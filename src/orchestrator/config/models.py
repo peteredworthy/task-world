@@ -129,6 +129,7 @@ class FanOutConfig(BaseModel):
     shared_context: list[str] = Field(default_factory=list)
     max_attempts: int = 4
     max_concurrent: int = 4
+    max_turns: int | None = None
     auto_verify: AutoVerifyConfig | None = None
 
 
@@ -269,6 +270,26 @@ class TaskConfig(BaseModel):
                             f"Task '{self.id}': phase {phase_index} has retry_target={phase.retry_target}, "
                             f"but retry_target must be less than the phase index."
                         )
+
+        # Auto-generate auto_verify items for required context_from sources.
+        # This catches missing input files deterministically at auto-verify time
+        # rather than leaving it to LLM grading (which may hallucinate or
+        # contradict itself about whether missing files are acceptable).
+        existing_av_ids = {item.id for item in self.auto_verify.items}
+        for source in self.context_from:
+            if not source.required:
+                continue
+            av_id = f"context_from_exists_{source.as_name or source.artifact}"
+            if av_id in existing_av_ids:
+                continue
+            self.auto_verify.items.append(
+                AutoVerifyItemConfig(
+                    id=av_id,
+                    cmd=f"test -f {source.artifact}",
+                    must=True,
+                )
+            )
+            existing_av_ids.add(av_id)
 
         # Warn when task has no auto_verify items and no verifier rubric.
         has_auto_verify = bool(self.auto_verify.items)

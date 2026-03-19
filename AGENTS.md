@@ -227,6 +227,14 @@ All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_
 
 **Event sourcing for recovery.** Log transitions to JSONL first, then update state. Reconstruct from history on startup.
 
+## Handling Errors and Failing Checks
+
+**Every failing check is your responsibility.** The commit process runs linters, type checks, and tests via pre-commit hooks. If any check fails, you must fix it before proceeding. Do not dismiss failures as "pre-existing" — the checks only run against your changes, so all failures are new.
+
+The most common reason an issue appears "pre-existing" is that it was introduced earlier in the current session (possibly by a sub-agent) and then forgotten. Take ownership: read the error, find the cause, and fix it. If a lint error is in a file you didn't intend to modify, check your git diff — you almost certainly did modify it, or a sub-agent did on your behalf.
+
+**Do not skip, suppress, or work around failing checks.** Do not use `--no-verify`, add `# noqa` / `# type: ignore` to silence errors you introduced, or delete tests that fail because of your changes. Fix the underlying problem.
+
 ## Testing
 
 Three strict levels:
