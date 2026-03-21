@@ -208,7 +208,7 @@ routine:
               as: "architecture"
               required: true
           task_context: |
-            Create docs/{{feature}}/step-XX-plan.md files from the implementation plan.
+            Create docs/{{feature}}/step-XX.md files from the implementation plan.
 
             PLAN:
             {{context.plan}}
@@ -225,7 +225,7 @@ routine:
             Follow docs/planner/templates/step-plan.md.
           requirements:
             - id: "R1"
-              desc: "Create step-XX-plan.md for each plan step"
+              desc: "Create step-XX.md for each plan step"
               priority: critical
             - id: "R2"
               desc: "Each step plan defines input/output/error contracts"
@@ -239,15 +239,15 @@ routine:
           auto_verify:
             items:
               - id: "step_plans_exist"
-                cmd: "ls docs/{{feature}}/step-*-plan.md >/dev/null 2>&1"
+                cmd: "ls docs/{{feature}}/step-[0-9][0-9].md >/dev/null 2>&1"
                 must: true
           verifier:
             rubric:
               - id: "R1"
                 text: |
-                  R1 — A: each step-XX-plan.md has a clear purpose, concrete prerequisites,
+                  R1 — A: each step-XX.md has a clear purpose, concrete prerequisites,
                   and names specific files/modules. B: files exist but purpose is generic or
-                  prerequisites are vague. F: step plan files missing.
+                  prerequisites are vague. F: step files missing.
               - id: "R2"
                 text: |
                   R2 — A: each plan has explicit "Inputs", "Outputs", and "Error handling" sections
@@ -281,7 +281,7 @@ routine:
           title: "Create Step Files (Fan-Out)"
           profile: "coder"
           fan_out:
-            input_glob: "docs/{{feature}}/step-*-plan.md"
+            input_glob: "docs/{{feature}}/step-[0-9][0-9].md"
             output_pattern: "docs/{{feature}}/steps/{{item_stem}}.md"
             per_item_prompt: |
               Convert the following step plan into a step file following the step-files format guide.
