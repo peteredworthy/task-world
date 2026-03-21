@@ -114,7 +114,7 @@ def _kill_stale_port_holders(port: int) -> None:
     for pid in pids:
         try:
             os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError, OSError):
+        except ProcessLookupError:
             pass
     time.sleep(1)
 

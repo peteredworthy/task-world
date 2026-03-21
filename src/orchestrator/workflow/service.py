@@ -866,21 +866,6 @@ class WorkflowService:
                 "complete_fan_out_parent (requires FAN_OUT_RUNNING)",
             )
 
-        # Fan-out children can finish concurrently using fine-grained per-task
-        # updates. Before we persist the parent transition, normalize any child
-        # task whose latest attempt is already terminal so a stale BUILDING
-        # status cannot be written back over completed child work.
-        for step in run.steps:
-            for task in step.tasks:
-                if task.parent_task_id != task_id or not task.attempts:
-                    continue
-                latest_attempt = task.attempts[-1]
-                if latest_attempt.outcome == "passed" and latest_attempt.completed_at is not None:
-                    task.status = TaskStatus.COMPLETED
-                elif latest_attempt.outcome == "failed" and latest_attempt.completed_at is not None:
-                    task.status = TaskStatus.FAILED
-        state.update_run(run)
-
         old_status = parent_task.status
 
         if not all_passed:
