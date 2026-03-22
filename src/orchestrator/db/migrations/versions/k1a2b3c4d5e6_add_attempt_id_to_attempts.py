@@ -27,12 +27,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Add attempt_id nullable TEXT column to attempts table."""
+    """Add attempt_id nullable TEXT column to attempts table with index."""
     with op.batch_alter_table("attempts", schema=None) as batch_op:
         batch_op.add_column(sa.Column("attempt_id", sa.String(), nullable=True))
+        batch_op.create_index("ix_attempts_attempt_id", ["attempt_id"], unique=False)
 
 
 def downgrade() -> None:
-    """Remove attempt_id column from attempts table."""
+    """Remove attempt_id column and index from attempts table."""
     with op.batch_alter_table("attempts", schema=None) as batch_op:
+        batch_op.drop_index("ix_attempts_attempt_id")
         batch_op.drop_column("attempt_id")
