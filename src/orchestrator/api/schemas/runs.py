@@ -216,6 +216,7 @@ class RecoverRequest(ApiModel):
     agent_config: dict[str, Any] | None = None
     preserve_checklist: bool = False
     guidance: str | None = None
+    reset_branch: bool = True
 
     @field_validator("agent_type", mode="before")
     @classmethod

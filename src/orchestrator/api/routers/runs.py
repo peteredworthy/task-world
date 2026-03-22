@@ -522,6 +522,7 @@ async def recover_run(
             agent_config=agent_config,
             preserve_checklist=body.preserve_checklist,
             guidance=body.guidance,
+            reset_branch=body.reset_branch,
         )
     except (RunNotFoundError, TaskNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

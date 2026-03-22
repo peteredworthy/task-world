@@ -5,6 +5,7 @@ export interface RecoverRequest {
   agent_config?: Record<string, unknown>;
   preserve_checklist?: boolean;
   guidance?: string;
+  reset_branch?: boolean;
 }
 
 export interface RecoverResponse {

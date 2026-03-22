@@ -473,6 +473,7 @@ class WorkflowService:
         agent_config: dict[str, object] | None = None,
         preserve_checklist: bool = False,
         guidance: str | None = None,
+        reset_branch: bool = True,
     ) -> RecoverResponse:
         """Recover a run by rewinding to a target task and pausing.
 
@@ -517,12 +518,21 @@ class WorkflowService:
 
         downstream = ordered_tasks[target_idx + 1 :]
 
-        # Capture restore point from DB-recorded builder end_commit before mutation.
+        # Capture restore point: the commit immediately before the target task's
+        # first attempt ran. Use start_commit of the first attempt when available;
+        # fall back to the end_commit of the nearest preceding task that has one.
         restore_commit: str | None = None
-        for attempt in reversed(target_task.attempts):
-            if attempt.end_commit:
-                restore_commit = attempt.end_commit
-                break
+        if target_task.attempts and target_task.attempts[0].start_commit:
+            restore_commit = target_task.attempts[0].start_commit
+        if not restore_commit:
+            for i in range(target_idx - 1, -1, -1):
+                prev_task = ordered_tasks[i][2]
+                for attempt in reversed(prev_task.attempts):
+                    if attempt.end_commit:
+                        restore_commit = attempt.end_commit
+                        break
+                if restore_commit:
+                    break
 
         now = self._clock.now()
 
@@ -584,8 +594,10 @@ class WorkflowService:
         if agent_config is not None:
             run.agent_config = agent_config
 
-        # Restore worktree to target task's end_commit (or source branch head fallback).
-        if run.worktree_path:
+        # Restore worktree to the commit before the target task's first attempt,
+        # so the branch is in the same state as when the task was first queued.
+        # When reset_branch=False the branch is left as-is ("carry on" mode).
+        if reset_branch and run.worktree_path:
             restored = False
             if restore_commit:
                 restored = self._checkout_on_branch(run.worktree_path, run.id, restore_commit)

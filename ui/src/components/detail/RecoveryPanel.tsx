@@ -87,7 +87,7 @@ export function RecoveryPanel({ run }: RecoveryPanelProps) {
     setRecoverError(null);
   };
 
-  const onConfirmRecover = () => {
+  const onConfirmRecover = (withReset: boolean) => {
     if (!selectedTaskId) {
       return;
     }
@@ -97,6 +97,7 @@ export function RecoveryPanel({ run }: RecoveryPanelProps) {
       {
         target_task_id: selectedTaskId,
         preserve_checklist: preserveChecklist,
+        reset_branch: withReset,
       },
       {
         onSuccess: () => {
@@ -200,8 +201,8 @@ export function RecoveryPanel({ run }: RecoveryPanelProps) {
             <p className="mt-3 text-sm text-text-secondary">
               Selected task: <span className="font-medium text-text-primary">{selectedTask.title || selectedTask.config_id}</span>
             </p>
-            <p className="mt-2 text-sm text-status-failed">
-              This will reset all downstream tasks to PENDING
+            <p className="mt-2 text-sm text-text-secondary">
+              All downstream tasks will be reset to PENDING.
             </p>
 
             <label className="mt-4 flex items-start gap-2 text-sm text-text-secondary">
@@ -211,7 +212,7 @@ export function RecoveryPanel({ run }: RecoveryPanelProps) {
                 checked={preserveChecklist}
                 onChange={event => setPreserveChecklist(event.target.checked)}
               />
-              <span>preserve_checklist</span>
+              <span>Preserve downstream checklist grades</span>
             </label>
 
             {recoverError && (
@@ -220,22 +221,36 @@ export function RecoveryPanel({ run }: RecoveryPanelProps) {
               </p>
             )}
 
-            <div className="mt-6 flex justify-end gap-3">
+            <div className="mt-6 flex flex-col gap-3">
+              <div className="flex gap-3">
+                <button
+                  type="button"
+                  onClick={() => onConfirmRecover(false)}
+                  disabled={recoverRun.isPending}
+                  className="flex-1 rounded-md border border-accent-purple/40 bg-accent-purple/10 px-4 py-2 text-sm font-medium text-accent-purple transition-colors hover:bg-accent-purple/15 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {recoverRun.isPending ? 'Recovering...' : 'Carry on'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onConfirmRecover(true)}
+                  disabled={recoverRun.isPending}
+                  className="flex-1 rounded-md border border-status-failed/40 bg-status-failed/15 px-4 py-2 text-sm font-medium text-status-failed transition-colors hover:bg-status-failed/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {recoverRun.isPending ? 'Recovering...' : 'Reset branch'}
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <p className="text-[11px] text-text-muted">Keep branch as-is and retry the task from the current state.</p>
+                <p className="text-[11px] text-text-muted">Reset branch to the commit before this task's first attempt.</p>
+              </div>
               <button
                 type="button"
                 onClick={onCancelConfirm}
                 disabled={recoverRun.isPending}
-                className="rounded-md bg-bg-elevated px-4 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-60"
+                className="self-end rounded-md bg-bg-elevated px-4 py-2 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-hover disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Cancel
-              </button>
-              <button
-                type="button"
-                onClick={onConfirmRecover}
-                disabled={recoverRun.isPending}
-                className="rounded-md border border-status-failed/40 bg-status-failed/15 px-4 py-2 text-sm font-medium text-status-failed transition-colors hover:bg-status-failed/20 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {recoverRun.isPending ? 'Recovering...' : 'Confirm'}
               </button>
             </div>
           </div>
