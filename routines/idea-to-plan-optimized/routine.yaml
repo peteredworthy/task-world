@@ -368,7 +368,7 @@ routine:
           title: "Simulate Execution Per Step"
           profile: "architect"
           fan_out:
-            input_glob: "docs/{{feature}}/steps/step-[0-9][0-9].md"
+            input_glob: "docs/{{feature}}/steps/step-*-plan.md"
             output_pattern: "docs/{{feature}}/dry-run/{{item_stem}}-notes.md"
             per_item_prompt: |
               Simulate execution of the following step file. For each task in the step:
