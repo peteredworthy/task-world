@@ -9,6 +9,8 @@ from pydantic import BaseModel
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.workflow.signals import DbSignalTransport, SignalQueue, WorkflowSignal
+
 from orchestrator.agents.resolution import get_agent_system_prompt, resolve_agent_name
 from orchestrator.api.deps import (
     get_current_user,
@@ -250,9 +252,17 @@ async def submit_task(
     run_id: str,
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TransitionResponse:
     """Submit task for verification."""
     result = await service.submit_for_verification(run_id, task_id)
+    if result.success:
+        queue = SignalQueue(DbSignalTransport(session))
+        await queue.enqueue(
+            run_id,
+            WorkflowSignal.ACTIVITY_COMPLETED,
+            payload={"task_id": task_id},
+        )
     return TransitionResponse(
         success=result.success,
         new_status=result.new_status.value,
@@ -268,9 +278,17 @@ async def complete_verification(
     run_id: str,
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TransitionResponse:
     """Complete verification phase."""
     result = await service.complete_verification(run_id, task_id)
+    if result.success:
+        queue = SignalQueue(DbSignalTransport(session))
+        await queue.enqueue(
+            run_id,
+            WorkflowSignal.ACTIVITY_VERIFIED,
+            payload={"task_id": task_id},
+        )
     return TransitionResponse(
         success=result.success,
         new_status=result.new_status.value,
