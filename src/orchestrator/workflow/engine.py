@@ -181,6 +181,7 @@ class WorkflowEngine:
                 old_status=old_status,
                 new_status=RunStatus.PAUSED,
                 pause_reason=reason,
+                last_error=error_detail,
             )
         )
         return run
@@ -243,11 +244,19 @@ class WorkflowEngine:
                 event_type="run_status_changed",
                 old_status=old_status,
                 new_status=RunStatus.PAUSED,
+                pause_reason="requirement_escalated",
+                last_error=f"Requirement {req_id} escalated: {reason}",
             )
         )
         return run
 
-    def start_task(self, run_id: str, task_id: str, agent_id: str = "default") -> TransitionResult:
+    def start_task(
+        self,
+        run_id: str,
+        task_id: str,
+        agent_id: str = "default",
+        start_commit: str | None = None,
+    ) -> TransitionResult:
         """Start building a task.
 
         When a lock_manager is configured, acquires a lock for the given
@@ -300,11 +309,17 @@ class WorkflowEngine:
                     task_id=task_id,
                     old_status=old_status,
                     new_status=result.new_status,
+                    start_commit=start_commit,
                 )
             )
         return result
 
-    def submit_for_verification(self, run_id: str, task_id: str) -> TransitionResult:
+    def submit_for_verification(
+        self,
+        run_id: str,
+        task_id: str,
+        end_commit: str | None = None,
+    ) -> TransitionResult:
         """Submit task for verification (builder done).
 
         Raises:
@@ -352,6 +367,7 @@ class WorkflowEngine:
                     task_id=task_id,
                     old_status=old_status,
                     new_status=result.new_status,
+                    end_commit=end_commit,
                 )
             )
         return result

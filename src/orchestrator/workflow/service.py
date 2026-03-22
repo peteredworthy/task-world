@@ -1147,14 +1147,19 @@ class WorkflowService:
         if run.status != RunStatus.ACTIVE:
             raise InvalidTransitionError(run.status.value, "start_task (requires ACTIVE run)")
         engine, state, buffer = self._build_engine(run)
-        result = engine.start_task(run_id, task_id)
 
-        # Capture start commit for git tracking
-        if result.success and run.worktree_path:
+        # Capture start commit before the engine transition so it's available for the event
+        start_commit: str | None = None
+        if run.worktree_path:
+            start_commit = get_head_commit(Path(run.worktree_path))
+
+        result = engine.start_task(run_id, task_id, start_commit=start_commit)
+
+        # Store start commit on the attempt (also available via the emitted event)
+        if result.success and start_commit:
             task = state.get_task(run_id, task_id)
             if task.attempts:
-                worktree_path = Path(run.worktree_path)
-                task.attempts[-1].start_commit = get_head_commit(worktree_path)
+                task.attempts[-1].start_commit = start_commit
 
         await self._persist(state, run_id, buffer)
 
@@ -1524,8 +1529,21 @@ class WorkflowService:
                         error="Auto-verify must-items failed (pre-gate)",
                     )
 
+        # --- Capture end commit for git tracking (before engine call so it's in the event) ---
+        end_commit: str | None = None
+        task_pre = state.get_task(run_id, task_id)
+        if run.worktree_path and task_pre.attempts:
+            worktree_path_obj = Path(run.worktree_path)
+            # Auto-commit any uncommitted changes left by the builder agent.
+            # Some CLI agents (e.g. codex) may not commit their work, and the
+            # verifier's git checkout of end_commit would destroy those changes.
+            commit_uncommitted_changes(
+                worktree_path_obj, f"Auto-commit builder changes for task {task_id}"
+            )
+            end_commit = get_head_commit(worktree_path_obj)
+
         try:
-            result = engine.submit_for_verification(run_id, task_id)
+            result = engine.submit_for_verification(run_id, task_id, end_commit=end_commit)
         except GateBlockedError:
             # Persist state to record the gate evaluation event
             await self._persist(state, run_id, buffer)
@@ -1535,17 +1553,10 @@ class WorkflowService:
             await self._persist(state, run_id, buffer)
             return result
 
-        # --- Capture end commit for git tracking ---
+        # Store end commit on the attempt
         task = state.get_task(run_id, task_id)
-        if run.worktree_path and task.attempts:
-            worktree_path = Path(run.worktree_path)
-            # Auto-commit any uncommitted changes left by the builder agent.
-            # Some CLI agents (e.g. codex) may not commit their work, and the
-            # verifier's git checkout of end_commit would destroy those changes.
-            commit_uncommitted_changes(
-                worktree_path, f"Auto-commit builder changes for task {task_id}"
-            )
-            task.attempts[-1].end_commit = get_head_commit(worktree_path)
+        if end_commit and task.attempts:
+            task.attempts[-1].end_commit = end_commit
 
         await self._persist(state, run_id, buffer)
         self._notify_submit(task_id)

@@ -514,7 +514,7 @@ def check_step_progression(
                                         step_index=run.current_step_index,
                                         step_id=step.id,
                                         condition=f"repeat_for '{repeat_for_expr}'",
-                                        reason="empty list",
+                                        skip_reason="empty list",
                                     )
                                 )
                             # Move to next step
@@ -603,7 +603,7 @@ def check_step_progression(
                                         step_index=run.current_step_index,
                                         step_id=step.id,
                                         condition=condition.when,
-                                        reason="Condition evaluated to false",
+                                        skip_reason=step.skip_reason,
                                     )
                                 )
                             # Move to next step
@@ -708,7 +708,7 @@ def check_step_progression(
                                             step_index=run.current_step_index,
                                             step_id=step.id,
                                             condition=condition.when,
-                                            reason="Condition evaluated to false",
+                                            skip_reason=step.skip_reason,
                                         )
                                     )
                                 # Advance past the last step so the while loop exits
@@ -808,7 +808,7 @@ def check_step_progression(
                                             step_index=run.current_step_index,
                                             step_id=next_step.id,
                                             condition=condition.when,
-                                            reason="Condition evaluated to false",
+                                            skip_reason=next_step.skip_reason,
                                         )
                                     )
                                 # Continue to evaluate next step in the while loop
