@@ -4,6 +4,7 @@ child task state management, and reset operations.
 Uses real SQLite in-memory DB and real files via tmp_path. No mocking.
 """
 
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,20 +38,27 @@ from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow.templates import derive_output_path, resolve_template
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
+# Project-root tmp/ directory for test SQLite databases (git-ignored, cleaned up per test).
+_TMP_DIR = Path(__file__).parent.parent.parent / "tmp"
 
 
 @pytest.fixture
-async def session_factory(tmp_path: Path) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     # Use a file-based SQLite DB (NullPool) so concurrent fan-out child sessions each
     # get their own connection. StaticPool's single-connection design causes intermittent
     # transaction conflicts when asyncio.gather runs children concurrently: the second
     # BEGIN fails because SQLite only allows one open transaction per connection.
-    db_path = tmp_path / "test.db"
+    # Files live in tmp/ at the project root (git-ignored) and are deleted on teardown.
+    _TMP_DIR.mkdir(exist_ok=True)
+    db_path = _TMP_DIR / f"test_{uuid.uuid4().hex}.db"
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield create_session_factory(engine)
     await engine.dispose()
+    db_path.unlink(missing_ok=True)
+    Path(str(db_path) + "-wal").unlink(missing_ok=True)
+    Path(str(db_path) + "-shm").unlink(missing_ok=True)
 
 
 @pytest.fixture

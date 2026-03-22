@@ -19,7 +19,13 @@ venv/
 
 # Database
 *.db
+*.db-wal
+*.db-shm
 *.bak
+
+# Test scratch directory (SQLite files for fan-out tests, etc.)
+tmp/*
+!tmp/.gitkeep
 
 # IDE
 .idea/
