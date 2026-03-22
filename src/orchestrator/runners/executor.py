@@ -18,9 +18,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
-    AgentCancelledError,
     AgentExecutionError,
-    AgentNotAvailableError,
 )
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import (
@@ -30,13 +28,12 @@ from orchestrator.config.enums import (
     TaskStatus,
 )
 from orchestrator.workflow.events import (
-    ApprovalRequested,
     WorkflowEvent,
 )
 from orchestrator.runners.execution.attempt_store import AttemptStore
 from orchestrator.runners.execution.event_broadcaster import EventBroadcaster
 from orchestrator.runners.execution.phase_handler import PhaseHandler
-from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow.errors import InvalidTransitionError
 from orchestrator.workflow.prompts import generate_builder_prompt
 from orchestrator.workflow.summary_cache import SummaryCache
 
@@ -520,266 +517,34 @@ class AgentRunnerExecutor:
         agent_type: AgentRunnerType,
         agent_config: dict[str, Any],
     ) -> None:
-        """Main loop that runs agent for all tasks in a run.
+        """Thin delegator: creates a RunWorkflow and awaits its run() method.
 
-        This runs in the background and processes tasks until the run is
-        complete, paused, or failed.
+        The execution loop itself now lives in RunWorkflow._run_loop() so that
+        RunWorkflow is the single owner of run execution and can manage the
+        active-workflow registry for signal routing.
         """
-        # Start a background health monitor for the agent
-        health_monitor_task = asyncio.create_task(self._monitor_agent_health(run_id, agent_type))
+        from orchestrator.workflow.runtime import RunWorkflow
 
-        # Track tasks whose recovery was already attempted in this executor session.
-        # If _handle_recovery completes without transitioning the task out of RECOVERING,
-        # we pause the run instead of looping forever.
-        recovery_attempted: set[str] = set()
-
-        # Run-scoped summary cache: summaries from earlier tasks are reused by
-        # later tasks, avoiding redundant API calls during context_from lookups.
-        summary_cache = SummaryCache()
-
-        try:
-            while True:
-                # Create a new session for each iteration
-                async with self._session_factory() as session:
-                    service = await self._create_service(session)
-                    from orchestrator.db.repositories import RunRepository
-
-                    repo = RunRepository(session)
-
-                    # Refresh run state
-                    run = await repo.get(run_id)
-
-                    # Check if run is still active
-                    if run.status != RunStatus.ACTIVE:
-                        logger.info(
-                            f"Run {run_id}: status is {run.status.value}, stopping agent loop"
-                        )
-                        break
-
-                    # Record heartbeat — the executor is alive and iterating,
-                    # even if no subprocess PID exists right now (e.g. between
-                    # tasks, during auto-verify, during fan-out coordination).
-                    self.heartbeat(run_id)
-
-                    # Find the first pending or building task
-                    task_state, no_task_reason = self._find_next_task(run)
-
-                    if no_task_reason is not None:
-                        action = resolve_no_task_action(run, no_task_reason)
-
-                        # Emit gate-blocked event (keeps existing behavior)
-                        if no_task_reason == NoTaskReason.BLOCKED_BY_GATE:
-                            blocked_step = None
-                            for step in run.steps:
-                                for task in step.tasks:
-                                    if task.status in (
-                                        TaskStatus.PENDING,
-                                        TaskStatus.BUILDING,
-                                        TaskStatus.VERIFYING,
-                                    ):
-                                        blocked_step = step
-                                        break
-                                if blocked_step is not None:
-                                    break
-
-                            step_id = blocked_step.id if blocked_step else ""
-                            logger.info(
-                                f"Run {run_id}: blocked by human_approval gate "
-                                f"on step {step_id}, pausing until approval"
-                            )
-                            event = ApprovalRequested(
-                                timestamp=datetime.now(timezone.utc),
-                                run_id=run_id,
-                                event_type="approval_requested",
-                                step_id=step_id,
-                            )
-                            await self._broadcaster.emit_log_event(event)
-                        elif no_task_reason == NoTaskReason.ALL_COMPLETE:
-                            logger.info(
-                                f"Run {run_id}: all steps complete, ensuring "
-                                f"run is in terminal state"
-                            )
-                        elif no_task_reason == NoTaskReason.FAN_OUT_IN_PROGRESS:
-                            logger.warning(
-                                f"Run {run_id}: fan-out task in progress but "
-                                f"no executor driving it — pausing for recovery"
-                            )
-                        else:
-                            logger.info(f"Run {run_id}: no task — {no_task_reason.value}")
-
-                        # Act on the decision
-                        if action.kind == "pause":
-                            await service.pause_run(run_id, reason=action.pause_reason or "unknown")
-                            await session.commit()
-                        elif action.kind in ("complete", "fail"):
-                            # resolve_no_task_action already called
-                            # check_run_completion which mutated run in-memory
-                            await repo.save(run)
-                            await session.commit()
-                            logger.info(f"Run {run_id}: safety-net completion → {run.status.value}")
-                        break
-
-                    # At this point no_task_reason is None, so task_state is set.
-                    assert task_state is not None  # type narrowing for pyright
-
-                    # Apply deterministic recovery rule for Codex agents.
-                    # For a healthy persisted session the config is passed
-                    # unchanged (agent can resume).  For a stale session the
-                    # session keys are stripped so the agent starts fresh.
-                    effective_config, stale_reason = self._prepare_codex_config(
-                        agent_type, agent_config
-                    )
-                    if stale_reason is not None:
-                        logger.info(
-                            f"Run {run_id}: task {task_state.id}: Codex session discarded "
-                            f"({stale_reason}); new attempt will start fresh"
-                        )
-
-                    # Execute the agent for this task
-                    logger.info(
-                        f"Run {run_id}: executing task {task_state.id} ({task_state.config_id})"
-                    )
-                    was_recovering = task_state.status == TaskStatus.RECOVERING
-
-                    # Guard against infinite loop: if we already ran recovery for
-                    # this task and it's still RECOVERING, pause instead of looping.
-                    if was_recovering and task_state.id in recovery_attempted:
-                        logger.warning(
-                            f"Run {run_id}: task {task_state.id} still RECOVERING after "
-                            "previous recovery attempt without complete_recovery call — pausing"
-                        )
-                        await service.pause_run(run_id, reason="recovery_loop")
-                        await session.commit()
-                        break
-                    if was_recovering:
-                        recovery_attempted.add(task_state.id)
-
-                    try:
-                        await self._execute_task(
-                            run,
-                            task_state,
-                            service,
-                            agent_type,
-                            effective_config,
-                            summary_cache=summary_cache,
-                            session=session,
-                        )
-                        await session.commit()
-                    except GateBlockedError as e:
-                        logger.warning(
-                            f"Run {run_id}: task {task_state.id} checklist gate blocked on submit: {e}. "
-                            f"Agent ran but could not satisfy the gate — pausing run."
-                        )
-                        await service.pause_run(run_id, reason="gate_blocked")
-                        await session.commit()
-                        break
-                    except AgentCancelledError:
-                        logger.info(f"Run {run_id}: agent cancelled — pausing run")
-                        await service.pause_run(run_id, reason="agent_cancelled")
-                        await session.commit()
-                        break
-                    except AgentNotAvailableError as e:
-                        logger.error(f"Run {run_id}: agent not available: {e}")
-                        await self._broadcaster.emit_error_event(
-                            run_id, task_state, "AgentNotAvailableError", str(e)
-                        )
-                        await self._attempt_store.store_attempt_output(
-                            run_id, task_state.id, [], str(e)
-                        )
-                        await service.pause_run(
-                            run_id,
-                            reason="agent_not_available",
-                            error_detail=str(e),
-                        )
-                        await session.commit()
-                        break
-                    except AgentExecutionError as e:
-                        logger.error(f"Run {run_id}: agent execution error: {e}")
-                        await self._broadcaster.emit_error_event(
-                            run_id, task_state, "AgentExecutionError", str(e)
-                        )
-                        await self._attempt_store.store_attempt_output(
-                            run_id, task_state.id, [], str(e)
-                        )
-                        await service.pause_run(
-                            run_id,
-                            reason="agent_execution_error",
-                            error_detail=str(e),
-                        )
-                        await session.commit()
-                        break
-                    except Exception as e:
-                        logger.exception(f"Run {run_id}: unexpected error: {e}")
-                        await self._broadcaster.emit_error_event(
-                            run_id, task_state, type(e).__name__, str(e)
-                        )
-                        # Pause the run on unexpected errors so the issue can be investigated
-                        try:
-                            await service.pause_run(
-                                run_id,
-                                reason="unexpected_error",
-                                error_detail=str(e),
-                            )
-                            await session.commit()
-                        except Exception:
-                            logger.exception(f"Run {run_id}: failed to pause run after error")
-                        break
-
-        except asyncio.CancelledError:
-            # Server shutdown/reload cancels asyncio tasks. CancelledError is a
-            # BaseException (not Exception) in Python 3.9+, so it must be caught
-            # explicitly. Use "server_shutdown" reason so startup recovery can
-            # auto-resume these runs rather than leaving them stuck in PAUSED.
-            logger.warning(f"Run {run_id}: agent loop cancelled (server shutdown?), pausing run")
-            try:
-                async with self._session_factory() as session:
-                    service = await self._create_service(session)
-                    await service.pause_run(run_id, reason="server_shutdown")
-                    await session.commit()
-            except Exception:
-                # DB/engine might be shutting down too (connection already closed).
-                # Startup recovery will detect the orphaned run and pause it.
-                logger.debug(f"Run {run_id}: could not pause run during shutdown (expected)")
-        except Exception as e:
-            logger.exception(f"Run {run_id}: unexpected error in agent loop: {e}")
-            # Try to pause the run if there's an outer exception
-            try:
-                async with self._session_factory() as session:
-                    service = await self._create_service(session)
-                    await service.pause_run(run_id, reason="unexpected_error")
-                    await session.commit()
-            except Exception:
-                logger.exception(f"Run {run_id}: failed to pause run after outer error")
-        finally:
-            # Cancel health monitor
-            health_monitor_task.cancel()
-            try:
-                await health_monitor_task
-            except asyncio.CancelledError:
-                pass
-
-            # Safety net: if the run is still ACTIVE when the executor exits,
-            # pause it so the sweeper doesn't find an orphaned ACTIVE run.
-            # This catches any code path that exits via `break` without pausing.
-            try:
-                async with self._session_factory() as session:
-                    from orchestrator.db.repositories import RunRepository
-
-                    repo = RunRepository(session)
-                    run = await repo.get(run_id)
-                    if run.status == RunStatus.ACTIVE:
-                        logger.warning(
-                            f"Run {run_id}: executor exiting with run still ACTIVE — pausing (safety net)"
-                        )
-                        service = await self._create_service(session)
-                        await service.pause_run(run_id, reason="executor_exited")
-                        await session.commit()
-            except Exception:
-                logger.exception(f"Run {run_id}: safety-net pause failed — run may be left ACTIVE")
-
-            self._running_tasks.pop(run_id, None)
-            self._heartbeats.pop(run_id, None)
-            logger.info(f"Run {run_id}: agent loop ended")
+        # Unpack private members here (inside AgentRunnerExecutor) and forward
+        # as explicit keyword args so RunWorkflow stores them as public attributes,
+        # avoiding reportPrivateUsage type errors.
+        workflow = RunWorkflow(
+            run_id,
+            agent_type,
+            agent_config,
+            session_factory=self._session_factory,
+            create_service=self._create_service,
+            monitor_agent_health=self._monitor_agent_health,
+            heartbeat=self.heartbeat,
+            find_next_task=self._find_next_task,
+            broadcaster=self._broadcaster,
+            prepare_codex_config=self._prepare_codex_config,
+            execute_task=self._execute_task,
+            attempt_store=self._attempt_store,
+            running_tasks=self._running_tasks,
+            heartbeats=self._heartbeats,
+        )
+        await workflow.run()
 
     def _is_step_gate_satisfied(self, run: Run, step: StepState) -> bool:
         """Check if a step's human_approval gate is satisfied.

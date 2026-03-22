@@ -286,8 +286,28 @@ class WorkflowService:
     async def cancel_run(self, run_id: str, reason: str | None = None) -> Run:
         """Cancel a run (ACTIVE/PAUSED -> FAILED).
 
+        If a RunWorkflow is actively executing, enqueues a CANCEL signal so
+        the workflow can apply the transition at a safe iteration boundary.
+        Otherwise falls back to direct DB mutation.
+
         Handles worktree cleanup if the run has a worktree configured.
         """
+        from orchestrator.workflow.signals import (
+            DbSignalTransport,
+            SignalQueue,
+            WorkflowSignal,
+            has_active_workflow,
+        )
+
+        if has_active_workflow(run_id):
+            transport = DbSignalTransport(self._session)
+            queue = SignalQueue(transport)
+            payload: dict[str, object] = {}
+            if reason is not None:
+                payload["reason"] = reason
+            await queue.enqueue(run_id, WorkflowSignal.CANCEL, payload or None)
+            return await self._repo.get(run_id)
+
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
         engine.cancel_run(run_id, reason)
@@ -377,7 +397,32 @@ class WorkflowService:
         reason: str = "manual_pause",
         error_detail: str | None = None,
     ) -> Run:
-        """Pause a run (ACTIVE -> PAUSED)."""
+        """Pause a run (ACTIVE -> PAUSED).
+
+        If a RunWorkflow is actively executing for this run, the signal is
+        enqueued so the workflow applies the pause at a safe iteration
+        boundary.  Otherwise the state change is applied directly to the DB
+        (existing behaviour, used for already-paused/queued runs and for
+        internal pauses initiated from within the RunWorkflow itself).
+        """
+        from orchestrator.workflow.signals import (
+            DbSignalTransport,
+            SignalQueue,
+            WorkflowSignal,
+            has_active_workflow,
+        )
+
+        if has_active_workflow(run_id):
+            transport = DbSignalTransport(self._session)
+            queue = SignalQueue(transport)
+            payload: dict[str, object] = {"reason": reason}
+            if error_detail is not None:
+                payload["error_detail"] = error_detail
+            await queue.enqueue(run_id, WorkflowSignal.PAUSE, payload)
+            # Return the current run state (transition happens asynchronously)
+            return await self._repo.get(run_id)
+
+        # Direct DB mutation (no active workflow, or internal call after unregister)
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
         engine.pause_run(run_id, reason=reason, error_detail=error_detail)
@@ -392,6 +437,11 @@ class WorkflowService:
     ) -> Run:
         """Resume a run (PAUSED -> ACTIVE), optionally changing the agent.
 
+        If a RunWorkflow is already active for this run (unusual — the run
+        should be PAUSED when resuming), enqueues a RESUME signal.  In
+        practice resume_run is always called on a PAUSED run (no active
+        workflow), so this falls through to the direct DB path.
+
         Args:
             run_id: The run ID
             agent_type: Optional new agent type to use
@@ -401,6 +451,19 @@ class WorkflowService:
         Returns:
             The updated run
         """
+        from orchestrator.workflow.signals import (
+            DbSignalTransport,
+            SignalQueue,
+            WorkflowSignal,
+            has_active_workflow,
+        )
+
+        if has_active_workflow(run_id):
+            transport = DbSignalTransport(self._session)
+            queue = SignalQueue(transport)
+            await queue.enqueue(run_id, WorkflowSignal.RESUME, None)
+            return await self._repo.get(run_id)
+
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
 

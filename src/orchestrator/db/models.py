@@ -56,6 +56,7 @@ class RunModel(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     runner_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    scheduled_resume_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Aggregate metrics
     total_tokens_read: Mapped[int] = mapped_column(Integer, default=0)
@@ -250,6 +251,23 @@ class ReplayCheckpointModel(Base):
     last_applied_timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     backup_snapshot_id: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class PendingSignalModel(Base):
+    __tablename__ = "pending_signals"
+    __table_args__ = (
+        # Index for fast drain queries: unprocessed signals for a given run
+        Index("ix_pending_signals_run_id", "run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(
+        String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    signal_type: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class ClarificationResponseModel(Base):
