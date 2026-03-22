@@ -33,7 +33,7 @@ class ActivityContext:
     task_id: str
     worktree_path: str
     prompt: str
-    requirements: list[str] = field(default_factory=list)
+    requirements: list[str] = field(default_factory=lambda: [])
     api_base_url: str | None = None
     auth_token: str | None = None
     end_commit: str | None = None

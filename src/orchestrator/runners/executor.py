@@ -1113,6 +1113,8 @@ class AgentRunnerExecutor:
                         run.id,
                         child_id,
                         {"status": TaskStatus.FAILED},
+                        parent_task_id=child.parent_task_id,
+                        fan_out_index=child.fan_out_index or 0,
                     )
 
             child_results[child_id] = passed
@@ -1367,6 +1369,9 @@ class AgentRunnerExecutor:
                             "completed_at": datetime.now(timezone.utc),
                             "status": TaskStatus.COMPLETED,
                         },
+                        parent_task_id=child.parent_task_id,
+                        fan_out_index=child.fan_out_index or 0,
+                        fan_out_output=child.fan_out_output,
                     )
                 else:
                     await svc.update_child_task_state(
@@ -1392,6 +1397,9 @@ class AgentRunnerExecutor:
                         "completed_at": datetime.now(timezone.utc),
                         "status": TaskStatus.COMPLETED,
                     },
+                    parent_task_id=child.parent_task_id,
+                    fan_out_index=child.fan_out_index or 0,
+                    fan_out_output=child.fan_out_output,
                 )
 
             return True

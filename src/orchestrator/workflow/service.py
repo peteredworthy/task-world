@@ -51,6 +51,9 @@ from orchestrator.workflow.events import (
     ApprovalDecision,
     AutoVerifyCompleted,
     BufferingEmitter,
+    ChildCompleted,
+    ChildFailed,
+    ChildSpawned,
     ClarificationRequested,
     ClarificationResponded,
     RunStatusChanged,
@@ -892,6 +895,25 @@ class WorkflowService:
             await self._repo.update_task_status(parent_task.id, TaskStatus.FAN_OUT_RUNNING)
         await self._session.commit()
 
+        # Emit ChildSpawned events for each created child and commit immediately
+        # so the write transaction is closed before concurrent child execution begins.
+        if children:
+            await self._event_emitter.emit_batch(
+                [
+                    ChildSpawned(
+                        timestamp=self._clock.now(),
+                        run_id=run_id,
+                        event_type="child_spawned",
+                        parent_task_id=task_id,
+                        child_task_id=child.id,
+                        fan_out_index=child.fan_out_index or 0,
+                        fan_out_input=child.fan_out_input,
+                    )
+                    for child in children
+                ]
+            )
+            await self._session.commit()
+
         logger.info(
             f"Run {run_id}: expanded fan-out task {task_id} into "
             f"{len(children)} children from glob '{fan_out.input_glob}'"
@@ -1114,6 +1136,10 @@ class WorkflowService:
         run_id: str,
         task_id: str,
         updates: dict[str, Any],
+        *,
+        parent_task_id: str | None = None,
+        fan_out_index: int = 0,
+        fan_out_output: str | None = None,
     ) -> None:
         """Update a child task's state fields (outcome, error, status, auto_verify_results).
 
@@ -1126,6 +1152,9 @@ class WorkflowService:
         - ``completed_at`` (datetime): set on latest attempt
         - ``auto_verify_results`` (list): set on latest attempt
         - ``status`` (TaskStatus): set on the task itself
+
+        When ``parent_task_id`` is provided, emits ChildCompleted or ChildFailed
+        events based on the new status.
         """
         # NOTE: Do NOT load the full run here.  Loading via self._repo.get()
         # pulls all child tasks into the session graph; if two children commit
@@ -1139,6 +1168,36 @@ class WorkflowService:
         if "status" in updates:
             repo_updates["status"] = updates["status"]
         await self._repo.update_latest_attempt(task_id, **repo_updates)
+
+        # Flush child lifecycle events in the same transaction to avoid extra write
+        # contention in concurrent fan-out (all DB writes committed atomically below).
+        if parent_task_id is not None and "status" in updates:
+            new_status = updates["status"]
+            if new_status == TaskStatus.COMPLETED:
+                await self._event_store.append(
+                    ChildCompleted(
+                        timestamp=self._clock.now(),
+                        run_id=run_id,
+                        event_type="child_completed",
+                        parent_task_id=parent_task_id,
+                        child_task_id=task_id,
+                        fan_out_index=fan_out_index,
+                        fan_out_output=fan_out_output,
+                    )
+                )
+            elif new_status == TaskStatus.FAILED:
+                await self._event_store.append(
+                    ChildFailed(
+                        timestamp=self._clock.now(),
+                        run_id=run_id,
+                        event_type="child_failed",
+                        parent_task_id=parent_task_id,
+                        child_task_id=task_id,
+                        fan_out_index=fan_out_index,
+                        error=updates.get("error"),
+                    )
+                )
+
         await self._session.commit()
 
     async def start_task(self, run_id: str, task_id: str) -> TransitionResult:
