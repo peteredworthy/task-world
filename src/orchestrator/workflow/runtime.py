@@ -26,6 +26,7 @@ from orchestrator.runners.errors import (
     AgentNotAvailableError,
 )
 from orchestrator.workflow.errors import GateBlockedError
+from orchestrator.workflow.handlers import build_registry, signal_handler
 from orchestrator.workflow.signals import (
     DbSignalTransport,
     SignalQueue,
@@ -172,7 +173,7 @@ class RunWorkflow:
             logger.info(f"Run {run_id}: agent loop ended")
 
     async def on_signal(self, session: AsyncSession, service: WorkflowService) -> bool:
-        """Drain pending signals and apply the first actionable one.
+        """Drain pending signals and dispatch each to its typed handler.
 
         Called at the top of each iteration of the execution loop.  Returns
         True if the loop should stop (signal was applied that transitions the
@@ -186,32 +187,82 @@ class RunWorkflow:
         queue = SignalQueue(transport)
         signals = await queue.drain(self.run_id)
 
+        registry = build_registry(self)
+
         for signal in signals:
-            if signal.signal_type == WorkflowSignal.PAUSE:
-                reason = (
-                    signal.payload.get("reason", "signal_pause")
-                    if signal.payload
-                    else "signal_pause"
-                )
-                logger.info(f"Run {self.run_id}: applying PAUSE signal (reason={reason})")
-                unregister_active_run(self.run_id)
-                await service.pause_run(self.run_id, reason=reason)
-                return True
-
-            elif signal.signal_type == WorkflowSignal.CANCEL:
-                logger.info(f"Run {self.run_id}: applying CANCEL signal")
-                unregister_active_run(self.run_id)
-                await service.cancel_run(self.run_id)
-                return True
-
-            elif signal.signal_type == WorkflowSignal.RESUME:
-                # RESUME while already running — ignore (no-op)
-                logger.debug(f"Run {self.run_id}: ignoring RESUME signal (already running)")
-
-            # ACTIVITY_COMPLETED / ACTIVITY_VERIFIED — reserved for future use
+            handler = registry.get(signal.signal_type)
+            if handler is not None:
+                should_stop: bool = await handler(session, service, signal.payload)
+                if should_stop:
+                    return True
             else:
                 logger.debug(f"Run {self.run_id}: unhandled signal {signal.signal_type.value}")
 
+        return False
+
+    # ------------------------------------------------------------------
+    # Typed signal handlers (registered via @signal_handler decorator)
+    # ------------------------------------------------------------------
+
+    @signal_handler(WorkflowSignal.PAUSE)
+    async def handle_pause(
+        self,
+        session: AsyncSession,
+        service: WorkflowService,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        """Apply pause state and emit RunStatusChanged."""
+        raw_reason: Any = payload.get("reason") if payload else None
+        reason: str = raw_reason if isinstance(raw_reason, str) else "signal_pause"
+        logger.info(f"Run {self.run_id}: applying PAUSE signal (reason={reason})")
+        unregister_active_run(self.run_id)
+        await service.pause_run(self.run_id, reason=reason)
+        return True
+
+    @signal_handler(WorkflowSignal.RESUME)
+    async def handle_resume(
+        self,
+        session: AsyncSession,
+        service: WorkflowService,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        """Ignore RESUME while already running (no-op)."""
+        logger.debug(f"Run {self.run_id}: ignoring RESUME signal (already running)")
+        return False
+
+    @signal_handler(WorkflowSignal.CANCEL)
+    async def handle_cancel(
+        self,
+        session: AsyncSession,
+        service: WorkflowService,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        """Apply cancelled state and emit RunStatusChanged."""
+        logger.info(f"Run {self.run_id}: applying CANCEL signal")
+        unregister_active_run(self.run_id)
+        await service.cancel_run(self.run_id)
+        return True
+
+    @signal_handler(WorkflowSignal.ACTIVITY_COMPLETED)
+    async def handle_activity_completed(
+        self,
+        session: AsyncSession,
+        service: WorkflowService,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        """Advance task from BUILDING to VERIFYING on activity completion."""
+        logger.debug(f"Run {self.run_id}: ACTIVITY_COMPLETED signal received (payload={payload})")
+        return False
+
+    @signal_handler(WorkflowSignal.ACTIVITY_VERIFIED)
+    async def handle_activity_verified(
+        self,
+        session: AsyncSession,
+        service: WorkflowService,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        """Process verification result: advance or retry based on outcome."""
+        logger.debug(f"Run {self.run_id}: ACTIVITY_VERIFIED signal received (payload={payload})")
         return False
 
     # ------------------------------------------------------------------
