@@ -312,6 +312,10 @@ class WorkflowService:
             return await self._repo.get(run_id)
 
         run = await self._repo.get(run_id)
+
+        # Idempotency: if run is already in a terminal state, return it as-is.
+        if run.status in (RunStatus.FAILED, RunStatus.COMPLETED):
+            return run
         engine, state, buffer = self._build_engine(run)
         engine.cancel_run(run_id, reason)
 
@@ -1479,6 +1483,12 @@ class WorkflowService:
             )
         engine, state, buffer = self._build_engine(run)
 
+        # Idempotency: if task is already VERIFYING, return current state without
+        # re-running auto-verify or re-advancing the state machine.
+        task = state.get_task(run_id, task_id)
+        if task.status == TaskStatus.VERIFYING:
+            return TransitionResult(success=True, new_status=TaskStatus.VERIFYING)
+
         # --- Pre-gate auto-verify: run auto-verify before the checklist gate ---
         # If task-level auto-verify items all pass, auto-mark OPEN checklist
         # items as DONE so the gate check succeeds. This prevents agents from
@@ -1653,6 +1663,19 @@ class WorkflowService:
         (COMPLETED or FAILED) and handles worktree cleanup if configured.
         """
         run = await self._repo.get(run_id)
+
+        # Idempotency: if task is already in a terminal state (COMPLETED or FAILED),
+        # return current state without re-advancing the state machine. Check this
+        # before the ACTIVE run guard so that a run that auto-completed still
+        # returns success for a duplicate call.
+        for _step in run.steps:
+            for _task in _step.tasks:
+                if _task.id == task_id and _task.status in (
+                    TaskStatus.COMPLETED,
+                    TaskStatus.FAILED,
+                ):
+                    return TransitionResult(success=True, new_status=_task.status)
+
         if run.status != RunStatus.ACTIVE:
             raise InvalidTransitionError(
                 run.status.value, "complete_verification (requires ACTIVE run)"
