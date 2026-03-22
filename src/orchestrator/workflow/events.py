@@ -319,11 +319,20 @@ class AgentFixCompleted(WorkflowEvent):
 
 
 @dataclass
+class FanOutSpawned(WorkflowEvent):
+    """Emitted once when the parent fan-out task spawns all children (parent aggregation event)."""
+
+    parent_task_id: str = ""
+    child_count: int = 0
+
+
+@dataclass
 class ChildSpawned(WorkflowEvent):
     """Emitted when a fan-out child task is spawned from a parent task."""
 
     parent_task_id: str = ""
     child_task_id: str = ""
+    child_id: str = ""  # Stable UUID for this fan-out child (durable across restarts)
     fan_out_index: int = 0
     fan_out_input: str | None = None
 
@@ -334,6 +343,7 @@ class ChildCompleted(WorkflowEvent):
 
     parent_task_id: str = ""
     child_task_id: str = ""
+    child_id: str = ""  # Stable UUID for this fan-out child
     fan_out_index: int = 0
     fan_out_output: str | None = None
 
@@ -344,8 +354,19 @@ class ChildFailed(WorkflowEvent):
 
     parent_task_id: str = ""
     child_task_id: str = ""
+    child_id: str = ""  # Stable UUID for this fan-out child
     fan_out_index: int = 0
     error: str | None = None
+
+
+@dataclass
+class FanOutCompleted(WorkflowEvent):
+    """Emitted once when all fan-out children reach terminal state (parent aggregation event)."""
+
+    parent_task_id: str = ""
+    all_passed: bool = True
+    completed_count: int = 0
+    failed_count: int = 0
 
 
 class BufferingEmitter:

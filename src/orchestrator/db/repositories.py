@@ -1,5 +1,6 @@
 """Repository pattern for Run persistence."""
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -184,6 +185,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                     fan_out_index=task_model.fan_out_index,
                     fan_out_input=task_model.fan_out_input,
                     fan_out_output=task_model.fan_out_output,
+                    child_id=task_model.child_id,
                 )
             )
 
@@ -329,6 +331,7 @@ def _to_model(run: Run) -> RunModel:
                     fan_out_index=task.fan_out_index,
                     fan_out_input=task.fan_out_input,
                     fan_out_output=task.fan_out_output,
+                    child_id=task.child_id,
                     attempts=attempts,
                 )
             )
@@ -522,6 +525,7 @@ class RunRepository:
                 id=attempt.id,
                 task_id=task_id,
                 attempt_num=attempt.attempt_num,
+                attempt_id=attempt.id,  # Stable UUID for Temporal Activity ID mapping
                 started_at=attempt.started_at,
                 completed_at=attempt.completed_at,
                 builder_prompt=attempt.builder_prompt,
@@ -588,6 +592,7 @@ class RunRepository:
                     fan_out_index=child.fan_out_index,
                     fan_out_input=child.fan_out_input,
                     fan_out_output=child.fan_out_output,
+                    child_id=child.child_id,
                     attempts=[],
                 )
             )
@@ -649,9 +654,35 @@ class RunRepository:
         auto_verify_results: Any = _UNSET,
         status: TaskStatus | None = None,
     ) -> None:
-        """Update a single task's latest attempt in place."""
+        """Update a single task's latest attempt in place.
+
+        Completed attempts (those with outcome already set) are immutable.
+        Callers must not attempt to modify a completed attempt — corrections
+        are tracked via append-only events rather than in-place updates.
+        """
         task_model = await self._get_task_model(task_id)
         attempt = task_model.attempts[-1] if task_model.attempts else None
+        if attempt is not None and attempt.outcome is not None:
+            # Attempt is already completed (outcome set). Guard against in-place mutation.
+            # Allow only non-state-changing fields (output lines for streaming, action log).
+            _modifying_keys = (
+                outcome is not _UNSET
+                or completed_at is not _UNSET
+                or error is not _UNSET
+                or auto_verify_results is not _UNSET
+                or metrics is not _UNSET
+            )
+            if _modifying_keys:
+                logging.getLogger(__name__).warning(
+                    f"Task {task_id}: attempt {attempt.attempt_num} is already completed "
+                    f"(outcome={attempt.outcome!r}); skipping in-place update. "
+                    "Use an append-only correction event instead."
+                )
+                if status is not None:
+                    task_model.status = status.value
+                    task_model.step.run.updated_at = datetime.now(timezone.utc)
+                    await self._session.flush()
+                return
         if attempt is not None:
             if builder_prompt is not _UNSET:
                 attempt.builder_prompt = builder_prompt

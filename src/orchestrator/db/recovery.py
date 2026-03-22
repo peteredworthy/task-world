@@ -41,6 +41,8 @@ RECOVERY_MATRIX: dict[str, str] = {
     "child_spawned": "informational",
     "child_completed": "informational",
     "child_failed": "informational",
+    "fan_out_spawned": "informational",
+    "fan_out_completed": "informational",
 }
 
 
@@ -115,6 +117,8 @@ def replay_events(run: Run, events: list[dict[str, Any]]) -> Run:
             "child_spawned",
             "child_completed",
             "child_failed",
+            "fan_out_spawned",
+            "fan_out_completed",
         ):
             # Informational events — no state changes needed
             pass

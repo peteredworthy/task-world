@@ -56,6 +56,8 @@ from orchestrator.workflow.events import (
     ChildSpawned,
     ClarificationRequested,
     ClarificationResponded,
+    FanOutCompleted,
+    FanOutSpawned,
     RunStatusChanged,
     TaskReverted,
     TaskStatusChanged,
@@ -886,6 +888,7 @@ class WorkflowService:
                 fan_out_index=index,
                 fan_out_input=rel_path,
                 fan_out_output=output_path,
+                child_id=generate_id(),  # Stable UUID for this child (durable across restarts)
             )
             children.append(child)
 
@@ -899,23 +902,31 @@ class WorkflowService:
             await self._repo.update_task_status(parent_task.id, TaskStatus.FAN_OUT_RUNNING)
         await self._session.commit()
 
-        # Emit ChildSpawned events for each created child and commit immediately
-        # so the write transaction is closed before concurrent child execution begins.
+        # Emit FanOutSpawned parent aggregation event + ChildSpawned per-child events.
+        # Commit immediately so the write transaction is closed before concurrent child execution.
         if children:
-            await self._event_emitter.emit_batch(
-                [
-                    ChildSpawned(
-                        timestamp=self._clock.now(),
-                        run_id=run_id,
-                        event_type="child_spawned",
-                        parent_task_id=task_id,
-                        child_task_id=child.id,
-                        fan_out_index=child.fan_out_index or 0,
-                        fan_out_input=child.fan_out_input,
-                    )
-                    for child in children
-                ]
-            )
+            events_to_emit = [
+                FanOutSpawned(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="fan_out_spawned",
+                    parent_task_id=task_id,
+                    child_count=len(children),
+                )
+            ] + [
+                ChildSpawned(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="child_spawned",
+                    parent_task_id=task_id,
+                    child_task_id=child.id,
+                    child_id=child.child_id or "",
+                    fan_out_index=child.fan_out_index or 0,
+                    fan_out_input=child.fan_out_input,
+                )
+                for child in children
+            ]
+            await self._event_emitter.emit_batch(events_to_emit)
             await self._session.commit()
 
         logger.info(
@@ -989,6 +1000,28 @@ class WorkflowService:
                 task_id=task_id,
                 old_status=old_status,
                 new_status=new_status,
+            )
+        )
+
+        # Emit FanOutCompleted parent aggregation event
+        updated_run_for_counts = state.get_run(run_id)
+        child_tasks = [
+            t
+            for step in updated_run_for_counts.steps
+            for t in step.tasks
+            if t.parent_task_id == task_id
+        ]
+        completed_count = sum(1 for t in child_tasks if t.status == TaskStatus.COMPLETED)
+        failed_count = sum(1 for t in child_tasks if t.status == TaskStatus.FAILED)
+        buffer.emit(
+            FanOutCompleted(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="fan_out_completed",
+                parent_task_id=task_id,
+                all_passed=all_passed,
+                completed_count=completed_count,
+                failed_count=failed_count,
             )
         )
 
@@ -1142,6 +1175,7 @@ class WorkflowService:
         updates: dict[str, Any],
         *,
         parent_task_id: str | None = None,
+        child_id: str = "",  # Stable fan-out child UUID (child.child_id)
         fan_out_index: int = 0,
         fan_out_output: str | None = None,
     ) -> None:
@@ -1185,6 +1219,7 @@ class WorkflowService:
                         event_type="child_completed",
                         parent_task_id=parent_task_id,
                         child_task_id=task_id,
+                        child_id=child_id,
                         fan_out_index=fan_out_index,
                         fan_out_output=fan_out_output,
                     )
@@ -1197,6 +1232,7 @@ class WorkflowService:
                         event_type="child_failed",
                         parent_task_id=parent_task_id,
                         child_task_id=task_id,
+                        child_id=child_id,
                         fan_out_index=fan_out_index,
                         error=updates.get("error"),
                     )

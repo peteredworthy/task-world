@@ -1,5 +1,6 @@
 """SQLAlchemy ORM models for persistent storage."""
 
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
@@ -7,6 +8,23 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text,
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orchestrator.db.base import Base
+
+
+@dataclass
+class AttemptRecord:
+    """Canonical attempt record shape, usable across all task types.
+
+    Works for: normal tasks, fan-out children, script tasks, recovery retries.
+    attempt_num provides ordering within a task; attempt_id is globally unique
+    and maps to a Temporal Activity ID.
+    """
+
+    attempt_num: int
+    attempt_id: str
+    task_id: str = ""
+    outcome: str | None = None  # "passed", "revision_needed", "failed"
+    error: str | None = None
+    extra: dict[str, Any] = field(default_factory=lambda: {})
 
 
 class RunModel(Base):
@@ -138,6 +156,7 @@ class TaskModel(Base):
     fan_out_index: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     fan_out_input: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     fan_out_output: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
+    child_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
     # Relationships
     step: Mapped["StepModel"] = relationship("StepModel", back_populates="tasks")
@@ -157,6 +176,7 @@ class AttemptModel(Base):
         String, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
     )
     attempt_num: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     builder_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
