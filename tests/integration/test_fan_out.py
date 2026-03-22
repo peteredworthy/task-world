@@ -10,7 +10,8 @@ from pathlib import Path
 import re
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from orchestrator.api.routers.tasks import get_attempt_logs, get_task as get_task_detail
 from orchestrator.config.enums import AgentRunnerType
@@ -21,7 +22,8 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.models import RequirementConfig, StepConfig, TaskConfig
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db.base import Base
+from orchestrator.db.connection import create_session_factory
 from orchestrator.db.repositories import RunRepository
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
@@ -38,9 +40,15 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
-    engine = create_engine(":memory:")
-    await init_db(engine)
+async def session_factory(tmp_path: Path) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
+    # Use a file-based SQLite DB (NullPool) so concurrent fan-out child sessions each
+    # get their own connection. StaticPool's single-connection design causes intermittent
+    # transaction conflicts when asyncio.gather runs children concurrently: the second
+    # BEGIN fails because SQLite only allows one open transaction per connection.
+    db_path = tmp_path / "test.db"
+    engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     yield create_session_factory(engine)
     await engine.dispose()
 
@@ -674,6 +682,7 @@ class TestFanOutRegression:
             assert "built output/processed" in child_logs.output
 
             parent_task = await service.get_task(run.id, parent_task.id)
+            persisted_run = await service.get_run(run.id)
             await executor._execute_task(
                 run=persisted_run,
                 task_state=parent_task,
