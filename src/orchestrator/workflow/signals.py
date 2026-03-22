@@ -168,7 +168,11 @@ class SignalQueue:
         return await self._transport.enqueue(run_id, signal_type, payload)
 
     async def drain(self, run_id: str) -> list[PendingSignal]:
-        """Return and consume all unprocessed signals for run_id (FIFO)."""
+        """Return and consume all unprocessed signals for run_id (FIFO order).
+
+        Delegates to the transport which marks each signal's processed_at
+        timestamp to guarantee exactly-once consumption.
+        """
         return await self._transport.drain(run_id)
 
 
