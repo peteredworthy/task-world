@@ -445,3 +445,11 @@ def _apply_task_reverted(run: Run, payload: dict[str, Any]) -> None:
         return
 
     task.status = TaskStatus.PENDING
+
+
+def recover_run_state(run: Run, events: list[dict[str, Any]]) -> Run:
+    """Reconstruct Run state from a list of events (alias for replay_events).
+
+    Convenience alias matching external naming conventions.
+    """
+    return replay_events(run, events)
