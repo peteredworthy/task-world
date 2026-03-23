@@ -147,6 +147,40 @@ class DbSignalTransport(SignalTransport):
         return signals
 
 
+class InMemorySignalTransport(SignalTransport):
+    """In-memory signal transport for testing. Stores signals in a list."""
+
+    def __init__(self) -> None:
+        self._queue: list[PendingSignal] = []
+
+    async def enqueue(
+        self,
+        run_id: str,
+        signal_type: WorkflowSignal,
+        payload: dict[str, Any] | None = None,
+    ) -> PendingSignal:
+        now = datetime.now(timezone.utc)
+        signal = PendingSignal(
+            id=str(uuid.uuid4()),
+            run_id=run_id,
+            signal_type=signal_type,
+            payload=payload,
+            created_at=now,
+            processed_at=None,
+        )
+        self._queue.append(signal)
+        return signal
+
+    async def drain(self, run_id: str) -> list[PendingSignal]:
+        now = datetime.now(timezone.utc)
+        pending = [s for s in self._queue if s.run_id == run_id and s.processed_at is None]
+        result: list[PendingSignal] = []
+        for signal in pending:
+            signal.processed_at = now
+            result.append(signal)
+        return result
+
+
 class SignalQueue:
     """High-level signal queue with pluggable transport.
 

@@ -9,21 +9,33 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, signal_transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    c, _ = client_and_drain
+    return c
 
 
 def _recover_test_routine() -> dict[str, object]:
@@ -91,28 +103,37 @@ async def _create_recover_run(client: AsyncClient, repo_name: str) -> tuple[str,
     )
 
 
-async def _fail_run_on_first_task(client: AsyncClient, run_id: str, task_1_id: str) -> None:
+async def _fail_run_on_first_task(
+    client: AsyncClient, run_id: str, task_1_id: str, drain: DrainFn
+) -> None:
     await client.post(f"/api/runs/{run_id}/start")
     await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/start")
     await client.patch(
         f"/api/runs/{run_id}/tasks/{task_1_id}/checklist/R1",
         json={"status": "done"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/submit")
+    submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/submit")
+    assert submit_resp.status_code == 202
+    await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_1_id}/checklist/R1/grade",
         json={"grade": "D", "grade_reason": "force failure"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/complete-verification")
+    complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/complete-verification")
+    assert complete_resp.status_code == 202
+    await drain(run_id)
 
     run_response = await client.get(f"/api/runs/{run_id}")
     assert run_response.status_code == 200
     assert run_response.json()["status"] == "failed"
 
 
-async def test_recover_happy_path_sets_paused_and_rewinds(client: AsyncClient) -> None:
+async def test_recover_happy_path_sets_paused_and_rewinds(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     run_id, task_1_id, task_2_id, task_3_id = await _create_recover_run(client, "recover-happy")
-    await _fail_run_on_first_task(client, run_id, task_1_id)
+    await _fail_run_on_first_task(client, run_id, task_1_id, drain)
 
     response = await client.post(
         f"/api/runs/{run_id}/recover",
@@ -147,7 +168,10 @@ async def test_recover_happy_path_sets_paused_and_rewinds(client: AsyncClient) -
     assert task_3_detail.json()["checklist"][0]["status"] == "open"
 
 
-async def test_recover_preserve_checklist_true_keeps_downstream_items(client: AsyncClient) -> None:
+async def test_recover_preserve_checklist_true_keeps_downstream_items(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     run_id, task_1_id, task_2_id, task_3_id = await _create_recover_run(client, "recover-preserve")
 
     # Pre-mark downstream checklist while run is ACTIVE; recover should retain this when requested.
@@ -163,12 +187,16 @@ async def test_recover_preserve_checklist_true_keeps_downstream_items(client: As
         f"/api/runs/{run_id}/tasks/{task_1_id}/checklist/R1",
         json={"status": "done"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/submit")
+    submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/submit")
+    assert submit_resp.status_code == 202
+    await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_1_id}/checklist/R1/grade",
         json={"grade": "D", "grade_reason": "force failure"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/complete-verification")
+    complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/complete-verification")
+    assert complete_resp.status_code == 202
+    await drain(run_id)
 
     failed_run = await client.get(f"/api/runs/{run_id}")
     assert failed_run.status_code == 200
@@ -201,11 +229,14 @@ async def test_recover_non_failed_run_returns_409(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
-async def test_recover_task_id_from_other_run_returns_404(client: AsyncClient) -> None:
+async def test_recover_task_id_from_other_run_returns_404(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     failed_run_id, task_1_id, _task_2_id, _task_3_id = await _create_recover_run(
         client, "recover-run-a"
     )
-    await _fail_run_on_first_task(client, failed_run_id, task_1_id)
+    await _fail_run_on_first_task(client, failed_run_id, task_1_id, drain)
 
     other_run_id, _other_task_1_id, other_task_2_id, _other_task_3_id = await _create_recover_run(
         client, "recover-run-b"

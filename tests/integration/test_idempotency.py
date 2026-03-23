@@ -6,7 +6,6 @@ safe no-ops — not errors or state corruption.
 
 from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -14,20 +13,26 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
@@ -52,7 +57,9 @@ async def _create_and_start_run(client: AsyncClient) -> tuple[str, str]:
     return run_id, task_id
 
 
-async def _drive_to_verifying(client: AsyncClient, run_id: str, task_id: str) -> dict[str, Any]:
+async def _drive_to_verifying(
+    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn
+) -> None:
     """Drive task from PENDING to VERIFYING (builder phase complete)."""
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     assert resp.status_code == 200
@@ -64,14 +71,17 @@ async def _drive_to_verifying(client: AsyncClient, run_id: str, task_id: str) ->
     assert resp.status_code == 200
 
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert data["new_status"] == "verifying"
-    return data
+    assert resp.status_code == 202
+    await drain(run_id)
+
+    # Verify task is now verifying
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert resp.json()["status"] == "verifying"
 
 
-async def _drive_to_completed(client: AsyncClient, run_id: str, task_id: str) -> dict[str, Any]:
+async def _drive_to_completed(
+    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn
+) -> None:
     """Drive task from VERIFYING to COMPLETED (verifier phase complete)."""
     resp = await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
@@ -80,11 +90,12 @@ async def _drive_to_completed(client: AsyncClient, run_id: str, task_id: str) ->
     assert resp.status_code == 200
 
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert data["new_status"] == "completed"
-    return data
+    assert resp.status_code == 202
+    await drain(run_id)
+
+    # Verify task is now completed
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert resp.json()["status"] == "completed"
 
 
 # ---------------------------------------------------------------------------
@@ -92,27 +103,25 @@ async def _drive_to_completed(client: AsyncClient, run_id: str, task_id: str) ->
 # ---------------------------------------------------------------------------
 
 
-async def test_submit_twice(client: AsyncClient) -> None:
+async def test_submit_twice(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Calling submit twice must advance task exactly once; second call is a no-op."""
+    client, drain = client_and_drain
     run_id, task_id = await _create_and_start_run(client)
 
     # First submit: task moves BUILDING -> VERIFYING
-    first = await _drive_to_verifying(client, run_id, task_id)
-    assert first["new_status"] == "verifying"
+    await _drive_to_verifying(client, run_id, task_id, drain)
 
     # Verify task is in VERIFYING
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
     assert resp.json()["status"] == "verifying"
     attempts_after_first = len(resp.json()["attempts"])
 
-    # Second submit: must succeed (HTTP 200), return VERIFYING, not create a new attempt
+    # Second submit: enqueues signal, drain applies it (idempotent)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 200, (
-        f"Second submit should return 200, got {resp.status_code}: {resp.text}"
-    )
-    second = resp.json()
-    assert second["success"] is True, "Second submit must report success"
-    assert second["new_status"] == "verifying", "Task must remain in verifying state"
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Attempt count must not have increased
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
@@ -131,32 +140,30 @@ async def test_submit_twice(client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_verify_twice(client: AsyncClient) -> None:
+async def test_verify_twice(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Calling complete-verification twice must not create a second attempt or error."""
+    client, drain = client_and_drain
     run_id, task_id = await _create_and_start_run(client)
 
     # Drive to VERIFYING
-    await _drive_to_verifying(client, run_id, task_id)
+    await _drive_to_verifying(client, run_id, task_id, drain)
 
     # First complete-verification: task moves VERIFYING -> COMPLETED
-    first = await _drive_to_completed(client, run_id, task_id)
-    assert first["new_status"] == "completed"
+    await _drive_to_completed(client, run_id, task_id, drain)
 
-    # Check run status and attempt count after first completion
+    # Check attempt count after first completion
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
     assert resp.status_code == 200
     task_data = resp.json()
     assert task_data["status"] == "completed"
     attempts_after_first = len(task_data["attempts"])
 
-    # Second complete-verification: must succeed (HTTP 200), not create new attempt
+    # Second complete-verification: enqueues signal, drain applies it (idempotent)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200, (
-        f"Second complete-verification should return 200, got {resp.status_code}: {resp.text}"
-    )
-    second = resp.json()
-    assert second["success"] is True, "Second complete-verification must report success"
-    assert second["new_status"] == "completed", "Task must remain completed"
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Attempt count and status must be unchanged
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
@@ -173,8 +180,11 @@ async def test_verify_twice(client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_cancel_twice(client: AsyncClient) -> None:
+async def test_cancel_twice(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Cancelling an already-cancelled run must return success without error."""
+    client, _drain = client_and_drain
     run_id, _ = await _create_and_start_run(client)
 
     # First cancel: run moves ACTIVE -> FAILED

@@ -9,21 +9,33 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, signal_transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    c, _ = client_and_drain
+    return c
 
 
 async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
@@ -102,8 +114,11 @@ async def test_escalation_resume_after_human_intervention(client: AsyncClient) -
     assert patch_resp.json()["status"] == "not_applicable"
 
 
-async def test_escalation_on_completed_run_returns_409(client: AsyncClient) -> None:
+async def test_escalation_on_completed_run_returns_409(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Escalation on a completed run returns 409 InvalidTransition."""
+    client, drain = client_and_drain
     run_id, task_id = await _setup_building_task(client)
 
     # Complete the full lifecycle: building -> verifying -> completed
@@ -111,12 +126,16 @@ async def test_escalation_on_completed_run_returns_409(client: AsyncClient) -> N
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
         json={"status": "done"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert submit_resp.status_code == 202
+    await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
         json={"grade": "A"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    assert complete_resp.status_code == 202
+    await drain(run_id)
 
     # Run is now completed (or at minimum the task is completed and run may be too)
     # Cancel the run to put it in a terminal state we can test

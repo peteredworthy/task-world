@@ -9,25 +9,38 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
-    """Create an async test client with in-memory database."""
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    """Create an async test client with in-memory database and signal drain."""
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, signal_transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
-async def _create_run_with_manual_gate(client: AsyncClient) -> tuple[str, str]:
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    """Backward-compatible fixture that returns just the client."""
+    c, _ = client_and_drain
+    return c
+
+
+async def _create_run_with_manual_gate(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run with a manual gate condition on step 2."""
     routine_config = {
         "id": "test-manual-gate",
@@ -90,14 +103,16 @@ async def _create_run_with_manual_gate(client: AsyncClient) -> tuple[str, str]:
             "completion_reason": "Completed task",
         },
     )
-    assert submit_resp.status_code == 200
+    assert submit_resp.status_code == 202
+    await drain(run_id)
 
     # Complete verification (auto-verify should pass)
     complete_resp = await client.post(
         f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
         json={"passing_grades": []},
     )
-    assert complete_resp.status_code == 200
+    assert complete_resp.status_code == 202
+    await drain(run_id)
 
     # Now check that run is paused at manual gate
     run_resp = await client.get(f"/api/runs/{run_id}")
@@ -116,9 +131,12 @@ async def _create_run_with_manual_gate(client: AsyncClient) -> tuple[str, str]:
 class TestSkipStepAPI:
     """Tests for POST /runs/{id}/steps/{step_id}/skip endpoint."""
 
-    async def test_skip_manual_gate_step(self, client: AsyncClient) -> None:
+    async def test_skip_manual_gate_step(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Skip a step with manual gate condition."""
-        run_id, step2_id = await _create_run_with_manual_gate(client)
+        client, drain = client_and_drain
+        run_id, step2_id = await _create_run_with_manual_gate(client, drain)
 
         # Skip the manual gate step
         skip_resp = await client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
@@ -172,18 +190,24 @@ class TestSkipStepAPI:
         assert skip_resp.status_code == 409
         assert "manual gate" in skip_resp.json()["detail"].lower()
 
-    async def test_skip_returns_409_for_wrong_step_id(self, client: AsyncClient) -> None:
+    async def test_skip_returns_409_for_wrong_step_id(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Return 409 when step_id doesn't match current step."""
-        run_id, step2_id = await _create_run_with_manual_gate(client)
+        client, drain = client_and_drain
+        run_id, step2_id = await _create_run_with_manual_gate(client, drain)
 
         # Try to skip with wrong step ID
         skip_resp = await client.post(f"/api/runs/{run_id}/steps/wrong-step-id/skip")
         assert skip_resp.status_code == 409
         assert "not the current step" in skip_resp.json()["detail"].lower()
 
-    async def test_skip_advances_to_next_step(self, client: AsyncClient) -> None:
+    async def test_skip_advances_to_next_step(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Skipping a step advances current_step_index."""
-        run_id, step2_id = await _create_run_with_manual_gate(client)
+        client, drain = client_and_drain
+        run_id, step2_id = await _create_run_with_manual_gate(client, drain)
 
         # Check current_step_index before skip
         run_resp = await client.get(f"/api/runs/{run_id}")
@@ -197,8 +221,11 @@ class TestSkipStepAPI:
         new_index = skip_resp.json()["current_step_index"]
         assert new_index > initial_index
 
-    async def test_skip_handles_cascading_conditions(self, client: AsyncClient) -> None:
+    async def test_skip_handles_cascading_conditions(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Skip can handle cascading conditions (skip multiple steps if needed)."""
+        client, drain = client_and_drain
         routine_config = {
             "id": "test-cascade-conditions",
             "name": "test-cascade-conditions",
@@ -277,13 +304,15 @@ class TestSkipStepAPI:
             f"/api/runs/{run_id}/tasks/{task1_id}/submit",
             json={"artifacts": [], "completion_reason": "Completed task"},
         )
-        assert submit_resp.status_code == 200
+        assert submit_resp.status_code == 202
+        await drain(run_id)
 
         complete_resp = await client.post(
             f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
             json={"passing_grades": []},
         )
-        assert complete_resp.status_code == 200
+        assert complete_resp.status_code == 202
+        await drain(run_id)
 
         # Now run is paused at step 2 (manual gate)
         run_resp = await client.get(f"/api/runs/{run_id}")

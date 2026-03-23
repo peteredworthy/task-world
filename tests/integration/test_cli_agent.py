@@ -352,11 +352,16 @@ async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state() -> Non
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
 
+    from orchestrator.workflow.signals import InMemorySignalTransport
+
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     await init_db(app.state.engine)
+    # Use InMemorySignalTransport so signals are retained in-process for drain
+    signal_transport = InMemorySignalTransport()
+    app.state.signal_transport = signal_transport
 
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
     server = uvicorn.Server(config)
@@ -446,6 +451,15 @@ async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state() -> Non
             result = await agent.execute(ctx, on_update, on_submit)
 
             assert result.success is True
+
+            # Drain the pending signals so the state transition fires.
+            from tests.integration.signal_helpers import drain_signals
+            from orchestrator.workflow.service import WorkflowService
+
+            async with app.state.session_factory() as drain_session:
+                service = WorkflowService(drain_session)
+                await drain_signals(run_id, signal_transport, drain_session, service)
+                await drain_session.commit()
 
             # Verify workflow state changed: task should be VERIFYING
             resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")

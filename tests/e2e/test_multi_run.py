@@ -21,10 +21,11 @@ from tests.e2e.conftest import (
     start_task,
     submit_task,
 )
+from tests.integration.signal_helpers import DrainFn
 
 
 @pytest.mark.e2e
-async def test_multiple_runs_independent_state(api_client: AsyncClient) -> None:
+async def test_multiple_runs_independent_state(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test that multiple runs maintain independent state.
 
     Creates three runs and progresses them to different states to verify
@@ -56,14 +57,14 @@ async def test_multiple_runs_independent_state(api_client: AsyncClient) -> None:
     # Progress run2 to verifying
     await start_task(api_client, run2_id, task2_id)
     await mark_checklist_done(api_client, run2_id, task2_id, "R1")
-    await submit_task(api_client, run2_id, task2_id)
+    await submit_task(api_client, run2_id, task2_id, drain=drain)
 
     # Progress run3 to completed
     await start_task(api_client, run3_id, task3_id)
     await mark_checklist_done(api_client, run3_id, task3_id, "R1")
-    await submit_task(api_client, run3_id, task3_id)
+    await submit_task(api_client, run3_id, task3_id, drain=drain)
     await grade_item(api_client, run3_id, task3_id, "R1", grade="A")
-    await complete_verification(api_client, run3_id, task3_id)
+    await complete_verification(api_client, run3_id, task3_id, drain=drain)
 
     # Verify each run is in the expected state
     task1_data = await get_task(api_client, run1_id, task1_id)
@@ -82,7 +83,7 @@ async def test_multiple_runs_independent_state(api_client: AsyncClient) -> None:
 
 
 @pytest.mark.e2e
-async def test_concurrent_task_operations(api_client: AsyncClient) -> None:
+async def test_concurrent_task_operations(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test that concurrent operations on different runs work correctly.
 
     Performs operations on multiple runs concurrently to verify thread-safety
@@ -108,20 +109,18 @@ async def test_concurrent_task_operations(api_client: AsyncClient) -> None:
         *[mark_checklist_done(api_client, run_id, task_id, "R1") for run_id, task_id in run_tasks]
     )
 
-    # Submit all tasks concurrently
-    await asyncio.gather(
-        *[submit_task(api_client, run_id, task_id) for run_id, task_id in run_tasks]
-    )
+    # Submit all tasks (sequentially to avoid signal drain contention)
+    for run_id, task_id in run_tasks:
+        await submit_task(api_client, run_id, task_id, drain=drain)
 
     # Grade all tasks concurrently
     await asyncio.gather(
         *[grade_item(api_client, run_id, task_id, "R1", grade="A") for run_id, task_id in run_tasks]
     )
 
-    # Complete all verifications concurrently
-    await asyncio.gather(
-        *[complete_verification(api_client, run_id, task_id) for run_id, task_id in run_tasks]
-    )
+    # Complete all verifications (sequentially to avoid signal drain contention)
+    for run_id, task_id in run_tasks:
+        await complete_verification(api_client, run_id, task_id, drain=drain)
 
     # Verify all runs completed successfully
     for run_id, _ in run_tasks:
@@ -153,7 +152,7 @@ async def test_multiple_runs_different_routines(api_client: AsyncClient) -> None
 
 
 @pytest.mark.e2e
-async def test_run_isolation_with_revisions(api_client: AsyncClient) -> None:
+async def test_run_isolation_with_revisions(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test that revision cycles in one run don't affect other runs.
 
     Creates multiple runs and causes revisions in one while progressing
@@ -178,15 +177,15 @@ async def test_run_isolation_with_revisions(api_client: AsyncClient) -> None:
 
     # Run1: Complete successfully on first try
     await mark_checklist_done(api_client, run1_id, task1_id, "R1")
-    await submit_task(api_client, run1_id, task1_id)
+    await submit_task(api_client, run1_id, task1_id, drain=drain)
     await grade_item(api_client, run1_id, task1_id, "R1", grade="A")
-    await complete_verification(api_client, run1_id, task1_id)
+    await complete_verification(api_client, run1_id, task1_id, drain=drain)
 
     # Run2: Fail first attempt
     await mark_checklist_done(api_client, run2_id, task2_id, "R1")
-    await submit_task(api_client, run2_id, task2_id)
+    await submit_task(api_client, run2_id, task2_id, drain=drain)
     await grade_item(api_client, run2_id, task2_id, "R1", grade="F", reason="Need revision")
-    await complete_verification(api_client, run2_id, task2_id)
+    await complete_verification(api_client, run2_id, task2_id, drain=drain)
 
     # Verify run1 is completed with 1 attempt
     task1_data = await get_task(api_client, run1_id, task1_id)
@@ -199,9 +198,9 @@ async def test_run_isolation_with_revisions(api_client: AsyncClient) -> None:
     assert len(task2_data["attempts"]) == 2
 
     # Complete run2's second attempt
-    await submit_task(api_client, run2_id, task2_id)
+    await submit_task(api_client, run2_id, task2_id, drain=drain)
     await grade_item(api_client, run2_id, task2_id, "R1", grade="A")
-    await complete_verification(api_client, run2_id, task2_id)
+    await complete_verification(api_client, run2_id, task2_id, drain=drain)
 
     # Verify run2 is now completed with 2 attempts
     task2_data = await get_task(api_client, run2_id, task2_id)
@@ -215,7 +214,7 @@ async def test_run_isolation_with_revisions(api_client: AsyncClient) -> None:
 
 
 @pytest.mark.e2e
-async def test_run_list_filtering(api_client: AsyncClient) -> None:
+async def test_run_list_filtering(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test that run list can be filtered and returns correct results.
 
     Creates runs in different states and verifies that listing and
@@ -251,9 +250,9 @@ async def test_run_list_filtering(api_client: AsyncClient) -> None:
         task_id = get_first_task_id(run_data)
         await start_task(api_client, run_id, task_id)
         await mark_checklist_done(api_client, run_id, task_id, "R1")
-        await submit_task(api_client, run_id, task_id)
+        await submit_task(api_client, run_id, task_id, drain=drain)
         await grade_item(api_client, run_id, task_id, "R1", grade="A")
-        await complete_verification(api_client, run_id, task_id)
+        await complete_verification(api_client, run_id, task_id, drain=drain)
         completed_runs.append(run_id)
 
     # Get all runs

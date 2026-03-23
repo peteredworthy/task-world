@@ -24,6 +24,9 @@ from orchestrator.db.event_journal import resolve_default_journal_path
 from orchestrator.db.journal_replay import replay_journal_to_repository
 from orchestrator.db.repositories import RunRepository
 from orchestrator.state.models import Run
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -87,22 +90,25 @@ FAN_OUT_ROUTINE: dict[str, Any] = {
 @pytest.fixture
 async def file_db_client(
     tmp_path: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, FastAPI], None]:
+) -> AsyncGenerator[tuple[AsyncClient, Path, FastAPI, DrainFn], None]:
     db_path = tmp_path / "orchestrator.db"
+    transport = InMemorySignalTransport()
     app = create_app(
         db_path=str(db_path),
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         spawn_agents=False,
     )
+    app.state.signal_transport = transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, db_path, app
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, db_path, app, drain
     await app.state.engine.dispose()
 
 
 async def _complete_task(
-    client: AsyncClient, run_id: str, task_id: str, req_id: str = "R1"
+    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn, req_id: str = "R1"
 ) -> None:
     """Drive a task through start → submit → grade → complete-verification."""
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -112,14 +118,19 @@ async def _complete_task(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 200, f"submit failed: {resp.text}"
+    assert resp.status_code == 202
+    await drain(run_id)
+
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}/grade",
         json={"grade": "A"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200, f"complete-verification failed: {resp.text}"
-    assert resp.json()["new_status"] == "completed"
+    assert resp.status_code == 202
+    await drain(run_id)
+
+    task = (await client.get(f"/api/runs/{run_id}/tasks/{task_id}")).json()
+    assert task["status"] == "completed"
 
 
 def _corrupt_run_to_draft(run: Run) -> None:
@@ -136,7 +147,7 @@ def _corrupt_run_to_draft(run: Run) -> None:
 
 
 async def test_partial_fan_out_replay_reconstructs_correct_state(
-    file_db_client: tuple[AsyncClient, Path, FastAPI],
+    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
 ) -> None:
     """After restart, completed fan-out children stay COMPLETED; pending stay PENDING.
 
@@ -148,7 +159,7 @@ async def test_partial_fan_out_replay_reconstructs_correct_state(
     5. Assert: run=ACTIVE, step 1=completed, child A=completed, child B=completed,
        child C=pending, fan-out step NOT completed
     """
-    client, db_path, app = file_db_client
+    client, db_path, app, drain = file_db_client
 
     # Create and start run
     resp = await client.post(
@@ -172,15 +183,15 @@ async def test_partial_fan_out_replay_reconstructs_correct_state(
     assert start_resp.status_code == 200
 
     # Complete setup step
-    await _complete_task(client, run_id, setup_task_id)
+    await _complete_task(client, run_id, setup_task_id, drain)
 
     # Verify we're on step 2
     run_state = (await client.get(f"/api/runs/{run_id}")).json()
     assert run_state["current_step_index"] == 1
 
     # Complete child A and child B (but NOT child C — partial completion)
-    await _complete_task(client, run_id, child_a_id)
-    await _complete_task(client, run_id, child_b_id)
+    await _complete_task(client, run_id, child_a_id, drain)
+    await _complete_task(client, run_id, child_b_id, drain)
 
     # Verify partial state: step 2 not completed yet, child C still pending
     run_state = (await client.get(f"/api/runs/{run_id}")).json()
@@ -257,10 +268,10 @@ async def test_partial_fan_out_replay_reconstructs_correct_state(
 
 
 async def test_all_fan_out_children_completed_replay(
-    file_db_client: tuple[AsyncClient, Path, FastAPI],
+    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
 ) -> None:
     """Replay after all children complete advances step index correctly."""
-    client, db_path, app = file_db_client
+    client, db_path, app, drain = file_db_client
 
     resp = await client.post(
         "/api/runs",
@@ -279,10 +290,10 @@ async def test_all_fan_out_children_completed_replay(
     child_c_id = run["steps"][1]["tasks"][2]["id"]
 
     await client.post(f"/api/runs/{run_id}/start")
-    await _complete_task(client, run_id, setup_task_id)
-    await _complete_task(client, run_id, child_a_id)
-    await _complete_task(client, run_id, child_b_id)
-    await _complete_task(client, run_id, child_c_id)
+    await _complete_task(client, run_id, setup_task_id, drain)
+    await _complete_task(client, run_id, child_a_id, drain)
+    await _complete_task(client, run_id, child_b_id, drain)
+    await _complete_task(client, run_id, child_c_id, drain)
 
     # Verify all done before restart
     run_state = (await client.get(f"/api/runs/{run_id}")).json()

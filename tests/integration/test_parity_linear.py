@@ -16,6 +16,9 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -67,15 +70,18 @@ LINEAR_ROUTINE: dict[str, Any] = {
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
@@ -116,7 +122,7 @@ async def _get_task(client: AsyncClient, run_id: str, task_id: str) -> dict[str,
 
 
 async def _complete_task(
-    client: AsyncClient, run_id: str, task_id: str, req_id: str = "R1"
+    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn, req_id: str = "R1"
 ) -> None:
     """Drive a task through the full build → verify → complete cycle."""
     # Start
@@ -133,12 +139,10 @@ async def _complete_task(
     )
     assert resp.status_code == 200
 
-    # Submit
+    # Submit (now returns 202)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert data["new_status"] == "verifying"
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Grade
     resp = await client.put(
@@ -147,12 +151,10 @@ async def _complete_task(
     )
     assert resp.status_code == 200
 
-    # Complete verification
+    # Complete verification (now returns 202)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["success"] is True
-    assert data["new_status"] == "completed"
+    assert resp.status_code == 202
+    await drain(run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -160,8 +162,11 @@ async def _complete_task(
 # ---------------------------------------------------------------------------
 
 
-async def test_linear_run_structure(client: AsyncClient) -> None:
+async def test_linear_run_structure(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Run created with 2 steps and 3 tasks in the expected layout."""
+    client, _drain = client_and_drain
     run = await _create_run(client)
 
     assert run["status"] == "draft"
@@ -171,8 +176,11 @@ async def test_linear_run_structure(client: AsyncClient) -> None:
     assert run["current_step_index"] == 0
 
 
-async def test_linear_run_starts_active(client: AsyncClient) -> None:
+async def test_linear_run_starts_active(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Run transitions to active and lands on step 0 after start."""
+    client, _drain = client_and_drain
     run = await _create_run(client)
     run_id = run["id"]
 
@@ -181,8 +189,11 @@ async def test_linear_run_starts_active(client: AsyncClient) -> None:
     assert started["current_step_index"] == 0
 
 
-async def test_linear_task_status_transitions(client: AsyncClient) -> None:
+async def test_linear_task_status_transitions(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Task status progresses: pending → building → verifying → completed."""
+    client, drain = client_and_drain
     run = await _create_run(client)
     run_id = run["id"]
     task_id = run["steps"][0]["tasks"][0]["id"]
@@ -206,7 +217,9 @@ async def test_linear_task_status_transitions(client: AsyncClient) -> None:
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
         json={"status": "done"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert resp.status_code == 202
+    await drain(run_id)
     task = await _get_task(client, run_id, task_id)
     assert task["status"] == "verifying"
 
@@ -215,14 +228,19 @@ async def test_linear_task_status_transitions(client: AsyncClient) -> None:
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
         json={"grade": "A"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    assert resp.status_code == 202
+    await drain(run_id)
     task = await _get_task(client, run_id, task_id)
     assert task["status"] == "completed"
     assert task["attempts"][0]["outcome"] == "passed"
 
 
-async def test_linear_step_advances_after_step1_complete(client: AsyncClient) -> None:
+async def test_linear_step_advances_after_step1_complete(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """current_step_index advances from 0 to 1 after step 1 completes."""
+    client, drain = client_and_drain
     run = await _create_run(client)
     run_id = run["id"]
     task1_id = run["steps"][0]["tasks"][0]["id"]
@@ -233,7 +251,7 @@ async def test_linear_step_advances_after_step1_complete(client: AsyncClient) ->
     r = await _get_run(client, run_id)
     assert r["current_step_index"] == 0
 
-    await _complete_task(client, run_id, task1_id)
+    await _complete_task(client, run_id, task1_id, drain)
 
     # Step should have advanced
     r = await _get_run(client, run_id)
@@ -241,8 +259,11 @@ async def test_linear_step_advances_after_step1_complete(client: AsyncClient) ->
     assert r["steps"][0]["completed"] is True
 
 
-async def test_linear_full_workflow_completes_run(client: AsyncClient) -> None:
+async def test_linear_full_workflow_completes_run(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Full 3-task linear run: all tasks done, run status == completed."""
+    client, drain = client_and_drain
     run = await _create_run(client)
     run_id = run["id"]
     task1_id = run["steps"][0]["tasks"][0]["id"]
@@ -252,20 +273,20 @@ async def test_linear_full_workflow_completes_run(client: AsyncClient) -> None:
     await _start_run(client, run_id)
 
     # Complete step 1
-    await _complete_task(client, run_id, task1_id)
+    await _complete_task(client, run_id, task1_id, drain)
 
     r = await _get_run(client, run_id)
     assert r["status"] == "active", "Run should remain active after step 1"
     assert r["current_step_index"] == 1
 
     # Complete step 2 task 1
-    await _complete_task(client, run_id, task2_id)
+    await _complete_task(client, run_id, task2_id, drain)
 
     r = await _get_run(client, run_id)
     assert r["status"] == "active", "Run still active with one step-2 task remaining"
 
     # Complete step 2 task 2 → run should complete
-    await _complete_task(client, run_id, task3_id)
+    await _complete_task(client, run_id, task3_id, drain)
 
     r = await _get_run(client, run_id)
     assert r["status"] == "completed"

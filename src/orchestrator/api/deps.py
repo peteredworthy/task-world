@@ -18,6 +18,7 @@ from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import WorkflowEvent
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.signals import DbSignalTransport, SignalTransport
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
@@ -34,6 +35,23 @@ async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
     session_factory = request.app.state.session_factory
     async with session_factory() as session:
         yield session
+
+
+async def get_signal_transport(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> SignalTransport:
+    """Return the signal transport for the current request.
+
+    If a transport override is stored in ``app.state.signal_transport`` (e.g.
+    an ``InMemorySignalTransport`` injected by tests), that instance is
+    returned directly.  Otherwise a ``DbSignalTransport`` bound to the current
+    session is created and returned.
+    """
+    override: SignalTransport | None = getattr(request.app.state, "signal_transport", None)
+    if override is not None:
+        return override
+    return DbSignalTransport(session)
 
 
 async def get_run_repository(

@@ -17,6 +17,9 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -42,15 +45,18 @@ REVISION_ROUTINE: dict[str, Any] = {
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
@@ -66,8 +72,12 @@ async def _get_run(client: AsyncClient, run_id: str) -> dict[str, Any]:
     return resp.json()
 
 
-async def test_revision_attempt_count_and_outcomes(client: AsyncClient) -> None:
+async def test_revision_attempt_count_and_outcomes(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Grade F on attempt 1 → revision; attempt 2 passes → run completed."""
+    client, drain = client_and_drain
+
     # Create and start run
     resp = await client.post(
         "/api/runs",
@@ -102,7 +112,11 @@ async def test_revision_attempt_count_and_outcomes(client: AsyncClient) -> None:
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.json()["new_status"] == "verifying"
+    assert resp.status_code == 202
+    await drain(run_id)
+
+    task = await _get_task(client, run_id, task_id)
+    assert task["status"] == "verifying"
 
     # Grade F → triggers revision
     await client.put(
@@ -110,11 +124,8 @@ async def test_revision_attempt_count_and_outcomes(client: AsyncClient) -> None:
         json={"grade": "F", "grade_reason": "Completely wrong"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200
-    verify_data = resp.json()
-    assert verify_data["new_status"] == "building", (
-        "Grade F should put task back into building for revision"
-    )
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Task should now be on attempt 2 with attempt 1 marked as revision_needed
     task = await _get_task(client, run_id, task_id)
@@ -138,17 +149,19 @@ async def test_revision_attempt_count_and_outcomes(client: AsyncClient) -> None:
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.json()["new_status"] == "verifying"
+    assert resp.status_code == 202
+    await drain(run_id)
+
+    task = await _get_task(client, run_id, task_id)
+    assert task["status"] == "verifying"
 
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
         json={"grade": "A", "grade_reason": "Much better"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200
-    verify_data = resp.json()
-    assert verify_data["success"] is True
-    assert verify_data["new_status"] == "completed"
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Final assertions
     task = await _get_task(client, run_id, task_id)
@@ -163,8 +176,12 @@ async def test_revision_attempt_count_and_outcomes(client: AsyncClient) -> None:
     assert run_state["steps"][0]["completed"] is True
 
 
-async def test_revision_feedback_available_on_second_attempt(client: AsyncClient) -> None:
+async def test_revision_feedback_available_on_second_attempt(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Grade reason from failed attempt is recorded on the first attempt."""
+    client, drain = client_and_drain
+
     resp = await client.post(
         "/api/runs",
         json={
@@ -186,12 +203,17 @@ async def test_revision_feedback_available_on_second_attempt(client: AsyncClient
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
         json={"status": "done"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert resp.status_code == 202
+    await drain(run_id)
+
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
         json={"grade": "D", "grade_reason": "Missing key functionality"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Verify that attempt 1 captured the grade reason
     task = await _get_task(client, run_id, task_id)

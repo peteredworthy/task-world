@@ -36,6 +36,9 @@ from orchestrator.db.connection import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -1005,20 +1008,32 @@ class TestRepeatForExpansionIntegration:
 
 
 @pytest.fixture
-async def api_client() -> AsyncGenerator[AsyncClient, None]:
-    """Create an async test client with in-memory database for API tests."""
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    """Create an async test client with in-memory database and signal drain for API tests."""
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, signal_transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
-async def _create_run_with_manual_gate_for_api(client: AsyncClient) -> tuple[str, str]:
+@pytest.fixture
+async def api_client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    """Backward-compatible fixture that returns just the client."""
+    client, _ = client_and_drain
+    return client
+
+
+async def _create_run_with_manual_gate_for_api(
+    client: AsyncClient, drain: DrainFn
+) -> tuple[str, str]:
     """Create a run with a manual gate condition on step 2."""
     routine_config = {
         "id": "test-manual-gate-api",
@@ -1081,14 +1096,16 @@ async def _create_run_with_manual_gate_for_api(client: AsyncClient) -> tuple[str
             "completion_reason": "Completed task",
         },
     )
-    assert submit_resp.status_code == 200
+    assert submit_resp.status_code == 202
+    await drain(run_id)
 
     # Complete verification (auto-verify should pass)
     complete_resp = await client.post(
         f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
         json={"passing_grades": []},
     )
-    assert complete_resp.status_code == 200
+    assert complete_resp.status_code == 202
+    await drain(run_id)
 
     # Now check that run is paused at manual gate
     run_resp = await client.get(f"/api/runs/{run_id}")
@@ -1108,10 +1125,11 @@ class TestSkipStepAPISurface:
     """API-level tests for skip-step endpoint and response schema."""
 
     async def test_get_run_response_includes_skipped_field_on_steps(
-        self, api_client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """Verify GET /runs/{id} response includes skipped field on steps."""
-        run_id, _ = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, _ = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Get the run
         run_resp = await api_client.get(f"/api/runs/{run_id}")
@@ -1126,10 +1144,11 @@ class TestSkipStepAPISurface:
             assert isinstance(step["skipped"], bool)
 
     async def test_get_run_response_includes_skip_reason_field_on_steps(
-        self, api_client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """Verify GET /runs/{id} response includes skip_reason field on steps."""
-        run_id, _ = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, _ = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Get the run
         run_resp = await api_client.get(f"/api/runs/{run_id}")
@@ -1143,10 +1162,11 @@ class TestSkipStepAPISurface:
             assert step["skip_reason"] is None or isinstance(step["skip_reason"], str)
 
     async def test_get_run_response_includes_condition_field_on_steps(
-        self, api_client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """Verify GET /runs/{id} response includes condition field on steps."""
-        run_id, _ = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, _ = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Get the run
         run_resp = await api_client.get(f"/api/runs/{run_id}")
@@ -1160,10 +1180,11 @@ class TestSkipStepAPISurface:
             # condition can be None or a dict with condition data
 
     async def test_skipped_step_has_skipped_true_after_skip_endpoint(
-        self, api_client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """After calling skip endpoint, skipped field should be true."""
-        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Skip the manual gate step
         skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
@@ -1176,9 +1197,12 @@ class TestSkipStepAPISurface:
         assert step2_data["skipped"] is True
         assert step2_data["skip_reason"] == "manual_skip"
 
-    async def test_skipped_step_in_activity_events(self, api_client: AsyncClient) -> None:
+    async def test_skipped_step_in_activity_events(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Verify activity is recorded when step is skipped."""
-        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Skip the manual gate step
         skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
@@ -1196,10 +1220,11 @@ class TestSkipStepAPISurface:
         assert len(activity_data["events"]) > 0
 
     async def test_skip_endpoint_works_for_manual_gate_paused_runs(
-        self, api_client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """Skip-step endpoint should succeed for runs paused at manual gate."""
-        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Verify run is paused at manual gate
         run_resp = await api_client.get(f"/api/runs/{run_id}")
@@ -1216,8 +1241,11 @@ class TestSkipStepAPISurface:
         assert result["id"] == run_id
         assert result["steps"][1]["skipped"] is True
 
-    async def test_skip_returns_409_when_not_at_manual_gate(self, api_client: AsyncClient) -> None:
+    async def test_skip_returns_409_when_not_at_manual_gate(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Skip-step should return 409 when run is not paused at manual gate."""
+        api_client, _ = client_and_drain
         routine_config = {
             "id": "test-no-condition",
             "name": "test-no-condition",
@@ -1252,18 +1280,24 @@ class TestSkipStepAPISurface:
         assert skip_resp.status_code == 409
         assert "manual gate" in skip_resp.json()["detail"].lower()
 
-    async def test_skip_returns_409_for_wrong_step_id(self, api_client: AsyncClient) -> None:
+    async def test_skip_returns_409_for_wrong_step_id(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Skip-step should return 409 when step_id doesn't match current step."""
-        run_id, _ = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, _ = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Try to skip with wrong step ID
         skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/wrong-step-id/skip")
         assert skip_resp.status_code == 409
         assert "not the current step" in skip_resp.json()["detail"].lower()
 
-    async def test_skip_endpoint_advances_current_step_index(self, api_client: AsyncClient) -> None:
+    async def test_skip_endpoint_advances_current_step_index(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Skipping a step should advance current_step_index."""
-        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Check current_step_index before skip
         run_resp = await api_client.get(f"/api/runs/{run_id}")
@@ -1277,9 +1311,12 @@ class TestSkipStepAPISurface:
         new_index = skip_resp.json()["current_step_index"]
         assert new_index >= initial_index
 
-    async def test_skip_endpoint_marks_step_completed(self, api_client: AsyncClient) -> None:
+    async def test_skip_endpoint_marks_step_completed(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Skipping a step should mark it as completed."""
-        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client)
+        api_client, drain = client_and_drain
+        run_id, step2_id = await _create_run_with_manual_gate_for_api(api_client, drain)
 
         # Skip the manual gate step
         skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
@@ -1292,8 +1329,11 @@ class TestSkipStepAPISurface:
         assert step2_data["skipped"] is True
         assert step2_data["completed"] is True
 
-    async def test_skip_cascades_false_conditions(self, api_client: AsyncClient) -> None:
+    async def test_skip_cascades_false_conditions(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Skip cascades through subsequent false conditions."""
+        api_client, drain = client_and_drain
         routine_config = {
             "id": "test-cascade-conditions-api",
             "name": "test-cascade-conditions-api",
@@ -1371,14 +1411,18 @@ class TestSkipStepAPISurface:
         task1_id = create_resp.json()["steps"][0]["tasks"][0]["id"]
 
         await api_client.post(f"/api/runs/{run_id}/tasks/{task1_id}/start")
-        await api_client.post(
+        submit_resp = await api_client.post(
             f"/api/runs/{run_id}/tasks/{task1_id}/submit",
             json={"artifacts": [], "completion_reason": "Completed task"},
         )
-        await api_client.post(
+        assert submit_resp.status_code == 202
+        await drain(run_id)
+        complete_resp = await api_client.post(
             f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
             json={"passing_grades": []},
         )
+        assert complete_resp.status_code == 202
+        await drain(run_id)
 
         # Skip step 2
         skip_resp = await api_client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")

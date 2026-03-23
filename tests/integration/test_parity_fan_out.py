@@ -20,6 +20,9 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -82,15 +85,18 @@ FAN_OUT_ROUTINE: dict[str, Any] = {
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
@@ -107,7 +113,7 @@ async def _get_task(client: AsyncClient, run_id: str, task_id: str) -> dict[str,
 
 
 async def _complete_task(
-    client: AsyncClient, run_id: str, task_id: str, req_id: str = "R1"
+    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn, req_id: str = "R1"
 ) -> None:
     """Drive a task through the full build → verify → complete cycle."""
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -117,18 +123,26 @@ async def _complete_task(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
+    await drain(run_id)
+
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}/grade",
         json={"grade": "A"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200
-    assert resp.json()["new_status"] == "completed"
+    assert resp.status_code == 202
+    await drain(run_id)
+
+    task = await _get_task(client, run_id, task_id)
+    assert task["status"] == "completed"
 
 
-async def test_fan_out_step_structure(client: AsyncClient) -> None:
+async def test_fan_out_step_structure(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Fan-out step contains exactly 3 child tasks at creation."""
+    client, _drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={
@@ -145,8 +159,11 @@ async def test_fan_out_step_structure(client: AsyncClient) -> None:
     assert run["steps"][1]["completed"] is False
 
 
-async def test_fan_out_step_incomplete_while_children_pending(client: AsyncClient) -> None:
+async def test_fan_out_step_incomplete_while_children_pending(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Fan-out step not completed while child tasks are still pending."""
+    client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={
@@ -162,10 +179,10 @@ async def test_fan_out_step_incomplete_while_children_pending(client: AsyncClien
     child_b_id = run["steps"][1]["tasks"][1]["id"]
 
     await client.post(f"/api/runs/{run_id}/start")
-    await _complete_task(client, run_id, task1_id)
+    await _complete_task(client, run_id, task1_id, drain)
 
     # Complete only first child
-    await _complete_task(client, run_id, child_a_id)
+    await _complete_task(client, run_id, child_a_id, drain)
 
     run_state = await _get_run(client, run_id)
     # current_step_index should still be on step index 1 (fan-out step)
@@ -179,8 +196,11 @@ async def test_fan_out_step_incomplete_while_children_pending(client: AsyncClien
     assert task_b["status"] == "pending"
 
 
-async def test_fan_out_step_completes_when_all_children_done(client: AsyncClient) -> None:
+async def test_fan_out_step_completes_when_all_children_done(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Fan-out step marked completed only after all child tasks finish."""
+    client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={
@@ -199,14 +219,14 @@ async def test_fan_out_step_completes_when_all_children_done(client: AsyncClient
     await client.post(f"/api/runs/{run_id}/start")
 
     # Complete setup step
-    await _complete_task(client, run_id, task1_id)
+    await _complete_task(client, run_id, task1_id, drain)
     run_state = await _get_run(client, run_id)
     assert run_state["current_step_index"] == 1
 
     # Complete all fan-out children in order
-    await _complete_task(client, run_id, child_a_id)
-    await _complete_task(client, run_id, child_b_id)
-    await _complete_task(client, run_id, child_c_id)
+    await _complete_task(client, run_id, child_a_id, drain)
+    await _complete_task(client, run_id, child_b_id, drain)
+    await _complete_task(client, run_id, child_c_id, drain)
 
     # Fan-out step should now be completed and run should advance
     run_state = await _get_run(client, run_id)
@@ -217,8 +237,11 @@ async def test_fan_out_step_completes_when_all_children_done(client: AsyncClient
     assert run_state["status"] == "active", "Run still active (combine step not done)"
 
 
-async def test_fan_out_run_completes_after_all_steps(client: AsyncClient) -> None:
+async def test_fan_out_run_completes_after_all_steps(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Full workflow: setup → fan-out (3 children) → combine → run completed."""
+    client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={
@@ -237,11 +260,11 @@ async def test_fan_out_run_completes_after_all_steps(client: AsyncClient) -> Non
 
     await client.post(f"/api/runs/{run_id}/start")
 
-    await _complete_task(client, run_id, task1_id)
-    await _complete_task(client, run_id, child_a_id)
-    await _complete_task(client, run_id, child_b_id)
-    await _complete_task(client, run_id, child_c_id)
-    await _complete_task(client, run_id, combine_id)
+    await _complete_task(client, run_id, task1_id, drain)
+    await _complete_task(client, run_id, child_a_id, drain)
+    await _complete_task(client, run_id, child_b_id, drain)
+    await _complete_task(client, run_id, child_c_id, drain)
+    await _complete_task(client, run_id, combine_id, drain)
 
     run_state = await _get_run(client, run_id)
     assert run_state["status"] == "completed"

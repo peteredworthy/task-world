@@ -30,6 +30,7 @@ from orchestrator.workflow.handlers import build_registry, signal_handler
 from orchestrator.workflow.signals import (
     DbSignalTransport,
     SignalQueue,
+    SignalTransport,
     WorkflowSignal,
     register_active_run,
     unregister_active_run,
@@ -60,25 +61,28 @@ class RunWorkflow:
     def __init__(
         self,
         run_id: str,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_type: AgentRunnerType | None = None,
+        agent_config: dict[str, Any] | None = None,
         *,
         # Executor services — provided by AgentRunnerExecutor._run_agent_loop
-        session_factory: async_sessionmaker[AsyncSession],
-        create_service: Callable[..., Any],
-        monitor_agent_health: Callable[..., Any],
-        heartbeat: Callable[[str], None],
-        find_next_task: Callable[..., Any],
-        broadcaster: EventBroadcaster,
-        prepare_codex_config: Callable[..., Any],
-        execute_task: Callable[..., Any],
-        attempt_store: AttemptStore,
-        running_tasks: dict[str, asyncio.Task[None]],
-        heartbeats: dict[str, datetime],
+        # All optional so that a minimal instance can be created for on_signal()
+        # use without an executor context (e.g., in integration tests).
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        create_service: Callable[..., Any] | None = None,
+        monitor_agent_health: Callable[..., Any] | None = None,
+        heartbeat: Callable[[str], None] | None = None,
+        find_next_task: Callable[..., Any] | None = None,
+        broadcaster: EventBroadcaster | None = None,
+        prepare_codex_config: Callable[..., Any] | None = None,
+        execute_task: Callable[..., Any] | None = None,
+        attempt_store: AttemptStore | None = None,
+        running_tasks: dict[str, asyncio.Task[None]] | None = None,
+        heartbeats: dict[str, datetime] | None = None,
+        transport: SignalTransport | None = None,
     ) -> None:
         self.run_id = run_id
         self.agent_type = agent_type
-        self.agent_config = agent_config
+        self.agent_config = agent_config if agent_config is not None else {}
 
         # Executor services (public attributes — no underscore)
         self.session_factory = session_factory
@@ -90,8 +94,11 @@ class RunWorkflow:
         self.prepare_codex_config = prepare_codex_config
         self.execute_task = execute_task
         self.attempt_store = attempt_store
-        self.running_tasks = running_tasks
-        self.heartbeats = heartbeats
+        self.running_tasks = running_tasks if running_tasks is not None else {}
+        self.heartbeats = heartbeats if heartbeats is not None else {}
+
+        # Injectable signal transport — falls back to DbSignalTransport when None
+        self._transport = transport
 
     # ------------------------------------------------------------------
     # Public API
@@ -103,6 +110,11 @@ class RunWorkflow:
         Executor creates this instance and awaits .run() inside the
         background asyncio Task.
         """
+        # These must be set when run() is called from an executor context.
+        assert self.session_factory is not None, "session_factory required for run()"
+        assert self.create_service is not None, "create_service required for run()"
+        assert self.monitor_agent_health is not None, "monitor_agent_health required for run()"
+
         run_id = self.run_id
         agent_type = self.agent_type
 
@@ -183,8 +195,10 @@ class RunWorkflow:
         marked processed_at exactly once — the DbSignalTransport guarantees
         idempotent consumption.
         """
-        transport = DbSignalTransport(session)
-        queue = SignalQueue(transport)
+        _transport: SignalTransport = (
+            self._transport if self._transport is not None else DbSignalTransport(session)
+        )
+        queue = SignalQueue(_transport)
         signals = await queue.drain(self.run_id)
 
         registry = build_registry(self)
@@ -267,6 +281,13 @@ class RunWorkflow:
                     f"Run {self.run_id}: ACTIVITY_COMPLETED for task {task_id} "
                     f"failed: {result.error}"
                 )
+        except GateBlockedError as e:
+            logger.warning(
+                f"Run {self.run_id}: task {task_id} checklist gate blocked on submit: {e}. "
+                "Pausing run."
+            )
+            await service.pause_run(self.run_id, reason="gate_blocked")
+            await session.commit()
         except Exception as e:
             logger.warning(
                 f"Run {self.run_id}: error handling ACTIVITY_COMPLETED for task {task_id}: {e}"
@@ -350,6 +371,18 @@ class RunWorkflow:
         from orchestrator.db.repositories import RunRepository
         from orchestrator.runners.executor import NoTaskReason, resolve_no_task_action
         from orchestrator.workflow.events import ApprovalRequested
+
+        # All executor services must be present when _run_loop() is called.
+        assert self.session_factory is not None, "session_factory required for _run_loop()"
+        assert self.create_service is not None, "create_service required for _run_loop()"
+        assert self.heartbeat is not None, "heartbeat required for _run_loop()"
+        assert self.find_next_task is not None, "find_next_task required for _run_loop()"
+        assert self.broadcaster is not None, "broadcaster required for _run_loop()"
+        assert self.prepare_codex_config is not None, (
+            "prepare_codex_config required for _run_loop()"
+        )
+        assert self.execute_task is not None, "execute_task required for _run_loop()"
+        assert self.attempt_store is not None, "attempt_store required for _run_loop()"
 
         run_id = self.run_id
         agent_type = self.agent_type

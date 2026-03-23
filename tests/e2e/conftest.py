@@ -16,6 +16,9 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 # Root directory of the project
 ROOT_DIR = Path(__file__).parent.parent.parent
@@ -43,18 +46,35 @@ def tmp_project(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-async def api_client() -> AsyncGenerator[AsyncClient, None]:
-    """In-process ASGI client backed by a real FastAPI app with in-memory DB."""
+async def api_client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    """In-process ASGI client with in-memory DB and signal drain function."""
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         auth_disabled=True,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test", timeout=30.0) as client:
-        yield client
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, signal_transport)
+    async with AsyncClient(transport=asgi, base_url="http://test", timeout=30.0) as client:
+        yield client, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def api_client(api_client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    """In-process ASGI client backed by a real FastAPI app with in-memory DB."""
+    client, _ = api_client_and_drain
+    return client
+
+
+@pytest.fixture
+async def drain(api_client_and_drain: tuple[AsyncClient, DrainFn]) -> DrainFn:
+    """Signal drain function for the api_client's app."""
+    _, drain_fn = api_client_and_drain
+    return drain_fn
 
 
 # Helper functions for common API operations
@@ -157,23 +177,31 @@ async def mark_checklist_done(
     return response.json()
 
 
-async def submit_task(client: httpx.AsyncClient, run_id: str, task_id: str) -> dict[str, Any]:
-    """Submit a task for verification via API.
+async def submit_task(
+    client: httpx.AsyncClient,
+    run_id: str,
+    task_id: str,
+    drain: DrainFn | None = None,
+) -> dict[str, Any]:
+    """Submit a task for verification via API, then drain signals.
 
     Args:
         client: HTTP client
         run_id: Run identifier
         task_id: Task identifier
+        drain: Signal drain function (required for state transition to occur)
 
     Returns:
-        Response JSON data
+        Dict with success=True and the current task state
 
     Raises:
         AssertionError: If the request fails
     """
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert response.status_code == 200, f"Failed to submit task: {response.text}"
-    return response.json()
+    assert response.status_code == 202, f"Failed to submit task: {response.text}"
+    if drain is not None:
+        await drain(run_id)
+    return {"success": True}
 
 
 async def grade_item(
@@ -212,24 +240,30 @@ async def grade_item(
 
 
 async def complete_verification(
-    client: httpx.AsyncClient, run_id: str, task_id: str
+    client: httpx.AsyncClient,
+    run_id: str,
+    task_id: str,
+    drain: DrainFn | None = None,
 ) -> dict[str, Any]:
-    """Complete verification for a task via API.
+    """Complete verification for a task via API, then drain signals.
 
     Args:
         client: HTTP client
         run_id: Run identifier
         task_id: Task identifier
+        drain: Signal drain function (required for state transition to occur)
 
     Returns:
-        Response JSON data
+        Dict with success=True
 
     Raises:
         AssertionError: If the request fails
     """
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert response.status_code == 200, f"Failed to complete verification: {response.text}"
-    return response.json()
+    assert response.status_code == 202, f"Failed to complete verification: {response.text}"
+    if drain is not None:
+        await drain(run_id)
+    return {"success": True}
 
 
 async def get_run(client: httpx.AsyncClient, run_id: str) -> dict[str, Any]:

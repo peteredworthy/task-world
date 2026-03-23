@@ -9,25 +9,40 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, signal_transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
-async def test_transition_backward_basic(client: AsyncClient) -> None:
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    c, _ = client_and_drain
+    return c
+
+
+async def test_transition_backward_basic(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Test basic backward transition to earlier step."""
+    client, drain = client_and_drain
     # Create a run with 3 steps
     routine = {
         "id": "test-routine",
@@ -94,13 +109,17 @@ async def test_transition_backward_basic(client: AsyncClient) -> None:
         json={"status": "done"},
     )
     # Submit for verification
-    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/submit")
+    submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/submit")
+    assert submit_resp.status_code == 202
+    await drain(run_id)
     # Set grade and complete
     await client.put(
         f"/api/runs/{run_id}/tasks/{task1_id}/checklist/req-1/grade",
         json={"grade": "A"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification")
+    complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification")
+    assert complete_resp.status_code == 202
+    await drain(run_id)
 
     # Check we're now at step 1
     run_resp = await client.get(f"/api/runs/{run_id}")
@@ -218,8 +237,11 @@ async def test_transition_backward_invalid_target_forward(client: AsyncClient) -
     assert backward_resp.status_code == 409
 
 
-async def test_transition_backward_event_emitted(client: AsyncClient) -> None:
+async def test_transition_backward_event_emitted(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Test that backward transition emits proper event."""
+    client, drain = client_and_drain
     # Create a run with 2 steps
     routine = {
         "id": "test-routine",
@@ -268,12 +290,16 @@ async def test_transition_backward_event_emitted(client: AsyncClient) -> None:
         f"/api/runs/{run_id}/tasks/{task1_id}/checklist/req-1",
         json={"status": "done"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/submit")
+    submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/submit")
+    assert submit_resp.status_code == 202
+    await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task1_id}/checklist/req-1/grade",
         json={"grade": "A"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification")
+    complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification")
+    assert complete_resp.status_code == 202
+    await drain(run_id)
 
     # Transition backward
     backward_resp = await client.post(

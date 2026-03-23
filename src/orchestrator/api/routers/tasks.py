@@ -15,6 +15,7 @@ from orchestrator.api.deps import (
     get_routine_dirs,
     get_run_repository,
     get_session,
+    get_signal_transport,
     get_workflow_service,
 )
 from orchestrator.api.schemas.tasks import (
@@ -54,6 +55,7 @@ from orchestrator.workflow.context_builder import TaskContextBuilder
 from orchestrator.workflow.errors import InvalidTransitionError
 from orchestrator.workflow.prompts import generate_builder_prompt, generate_verifier_prompt
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.signals import SignalTransport, WorkflowSignal
 from orchestrator.workflow.service import find_task_config
 from orchestrator.workflow.summary_cache import SummaryCache
 from orchestrator.workflow.templates import derive_output_path
@@ -245,49 +247,47 @@ async def start_task(
     )
 
 
-@router.post("/{run_id}/tasks/{task_id}/submit", response_model=TransitionResponse)
+@router.post("/{run_id}/tasks/{task_id}/submit", status_code=202)
 async def submit_task(
     run_id: str,
     task_id: str,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> TransitionResponse:
+    signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
+) -> dict[str, str]:
     """Submit task for verification (BUILDING → VERIFYING).
 
-    Calls the workflow service synchronously so the state transition is applied
-    within the request and the caller receives the new status immediately.
-    Also enqueues an ACTIVITY_COMPLETED signal (marked processed) for the
-    RunWorkflow audit trail and async-path compatibility.
+    Enqueues an ACTIVITY_COMPLETED signal for the RunWorkflow to process.
+    Returns HTTP 202 (Accepted) immediately; the actual state transition
+    happens when the signal queue is drained.
     """
-    result = await service.submit_for_verification(run_id, task_id)
-    return TransitionResponse(
-        success=result.success,
-        new_status=result.new_status.value,
-        error=result.error,
+    await signal_transport.enqueue(
+        run_id,
+        WorkflowSignal.ACTIVITY_COMPLETED,
+        payload={"task_id": task_id},
     )
+    return {"status": "accepted"}
 
 
 @router.post(
     "/{run_id}/tasks/{task_id}/complete-verification",
-    response_model=TransitionResponse,
+    status_code=202,
 )
 async def complete_verification_endpoint(
     run_id: str,
     task_id: str,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> TransitionResponse:
+    signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
+) -> dict[str, str]:
     """Complete verification phase and transition task to its outcome state.
 
-    Calls the workflow service synchronously so the state transition is applied
-    within the request and the caller receives the new status immediately.
-    Also enqueues an ACTIVITY_VERIFIED signal (marked processed) for the
-    RunWorkflow audit trail and async-path compatibility.
+    Enqueues an ACTIVITY_VERIFIED signal for the RunWorkflow to process.
+    Returns HTTP 202 (Accepted) immediately; the actual state transition
+    happens when the signal queue is drained.
     """
-    result = await service.complete_verification(run_id, task_id)
-    return TransitionResponse(
-        success=result.success,
-        new_status=result.new_status.value,
-        error=result.error,
+    await signal_transport.enqueue(
+        run_id,
+        WorkflowSignal.ACTIVITY_VERIFIED,
+        payload={"task_id": task_id},
     )
+    return {"status": "accepted"}
 
 
 class CompleteRecoveryRequest(BaseModel):

@@ -22,6 +22,9 @@ from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig,
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -80,15 +83,18 @@ SKIP_ROUTINE: dict[str, Any] = {
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
@@ -113,7 +119,7 @@ def service(session: AsyncSession) -> WorkflowService:
 
 
 async def _complete_task(
-    client: AsyncClient, run_id: str, task_id: str, req_id: str = "R1"
+    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn, req_id: str = "R1"
 ) -> None:
     """Drive a task through the full build → verify → complete cycle."""
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -123,14 +129,19 @@ async def _complete_task(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
+    await drain(run_id)
+
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}/grade",
         json={"grade": "A"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200
-    assert resp.json()["new_status"] == "completed"
+    assert resp.status_code == 202
+    await drain(run_id)
+
+    task = (await client.get(f"/api/runs/{run_id}/tasks/{task_id}")).json()
+    assert task["status"] == "completed"
 
 
 async def _get_run(client: AsyncClient, run_id: str) -> dict[str, Any]:
@@ -144,8 +155,11 @@ async def _get_run(client: AsyncClient, run_id: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-async def test_skip_step_not_executed(client: AsyncClient) -> None:
+async def test_skip_step_not_executed(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Step with condition=false is skipped; its task remains pending."""
+    client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={
@@ -163,7 +177,7 @@ async def test_skip_step_not_executed(client: AsyncClient) -> None:
     await client.post(f"/api/runs/{run_id}/start")
 
     # Complete step 1 → triggers condition evaluation on step 2
-    await _complete_task(client, run_id, task1_id)
+    await _complete_task(client, run_id, task1_id, drain)
 
     # Step 2 should be skipped; its task should remain pending (not executed)
     run_state = await _get_run(client, run_id)
@@ -176,8 +190,11 @@ async def test_skip_step_not_executed(client: AsyncClient) -> None:
     assert task2["status"] == "pending", "Task in skipped step should remain pending (not executed)"
 
 
-async def test_skip_step_run_advances_to_next(client: AsyncClient) -> None:
+async def test_skip_step_run_advances_to_next(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """After skipping step 2, run.current_step_index advances to step 3."""
+    client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={
@@ -191,7 +208,7 @@ async def test_skip_step_run_advances_to_next(client: AsyncClient) -> None:
     task1_id = run["steps"][0]["tasks"][0]["id"]
 
     await client.post(f"/api/runs/{run_id}/start")
-    await _complete_task(client, run_id, task1_id)
+    await _complete_task(client, run_id, task1_id, drain)
 
     # Run should have jumped to step index 2 (step 3), skipping step index 1
     run_state = await _get_run(client, run_id)
@@ -201,8 +218,11 @@ async def test_skip_step_run_advances_to_next(client: AsyncClient) -> None:
     assert run_state["status"] == "active"
 
 
-async def test_skip_reason_recorded(client: AsyncClient) -> None:
+async def test_skip_reason_recorded(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Skipped step has a non-empty skip_reason."""
+    client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={
@@ -216,7 +236,7 @@ async def test_skip_reason_recorded(client: AsyncClient) -> None:
     task1_id = run["steps"][0]["tasks"][0]["id"]
 
     await client.post(f"/api/runs/{run_id}/start")
-    await _complete_task(client, run_id, task1_id)
+    await _complete_task(client, run_id, task1_id, drain)
 
     run_state = await _get_run(client, run_id)
     skip_reason = run_state["steps"][1].get("skip_reason")
@@ -226,8 +246,11 @@ async def test_skip_reason_recorded(client: AsyncClient) -> None:
     assert "false" in skip_reason.lower(), "Skip reason should mention the condition"
 
 
-async def test_skip_step_full_workflow_completes(client: AsyncClient) -> None:
+async def test_skip_step_full_workflow_completes(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Full run with skipped step 2: step 1 → skip step 2 → step 3 → completed."""
+    client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={
@@ -244,10 +267,10 @@ async def test_skip_step_full_workflow_completes(client: AsyncClient) -> None:
     await client.post(f"/api/runs/{run_id}/start")
 
     # Complete step 1 (step 2 auto-skipped)
-    await _complete_task(client, run_id, task1_id)
+    await _complete_task(client, run_id, task1_id, drain)
 
     # Complete step 3
-    await _complete_task(client, run_id, task3_id)
+    await _complete_task(client, run_id, task3_id, drain)
 
     run_state = await _get_run(client, run_id)
     assert run_state["status"] == "completed"

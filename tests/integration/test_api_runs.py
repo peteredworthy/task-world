@@ -13,21 +13,31 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     await init_db(app.state.engine)
+    transport_obj = InMemorySignalTransport()
+    app.state.signal_transport = transport_obj
+    drain = make_drain_fn(app, transport_obj)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    return client_and_drain[0]
 
 
 async def _create_run(client: AsyncClient) -> dict[str, Any]:
@@ -207,7 +217,7 @@ async def test_resume_invalid_state(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
-async def _drive_run_to_failed(client: AsyncClient) -> tuple[str, str]:
+async def _drive_run_to_failed(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run and fail it by exhausting 3 verification attempts."""
     created = await _create_run(client)
     run_id = created["id"]
@@ -221,17 +231,21 @@ async def _drive_run_to_failed(client: AsyncClient) -> tuple[str, str]:
             f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
             json={"status": "done"},
         )
-        await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+        resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+        assert resp.status_code == 202
+        await drain(run_id)
         await client.put(
             f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
             json={"grade": "D", "grade_reason": "force failure"},
         )
-        await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+        resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+        assert resp.status_code == 202
+        await drain(run_id)
 
     return run_id, task_id
 
 
-async def _drive_run_to_completed(client: AsyncClient) -> tuple[str, str]:
+async def _drive_run_to_completed(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run and complete it successfully."""
     created = await _create_run(client)
     run_id = created["id"]
@@ -243,17 +257,24 @@ async def _drive_run_to_completed(client: AsyncClient) -> tuple[str, str]:
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
         json={"status": "done"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
         json={"grade": "A"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    assert resp.status_code == 202
+    await drain(run_id)
     return run_id, task_id
 
 
-async def test_recover_run_success_from_failed(client: AsyncClient) -> None:
-    run_id, task_id = await _drive_run_to_failed(client)
+async def test_recover_run_success_from_failed(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
+    run_id, task_id = await _drive_run_to_failed(client, drain)
     run_before = await client.get(f"/api/runs/{run_id}")
     assert run_before.status_code == 200
     assert run_before.json()["status"] == "failed"
@@ -294,8 +315,11 @@ async def test_recover_run_succeeds_when_paused(client: AsyncClient) -> None:
     assert data["pause_reason"] == "recovered"
 
 
-async def test_recover_run_conflict_when_completed(client: AsyncClient) -> None:
-    run_id, task_id = await _drive_run_to_completed(client)
+async def test_recover_run_conflict_when_completed(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
+    run_id, task_id = await _drive_run_to_completed(client, drain)
     run_before = await client.get(f"/api/runs/{run_id}")
     assert run_before.status_code == 200
     assert run_before.json()["status"] == "completed"
@@ -312,8 +336,11 @@ async def test_recover_run_not_found_when_run_missing(client: AsyncClient) -> No
     assert response.status_code == 404
 
 
-async def test_recover_run_not_found_when_target_task_missing(client: AsyncClient) -> None:
-    run_id, _task_id = await _drive_run_to_failed(client)
+async def test_recover_run_not_found_when_target_task_missing(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
+    run_id, _task_id = await _drive_run_to_failed(client, drain)
 
     response = await client.post(
         f"/api/runs/{run_id}/recover",

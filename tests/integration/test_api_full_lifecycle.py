@@ -20,21 +20,31 @@ from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
 from orchestrator.workflow.locks import InMemoryLockManager
+from orchestrator.workflow.signals import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     await init_db(app.state.engine)
+    transport_obj = InMemorySignalTransport()
+    app.state.signal_transport = transport_obj
+    drain = make_drain_fn(app, transport_obj)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    return client_and_drain[0]
 
 
 # ---------------------------------------------------------------------------
@@ -86,10 +96,14 @@ async def _mark_checklist_done(
     return resp.json()
 
 
-async def _submit_task(client: AsyncClient, run_id: str, task_id: str) -> dict[str, Any]:
+async def _submit_task(
+    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn | None = None
+) -> dict[str, Any]:
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 200, f"Failed to submit task: {resp.text}"
-    return resp.json()
+    assert resp.status_code == 202, f"Failed to submit task: {resp.text}"
+    if drain is not None:
+        await drain(run_id)
+    return {"success": True}
 
 
 async def _grade_item(
@@ -111,25 +125,31 @@ async def _grade_item(
     return resp.json()
 
 
-async def _complete_verification(client: AsyncClient, run_id: str, task_id: str) -> dict[str, Any]:
+async def _complete_verification(
+    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn | None = None
+) -> dict[str, Any]:
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 200, f"Failed to complete verification: {resp.text}"
-    return resp.json()
+    assert resp.status_code == 202, f"Failed to complete verification: {resp.text}"
+    if drain is not None:
+        await drain(run_id)
+    return {"success": True}
 
 
 async def _complete_task_successfully(
-    client: AsyncClient, run_id: str, task_id: str, req_id: str = "R1"
+    client: AsyncClient, run_id: str, task_id: str, req_id: str = "R1", drain: DrainFn | None = None
 ) -> None:
     """Drive a single task through the full builder/verifier cycle to completion."""
     await _start_task(client, run_id, task_id)
     await _mark_checklist_done(client, run_id, task_id, req_id)
-    submit_resp = await _submit_task(client, run_id, task_id)
-    assert submit_resp["success"] is True, "Submit should succeed when checklist is done"
-    assert submit_resp["new_status"] == "verifying", "Task should be verifying after submit"
+    await _submit_task(client, run_id, task_id, drain=drain)
+    # Verify task is in verifying state after drain
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.json()["status"] == "verifying", "Task should be verifying after submit+drain"
     await _grade_item(client, run_id, task_id, req_id, "A", "Excellent")
-    verify_resp = await _complete_verification(client, run_id, task_id)
-    assert verify_resp["success"] is True, "Verification should succeed with grade A"
-    assert verify_resp["new_status"] == "completed", "Task should be completed after grade A"
+    await _complete_verification(client, run_id, task_id, drain=drain)
+    # Verify task is completed after drain
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.json()["status"] == "completed", "Task should be completed after verify+drain"
 
 
 # ---------------------------------------------------------------------------
@@ -137,8 +157,11 @@ async def _complete_task_successfully(
 # ---------------------------------------------------------------------------
 
 
-async def test_full_lifecycle_builder_verifier_pass(client: AsyncClient) -> None:
+async def test_full_lifecycle_builder_verifier_pass(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Complete workflow: create -> start -> build -> verify -> complete."""
+    client, drain = client_and_drain
     # 1. Create run
     run_data = await _create_run(client)
     run_id = run_data["id"]
@@ -182,10 +205,8 @@ async def test_full_lifecycle_builder_verifier_pass(client: AsyncClient) -> None
     checklist_resp = await _mark_checklist_done(client, run_id, task_id, "R1")
     assert checklist_resp["status"] == "done", "Checklist item should be done"
 
-    # 9. Submit task
-    submit_resp = await _submit_task(client, run_id, task_id)
-    assert submit_resp["success"] is True, "Submit should succeed with done checklist"
-    assert submit_resp["new_status"] == "verifying", "Task should move to verifying"
+    # 9. Submit task (202 async) then drain
+    await _submit_task(client, run_id, task_id, drain=drain)
 
     # 10. Verify task is in verifying state
     task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
@@ -206,10 +227,8 @@ async def test_full_lifecycle_builder_verifier_pass(client: AsyncClient) -> None
     assert grade_resp["grade"] == "A"
     assert grade_resp["grade_reason"] == "Well done"
 
-    # 13. Complete verification
-    verify_resp = await _complete_verification(client, run_id, task_id)
-    assert verify_resp["success"] is True, "Verification should succeed"
-    assert verify_resp["new_status"] == "completed", "Task should be completed"
+    # 13. Complete verification (202 async) then drain
+    await _complete_verification(client, run_id, task_id, drain=drain)
 
     # 14. Verify task is completed via GET
     task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
@@ -242,8 +261,9 @@ async def test_full_lifecycle_builder_verifier_pass(client: AsyncClient) -> None
 # ---------------------------------------------------------------------------
 
 
-async def test_full_lifecycle_with_revision(client: AsyncClient) -> None:
+async def test_full_lifecycle_with_revision(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Revision cycle: fail verification, then pass on retry."""
+    client, drain = client_and_drain
     # Setup: create and start run
     run_data = await _create_run(client)
     run_id = run_data["id"]
@@ -253,18 +273,20 @@ async def test_full_lifecycle_with_revision(client: AsyncClient) -> None:
     # Attempt 1: start task, submit, fail verification
     await _start_task(client, run_id, task_id)
     await _mark_checklist_done(client, run_id, task_id, "R1")
-    submit_resp = await _submit_task(client, run_id, task_id)
-    assert submit_resp["success"] is True
-    assert submit_resp["new_status"] == "verifying"
+    await _submit_task(client, run_id, task_id, drain=drain)
+
+    # Verify task is in verifying state
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.json()["status"] == "verifying"
 
     # Grade with F -> should trigger revision
     await _grade_item(client, run_id, task_id, "R1", "F", "Needs complete rework")
-    verify_resp = await _complete_verification(client, run_id, task_id)
-    assert verify_resp["new_status"] == "building", "Failed grade should trigger revision"
+    await _complete_verification(client, run_id, task_id, drain=drain)
 
-    # Verify attempt count incremented
+    # Verify task went back to building
     task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
     task_data = task_resp.json()
+    assert task_data["status"] == "building", "Failed grade should trigger revision"
     assert task_data["current_attempt"] == 2, "Should be on attempt 2 after revision"
     assert len(task_data["attempts"]) == 2, "Should have 2 attempts"
     # First attempt should have outcome recorded
@@ -274,14 +296,18 @@ async def test_full_lifecycle_with_revision(client: AsyncClient) -> None:
 
     # Attempt 2: complete successfully
     await _mark_checklist_done(client, run_id, task_id, "R1")
-    submit_resp = await _submit_task(client, run_id, task_id)
-    assert submit_resp["success"] is True
-    assert submit_resp["new_status"] == "verifying"
+    await _submit_task(client, run_id, task_id, drain=drain)
+
+    # Verify in verifying state
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.json()["status"] == "verifying"
 
     await _grade_item(client, run_id, task_id, "R1", "A", "Much better")
-    verify_resp = await _complete_verification(client, run_id, task_id)
-    assert verify_resp["success"] is True
-    assert verify_resp["new_status"] == "completed", "Should complete on second attempt"
+    await _complete_verification(client, run_id, task_id, drain=drain)
+
+    # Verify task completed
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.json()["status"] == "completed", "Should complete on second attempt"
 
     # Verify final state
     run_resp = await client.get(f"/api/runs/{run_id}")
@@ -340,8 +366,9 @@ async def test_full_lifecycle_cancel_active_run(client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_full_lifecycle_pause_resume(client: AsyncClient) -> None:
+async def test_full_lifecycle_pause_resume(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Create, start, pause, resume, then complete the workflow."""
+    client, drain = client_and_drain
     # 1. Create and start
     run_data = await _create_run(client)
     run_id = run_data["id"]
@@ -367,7 +394,7 @@ async def test_full_lifecycle_pause_resume(client: AsyncClient) -> None:
     assert get_resp.json()["status"] == "active"
 
     # 6. Complete the workflow
-    await _complete_task_successfully(client, run_id, task_id)
+    await _complete_task_successfully(client, run_id, task_id, drain=drain)
 
     run_final = await client.get(f"/api/runs/{run_id}")
     assert run_final.json()["status"] == "completed"
@@ -383,14 +410,15 @@ async def test_full_lifecycle_pause_resume(client: AsyncClient) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_cost_estimation_in_response(client: AsyncClient) -> None:
+async def test_cost_estimation_in_response(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Verify cost estimation appears when token data is present."""
+    client, drain = client_and_drain
     # 1. Create and complete a run (abbreviated)
     run_data = await _create_run(client)
     run_id = run_data["id"]
     task_id = run_data["steps"][0]["tasks"][0]["id"]
     await _start_run(client, run_id)
-    await _complete_task_successfully(client, run_id, task_id)
+    await _complete_task_successfully(client, run_id, task_id, drain=drain)
 
     # Verify initially no cost estimate (no tokens used through API)
     run_resp = await client.get(f"/api/runs/{run_id}")
@@ -454,8 +482,11 @@ EMBEDDED_ROUTINE: dict[str, Any] = {
 }
 
 
-async def test_embedded_routine_full_lifecycle(client: AsyncClient) -> None:
+async def test_embedded_routine_full_lifecycle(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Full lifecycle using an inline embedded routine instead of routine_id."""
+    client, drain = client_and_drain
     # 1. Create run with embedded routine
     resp = await client.post(
         "/api/runs",
@@ -492,9 +523,7 @@ async def test_embedded_routine_full_lifecycle(client: AsyncClient) -> None:
 
     # 4. Complete the full workflow
     await _mark_checklist_done(client, run_id, task_id, "R1")
-    submit_resp = await _submit_task(client, run_id, task_id)
-    assert submit_resp["success"] is True
-    assert submit_resp["new_status"] == "verifying"
+    await _submit_task(client, run_id, task_id, drain=drain)
 
     # Verify verifier prompt works with embedded routine
     prompt_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
@@ -502,9 +531,11 @@ async def test_embedded_routine_full_lifecycle(client: AsyncClient) -> None:
     assert prompt_resp.json()["phase"] == "verifying"
 
     await _grade_item(client, run_id, task_id, "R1", "A", "Perfect")
-    verify_resp = await _complete_verification(client, run_id, task_id)
-    assert verify_resp["success"] is True
-    assert verify_resp["new_status"] == "completed"
+    await _complete_verification(client, run_id, task_id, drain=drain)
+
+    # Verify task completed
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.json()["status"] == "completed"
 
     # 5. Verify run completed successfully
     run_resp = await client.get(f"/api/runs/{run_id}")
@@ -606,7 +637,9 @@ EMBEDDED_ROUTINE_WITH_AUTO_VERIFY: dict[str, Any] = {
 }
 
 
-async def test_auto_verify_results_in_response(client: AsyncClient, tmp_path: Path) -> None:
+async def test_auto_verify_results_in_response(
+    client_and_drain: tuple[AsyncClient, DrainFn], tmp_path: Path
+) -> None:
     """Verify that auto-verify commands are executed during submit and
     results appear in the task detail response.
 
@@ -619,6 +652,7 @@ async def test_auto_verify_results_in_response(client: AsyncClient, tmp_path: Pa
     """
     from orchestrator.db.repositories import RunRepository
 
+    client, drain = client_and_drain
     # 1. Create run with embedded routine that has auto_verify
     resp = await client.post(
         "/api/runs",
@@ -647,13 +681,13 @@ async def test_auto_verify_results_in_response(client: AsyncClient, tmp_path: Pa
     await _start_run(client, run_id)
     await _start_task(client, run_id, task_id)
 
-    # 3. Mark checklist done and submit (triggers auto-verify)
+    # 3. Mark checklist done and submit (triggers auto-verify), then drain
     await _mark_checklist_done(client, run_id, task_id, "R1")
-    submit_resp = await _submit_task(client, run_id, task_id)
-    assert submit_resp["success"] is True, f"Submit failed: {submit_resp}"
-    # Auto-verify with "echo passed" should succeed, so task stays in verifying
-    assert submit_resp["new_status"] == "verifying", (
-        f"Expected verifying after auto-verify pass, got {submit_resp['new_status']}"
+    await _submit_task(client, run_id, task_id, drain=drain)
+    # Auto-verify with "echo passed" should succeed, so task is now in verifying
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.json()["status"] == "verifying", (
+        f"Expected verifying after auto-verify pass, got {task_resp.json()['status']}"
     )
 
     # 4. Check task detail for auto_verify_results
@@ -687,7 +721,7 @@ async def test_auto_verify_results_in_response(client: AsyncClient, tmp_path: Pa
 
 
 async def test_activity_events_recorded_for_all_transitions(
-    client: AsyncClient,
+    client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Verify that ALL expected event types are recorded during a full
     lifecycle through the API.
@@ -702,6 +736,7 @@ async def test_activity_events_recorded_for_all_transitions(
     - step_completed: step finishes when all tasks complete
     - run_status_changed: active->completed (auto-complete)
     """
+    client, drain = client_and_drain
     # 1. Create and start a run
     run_data = await _create_run(client)
     run_id = run_data["id"]
@@ -715,11 +750,11 @@ async def test_activity_events_recorded_for_all_transitions(
 
     # 4. Mark checklist done and submit
     await _mark_checklist_done(client, run_id, task_id, "R1")
-    await _submit_task(client, run_id, task_id)
+    await _submit_task(client, run_id, task_id, drain=drain)
 
     # 5. Grade and complete verification
     await _grade_item(client, run_id, task_id, "R1", "A", "Excellent")
-    await _complete_verification(client, run_id, task_id)
+    await _complete_verification(client, run_id, task_id, drain=drain)
 
     # 6. Verify run completed
     run_resp = await client.get(f"/api/runs/{run_id}")
@@ -818,13 +853,14 @@ EMBEDDED_ROUTINE_PERSIST: dict[str, Any] = {
 
 
 async def test_embedded_routine_persists_across_requests(
-    client: AsyncClient,
+    client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Verify that routine_embedded is stored in the database and survives
     across multiple GET requests and through the entire lifecycle.
 
     This confirms the routine_embedded JSON column on RunModel works end-to-end.
     """
+    client, drain = client_and_drain
     # 1. Create run with embedded routine
     resp = await client.post(
         "/api/runs",
@@ -864,9 +900,9 @@ async def test_embedded_routine_persists_across_requests(
     # 4. Complete a task through the full lifecycle
     await _start_task(client, run_id, task_id)
     await _mark_checklist_done(client, run_id, task_id, "R1")
-    await _submit_task(client, run_id, task_id)
+    await _submit_task(client, run_id, task_id, drain=drain)
     await _grade_item(client, run_id, task_id, "R1", "A", "Perfect")
-    await _complete_verification(client, run_id, task_id)
+    await _complete_verification(client, run_id, task_id, drain=drain)
 
     # 5. GET the run after completion - routine_embedded still there
     get_resp = await client.get(f"/api/runs/{run_id}")

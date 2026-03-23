@@ -230,14 +230,20 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
     This is the most important integration test for UserManagedAgent.
     It exercises the actual DI path: FastAPI deps.py creates a fresh
     WorkflowService that gets the SubmitEventRegistry from app.state.
-    When that service calls submit_for_verification, the registry
-    notifies the agent's event, waking it up.
+    When that service calls submit_for_verification (via signal drain),
+    the registry notifies the agent's event, waking it up.
     """
+    from orchestrator.workflow.signals import InMemorySignalTransport
+    from tests.integration.signal_helpers import make_drain_fn
+
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
 
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -278,13 +284,14 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
             async def on_submit() -> None:
                 pass
 
-            async def submit_via_rest_api() -> None:
+            async def submit_via_rest_api_and_drain() -> None:
                 await asyncio.sleep(0.05)
                 resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-                assert resp.status_code == 200
-                assert resp.json()["success"] is True
+                assert resp.status_code == 202
+                # Drain signals so submit_for_verification is called and the agent wakes up
+                await drain(run_id)
 
-            bg = asyncio.create_task(submit_via_rest_api())
+            bg = asyncio.create_task(submit_via_rest_api_and_drain())
             result = await agent.execute(ctx, on_update, on_submit)
             await bg
 

@@ -27,6 +27,9 @@ from orchestrator.db.event_store import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.signals import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 
 # ---------------------------------------------------------------------------
@@ -45,14 +48,24 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def api_client() -> AsyncGenerator[AsyncClient, None]:
-    """HTTP client backed by a real in-memory app with LocalAutoVerifyRunner."""
+async def api_client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    """HTTP client backed by a real in-memory app with LocalAutoVerifyRunner and signal drain."""
+    signal_transport = InMemorySignalTransport()
     app = create_app(db_path=":memory:")
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, signal_transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def api_client(api_client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    """Backward-compatible fixture returning just the client."""
+    c, _ = api_client_and_drain
+    return c
 
 
 def _make_run_with_auto_verify(
@@ -250,14 +263,15 @@ async def test_passing_auto_verify_allows_transition(session: AsyncSession, tmp_
 
 @pytest.mark.asyncio
 async def test_api_auto_verify_configured_failure_returns_409(
-    api_client: AsyncClient, tmp_path: Path
+    api_client_and_drain: tuple[AsyncClient, DrainFn], tmp_path: Path
 ) -> None:
-    """API returns 409 when auto_verify is configured and the transition is blocked.
+    """API pauses run with gate_blocked when auto_verify fails and checklist is not done.
 
     When auto_verify is configured with a failing command the checklist gate has
     no opportunity to auto-mark items, so any OPEN critical items cause a
-    GateBlockedError → 409.
+    GateBlockedError which pauses the run with pause_reason="gate_blocked".
     """
+    api_client, drain = api_client_and_drain
     # Create a run with an embedded routine containing a failing auto_verify command
     resp = await api_client.post(
         "/api/runs",
@@ -275,11 +289,19 @@ async def test_api_auto_verify_configured_failure_returns_409(
     await api_client.post(f"/api/runs/{run_id}/start")
     await api_client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
-    # Attempt submit WITHOUT marking the checklist done.
-    # auto_verify fails (cmd="false") → no auto-marking → OPEN critical item → 409
+    # Submit WITHOUT marking the checklist done — returns 202 (async).
+    # auto_verify fails (cmd="false") → no auto-marking → OPEN critical item → GateBlockedError
     resp = await api_client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 409, (
-        f"Expected 409 when auto_verify fails and checklist not done, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 202, f"Expected 202 from submit, got {resp.status_code}: {resp.text}"
+
+    # Drain signals — the GateBlockedError will pause the run with reason="gate_blocked"
+    await drain(run_id)
+
+    # Verify the run is now paused due to gate blocked
+    run_resp = await api_client.get(f"/api/runs/{run_id}")
+    assert run_resp.status_code == 200
+    run_data = run_resp.json()
+    assert run_data["status"] == "paused", f"Expected paused, got {run_data['status']}"
+    assert run_data["pause_reason"] == "gate_blocked", (
+        f"Expected gate_blocked pause_reason, got {run_data['pause_reason']}"
     )
-    data = resp.json()
-    assert data["error"] == "gate_blocked"

@@ -11,6 +11,7 @@ from tests.e2e.conftest import (
     complete_verification,
     create_run,
     get_first_task_id,
+    get_run,
     get_task,
     grade_item,
     mark_checklist_done,
@@ -18,14 +19,15 @@ from tests.e2e.conftest import (
     start_task,
     submit_task,
 )
+from tests.integration.signal_helpers import DrainFn
 
 
 @pytest.mark.e2e
-async def test_revision_flow_gate_blocked(api_client: AsyncClient) -> None:
+async def test_revision_flow_gate_blocked(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test task revision when checklist gate blocks submission.
 
     When a task is submitted with incomplete checklist items, the gate
-    should block and keep the task in BUILDING state.
+    blocks and pauses the run with pause_reason="gate_blocked".
     """
     # Create and start run
     run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-1")
@@ -36,20 +38,26 @@ async def test_revision_flow_gate_blocked(api_client: AsyncClient) -> None:
     task_id = get_first_task_id(run_data)
     await start_task(api_client, run_id, task_id)
 
-    # Try to submit WITHOUT completing checklist - should fail with 409
+    # Submit WITHOUT completing checklist — 202 (async), then drain → gate blocked → run paused
     response = await api_client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert response.status_code == 409  # Gate blocked
-    error_data = response.json()
-    assert error_data["error"] == "gate_blocked"
-    assert "gate_name" in error_data
+    assert response.status_code == 202
+    await drain(run_id)
+
+    # Run should be paused with gate_blocked reason
+    run_data = await get_run(api_client, run_id)
+    assert run_data["status"] == "paused"
+    assert run_data["pause_reason"] == "gate_blocked"
 
     # Task should still be in BUILDING state
     task_data = await get_task(api_client, run_id, task_id)
     assert task_data["status"] == "building"
 
-    # Now complete the checklist and try again
+    # Resume the run, complete the checklist, and try again
+    resume_resp = await api_client.post(f"/api/runs/{run_id}/resume")
+    assert resume_resp.status_code == 200
+
     await mark_checklist_done(api_client, run_id, task_id, "R1")
-    result = await submit_task(api_client, run_id, task_id)
+    result = await submit_task(api_client, run_id, task_id, drain=drain)
     assert result["success"] is True
 
     # Task should now be in VERIFYING state
@@ -58,7 +66,7 @@ async def test_revision_flow_gate_blocked(api_client: AsyncClient) -> None:
 
 
 @pytest.mark.e2e
-async def test_revision_flow_failed_grades(api_client: AsyncClient) -> None:
+async def test_revision_flow_failed_grades(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test task revision when grades fail threshold.
 
     When verification grades fail to meet the threshold, the task should
@@ -73,11 +81,11 @@ async def test_revision_flow_failed_grades(api_client: AsyncClient) -> None:
     task_id = get_first_task_id(run_data)
     await start_task(api_client, run_id, task_id)
     await mark_checklist_done(api_client, run_id, task_id, "R1")
-    await submit_task(api_client, run_id, task_id)
+    await submit_task(api_client, run_id, task_id, drain=drain)
 
     # First verification attempt - fail the grade
     await grade_item(api_client, run_id, task_id, "R1", grade="F", reason="Not good enough")
-    result = await complete_verification(api_client, run_id, task_id)
+    result = await complete_verification(api_client, run_id, task_id, drain=drain)
     assert result["success"] is True
 
     # Task should be back in BUILDING (revision)
@@ -95,9 +103,9 @@ async def test_revision_flow_failed_grades(api_client: AsyncClient) -> None:
     assert checklist_item["grade_reason"] == "Not good enough"
 
     # Second attempt - pass this time
-    await submit_task(api_client, run_id, task_id)
+    await submit_task(api_client, run_id, task_id, drain=drain)
     await grade_item(api_client, run_id, task_id, "R1", grade="A")
-    await complete_verification(api_client, run_id, task_id)
+    await complete_verification(api_client, run_id, task_id, drain=drain)
 
     # Task should now be completed
     task_data = await get_task(api_client, run_id, task_id)
@@ -107,7 +115,7 @@ async def test_revision_flow_failed_grades(api_client: AsyncClient) -> None:
 
 
 @pytest.mark.e2e
-async def test_revision_flow_multiple_rounds(api_client: AsyncClient) -> None:
+async def test_revision_flow_multiple_rounds(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test task can go through multiple revision rounds.
 
     Verifies that a task can fail verification multiple times and continue
@@ -124,27 +132,27 @@ async def test_revision_flow_multiple_rounds(api_client: AsyncClient) -> None:
 
     # Round 1: Fail
     await mark_checklist_done(api_client, run_id, task_id, "R1")
-    await submit_task(api_client, run_id, task_id)
+    await submit_task(api_client, run_id, task_id, drain=drain)
     await grade_item(api_client, run_id, task_id, "R1", grade="F", reason="Round 1 fail")
-    await complete_verification(api_client, run_id, task_id)
+    await complete_verification(api_client, run_id, task_id, drain=drain)
 
     task_data = await get_task(api_client, run_id, task_id)
     assert task_data["status"] == "building"
     assert len(task_data["attempts"]) == 2
 
     # Round 2: Fail again
-    await submit_task(api_client, run_id, task_id)
+    await submit_task(api_client, run_id, task_id, drain=drain)
     await grade_item(api_client, run_id, task_id, "R1", grade="F", reason="Round 2 fail")
-    await complete_verification(api_client, run_id, task_id)
+    await complete_verification(api_client, run_id, task_id, drain=drain)
 
     task_data = await get_task(api_client, run_id, task_id)
     assert task_data["status"] == "building"
     assert len(task_data["attempts"]) == 3
 
     # Round 3: Pass
-    await submit_task(api_client, run_id, task_id)
+    await submit_task(api_client, run_id, task_id, drain=drain)
     await grade_item(api_client, run_id, task_id, "R1", grade="A")
-    await complete_verification(api_client, run_id, task_id)
+    await complete_verification(api_client, run_id, task_id, drain=drain)
 
     task_data = await get_task(api_client, run_id, task_id)
     assert task_data["status"] == "completed"
@@ -155,7 +163,7 @@ async def test_revision_flow_multiple_rounds(api_client: AsyncClient) -> None:
 
 
 @pytest.mark.e2e
-async def test_revision_preserves_checklist_state(api_client: AsyncClient) -> None:
+async def test_revision_preserves_checklist_state(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test that checklist state is preserved on revision.
 
     When a task enters revision, the checklist items preserve their status
@@ -171,11 +179,11 @@ async def test_revision_preserves_checklist_state(api_client: AsyncClient) -> No
     task_id = get_first_task_id(run_data)
     await start_task(api_client, run_id, task_id)
     await mark_checklist_done(api_client, run_id, task_id, "R1")
-    await submit_task(api_client, run_id, task_id)
+    await submit_task(api_client, run_id, task_id, drain=drain)
 
     # Fail verification
     await grade_item(api_client, run_id, task_id, "R1", grade="F")
-    await complete_verification(api_client, run_id, task_id)
+    await complete_verification(api_client, run_id, task_id, drain=drain)
 
     # Check that grade is preserved after revision
     task_data = await get_task(api_client, run_id, task_id)
@@ -184,9 +192,9 @@ async def test_revision_preserves_checklist_state(api_client: AsyncClient) -> No
 
     # Re-mark checklist done for second attempt
     await mark_checklist_done(api_client, run_id, task_id, "R1")
-    await submit_task(api_client, run_id, task_id)
+    await submit_task(api_client, run_id, task_id, drain=drain)
     await grade_item(api_client, run_id, task_id, "R1", grade="A")
-    await complete_verification(api_client, run_id, task_id)
+    await complete_verification(api_client, run_id, task_id, drain=drain)
 
     # Verify final state
     task_data = await get_task(api_client, run_id, task_id)
@@ -197,7 +205,7 @@ async def test_revision_preserves_checklist_state(api_client: AsyncClient) -> No
 
 
 @pytest.mark.e2e
-async def test_revision_preserves_task_context(api_client: AsyncClient) -> None:
+async def test_revision_preserves_task_context(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test that task context is preserved across revisions.
 
     The task's context, requirements, and other metadata should remain
@@ -218,9 +226,9 @@ async def test_revision_preserves_task_context(api_client: AsyncClient) -> None:
 
     # Complete first attempt and fail
     await mark_checklist_done(api_client, run_id, task_id, "R1")
-    await submit_task(api_client, run_id, task_id)
+    await submit_task(api_client, run_id, task_id, drain=drain)
     await grade_item(api_client, run_id, task_id, "R1", grade="F")
-    await complete_verification(api_client, run_id, task_id)
+    await complete_verification(api_client, run_id, task_id, drain=drain)
 
     # Verify checklist is preserved after revision
     task_data = await get_task(api_client, run_id, task_id)

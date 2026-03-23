@@ -16,6 +16,8 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -23,16 +25,24 @@ _SEPARATOR = "\n\n---\n\n"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     await init_db(app.state.engine)
+    transport_obj = InMemorySignalTransport()
+    app.state.signal_transport = transport_obj
+    drain = make_drain_fn(app, transport_obj)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    return client_and_drain[0]
 
 
 async def _create_agent(client: AsyncClient, name: str, system_prompt: str) -> str:
@@ -244,8 +254,11 @@ async def test_step_level_agent_overrides_routine_level(client: AsyncClient) -> 
 # ---------------------------------------------------------------------------
 
 
-async def test_verifier_prompt_includes_agent_system_prompt(client: AsyncClient) -> None:
+async def test_verifier_prompt_includes_agent_system_prompt(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Agent system prompt is prepended in VERIFYING phase too."""
+    client, drain = client_and_drain
     verifier_system = "You are a strict code reviewer agent."
     await _create_agent(client, "StrictVerifier", verifier_system)
 
@@ -276,7 +289,10 @@ async def test_verifier_prompt_includes_agent_system_prompt(client: AsyncClient)
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.json()["new_status"] == "verifying"
+    assert resp.status_code == 202
+    await drain(run_id)
+    task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert task_resp.json()["status"] == "verifying"
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
     assert resp.status_code == 200

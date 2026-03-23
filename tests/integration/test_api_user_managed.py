@@ -9,21 +9,31 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     await init_db(app.state.engine)
+    transport_obj = InMemorySignalTransport()
+    app.state.signal_transport = transport_obj
+    drain = make_drain_fn(app, transport_obj)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    return client_and_drain[0]
 
 
 async def _create_and_start_run(client: AsyncClient) -> tuple[str, str]:
@@ -143,8 +153,9 @@ async def test_guidance_with_building_task(client: AsyncClient) -> None:
     assert any("submit" in action for action in data["expected_actions"])
 
 
-async def test_guidance_with_verifying_task(client: AsyncClient) -> None:
+async def test_guidance_with_verifying_task(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """GET /runs/{id}/guidance returns prompt and actions for VERIFYING task."""
+    client, drain = client_and_drain
     run_id, task_id = await _create_and_start_run(client)
 
     # Start task and submit for verification
@@ -154,7 +165,8 @@ async def test_guidance_with_verifying_task(client: AsyncClient) -> None:
         json={"status": "done"},
     )
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert response.status_code == 200
+    assert response.status_code == 202
+    await drain(run_id)
 
     # Get guidance (should now be VERIFYING)
     response = await client.get(f"/api/runs/{run_id}/guidance")
@@ -209,7 +221,7 @@ async def test_agent_cancelled_run_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_full_user_managed_lifecycle(client: AsyncClient) -> None:
+async def test_full_user_managed_lifecycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Test complete user-managed agent lifecycle flow.
 
     1. Create run
@@ -222,6 +234,7 @@ async def test_full_user_managed_lifecycle(client: AsyncClient) -> None:
     8. Set grades
     9. Complete verification
     """
+    client, drain = client_and_drain
     # Create and start run
     response = await client.post(
         "/api/runs",
@@ -260,9 +273,10 @@ async def test_full_user_managed_lifecycle(client: AsyncClient) -> None:
         json={"status": "done"},
     )
 
-    # Submit for verification
+    # Submit for verification (202 async) then drain
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert response.status_code == 200
+    assert response.status_code == 202
+    await drain(run_id)
 
     # Get guidance (should be verifying now)
     response = await client.get(f"/api/runs/{run_id}/guidance")
@@ -277,10 +291,10 @@ async def test_full_user_managed_lifecycle(client: AsyncClient) -> None:
         json={"grade": "A", "grade_reason": "Perfect work"},
     )
 
-    # Complete verification
+    # Complete verification (202 async) then drain
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert response.status_code == 200
-    assert response.json()["success"] is True
+    assert response.status_code == 202
+    await drain(run_id)
 
     # Verify task is completed
     response = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")

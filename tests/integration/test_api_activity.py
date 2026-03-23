@@ -11,21 +11,31 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.db.connection import init_db
+from orchestrator.workflow.signals import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     await init_db(app.state.engine)
+    transport_obj = InMemorySignalTransport()
+    app.state.signal_transport = transport_obj
+    drain = make_drain_fn(app, transport_obj)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    return client_and_drain[0]
 
 
 async def _setup_active_run(client: AsyncClient) -> tuple[str, str]:
@@ -86,8 +96,9 @@ async def test_activity_after_task_lifecycle(client: AsyncClient) -> None:
     assert all(e["timestamp"].endswith("Z") for e in data["events"])
 
 
-async def test_activity_pagination(client: AsyncClient) -> None:
+async def test_activity_pagination(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Cursor pagination with limit returns correct subsets."""
+    client, drain = client_and_drain
     run_id, task_id = await _setup_active_run(client)
 
     # Generate more events
@@ -96,7 +107,9 @@ async def test_activity_pagination(client: AsyncClient) -> None:
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
         json={"status": "done"},
     )
-    await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Fetch with small limit
     resp = await client.get(f"/api/runs/{run_id}/activity?limit=2")

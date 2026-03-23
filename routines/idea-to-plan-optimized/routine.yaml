@@ -387,6 +387,15 @@ routine:
                  - Are async/infrastructure dependencies resolved?
                  - Persistence layer complete? (DB column, repo write, repo read for new fields)
                  - Integration test assertions specified?
+                 - COMPONENT WIRING: for every new class, protocol, adapter, or handler
+                   introduced by this step, is there a call site in the ACTIVE code path
+                   that will actually use it? A common LLM failure mode is to build all
+                   specified components correctly (imports work, hasattr passes, tests pass
+                   via the old path), while the system continues using the old implementation.
+                   Ask: what replaces what? If this step introduces a new handler/adapter/
+                   protocol to replace old code, does the step explicitly require removing
+                   or replacing the old call site? If existing tests can still pass without
+                   the new component being used, the wiring is not verified.
 
               3. For each failure mode, propose a concrete hardening action.
 
@@ -877,6 +886,31 @@ routine:
             internal implementation details — those break when the builder makes
             reasonable implementation choices that differ from the planner's assumptions.
 
+            === WIRING VERIFICATION ===
+
+            When a task introduces a new component (handler, adapter, protocol) to REPLACE
+            existing functionality, structural checks alone are insufficient. A builder can
+            satisfy every hasattr(), import, and structural assertion while the system
+            continues using the old code path — making the new component dead code that
+            passes all checks.
+
+            For any task that replaces an existing code path, the routine MUST include at
+            least one of:
+            - A grep/AST check confirming the old call site is gone (e.g., the router no
+              longer calls the service method directly)
+            - An integration test that exercises the full path through the NEW component
+              and would fail if the old path were still active
+            - A verifier rubric item explicitly instructing the verifier to read both the
+              old call site AND the new component and confirm the transition happened
+
+            Structural checks (method exists, class is importable, hasattr passes) do NOT
+            verify wiring. Parity tests that pass via the old code path do NOT verify that
+            the new component is in use. Mark wiring requirements as critical and use the
+            verifier rubric to require the human verifier to confirm the switchover by
+            reading source, not just running tests.
+
+            === END WIRING VERIFICATION ===
+
             === END FORMAT GUIDE ===
           requirements:
             - id: "R1"
@@ -886,7 +920,7 @@ routine:
               desc: "Routine YAML passes CLI validation"
               priority: critical
             - id: "R3"
-              desc: "Every task has contract-level auto_verify commands (not just existence checks)"
+              desc: "Every task has contract-level auto_verify commands (not just existence checks); tasks that replace an existing code path include a wiring check confirming the old path is gone or the new component is the active one"
               priority: critical
             - id: "R4"
               desc: "intent.md annotated with requirement IDs — every element of intent maps to at least one requirement, and every referenced ID exists in the routine"
@@ -929,8 +963,13 @@ routine:
                   grade_reason, list each task (S-XX/T-YY) and classify its strongest check:
                   - contract-level: import/assertion, test run, type check, schema validation
                   - existence-only: test -f, grep -q, grep -c, ls
-                  A: every task's strongest check is contract-level. No shell pipes.
+                  A: every task's strongest check is contract-level. No shell pipes. AND any
+                  task that replaces an existing code path includes a wiring check (grep for
+                  absence of old call site, or a rubric item requiring the verifier to confirm
+                  the switchover by reading source).
                   B: ANY task's strongest check is existence-only (even if paired with others).
+                  Also B: a task replaces existing functionality but has no wiring check —
+                  the new component could be dead code while old path remains active.
                   F: tasks missing auto_verify entirely.
                   You MUST list every task and its classification — do not say "some tasks".
               - id: "R4"
