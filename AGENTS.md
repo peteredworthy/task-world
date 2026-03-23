@@ -22,6 +22,8 @@ Design documentation lives in `docs/intent/`. Implementation follows the phased 
 See **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** for:
 - **Directory map** - Full project structure with file descriptions
 - **How to run** - Backend (port 8000), frontend (port 5173), and all service URLs
+- **Event & Signaling System** - Event taxonomy, dual-write flow, signal queue, agent callbacks
+- **Tech Debt** - Known legacy patterns, stubs, and mismatched abstractions (TD-01 through TD-11)
 - **API routes** - Complete REST endpoint reference
 - **CLI commands** - All orchestrator commands
 - **Tech stack** - Python/FastAPI backend, React/Vite frontend
@@ -78,7 +80,7 @@ User creates Run → Selects Agent Runner → Start (create worktree, acquire lo
 
 ### Agent Runners
 
-An **Agent Runner** is the execution backend that performs work inside a run's worktree. The user selects a runner when creating (or resuming) a run. Runners are discovered at runtime by `ToolDetector` in `src/orchestrator/runners/detector.py`.
+An **Agent Runner** is the execution backend that performs work inside a run's worktree. The user selects a runner when creating (or resuming) a run. Runners are discovered at runtime via `src/orchestrator/runners/agent_detector.py` (registry-based; each runner package self-registers) and exposed through `GET /api/agent-runners`.
 
 Available runner types (`AgentRunnerType` enum in `src/orchestrator/config/enums.py`):
 

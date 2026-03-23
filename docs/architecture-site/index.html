@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Task-World Architecture</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
 <style>
   :root {
     --bg: #0f1117;
@@ -416,13 +417,135 @@
   .impact-high { color: var(--accent4); }
   .impact-medium { color: var(--accent3); }
   .impact-low { color: var(--accent2); }
+
+  /* Mermaid diagram wrapper */
+  .mermaid-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+  }
+  .mermaid-wrap .mermaid-header {
+    padding: 0.75rem 1.25rem;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .mermaid-wrap .mermaid-body {
+    padding: 1.5rem;
+    display: flex;
+    justify-content: center;
+  }
+  .mermaid-wrap .mermaid-body .mermaid {
+    max-width: 100%;
+  }
+  /* Mermaid overrides for dark theme */
+  .mermaid svg { max-width: 100%; }
+
+  /* Event taxonomy tables */
+  .event-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .event-group {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+  }
+  .event-group h4 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 0.6rem;
+    padding-bottom: 0.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .event-group h4 .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .event-group ul {
+    list-style: none;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    line-height: 1.8;
+  }
+  .event-group ul li code {
+    background: var(--surface2);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.76rem;
+    color: var(--accent);
+  }
+
+  /* Tech debt items */
+  .td-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1rem;
+  }
+  .td-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
+    border-left: 3px solid var(--border);
+  }
+  .td-card.sev-low { border-left-color: var(--accent2); }
+  .td-card.sev-medium { border-left-color: var(--accent3); }
+  .td-card.sev-high { border-left-color: var(--accent4); }
+  .td-card h4 {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #fff;
+    margin-bottom: 0.4rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .td-card h4 .td-id {
+    font-size: 0.72rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 99px;
+    font-weight: 600;
+    background: var(--surface2);
+    color: var(--text-dim);
+  }
+  .td-card .td-desc {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    line-height: 1.55;
+  }
+  .td-card .td-desc code {
+    background: var(--surface2);
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.76rem;
+    color: var(--accent);
+  }
+  .td-card .td-fix {
+    margin-top: 0.5rem;
+    font-size: 0.78rem;
+    color: var(--accent2);
+  }
 </style>
 </head>
 <body>
 
 <header>
   <h1>Task-World Architecture</h1>
-  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 modules, ~35K lines of Python</p>
+  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 active modules + 1 dead shim, ~40K lines of Python</p>
   <nav>
     <a href="#project-overview">Project</a>
     <a href="#overview">Stats</a>
@@ -434,6 +557,8 @@
     <a href="#sizes">Sizes</a>
     <a href="#concerns">Concerns</a>
     <a href="#patterns">Patterns</a>
+    <a href="#events">Events &amp; Signals</a>
+    <a href="#tech-debt">Tech Debt</a>
     <a class="external" href="/api/docs" target="_blank">Swagger UI &nearr;</a>
     <a class="external" href="/api/redoc" target="_blank">ReDoc &nearr;</a>
   </nav>
@@ -452,7 +577,7 @@
   <div class="feature-grid">
     <div class="feature-item">
       <strong>Multi-Agent Orchestration</strong>
-      Registry-based agent architecture with auto-discovery. Supports Claude CLI, Claude SDK, Codex Server, OpenHands, and user-managed agents.
+      Registry-based agent architecture with auto-discovery. Supports Claude CLI, Claude SDK, Codex Server, OpenHands (local &amp; Docker), and user-managed agents.
     </div>
     <div class="feature-item">
       <strong>Builder/Verifier Cycle</strong>
@@ -489,13 +614,13 @@
 <section id="overview">
   <h2>Overview</h2>
   <div class="stats-grid">
-    <div class="stat-card"><div class="value">19</div><div class="label">Modules</div></div>
-    <div class="stat-card"><div class="value">203</div><div class="label">Python Files</div></div>
-    <div class="stat-card"><div class="value">~35K</div><div class="label">Lines of Code</div></div>
+    <div class="stat-card"><div class="value">19</div><div class="label">Active Modules</div></div>
+    <div class="stat-card"><div class="value">230+</div><div class="label">Python Files</div></div>
+    <div class="stat-card"><div class="value">~40K</div><div class="label">Lines of Code</div></div>
     <div class="stat-card"><div class="value">7</div><div class="label">Architecture Layers</div></div>
     <div class="stat-card"><div class="value">0</div><div class="label">Circular Dependencies</div></div>
-    <div class="stat-card"><div class="value">786</div><div class="label">Total Tests</div></div>
-    <div class="stat-card"><div class="value">70+</div><div class="label">API Endpoints</div></div>
+    <div class="stat-card"><div class="value">2500+</div><div class="label">Backend Tests</div></div>
+    <div class="stat-card"><div class="value">80+</div><div class="label">API Endpoints</div></div>
     <div class="stat-card"><div class="value">6</div><div class="label">Agent Types</div></div>
   </div>
 </section>
@@ -585,8 +710,8 @@
 
 <!-- SUGGESTED REFACTORING MOVES -->
 <section id="suggested-moves">
-  <h2>Consolidation Plan: 19 &rarr; 9 Modules <span>Aggressive simplification with clear boundaries</span></h2>
-  <p class="section-desc">The current 19 top-level modules include many &ldquo;phantom modules&rdquo; &mdash; tiny, single-consumer packages that inflate the dependency graph without providing meaningful boundaries. This plan absorbs 10 modules into their natural parents, producing 9 focused top-level packages with clean, obvious ownership.</p>
+  <h2>Consolidation Plan: 19 &rarr; 9 Modules <span>Proposed — not yet implemented</span></h2>
+  <p class="section-desc">The current 19 active top-level modules include many &ldquo;phantom modules&rdquo; &mdash; tiny, single-consumer packages that inflate the dependency graph without providing meaningful boundaries. <strong>None of these moves have been executed yet.</strong> This plan absorbs 10 modules into their natural parents, producing 9 focused top-level packages with clean, obvious ownership.</p>
 
   <div class="diagram-container">
     <div class="diagram-header">
@@ -600,55 +725,55 @@
           <tr>
             <td><strong><code>config</code></strong></td>
             <td><code>+ routines</code></td>
-            <td>~1,260</td>
+            <td>~1,390</td>
             <td>All configuration: enums, models, global config, YAML routine loading &amp; discovery</td>
           </tr>
           <tr>
             <td><strong><code>state</code></strong></td>
             <td>&mdash;</td>
-            <td>~530</td>
+            <td>~550</td>
             <td>Core domain models: Run, StepState, TaskState, Attempt, ChecklistItem, SessionStateManager</td>
           </tr>
           <tr>
             <td><strong><code>db</code></strong></td>
             <td>&mdash;</td>
-            <td>~2,010</td>
-            <td>Persistence: SQLAlchemy ORM, repositories, event store, migrations</td>
+            <td>~3,820</td>
+            <td>Persistence: SQLAlchemy ORM, repositories, event store, JSONL journal, migrations</td>
           </tr>
           <tr>
             <td><strong><code>git</code></strong></td>
             <td><code>+ repos + cache + review</code></td>
-            <td>~3,220</td>
+            <td>~3,500</td>
             <td>All git &amp; repository operations: worktrees, branches, diffs, conflicts, repo discovery, test execution, diff caching</td>
           </tr>
           <tr>
             <td><strong><code>envfiles</code></strong></td>
             <td>&mdash;</td>
             <td>~910</td>
-            <td>Environment file management: snapshots, lifecycle, resolution, encryption</td>
+            <td>Environment file management: snapshots, lifecycle, resolution, security filtering</td>
           </tr>
           <tr>
             <td><strong><code>workflow</code></strong></td>
             <td><code>+ artifacts</code></td>
-            <td>~5,430</td>
-            <td>State machine engine: transitions, gates, grades, locks, events, prompts, artifact registry</td>
+            <td>~8,550</td>
+            <td>State machine engine: transitions, gates, grades, locks, events, signals, prompts, condition evaluator, handlers, artifact registry</td>
           </tr>
           <tr>
             <td><strong><code>runners</code></strong></td>
             <td><code>+ scaffolding + agents</code></td>
-            <td>~12,040</td>
+            <td>~12,170</td>
             <td>Agent execution: all agent integrations, scaffolding, agent config CRUD, profiles, detection</td>
           </tr>
           <tr>
             <td><strong><code>api</code></strong></td>
             <td><code>+ metrics + mcp</code></td>
-            <td>~7,460</td>
+            <td>~7,880</td>
             <td>All external interfaces: FastAPI routers, schemas, WebSocket, MCP server, cost estimation</td>
           </tr>
           <tr>
             <td><strong><code>cli</code></strong></td>
             <td>&mdash;</td>
-            <td>~1,450</td>
+            <td>~1,770</td>
             <td>Command-line interface: run/agent/routine/repo commands, approval workflows</td>
           </tr>
           <tr style="background: rgba(243,139,168,0.05);">
@@ -722,8 +847,8 @@
 
   <div class="move-card">
     <h4>M9: Absorb <code>agents</code> into <code>runners</code></h4>
-    <div class="from-to"><code>orchestrator/agents/</code> &rarr; <code>orchestrator/runners/profiles/</code></div>
-    <div class="rationale">348 LOC agent configuration CRUD (profiles, seeding Planner/Builder/Verifier defaults). Only consumed by <code>api/routers/agents.py</code> and <code>app.py</code> (for seeding). Runners already contains <code>runners/agents/</code> for agent implementations &mdash; the config/profiles layer belongs alongside them. Renaming to <code>profiles</code> avoids collision with the existing <code>runners/agents/</code> sub-package.</div>
+    <div class="from-to"><code>orchestrator/agents/</code> (config CRUD) &rarr; <code>orchestrator/runners/profiles/</code></div>
+    <div class="rationale">348 LOC agent configuration CRUD (profiles, seeding Planner/Builder/Verifier defaults). Only consumed by <code>api/routers/agents.py</code> and <code>app.py</code> (for seeding). Note: <code>runners/agents/</code> already exists as the canonical home of agent <em>implementations</em> (claude_cli, claude_sdk, codex, etc.) — this move is for the config/profiles layer. Renaming to <code>profiles</code> avoids collision with the existing sub-package.</div>
     <div class="impact impact-low">Low risk &mdash; ~3 import paths to update</div>
   </div>
 
@@ -757,9 +882,10 @@
     </div>
     <div class="diagram-body" style="padding: 0;">
       <table class="concerns-table">
-        <thead><tr><th>Metric</th><th>Current (19 modules)</th><th>After Phase 1&ndash;2 (9 modules)</th><th>After Phase 3</th></tr></thead>
+        <thead><tr><th>Metric</th><th>Current (19 modules, not yet moved)</th><th>After Phase 1&ndash;2 (9 modules)</th><th>After Phase 3</th></tr></thead>
         <tbody>
-          <tr><td>Top-level modules</td><td>19</td><td><strong>9</strong></td><td>9</td></tr>
+          <tr><td>Top-level modules</td><td>19 active + 1 dead shim</td><td><strong>9</strong></td><td>9</td></tr>
+          <tr><td>Total LOC</td><td>~40K</td><td>~40K (same code, fewer dirs)</td><td>~40K</td></tr>
           <tr><td><code>api</code> external deps</td><td>15</td><td>7 (config, state, db, git, envfiles, workflow, runners)</td><td>5&ndash;6 (via services)</td></tr>
           <tr><td><code>git</code> external deps</td><td>2 (cache, review)</td><td>0 (both absorbed)</td><td>0</td></tr>
           <tr><td><code>runners</code> external deps</td><td>7 + scaffolding + agents ext.</td><td>5 (config, state, db, git, workflow)</td><td>5</td></tr>
@@ -859,13 +985,13 @@
           <tr>
             <td><strong>WorkflowService Scope</strong></td>
             <td><span class="severity-medium">Medium</span></td>
-            <td>Single class handling state machine orchestration, verification, building, and recovery. Estimated 1500+ LOC.</td>
-            <td>Extract sub-services: VerificationService, RecoveryService, CompletionService.</td>
+            <td>The <code>workflow/</code> module has grown to 8,400 LOC across 22 files, encompassing state machine orchestration, verification, building, recovery, signal handling, condition evaluation, and summary caching. <code>WorkflowService</code> remains the primary entry point for all state mutations.</td>
+            <td>Extract sub-services: VerificationService, RecoveryService, CompletionService. The module already has partial decomposition via <code>handlers.py</code>, <code>completion.py</code>, and <code>clarifications.py</code>.</td>
           </tr>
           <tr>
             <td><strong>Phantom Top-Level Modules</strong></td>
             <td><span class="severity-medium">Medium</span></td>
-            <td><code>scaffolding</code> (176 LOC), <code>cache</code> (88 LOC), <code>review</code> (261 LOC), <code>metrics</code> (70 LOC), <code>artifacts</code> (146 LOC), <code>repos</code> (268 LOC), <code>agents</code> (348 LOC), <code>routines</code> (555 LOC), and <code>mcp</code> (785 LOC) are top-level modules with 1&ndash;2 consumers each. They inflate the module count from 9 to 19.</td>
+            <td><code>scaffolding</code> (176 LOC), <code>cache</code> (88 LOC), <code>review</code> (261 LOC), <code>metrics</code> (70 LOC), <code>artifacts</code> (146 LOC), <code>repos</code> (268 LOC), <code>agents</code> (348 LOC), <code>routines</code> (555 LOC), and <code>mcp</code> (785 LOC) are top-level modules with 1&ndash;2 consumers each. They inflate the module count from 9 to 19. <strong>None of the planned consolidations have been executed yet.</strong></td>
             <td>Absorb into their natural parents (see <a href="#suggested-moves" style="color: var(--accent);">M1&ndash;M10</a>).</td>
           </tr>
           <tr>
@@ -924,6 +1050,292 @@
   </div>
 </section>
 
+<!-- EVENTS & SIGNALS -->
+<section id="events">
+  <h2>Event &amp; Signaling System <span>Immutable history + one-time control commands</span></h2>
+  <p class="section-desc">The system uses two distinct mechanisms: <strong>Events</strong> are immutable records of state changes persisted to SQLite and a JSONL journal, then broadcast to all connected UIs via WebSocket. <strong>Signals</strong> are one-time control commands (pause, cancel, resume) enqueued to the database and consumed by the executor loop on its next tick.</p>
+
+  <!-- Event taxonomy -->
+  <h3 style="color: #fff; font-size: 1rem; margin: 0 0 0.75rem;">Event Taxonomy</h3>
+  <div class="event-grid">
+    <div class="event-group">
+      <h4><span class="dot" style="background:#89b4fa;"></span>Workflow Lifecycle</h4>
+      <ul>
+        <li><code>RunStatusChanged</code> — DRAFT/ACTIVE/PAUSED/COMPLETED/FAILED; carries <em>pause_reason</em></li>
+        <li><code>TaskStatusChanged</code> — PENDING→BUILDING→VERIFYING→terminal; carries start/end commit</li>
+        <li><code>StepCompleted</code> — all tasks in step reach terminal state</li>
+        <li><code>StepSkipped</code> — step skipped by condition</li>
+        <li><code>RunStepBackward</code> — run rewound to earlier step</li>
+        <li><code>ChecklistGateEvaluated</code> — gate pass/fail with blocking items</li>
+        <li><code>GradesEvaluated</code> — grade threshold result with per-requirement detail</li>
+        <li><code>AutoVerifyCompleted</code> — auto-verify script results</li>
+      </ul>
+    </div>
+    <div class="event-group">
+      <h4><span class="dot" style="background:#cba6f7;"></span>Agent Lifecycle</h4>
+      <ul>
+        <li><code>AgentChangedEvent</code> — agent runner switched on resume</li>
+        <li><code>AgentDiedEvent</code> — managed agent process exited unexpectedly</li>
+        <li><code>AgentOutputEvent</code> — batched stdout lines with <em>line_offset</em></li>
+        <li><code>AgentErrorEvent</code> — agent error with type and message</li>
+        <li><code>TaskReverted</code> — task reverted to phase start on resume</li>
+        <li><code>HealthCheckEvent</code> — pre-run health check started/completed/failed</li>
+      </ul>
+    </div>
+    <div class="event-group">
+      <h4><span class="dot" style="background:#94e2d5;"></span>Fan-out &amp; Human</h4>
+      <ul>
+        <li><code>FanOutSpawned</code>, <code>ChildSpawned</code>, <code>ChildCompleted</code></li>
+        <li><code>ChildFailed</code>, <code>FanOutCompleted</code></li>
+        <li><code>ClarificationRequested</code>, <code>ClarificationResponded</code></li>
+        <li><code>ApprovalRequested</code>, <code>ApprovalDecision</code></li>
+      </ul>
+    </div>
+    <div class="event-group">
+      <h4><span class="dot" style="background:#f38ba8;"></span>Review Workbench</h4>
+      <ul>
+        <li><code>PruneApplied</code> — selective change removal with audit commit</li>
+        <li><code>TestRunStarted</code> / <code>TestRunCompleted</code></li>
+        <li><code>ConflictResolved</code> — conflict file marked resolved</li>
+        <li><code>BackMergeCompleted</code> / <code>BackMergeReverted</code></li>
+        <li><code>AgentFixStarted</code> / <code>AgentFixCompleted</code></li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- Event flow diagram -->
+  <div class="mermaid-wrap">
+    <div class="mermaid-header">
+      <span>Event Emission &amp; Persistence Flow</span>
+      <span>Dual write: SQLite + JSONL journal → WebSocket broadcast</span>
+    </div>
+    <div class="mermaid-body">
+      <pre class="mermaid">
+flowchart TD
+    ENG["WorkflowEngine\n.emit(event)\n(pure — no I/O)"]
+    BUF["BufferingEmitter\ncollects events during\nsynchronous transitions"]
+    DRAIN["emitter.drain()\ncalled by executor after\neach state mutation"]
+    PEE["PersistentEventEmitter\nworkflow/event_logger.py"]
+    ESQ["EventStore\nSQLite · events table\n(structured, queryable)"]
+    JL["JsonlEventJournal\n.orchestrator/state/history.jsonl\n(append-only, recovery source)"]
+    LST["Registered Listeners\n(sync callbacks)"]
+    TASK["loop.create_task()\nnon-blocking"]
+    WS["WebSocket Manager\nbroadcast_event()"]
+    UI["Connected React UIs\nlive dashboard updates"]
+
+    ENG --> BUF
+    BUF --> DRAIN
+    DRAIN --> PEE
+    PEE --> ESQ
+    PEE --> JL
+    PEE --> LST
+    LST --> TASK
+    TASK --> WS
+    WS --> UI
+
+    style ENG fill:#1e2030,stroke:#89b4fa,color:#89b4fa
+    style BUF fill:#1e2030,stroke:#7f849c,color:#c8cad8
+    style DRAIN fill:#1e2030,stroke:#7f849c,color:#7f849c
+    style PEE fill:#1e2030,stroke:#a6e3a1,color:#a6e3a1
+    style ESQ fill:#1e2030,stroke:#f9e2af,color:#f9e2af
+    style JL fill:#1e2030,stroke:#f9e2af,color:#f9e2af
+    style LST fill:#1e2030,stroke:#7f849c,color:#c8cad8
+    style TASK fill:#1e2030,stroke:#cba6f7,color:#cba6f7
+    style WS fill:#1e2030,stroke:#94e2d5,color:#94e2d5
+    style UI fill:#1e2030,stroke:#f38ba8,color:#f38ba8
+      </pre>
+    </div>
+  </div>
+
+  <!-- Signal flow diagram -->
+  <div class="mermaid-wrap">
+    <div class="mermaid-header">
+      <span>Signal Queue Flow</span>
+      <span>Control commands enqueued to DB, consumed once per executor tick</span>
+    </div>
+    <div class="mermaid-body">
+      <pre class="mermaid">
+flowchart TD
+    API["API Request\nPOST /api/runs/{id}/pause\nor /cancel, /resume"]
+    SVC["WorkflowService\n.pause_run() / .cancel_run()"]
+    REG{"_active_run_ids\nprocess-local set\nworkflow/signals.py"}
+    DB["pending_signals\nSQLite table\nprocessed_at = NULL"]
+    DIRECT["Direct DB state update\nrun was already idle"]
+    LOOP["RunWorkflow._run_loop()\nnext iteration"]
+    DRAIN["on_signal()\ndrains pending rows\nmarks processed_at"]
+    HANDLER["@signal_handler dispatch\nPAUSE · RESUME · CANCEL\nACTIVITY_COMPLETED\nACTIVITY_VERIFIED"]
+    STOP{"handler returns\nTrue?"}
+    BREAK["break loop\nrun pauses or cancels"]
+    CONT["continue loop\nnext task"]
+
+    API --> SVC
+    SVC --> REG
+    REG -- "run active" --> DB
+    REG -- "run idle" --> DIRECT
+    DB -- "polled each tick" --> LOOP
+    LOOP --> DRAIN
+    DRAIN --> HANDLER
+    HANDLER --> STOP
+    STOP -- "Yes" --> BREAK
+    STOP -- "No" --> CONT
+
+    style API fill:#1e2030,stroke:#f38ba8,color:#f38ba8
+    style SVC fill:#1e2030,stroke:#89b4fa,color:#89b4fa
+    style REG fill:#1e2030,stroke:#f9e2af,color:#f9e2af
+    style DB fill:#1e2030,stroke:#f9e2af,color:#f9e2af
+    style DIRECT fill:#1e2030,stroke:#7f849c,color:#7f849c
+    style LOOP fill:#1e2030,stroke:#cba6f7,color:#cba6f7
+    style DRAIN fill:#1e2030,stroke:#cba6f7,color:#cba6f7
+    style HANDLER fill:#1e2030,stroke:#a6e3a1,color:#a6e3a1
+    style STOP fill:#1e2030,stroke:#7f849c,color:#c8cad8
+    style BREAK fill:#1e2030,stroke:#f38ba8,color:#f38ba8
+    style CONT fill:#1e2030,stroke:#a6e3a1,color:#a6e3a1
+      </pre>
+    </div>
+  </div>
+
+  <!-- Agent callback diagram -->
+  <div class="mermaid-wrap">
+    <div class="mermaid-header">
+      <span>Agent Runner ↔ Orchestrator Callbacks</span>
+      <span>Signals queue while agent runs; callbacks drive state transitions</span>
+    </div>
+    <div class="mermaid-body">
+      <pre class="mermaid">
+flowchart TD
+    LOOP["RunWorkflow._run_loop()"]
+    SIG["① drain signals\nPAUSE / CANCEL detected here\nbefore next agent call"]
+    FIND["② find_next_task()\nPENDING task in current step"]
+    PHASE["③ PhaseHandler.execute_phase()\nbinds WorkflowService calls\nas async closure callbacks"]
+    AGENT["④ agent.execute(\n  on_submit, on_grade,\n  on_checklist_update,\n  on_output, on_escalation\n)\nblocks until agent finishes"]
+
+    CB1["on_submit()\n→ submit_for_verification()\nor complete_verification()"]
+    CB2["on_grade(req, grade, reason)\n→ set_grade()"]
+    CB3["on_checklist_update(req, status)\n→ update_checklist_item()"]
+    CB4["on_output(lines)\n→ EventBroadcaster\n→ AgentOutputEvent"]
+    CB5["on_escalation(req, reason)\n→ escalate_requirement()\n→ enqueues PAUSE signal"]
+
+    NEXT["⑤ loop back to ①"]
+
+    LOOP --> SIG --> FIND --> PHASE --> AGENT
+    AGENT -. "while running" .-> CB1
+    AGENT -. "while running" .-> CB2
+    AGENT -. "while running" .-> CB3
+    AGENT -. "while running" .-> CB4
+    AGENT -. "while running" .-> CB5
+    AGENT --> NEXT
+    NEXT --> LOOP
+
+    style LOOP fill:#1e2030,stroke:#cba6f7,color:#cba6f7
+    style SIG fill:#1e2030,stroke:#f9e2af,color:#f9e2af
+    style FIND fill:#1e2030,stroke:#7f849c,color:#c8cad8
+    style PHASE fill:#1e2030,stroke:#89b4fa,color:#89b4fa
+    style AGENT fill:#1e2030,stroke:#a6e3a1,color:#a6e3a1
+    style CB1 fill:#1e2030,stroke:#94e2d5,color:#94e2d5
+    style CB2 fill:#1e2030,stroke:#94e2d5,color:#94e2d5
+    style CB3 fill:#1e2030,stroke:#94e2d5,color:#94e2d5
+    style CB4 fill:#1e2030,stroke:#94e2d5,color:#94e2d5
+    style CB5 fill:#1e2030,stroke:#f38ba8,color:#f38ba8
+    style NEXT fill:#1e2030,stroke:#7f849c,color:#7f849c
+      </pre>
+    </div>
+  </div>
+
+  <div class="diagram-container">
+    <div class="diagram-header">
+      <span>Signal Types</span>
+      <span>WorkflowSignal enum — workflow/signals.py</span>
+    </div>
+    <div class="diagram-body" style="padding: 0;">
+      <table class="concerns-table">
+        <thead><tr><th>Signal</th><th>Sent by</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>PAUSE</code></td><td>API <code>POST /runs/{id}/pause</code></td><td>Breaks the executor loop; run → PAUSED</td></tr>
+          <tr><td><code>RESUME</code></td><td>API <code>POST /runs/{id}/resume</code></td><td>Spawns a new executor loop iteration</td></tr>
+          <tr><td><code>CANCEL</code></td><td>API <code>POST /runs/{id}/cancel</code></td><td>Breaks loop; run → FAILED</td></tr>
+          <tr><td><code>ACTIVITY_COMPLETED</code></td><td>External agent callback</td><td>Marks activity done; advances task</td></tr>
+          <tr><td><code>ACTIVITY_VERIFIED</code></td><td>External agent callback</td><td>Marks verification done; advances task</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- TECH DEBT -->
+<section id="tech-debt">
+  <h2>Tech Debt <span>Known legacy patterns, stubs, and mismatched abstractions</span></h2>
+  <p class="section-desc">These are documented, known issues — not surprises. Each item has a clear resolution path. Severity reflects impact on correctness or maintainability, not urgency.</p>
+  <div class="td-grid">
+
+    <div class="td-card sev-medium">
+      <h4><span class="td-id">TD-01</span> Backward-compat shims after module split</h4>
+      <div class="td-desc">After agents moved from <code>runners/*.py</code> to <code>runners/agents/*/</code>, the old flat paths remain as <code>import *</code> shim files (<code>runners/cli.py</code>, <code>runners/openhands.py</code>, etc.). Root-level <code>orchestrator/executor.py</code> and <code>orchestrator/routers/</code> are also shims. New code must never be added to shim files.</div>
+      <div class="td-fix">✦ Remove once all internal imports use canonical <code>agents/</code> paths.</div>
+    </div>
+
+    <div class="td-card sev-medium">
+      <h4><span class="td-id">TD-02</span> Duplicate agent detection systems</h4>
+      <div class="td-desc"><code>runners/detector.py</code> (legacy, wired to <code>GET /api/agent-runners</code>) and <code>runners/agent_detector.py</code> (registry-based, each package self-registers) both exist. Both must be kept in sync when adding a new runner type.</div>
+      <div class="td-fix">✦ Replace <code>detector.py</code> with <code>agent_detector.py</code> once the API route is updated.</div>
+    </div>
+
+    <div class="td-card sev-low">
+      <h4><span class="td-id">TD-03</span> Process-local active-run registry</h4>
+      <div class="td-desc"><code>_active_run_ids</code> in <code>signals.py</code> is a module-level <code>set[str]</code>. It is lost on server restart and is incompatible with multi-worker deployments. Runs paused mid-transition when the process dies silently lose registry state.</div>
+      <div class="td-fix">✦ Low impact today (single-process). Becomes a correctness bug if deployment model changes.</div>
+    </div>
+
+    <div class="td-card sev-low">
+      <h4><span class="td-id">TD-04</span> StepSkipped dual-field inconsistency</h4>
+      <div class="td-desc"><code>StepSkipped</code> has both <code>skip_reason</code> (canonical) and <code>reason</code> (legacy alias), kept in sync manually in <code>__init__</code>. Recovery code has a matching fallback comment for old events in the JSONL journal.</div>
+      <div class="td-fix">✦ Remove <code>reason</code> once old events have aged out of production journals.</div>
+    </div>
+
+    <div class="td-card sev-medium">
+      <h4><span class="td-id">TD-05</span> scheduled_resume_at is a stub</h4>
+      <div class="td-desc"><code>RunWorkflow._scheduled_resume_check()</code> reads the <code>scheduled_resume_at</code> DB column (migration applied) but only logs <em>"auto-resume pending (stub, not yet implemented)"</em> — no action is taken. The feature is not functional.</div>
+      <div class="td-fix">✦ Implement scheduled wakeup or remove the column and method.</div>
+    </div>
+
+    <div class="td-card sev-medium">
+      <h4><span class="td-id">TD-06</span> InMemoryLockManager never raises LockTimeoutError</h4>
+      <div class="td-desc"><code>LockTimeoutError</code> is defined but <code>InMemoryLockManager</code> lets locks expire passively — it never detects or raises on contention. The pessimistic locking contract is not enforced in practice. Tests document this as a known gap.</div>
+      <div class="td-fix">✦ Implement contention detection, or document that locking is advisory only.</div>
+    </div>
+
+    <div class="td-card sev-low">
+      <h4><span class="td-id">TD-07</span> Unimplemented planning phase</h4>
+      <div class="td-desc"><code>PhaseType</code> enum includes <code>plan</code>, <code>gap_check</code>, <code>summarize</code>, <code>human_review</code> in addition to active <code>build</code>/<code>verify</code>. <code>RoutineConfig</code>, <code>StepConfig</code>, and <code>TaskConfig</code> carry a <code>planner_agent</code> field that is never read by the executor.</div>
+      <div class="td-fix">✦ Implement or prune the unused enum values and fields.</div>
+    </div>
+
+    <div class="td-card sev-low">
+      <h4><span class="td-id">TD-08</span> Dead Codex HTTP-era code</h4>
+      <div class="td-desc"><code>runners/agents/codex/common.py</code> contains <code>create_session_payload()</code>, marked deprecated and tagged <code># pragma: no cover</code>. It is dead code from a previous HTTP-based Codex integration. Never called.</div>
+      <div class="td-fix">✦ Delete the function.</div>
+    </div>
+
+    <div class="td-card sev-medium">
+      <h4><span class="td-id">TD-09</span> EventBroadcaster opens a new DB session per output line</h4>
+      <div class="td-desc"><code>EventBroadcaster.emit_log_event()</code> opens a fresh <code>async_sessionmaker</code> session per call to persist <code>AgentOutputEvent</code> batches. Under high-throughput agents this creates many short-lived DB connections. Acknowledged in the module docstring as a known trade-off.</div>
+      <div class="td-fix">✦ Batch output events or reuse a dedicated session with a short-lived transaction.</div>
+    </div>
+
+    <div class="td-card sev-low">
+      <h4><span class="td-id">TD-10</span> repos/discovery.py deprecated parameter</h4>
+      <div class="td-desc">The <code>include_remote</code> parameter in <code>repos/discovery.py</code> is marked deprecated in the docstring ("use <code>local_only</code>") but remains in the function signature. Callers passing <code>include_remote=True</code> receive stale behaviour silently.</div>
+      <div class="td-fix">✦ Remove parameter after updating all callers.</div>
+    </div>
+
+    <div class="td-card sev-low">
+      <h4><span class="td-id">TD-11</span> RunWorkflow constructor arity</h4>
+      <div class="td-desc"><code>RunWorkflow.__init__</code> accepts 15+ mostly-optional keyword-only <code>Callable | None</code> parameters — bound references to private methods of <code>AgentRunnerExecutor</code>, added to avoid <code>reportPrivateUsage</code> type-checker errors.</div>
+      <div class="td-fix">✦ Extract a small dataclass or protocol that <code>AgentRunnerExecutor</code> constructs and passes.</div>
+    </div>
+
+  </div>
+</section>
+
 </main>
 
 <div class="tooltip" id="tooltip" style="display:none;"></div>
@@ -933,25 +1345,25 @@
 // DATA
 // ============================================================
 const modules = {
-  config:      { loc: 705,  files: 5,  layer: 'foundation', desc: 'Runtime enums (RunStatus, TaskStatus, Priority), Pydantic models for routine/step/task YAML, and GlobalConfig for paths and settings.' },
+  config:      { loc: 837,  files: 5,  layer: 'foundation', desc: 'Runtime enums (RunStatus, TaskStatus, Priority, AgentRunnerType, ModelProfile), Pydantic models for routine/step/task YAML, and GlobalConfig for paths and settings.' },
   cache:       { loc: 88,   files: 2,  layer: 'foundation', desc: 'Simple LRU cache utility used by git operations for memoizing expensive diff computations.', parent: 'git' },
   metrics:     { loc: 70,   files: 2,  layer: 'foundation', desc: 'Cost estimation from token usage data. Calculates USD costs using model pricing tables.', parent: 'api' },
-  state:       { loc: 532,  files: 5,  layer: 'domain',     desc: 'In-memory runtime models: Run, StepState, TaskState, Attempt, ChecklistItem. SessionStateManager for state mutations.' },
+  state:       { loc: 548,  files: 5,  layer: 'domain',     desc: 'In-memory runtime models: Run, StepState, TaskState, Attempt, ChecklistItem. SessionStateManager for state mutations.' },
   routines:    { loc: 555,  files: 5,  layer: 'domain',     desc: 'Routine discovery and loading from YAML files. Handles file resolution, inheritance, and semantic versioning.', parent: 'config' },
   artifacts:   { loc: 146,  files: 3,  layer: 'domain',     desc: 'Structured output registry. Stores named artifacts (code snippets, configs) produced during task execution.', parent: 'workflow' },
   repos:       { loc: 268,  files: 4,  layer: 'domain',     desc: 'Git repository discovery and introspection. Lists repos, branches, and provides RepoInfo data classes.', parent: 'git' },
   review:      { loc: 261,  files: 3,  layer: 'domain',     desc: 'Code review models and test execution. Runs test commands in worktrees and provides diff/commit data.', parent: 'git' },
   scaffolding: { loc: 176,  files: 4,  layer: 'domain',     desc: 'Project setup: copies template files, ensures .gitignore, prepares workspace for new tasks.', parent: 'runners' },
-  db:          { loc: 2012, files: 21, layer: 'infra',       desc: 'Persistence via SQLAlchemy ORM. RunModel, StepModel, TaskModel, AttemptModel. Repositories for querying and hydrating state.' },
-  git:         { loc: 2605, files: 10, layer: 'infra',       desc: 'Low-level git operations: WorktreeManager, branch ops, diff computation, conflict detection, and commit utilities.' },
-  envfiles:    { loc: 908,  files: 9,  layer: 'infra',       desc: 'Environment file management: snapshots, lifecycle (create/cleanup), resolution, and security (encryption).' },
-  workflow:    { loc: 5288, files: 17, layer: 'orchestration', desc: 'State machine engine: transitions, gates, grades, locks, events, clarifications, auto-verify, prompts, and completion logic.' },
-  runners:     { loc: 11514, files: 58, layer: 'execution',   desc: 'Agent integrations and execution. Contains agents/ (claude_cli, claude_sdk, codex, openhands, user_managed, mock), execution/ (phase_handler, attempt_store, event_broadcaster), scaffolding/, and shared utilities.' },
-  agents:      { loc: 348,  files: 6,  layer: 'execution',   desc: 'Agent configuration CRUD. Manages agent profiles, seeding defaults (Planner, Builder, Verifier), and name resolution.', parent: 'runners' },
-  api:         { loc: 6604, files: 30, layer: 'api',         desc: 'FastAPI application: routers, schemas, dependency injection, auth, error handlers, and WebSocket real-time events.' },
-  cli:         { loc: 1447, files: 7,  layer: 'integration', desc: 'Command-line interface: run, agent, routine, and repo commands. Approval workflows for human-in-the-loop.' },
+  db:          { loc: 3817, files: 34, layer: 'infra',       desc: 'Persistence via SQLAlchemy ORM. RunModel, StepModel, TaskModel, AttemptModel. Repositories, event store, JSONL journal, journal replay, and Alembic migrations.' },
+  git:         { loc: 2882, files: 10, layer: 'infra',       desc: 'Low-level git operations: WorktreeManager, branch ops, diff computation (with LRU-cached variant), conflict detection, prune ops, and commit utilities.' },
+  envfiles:    { loc: 912,  files: 9,  layer: 'infra',       desc: 'Environment file management: snapshots, lifecycle (create/cleanup), resolution, security filtering, and tooling.' },
+  workflow:    { loc: 8402, files: 22, layer: 'orchestration', desc: 'State machine engine: transitions, gates, grades, locks, events, signals, clarifications, auto-verify, prompts, condition_evaluator, handlers, summary_cache, and completion logic.' },
+  runners:     { loc: 11651, files: 58, layer: 'execution',  desc: 'Agent integrations and execution. Contains agents/ (claude_cli, claude_sdk, codex, openhands, user_managed, mock), execution/ (phase_handler, attempt_store, event_broadcaster), parsers/, and shared utilities (quota, repetition_detector, config_utils, nudger, monitor).' },
+  agents:      { loc: 348,  files: 6,  layer: 'execution',   desc: 'Agent configuration CRUD. Manages named agent profiles (system_prompt + model_profile), seeding defaults (Planner, Builder, Verifier), and cascading name resolution.', parent: 'runners' },
+  api:         { loc: 7028, files: 30, layer: 'api',         desc: 'FastAPI application: 11 routers (runs, tasks, agents, routines, repos, runners, model_profiles, review, clarifications, envfiles, config), schemas, dependency injection, auth, error handlers, and WebSocket real-time events.' },
+  cli:         { loc: 1772, files: 8,  layer: 'integration', desc: 'Command-line interface: run, agent, routine, and repo commands. Approval workflows for human-in-the-loop.' },
   mcp:         { loc: 785,  files: 4,  layer: 'integration', desc: 'Model Context Protocol server: exposes tools to external agents for run status, task context, and clarifications.', parent: 'api' },
-  routers:     { loc: 6,    files: 2,  layer: 'integration', desc: 'Legacy router shim (6 LOC). Re-exports from api.routers for backwards compatibility.' },
+  routers:     { loc: 6,    files: 2,  layer: 'integration', desc: 'Dead shim (6 LOC). Re-exports from api.routers.tasks for backwards compatibility. Pending deletion.' },
 };
 
 // Dependencies: source depends on targets
@@ -2000,6 +2412,36 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
       .text(l.label);
   });
 })();
+
+// ============================================================
+// MERMAID INIT
+// ============================================================
+mermaid.initialize({
+  startOnLoad: true,
+  theme: 'base',
+  themeVariables: {
+    // Match the Catppuccin dark palette
+    background: '#161822',
+    primaryColor: '#1e2030',
+    primaryTextColor: '#c8cad8',
+    primaryBorderColor: '#2a2d3e',
+    lineColor: '#4a4d5e',
+    secondaryColor: '#1e2030',
+    tertiaryColor: '#1e2030',
+    edgeLabelBackground: '#1e2030',
+    clusterBkg: '#161822',
+    clusterBorder: '#2a2d3e',
+    titleColor: '#c8cad8',
+    nodeTextColor: '#c8cad8',
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif",
+    fontSize: '13px',
+  },
+  flowchart: {
+    curve: 'basis',
+    padding: 20,
+    useMaxWidth: true,
+  },
+});
 </script>
 
 </body>

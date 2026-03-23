@@ -44,7 +44,9 @@ npm run dev   # starts on port 5173
 ```
 task-world/
 ├── src/orchestrator/          # Python backend (main application)
-│   ├── errors.py              # Root-level error definitions
+│   ├── errors.py              # Root-level error definitions (domain exceptions)
+│   ├── time_utils.py          # Time utilities (injectable clocks for testing)
+│   ├── executor.py            # Backward-compat shim → runners/executor.py
 │   ├── agents/                # Agent configs (prompt + model profile, CRUD)
 │   │   ├── errors.py          # AgentNotFoundError, AgentNameConflictError, etc.
 │   │   ├── models.py          # AgentConfigModel ORM model
@@ -54,71 +56,90 @@ task-world/
 │   ├── runners/               # Agent runner implementations (execution backends)
 │   │   ├── interface.py       # AgentRunner protocol definition
 │   │   ├── types.py           # ExecutionContext, ExecutionResult, AgentRunnerOption, etc.
-│   │   ├── executor.py        # Runner lifecycle management
-│   │   ├── detector.py        # Detects available runner backends; serves GET /api/agent-runners
+│   │   ├── agent_factory.py   # Registry-based agent factory; each package self-registers
+│   │   ├── agent_detector.py  # Registry-based runner detection (preferred over detector.py)
+│   │   ├── detector.py        # Legacy detector; still used by GET /api/agent-runners (TD-02)
 │   │   ├── profile_resolution.py # Model profile → model string resolution
-│   │   ├── cli.py             # CLI subprocess runner with nudger
-│   │   ├── openhands.py       # OpenHands Local runner (in-process)
-│   │   ├── openhands_docker.py # OpenHands Docker runner (container)
-│   │   ├── openhands_common.py # Shared OpenHands utilities
-│   │   ├── codex_server_common.py # Shared helpers for Codex Server runners
-│   │   ├── codex_server.py    # CodexServerRunner: local managed-process variant
-│   │   ├── claude_sdk.py      # Claude SDK runner (in-process Anthropic API)
-│   │   ├── user_managed.py    # External/manual runner
 │   │   ├── monitor.py         # Dead runner detection/recovery
 │   │   ├── nudger.py          # Stuck runner nudging (timeout, nudge, kill)
 │   │   ├── action_log.py      # Structured runner activity log
-│   │   ├── mock.py            # Mock runner for testing
-│   │   └── parsers/           # Per-runner output stream parsers
-│   │       ├── base.py        # Base stream parser protocol
-│   │       ├── claude_parser.py
-│   │       ├── codex_parser.py
-│   │       └── openhands_parser.py
+│   │   ├── quota.py           # Agent quota tracking and enforcement
+│   │   ├── repetition_detector.py # Detects agent stuck in output loops
+│   │   ├── config_utils.py    # Shared agent config helpers
+│   │   ├── errors.py          # Runner-specific error types
+│   │   ├── agents/            # Concrete agent implementations (canonical location)
+│   │   │   ├── claude_cli/    # CLIAgent: subprocess via stdin/stdout
+│   │   │   │   ├── agent.py   # Main CLIAgent; uses Nudger, ClaudeStreamParser
+│   │   │   │   ├── config.py  # CLIAgent config schema
+│   │   │   │   ├── factory.py # Self-registration with agent_factory
+│   │   │   │   └── parser.py  # ClaudeStreamParser: JSON stream → events
+│   │   │   ├── claude_sdk/    # In-process Anthropic SDK agent
+│   │   │   ├── codex/         # CodexServerAgent: managed `codex app-server` (stdio/JSON-RPC)
+│   │   │   ├── openhands/     # OpenHandsAgent (local in-process) + DockerOpenHandsAgent
+│   │   │   ├── user_managed/  # UserManagedAgent: passive wait-for-external-signal
+│   │   │   └── mock/          # Mock agent for testing
+│   │   ├── execution/         # Shared execution infrastructure
+│   │   │   ├── phase_handler.py   # Wires agent callbacks to WorkflowService calls
+│   │   │   ├── attempt_store.py   # Persists attempt metrics and agent metadata
+│   │   │   └── event_broadcaster.py # Persists AgentOutputEvent; one DB session per call
+│   │   ├── # Backward-compat shims pointing to agents/ — DO NOT add new code here (TD-01):
+│   │   ├── openhands.py, openhands_docker.py, openhands_common.py
+│   │   ├── codex_server.py, codex_server_common.py, executor.py
+│   │   └── parsers/           # Stream parser protocol + shims
+│   │       ├── base.py        # Base stream parser protocol (canonical)
+│   │       ├── claude_parser.py, codex_parser.py, openhands_parser.py
 │   ├── api/                   # FastAPI REST API
-│   │   ├── app.py             # Application factory, lifespan
+│   │   ├── app.py             # Application factory, lifespan, startup recovery
 │   │   ├── auth.py            # JWT authentication
 │   │   ├── deps.py            # Dependency injection
 │   │   ├── errors.py          # Exception handlers
 │   │   ├── websocket.py       # WebSocket connection manager
-│   │   ├── routers/           # API endpoints
+│   │   ├── routers/           # API endpoints (11 routers)
 │   │   │   ├── agents.py      # GET/POST/PUT/DELETE /api/agents (agent CRUD)
-│   │   │   ├── runners.py     # GET /api/agent-runners (runner discovery + profile defaults)
+│   │   │   ├── runners.py     # GET /api/agent-runners (runner discovery)
+│   │   │   ├── model_profiles.py # GET/PUT /api/agent-runners/{type}/profiles
 │   │   │   ├── routines.py    # /api/routines CRUD + validate
 │   │   │   ├── runs.py        # /api/runs CRUD + lifecycle
-│   │   │   ├── tasks.py       # Task operations, checklist, grades
+│   │   │   ├── tasks.py       # Task operations, checklist, grades, prompts
 │   │   │   ├── repos.py       # /api/repos (repository browser)
 │   │   │   ├── config.py      # GET /api/config
 │   │   │   ├── clarifications.py # Clarification requests
 │   │   │   ├── envfiles.py    # Environment file operations
 │   │   │   └── review.py      # Review & merge workbench (13 endpoints)
 │   │   └── schemas/           # Pydantic request/response models
-│   │       ├── routines.py, runs.py, tasks.py, steps.py
+│   │       ├── runs.py, tasks.py, steps.py, routines.py
 │   │       ├── repos.py, clarifications.py, envfiles.py
+│   │       ├── model_profiles.py  # Runner profile request/response schemas
 │   │       ├── activity.py    # Activity log schemas
 │   │       └── review.py      # Review schemas (diff, prune, conflicts, tests, merge)
-│   ├── artifacts/             # Artifact tracking
+│   ├── artifacts/             # Artifact tracking (proposed: move to workflow/)
 │   │   ├── models.py          # Artifact data models
 │   │   └── registry.py        # Registry for generated files
+│   ├── cache/                 # LRU cache utility (proposed: move to git/)
+│   │   └── lru.py             # Generic LRU cache used by cached_diff_ops
 │   ├── cli/                   # Click CLI commands
 │   │   ├── main.py            # Entry point (orchestrator command)
 │   │   ├── runs.py            # Run management commands
 │   │   ├── routines.py        # Routine listing commands
 │   │   ├── agents.py          # Agent listing commands
 │   │   ├── repos.py           # Repository commands
-│   │   └── approve.py         # Human approval commands
+│   │   ├── approve.py         # Human approval commands
+│   │   └── model_profiles.py  # Runner model profile commands
 │   ├── config/                # Configuration models
-│   │   ├── enums.py           # RunStatus, TaskStatus, AgentType
+│   │   ├── enums.py           # RunStatus, TaskStatus, AgentRunnerType, ModelProfile, etc.
 │   │   ├── global_config.py   # config.json loader
+│   │   ├── loader.py          # Config loading helpers
 │   │   └── models.py          # RoutineConfig, StepConfig, TaskConfig
 │   ├── db/                    # Database layer (SQLAlchemy + SQLite)
 │   │   ├── base.py            # SQLAlchemy Base class
 │   │   ├── connection.py      # Async engine + session factory
-│   │   ├── models.py          # ORM models
-│   │   ├── repositories.py    # RunRepository (CRUD)
-│   │   ├── event_store.py     # Event persistence
-│   │   ├── event_journal.py   # External JSONL event journal (append-only)
+│   │   ├── models.py          # ORM models (Run, Step, Task, Attempt, Event, Signal, Lock…)
+│   │   ├── repositories.py    # RunRepository, AttemptRepository, etc.
+│   │   ├── event_store.py     # Event persistence + paginated queries
+│   │   ├── event_journal.py   # JSONL journal (append-only, recovery source)
 │   │   ├── journal_replay.py  # Replay JSONL journal onto DB snapshots
-│   │   ├── recovery.py        # State recovery from events
+│   │   ├── recovery.py        # State recovery from event history
+│   │   ├── backup.py          # DB backup utilities
 │   │   └── migrations/        # Alembic migrations
 │   ├── envfiles/              # Environment file management
 │   │   ├── models.py          # Env file data models
@@ -129,52 +150,60 @@ task-world/
 │   │   ├── cleanup.py         # Cleanup operations
 │   │   └── tools.py           # Env file management tools
 │   ├── git/                   # Git operations
-│   │   ├── worktree.py        # Git worktree management
+│   │   ├── worktree.py        # Git worktree management + ensure_exists()
 │   │   ├── branch_ops.py      # Branch operations (merge, back-merge)
+│   │   ├── cached_diff_ops.py # LRU-cached diff operations
 │   │   ├── project_init.py    # Project initialization
 │   │   ├── utils.py           # Git utility functions
 │   │   ├── diff_ops.py        # Diff generation (branch/commit/task scopes)
 │   │   ├── prune_ops.py       # Selective change removal (file/hunk/line granularity)
 │   │   ├── conflict_ops.py    # Merge conflict detection and resolution
 │   │   └── errors.py          # Git-specific error types
-│   ├── review/                # Review subsystem
-│   │   ├── models.py          # Domain models (DiffScope, ModifiedFile, CommitInfo, FileStatus)
-│   │   └── test_runner.py     # Async test execution with result tracking and polling
-│   ├── mcp/                   # MCP server (tool protocol)
+│   ├── mcp/                   # MCP server (proposed: move to api/) (TD-01)
 │   │   ├── server.py          # FastMCP SSE server
 │   │   ├── tools.py           # Tool definitions
 │   │   └── clarification_tools.py # Clarification-specific tools
-│   ├── metrics/               # Performance and cost tracking
-│   │   └── cost.py            # Token counting and pricing
-│   ├── repos/                 # Repository management
+│   ├── metrics/               # Cost tracking (proposed: move to api/) (TD-01)
+│   │   └── cost.py            # Token counting and USD pricing
+│   ├── repos/                 # Repository management (proposed: move to git/) (TD-01)
 │   │   ├── models.py          # RepoInfo, BranchInfo
 │   │   ├── discovery.py       # Repository discovery
 │   │   └── errors.py          # Repo-specific errors
-│   ├── routines/              # Routine loading and discovery
+│   ├── review/                # Review subsystem (proposed: move to git/) (TD-01)
+│   │   ├── models.py          # Domain models (DiffScope, ModifiedFile, CommitInfo, FileStatus)
+│   │   └── test_runner.py     # Async test execution with result tracking and polling
+│   ├── routines/              # Routine loading (proposed: move to config/) (TD-01)
 │   │   ├── loader.py          # YAML routine parser
 │   │   ├── discovery.py       # Directory scanning
 │   │   └── versioning.py      # Git SHA versioning
-│   ├── scaffolding/           # Project scaffolding
+│   ├── routers/               # Dead shim — pending deletion (TD-01)
+│   ├── scaffolding/           # Project scaffolding (proposed: move to runners/) (TD-01)
 │   │   ├── copier.py          # Copier integration
 │   │   └── models.py          # Scaffolding models
 │   ├── state/                 # Runtime state models
 │   │   ├── models.py          # Run, StepState, TaskState
 │   │   ├── factory.py         # Create Run from RoutineConfig
 │   │   └── session.py         # In-memory state manager
-│   └── workflow/              # Workflow engine
-│       ├── engine.py          # State machine orchestration
-│       ├── service.py         # WorkflowService (async wrapper)
+│   └── workflow/              # Workflow engine (~8,400 LOC, 22 files)
+│       ├── engine.py          # State machine orchestration (pure, no I/O)
+│       ├── service.py         # WorkflowService (async wrapper; owns DB session)
+│       ├── runtime.py         # RunWorkflow: executor loop, signal dispatch, phase routing
+│       ├── signals.py         # WorkflowSignal enum, SignalTransport ABC, DbSignalTransport
+│       ├── handlers.py        # Typed signal handler dispatch
+│       ├── condition_evaluator.py # Step/task condition expression evaluator
 │       ├── gates.py           # Checklist gate evaluation
 │       ├── grades.py          # Grade threshold evaluation
 │       ├── transitions.py     # State transition functions
 │       ├── prompts.py         # Builder/verifier prompts
+│       ├── templates.py       # Prompt template rendering
 │       ├── context_builder.py # Build execution context for agents
 │       ├── auto_verify.py     # Automatic verification logic
 │       ├── clarifications.py  # Clarification workflow handling
 │       ├── completion.py      # Run completion logic
 │       ├── dry_run.py         # Dry run execution
-│       ├── events.py          # Event types + emitter
-│       ├── event_logger.py    # Persistent event logging
+│       ├── summary_cache.py   # Cached run summaries for activity feed
+│       ├── events.py          # Event dataclasses + emitter ABC
+│       ├── event_logger.py    # PersistentEventEmitter: SQLite + JSONL dual write
 │       └── locks.py           # Task-level pessimistic locking
 │
 ├── ui/                        # React frontend
@@ -279,6 +308,218 @@ Each task goes through:
 2. **Gates Check** - Verify checklist items are complete
 3. **Verifier Phase** - Agent grades each requirement (fresh LLM context)
 4. **Pass/Fail** - Either proceed to next task or retry with revision
+
+---
+
+## Event & Signaling System
+
+The system uses two separate mechanisms for communicating about workflow state: **Events** (what happened, immutable history) and **Signals** (what to do next, consumed once).
+
+### Events
+
+Events record every observable state change. All event types inherit from `WorkflowEvent` (`src/orchestrator/workflow/events.py`) and carry `timestamp`, `run_id`, and `event_type`.
+
+**Lifecycle events:**
+
+| Event | When emitted |
+|-------|-------------|
+| `RunStatusChanged` | Run transitions between DRAFT / ACTIVE / PAUSED / COMPLETED / FAILED; carries `pause_reason` and `last_error` |
+| `TaskStatusChanged` | Task transitions between PENDING / BUILDING / VERIFYING / COMPLETED / FAILED; carries `start_commit` and `end_commit` |
+| `StepCompleted` | All tasks in a step reach a terminal state |
+| `StepSkipped` | Step skipped due to a condition |
+| `RunStepBackward` | Run transitions to an earlier step |
+| `ChecklistGateEvaluated` | Checklist gate evaluated with pass/fail and blocking items |
+| `GradesEvaluated` | Grade thresholds evaluated with per-requirement `GradeDetail` list |
+| `AutoVerifyCompleted` | Auto-verify commands finished |
+
+**Agent lifecycle events:**
+
+| Event | When emitted |
+|-------|-------------|
+| `AgentChangedEvent` | Agent switched on resume |
+| `AgentDiedEvent` | Managed agent process exited unexpectedly |
+| `AgentOutputEvent` | Batch of stdout lines with `line_offset` for stream reassembly |
+| `AgentErrorEvent` | Agent error with type and message |
+| `TaskReverted` | Task reverted to phase start during resume |
+| `HealthCheckEvent` | Pre-run health check started / completed / failed |
+
+**Fan-out events:** `FanOutSpawned`, `ChildSpawned`, `ChildCompleted`, `ChildFailed`, `FanOutCompleted`
+
+**Human interaction events:** `ClarificationRequested`, `ClarificationResponded`, `ApprovalRequested`, `ApprovalDecision`
+
+**Review workbench events:** `PruneApplied`, `TestRunStarted`, `TestRunCompleted`, `ConflictResolved`, `BackMergeCompleted`, `BackMergeReverted`, `AgentFixStarted`, `AgentFixCompleted`
+
+### How Events Flow
+
+```
+WorkflowEngine.emit(event)          ← pure, synchronous, no I/O
+        ↓
+PersistentEventEmitter              (src/orchestrator/workflow/event_logger.py)
+        ↓
+EventStore.append()                 ← writes to SQLite `events` table
+        +
+JsonlEventJournal.append()          ← appends to .orchestrator/state/history.jsonl (aiofiles)
+        ↓
+Registered listeners notified
+        ↓
+loop.create_task(manager.broadcast_event(event))   ← WebSocket fan-out to all connected UIs
+```
+
+**Dual write rationale:** SQLite is the primary store for online queries (`EventStore.get_events_paginated()`). The JSONL journal is a secondary durable log used for recovery when the DB is unavailable or has been corrupted. Journal replay (`db/journal_replay.py`) can reconstruct DB state from the JSONL file.
+
+**Buffering emitter:** `WorkflowEngine` uses a `BufferingEmitter` during synchronous state transitions — it collects events in memory. The caller drains them with `emitter.drain()` and persists in a single batch, keeping the engine itself free of I/O.
+
+**High-frequency output:** `AgentOutputEvent` lines (stdout from running agents) are persisted by `EventBroadcaster` (`runners/execution/event_broadcaster.py`), which opens a fresh DB session per call rather than sharing the long-lived executor session. This trades connection overhead for isolation between agent output and workflow state writes.
+
+### Signals
+
+Signals are **one-time control commands** sent to an active run's executor loop. Unlike events (append-only history), signals are consumed exactly once.
+
+**Signal types** (`WorkflowSignal` enum in `src/orchestrator/workflow/signals.py`):
+
+| Signal | Purpose |
+|--------|---------|
+| `PAUSE` | Pause the run |
+| `RESUME` | Resume a paused run |
+| `CANCEL` | Cancel and terminate the run |
+| `ACTIVITY_COMPLETED` | Notify that an external activity has completed |
+| `ACTIVITY_VERIFIED` | Notify that an external activity has been verified |
+
+**Transport abstraction:** `SignalTransport` ABC with two implementations:
+- `DbSignalTransport` — reads/writes the `pending_signals` SQLite table; marks each row with `processed_at` for exactly-once delivery
+- `InMemorySignalTransport` — for testing
+
+**Signal flow:**
+
+```
+API route (e.g. POST /api/runs/{id}/pause)
+        ↓
+WorkflowService.pause_run()
+        ↓  checks _active_run_ids set
+  ┌─────┴──────┐
+  │ run active │ → enqueue signal to pending_signals table
+  │ run idle   │ → update DB state directly (no executor to notify)
+  └────────────┘
+        ↓  (on next executor loop tick)
+RunWorkflow.on_signal()
+        ↓
+drain pending_signals → dispatch to @signal_handler(WorkflowSignal.X)
+        ↓
+handler returns True to stop the loop, False to continue
+```
+
+**Active-run registry:** `_active_run_ids` is a module-level `set[str]` in `signals.py`. This is an intentional, documented exception to the "no global state" design constraint — it must survive across API request/response cycles within a single process. The set is **process-local**: it is lost on server restart and does not survive across multiple workers.
+
+### Interaction Between Signals and Agent Runners
+
+Agent runners (`AgentRunner.execute()`) are long-running async tasks. The executor loop drives state transitions between runner invocations; it cannot interrupt a runner mid-execution via signals. The flow is:
+
+```
+RunWorkflow._run_loop():
+  1. drain pending signals         ← PAUSE/CANCEL detected here, before next agent call
+  2. find_next_task()
+  3. execute_task() → PhaseHandler → agent.execute()   ← runner runs until it calls back
+  4. callbacks (on_submit, on_grade, etc.) → WorkflowService   ← signals state transitions
+  5. loop back to step 1
+```
+
+Signals received while an agent is executing (step 3) are **queued** in the `pending_signals` table and processed at the next loop iteration (step 1). A running agent cannot be interrupted mid-stream — cancellation takes effect between phases.
+
+Agent runners communicate completion back to the orchestrator through **async closure callbacks** injected by `PhaseHandler`:
+
+| Callback | Phase | Effect |
+|----------|-------|--------|
+| `on_submit()` | Builder | Calls `WorkflowService.submit_for_verification()` |
+| `on_submit()` | Verifier | Calls `WorkflowService.complete_verification()` |
+| `on_grade(req_id, grade, reason)` | Verifier | Calls `WorkflowService.set_grade()` |
+| `on_checklist_update(req_id, status, note)` | Both | Calls `WorkflowService.update_checklist_item()` |
+| `on_escalation(req_id, reason)` | Builder | Calls `WorkflowService.escalate_requirement()` → pauses run |
+| `on_output(lines)` | Both | Emits `AgentOutputEvent` via `EventBroadcaster` |
+| `on_agent_metadata(metadata)` | Both | Persists PID and other agent metadata |
+
+External agents (REST/MCP) bypass the callback mechanism entirely — they call the orchestrator REST API directly (`POST /tasks/{id}/submit`, `PUT /tasks/{id}/checklist/{req}/grade`, etc.). The `UserManagedAgent` runner waits for an `asyncio.Event` set by `WorkflowService` when the external agent calls in.
+
+---
+
+## Tech Debt
+
+### TD-01: Backward-compat Shims After Module Reorganisation
+
+After agent implementations were moved from `runners/*.py` to `runners/agents/*/`, the original module paths were preserved as one-liner shim files that `import *` from the new location (e.g. `runners/openhands.py`, `runners/codex_server.py`, `runners/parsers/claude_parser.py`). The root-level `orchestrator/executor.py` and `orchestrator/routers/` are similarly stale shims.
+
+These shims exist solely for backward compatibility and should be removed once all internal imports reference the canonical `agents/` paths. New code must never be added to shim files.
+
+**Affected files:** `runners/cli.py`, `runners/openhands.py`, `runners/openhands_docker.py`, `runners/openhands_common.py`, `runners/codex_server.py`, `runners/codex_server_common.py`, `runners/claude_sdk.py`, `runners/user_managed.py`, `runners/mock.py`, `runners/executor.py`, `runners/parsers/claude_parser.py`, `orchestrator/executor.py`, `orchestrator/routers/`.
+
+---
+
+### TD-02: Duplicate Agent Detection Systems
+
+Two agent detection systems coexist:
+- `runners/detector.py` — original; still wired to `GET /api/agent-runners`
+- `runners/agent_detector.py` — newer registry-based design; each agent package self-registers
+
+Both systems must be kept in sync when adding a new runner type. `detector.py` should be replaced by `agent_detector.py` once the API route is updated.
+
+---
+
+### TD-03: Process-Local Active-Run Registry
+
+`_active_run_ids` in `signals.py` is a module-level `set[str]`. It is lost on server restart and is incompatible with multi-worker deployments. Runs paused by server shutdown are recovered via the `server_shutdown` pause reason, but if a run is mid-transition when the process dies, the registry state is gone.
+
+**Impact today:** Low — single-process, single-worker deployment. Becomes a correctness problem if the deployment model changes.
+
+---
+
+### TD-04: `StepSkipped` Dual-Field Inconsistency
+
+`StepSkipped` carries both `skip_reason` (canonical) and `reason` (legacy alias), kept manually in sync in `__init__`. Recovery code (`db/recovery.py`) contains a matching fallback comment. This is a backward-compatibility wart for events already written to the JSONL journal and SQLite store.
+
+**Resolution path:** Once events older than the `skip_reason` introduction date have aged out of production journals, remove `reason` and the sync code.
+
+---
+
+### TD-05: `scheduled_resume_at` Is a Stub
+
+`RunWorkflow._scheduled_resume_check()` reads the `scheduled_resume_at` DB column but only logs `"auto-resume pending (stub, not yet implemented)"` — no action is taken. The column exists and the migration is applied, but the feature is not functional.
+
+---
+
+### TD-06: `InMemoryLockManager` Does Not Raise `LockTimeoutError`
+
+`LockTimeoutError` is defined but `InMemoryLockManager` never raises it — locks simply expire passively (no contention detection). This means the pessimistic locking contract is not enforced in practice. Tests document this as a known gap.
+
+---
+
+### TD-07: Unimplemented Planning Phase
+
+`PhaseType` enum includes `plan`, `gap_check`, `summarize`, `human_review`, and `auto_verify` alongside the active `build` and `verify` phases. `RoutineConfig`, `StepConfig`, and `TaskConfig` all carry a `planner_agent` field. Neither the planner agent field nor the additional phase types are read by the executor — planning was designed but never implemented.
+
+---
+
+### TD-08: Dead Codex HTTP-Era Code
+
+`runners/agents/codex/common.py` contains `create_session_payload()`, marked `"""Deprecated — HTTP-era session payload builder. Do not use."""` and tagged `# pragma: no cover`. It is never called. This is dead code from a previous HTTP-based Codex integration.
+
+---
+
+### TD-09: `EventBroadcaster` Opens a New DB Session Per Output Line
+
+`EventBroadcaster.emit_log_event()` opens a fresh `async_sessionmaker` session for each batch of agent output lines. Under high-throughput agents (many lines/second) this creates a large number of short-lived DB connections. The module docstring acknowledges this as a known trade-off to preserve the original semantics when the code was extracted from `AgentRunnerExecutor`.
+
+**Resolution path:** Batch output events or reuse a dedicated session with a short-lived transaction.
+
+---
+
+### TD-10: `repos/discovery.py` Deprecated Parameter
+
+The `include_remote` parameter in `repos/discovery.py` is marked `deprecated, use local_only` in the docstring but remains in the function signature. Callers that still pass `include_remote=True` receive the old (now incorrect) behaviour silently.
+
+---
+
+### TD-11: `RunWorkflow` Constructor Arity
+
+`RunWorkflow.__init__` accepts 15+ mostly-optional keyword-only `Callable | None` parameters — bound references to private methods of `AgentRunnerExecutor`. This exists to avoid `reportPrivateUsage` type-checker errors. The correct fix is a small interface or dataclass that `AgentRunnerExecutor` constructs and passes to `RunWorkflow`.
 
 ---
 
