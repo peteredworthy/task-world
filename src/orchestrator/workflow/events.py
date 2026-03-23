@@ -23,6 +23,8 @@ class TaskStatusChanged(WorkflowEvent):
     task_id: str = ""
     old_status: TaskStatus = TaskStatus.PENDING
     new_status: TaskStatus = TaskStatus.PENDING
+    start_commit: str | None = None  # Git commit SHA at attempt start (BUILDING transition)
+    end_commit: str | None = None  # Git commit SHA at attempt end (VERIFYING transition)
 
 
 @dataclass
@@ -32,6 +34,7 @@ class RunStatusChanged(WorkflowEvent):
     old_status: RunStatus = RunStatus.DRAFT
     new_status: RunStatus = RunStatus.DRAFT
     pause_reason: str | None = None
+    last_error: str | None = None  # Human-readable error detail when paused due to error
 
 
 @dataclass
@@ -87,7 +90,8 @@ class StepSkipped(WorkflowEvent):
     step_index: int = 0
     step_id: str = ""
     condition: str | None = None
-    reason: str | None = None
+    skip_reason: str | None = None  # Why the step was skipped (preferred over legacy 'reason')
+    reason: str | None = None  # Legacy alias for skip_reason; kept for backward compatibility
 
     def __init__(
         self,
@@ -97,6 +101,7 @@ class StepSkipped(WorkflowEvent):
         step_index: int = 0,
         step_id: str = "",
         condition: str | None = None,
+        skip_reason: str | None = None,
         reason: str | None = None,
     ) -> None:
         """Initialize StepSkipped event."""
@@ -106,7 +111,9 @@ class StepSkipped(WorkflowEvent):
         self.step_index = step_index
         self.step_id = step_id
         self.condition = condition
-        self.reason = reason
+        # Prefer skip_reason; fall back to legacy reason param
+        self.skip_reason = skip_reason if skip_reason is not None else reason
+        self.reason = self.skip_reason  # keep in sync for backward compat
 
 
 @dataclass
@@ -309,6 +316,57 @@ class AgentFixCompleted(WorkflowEvent):
 
     job_id: str = ""
     status: str = ""  # "completed" | "failed"
+
+
+@dataclass
+class FanOutSpawned(WorkflowEvent):
+    """Emitted once when the parent fan-out task spawns all children (parent aggregation event)."""
+
+    parent_task_id: str = ""
+    child_count: int = 0
+
+
+@dataclass
+class ChildSpawned(WorkflowEvent):
+    """Emitted when a fan-out child task is spawned from a parent task."""
+
+    parent_task_id: str = ""
+    child_task_id: str = ""
+    child_id: str = ""  # Stable UUID for this fan-out child (durable across restarts)
+    fan_out_index: int = 0
+    fan_out_input: str | None = None
+
+
+@dataclass
+class ChildCompleted(WorkflowEvent):
+    """Emitted when a fan-out child task completes successfully."""
+
+    parent_task_id: str = ""
+    child_task_id: str = ""
+    child_id: str = ""  # Stable UUID for this fan-out child
+    fan_out_index: int = 0
+    fan_out_output: str | None = None
+
+
+@dataclass
+class ChildFailed(WorkflowEvent):
+    """Emitted when a fan-out child task fails."""
+
+    parent_task_id: str = ""
+    child_task_id: str = ""
+    child_id: str = ""  # Stable UUID for this fan-out child
+    fan_out_index: int = 0
+    error: str | None = None
+
+
+@dataclass
+class FanOutCompleted(WorkflowEvent):
+    """Emitted once when all fan-out children reach terminal state (parent aggregation event)."""
+
+    parent_task_id: str = ""
+    all_passed: bool = True
+    completed_count: int = 0
+    failed_count: int = 0
 
 
 class BufferingEmitter:

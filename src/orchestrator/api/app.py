@@ -504,12 +504,19 @@ def create_app(
     app.state.test_runner = TestRunner()
 
     # Agent executor for spawning managed agents (created here so it's available
-    # in tests that don't run the lifespan)
+    # in tests that don't run the lifespan).
+    # When WORKER_SEPARATE=true the executor runs in a separate worker process;
+    # the API only enqueues signals via the DB and does NOT spawn agents itself.
     from orchestrator.runners.executor import AgentRunnerExecutor
+
+    worker_separate = os.environ.get("WORKER_SEPARATE", "").lower() in ("1", "true", "yes")
 
     # Disable agent spawning for in-memory SQLite (tests), unless explicitly enabled
     if spawn_agents is None:
-        spawn_agents = db_path != ":memory:"
+        if worker_separate:
+            spawn_agents = False
+        else:
+            spawn_agents = db_path != ":memory:"
 
     # Note: runner_monitor will be set in lifespan if available, but AgentRunnerExecutor
     # can lazy-initialize it if needed. This avoids circular dependencies.
@@ -522,6 +529,11 @@ def create_app(
         connection_manager=app.state.connection_manager,
         spawn_agents=spawn_agents,
     )
+
+    if worker_separate:
+        logger.info(
+            "WORKER_SEPARATE=true: API will not spawn agents — executor runs in worker process"
+        )
 
     register_error_handlers(app)
 

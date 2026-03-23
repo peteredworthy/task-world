@@ -2,28 +2,35 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+// Override the backend port via VITE_API_PORT env var.
+// Example (isolated dev server on port 9100):
+//   cd ui && VITE_API_PORT=9100 npm run dev -- --port 9173
+const apiPort = process.env.VITE_API_PORT ?? '8000'
+const httpTarget = `http://localhost:${apiPort}`
+const wsTarget = `ws://localhost:${apiPort}`
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: httpTarget,
         changeOrigin: true,
       },
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: wsTarget,
         ws: true,
       },
       '/mcp': {
-        target: 'http://localhost:8000',
+        target: httpTarget,
         changeOrigin: true,
       },
       '/health': {
-        target: 'http://localhost:8000',
+        target: httpTarget,
         changeOrigin: true,
       },
       '/docs': {
-        target: 'http://localhost:8000',
+        target: httpTarget,
         changeOrigin: true,
       },
     },

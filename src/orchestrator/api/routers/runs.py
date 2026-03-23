@@ -918,7 +918,7 @@ async def skip_step(
             run_id=run_id,
             step_index=actionable_index,
             step_id=step.id,
-            reason="manual_skip",
+            skip_reason="manual_skip",
         )
     )
 

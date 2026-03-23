@@ -1,0 +1,1 @@
+[     103ms] [WARNING] WebSocket connection to 'ws://localhost:9173/ws/runs/dcab9571-2a2e-493a-939d-afb93d6d6182' failed: WebSocket is closed before the connection is established. @ http://localhost:9173/src/hooks/useWebSocket.ts:117

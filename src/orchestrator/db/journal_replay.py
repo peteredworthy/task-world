@@ -285,3 +285,7 @@ async def _load_and_filter_entries(
     filtered.sort(key=lambda e: e["sequence_number"])
 
     return filtered, len(raw_entries)
+
+
+# Convenience alias for external callers / auto-verify checks
+replay_journal = replay_journal_to_repository

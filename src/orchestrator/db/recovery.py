@@ -15,6 +15,7 @@ RECOVERY_MATRIX: dict[str, str] = {
     "run_status_changed": "recoverable",
     "task_status_changed": "recoverable",
     "step_completed": "recoverable",
+    "step_skipped": "recoverable",
     "grades_evaluated": "recoverable",
     "agent_error": "recoverable",
     "auto_verify_completed": "recoverable",
@@ -37,6 +38,11 @@ RECOVERY_MATRIX: dict[str, str] = {
     "back_merge_reverted": "informational",
     "agent_fix_started": "informational",
     "agent_fix_completed": "informational",
+    "child_spawned": "informational",
+    "child_completed": "informational",
+    "child_failed": "informational",
+    "fan_out_spawned": "informational",
+    "fan_out_completed": "informational",
 }
 
 
@@ -74,6 +80,8 @@ def replay_events(run: Run, events: list[dict[str, Any]]) -> Run:
             _apply_task_status_changed(run, payload, timestamp)
         elif event_type == "step_completed":
             _apply_step_completed(run, payload)
+        elif event_type == "step_skipped":
+            _apply_step_skipped(run, payload)
         elif event_type == "grades_evaluated":
             _apply_grades_evaluated(run, payload)
         elif event_type == "agent_error":
@@ -106,6 +114,11 @@ def replay_events(run: Run, events: list[dict[str, Any]]) -> Run:
             "back_merge_reverted",
             "agent_fix_started",
             "agent_fix_completed",
+            "child_spawned",
+            "child_completed",
+            "child_failed",
+            "fan_out_spawned",
+            "fan_out_completed",
         ):
             # Informational events — no state changes needed
             pass
@@ -123,10 +136,20 @@ def _apply_run_status_changed(run: Run, payload: dict[str, Any], timestamp: date
 
     run.status = new_status
 
-    if new_status == RunStatus.ACTIVE and run.started_at is None:
-        run.started_at = timestamp
+    if new_status == RunStatus.ACTIVE:
+        if run.started_at is None:
+            run.started_at = timestamp
+        # Clear pause state whenever transitioning to ACTIVE (covers both start and resume)
+        run.pause_reason = None
+        run.last_error = None
+    elif new_status == RunStatus.PAUSED:
+        # Apply pause metadata from enriched events (default to None for old events)
+        run.pause_reason = payload.get("pause_reason")
+        run.last_error = payload.get("last_error")
     elif new_status in (RunStatus.COMPLETED, RunStatus.FAILED):
         run.completed_at = timestamp
+        run.pause_reason = None
+        run.last_error = None
 
 
 def _apply_step_completed(run: Run, payload: dict[str, Any]) -> None:
@@ -154,6 +177,43 @@ def _apply_step_completed(run: Run, payload: dict[str, Any]) -> None:
     step.completed = True
 
     # Advance current_step_index past completed steps (only for index-based lookup)
+    if step_index is not None:
+        while (
+            run.current_step_index < len(run.steps) - 1
+            and run.steps[run.current_step_index].completed
+        ):
+            run.current_step_index += 1
+
+
+def _apply_step_skipped(run: Run, payload: dict[str, Any]) -> None:
+    """Apply a step_skipped event — mark step as skipped with skip_reason."""
+    step_index = payload.get("step_index")
+    step_id = payload.get("step_id", "")
+
+    # Find by index first, fall back to id
+    if step_index is not None and 0 <= step_index < len(run.steps):
+        step = run.steps[int(step_index)]
+    else:
+        step = None
+        for s in run.steps:
+            if s.id == step_id:
+                step = s
+                break
+
+    if step is None:
+        return
+
+    # Idempotency: skip if step already marked as skipped with same reason
+    # Prefer skip_reason field; fall back to legacy reason field for old events
+    skip_reason = payload.get("skip_reason") or payload.get("reason")
+    if step.skipped and step.skip_reason == skip_reason:
+        return
+
+    step.skipped = True
+    step.completed = True
+    step.skip_reason = skip_reason
+
+    # Advance current_step_index past skipped steps
     if step_index is not None:
         while (
             run.current_step_index < len(run.steps) - 1
@@ -190,6 +250,10 @@ def _apply_task_status_changed(run: Run, payload: dict[str, Any], timestamp: dat
                 started_at=timestamp,
             )
         )
+        # Apply start_commit from enriched events (None for old events without this field)
+        start_commit = payload.get("start_commit")
+        if start_commit and task.attempts:
+            task.attempts[-1].start_commit = start_commit
     elif (
         new_status
         in (
@@ -204,6 +268,10 @@ def _apply_task_status_changed(run: Run, payload: dict[str, Any], timestamp: dat
             task.attempts[-1].outcome = "passed"
         elif new_status == TaskStatus.FAILED:
             task.attempts[-1].outcome = "failed"
+        # Apply end_commit from enriched events (VERIFYING = after builder done)
+        end_commit = payload.get("end_commit")
+        if end_commit and new_status == TaskStatus.VERIFYING:
+            task.attempts[-1].end_commit = end_commit
 
 
 def _apply_grades_evaluated(run: Run, payload: dict[str, Any]) -> None:
@@ -381,3 +449,11 @@ def _apply_task_reverted(run: Run, payload: dict[str, Any]) -> None:
         return
 
     task.status = TaskStatus.PENDING
+
+
+def recover_run_state(run: Run, events: list[dict[str, Any]]) -> Run:
+    """Reconstruct Run state from a list of events (alias for replay_events).
+
+    Convenience alias matching external naming conventions.
+    """
+    return replay_events(run, events)

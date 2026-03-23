@@ -111,6 +111,7 @@ class TaskState(BaseModel):
     fan_out_index: int | None = None
     fan_out_input: str | None = None
     fan_out_output: str | None = None
+    child_id: str | None = None  # Stable UUID for fan-out children (durable across restarts)
 
 
 class HumanApproval(BaseModel):
