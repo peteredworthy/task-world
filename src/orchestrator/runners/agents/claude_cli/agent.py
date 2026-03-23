@@ -436,8 +436,9 @@ class CLIAgent:
                     self._process.stdin.write(enriched_prompt.encode())
                     self._process.stdin.write(b"\n")
                     await self._process.stdin.drain()
-                except (BrokenPipeError, ConnectionResetError, ConnectionError):
+                except (BrokenPipeError, ConnectionResetError, ConnectionError, RuntimeError):
                     pass  # Process exited before we finished writing — that's fine
+                    # RuntimeError covers uvloop's WriteUnixTransport closed error
                 if self._stdin_mode == "close":
                     self._process.stdin.close()
 
@@ -520,8 +521,8 @@ class CLIAgent:
                             try:
                                 self._process.stdin.write((message + "\n").encode())
                                 await self._process.stdin.drain()
-                            except (BrokenPipeError, ConnectionResetError):
-                                pass  # Process already exited
+                            except (BrokenPipeError, ConnectionResetError, RuntimeError):
+                                pass  # Process already exited (RuntimeError = uvloop transport closed)
 
             if batch_buffer and on_output:
                 await on_output(batch_buffer)
