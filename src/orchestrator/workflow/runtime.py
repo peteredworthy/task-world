@@ -243,28 +243,6 @@ class RunWorkflow:
         await service.cancel_run(self.run_id)
         return True
 
-    @signal_handler(WorkflowSignal.ACTIVITY_COMPLETED)
-    async def handle_activity_completed(
-        self,
-        session: AsyncSession,
-        service: WorkflowService,
-        payload: dict[str, Any] | None,
-    ) -> bool:
-        """Advance task from BUILDING to VERIFYING on activity completion."""
-        logger.debug(f"Run {self.run_id}: ACTIVITY_COMPLETED signal received (payload={payload})")
-        return False
-
-    @signal_handler(WorkflowSignal.ACTIVITY_VERIFIED)
-    async def handle_activity_verified(
-        self,
-        session: AsyncSession,
-        service: WorkflowService,
-        payload: dict[str, Any] | None,
-    ) -> bool:
-        """Process verification result: advance or retry based on outcome."""
-        logger.debug(f"Run {self.run_id}: ACTIVITY_VERIFIED signal received (payload={payload})")
-        return False
-
     # ------------------------------------------------------------------
     # Scheduled-resume stub
     # ------------------------------------------------------------------
