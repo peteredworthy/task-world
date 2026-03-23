@@ -415,7 +415,7 @@ class CLIAgent:
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=context.working_dir,
                 env=child_env,
-                limit=1024 * 1024,  # 1MB readline buffer for large JSON output
+                limit=8 * 1024 * 1024,  # 8MB transport buffer (backpressure only)
             )
 
             # Store PID for agent monitoring
@@ -441,10 +441,16 @@ class CLIAgent:
                 if self._stdin_mode == "close":
                     self._process.stdin.close()
 
-            # Read output with periodic nudge checks
+            # Read output with periodic nudge checks.
+            # Use chunked reads (read(n)) instead of readline() so that
+            # arbitrarily large JSON lines — which exceed readline()'s
+            # LimitOverrunError threshold — never crash the agent.
             output_lines: list[str] = []
             batch_buffer: list[str] = []
             BATCH_SIZE = 20
+            CHUNK_SIZE = 64 * 1024  # 64KB per read
+            raw_buf: bytes = b""
+
             while True:
                 if self._cancelled:
                     self._process.terminate()
@@ -453,25 +459,39 @@ class CLIAgent:
                 try:
                     if self._process.stdout is None:
                         break
-                    line_bytes = await asyncio.wait_for(
-                        self._process.stdout.readline(),
+                    chunk: bytes = await asyncio.wait_for(
+                        self._process.stdout.read(CHUNK_SIZE),
                         timeout=self._poll_interval,
                     )
-                    if not line_bytes:
-                        break  # EOF
+                    if not chunk:
+                        # EOF — flush any remaining bytes as a final line
+                        if raw_buf:
+                            line = raw_buf.decode(errors="replace").rstrip()
+                            if line:
+                                output_lines.append(line)
+                                batch_buffer.append(line)
+                                if self._parser is not None:
+                                    self._parser.parse_line(line)
+                            raw_buf = b""
+                        break
 
-                    line = line_bytes.decode(errors="replace").rstrip()
-                    output_lines.append(line)
-                    batch_buffer.append(line)
-                    if self._parser is not None:
-                        self._parser.parse_line(line)
-                    if len(batch_buffer) >= BATCH_SIZE and on_output:
-                        await on_output(batch_buffer)
-                        batch_buffer = []
+                    raw_buf += chunk
                     nudger.record_output()
 
+                    # Emit all complete newline-delimited lines from the buffer
+                    while b"\n" in raw_buf:
+                        line_bytes, raw_buf = raw_buf.split(b"\n", 1)
+                        line = line_bytes.decode(errors="replace").rstrip()
+                        output_lines.append(line)
+                        batch_buffer.append(line)
+                        if self._parser is not None:
+                            self._parser.parse_line(line)
+                        if len(batch_buffer) >= BATCH_SIZE and on_output:
+                            await on_output(batch_buffer)
+                            batch_buffer = []
+
                 except TimeoutError:
-                    # Check nudger
+                    # No bytes received within poll_interval — check nudger
                     action = nudger.check()
                     if action == NudgeAction.KILL:
                         self._process.terminate()
