@@ -1,0 +1,27 @@
+[     888ms] [WARNING] WebSocket connection to 'ws://localhost:9176/ws/runs/8c4491b7-84e1-422c-8b83-1041195f738d' failed: WebSocket is closed before the connection is established. @ http://localhost:9176/src/hooks/useWebSocket.ts:117
+[     937ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[     976ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/review/conflicts:0
+[    2515ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/review/diff/files?scope=aggregate:0
+[    2566ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[    2566ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/review/conflicts:0
+[    3530ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/review/diff/files?scope=aggregate:0
+[    4587ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[    4587ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/review/conflicts:0
+[    5545ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/review/diff/files?scope=aggregate:0
+[    8606ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[    8606ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/review/conflicts:0
+[    9560ms] [ERROR] Failed to load resource: the server responded with a status of 409 (Conflict) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/review/diff/files?scope=aggregate:0
+[   38623ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[   39643ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[   41658ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[   45668ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[   75684ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[   76698ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[   78711ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[   82776ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[  112792ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[  113809ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[  115818ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[  119828ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[  149837ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
+[  150846ms] [ERROR] Failed to load resource: the server responded with a status of 400 (Bad Request) @ http://localhost:9176/api/runs/8c4491b7-84e1-422c-8b83-1041195f738d/branch-status:0
