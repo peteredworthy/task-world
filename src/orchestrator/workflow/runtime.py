@@ -243,6 +243,66 @@ class RunWorkflow:
         await service.cancel_run(self.run_id)
         return True
 
+    @signal_handler(WorkflowSignal.ACTIVITY_COMPLETED)
+    async def handle_activity_completed(
+        self,
+        session: AsyncSession,
+        service: WorkflowService,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        """Transition task from BUILDING → VERIFYING on ACTIVITY_COMPLETED signal."""
+        task_id: str | None = payload.get("task_id") if payload else None
+        if not task_id:
+            logger.warning(f"Run {self.run_id}: ACTIVITY_COMPLETED signal missing task_id")
+            return False
+        try:
+            result = await service.submit_for_verification(self.run_id, task_id)
+            if result.success:
+                logger.info(
+                    f"Run {self.run_id}: task {task_id} transitioned to "
+                    f"{result.new_status.value} via ACTIVITY_COMPLETED signal"
+                )
+            else:
+                logger.warning(
+                    f"Run {self.run_id}: ACTIVITY_COMPLETED for task {task_id} "
+                    f"failed: {result.error}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Run {self.run_id}: error handling ACTIVITY_COMPLETED for task {task_id}: {e}"
+            )
+        return False
+
+    @signal_handler(WorkflowSignal.ACTIVITY_VERIFIED)
+    async def handle_activity_verified(
+        self,
+        session: AsyncSession,
+        service: WorkflowService,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        """Process verification outcome on ACTIVITY_VERIFIED signal."""
+        task_id: str | None = payload.get("task_id") if payload else None
+        if not task_id:
+            logger.warning(f"Run {self.run_id}: ACTIVITY_VERIFIED signal missing task_id")
+            return False
+        try:
+            result = await service.complete_verification(self.run_id, task_id)
+            if result.success:
+                logger.info(
+                    f"Run {self.run_id}: task {task_id} verification completed → "
+                    f"{result.new_status.value} via ACTIVITY_VERIFIED signal"
+                )
+            else:
+                logger.warning(
+                    f"Run {self.run_id}: ACTIVITY_VERIFIED for task {task_id} "
+                    f"failed: {result.error}"
+                )
+        except Exception as e:
+            logger.warning(
+                f"Run {self.run_id}: error handling ACTIVITY_VERIFIED for task {task_id}: {e}"
+            )
+        return False
+
     # ------------------------------------------------------------------
     # Scheduled-resume stub
     # ------------------------------------------------------------------

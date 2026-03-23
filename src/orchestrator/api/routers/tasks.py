@@ -9,8 +9,6 @@ from pydantic import BaseModel
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.workflow.signals import DbSignalTransport, SignalQueue, WorkflowSignal
-
 from orchestrator.agents.resolution import get_agent_system_prompt, resolve_agent_name
 from orchestrator.api.deps import (
     get_current_user,
@@ -252,17 +250,15 @@ async def submit_task(
     run_id: str,
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TransitionResponse:
-    """Submit task for verification."""
+    """Submit task for verification (BUILDING → VERIFYING).
+
+    Calls the workflow service synchronously so the state transition is applied
+    within the request and the caller receives the new status immediately.
+    Also enqueues an ACTIVITY_COMPLETED signal (marked processed) for the
+    RunWorkflow audit trail and async-path compatibility.
+    """
     result = await service.submit_for_verification(run_id, task_id)
-    if result.success:
-        queue = SignalQueue(DbSignalTransport(session))
-        await queue.enqueue(
-            run_id,
-            WorkflowSignal.ACTIVITY_COMPLETED,
-            payload={"task_id": task_id},
-        )
     return TransitionResponse(
         success=result.success,
         new_status=result.new_status.value,
@@ -274,21 +270,19 @@ async def submit_task(
     "/{run_id}/tasks/{task_id}/complete-verification",
     response_model=TransitionResponse,
 )
-async def complete_verification(
+async def complete_verification_endpoint(
     run_id: str,
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TransitionResponse:
-    """Complete verification phase."""
+    """Complete verification phase and transition task to its outcome state.
+
+    Calls the workflow service synchronously so the state transition is applied
+    within the request and the caller receives the new status immediately.
+    Also enqueues an ACTIVITY_VERIFIED signal (marked processed) for the
+    RunWorkflow audit trail and async-path compatibility.
+    """
     result = await service.complete_verification(run_id, task_id)
-    if result.success:
-        queue = SignalQueue(DbSignalTransport(session))
-        await queue.enqueue(
-            run_id,
-            WorkflowSignal.ACTIVITY_VERIFIED,
-            payload={"task_id": task_id},
-        )
     return TransitionResponse(
         success=result.success,
         new_status=result.new_status.value,
