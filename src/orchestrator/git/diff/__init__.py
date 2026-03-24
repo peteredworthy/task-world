@@ -1,6 +1,6 @@
 """Git diff operations and models."""
 
-from orchestrator.git.diff.cached_diff_ops import GitDiffOps
+from orchestrator.git.diff.cached_diff_ops import CachedDiffOps, DiffOps, GitDiffOps
 from orchestrator.git.diff.lru_cache import Cache, LRUCache
 from orchestrator.git.diff.models import (
     CommitInfo,
@@ -12,7 +12,9 @@ from orchestrator.git.diff.models import (
 
 __all__ = [
     "Cache",
+    "CachedDiffOps",
     "CommitInfo",
+    "DiffOps",
     "DiffResult",
     "DiffScope",
     "FileStatus",
