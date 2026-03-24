@@ -3,9 +3,10 @@
 Pure logic, zero I/O. All time-dependent behavior uses injected TimeProvider.
 """
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Protocol
+
+from orchestrator.config.models import NudgerConfig
 
 
 class TimeProvider(Protocol):
@@ -20,23 +21,6 @@ class NudgeAction:
     NONE = "none"
     NUDGE = "nudge"
     KILL = "kill"
-
-
-@dataclass
-class NudgerConfig:
-    """Configuration for the nudger.
-
-    Attributes:
-        output_timeout: Time without output before considering agent stuck.
-        nudge_interval: Minimum time between nudges.
-        max_nudges: Maximum nudges before kill.
-        nudge_message: Message sent to nudge the agent.
-    """
-
-    output_timeout: timedelta = timedelta(seconds=60)
-    nudge_interval: timedelta = timedelta(seconds=30)
-    max_nudges: int = 3
-    nudge_message: str = "Please continue or call orchestrator tools to submit."
 
 
 class Nudger:

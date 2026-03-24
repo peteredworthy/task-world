@@ -7,9 +7,9 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from orchestrator.config.models import EnvFileSpec
 from orchestrator.envfiles.errors import SnapshotNotFoundError
 from orchestrator.envfiles.models import (
-    EnvFileSpec,
     SnapshotManifest,
     SnapshotPoint,
     SnapshotPointType,

@@ -5,8 +5,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from orchestrator.git.diff_models import CommitInfo, FileStatus, ModifiedFile
 from orchestrator.git.errors import GitCommandError
-from orchestrator.review.models import CommitInfo, FileStatus, ModifiedFile
 
 
 def _run_git_sync(args: list[str], cwd: Path) -> str:

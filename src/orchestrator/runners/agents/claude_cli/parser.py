@@ -18,7 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, cast
 
-from orchestrator.runners.action_log import (
+from orchestrator.state.models import (
     MAX_TOOL_OUTPUT_SIZE,
     ActionEntryKind,
     ActionLog,

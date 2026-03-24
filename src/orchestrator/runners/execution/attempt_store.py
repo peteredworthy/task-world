@@ -10,8 +10,8 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from orchestrator.state.models import ActionLog
 from orchestrator.db.models import RunModel
-from orchestrator.runners.action_log import ActionLog
 from orchestrator.runners.types import ExecutionMetrics
 
 if TYPE_CHECKING:

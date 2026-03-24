@@ -27,8 +27,8 @@ from orchestrator.db.models import (
     TaskModel,
 )
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
-from orchestrator.runners.action_log import ActionLog
 from orchestrator.state.models import (
+    ActionLog,
     Attempt,
     AttemptMetrics,
     ChecklistItem,
@@ -218,7 +218,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
         )
 
     # Convert env_file_specs from JSON to EnvFileSpec models
-    from orchestrator.envfiles.models import EnvFileSpec
+    from orchestrator.config.models import EnvFileSpec
 
     env_specs_data: list[dict[str, Any]] = model.env_file_specs or []
     env_file_specs = [

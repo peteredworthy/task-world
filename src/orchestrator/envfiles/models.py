@@ -5,6 +5,8 @@ from enum import Enum
 
 from pydantic import BaseModel, Field
 
+from orchestrator.config.models import EnvFileSpec
+
 
 class SnapshotPointType(str, Enum):
     """Type of snapshot point in the run lifecycle."""
@@ -13,13 +15,6 @@ class SnapshotPointType(str, Enum):
     TASK_START = "task_start"
     TASK_END = "task_end"
     RUN_END = "run_end"
-
-
-class EnvFileSpec(BaseModel):
-    """Declares a file to be managed outside git."""
-
-    relative_path: str
-    promote_on_success: bool = False
 
 
 class SnapshotPoint(BaseModel):
