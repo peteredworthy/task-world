@@ -6,12 +6,14 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from orchestrator.db.recovery.event_journal import parse_journal_timestamp, read_journal_entries
 from orchestrator.db.recovery.recovery import replay_events
-from orchestrator.db.access.repositories import CheckpointRepository, RunRepository
 from orchestrator.state.errors import RunNotFoundError
+
+if TYPE_CHECKING:
+    from orchestrator.db.access.repositories import CheckpointRepository, RunRepository
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +32,7 @@ class JournalReplaySummary:
 
 
 async def replay_journal_to_repository(
-    repo: RunRepository,
+    repo: "RunRepository",
     *,
     journal_path: Path,
     run_ids: set[str] | None = None,
@@ -38,7 +40,7 @@ async def replay_journal_to_repository(
     dry_run: bool = False,
     batch_size: int = 100,
     from_checkpoint: bool = False,
-    checkpoint_repo: CheckpointRepository | None = None,
+    checkpoint_repo: "CheckpointRepository | None" = None,
 ) -> JournalReplaySummary:
     """Replay journal events onto runs in the repository.
 
@@ -157,8 +159,8 @@ async def replay_journal_to_repository(
 
 async def _replay_batched(
     *,
-    repo: RunRepository,
-    checkpoint_repo: CheckpointRepository,
+    repo: "RunRepository",
+    checkpoint_repo: "CheckpointRepository",
     journal_key: str,
     entries: list[dict[str, Any]],
     batch_size: int,
@@ -169,6 +171,8 @@ async def _replay_batched(
     checkpoint update. On crash, the next replay picks up from the last
     committed checkpoint.
     """
+    from orchestrator.db.access.repositories import CheckpointRepository
+
     session = repo.session
     total_replayed = 0
     seen_run_ids: set[str] = set()
