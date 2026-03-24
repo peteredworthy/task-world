@@ -99,6 +99,6 @@ describe('RecoveryPanel', () => {
     expect(screen.getByText('Confirm recovery')).toBeInTheDocument();
     expect(screen.getByText(/Selected task:/i)).toBeInTheDocument();
     expect(screen.getByText('Build API')).toBeInTheDocument();
-    expect(screen.getByText('This will reset all downstream tasks to PENDING')).toBeInTheDocument();
+    expect(screen.getByText('All downstream tasks will be reset to PENDING.')).toBeInTheDocument();
   });
 });

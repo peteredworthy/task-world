@@ -326,7 +326,7 @@ async def create_run(
     if request.agent_config:
         # Validate agent_config keys against the agent's known config schema
         if run.agent_type is not None:
-            from orchestrator.runners import AGENT_CONFIG_FIELDS
+            from orchestrator.runners.detection import AGENT_CONFIG_FIELDS
 
             valid_fields = AGENT_CONFIG_FIELDS.get(run.agent_type, set())
             unknown = set(request.agent_config.keys()) - valid_fields
