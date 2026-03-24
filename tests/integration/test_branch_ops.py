@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.git.branch_ops import back_merge, get_branch_status, merge_back
+from orchestrator.git import back_merge, get_branch_status, merge_back
 from orchestrator.git.errors import BranchNotFoundError, MergeConflictError
 
 

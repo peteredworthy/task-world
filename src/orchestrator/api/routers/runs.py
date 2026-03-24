@@ -1157,7 +1157,7 @@ async def get_branch_status_endpoint(
 
     Requires: run has worktree_path and source_branch set.
     """
-    from orchestrator.git.branch_ops import get_branch_status
+    from orchestrator.git import get_branch_status
 
     run = await service.get_run(run_id)
 
@@ -1215,7 +1215,7 @@ async def back_merge_endpoint(
 
     Allowed when run is ACTIVE or PAUSED.
     """
-    from orchestrator.git.branch_ops import BackMergeResult, back_merge
+    from orchestrator.git import BackMergeResult, back_merge
 
     run = await service.get_run(run_id)
 
@@ -1269,7 +1269,7 @@ async def merge_back_endpoint(
     returns 409 if any gate is unmet.
     """
     from orchestrator.api.routers.review import compute_readiness
-    from orchestrator.git.branch_ops import merge_back
+    from orchestrator.git import merge_back
 
     run = await service.get_run(run_id)
 
