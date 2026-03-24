@@ -12,7 +12,7 @@ from typing import Any
 from orchestrator.config.enums import ChecklistStatus
 from orchestrator.git import get_repo, list_branches, list_repos
 from orchestrator.git.repos import RepoNotFoundError
-from orchestrator.mcp.clarification_tools import CLARIFICATION_TOOL
+from orchestrator.api.mcp.clarification_tools import CLARIFICATION_TOOL
 from orchestrator.time_utils import format_utc_datetime
 from orchestrator.workflow.clarifications import ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService

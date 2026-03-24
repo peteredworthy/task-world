@@ -601,7 +601,7 @@ class _SessionPerCallHandler:
     async def handle(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         from orchestrator.db.event_store import EventStore
         from orchestrator.db.repositories import RunRepository
-        from orchestrator.mcp.tools import ToolHandler
+        from orchestrator.api.mcp.tools import ToolHandler
         from orchestrator.workflow.event_logger import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
@@ -640,7 +640,7 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
     from starlette.types import ASGIApp, Receive, Scope, Send
 
     from orchestrator.api.auth import InvalidTokenError, validate_token
-    from orchestrator.mcp.server import OrchestratorMCPServer
+    from orchestrator.api.mcp.server import OrchestratorMCPServer
 
     handler = _SessionPerCallHandler(app)
     mcp_server = OrchestratorMCPServer(handler=handler)  # type: ignore[arg-type]

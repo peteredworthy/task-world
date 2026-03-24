@@ -65,7 +65,7 @@ from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db.event_store import EventStore
 from orchestrator.db.repositories import RunRepository
-from orchestrator.metrics.cost import estimate_cost
+from orchestrator.api.metrics import estimate_cost
 from orchestrator.config.routines.discovery import discover_routines
 from orchestrator.config.routines.errors import RoutineNotFoundError
 from orchestrator.state.factory import create_run_from_routine

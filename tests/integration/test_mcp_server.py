@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
-from orchestrator.mcp.server import OrchestratorMCPServer
+from orchestrator.api.mcp.server import OrchestratorMCPServer
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
 

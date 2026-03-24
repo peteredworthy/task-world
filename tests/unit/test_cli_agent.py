@@ -220,7 +220,7 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
     If someone renames an MCP tool but forgets to update build_prompt,
     this test will fail.
     """
-    from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS
+    from orchestrator.api.mcp.tools import ORCHESTRATOR_TOOLS
 
     registered_names = {t["name"] for t in ORCHESTRATOR_TOOLS}
 

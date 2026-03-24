@@ -13,7 +13,7 @@ from typing import Literal
 
 from mcp.server import FastMCP
 
-from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS, ToolHandler
+from orchestrator.api.mcp.tools import ORCHESTRATOR_TOOLS, ToolHandler
 from orchestrator.workflow.service import WorkflowService
 
 BUILDER_TOOLS = {
