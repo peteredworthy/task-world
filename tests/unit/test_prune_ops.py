@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.git.errors import GitCommandError
-from orchestrator.git.prune_ops import (
+from orchestrator.git.ops.prune_ops import (
     Hunk,
     _build_hunk_reverse_patch,
     _build_line_reverse_patch,
