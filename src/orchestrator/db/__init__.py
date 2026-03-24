@@ -5,6 +5,22 @@ Public interface — all symbols importable as ``from orchestrator.db import X``
 
 from typing import TYPE_CHECKING
 
+# ORM base and models (not in __all__ — use repositories for public API)
+from orchestrator.db.orm.base import Base
+from orchestrator.db.orm.models import (
+    AttemptModel,
+    AttemptRecord,
+    ClarificationRequestModel,
+    ClarificationResponseModel,
+    EventModel,
+    PendingSignalModel,
+    ReplayCheckpointModel,
+    RunModel,
+    RunnerProfileDefaultModel,
+    StepModel,
+    TaskModel,
+)
+
 # Connection management
 from orchestrator.db.access.connection import (
     create_engine,
