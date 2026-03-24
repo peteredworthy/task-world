@@ -47,7 +47,7 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
-from orchestrator.workflow.errors import GateBlockedError
+from orchestrator.workflow import GateBlockedError
 
 logger = logging.getLogger(__name__)
 

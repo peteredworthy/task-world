@@ -22,14 +22,14 @@ from orchestrator.db import RunRepository
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
-from orchestrator.workflow.auto_verify import (
+from orchestrator.workflow.agent.auto_verify import (
     AutoVerifyResult,
     AutoVerifyRunner,
     evaluate_auto_verify,
     has_crashes,
     run_auto_verify,
 )
-from orchestrator.workflow.clarifications import (
+from orchestrator.workflow.agent.clarifications import (
     ClarificationAnswer,
     ClarificationQuestion,
     ClarificationRequest,
@@ -41,10 +41,10 @@ from orchestrator.workflow.clarifications import (
     resolve_artifact_path,
 )
 from orchestrator.workflow.engine import Clock, WorkflowEngine
-from orchestrator.workflow.prompts import generate_builder_prompt, generate_recovery_prompt
-from orchestrator.workflow.templates import resolve_template
-from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
-from orchestrator.workflow.event_logger import PersistentEventEmitter
+from orchestrator.workflow.agent.prompts import generate_builder_prompt, generate_recovery_prompt
+from orchestrator.workflow.agent.templates import resolve_template
+from orchestrator.workflow.engine.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow.events.logger import PersistentEventEmitter
 from orchestrator.workflow.events import (
     AgentChangedEvent,
     ApprovalDecision,
@@ -62,7 +62,7 @@ from orchestrator.workflow.events import (
     TaskStatusChanged,
 )
 from orchestrator.workflow.locks import LockManager
-from orchestrator.workflow.transitions import (
+from orchestrator.workflow.engine.transitions import (
     TransitionResult,
     transition_from_approval,
     transition_from_clarification,
@@ -819,7 +819,7 @@ class WorkflowService:
         import glob as glob_mod
         import logging
 
-        from orchestrator.workflow.templates import derive_output_path
+        from orchestrator.workflow.agent.templates import derive_output_path
 
         logger = logging.getLogger(__name__)
 
@@ -966,7 +966,7 @@ class WorkflowService:
             to_verifying: If True and all_passed, move to VERIFYING (for outer LLM verifier)
         """
         import logging
-        from orchestrator.workflow.transitions import (
+        from orchestrator.workflow.engine.transitions import (
             check_run_completion,
             check_step_progression,
         )
@@ -1408,7 +1408,7 @@ class WorkflowService:
             # Transition: BUILDING -> VERIFYING -> COMPLETED
             # Since script tasks have no verification, we go directly through
             # submit_for_verification and complete_verification via the engine
-            from orchestrator.workflow.transitions import (
+            from orchestrator.workflow.engine.transitions import (
                 check_run_completion,
                 check_step_progression,
             )
@@ -2613,7 +2613,7 @@ class WorkflowService:
             run.pause_reason = None
 
         # Check step progression to advance to next task
-        from orchestrator.workflow.transitions import check_step_progression, check_run_completion
+        from orchestrator.workflow.engine.transitions import check_step_progression, check_run_completion
 
         # Load routine config if available for condition evaluation
         routine_config = None

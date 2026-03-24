@@ -71,7 +71,7 @@ from orchestrator.config.routines.errors import RoutineNotFoundError
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.errors import RunNotFoundError, StepNotFoundError, TaskNotFoundError
 from orchestrator.state.models import HumanApproval, Run
-from orchestrator.workflow.errors import InvalidTransitionError
+from orchestrator.workflow import InvalidTransitionError
 from orchestrator.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -816,7 +816,7 @@ async def approve_step(
         "awaiting_approval",
     ):
         from orchestrator.db import EventStore
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         event_store = EventStore(session)
@@ -908,7 +908,7 @@ async def skip_step(
 
     # Mark the step as skipped
     from datetime import datetime, timezone
-    from orchestrator.workflow.transitions import check_step_progression
+    from orchestrator.workflow import check_step_progression
     from orchestrator.workflow.events import StepSkipped, BufferingEmitter
 
     step.skipped = True
@@ -987,7 +987,7 @@ async def get_guidance(
     - MCP URL for callbacks
     - Expected actions list
     """
-    from orchestrator.workflow.prompts import generate_builder_prompt, generate_verifier_prompt
+    from orchestrator.workflow import generate_builder_prompt, generate_verifier_prompt
 
     run = await service.get_run(run_id)
 

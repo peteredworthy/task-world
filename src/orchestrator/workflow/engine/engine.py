@@ -7,7 +7,7 @@ from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.state.models import Run
 from orchestrator.state.session import SessionStateManager
-from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow.engine.errors import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.locks import LockManager, TaskLockedError
 from orchestrator.workflow.events import (
     ChecklistGateEvaluated,
@@ -19,7 +19,7 @@ from orchestrator.workflow.events import (
     TaskStatusChanged,
     WorkflowEvent,
 )
-from orchestrator.workflow.transitions import (
+from orchestrator.workflow.engine.transitions import (
     TransitionResult,
     check_run_completion,
     check_step_progression,

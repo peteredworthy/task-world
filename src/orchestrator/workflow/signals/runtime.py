@@ -29,8 +29,8 @@ from orchestrator.runners.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.workflow.errors import GateBlockedError
-from orchestrator.workflow.handlers import build_registry, signal_handler
+from orchestrator.workflow.engine.errors import GateBlockedError
+from orchestrator.workflow.signals.handlers import build_registry, signal_handler
 from orchestrator.workflow.signals.signals import (
     DbSignalTransport,
     SignalQueue,
@@ -39,7 +39,7 @@ from orchestrator.workflow.signals.signals import (
     register_active_run,
     unregister_active_run,
 )
-from orchestrator.workflow.summary_cache import SummaryCache
+from orchestrator.workflow.agent.summary_cache import SummaryCache
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -87,7 +87,7 @@ def resolve_no_task_action(run: Run, reason: NoTaskReason) -> LoopAction:
     if reason == NoTaskReason.NO_ACTIONABLE_TASKS:
         return LoopAction(kind="pause", pause_reason="no_actionable_tasks")
     if reason == NoTaskReason.ALL_COMPLETE:
-        from orchestrator.workflow.transitions import check_run_completion
+        from orchestrator.workflow.engine.transitions import check_run_completion
 
         new_status = check_run_completion(run, datetime.now(timezone.utc))
         if new_status == RunStatus.COMPLETED:

@@ -14,7 +14,7 @@ from orchestrator.git import get_repo, list_branches, list_repos
 from orchestrator.git.repos import RepoNotFoundError
 from orchestrator.api.mcp.clarification_tools import CLARIFICATION_TOOL
 from orchestrator.time_utils import format_utc_datetime
-from orchestrator.workflow.clarifications import ClarificationQuestion
+from orchestrator.workflow import ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService
 
 # JSON schemas for the orchestrator MCP tools
@@ -245,7 +245,7 @@ class ToolHandler:
         }
 
     async def _set_grade(self, args: dict[str, Any]) -> dict[str, Any]:
-        from orchestrator.workflow.errors import InvalidTransitionError
+        from orchestrator.workflow import InvalidTransitionError
 
         run_id: str = args["run_id"]
         task_id: str = args["task_id"]

@@ -60,7 +60,7 @@ from orchestrator.git.ops.prune_ops import (
     revert_file,
 )
 from orchestrator.git.testing import TestRunResult, TestRunner
-from orchestrator.workflow.event_logger import PersistentEventEmitter
+from orchestrator.workflow import PersistentEventEmitter
 from orchestrator.workflow.events import (
     AgentFixStarted,
     BackMergeReverted,

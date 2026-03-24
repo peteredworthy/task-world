@@ -31,9 +31,8 @@ from orchestrator.workflow.events import (
 from orchestrator.runners.execution.attempt_store import AttemptStore
 from orchestrator.runners.execution.event_broadcaster import EventBroadcaster
 from orchestrator.runners.execution.phase_handler import PhaseHandler
-from orchestrator.workflow.errors import InvalidTransitionError
-from orchestrator.workflow.prompts import generate_builder_prompt
-from orchestrator.workflow.summary_cache import SummaryCache
+from orchestrator.workflow import InvalidTransitionError
+from orchestrator.workflow import generate_builder_prompt, SummaryCache
 from orchestrator.workflow.signals import (
     NoTaskReason,
     resolve_no_task_action,
@@ -158,8 +157,8 @@ class AgentRunnerExecutor:
         """Create a WorkflowService for the given session."""
         from orchestrator.db import EventStore
         from orchestrator.db import RunRepository
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
@@ -484,7 +483,7 @@ class AgentRunnerExecutor:
         RunWorkflow is the single owner of run execution and can manage the
         active-workflow registry for signal routing.
         """
-        from orchestrator.workflow.runtime import RunWorkflow
+        from orchestrator.workflow import RunWorkflow
 
         # Unpack private members here (inside AgentRunnerExecutor) and forward
         # as explicit keyword args so RunWorkflow stores them as public attributes,
@@ -766,7 +765,7 @@ class AgentRunnerExecutor:
         working_dir = run.worktree_path
 
         # Resolve clarifications artifact path if configured
-        from orchestrator.workflow.clarifications import (
+        from orchestrator.workflow import (
             decisions_from_config,
             resolve_artifact_path as _resolve_path,
         )
@@ -785,7 +784,7 @@ class AgentRunnerExecutor:
         run_config = dict(run.config)
         if task_config.context_from:
             from orchestrator.workflow.artifacts import ArtifactRegistry
-            from orchestrator.workflow.context_builder import TaskContextBuilder
+            from orchestrator.workflow import TaskContextBuilder
 
             worktree_path = Path(run.worktree_path) if run.worktree_path else None
             ctx_builder = TaskContextBuilder(ArtifactRegistry(), worktree_path=worktree_path)
@@ -1195,11 +1194,11 @@ class AgentRunnerExecutor:
         Builds the prompt, spawns agent, runs auto_verify.
         Returns True if auto_verify passes, False otherwise.
         """
-        from orchestrator.workflow.auto_verify import (
+        from orchestrator.workflow import (
             LocalAutoVerifyRunner,
             run_auto_verify,
+            resolve_template,
         )
-        from orchestrator.workflow.templates import resolve_template
 
         child_id = child.id
         input_path = child.fan_out_input or ""
@@ -1382,7 +1381,7 @@ class AgentRunnerExecutor:
         For tasks with no rubric (auto-verify only), automatically complete
         the verification. For tasks with a rubric, run the verifier agent.
         """
-        from orchestrator.workflow.prompts import generate_verifier_prompt
+        from orchestrator.workflow import generate_verifier_prompt
 
         # Check if task has a rubric that needs LLM evaluation
         has_rubric = bool(task_config.verifier.rubric)

@@ -40,6 +40,7 @@ from orchestrator.workflow.agent.auto_verify import (
     LocalAutoVerifyRunner,
     evaluate_auto_verify,
     has_crashes,
+    run_auto_verify,
 )
 from orchestrator.workflow.agent.summary_cache import SummaryCache
 
@@ -66,6 +67,7 @@ __all__ = [
     "derive_output_path",
     "evaluate_auto_verify",
     "extract_section",
+    "run_auto_verify",
     "format_clarification_artifact",
     "generate_builder_prompt",
     "generate_recovery_prompt",

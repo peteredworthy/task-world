@@ -29,7 +29,7 @@ from orchestrator.runners.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.workflow.errors import GateBlockedError
+from orchestrator.workflow import GateBlockedError
 from orchestrator.runners.runtime.repetition_detector import (
     ActionBudget,
     ActionBudgetConfig,

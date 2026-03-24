@@ -174,11 +174,9 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     async with session_factory() as session:
                         from orchestrator.db import RunRepository as _RR3
                         from orchestrator.db import EventStore as _ES3
-                        from orchestrator.workflow.event_logger import (
-                            PersistentEventEmitter as _PEE3,
-                        )
+                        from orchestrator.workflow import PersistentEventEmitter as _PEE3
                         from orchestrator.workflow.service import WorkflowService as _WS3
-                        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner as _AVR
+                        from orchestrator.workflow import LocalAutoVerifyRunner as _AVR
 
                         repo3 = _RR3(session)
                         event_store3 = _ES3(session)
@@ -314,9 +312,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                             async with session_factory() as session:
                                 from orchestrator.db import RunRepository as _RRS
                                 from orchestrator.db import EventStore as _ESS
-                                from orchestrator.workflow.event_logger import (
-                                    PersistentEventEmitter as _PEES,
-                                )
+                                from orchestrator.workflow import PersistentEventEmitter as _PEES
                                 from orchestrator.workflow.service import (
                                     WorkflowService as _WSS,
                                 )
@@ -602,7 +598,7 @@ class _SessionPerCallHandler:
         from orchestrator.db import EventStore
         from orchestrator.db import RunRepository
         from orchestrator.api.mcp.tools import ToolHandler
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         session_factory = self._app.state.session_factory

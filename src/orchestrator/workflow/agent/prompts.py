@@ -5,7 +5,7 @@ from typing import Any
 
 from orchestrator.config.models import TaskConfig
 from orchestrator.state.models import TaskState
-from orchestrator.workflow.clarifications import CompressedDecisions
+from orchestrator.workflow.agent.clarifications import CompressedDecisions
 
 
 @dataclass

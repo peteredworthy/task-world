@@ -50,7 +50,7 @@ from orchestrator.runners.errors import (
     AgentNotAvailableError,
     AgentTimeoutError,
 )
-from orchestrator.workflow.errors import GateBlockedError
+from orchestrator.workflow import GateBlockedError
 from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,

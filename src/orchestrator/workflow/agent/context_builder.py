@@ -8,7 +8,7 @@ from orchestrator.config.models import ContextSource
 from orchestrator.workflow.artifacts import ArtifactRegistry
 
 if TYPE_CHECKING:
-    from orchestrator.workflow.summary_cache import SummaryCache
+    from orchestrator.workflow.agent.summary_cache import SummaryCache
 
 
 class ContextError(Exception):

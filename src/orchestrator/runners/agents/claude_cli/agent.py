@@ -24,7 +24,7 @@ from orchestrator.runners.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.workflow.errors import GateBlockedError
+from orchestrator.workflow import GateBlockedError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
 from orchestrator.runners.types import (
     AgentRunnerInfo,

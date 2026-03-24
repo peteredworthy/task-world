@@ -108,7 +108,7 @@ def evaluate_gate(
 
     elif gate_config.type == GateType.GRADE_THRESHOLD:
         # Evaluate grade thresholds
-        from orchestrator.workflow.grades import evaluate_grades
+        from orchestrator.workflow.engine.grades import evaluate_grades
 
         grade_result = evaluate_grades(
             checklist,

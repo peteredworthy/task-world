@@ -17,15 +17,15 @@ from orchestrator.state.models import (
     TaskState,
     TransitionTracker,
 )
-from orchestrator.workflow.condition_evaluator import (
+from orchestrator.workflow.engine.condition_evaluator import (
     ConditionEvaluator,
     ConditionEvalError,
     StepOutcome,
 )
-from orchestrator.workflow.errors import GateBlockedError
+from orchestrator.workflow.engine.errors import GateBlockedError
 from orchestrator.workflow.events import StepSkipped, WorkflowEvent
-from orchestrator.workflow.gates import GateResult, evaluate_checklist_gate
-from orchestrator.workflow.grades import GradeResult, evaluate_grades
+from orchestrator.workflow.engine.gates import GateResult, evaluate_checklist_gate
+from orchestrator.workflow.engine.grades import GradeResult, evaluate_grades
 
 
 class Clock(Protocol):

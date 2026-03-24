@@ -14,8 +14,8 @@ from orchestrator.config.enums import RoutineSource
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.db import EventStore
 from orchestrator.db import RunRepository
-from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-from orchestrator.workflow.event_logger import PersistentEventEmitter
+from orchestrator.workflow import LocalAutoVerifyRunner
+from orchestrator.workflow import PersistentEventEmitter
 from orchestrator.workflow.events import WorkflowEvent
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow.signals import DbSignalTransport, SignalTransport

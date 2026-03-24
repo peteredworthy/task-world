@@ -20,7 +20,7 @@ from orchestrator.state.errors import (
     StepNotFoundError,
     TaskNotFoundError,
 )
-from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.locks import TaskLockedError
 
 
