@@ -498,7 +498,9 @@ class CLIAgent:
                         self._process.terminate()
                         if batch_buffer and on_output:
                             await on_output(batch_buffer)
-                        # Notify monitor that agent was killed due to being stuck
+                        # Log agent death event (but don't pause the run —
+                        # the AgentExecutionError below propagates to _run_loop
+                        # which handles the pause with proper reason tracking).
                         if self._runner_monitor and self._run_id:
                             try:
                                 await self._runner_monitor.on_agent_died(
@@ -506,6 +508,7 @@ class CLIAgent:
                                     agent_type=AgentRunnerType.CLI_SUBPROCESS,
                                     exit_code=None,
                                     reason=f"agent_stuck_killed_after_{nudger.nudge_count}_nudges",
+                                    pause_run=False,
                                 )
                             except Exception as e:
                                 logger.warning(f"Failed to notify monitor of stuck agent: {e}")
@@ -532,7 +535,8 @@ class CLIAgent:
 
             success = self._process.returncode == 0
 
-            # If process exited with non-zero code (failure), notify monitor
+            # If process exited with non-zero code (failure), log death event
+            # (don't pause — let error propagate to _run_loop)
             if not success and self._runner_monitor and self._run_id:
                 try:
                     await self._runner_monitor.on_agent_died(
@@ -540,6 +544,7 @@ class CLIAgent:
                         agent_type=AgentRunnerType.CLI_SUBPROCESS,
                         exit_code=self._process.returncode,
                         reason="agent_exit_failure",
+                        pause_run=False,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to notify monitor of agent exit failure: {e}")
@@ -582,7 +587,7 @@ class CLIAgent:
         except GateBlockedError:  # re-raise for executor retry path
             raise  # Let executor handle as revision, not a crash
         except Exception as exc:
-            # Check if process died unexpectedly and notify monitor
+            # Log agent death event (don't pause — let error propagate to _run_loop)
             if self._process and self._runner_monitor and self._run_id:
                 try:
                     exit_code = self._process.returncode
@@ -591,6 +596,7 @@ class CLIAgent:
                         agent_type=AgentRunnerType.CLI_SUBPROCESS,
                         exit_code=exit_code,
                         reason="agent_execution_error",
+                        pause_run=False,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to notify monitor of agent execution error: {e}")

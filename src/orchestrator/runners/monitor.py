@@ -87,14 +87,18 @@ class AgentRunnerMonitor:
         agent_type: AgentRunnerType,
         exit_code: int | None = None,
         reason: str = "agent_process_died",
+        pause_run: bool = True,
     ) -> None:
-        """Handle unexpected agent death - transition run to PAUSED.
+        """Handle unexpected agent death.
 
         This is called by agent wrappers when they detect the agent process
         has died unexpectedly (not via normal completion or orchestrator kill).
 
-        The run is transitioned from ACTIVE to PAUSED so the user can resume
-        with the same or a different agent.
+        When pause_run=True (default), the run is transitioned from ACTIVE to
+        PAUSED so the user can resume with the same or a different agent.  When
+        pause_run=False the death event is logged but the run state is left
+        untouched — use this when the caller (e.g. the executor loop) will
+        handle the pause itself via the normal error-handling path.
 
         Creates a fresh DB session to avoid stale-session issues.
 
@@ -103,6 +107,9 @@ class AgentRunnerMonitor:
             agent_type: The type of agent that died.
             exit_code: Optional exit code if available.
             reason: Reason string (e.g., "agent_process_died", "agent_not_running_on_startup").
+            pause_run: Whether to transition the run to PAUSED (default True).
+                Set to False when called from within the executor loop where
+                the error will propagate to _run_loop's exception handler.
         """
         from orchestrator.db.event_store import EventStore
         from orchestrator.db.repositories import RunRepository
@@ -147,30 +154,39 @@ class AgentRunnerMonitor:
             )
             await event_store.append(event)
 
-            # Transition run to PAUSED
-            old_status = run.status
-            run.status = RunStatus.PAUSED
-            run.pause_reason = reason
-            run.updated_at = datetime.now(timezone.utc)
+            if pause_run:
+                # Transition run to PAUSED
+                old_status = run.status
+                run.status = RunStatus.PAUSED
+                run.pause_reason = reason
+                run.updated_at = datetime.now(timezone.utc)
 
-            # Log the status change event
-            status_event = RunStatusChanged(
-                timestamp=datetime.now(timezone.utc),
-                run_id=run_id,
-                event_type="run_status_changed",
-                old_status=old_status,
-                new_status=RunStatus.PAUSED,
-            )
-            await event_store.append(status_event)
+                # Log the status change event
+                status_event = RunStatusChanged(
+                    timestamp=datetime.now(timezone.utc),
+                    run_id=run_id,
+                    event_type="run_status_changed",
+                    old_status=old_status,
+                    new_status=RunStatus.PAUSED,
+                    pause_reason=reason,
+                )
+                await event_store.append(status_event)
 
-            # Persist the state change
-            await repo.save(run)
+                # Persist the state change
+                await repo.save(run)
+
             await session.commit()
 
-        logger.warning(
-            f"Run {run_id}: agent {agent_type.value} died (exit_code={exit_code}), "
-            f"transitioned to PAUSED. Reason: {reason}"
-        )
+        if pause_run:
+            logger.warning(
+                f"Run {run_id}: agent {agent_type.value} died (exit_code={exit_code}), "
+                f"transitioned to PAUSED. Reason: {reason}"
+            )
+        else:
+            logger.warning(
+                f"Run {run_id}: agent {agent_type.value} died (exit_code={exit_code}), "
+                f"logged event only (pause_run=False). Reason: {reason}"
+            )
 
     async def check_agent_alive(self, run: Run) -> bool:
         """Check if a run's agent is still active.

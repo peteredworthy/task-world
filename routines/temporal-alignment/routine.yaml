@@ -1,0 +1,1132 @@
+id: "temporal-alignment"
+name: "Temporal Alignment"
+description: |
+  Align the orchestrator's internal architecture with Temporal's proven design primitives.
+  Implements all 7 milestones: parity tests (safety net), DB-persisted signal queue +
+  RunWorkflow shell, ActivityAdapter protocol for all runners, event-driven state
+  reconstruction, idempotent activity boundaries, fan-out child identity + AttemptRecord
+  normalization, and worker separation with typed signal handlers.
+
+  All work runs on port 9100 (backend) and port 9173 (frontend) with orchestrator_dev.db,
+  never touching the production orchestrator at localhost:8000.
+
+steps:
+  - id: "S-00"
+    title: "Environment Setup"
+    step_context: |
+      Create isolated development scripts and configuration. All temporal alignment work
+      must run on non-default ports with a separate database to avoid any interference
+      with the production orchestrator at localhost:8000.
+    tasks:
+      - id: "T-01"
+        title: "Create Isolated Environment Scripts"
+        task_context: |
+          Create the scripts and configuration needed to run temporal alignment
+          implementation in isolation from the production orchestrator.
+
+          1. Create scripts/dev_isolated.sh that:
+             - Sets ORCHESTRATOR_DB=orchestrator_dev.db
+             - Starts uvicorn on port 9100 (not 8000)
+             - Uses --reload-dir src --reload-dir scripts flags
+             - Is executable (chmod +x)
+
+          2. Update ui/vite.config.ts (or create ui/.env.development.local, gitignored) to
+             point the Vite proxy to localhost:9100 when VITE_API_PORT=9100 is set.
+             Document how to set VITE_API_PORT for the dev server.
+
+          Do NOT start or modify the production orchestrator at localhost:8000.
+        requirements:
+          - id: "R1"
+            desc: "scripts/dev_isolated.sh exists, uses port 9100, and sets ORCHESTRATOR_DB=orchestrator_dev.db"
+            priority: critical
+          - id: "R2"
+            desc: "scripts/dev_isolated.sh uses --reload-dir src --reload-dir scripts (not watching all dirs)"
+            priority: critical
+          - id: "R3"
+            desc: "Documentation or config exists for running frontend dev server on port 9173 against port 9100"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "dev_script_exists"
+              cmd: "test -f scripts/dev_isolated.sh"
+              must: true
+            - id: "dev_script_port"
+              cmd: "grep -q '9100' scripts/dev_isolated.sh"
+              must: true
+            - id: "dev_script_db"
+              cmd: "grep -q 'ORCHESTRATOR_DB=orchestrator_dev.db' scripts/dev_isolated.sh"
+              must: true
+            - id: "dev_script_reload_dir"
+              cmd: "grep -q 'reload-dir' scripts/dev_isolated.sh"
+              must: true
+            - id: "dev_script_syntax_valid"
+              cmd: "bash -n scripts/dev_isolated.sh"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: dev_isolated.sh exists, sets ORCHESTRATOR_DB=orchestrator_dev.db, starts
+                uvicorn on port 9100. B: file exists but port or db var is wrong. F: file missing.
+            - id: "R2"
+              text: |
+                R2 — A: script uses --reload-dir src --reload-dir scripts (not bare --reload which
+                watches everything). B: uses reload but without dir restrictions. F: no reload at all.
+            - id: "R3"
+              text: |
+                R3 — A: ui/.env.development.local or equivalent sets VITE_API_PORT=9100, or docs
+                explain how to configure the frontend dev port. B: partial docs only. F: nothing documented.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 2
+
+  - id: "S-01"
+    title: "M1: Parity Test Suite (Safety Net)"
+    step_context: |
+      Capture current orchestrator behavior in integration tests BEFORE any structural
+      changes. These tests are the regression safety net for all subsequent milestones.
+      Tests must pass against the current, unmodified codebase running on the isolated
+      environment (port 9100, orchestrator_dev.db).
+    tasks:
+      - id: "T-01"
+        title: "Create Parity Integration Tests — All Six Scenarios"
+        task_context: |
+          Create a comprehensive parity test suite in tests/integration/ covering the six
+          required execution scenarios. Each test must assert run status, current_step_index,
+          task statuses, and attempt counts at each stage — not just final state.
+
+          Required test files and what each must cover:
+
+          tests/integration/test_parity_linear.py
+            - Create run with 2 steps, 3 tasks
+            - Walk through build → submit → verify → complete for each task
+            - Assert run.status, run.current_step_index, task.status, attempt counts at each stage
+
+          tests/integration/test_parity_revision.py
+            - Task fails verification (receives revision feedback)
+            - New attempt created with feedback from failed attempt
+            - Second attempt passes verification
+            - Assert attempt_count = 2, both attempts have correct outcomes, run advances
+
+          tests/integration/test_parity_pause_resume.py
+            - Start run, pause with a named reason (e.g. "manual_pause")
+            - Assert run.status == paused AND pause_reason persisted in DB
+            - Resume run, assert run.status == active
+            - Also test cancel: start run, cancel, assert run.status == failed/cancelled
+
+          tests/integration/test_parity_fan_out.py
+            - Step configured for fan-out (multiple child tasks)
+            - Complete children in order
+            - Assert parent step completes when all children done
+            - Assert run advances past fan-out step
+
+          tests/integration/test_parity_recovery.py
+            - Start run, advance to first task
+            - Simulate executor restart (stop executor, re-instantiate)
+            - Assert run resumes from correct step/task without re-executing completed work
+            - Assert no duplicate attempt created for completed tasks
+
+          tests/integration/test_parity_skip.py
+            - Step with a condition that evaluates to false
+            - Assert step is skipped (not executed)
+            - Assert run advances to the next non-skipped step
+            - Assert skip reason/status is recorded
+
+          All tests use the isolated environment (port 9100) or in-memory DB as appropriate.
+          Existing tests may be updated to use new patterns but total test count must not decrease.
+        requirements:
+          - id: "R1"
+            desc: "All six parity test files exist in tests/integration/ with test functions for their scenarios"
+            priority: critical
+          - id: "R2"
+            desc: "All six test files are collectible by pytest without import errors or missing fixtures"
+            priority: critical
+          - id: "R3"
+            desc: "All parity tests pass against the current (unmodified) codebase"
+            priority: critical
+          - id: "R4"
+            desc: "Total backend test count does not decrease from baseline (786 before this milestone)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "linear_exists"
+              cmd: "test -f tests/integration/test_parity_linear.py"
+              must: true
+            - id: "revision_exists"
+              cmd: "test -f tests/integration/test_parity_revision.py"
+              must: true
+            - id: "pause_exists"
+              cmd: "test -f tests/integration/test_parity_pause_resume.py"
+              must: true
+            - id: "fanout_exists"
+              cmd: "test -f tests/integration/test_parity_fan_out.py"
+              must: true
+            - id: "recovery_exists"
+              cmd: "test -f tests/integration/test_parity_recovery.py"
+              must: true
+            - id: "skip_exists"
+              cmd: "test -f tests/integration/test_parity_skip.py"
+              must: true
+            - id: "all_parity_collectible"
+              cmd: "uv run pytest tests/integration/test_parity_linear.py tests/integration/test_parity_revision.py tests/integration/test_parity_pause_resume.py tests/integration/test_parity_fan_out.py tests/integration/test_parity_recovery.py tests/integration/test_parity_skip.py --collect-only -q"
+              must: true
+            - id: "all_parity_pass"
+              cmd: "uv run pytest tests/integration/test_parity_linear.py tests/integration/test_parity_revision.py tests/integration/test_parity_pause_resume.py tests/integration/test_parity_fan_out.py tests/integration/test_parity_recovery.py tests/integration/test_parity_skip.py -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: all 6 parity test files exist, each with at least 2 test functions covering
+                the documented scenario stages (not just setup/teardown stubs).
+                B: 4-5 files exist with real test logic. F: fewer than 4 or files are empty stubs.
+            - id: "R2"
+              text: |
+                R2 — A: all 6 files collect without import errors; no undefined fixtures or name errors.
+                B: 5 collect cleanly, 1 has minor fixture issue. F: any file fails collection.
+            - id: "R3"
+              text: |
+                R3 — A: all parity tests pass (green) against the current codebase.
+                B: 1-2 tests fail due to environment or fixture issues (not behavior bugs).
+                F: tests fail because they encode wrong behavior, or 3+ tests fail.
+            - id: "R4"
+              text: |
+                R4 — A: total backend test count ≥ 786 (verify with pytest --collect-only -q).
+                B: count within 5 of baseline (781-785). F: count dropped by more than 5.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-02"
+    title: "M2: Signal Queue & RunWorkflow Shell"
+    step_context: |
+      Introduce the DB-persisted signal queue and a RunWorkflow class that wraps the
+      existing executor loop without changing observable behavior. Route pause/resume/cancel
+      through the signal queue. Add scheduled_resume_at column and poller stub.
+      All M1 parity tests must still pass after this milestone.
+    tasks:
+      - id: "T-01"
+        title: "Signal Types, DB Migrations, RunWorkflow Shell, and Signal Routing"
+        task_context: |
+          Implement the signal queue infrastructure and RunWorkflow shell as described in
+          docs/temporal-alignment/plan.md (Milestone 2).
+
+          1. Create src/orchestrator/workflow/signals.py with:
+             - WorkflowSignal enum with values: PAUSE, RESUME, CANCEL,
+               ACTIVITY_COMPLETED, ACTIVITY_VERIFIED
+             - PendingSignal model/dataclass with fields: id (UUID str), run_id (str),
+               signal_type (WorkflowSignal), payload (dict or JSON str, optional),
+               created_at (datetime), processed_at (datetime or None)
+             - SignalQueue class with transport abstraction:
+               * enqueue(run_id, signal_type, payload) -> saves to DB
+               * drain(run_id) -> returns list of unprocessed signals, marks them processed
+               * Transport is abstracted so DB polling can be swapped for LISTEN/NOTIFY later
+
+          2. Create two Alembic migrations in src/orchestrator/db/migrations/versions/:
+             - pending_signals table: (id TEXT PK, run_id TEXT FK, signal_type TEXT,
+               payload TEXT, created_at TIMESTAMP, processed_at TIMESTAMP nullable)
+               + index on (run_id) WHERE processed_at IS NULL
+             - scheduled_resume_at: add nullable datetime column to runs table
+
+          3. Create src/orchestrator/workflow/runtime.py with RunWorkflow class:
+             - run() method: main execution loop, calls on_signal() at top of each iteration
+             - on_signal() method: drains signal queue, applies state changes
+             - Minimal scheduled_resume_at poller stub: check column, auto-resume if time reached
+             - Initially delegates to existing executor/engine methods (thin wrapper)
+
+          4. Modify WorkflowService.pause_run(), resume_run(), cancel_run():
+             - For runs with an active RunWorkflow: enqueue signal instead of direct DB mutation
+             - For runs without active RunWorkflow (already paused/queued): fall back to direct
+               DB mutation (existing behavior)
+
+          5. Wire executor's _run_agent_loop() (or equivalent) to create RunWorkflow
+             and call .run() instead of running the loop directly
+
+          The signal transport must be abstracted (not hardcoded to DB polling) to enable
+          future PostgreSQL LISTEN/NOTIFY optimization without changing worker code.
+        requirements:
+          - id: "R1"
+            desc: "WorkflowSignal (enum with 5 values), PendingSignal, and SignalQueue importable from orchestrator.workflow.signals; SignalQueue.drain() returns unprocessed signals in FIFO order (by created_at) and marks them processed_at so each signal is consumed exactly once"
+            priority: critical
+          - id: "R2"
+            desc: "RunWorkflow importable from orchestrator.workflow.runtime with run() and on_signal() methods; RunWorkflow.run() replaces executor._run_agent_loop() as the single owner of run execution — the executor creates a RunWorkflow instance and delegates to .run() rather than running the loop itself"
+            priority: critical
+          - id: "R3"
+            desc: "Alembic migrations exist for pending_signals table (with index) and scheduled_resume_at column on runs"
+            priority: critical
+          - id: "R4"
+            desc: "All six M1 parity tests still pass after signal routing changes (no regressions)"
+            priority: critical
+          - id: "R5"
+            desc: "SignalQueue has an abstracted transport layer (not hardcoded DB calls throughout)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "signals_import"
+              cmd: "uv run python -c \"from orchestrator.workflow.signals import WorkflowSignal, PendingSignal, SignalQueue; assert hasattr(WorkflowSignal, 'PAUSE'); assert hasattr(WorkflowSignal, 'RESUME'); assert hasattr(WorkflowSignal, 'CANCEL'); assert hasattr(WorkflowSignal, 'ACTIVITY_COMPLETED'); assert hasattr(WorkflowSignal, 'ACTIVITY_VERIFIED'); print('OK')\""
+              must: true
+            - id: "runtime_import"
+              cmd: "uv run python -c \"from orchestrator.workflow.runtime import RunWorkflow; assert hasattr(RunWorkflow, 'run'); assert hasattr(RunWorkflow, 'on_signal'); print('OK')\""
+              must: true
+            - id: "signal_queue_methods"
+              cmd: "uv run python -c \"from orchestrator.workflow.signals import SignalQueue; assert hasattr(SignalQueue, 'enqueue'); assert hasattr(SignalQueue, 'drain'); print('OK')\""
+              must: true
+            - id: "pending_signals_migration"
+              cmd: "uv run python -c \"import glob; content = ' '.join(open(f).read() for f in glob.glob('src/orchestrator/db/migrations/versions/*.py')); assert 'pending_signals' in content, 'No pending_signals migration found'; print('OK')\""
+              must: true
+            - id: "scheduled_resume_migration"
+              cmd: "uv run python -c \"import glob; content = ' '.join(open(f).read() for f in glob.glob('src/orchestrator/db/migrations/versions/*.py')); assert 'scheduled_resume_at' in content, 'No scheduled_resume_at migration found'; print('OK')\""
+              must: true
+            - id: "signal_queue_fifo_and_exactly_once"
+              cmd: "uv run python -c \"from orchestrator.workflow.signals import SignalQueue; import inspect; src = inspect.getsource(SignalQueue.drain); assert 'processed_at' in src, 'drain() does not mark processed_at for exactly-once semantics'; print('OK')\""
+              must: true
+            - id: "executor_delegates_to_runworkflow"
+              cmd: "uv run python -c \"import inspect; import orchestrator.executor as ex; src = inspect.getsource(ex); assert 'RunWorkflow' in src, 'executor does not create/delegate to RunWorkflow'; print('OK')\""
+              must: true
+            - id: "parity_tests_still_pass"
+              cmd: "uv run pytest tests/integration/test_parity_linear.py tests/integration/test_parity_revision.py tests/integration/test_parity_pause_resume.py tests/integration/test_parity_fan_out.py tests/integration/test_parity_recovery.py tests/integration/test_parity_skip.py -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: WorkflowSignal has all 5 values (PAUSE, RESUME, CANCEL, ACTIVITY_COMPLETED,
+                ACTIVITY_VERIFIED); PendingSignal has id/run_id/signal_type/payload/created_at/
+                processed_at; SignalQueue.drain() returns signals ordered by created_at (FIFO) and
+                marks processed_at so each signal is delivered exactly once (duplicate drain calls
+                do not re-return processed signals). B: importable and fields present but
+                ordering/exactly-once not implemented. F: import fails or enum incomplete.
+            - id: "R2"
+              text: |
+                R2 — A: RunWorkflow.run() is the main execution loop and on_signal() is called at
+                the top of each iteration; the executor creates a RunWorkflow instance and delegates
+                to .run() (RunWorkflow is the single owner of run execution, replacing direct loop
+                execution in the executor). B: class importable and methods exist but executor does
+                not yet delegate — loop still runs directly in executor. F: import fails or methods
+                missing.
+            - id: "R3"
+              text: |
+                R3 — A: pending_signals migration creates table with all required columns plus an
+                index on (run_id) WHERE processed_at IS NULL; scheduled_resume_at migration adds
+                nullable datetime to runs. B: migrations exist but missing index. F: either missing.
+            - id: "R4"
+              text: |
+                R4 — A: all 6 M1 parity tests pass. B: 1 test has minor fixture update needed.
+                F: structural changes broke 2+ parity tests.
+            - id: "R5"
+              text: |
+                R5 — A: SignalQueue uses a transport abstraction (base class, protocol, or
+                configurable backend) that the DB implementation satisfies; no raw DB calls
+                scattered throughout the queue logic. B: partial abstraction. F: DB calls hardcoded.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-03"
+    title: "M3: ActivityAdapter Protocol"
+    step_context: |
+      Define a clean start/cancel boundary for agent runners via ActivityAdapter protocol.
+      Implement the protocol for all four agent runners (CLI, ClaudeSdk, CodexServer,
+      OpenHands). Wire task completion through ACTIVITY_COMPLETED and ACTIVITY_VERIFIED signals.
+
+      CRITICAL INTEGRATION REQUIREMENT: Building the components (adapters, signal enqueue
+      calls) is not sufficient. The old direct-call path in the API routers must be
+      REPLACED — not left running alongside the new path. A known LLM failure mode is to
+      implement all the specified components correctly but never remove the old code,
+      leaving the new components as dead code that satisfies structural checks while the
+      system continues to use the old path. Verification must confirm the switchover
+      actually happened: the API endpoint enqueues a signal and stops there; the state
+      transition is performed by the signal handler, not the router.
+    tasks:
+      - id: "T-01"
+        title: "ActivityAdapter Protocol and All Four Runner Implementations"
+        task_context: |
+          Define the ActivityAdapter protocol and implement it for all four agent runners.
+          Wire task completion signals through the signal queue.
+
+          1. Create src/orchestrator/workflow/activity.py with:
+             - ActivityAdapter: typing.Protocol with:
+               * start(task_id: str, context: ActivityContext) -> None (or asyncio coroutine)
+               * cancel(task_id: str) -> None (or asyncio coroutine)
+             - ActivityContext: frozen dataclass with run_id, task_id, worktree_path, and
+               other relevant fields the adapter needs to start the agent
+             - BaseActivityAdapter: abstract base class (NOT the Protocol) that provides
+               shared implementation for all four concrete adapters:
+               * _agent attribute (the wrapped runner)
+               * _tasks: dict[str, asyncio.Task] for tracking running tasks
+               * _build_execution_context(context: ActivityContext) -> ExecutionContext
+                 (shared mapping logic — single implementation, not duplicated per adapter)
+               * start() and cancel() default implementations using the above
+               Runner-specific differences must be explicit overrides, not silent divergence
+               across four identical copies.
+
+          2. Implement all four concrete adapter classes in a submodule
+             (src/orchestrator/workflow/adapters/):
+             - CLIActivityAdapter(BaseActivityAdapter)
+             - ClaudeSdkActivityAdapter(BaseActivityAdapter)
+             - CodexServerActivityAdapter(BaseActivityAdapter)
+             - OpenHandsActivityAdapter(BaseActivityAdapter)
+             Each inherits start()/cancel()/_build_execution_context() from BaseActivityAdapter.
+             Only override what genuinely differs for that runner (e.g. runner-specific
+             config mapping, callback signatures). If a concrete adapter has no body beyond
+             pass, that is correct — it means the base handles everything and no duplication
+             occurred. Do NOT copy start()/cancel() boilerplate into each concrete class.
+
+          IMPORTANT: Correct factoring is the primary goal here. The base class exists to
+          ensure shared logic lives in exactly one place and runner-specific divergences are
+          explicit, visible overrides — not hidden duplicates. This makes the adapter shape
+          easy to refine later and prepares for eventual merging back into the runners.
+
+          3. Modify POST /tasks/{id}/submit handler:
+             - Enqueue ACTIVITY_COMPLETED signal on the run's SignalQueue
+             - RunWorkflow processes the signal to advance task state
+
+          4. Modify POST /tasks/{id}/complete-verification handler:
+             - Enqueue ACTIVITY_VERIFIED signal on the run's SignalQueue
+             - RunWorkflow processes the signal to advance step/run state
+
+          5. Ensure all M1 parity tests still pass after this wiring change.
+        requirements:
+          - id: "R1"
+            desc: "ActivityAdapter (Protocol) and ActivityContext (frozen dataclass) importable from orchestrator.workflow.activity"
+            priority: critical
+          - id: "R2"
+            desc: "All four adapters importable: CLIActivityAdapter, ClaudeSdkActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter"
+            priority: critical
+          - id: "R3"
+            desc: "All four adapters have start() and cancel() methods matching the ActivityAdapter protocol"
+            priority: critical
+          - id: "R4"
+            desc: "All six M1 parity tests still pass after completion signal wiring"
+            priority: critical
+          - id: "R5"
+            desc: "BaseActivityAdapter exists and all four concrete adapters inherit from it; shared logic (_tasks dict, _build_execution_context, start/cancel) is in the base only, not duplicated in each adapter"
+            priority: critical
+          - id: "R6"
+            desc: "POST /tasks/{id}/submit enqueues ACTIVITY_COMPLETED via SignalQueue and no longer calls service.submit_for_verification() directly — the state transition (BUILDING→VERIFYING) is owned by the RunWorkflow signal handler, not the router"
+            priority: critical
+          - id: "R7"
+            desc: "POST /tasks/{id}/complete-verification enqueues ACTIVITY_VERIFIED via SignalQueue and no longer calls service.complete_verification() directly — the state transition (VERIFYING→COMPLETED/FAILED/BUILDING) is owned by the RunWorkflow signal handler, not the router"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "protocol_import"
+              cmd: "uv run python -c \"from orchestrator.workflow.activity import ActivityAdapter, ActivityContext; print('OK')\""
+              must: true
+            - id: "base_class_import"
+              cmd: "uv run python -c \"from orchestrator.workflow.activity import BaseActivityAdapter; import inspect; assert inspect.isclass(BaseActivityAdapter); print('OK')\""
+              must: true
+            - id: "adapters_inherit_base"
+              cmd: "uv run python -c \"from orchestrator.workflow.activity import BaseActivityAdapter; from orchestrator.workflow.adapters import CLIActivityAdapter, ClaudeSdkActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter; assert issubclass(CLIActivityAdapter, BaseActivityAdapter); assert issubclass(ClaudeSdkActivityAdapter, BaseActivityAdapter); assert issubclass(CodexServerActivityAdapter, BaseActivityAdapter); assert issubclass(OpenHandsActivityAdapter, BaseActivityAdapter); print('OK')\""
+              must: true
+            - id: "shared_logic_in_base_not_duplicated"
+              cmd: "uv run python -c \"import inspect; from orchestrator.workflow.adapters import CLIActivityAdapter, ClaudeSdkActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter; adapters = [CLIActivityAdapter, ClaudeSdkActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter]; dupes = [cls.__name__ for cls in adapters if '_build_execution_context' in cls.__dict__ or '_tasks' in cls.__dict__]; assert not dupes, f'These adapters duplicate base class logic: {dupes}'; print('OK')\""
+              must: true
+            - id: "cli_adapter"
+              cmd: "uv run python -c \"from orchestrator.workflow.adapters import CLIActivityAdapter; assert hasattr(CLIActivityAdapter, 'start'); assert hasattr(CLIActivityAdapter, 'cancel'); print('OK')\""
+              must: true
+            - id: "claude_sdk_adapter"
+              cmd: "uv run python -c \"from orchestrator.workflow.adapters import ClaudeSdkActivityAdapter; assert hasattr(ClaudeSdkActivityAdapter, 'start'); assert hasattr(ClaudeSdkActivityAdapter, 'cancel'); print('OK')\""
+              must: true
+            - id: "codex_adapter"
+              cmd: "uv run python -c \"from orchestrator.workflow.adapters import CodexServerActivityAdapter; assert hasattr(CodexServerActivityAdapter, 'start'); assert hasattr(CodexServerActivityAdapter, 'cancel'); print('OK')\""
+              must: true
+            - id: "openhands_adapter"
+              cmd: "uv run python -c \"from orchestrator.workflow.adapters import OpenHandsActivityAdapter; assert hasattr(OpenHandsActivityAdapter, 'start'); assert hasattr(OpenHandsActivityAdapter, 'cancel'); print('OK')\""
+              must: true
+            - id: "parity_tests_pass"
+              cmd: "uv run pytest tests/integration/test_parity_linear.py tests/integration/test_parity_revision.py tests/integration/test_parity_pause_resume.py tests/integration/test_parity_fan_out.py tests/integration/test_parity_recovery.py tests/integration/test_parity_skip.py -q"
+              must: true
+            - id: "submit_router_no_direct_call"
+              cmd: "uv run python -c \"import ast, pathlib; src = pathlib.Path('src/orchestrator/api/routers/tasks.py').read_text(); tree = ast.parse(src); calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]; method_calls = [c for c in calls if isinstance(c.func, ast.Attribute) and c.func.attr in ('submit_for_verification', 'complete_verification')]; assert not method_calls, f'Router still calls service methods directly: {[c.func.attr for c in method_calls]}'; print('OK — no direct service calls in tasks router')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: ActivityAdapter is a typing.Protocol with start(task_id, context) and
+                cancel(task_id) method signatures; ActivityContext is a frozen dataclass;
+                BaseActivityAdapter is a separate abstract base class providing shared implementation.
+                B: Protocol and/or dataclass exist but BaseActivityAdapter is missing or is the
+                same object as the Protocol. F: import fails.
+            - id: "R2"
+              text: |
+                R2 — A: all four adapter classes are importable from orchestrator.workflow.adapters
+                (or equivalent submodule). B: 3 of 4 present. F: 2 or fewer implemented.
+            - id: "R3"
+              text: |
+                R3 — A: each adapter has start() and cancel() with correct signatures matching
+                the protocol. B: methods exist but wrong signatures. F: adapters don't satisfy protocol.
+            - id: "R4"
+              text: |
+                R4 — A: all 6 M1 parity tests pass. B: 1-2 need minor fixture updates.
+                F: structural breakage affecting 3+ tests.
+            - id: "R5"
+              text: |
+                R5 — A: all four concrete adapters inherit from BaseActivityAdapter; shared logic
+                (_tasks dict, _build_execution_context, start/cancel default implementations) is
+                defined once in the base and not duplicated in the concrete classes; runner-specific
+                differences are explicit overrides only. B: base class exists but 1-2 adapters
+                duplicate shared methods instead of inheriting. F: no base class, or all four
+                adapters copy the same boilerplate (correct factoring was not achieved).
+            - id: "R6"
+              text: |
+                R6 — INTEGRATION: A: POST /tasks/{id}/submit enqueues ACTIVITY_COMPLETED and
+                returns without calling service.submit_for_verification(); the BUILDING→VERIFYING
+                transition happens inside RunWorkflow.handle_activity_completed() when the signal
+                is dispatched. Read the router source and the handler source to confirm the
+                transition logic is in the handler, not the router. B: signal is enqueued but
+                the router also still calls the service method directly (double execution path).
+                F: router still calls service method directly with no signal enqueued, meaning
+                the adapters and signal handlers are dead code.
+            - id: "R7"
+              text: |
+                R7 — INTEGRATION: A: POST /tasks/{id}/complete-verification enqueues
+                ACTIVITY_VERIFIED and returns without calling service.complete_verification();
+                the VERIFYING→COMPLETED/FAILED/BUILDING transition happens inside
+                RunWorkflow.handle_activity_verified(). Read the router source and handler
+                source to confirm. B: signal enqueued but direct call also present.
+                F: direct call still the only path; signal handler is dead code.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-04"
+    title: "M4: Event-Driven State Reconstruction"
+    step_context: |
+      Make event replay sufficient to reconstruct full run state from the event journal alone.
+      Enrich event payloads with missing fields, extend the replay engine, and prove
+      round-trip reconstruction with tests.
+    tasks:
+      - id: "T-01"
+        title: "Enrich Events, Extend Replay Engine, and Round-Trip Tests"
+        task_context: |
+          Audit event payloads, add missing fields required for complete replay, extend
+          the replay engine, and create round-trip tests.
+
+          Audit gaps to fill:
+          - RunStatusChanged: ensure pause_reason AND last_error are in payload
+          - Attempt completion events: ensure start_commit and end_commit (git hashes) are present
+          - Step skip events: ensure skip_reason is in payload
+          - Fan-out child lifecycle: add CHILD_SPAWNED, CHILD_COMPLETED, CHILD_FAILED event types
+
+          Implementation steps:
+          1. Update orchestrator.workflow.events module:
+             - Ensure RunStatusChanged has pause_reason (str|None) and last_error (str|None)
+             - Ensure AttemptCompleted/equivalent has start_commit and end_commit fields
+             - Add CHILD_SPAWNED, CHILD_COMPLETED, CHILD_FAILED event types/classes
+
+          2. Update emitters in executor/engine to populate the new fields when emitting events
+
+          3. Extend src/orchestrator/db/journal_replay.py and src/orchestrator/db/recovery.py:
+             - Handle enriched event payloads with new fields
+             - Handle old events (without new fields) gracefully by defaulting to None/empty
+             - Reconstruct: run.status, run.pause_reason, current_step_index, per-task status,
+               active attempt, skip state, fan-out child state
+
+          4. Create tests/integration/test_parity_replay.py:
+             - Test: run full linear lifecycle to completion
+             - Capture all events from the journal
+             - Clear/destroy DB run state (simulate crash)
+             - Replay events from journal
+             - Assert reconstructed state matches original: status, step, task statuses, attempts
+             - Cover at least: linear execution, pause/resume cycle, step skip
+
+          Event versioning: replay must handle both old (pre-enrichment) and new event formats.
+        requirements:
+          - id: "R1"
+            desc: "RunStatusChanged event has pause_reason and last_error fields populated on emit"
+            priority: critical
+          - id: "R2"
+            desc: "Attempt completion events carry start_commit and end_commit git metadata fields"
+            priority: critical
+          - id: "R3"
+            desc: "CHILD_SPAWNED, CHILD_COMPLETED, CHILD_FAILED event types defined in orchestrator.workflow.events"
+            priority: critical
+          - id: "R4"
+            desc: "Replay engine reconstructs run.status, pause_reason, current_step_index, and attempt history from events"
+            priority: critical
+          - id: "R5"
+            desc: "Round-trip replay test passes: destroy DB state, replay journal, compare reconstructed state to original"
+            priority: critical
+          - id: "R6"
+            desc: "Replay handles old event formats (missing new fields) without errors"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "run_status_changed_fields"
+              cmd: "uv run python -c \"from orchestrator.workflow.events import RunStatusChanged; import inspect; src = inspect.getsource(RunStatusChanged); assert 'pause_reason' in src; assert 'last_error' in src; print('OK')\""
+              must: true
+            - id: "child_event_types"
+              cmd: "uv run python -c \"import orchestrator.workflow.events as ev; names = dir(ev); assert any('CHILD' in n or 'Child' in n for n in names), 'No child event types found: ' + str([n for n in names if 'child' in n.lower()]); print('OK')\""
+              must: true
+            - id: "replay_module"
+              cmd: "uv run python -c \"from orchestrator.db.journal_replay import replay_journal; from orchestrator.db.recovery import recover_run_state; print('OK')\""
+              must: true
+            - id: "replay_test_exists"
+              cmd: "test -f tests/integration/test_parity_replay.py"
+              must: true
+            - id: "replay_tests_pass"
+              cmd: "uv run pytest tests/integration/test_parity_replay.py -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: RunStatusChanged event class has pause_reason (str|None) and last_error
+                (str|None) fields, and emitters populate them when pausing or erroring.
+                B: fields in class but not consistently populated by emitters. F: fields missing.
+            - id: "R2"
+              text: |
+                R2 — A: attempt completion events have start_commit and end_commit fields (even if
+                None when git info unavailable). B: fields present but always None. F: fields missing.
+            - id: "R3"
+              text: |
+                R3 — A: CHILD_SPAWNED, CHILD_COMPLETED, CHILD_FAILED exist as event classes or
+                enum values and are emitted at appropriate lifecycle points.
+                B: defined but not emitted. F: not defined.
+            - id: "R4"
+              text: |
+                R4 — A: after replay, reconstructed run has correct status, pause_reason,
+                current_step_index, and per-task statuses matching pre-destroy state.
+                B: most fields correct but 1-2 missing. F: replay produces wrong state.
+            - id: "R5"
+              text: |
+                R5 — A: test_parity_replay.py round-trip tests pass for linear, pause/resume,
+                and skip scenarios. B: linear passes but others fail. F: test missing or all fail.
+            - id: "R6"
+              text: |
+                R6 — A: replay gracefully handles old events with missing fields (defaults to None,
+                no KeyError or AttributeError). B: handles most old events but 1 edge case fails.
+                F: old event replay crashes.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-05"
+    title: "M5: Idempotent Activity Boundaries"
+    step_context: |
+      Make submit, verification, and cancellation duplicate-safe at the task-attempt level.
+      Duplicate API calls must be no-ops, not errors or state corruption. Prove with tests.
+    tasks:
+      - id: "T-01"
+        title: "Make Submit, Verify, and Cancel Idempotent"
+        task_context: |
+          Add idempotency to the three key activity boundary endpoints so duplicate calls
+          are safe no-ops.
+
+          1. Idempotent submit (POST /tasks/{id}/submit):
+             - If task is already in VERIFYING state (already submitted), return current
+               state with HTTP 200 — do not create a second attempt
+             - Detect duplicates by checking current task.status before advancing
+             - The response should be identical or equivalent to the first call
+
+          2. Idempotent verification (POST /tasks/{id}/complete-verification):
+             - If task is already in a terminal state for this attempt (completed, failed,
+               or has a revision), return current state — do not double-advance
+             - The attempt_num or current status is the idempotency key
+
+          3. Idempotent cancellation (cancel run or task):
+             - If run/task is already cancelled, return HTTP 200 (or equivalent success)
+             - Do not error, do not re-cancel
+
+          4. Create tests/integration/test_idempotency.py:
+             - test_submit_twice: call submit twice, assert task advanced exactly once,
+               second call returns same state as first
+             - test_verify_twice: call complete-verification twice, assert no duplicate
+               attempt created, second call is a no-op
+             - test_cancel_twice: cancel run twice, assert run stays cancelled, no error
+        requirements:
+          - id: "R1"
+            desc: "Duplicate submit calls return current state without error and without double-advancing task status"
+            priority: critical
+          - id: "R2"
+            desc: "Duplicate complete-verification calls are no-ops (no second attempt created, state unchanged)"
+            priority: critical
+          - id: "R3"
+            desc: "Duplicate cancel calls on already-cancelled run return success without error or state corruption"
+            priority: critical
+          - id: "R4"
+            desc: "tests/integration/test_idempotency.py exists and all three idempotency tests pass"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "idempotency_test_exists"
+              cmd: "test -f tests/integration/test_idempotency.py"
+              must: true
+            - id: "idempotency_tests_pass"
+              cmd: "uv run pytest tests/integration/test_idempotency.py -q"
+              must: true
+            - id: "parity_regression"
+              cmd: "uv run pytest tests/integration/test_parity_linear.py tests/integration/test_parity_revision.py tests/integration/test_parity_pause_resume.py -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: calling submit twice results in task status advancing exactly once;
+                second call returns HTTP 200 with current state (not 4xx error, not two VERIFYING states).
+                B: second call returns 4xx (no double-advance, but not clean). F: second call corrupts state.
+            - id: "R2"
+              text: |
+                R2 — A: calling complete-verification twice results in exactly one attempt outcome;
+                second call is a no-op returning current state. B: second call returns 4xx but
+                no corruption. F: second call creates duplicate attempt or corrupts state.
+            - id: "R3"
+              text: |
+                R3 — A: cancelling already-cancelled run returns 200 (no-op), run stays in
+                cancelled/failed state. B: returns 4xx but no state corruption. F: crashes or re-cancels.
+            - id: "R4"
+              text: |
+                R4 — A: test_idempotency.py has all three test functions and they all pass.
+                B: 2 of 3 scenarios tested and passing. F: test missing or tests fail.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-06"
+    title: "M6: Fan-Out Child Identity & Attempt Normalization"
+    step_context: |
+      Give fan-out children stable durable UUIDs, per-child event streams, and normalize
+      attempt storage with a canonical AttemptRecord shape across all task types.
+      Begin with an investigation into the ExecutionProcess superclass pattern.
+    tasks:
+      - id: "T-01"
+        title: "Investigate ExecutionProcess Superclass and Write Recommendation"
+        task_context: |
+          Before implementing fan-out child identity, investigate the shared superclass
+          pattern and document a concrete recommendation.
+
+          Prior art: M3 introduced BaseActivityAdapter — a thin abstract base that puts
+          shared logic (_tasks dict, context mapping, start/cancel lifecycle) in one place
+          and makes runner-specific differences explicit overrides. The same principle
+          applies here: identify what is genuinely shared, put it in a base, and let
+          divergences be visible overrides rather than silent copies.
+
+          Analyze:
+          1. What state/lifecycle do Runs and fan-out children share?
+             - Status field (draft→active→paused→completed/failed)
+             - Parent/child linkage (parent_run_id, parent_task_id)
+             - Event stream association
+             - Attempt containers
+             - Heartbeat / liveness tracking
+          2. Do Attempts also fit this pattern? Attempts have similar states: pending →
+             active → completed/failed/revised. They also need event association.
+          3. What would a shared ExecutionProcess base class look like? Define the fields
+             and methods it would provide. Consider what BaseActivityAdapter got right
+             (thin, shared lifecycle logic, explicit overrides) as a reference for scope.
+          4. What are the tradeoffs of a unified base vs. keeping types separate?
+          5. Is the pattern compatible with future Temporal child workflow or activity mapping?
+             (Decision on Temporal mapping is deferred, but design must accommodate both)
+
+          Write recommendation to docs/temporal-alignment/execution-process-investigation.md:
+          - Summary of shared state/behavior identified
+          - Concrete recommendation: "use ExecutionProcess base" OR "keep separate with
+            shared interface" — with rationale
+          - Impact on fan-out child implementation in T-02
+          - Open questions for future Temporal mapping decision
+        requirements:
+          - id: "R1"
+            desc: "docs/temporal-alignment/execution-process-investigation.md exists with lifecycle analysis of Runs, fan-out children, and Attempts"
+            priority: critical
+          - id: "R2"
+            desc: "Document contains a concrete recommendation (for or against ExecutionProcess base) with rationale"
+            priority: critical
+          - id: "R3"
+            desc: "Document addresses Temporal compatibility considerations and lists open design questions"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "investigation_exists"
+              cmd: "test -f docs/temporal-alignment/execution-process-investigation.md"
+              must: true
+            - id: "has_recommendation_section"
+              cmd: "grep -qi 'recommendation' docs/temporal-alignment/execution-process-investigation.md"
+              must: true
+            - id: "covers_attempts"
+              cmd: "grep -qi 'attempt' docs/temporal-alignment/execution-process-investigation.md"
+              must: true
+            - id: "document_has_substance"
+              cmd: "uv run python -c \"content = open('docs/temporal-alignment/execution-process-investigation.md').read(); assert len(content) > 300, f'Document too short: {len(content)} chars — must be a real analysis'; print('OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: investigation covers shared state fields for all three types (Runs, fan-out
+                children, Attempts) including status FSM, event association, parent/child linkage,
+                and attempt containers. B: covers Runs+children but not Attempts. F: file missing.
+            - id: "R2"
+              text: |
+                R2 — A: concrete recommendation stated clearly (yes/no to ExecutionProcess base)
+                with specific rationale and implementation implications for fan-out. B: recommendation
+                present but vague or contradictory. F: no recommendation.
+            - id: "R3"
+              text: |
+                R3 — A: document explicitly addresses whether the design is compatible with Temporal
+                child workflow AND activity models, and lists at least 2 open questions.
+                B: mentions Temporal but superficially. F: no forward-looking analysis.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 2
+
+      - id: "T-02"
+        title: "Implement Stable Fan-Out Child Identity and Canonical AttemptRecord"
+        task_context: |
+          Based on the investigation from T-01, implement stable fan-out child identity
+          and normalize attempt storage across all task types.
+
+          Fan-out child identity:
+          1. Add child_id (UUID) to fan-out child task states:
+             - Alembic migration: add child_id (nullable UUID/TEXT) column to task_states table
+             - Each fan-out child gets a UUID assigned at creation time (durable across restarts)
+          2. Per-child event stream:
+             - Include child_id in fan-out event payloads
+             - Ensure CHILD_SPAWNED, CHILD_COMPLETED, CHILD_FAILED events use child_id
+             - Add FAN_OUT_SPAWNED and FAN_OUT_COMPLETED parent aggregation events
+             - Events must be compatible with future Temporal child workflow OR activity mapping
+
+          Canonical AttemptRecord:
+          3. Define AttemptRecord class (in db/models.py or new module):
+             - Works for: normal tasks, fan-out children, script tasks, recovery retries
+             - Has attempt_num (int, ordering within a task)
+             - Has attempt_id (UUID str, globally unique, for Temporal Activity ID mapping)
+             - Alembic migration: add attempt_id (UUID/TEXT) column to attempts table
+          4. Enforce attempt immutability:
+             - Completed attempts must NOT be updated in place
+             - Corrections use a new correction event (append-only) rather than modifying existing
+          5. Create tests/integration/test_parity_fan_out_replay.py:
+             - Simulate partial fan-out completion (some children done, some pending)
+             - Restart executor
+             - Replay events from journal
+             - Assert correct children are reconstructed as done vs pending
+        requirements:
+          - id: "R1"
+            desc: "task_states table has child_id UUID column and Alembic migration exists"
+            priority: critical
+          - id: "R2"
+            desc: "Fan-out events (FAN_OUT_SPAWNED, CHILD_SPAWNED, CHILD_COMPLETED, FAN_OUT_COMPLETED) carry child_id and exist in event definitions"
+            priority: critical
+          - id: "R3"
+            desc: "AttemptRecord has both attempt_num (int) and attempt_id (UUID str) fields"
+            priority: critical
+          - id: "R4"
+            desc: "Alembic migration adds attempt_id UUID column to attempts table"
+            priority: critical
+          - id: "R5"
+            desc: "Fan-out partial-completion replay test exists and passes"
+            priority: critical
+          - id: "R6"
+            desc: "No code path updates a completed attempt record in place (corrections use append-only events)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "child_id_migration"
+              cmd: "uv run python -c \"import glob; content = ' '.join(open(f).read() for f in glob.glob('src/orchestrator/db/migrations/versions/*.py')); assert 'child_id' in content, 'No child_id column in any migration'; print('OK')\""
+              must: true
+            - id: "attempt_id_migration"
+              cmd: "uv run python -c \"import glob; content = ' '.join(open(f).read() for f in glob.glob('src/orchestrator/db/migrations/versions/*.py')); assert 'attempt_id' in content, 'No attempt_id column in any migration'; print('OK')\""
+              must: true
+            - id: "attempt_record_import"
+              cmd: "uv run python -c \"from orchestrator.db.models import AttemptRecord; import inspect; src = inspect.getsource(AttemptRecord); assert 'attempt_id' in src; assert 'attempt_num' in src; print('OK')\""
+              must: true
+            - id: "fanout_events_have_child_id"
+              cmd: "uv run python -c \"import orchestrator.workflow.events as ev; src = open('src/orchestrator/workflow/events.py').read(); assert 'child_id' in src, 'child_id not in events module'; print('OK')\""
+              must: true
+            - id: "fanout_replay_test_exists"
+              cmd: "test -f tests/integration/test_parity_fan_out_replay.py"
+              must: true
+            - id: "fanout_replay_tests_pass"
+              cmd: "uv run pytest tests/integration/test_parity_fan_out_replay.py -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: Alembic migration adds nullable child_id UUID to task_states; fan-out
+                children receive UUID at creation and retain it across restarts.
+                B: column added but not consistently assigned. F: migration missing.
+            - id: "R2"
+              text: |
+                R2 — A: FAN_OUT_SPAWNED, CHILD_SPAWNED/COMPLETED/FAILED, FAN_OUT_COMPLETED all
+                include child_id in payload; events compatible with both Temporal child workflow
+                and activity models. B: some events missing child_id. F: events not defined.
+            - id: "R3"
+              text: |
+                R3 — A: AttemptRecord has attempt_num (int, ordering) and attempt_id (UUID str,
+                globally unique); works for normal, fan-out, script, and recovery task types.
+                B: fields present for only some task types. F: either field missing.
+            - id: "R4"
+              text: |
+                R4 — A: Alembic migration adds attempt_id UUID/TEXT column to attempts table.
+                B: column added but without proper index. F: migration missing.
+            - id: "R5"
+              text: |
+                R5 — A: fan-out replay test simulates partial completion + restart and verifies
+                that done/pending children are correctly reconstructed from events.
+                B: test exists but only covers simple case. F: test missing or fails.
+            - id: "R6"
+              text: |
+                R6 — A: no code path calls UPDATE on a completed attempt; corrections are new
+                events appended to the journal. B: mostly immutable, one minor edge case.
+                F: in-place update of completed attempts still occurs.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-07"
+    title: "M7: Worker Separation & Typed Signal Handlers"
+    step_context: |
+      Decouple the executor from the FastAPI app lifecycle. Add typed @signal_handler
+      decorators to RunWorkflow. Create a standalone worker.py entry point. Verify all
+      parity tests pass in the separated configuration. Run final frontend verification.
+
+      CRITICAL: A known failure mode for this step is implementing the decorator
+      infrastructure and creating stub handler methods that satisfy hasattr() checks, while
+      the handler bodies do nothing (e.g., log a message and return False). Stub handlers
+      are not acceptable. handle_activity_completed MUST call the service to transition
+      the task to VERIFYING. handle_activity_verified MUST call the service to process the
+      verification outcome and advance or retry. The verifier must read the handler source
+      code and confirm each handler contains real transition logic, not just a log line.
+    mcp_servers:
+      - name: "browser"
+        command: "npx"
+        args: ["-y", "@playwright/mcp@latest", "--headless"]
+    tasks:
+      - id: "T-01"
+        title: "Typed Signal Handlers and Standalone Worker Entry Point"
+        task_context: |
+          Add typed signal handler decorators and create a standalone worker that can run
+          independently of the FastAPI app.
+
+          1. Create src/orchestrator/workflow/handlers.py:
+             - @signal_handler(signal_type) decorator that registers a method as a handler
+               for a specific WorkflowSignal type
+             - Handler registry (dict mapping WorkflowSignal -> callable)
+             - RunWorkflow.on_signal() dispatches to the registered typed handler
+
+          2. Add typed handlers to RunWorkflow using @signal_handler:
+             - handle_pause(): apply pause state, emit RunStatusChanged
+             - handle_resume(): apply active state, emit RunStatusChanged
+             - handle_cancel(): apply cancelled state, emit RunStatusChanged
+             - handle_activity_completed(payload): advance task from BUILDING to VERIFYING
+             - handle_activity_verified(payload): process verification result, advance or retry
+
+          3. Create scripts/worker.py standalone entry point:
+             - Starts executor WITHOUT importing or depending on FastAPI app
+             - Reads ORCHESTRATOR_DB env var for DB path
+             - Creates SignalQueue and polls pending_signals table
+             - Implements worker heartbeat (periodic DB write proving liveness)
+             - Implements graceful shutdown: on SIGTERM, drain current signal then stop
+             - Has if __name__ == '__main__': entry point
+
+          4. Update src/orchestrator/api/app.py:
+             - When WORKER_SEPARATE=true env var is set, do not start the executor
+             - API and worker both connect to DB independently via SignalQueue
+             - The signal transport abstraction (from M2) enables this without code duplication
+
+          5. Run all six M1 parity tests with worker running in a separate asyncio context
+             (or subprocess) to verify signals flow correctly through the DB.
+        requirements:
+          - id: "R1"
+            desc: "@signal_handler decorator importable from orchestrator.workflow.handlers"
+            priority: critical
+          - id: "R2"
+            desc: "RunWorkflow has typed handlers: handle_pause, handle_resume, handle_cancel, handle_activity_completed, handle_activity_verified — all registered via @signal_handler. handle_activity_completed and handle_activity_verified must contain real transition logic (calling service methods to advance task state), not stubs that only log and return False"
+            priority: critical
+          - id: "R3"
+            desc: "scripts/worker.py exists with if __name__ == '__main__' entry point and does not import FastAPI app"
+            priority: critical
+          - id: "R4"
+            desc: "Worker reads ORCHESTRATOR_DB env var, polls pending_signals, and has graceful shutdown (SIGTERM handler)"
+            priority: critical
+          - id: "R5"
+            desc: "All six M1 parity tests pass with the worker running (co-located or via WORKER_SEPARATE=true)"
+            priority: critical
+          - id: "R6"
+            desc: "End-to-end integration: the full call chain from POST /tasks/{id}/submit → ACTIVITY_COMPLETED signal enqueued → RunWorkflow._dispatch_signals() → handle_activity_completed() → task transitions to VERIFYING is connected and working. Same for POST /tasks/{id}/complete-verification → ACTIVITY_VERIFIED → handle_activity_verified() → outcome transition. This must be verified by the human verifier reading the source; automated tests are not required but the chain must be traceable in code."
+            priority: critical
+        auto_verify:
+          items:
+            - id: "handlers_import"
+              cmd: "uv run python -c \"from orchestrator.workflow.handlers import signal_handler; print('OK')\""
+              must: true
+            - id: "typed_handlers_exist"
+              cmd: "uv run python -c \"from orchestrator.workflow.runtime import RunWorkflow; assert hasattr(RunWorkflow, 'handle_pause'); assert hasattr(RunWorkflow, 'handle_resume'); assert hasattr(RunWorkflow, 'handle_cancel'); assert hasattr(RunWorkflow, 'handle_activity_completed'); assert hasattr(RunWorkflow, 'handle_activity_verified'); print('OK')\""
+              must: true
+            - id: "handlers_not_stubs"
+              cmd: "uv run python -c \"import inspect; from orchestrator.workflow.runtime import RunWorkflow; src_completed = inspect.getsource(RunWorkflow.handle_activity_completed); src_verified = inspect.getsource(RunWorkflow.handle_activity_verified); assert src_completed.count('\\n') > 3, 'handle_activity_completed appears to be a stub (too short)'; assert src_verified.count('\\n') > 3, 'handle_activity_verified appears to be a stub (too short)'; assert 'return False' not in src_completed.split('\\n')[-2], 'handle_activity_completed ends with return False — likely a stub'; assert 'return False' not in src_verified.split('\\n')[-2], 'handle_activity_verified ends with return False — likely a stub'; print('OK — handlers contain non-trivial bodies')\""
+              must: true
+            - id: "worker_script_exists"
+              cmd: "test -f scripts/worker.py"
+              must: true
+            - id: "worker_has_entrypoint"
+              cmd: "grep -q '__name__' scripts/worker.py"
+              must: true
+            - id: "worker_no_fastapi_import"
+              cmd: "uv run python -c \"import ast, sys; tree = ast.parse(open('scripts/worker.py').read()); imports = [n.names[0].name if isinstance(n, ast.Import) else n.module for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]; fastapi_imports = [i for i in imports if i and 'fastapi' in i.lower()]; assert not fastapi_imports, f'FastAPI imported: {fastapi_imports}'; print('OK')\""
+              must: true
+            - id: "all_parity_tests_pass"
+              cmd: "uv run pytest tests/integration/test_parity_linear.py tests/integration/test_parity_revision.py tests/integration/test_parity_pause_resume.py tests/integration/test_parity_fan_out.py tests/integration/test_parity_recovery.py tests/integration/test_parity_skip.py tests/integration/test_idempotency.py tests/integration/test_parity_replay.py tests/integration/test_parity_fan_out_replay.py -q"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: @signal_handler is a working decorator; applied to a RunWorkflow method,
+                it registers that method to receive the specified signal type from on_signal()
+                dispatch. B: decorator exists but dispatch not wired. F: import fails.
+            - id: "R2"
+              text: |
+                R2 — A: all 5 handle_* methods exist on RunWorkflow, registered via @signal_handler,
+                dispatched from on_signal(), AND handle_activity_completed / handle_activity_verified
+                contain real transition logic. Read the handler source — a body that consists only
+                of a log line and "return False" is a stub and grades F regardless of whether the
+                method exists. handle_activity_completed must call service to transition task to
+                VERIFYING. handle_activity_verified must call service to process the outcome.
+                B: 3-4 of 5 present with real logic. F: stubs only, or handlers missing.
+            - id: "R3"
+              text: |
+                R3 — A: scripts/worker.py starts without importing FastAPI app; has __main__ guard;
+                can be invoked directly. B: exists but imports from api.app. F: file missing.
+            - id: "R4"
+              text: |
+                R4 — A: worker reads ORCHESTRATOR_DB, polls pending_signals via SignalQueue,
+                handles SIGTERM gracefully (drains in-progress signal, then exits).
+                B: polls but no graceful shutdown. F: hardcoded path or no polling.
+            - id: "R5"
+              text: |
+                R5 — A: all 6 M1 parity tests + idempotency + replay tests pass (9 total).
+                B: 7-8 pass, 1-2 have minor environment issues. F: structural breakage.
+            - id: "R6"
+              text: |
+                R6 — END-TO-END INTEGRATION: Trace the full lifecycle of a task submission
+                through the new signal path. Confirm: (1) POST /tasks/{id}/submit enqueues
+                ACTIVITY_COMPLETED and does not call service.submit_for_verification() directly;
+                (2) RunWorkflow._dispatch_signals() picks up the signal and calls
+                handle_activity_completed(); (3) handle_activity_completed() calls the service
+                and the task transitions to VERIFYING. Do the same for ACTIVITY_VERIFIED →
+                handle_activity_verified() → VERIFYING→outcome transition. This can be verified
+                by reading the source code of the router, the handler, and tracing the call chain
+                — automated tests are not required, but the verifier must confirm the full chain
+                exists and is connected. A: full chain confirmed in both directions.
+                B: one direction confirmed, one has a gap. F: handlers are stubs or router still
+                calls service directly (the new path is not the active path).
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+      - id: "T-02"
+        title: "Final Frontend Verification via Browser Automation"
+        task_context: |
+          Verify the frontend works correctly against the refactored backend using the
+          Playwright browser MCP server available in this step.
+
+          Start the isolated backend (port 9100) and frontend dev server (port 9173), then:
+
+          1. Navigate to http://localhost:9173 (dashboard)
+             - Verify runs list renders (run cards or table rows visible in snapshot)
+             - Take a screenshot saved to docs/temporal-alignment/verification-screenshots/dashboard.png
+
+          2. Click into a run detail page
+             - Verify steps and tasks are displayed
+             - Screenshot: run-detail.png
+
+          3. Navigate to a task detail
+             - Verify attempt history is shown
+             - Screenshot: task-detail.png
+
+          4. Test pause/resume UI:
+             - Find or create a paused run
+             - Verify pause reason is displayed in the UI (human-readable, not just "paused")
+             - Screenshot: pause-reason.png
+
+          5. If a run with fan-out tasks exists:
+             - Open the run detail
+             - Verify child tasks are listed
+             - Screenshot: fan-out.png
+
+          Save all screenshots to docs/temporal-alignment/verification-screenshots/.
+          Document any UI regressions found in a brief notes file in the same directory.
+        requirements:
+          - id: "R1"
+            desc: "Dashboard at localhost:9173 renders run list without JS errors"
+            priority: critical
+          - id: "R2"
+            desc: "Run detail page renders steps and tasks correctly"
+            priority: critical
+          - id: "R3"
+            desc: "Task detail page shows attempt history"
+            priority: expected
+          - id: "R4"
+            desc: "Pause reason is displayed as human-readable text in the UI"
+            priority: expected
+          - id: "R5"
+            desc: "At least 3 screenshots saved to docs/temporal-alignment/verification-screenshots/"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "dashboard_png_valid"
+              cmd: "python3 -c \"import struct; data=open('docs/temporal-alignment/verification-screenshots/dashboard.png','rb').read(); assert data[:8]==b'\\x89PNG\\r\\n\\x1a\\n','not a PNG'; w=struct.unpack('>I',data[16:20])[0]; h=struct.unpack('>I',data[20:24])[0]; assert w>100 and h>100,f'too small {w}x{h}'; print(f'dashboard.png: {w}x{h} OK')\""
+              must: true
+            - id: "run_detail_png_valid"
+              cmd: "python3 -c \"import struct; data=open('docs/temporal-alignment/verification-screenshots/run-detail.png','rb').read(); assert data[:8]==b'\\x89PNG\\r\\n\\x1a\\n','not a PNG'; w=struct.unpack('>I',data[16:20])[0]; h=struct.unpack('>I',data[20:24])[0]; assert w>100 and h>100,f'too small {w}x{h}'; print(f'run-detail.png: {w}x{h} OK')\""
+              must: true
+            - id: "screenshot_count"
+              cmd: "python3 -c \"import glob; shots=glob.glob('docs/temporal-alignment/verification-screenshots/*.png'); assert len(shots)>=3,f'only {len(shots)} screenshots, need >=3'; print(f'{len(shots)} screenshots OK')\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — A: dashboard screenshot shows run list UI (cards, rows, or list) without
+                console errors visible. B: loads but with minor visual regressions. F: blank page or JS crash.
+            - id: "R2"
+              text: |
+                R2 — A: run detail screenshot shows step list and task cards with correct status.
+                B: renders but missing some elements. F: 500 error or blank.
+            - id: "R3"
+              text: |
+                R3 — A: task detail screenshot shows attempt count and attempt status history.
+                B: task detail loads but no attempt history section. F: task detail fails to render.
+            - id: "R4"
+              text: |
+                R4 — A: pause reason screenshot shows human-readable reason (e.g. "server_shutdown",
+                "manual_pause") not just "paused". B: shown but raw enum value. F: not visible.
+            - id: "R5"
+              text: |
+                R5 — A: at least 3 non-empty screenshots saved (dashboard, run-detail, one more).
+                B: only 2 screenshots. F: 0 or 1 screenshot.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 2
