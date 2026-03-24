@@ -7,7 +7,7 @@ import yaml
 from pydantic import ValidationError
 
 from orchestrator.config.models import RoutineConfig
-from orchestrator.routines.errors import (
+from orchestrator.config.routines.errors import (
     RoutineNotFoundError,
     RoutineParseError,
     RoutineValidationError,

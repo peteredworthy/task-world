@@ -10,8 +10,8 @@ from pydantic import ValidationError
 
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.models import RoutineConfig
-from orchestrator.routines.errors import RoutineError
-from orchestrator.routines.loader import load_routine_from_path
+from orchestrator.config.routines.errors import RoutineError
+from orchestrator.config.routines.loader import load_routine_from_path
 
 
 @dataclass

@@ -125,7 +125,7 @@ async def test_executor_pauses_run_on_agent_not_available(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -177,7 +177,7 @@ async def test_executor_pauses_run_on_agent_execution_error(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -222,7 +222,7 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -272,7 +272,7 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -313,7 +313,7 @@ async def test_executor_persists_builder_prompt_before_execution(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -366,7 +366,7 @@ async def test_agent_metadata_persisted_immediately(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -415,7 +415,7 @@ async def test_agent_death_detection_on_startup(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))

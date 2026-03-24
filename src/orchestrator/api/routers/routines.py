@@ -19,8 +19,8 @@ from orchestrator.api.schemas.routines import (
 )
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.models import RoutineConfig
-from orchestrator.routines.discovery import discover_routines
-from orchestrator.routines.errors import RoutineNotFoundError
+from orchestrator.config.routines.discovery import discover_routines
+from orchestrator.config.routines.errors import RoutineNotFoundError
 
 router = APIRouter(prefix="/api/routines", tags=["routines"])
 

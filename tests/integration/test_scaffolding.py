@@ -340,7 +340,7 @@ steps:
 
         # Create run
         async with session_factory() as session:
-            from orchestrator.routines.discovery import discover_routines_in_repo
+            from orchestrator.config.routines.discovery import discover_routines_in_repo
 
             # For PROJECT routines, use discover_routines_in_repo which finds directory-based routines
             project_routines = discover_routines_in_repo(repo, "main")
@@ -480,7 +480,7 @@ steps:
 
         # Create run
         async with session_factory() as session:
-            from orchestrator.routines.discovery import discover_routines_in_repo
+            from orchestrator.config.routines.discovery import discover_routines_in_repo
 
             # For PROJECT routines, use discover_routines_in_repo which finds directory-based routines
             project_routines = discover_routines_in_repo(repo, "main")

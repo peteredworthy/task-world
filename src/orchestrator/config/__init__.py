@@ -28,6 +28,13 @@ from orchestrator.config.models import (
     TransitionCondition,
     VerifierConfig,
 )
+from orchestrator.config.routines import (
+    RoutineError,
+    RoutineNotFoundError,
+    RoutineParseError,
+    RoutineValidationError,
+    load_routine_from_path,
+)
 
 __all__ = [
     "AgentRunnerType",
@@ -42,8 +49,12 @@ __all__ = [
     "RequirementConfig",
     "RetryConfig",
     "RoutineConfig",
+    "RoutineError",
     "RoutineInputConfig",
+    "RoutineNotFoundError",
+    "RoutineParseError",
     "RoutineSource",
+    "RoutineValidationError",
     "RubricItemConfig",
     "RunStatus",
     "StepConfig",
@@ -54,4 +65,5 @@ __all__ = [
     "TaskStatus",
     "TransitionCondition",
     "VerifierConfig",
+    "load_routine_from_path",
 ]

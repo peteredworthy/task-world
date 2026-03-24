@@ -9,13 +9,13 @@ import click
 import httpx
 
 from orchestrator.config.enums import RoutineSource
-from orchestrator.routines.discovery import discover_routines
-from orchestrator.routines.errors import (
+from orchestrator.config.routines.discovery import discover_routines
+from orchestrator.config.routines.errors import (
     RoutineNotFoundError,
     RoutineParseError,
     RoutineValidationError,
 )
-from orchestrator.routines.loader import load_routine_from_path
+from orchestrator.config.routines.loader import load_routine_from_path
 
 
 @click.group()

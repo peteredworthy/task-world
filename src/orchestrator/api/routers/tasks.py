@@ -41,8 +41,8 @@ from orchestrator.api.schemas.tasks import (
 from orchestrator.config.enums import ChecklistStatus, RoutineSource, TaskStatus
 from orchestrator.config.models import MCPServerConfig, RoutineConfig
 from orchestrator.db.repositories import RunRepository
-from orchestrator.routines.discovery import discover_routines
-from orchestrator.routines.errors import RoutineNotFoundError
+from orchestrator.config.routines.discovery import discover_routines
+from orchestrator.config.routines.errors import RoutineNotFoundError
 from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
 from orchestrator.artifacts.registry import ArtifactRegistry
 from orchestrator.workflow.clarifications import (

@@ -28,7 +28,7 @@ from orchestrator.db.connection import create_session_factory
 from orchestrator.db.repositories import RunRepository
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
-from orchestrator.routines.loader import load_routine_from_path
+from orchestrator.config.routines.loader import load_routine_from_path
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import (
     Attempt,

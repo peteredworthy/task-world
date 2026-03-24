@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from orchestrator.config.enums import GateType, Priority, StepType
-from orchestrator.routines.loader import load_routine_from_path
+from orchestrator.config.routines.loader import load_routine_from_path
 
 ROUTINE_PATH = Path(__file__).parent.parent.parent / "routines" / "idea-to-plan" / "routine.yaml"
 

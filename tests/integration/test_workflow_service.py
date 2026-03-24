@@ -17,7 +17,7 @@ from orchestrator.config.enums import (
 )
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
 from orchestrator.db.event_store import EventStore
-from orchestrator.routines.loader import load_routine_from_path
+from orchestrator.config.routines.loader import load_routine_from_path
 from orchestrator.state.errors import (
     ChecklistItemNotFoundError,
     RunNotFoundError,

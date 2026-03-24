@@ -18,7 +18,7 @@ from orchestrator.db.connection import create_engine, create_session_factory, in
 from orchestrator.db.event_journal import resolve_default_journal_path
 from orchestrator.db.journal_replay import replay_journal_to_repository
 from orchestrator.db.repositories import CheckpointRepository, RunRepository
-from orchestrator.routines.discovery import discover_routines
+from orchestrator.config.routines.discovery import discover_routines
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.locks import InMemoryLockManager
 from orchestrator.workflow.service import WorkflowService

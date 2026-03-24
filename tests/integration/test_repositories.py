@@ -17,7 +17,7 @@ from orchestrator.config.enums import (
 )
 from orchestrator.db.connection import create_engine, create_session_factory, init_db
 from orchestrator.db.repositories import RunRepository
-from orchestrator.routines.loader import load_routine_from_path
+from orchestrator.config.routines.loader import load_routine_from_path
 from orchestrator.state.errors import RunNotFoundError
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import (
