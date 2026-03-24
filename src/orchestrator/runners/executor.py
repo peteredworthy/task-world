@@ -398,7 +398,7 @@ class AgentRunnerExecutor:
                     # Copy scaffolding if routine has it
                     if run.routine_path and run.routine_commit:
                         try:
-                            from orchestrator.scaffolding.copier import copy_scaffolding
+                            from orchestrator.runners.scaffolding.copier import copy_scaffolding
 
                             scaffolding_result = copy_scaffolding(
                                 repo_path=repo_path,

@@ -2,13 +2,12 @@
 
 from datetime import datetime
 
-from pydantic import Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
-from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config.enums import ModelProfile
 
 
-class AgentSchema(ApiModel):
+class AgentSchema(BaseModel):
     id: str
     name: str
     system_prompt: str
@@ -18,7 +17,7 @@ class AgentSchema(ApiModel):
     updated_at: datetime
 
 
-class CreateAgentRequest(ApiModel):
+class CreateAgentRequest(BaseModel):
     name: str = Field(..., min_length=1)
     system_prompt: str = Field(..., min_length=1)
     default_prompt: str = Field(default="")
@@ -32,7 +31,7 @@ class CreateAgentRequest(ApiModel):
         return v
 
 
-class UpdateAgentRequest(ApiModel):
+class UpdateAgentRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     system_prompt: str | None = Field(default=None, min_length=1)
     default_prompt: str | None = None

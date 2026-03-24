@@ -44,7 +44,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     session_factory = app.state.session_factory
 
     # Seed factory-default agents (Planner, Builder, Verifier) if not present
-    from orchestrator.agents.service import seed_default_agents
+    from orchestrator.runners.profiles.service import seed_default_agents
 
     async with session_factory() as _seed_session:
         await seed_default_agents(_seed_session)

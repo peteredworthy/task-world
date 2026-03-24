@@ -11,7 +11,7 @@ from orchestrator.db.base import Base
 
 # Import all models so Alembic can detect them
 import orchestrator.db.models as _models  # noqa: F401
-import orchestrator.agents.models as _agent_models  # noqa: F401
+import orchestrator.runners.profiles.models as _agent_models  # noqa: F401
 
 _models_loaded = _models  # ensure pyright sees the import as used
 _agent_models_loaded = _agent_models  # ensure pyright sees the import as used

@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from orchestrator.agents.service import seed_default_agents
+from orchestrator.runners.profiles.service import seed_default_agents
 from orchestrator.api.app import create_app
 from orchestrator.db.connection import init_db
 from orchestrator.workflow.signals import InMemorySignalTransport

@@ -10,7 +10,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.agents.models import AgentConfigModel
+from orchestrator.runners.profiles.models import AgentConfigModel
 
 logger = logging.getLogger(__name__)
 

@@ -3,8 +3,8 @@
 import subprocess
 from pathlib import Path
 
-from orchestrator.scaffolding.errors import ScaffoldingCopyError
-from orchestrator.scaffolding.models import ScaffoldingResult
+from orchestrator.runners.scaffolding.errors import ScaffoldingCopyError
+from orchestrator.runners.scaffolding.models import ScaffoldingResult
 
 
 def copy_scaffolding(

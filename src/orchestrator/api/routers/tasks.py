@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.agents.resolution import get_agent_system_prompt, resolve_agent_name
+from orchestrator.runners.profiles.resolution import get_agent_system_prompt, resolve_agent_name
 from orchestrator.api.deps import (
     get_current_user,
     get_routine_dirs,

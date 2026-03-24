@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.scaffolding import copy_scaffolding, ensure_gitignore
+from orchestrator.runners.scaffolding import copy_scaffolding, ensure_gitignore
 
 
 def _git(args: list[str], cwd: Path) -> str:

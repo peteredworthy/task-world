@@ -7,13 +7,17 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.agents.errors import (
+from orchestrator.runners.profiles.errors import (
     AgentNameConflictError,
     AgentNoDefaultPromptError,
     AgentNotFoundError,
 )
-from orchestrator.agents.models import AgentConfigModel
-from orchestrator.agents.schemas import AgentSchema, CreateAgentRequest, UpdateAgentRequest
+from orchestrator.runners.profiles.models import AgentConfigModel
+from orchestrator.runners.profiles.schemas import (
+    AgentSchema,
+    CreateAgentRequest,
+    UpdateAgentRequest,
+)
 from orchestrator.config.enums import ModelProfile
 
 _PLANNER_PROMPT = (
