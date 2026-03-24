@@ -31,7 +31,7 @@ class _NamedOpenHandsAgent:
 
     def get_quota(self) -> Any:
         from orchestrator.runners.openhands import OpenHandsAgent
-        from orchestrator.runners.quota import FakeQuotaFetcher
+        from orchestrator.runners import FakeQuotaFetcher
 
         fetcher = FakeQuotaFetcher({"total_granted": 100.0, "total_used": 20.0})
         return OpenHandsAgent().get_quota(fetcher=fetcher)
@@ -40,7 +40,7 @@ class _NamedOpenHandsAgent:
 @pytest.fixture
 async def client_with_quota() -> AsyncGenerator[AsyncClient, None]:
     """Client backed by a ToolDetector that has a real quota-capable agent registered."""
-    from orchestrator.runners.detector import ToolDetector
+    from orchestrator.runners import ToolDetector
 
     app = create_app(db_path=":memory:")
     app.state.tool_detector = ToolDetector(agents=[_NamedOpenHandsAgent()])

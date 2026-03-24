@@ -6,7 +6,7 @@ import asyncio
 import time
 import pytest
 
-from orchestrator.runners.detector import ToolDetector
+from orchestrator.runners import ToolDetector
 from orchestrator.runners.types import AgentOption, AgentQuota
 from orchestrator.config.enums import AgentRunnerType
 

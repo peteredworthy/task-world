@@ -42,7 +42,7 @@ from orchestrator.workflow.signals import (
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from orchestrator.runners.monitor import AgentRunnerMonitor
+    from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
     from orchestrator.api.websocket import ConnectionManager
     from orchestrator.config.global_config import GlobalConfig
     from orchestrator.state.models import Run, StepState, TaskState
@@ -142,7 +142,7 @@ class AgentRunnerExecutor:
 
         # Lazy init - create monitor instance with session_factory and lock_manager
         try:
-            from orchestrator.runners.monitor import AgentRunnerMonitor
+            from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
 
             self._runner_monitor = AgentRunnerMonitor(
                 self._session_factory,
@@ -689,7 +689,7 @@ class AgentRunnerExecutor:
 
             from orchestrator.config.enums import ModelProfile
             from orchestrator.db import RunnerProfileDefaultModel
-            from orchestrator.runners.profile_resolution import resolve_model_for_profile
+            from orchestrator.runners.detection.profile_resolution import resolve_model_for_profile
 
             rows = (
                 (

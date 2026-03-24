@@ -2,7 +2,7 @@
 
 from typing import Protocol, runtime_checkable
 
-from orchestrator.runners.quota import QuotaFetcher
+from orchestrator.runners.runtime.quota import QuotaFetcher
 from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,

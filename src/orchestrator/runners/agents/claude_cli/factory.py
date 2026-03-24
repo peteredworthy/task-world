@@ -13,7 +13,7 @@ from orchestrator.runners.agents.claude_cli.parser import ClaudeStreamParser
 from orchestrator.runners.agents.codex.parser import CodexStreamParser
 
 if TYPE_CHECKING:
-    from orchestrator.runners.monitor import AgentRunnerMonitor
+    from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
     from orchestrator.config.global_config import GlobalConfig
 
 

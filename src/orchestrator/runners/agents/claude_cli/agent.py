@@ -25,7 +25,7 @@ from orchestrator.runners.errors import (
     AgentNotAvailableError,
 )
 from orchestrator.workflow.errors import GateBlockedError
-from orchestrator.runners.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
+from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
 from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
@@ -43,7 +43,7 @@ from orchestrator.runners.types import (
 from orchestrator.config.enums import AgentRunnerType
 
 if TYPE_CHECKING:
-    from orchestrator.runners.monitor import AgentRunnerMonitor
+    from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
     from orchestrator.runners.parsers.base import StreamParser
 
 logger = logging.getLogger(__name__)

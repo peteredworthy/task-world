@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 from orchestrator.runners.errors import AgentCancelledError, AgentExecutionError
-from orchestrator.runners.quota import QuotaFetcher
+from orchestrator.runners.runtime.quota import QuotaFetcher
 from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,

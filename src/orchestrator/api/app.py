@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
-    from orchestrator.runners.monitor import AgentRunnerMonitor
+    from orchestrator.runners import AgentRunnerMonitor
     from orchestrator.db import RunRepository
 
     await init_db(app.state.engine)
@@ -475,7 +475,7 @@ def create_app(
     from orchestrator.runners.agents.claude_sdk.agent import ClaudeSDKAgent
     from orchestrator.runners.agents.claude_cli.agent import ClaudeCliQuotaAgent
     from orchestrator.runners.codex_server import CodexServerAgent
-    from orchestrator.runners.detector import ToolDetector
+    from orchestrator.runners import ToolDetector
     from orchestrator.runners.openhands import OpenHandsAgent
 
     app.state.tool_detector = ToolDetector(

@@ -30,7 +30,7 @@ from orchestrator.runners.errors import (
     AgentNotAvailableError,
 )
 from orchestrator.workflow.errors import GateBlockedError
-from orchestrator.runners.repetition_detector import (
+from orchestrator.runners.runtime.repetition_detector import (
     ActionBudget,
     ActionBudgetConfig,
     ReasoningRepetitionDetector,
@@ -38,7 +38,7 @@ from orchestrator.runners.repetition_detector import (
     RepetitionDetector,
     RepetitionDetectorConfig,
 )
-from orchestrator.runners.quota import HttpQuotaFetcher, QuotaFetcher
+from orchestrator.runners.runtime.quota import HttpQuotaFetcher, QuotaFetcher
 from orchestrator.runners.agents.openhands.common import (
     CallbackRegistry,
     GetRequirementsExecutor,
