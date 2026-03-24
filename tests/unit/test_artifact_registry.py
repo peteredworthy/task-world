@@ -4,7 +4,7 @@ from datetime import datetime
 
 import pytest
 
-from orchestrator.artifacts import ArtifactRegistry
+from orchestrator.workflow.artifacts import ArtifactRegistry
 
 
 @pytest.fixture

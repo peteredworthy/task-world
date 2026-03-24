@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.artifacts.registry import ArtifactRegistry
+from orchestrator.workflow.artifacts import ArtifactRegistry
 from orchestrator.config.models import ContextSource
 from orchestrator.workflow.context_builder import TaskContextBuilder
 from orchestrator.workflow.summary_cache import SummaryCache

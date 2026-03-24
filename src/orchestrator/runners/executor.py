@@ -823,7 +823,7 @@ class AgentRunnerExecutor:
         # Build artifact context from context_from if configured
         run_config = dict(run.config)
         if task_config.context_from:
-            from orchestrator.artifacts.registry import ArtifactRegistry
+            from orchestrator.workflow.artifacts import ArtifactRegistry
             from orchestrator.workflow.context_builder import TaskContextBuilder
 
             worktree_path = Path(run.worktree_path) if run.worktree_path else None

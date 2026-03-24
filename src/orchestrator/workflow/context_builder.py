@@ -4,8 +4,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from orchestrator.artifacts.registry import ArtifactRegistry
 from orchestrator.config.models import ContextSource
+from orchestrator.workflow.artifacts import ArtifactRegistry
 
 if TYPE_CHECKING:
     from orchestrator.workflow.summary_cache import SummaryCache

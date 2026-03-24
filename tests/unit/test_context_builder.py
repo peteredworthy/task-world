@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio  # noqa: F401
 
-from orchestrator.artifacts.registry import ArtifactRegistry
+from orchestrator.workflow.artifacts import ArtifactRegistry
 from orchestrator.config.models import ContextSource
 from orchestrator.workflow.context_builder import (
     ContextError,

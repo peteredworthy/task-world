@@ -44,7 +44,7 @@ from orchestrator.db.repositories import RunRepository
 from orchestrator.config.routines.discovery import discover_routines
 from orchestrator.config.routines.errors import RoutineNotFoundError
 from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
-from orchestrator.artifacts.registry import ArtifactRegistry
+from orchestrator.workflow.artifacts import ArtifactRegistry
 from orchestrator.workflow.clarifications import (
     ClarificationRequest,
     ClarificationResponse,

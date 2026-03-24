@@ -4,7 +4,7 @@ import hashlib
 from datetime import UTC, datetime
 from typing import Any
 
-from orchestrator.artifacts.models import Artifact
+from orchestrator.workflow.artifacts.models import Artifact
 
 
 class ArtifactRegistry:

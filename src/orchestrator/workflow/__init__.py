@@ -1,5 +1,6 @@
 """Workflow engine and gate logic."""
 
+from orchestrator.workflow.artifacts import Artifact, ArtifactRegistry
 from orchestrator.workflow.engine import (
     Clock,
     DefaultClock,
@@ -46,6 +47,8 @@ from orchestrator.workflow.condition_evaluator import (
 )
 
 __all__ = [
+    "Artifact",
+    "ArtifactRegistry",
     "BuilderPrompt",
     "ChecklistGateEvaluated",
     "Clock",
