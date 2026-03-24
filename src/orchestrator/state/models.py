@@ -3,7 +3,6 @@
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
-from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -16,11 +15,7 @@ from orchestrator.config.enums import (
     RunStatus,
     TaskStatus,
 )
-
-
-def generate_id() -> str:
-    """Generate a unique ID."""
-    return str(uuid4())
+from orchestrator.state._utils import generate_id
 
 
 def _utc_now() -> datetime:

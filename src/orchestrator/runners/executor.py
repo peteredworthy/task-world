@@ -18,7 +18,7 @@ from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
     AgentExecutionError,
 )
-from orchestrator.runners.types import ExecutionContext
+from orchestrator.runners.types import BroadcastCallback, ExecutionContext
 from orchestrator.config.enums import (
     AgentRunnerType,
     GateType,
@@ -43,7 +43,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
-    from orchestrator.api.websocket import ConnectionManager
     from orchestrator.config.global_config import GlobalConfig
     from orchestrator.state.models import Run, StepState, TaskState
     from orchestrator.workflow.locks import LockManager
@@ -93,7 +92,7 @@ class AgentRunnerExecutor:
         lock_manager: LockManager | None = None,
         submit_event_registry: SubmitEventRegistry | None = None,
         runner_monitor: AgentRunnerMonitor | None = None,
-        connection_manager: ConnectionManager | None = None,
+        connection_manager: BroadcastCallback | None = None,
         api_base_url: str | None = None,
         *,
         spawn_agents: bool = True,

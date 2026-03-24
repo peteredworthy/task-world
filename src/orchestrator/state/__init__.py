@@ -13,7 +13,6 @@ from orchestrator.state.models import (
     Run,
     StepState,
     TaskState,
-    generate_id,
 )
 from orchestrator.state.session import SessionStateManager
 
@@ -29,5 +28,4 @@ __all__ = [
     "StepState",
     "TaskNotFoundError",
     "TaskState",
-    "generate_id",
 ]

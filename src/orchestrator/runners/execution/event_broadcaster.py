@@ -15,11 +15,11 @@ from orchestrator.workflow.events import (
     AgentErrorEvent,
     WorkflowEvent,
 )
+from orchestrator.runners.types import BroadcastCallback
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from orchestrator.api.websocket import ConnectionManager
     from orchestrator.state.models import TaskState
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class EventBroadcaster:
     def __init__(
         self,
         session_factory: "async_sessionmaker[AsyncSession]",
-        connection_manager: "ConnectionManager | None" = None,
+        connection_manager: BroadcastCallback | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._connection_manager = connection_manager

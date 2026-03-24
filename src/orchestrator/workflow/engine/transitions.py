@@ -7,10 +7,10 @@ from typing import Any, cast, Protocol
 
 from orchestrator.config.enums import ChecklistStatus, Priority, RunStatus, TaskStatus
 from orchestrator.config.models import RoutineConfig, StepConfig
+from orchestrator.state._utils import generate_id
 from orchestrator.state.models import (
     Attempt,
     ChecklistItem,
-    generate_id,
     GradeSnapshotItem,
     Run,
     StepState,

@@ -888,7 +888,7 @@ class WorkflowService:
             output_path = derive_output_path(fan_out.output_pattern, rel_path, variables)
             input_name = Path(rel_path).name
 
-            from orchestrator.state.models import generate_id
+            from orchestrator.state._utils import generate_id
 
             child = TaskState(
                 id=generate_id(),

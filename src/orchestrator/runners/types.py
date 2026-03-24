@@ -9,6 +9,19 @@ from pydantic import BaseModel
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
 
+
+class BroadcastCallback(Protocol):
+    """Protocol for broadcasting run events to connected WebSocket clients.
+
+    Runners depend on this protocol rather than the concrete ConnectionManager
+    from api/, preserving the Execution → Interface layering boundary.
+    """
+
+    async def broadcast_event(self, event: object) -> None:
+        """Broadcast a WorkflowEvent to the relevant run's subscribers."""
+        ...
+
+
 # Callback type aliases.
 # run_id and task_id are captured in the closure by the caller,
 # so callbacks only need req_id, status, and optional note.

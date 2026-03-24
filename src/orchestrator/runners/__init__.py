@@ -1,5 +1,9 @@
 """Agent runner integrations for the orchestrator."""
 
+# Agent interface and types
+from orchestrator.runners.interface import AgentRunner
+from orchestrator.runners.types import AgentMetadataCallback, BroadcastCallback
+
 # S-06: Scaffolding and Profiles re-exports (preserved)
 from orchestrator.runners.scaffolding import (
     ScaffoldingError,
@@ -20,7 +24,6 @@ from orchestrator.runners.profiles import (
 
 # Detection sub-package
 from orchestrator.runners.detection import (
-    AGENT_CONFIG_FIELDS,
     ToolDetector,
     coerce_llm_config,
     resolve_model_for_profile,
@@ -46,6 +49,10 @@ from orchestrator.runners.runtime import (
 )
 
 __all__ = [
+    # Core
+    "AgentRunner",
+    "AgentMetadataCallback",
+    "BroadcastCallback",
     # S-06: Scaffolding
     "copy_scaffolding",
     "ensure_gitignore",
@@ -61,7 +68,6 @@ __all__ = [
     "AgentNameConflictError",
     "AgentNoDefaultPromptError",
     # Detection
-    "AGENT_CONFIG_FIELDS",
     "ToolDetector",
     "coerce_llm_config",
     "resolve_model_for_profile",

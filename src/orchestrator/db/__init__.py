@@ -5,22 +5,6 @@ Public interface — all symbols importable as ``from orchestrator.db import X``
 
 from typing import TYPE_CHECKING
 
-# ORM base and models
-from orchestrator.db.orm.base import Base
-from orchestrator.db.orm.models import (
-    AttemptModel,
-    AttemptRecord,
-    ClarificationRequestModel,
-    ClarificationResponseModel,
-    EventModel,
-    PendingSignalModel,
-    ReplayCheckpointModel,
-    RunModel,
-    RunnerProfileDefaultModel,
-    StepModel,
-    TaskModel,
-)
-
 # Connection management
 from orchestrator.db.access.connection import (
     create_engine,
@@ -69,30 +53,20 @@ def __getattr__(name: str):
     """Lazy-load repositories and event_store to avoid circular imports."""
     if name == "RunRepository":
         from orchestrator.db.access.repositories import RunRepository
+
         return RunRepository
     elif name == "CheckpointRepository":
         from orchestrator.db.access.repositories import CheckpointRepository
+
         return CheckpointRepository
     elif name == "EventStore":
         from orchestrator.db.access.event_store import EventStore
+
         return EventStore
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
-    # orm
-    "Base",
-    "AttemptModel",
-    "AttemptRecord",
-    "ClarificationRequestModel",
-    "ClarificationResponseModel",
-    "EventModel",
-    "PendingSignalModel",
-    "ReplayCheckpointModel",
-    "RunModel",
-    "RunnerProfileDefaultModel",
-    "StepModel",
-    "TaskModel",
     # access
     "create_engine",
     "create_session_factory",
