@@ -65,6 +65,22 @@ routine:
             Follow docs/planner/templates/*.md for artifact structure.
 
             Ensure content is specific to the project and actionable.
+
+            === INTENT ITEM NUMBERING ===
+
+            After writing intent.md, assign a sequential [I-XX] identifier to every
+            discrete element: each goal, each scope item, each constraint, and every
+            line in the Definition of Complete. Append the ID inline at the end of
+            the sentence or bullet it applies to.
+
+              Before: "All tests pass after each phase."
+              After:  "All tests pass after each phase. [I-07]"
+
+            These IDs are stable handles used by later steps to trace each intent
+            element to a requirement. Assign them now so the traceability chain
+            flows forward, not backward.
+
+            === END INTENT ITEM NUMBERING ===
           requirements:
             - id: "R1"
               desc: "Create intent.md with goal, scope, and completion criteria"
@@ -75,6 +91,9 @@ routine:
             - id: "R3"
               desc: "Create architecture.md with integration and testing strategy"
               priority: expected
+            - id: "R4"
+              desc: "Every goal, constraint, and Definition of Complete criterion in intent.md is assigned a sequential [I-XX] identifier"
+              priority: critical
           artifacts:
             - path: "docs/{{feature}}/intent.md"
               required: true
@@ -86,6 +105,9 @@ routine:
             items:
               - id: "files_exist"
                 cmd: "test -f docs/{{feature}}/intent.md && test -f docs/{{feature}}/plan.md"
+                must: true
+              - id: "intent_items_numbered"
+                cmd: "grep -q '\\[I-' docs/{{feature}}/intent.md"
                 must: true
           verifier:
             rubric:
@@ -104,6 +126,11 @@ routine:
                   R3 (architecture.md) — A: names specific files/modules to create, testing approach references
                   concrete tools or patterns. B: describes architecture in general terms without file-level specifics.
                   F: file missing or only headings.
+              - id: "R4"
+                text: |
+                  R4 — A: every goal, scope item, constraint, and Definition of Complete line in intent.md
+                  has an [I-XX] identifier appended inline. IDs are sequential with no gaps or duplicates.
+                  B: most items numbered but 1-2 are missing. F: no numbering applied.
           retry:
             max_attempts: 2
 
@@ -223,6 +250,27 @@ routine:
             - Verification strategy
 
             Follow docs/planner/templates/step-plan.md.
+
+            === PROVISIONAL INTENT COVERAGE ===
+
+            After creating all step plans, annotate docs/{{feature}}/intent.md to
+            record which step covers each [I-XX] item. Add the step reference inline
+            after the existing [I-XX] identifier:
+
+              Before: "All tests pass after each phase. [I-07]"
+              After:  "All tests pass after each phase. [I-07 → S-05]"
+
+            For items covered by multiple steps, list all:
+              "Zero backward-compatibility stubs remain. [I-12 → S-02, S-04]"
+
+            For items no step addresses, mark explicitly:
+              "Out of scope: frontend changes. [I-15 → NO-REQ: excluded by scope]"
+
+            Every [I-XX] must resolve to either a step reference or NO-REQ. Any
+            unresolved [I-XX] is a coverage gap — either add a step that covers it
+            or mark it NO-REQ with justification.
+
+            === END PROVISIONAL INTENT COVERAGE ===
           requirements:
             - id: "R1"
               desc: "Create step-XX-plan.md for each plan step"
@@ -236,10 +284,16 @@ routine:
             - id: "R4"
               desc: "Dependencies between steps are explicit"
               priority: expected
+            - id: "R5"
+              desc: "intent.md updated — every [I-XX] item is annotated with the step(s) that address it, or marked [I-XX → NO-REQ: justification]. No [I-XX] left unresolved."
+              priority: critical
           auto_verify:
             items:
               - id: "step_plans_exist"
                 cmd: "ls docs/{{feature}}/step-*-plan.md >/dev/null 2>&1"
+                must: true
+              - id: "intent_coverage_started"
+                cmd: "grep -q '\\[I-.*→' docs/{{feature}}/intent.md"
                 must: true
           verifier:
             rubric:
@@ -261,6 +315,12 @@ routine:
                 text: |
                   R4 — A: each plan states which prior steps must complete first and why.
                   B: ordering is implied by numbering but not stated.
+              - id: "R5"
+                text: |
+                  R5 — A: every [I-XX] in intent.md has a [→ S-XX] or [→ NO-REQ] annotation.
+                  Read the DoC section specifically — each criterion must be covered.
+                  B: most items covered but 1-2 [I-XX] remain unresolved.
+                  F: multiple unresolved [I-XX] items, or DoC criteria left without step coverage.
           retry:
             max_attempts: 2
       transitions:
@@ -541,6 +601,15 @@ routine:
               scenario names (what to test). Step files that say "test budget
               exhaustion" without specifying "make N+1 calls, assert Nth+1 returns
               429" are insufficient.
+
+            Also verify intent coverage completeness:
+            - Read intent.md and confirm every [I-XX] has a [→ S-XX] or [→ NO-REQ]
+              annotation from S-03. Any bare [I-XX] with no arrow is a gap.
+            - For each [I-XX → S-XX] annotation, confirm that the referenced step
+              file actually addresses the intent item. A step reference that does
+              not match the step file content is a traceability error.
+            - List any gaps in the verification-report.md under an "Intent Coverage
+              Gaps" section. If no gaps: note "Intent coverage: complete."
           requirements:
             - id: "R1"
               desc: "Step files align with plan and intent"
@@ -557,6 +626,9 @@ routine:
             - id: "R5"
               desc: "Integration test step files specify assertion logic, not just scenario names"
               priority: expected
+            - id: "R6"
+              desc: "Every [I-XX] in intent.md is annotated with a step reference or NO-REQ; referenced steps actually cover the intent item"
+              priority: critical
           verifier:
             rubric:
               - id: "R1"
@@ -593,6 +665,14 @@ routine:
                   assert call N+1 returns 429 with limit_type in body"). B: most test steps specify
                   assertions but one or two use scenario names only. F: test steps say "test X"
                   without specifying what the test must assert.
+              - id: "R6"
+                text: |
+                  R6 — A: verification-report.md has an "Intent Coverage" section; every [I-XX] in
+                  intent.md resolves to a step reference or NO-REQ; each referenced step file
+                  actually contains content addressing that intent item. B: all [I-XX] annotated
+                  but 1-2 step references are loose (step exists but coverage is indirect).
+                  F: any bare [I-XX] with no arrow, or a step reference that clearly does not
+                  cover the intent item it claims to.
             submission_template:
               grade_scale: [A, B, C, D, F]
               require_reason_if_below: A
@@ -601,6 +681,9 @@ routine:
             items:
               - id: "report_exists"
                 cmd: "test -f docs/{{feature}}/verification-report.md"
+                must: true
+              - id: "no_bare_intent_items"
+                cmd: "uv run python -c \"import re,sys; txt=open('docs/{{feature}}/intent.md').read(); bare=[m.group() for m in re.finditer(r'\\[I-\\d+\\](?!\\s*[→\\-]|[^\\]]*→)', txt)]; print(f'Bare [I-XX] items with no step annotation: {bare}',file=sys.stderr) if bare else None; sys.exit(1 if bare else 0)\""
                 must: true
           retry:
             max_attempts: 2
@@ -723,29 +806,31 @@ routine:
 
             === INTENT-REQUIREMENT TRACEABILITY ===
 
-            After creating the routine YAML, annotate docs/{{feature}}/intent.md with
-            requirement IDs to prove every element of intent is captured by at least one
-            requirement. Use square brackets inline in the text:
+            intent.md already has [I-XX] identifiers on every intent element (from S-01)
+            and provisional [I-XX → S-XX] step annotations (from S-03). Your job here
+            is to refine those provisional annotations to full requirement IDs now that
+            the routine YAML exists.
 
-              Before: "The cache must persist for the duration of the run."
-              After:  "The cache must persist for the duration of the run. [S-03/T-01/R1]"
+            For each [I-XX → S-XX] annotation, replace the provisional step reference
+            with the specific requirement ID(s) from the routine that cover it:
 
-            Format: [S-XX/T-YY/RN] where S-XX/T-YY/RN matches a requirement in the
-            routine YAML. For multiple requirements, separate with commas:
-            [S-01/T-01/R1, S-02/T-01/R3]
+              Before: "All tests pass after each phase. [I-07 → S-05]"
+              After:  "All tests pass after each phase. [I-07 → S-05/T-01/R4]"
+
+            For items covered by multiple requirements:
+              "Zero backward-compatibility stubs remain. [I-12 → S-02/T-01/R1, S-04/T-01/R3]"
+
+            Items already marked NO-REQ stay as-is.
 
             Rules:
-            - Every statement of intent, goal, constraint, or completion criterion in
-              intent.md must have at least one annotation.
-            - Every requirement ID referenced in an annotation must exist in the routine.
-            - Group annotations at the end of the sentence or bullet they apply to.
-            - If a section of intent has no corresponding requirement, you must EITHER
-              add a requirement to the routine OR note the gap explicitly with [NO-REQ]
-              and a brief justification (e.g., out of scope, covered implicitly).
+            - Every [I-XX] must resolve to at least one [S-XX/T-YY/RN] or remain NO-REQ.
+            - Every requirement ID referenced must exist in the routine YAML.
+            - If an [I-XX] item has no matching requirement after the routine is written,
+              you must EITHER add a requirement to the routine OR mark it [NO-REQ] with
+              justification. A bare [I-XX → S-XX] with no task/requirement is insufficient.
 
-            This is the primary mechanism for catching requirement-intention gaps —
-            where the intent describes behavior that no requirement covers. These gaps
-            cause builders to satisfy all requirements while missing the actual goal.
+            This is the final verification that every intent element is enforced by a
+            specific, testable requirement — not just claimed by a step reference.
 
             === END INTENT-REQUIREMENT TRACEABILITY ===
 
@@ -937,7 +1022,7 @@ routine:
                 cmd: "uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml"
                 must: true
               - id: "intent_annotated"
-                cmd: "grep -q '\\[S-' docs/{{feature}}/intent.md"
+                cmd: "uv run python -c \"import re,sys; txt=open('docs/{{feature}}/intent.md').read(); unresolved=[m.group() for m in re.finditer(r'\\[I-\\d+\\s*→\\s*S-\\d+\\]', txt)]; print(f'Provisional [I-XX → S-XX] annotations not yet resolved to requirements: {unresolved}',file=sys.stderr) if unresolved else None; sys.exit(1 if unresolved else 0)\""
                 must: true
               - id: "no_existence_only_verify"
                 cmd: "uv run python -c \"import yaml,sys; r=yaml.safe_load(open('routines/{{feature}}/routine.yaml')); root=r.get('routine',r); ep=('test -f','test -d','grep -q','grep -c','ls '); weak=[f\\\"{s['id']}/{t['id']}\\\" for s in root['steps'] for t in s.get('tasks',[]) for items in [(t.get('auto_verify')or{}).get('items',[])] if items and all(any(c['cmd'].strip().startswith(p) for p in ep) for c in items)]; print(f'Tasks with ONLY existence-level auto_verify: {weak}',file=sys.stderr) if weak else None; sys.exit(1 if weak else 0)\""
@@ -975,16 +1060,17 @@ routine:
               - id: "R4"
                 text: |
                   R4 (intent-requirement traceability) — check three things:
-                  1. COVERAGE: Read intent.md and verify every statement of intent, goal,
-                     constraint, and completion criterion has a [S-XX/T-YY/RN] annotation
-                     (or [NO-REQ] with justification). Any unannotated intent element = F.
-                  2. VALIDITY: Every requirement ID in an annotation must exist in the
-                     routine YAML. Extract all [S-XX/T-YY/RN] references and confirm each
-                     corresponds to a real requirement. Any dangling reference = F.
+                  1. RESOLUTION: Every [I-XX] in intent.md must be fully resolved — either
+                     [I-XX → S-XX/T-YY/RN] with a real requirement ID, or [NO-REQ: reason].
+                     Any provisional [I-XX → S-XX] without a task/requirement suffix = F.
+                     Any bare [I-XX] with no arrow at all = F.
+                  2. VALIDITY: Every [S-XX/T-YY/RN] referenced in an annotation must exist
+                     in the routine YAML. Extract all references and confirm each corresponds
+                     to a real requirement. Any dangling reference = F.
                   3. ALIGNMENT: For each annotation, verify the requirement's desc actually
                      captures the intent element it is tagged against. A requirement that
                      is technically present but too narrow to cover the full intent = B.
-                  A: all three checks pass — full coverage, all IDs valid, all alignments
-                  accurate. B: coverage and validity pass but one or two alignments are
-                  loose (requirement is narrower than the intent element). F: unannotated
-                  intent elements, dangling IDs, or systematic misalignment.
+                  A: all three checks pass — every [I-XX] fully resolved, all IDs valid,
+                  all alignments accurate. B: resolution and validity pass but one or two
+                  alignments are loose (requirement is narrower than the intent element).
+                  F: any unresolved [I-XX], dangling IDs, or systematic misalignment.
