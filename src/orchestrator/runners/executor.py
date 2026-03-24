@@ -8,13 +8,11 @@ creates the appropriate agent and runs it in the background.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import enum
 import logging
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
@@ -36,6 +34,7 @@ from orchestrator.runners.execution.phase_handler import PhaseHandler
 from orchestrator.workflow.errors import InvalidTransitionError
 from orchestrator.workflow.prompts import generate_builder_prompt
 from orchestrator.workflow.summary_cache import SummaryCache
+from orchestrator.workflow.signals import NoTaskReason
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -48,53 +47,6 @@ if TYPE_CHECKING:
     from orchestrator.workflow.service import SubmitEventRegistry, WorkflowService
 
 logger = logging.getLogger(__name__)
-
-
-class NoTaskReason(enum.Enum):
-    """Why _find_next_task returned no actionable task."""
-
-    ALL_COMPLETE = "all_complete"  # All steps are done
-    BLOCKED_BY_GATE = "blocked_by_gate"  # human_approval gate unsatisfied
-    PENDING_USER_ACTION = "pending_user_action"  # Waiting on user input
-    FAN_OUT_IN_PROGRESS = "fan_out_in_progress"  # Fan-out children running (crash recovery)
-    NO_ACTIONABLE_TASKS = "no_actionable_tasks"  # Step has tasks but none actionable
-
-
-@dataclasses.dataclass(frozen=True)
-class LoopAction:
-    """What the executor loop should do when _find_next_task returns no task."""
-
-    kind: Literal["pause", "complete", "fail"]
-    pause_reason: str | None = None  # for kind="pause"
-
-
-def resolve_no_task_action(run: Run, reason: NoTaskReason) -> LoopAction:
-    """Decide what the executor loop should do for a given NoTaskReason.
-
-    Pure function — no DB, no service, no side effects.  The only
-    external call is ``check_run_completion`` which mutates the Run
-    in-memory (sets status/completed_at) but performs no I/O.
-    """
-    if reason == NoTaskReason.BLOCKED_BY_GATE:
-        return LoopAction(kind="pause", pause_reason="awaiting_approval")
-    if reason == NoTaskReason.PENDING_USER_ACTION:
-        return LoopAction(kind="pause", pause_reason="awaiting_user_input")
-    if reason == NoTaskReason.FAN_OUT_IN_PROGRESS:
-        return LoopAction(kind="pause", pause_reason="fan_out_orphaned")
-    if reason == NoTaskReason.NO_ACTIONABLE_TASKS:
-        return LoopAction(kind="pause", pause_reason="no_actionable_tasks")
-    if reason == NoTaskReason.ALL_COMPLETE:
-        from orchestrator.workflow.transitions import check_run_completion
-
-        new_status = check_run_completion(run, datetime.now(timezone.utc))
-        if new_status == RunStatus.COMPLETED:
-            return LoopAction(kind="complete")
-        if new_status == RunStatus.FAILED:
-            return LoopAction(kind="fail")
-        # Still ACTIVE despite all steps done — shouldn't happen
-        return LoopAction(kind="pause", pause_reason="all_steps_complete_but_active")
-    # Defensive: unknown reason — pause rather than leave ACTIVE
-    return LoopAction(kind="pause", pause_reason=f"unknown_reason_{reason.value}")
 
 
 def resolve_verifier_config(
