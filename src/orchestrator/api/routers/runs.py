@@ -514,7 +514,7 @@ async def recover_run(
     agent_type = AgentRunnerType(body.agent_type) if body.agent_type else None
     agent_config = body.agent_config if body.agent_config else None
     try:
-        return await service.recover_run(
+        result = await service.recover_run(
             run_id=run_id,
             target_task_id=body.target_task_id,
             additional_attempts=body.additional_attempts,
@@ -523,6 +523,13 @@ async def recover_run(
             preserve_checklist=body.preserve_checklist,
             guidance=body.guidance,
             reset_branch=body.reset_branch,
+        )
+        # Translate RecoveryResult (workflow domain) to RecoverResponse (API schema)
+        return RecoverResponse(
+            run_id=result.run_id,
+            status=result.status,
+            pause_reason=result.pause_reason,
+            current_step_index=result.current_step_index,
         )
     except (RunNotFoundError, TaskNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

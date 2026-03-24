@@ -2,13 +2,12 @@
 
 import asyncio
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from orchestrator.api.schemas.runs import RecoverResponse
 from orchestrator.config.enums import (
     AgentRunnerType,
     ChecklistStatus,
@@ -104,6 +103,20 @@ class SubmitEventRegistry:
         event = self._events.get(task_id)
         if event is not None:
             event.set()
+
+
+@dataclass
+class RecoveryResult:
+    """Result of a run recovery operation.
+
+    Returned by WorkflowService.recover_run(); translated to RecoverResponse
+    by the API layer (api/routers/runs.py).
+    """
+
+    run_id: str
+    status: str
+    pause_reason: str | None = None
+    current_step_index: int | None = None
 
 
 def find_task_config(
@@ -546,7 +559,7 @@ class WorkflowService:
         preserve_checklist: bool = False,
         guidance: str | None = None,
         reset_branch: bool = True,
-    ) -> RecoverResponse:
+    ) -> RecoveryResult:
         """Recover a run by rewinding to a target task and pausing.
 
         Allowed when the run is FAILED or PAUSED. A common scenario for PAUSED:
@@ -679,7 +692,7 @@ class WorkflowService:
         await self._repo.save(run)
         await self._session.commit()
 
-        return RecoverResponse(
+        return RecoveryResult(
             run_id=run.id,
             status=run.status.value,
             pause_reason=run.pause_reason,
