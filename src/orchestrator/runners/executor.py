@@ -34,7 +34,10 @@ from orchestrator.runners.execution.phase_handler import PhaseHandler
 from orchestrator.workflow.errors import InvalidTransitionError
 from orchestrator.workflow.prompts import generate_builder_prompt
 from orchestrator.workflow.summary_cache import SummaryCache
-from orchestrator.workflow.signals import NoTaskReason
+from orchestrator.workflow.signals import (
+    NoTaskReason,
+    resolve_no_task_action,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -47,6 +50,13 @@ if TYPE_CHECKING:
     from orchestrator.workflow.service import SubmitEventRegistry, WorkflowService
 
 logger = logging.getLogger(__name__)
+
+# Re-exports for backward compatibility
+__all__ = [
+    "AgentRunnerExecutor",
+    "NoTaskReason",
+    "resolve_no_task_action",
+]
 
 
 def resolve_verifier_config(
