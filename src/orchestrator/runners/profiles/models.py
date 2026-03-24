@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from orchestrator.config.enums import ModelProfile
-from orchestrator.db.base import Base
+from orchestrator.db import Base
 
 
 class AgentConfigModel(Base):

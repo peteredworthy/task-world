@@ -2,7 +2,7 @@
 
 from collections.abc import Callable, Sequence
 
-from orchestrator.db.event_store import EventStore
+from orchestrator.db import EventStore
 from orchestrator.workflow.events import WorkflowEvent
 
 

@@ -14,7 +14,7 @@ from httpx import AsyncClient
 from orchestrator.config.models import NudgerConfig
 from orchestrator.config.enums import ChecklistStatus, RoutineSource
 from orchestrator.api.app import create_app
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 from orchestrator.runners.agents.claude_cli.agent import CLIAgent
 from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
 from orchestrator.runners.types import ChecklistUpdateCallback, ExecutionContext, SubmitCallback

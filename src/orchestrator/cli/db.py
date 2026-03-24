@@ -7,8 +7,8 @@ from pathlib import Path
 
 import click
 
-from orchestrator.db.backup import BackupError, create_backup, restore_backup
-from orchestrator.db.event_journal import resolve_default_journal_path
+from orchestrator.db import BackupError, create_backup, restore_backup
+from orchestrator.db import resolve_default_journal_path
 
 
 @click.group()

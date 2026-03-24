@@ -21,7 +21,7 @@ from orchestrator.api.schemas.repos import (
     ReposListResponse,
     RepoStatsResponse,
 )
-from orchestrator.db.models import RunModel
+from orchestrator.db import RunModel
 from orchestrator.git import branch_count, get_repo, list_branches, list_repos
 from orchestrator.config.routines.discovery import discover_routines_in_repo, get_routine_from_repo
 

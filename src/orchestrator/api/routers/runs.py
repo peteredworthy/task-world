@@ -63,8 +63,8 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db.event_store import EventStore
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import EventStore
+from orchestrator.db import RunRepository
 from orchestrator.api.metrics import estimate_cost
 from orchestrator.config.routines.discovery import discover_routines
 from orchestrator.config.routines.errors import RoutineNotFoundError
@@ -815,7 +815,7 @@ async def approve_step(
         "waiting_for_approval",
         "awaiting_approval",
     ):
-        from orchestrator.db.event_store import EventStore
+        from orchestrator.db import EventStore
         from orchestrator.workflow.event_logger import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 

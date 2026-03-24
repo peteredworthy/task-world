@@ -86,7 +86,7 @@ class DbSignalTransport(SignalTransport):
         signal_type: WorkflowSignal,
         payload: dict[str, Any] | None = None,
     ) -> PendingSignal:
-        from orchestrator.db.models import PendingSignalModel
+        from orchestrator.db import PendingSignalModel
 
         now = datetime.now(timezone.utc)
         signal_id = str(uuid.uuid4())
@@ -112,7 +112,7 @@ class DbSignalTransport(SignalTransport):
     async def drain(self, run_id: str) -> list[PendingSignal]:
         from sqlalchemy import select
 
-        from orchestrator.db.models import PendingSignalModel
+        from orchestrator.db import PendingSignalModel
 
         now = datetime.now(timezone.utc)
         stmt = (

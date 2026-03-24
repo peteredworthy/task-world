@@ -6,8 +6,8 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import RunRepository
 from orchestrator.workflow.clarifications import (
     ClarificationAnswer,
     ClarificationQuestion,

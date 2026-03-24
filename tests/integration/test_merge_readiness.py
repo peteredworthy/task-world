@@ -19,8 +19,8 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource, RunStatus
-from orchestrator.db.connection import init_db
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import init_db
+from orchestrator.db import RunRepository
 from orchestrator.git.testing import TestRunResult
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"

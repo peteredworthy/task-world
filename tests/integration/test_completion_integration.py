@@ -20,7 +20,7 @@ from orchestrator.config.models import (
     StepConfig,
     TaskConfig,
 )
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Attempt

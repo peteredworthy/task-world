@@ -28,7 +28,7 @@ from orchestrator.config.models import (
     TaskConfig,
     StepCondition,
 )
-from orchestrator.db.connection import (
+from orchestrator.db import (
     create_engine,
     create_session_factory,
     init_db,

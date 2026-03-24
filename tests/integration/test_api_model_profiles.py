@@ -7,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import ModelProfile
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 
 
 @pytest.fixture

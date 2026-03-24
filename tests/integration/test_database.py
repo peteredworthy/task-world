@@ -9,8 +9,8 @@ from collections.abc import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
-from orchestrator.db.models import AttemptModel, EventModel, RunModel, StepModel, TaskModel
+from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import AttemptModel, EventModel, RunModel, StepModel, TaskModel
 
 
 @pytest.fixture

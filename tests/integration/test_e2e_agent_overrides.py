@@ -24,7 +24,7 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.runners.profiles.service import seed_default_agents
 from orchestrator.api.app import create_app
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 from orchestrator.workflow.signals import InMemorySignalTransport
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 

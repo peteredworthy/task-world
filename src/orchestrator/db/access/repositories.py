@@ -17,7 +17,7 @@ from orchestrator.config.enums import (
     RunStatus,
     TaskStatus,
 )
-from orchestrator.db.models import (
+from orchestrator.db.orm.models import (
     AttemptModel,
     ClarificationRequestModel,
     ClarificationResponseModel,

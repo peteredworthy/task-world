@@ -10,12 +10,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.db.event_journal import (
+from orchestrator.db.recovery.event_journal import (
     JsonlEventJournal,
     make_journal_entry,
     resolve_default_journal_path_from_session,
 )
-from orchestrator.db.models import EventModel
+from orchestrator.db.orm.models import EventModel
 from orchestrator.time_utils import ensure_utc, format_utc_datetime
 from orchestrator.workflow.events import WorkflowEvent
 

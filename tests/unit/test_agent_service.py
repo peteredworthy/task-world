@@ -14,7 +14,7 @@ from orchestrator.runners.profiles.errors import (
 from orchestrator.runners.profiles.schemas import CreateAgentRequest, UpdateAgentRequest
 from orchestrator.runners.profiles.service import AgentService, seed_default_agents
 from orchestrator.config.enums import ModelProfile
-from orchestrator.db.base import Base
+from orchestrator.db import Base
 
 
 @pytest.fixture

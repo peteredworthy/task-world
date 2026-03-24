@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from orchestrator.runners.profiles.models import AgentConfigModel
 from orchestrator.runners.profiles.resolution import get_agent_system_prompt, resolve_agent_name
-from orchestrator.db.base import Base
+from orchestrator.db import Base
 
 
 # ---------------------------------------------------------------------------

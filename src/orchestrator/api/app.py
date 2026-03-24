@@ -24,7 +24,7 @@ from orchestrator.api.errors import register_error_handlers
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
 from orchestrator.config.enums import RoutineSource, RunStatus
 from orchestrator.config.global_config import GlobalConfig, load_global_config
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.envfiles.cleanup import EnvFileCleanup
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
     from orchestrator.runners.monitor import AgentRunnerMonitor
-    from orchestrator.db.repositories import RunRepository
+    from orchestrator.db import RunRepository
 
     await init_db(app.state.engine)
 
@@ -78,7 +78,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             executor = app.state.runner_executor
             async with session_factory() as session:
-                from orchestrator.db.repositories import RunRepository as _RR
+                from orchestrator.db import RunRepository as _RR
 
                 repo = _RR(session)
                 active_runs = await repo.list_by_status(RunStatus.ACTIVE)
@@ -105,7 +105,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # startup we restore them to ACTIVE and re-spawn the executor loop so
             # they continue from where they left off without user intervention.
             async with session_factory() as session:
-                from orchestrator.db.repositories import RunRepository as _RR2
+                from orchestrator.db import RunRepository as _RR2
 
                 repo2 = _RR2(session)
                 paused_runs_all = await repo2.list_by_status(RunStatus.PAUSED)
@@ -172,8 +172,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                                 continue
 
                     async with session_factory() as session:
-                        from orchestrator.db.repositories import RunRepository as _RR3
-                        from orchestrator.db.event_store import EventStore as _ES3
+                        from orchestrator.db import RunRepository as _RR3
+                        from orchestrator.db import EventStore as _ES3
                         from orchestrator.workflow.event_logger import (
                             PersistentEventEmitter as _PEE3,
                         )
@@ -312,8 +312,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         )
                         try:
                             async with session_factory() as session:
-                                from orchestrator.db.repositories import RunRepository as _RRS
-                                from orchestrator.db.event_store import EventStore as _ESS
+                                from orchestrator.db import RunRepository as _RRS
+                                from orchestrator.db import EventStore as _ESS
                                 from orchestrator.workflow.event_logger import (
                                     PersistentEventEmitter as _PEES,
                                 )
@@ -599,8 +599,8 @@ class _SessionPerCallHandler:
         self._app = app
 
     async def handle(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.api.mcp.tools import ToolHandler
         from orchestrator.workflow.event_logger import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService

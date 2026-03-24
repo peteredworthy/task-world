@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.api.deps import get_session
 from orchestrator.api.schemas.model_profiles import RunnerProfileDefaultsSchema
 from orchestrator.config.enums import ModelProfile
-from orchestrator.db.models import RunnerProfileDefaultModel
+from orchestrator.db import RunnerProfileDefaultModel
 from orchestrator.runners.detector import ToolDetector
 from orchestrator.runners.types import AgentRunnerOption
 

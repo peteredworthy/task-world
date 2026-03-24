@@ -12,8 +12,8 @@ from orchestrator.api.auth import AuthConfig
 from orchestrator.api.websocket import ConnectionManager
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.global_config import GlobalConfig
-from orchestrator.db.event_store import EventStore
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import EventStore
+from orchestrator.db import RunRepository
 from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import WorkflowEvent

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 from orchestrator.workflow.locks import InMemoryLockManager
 from orchestrator.workflow.signals import InMemorySignalTransport
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
@@ -427,7 +427,7 @@ async def test_cost_estimation_in_response(client_and_drain: tuple[AsyncClient, 
     assert run_final["total_tokens_read"] == 0, "No tokens tracked through API"
 
     # 2. Manually update token counts via the repo layer
-    from orchestrator.db.repositories import RunRepository
+    from orchestrator.db import RunRepository
 
     app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
     session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
@@ -650,7 +650,7 @@ async def test_auto_verify_results_in_response(
 
     We set worktree_path to tmp_path so auto-verify commands can run.
     """
-    from orchestrator.db.repositories import RunRepository
+    from orchestrator.db import RunRepository
 
     client, drain = client_and_drain
     # 1. Create run with embedded routine that has auto_verify

@@ -217,7 +217,7 @@ class RunWorkflow:
             # uses the direct-DB path.
             try:
                 async with self.session_factory() as session:
-                    from orchestrator.db.repositories import RunRepository
+                    from orchestrator.db import RunRepository
 
                     repo = RunRepository(session)
                     run = await repo.get(run_id)
@@ -391,7 +391,7 @@ class RunWorkflow:
         """
         from sqlalchemy import select
 
-        from orchestrator.db.models import RunModel
+        from orchestrator.db import RunModel
 
         stmt = select(RunModel.scheduled_resume_at).where(RunModel.id == self.run_id)
         result = await session.execute(stmt)
@@ -420,7 +420,7 @@ class RunWorkflow:
         that the signal-routing check in WorkflowService uses the direct-DB
         path (not the signal queue).
         """
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
         from orchestrator.workflow.events import ApprovalRequested
 
         # All executor services must be present when _run_loop() is called.

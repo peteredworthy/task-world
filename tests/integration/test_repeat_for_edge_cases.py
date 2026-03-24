@@ -23,7 +23,7 @@ from orchestrator.config.models import (
     TaskConfig,
     StepCondition,
 )
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService

@@ -8,7 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.runners.profiles.service import seed_default_agents
 from orchestrator.api.app import create_app
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 
 
 @pytest.fixture

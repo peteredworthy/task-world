@@ -9,7 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 from orchestrator.config.routines.discovery import discover_routines_in_repo, get_routine_from_repo
 
 

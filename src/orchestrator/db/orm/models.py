@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from orchestrator.db.base import Base
+from orchestrator.db.orm.base import Base
 
 
 @dataclass

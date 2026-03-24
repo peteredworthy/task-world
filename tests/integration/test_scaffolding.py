@@ -267,9 +267,9 @@ class TestScaffoldingIntegration:
         from orchestrator.runners.executor import AgentRunnerExecutor
         from orchestrator.config.enums import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
-        from orchestrator.db.connection import create_engine, create_session_factory, init_db
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import create_engine, create_session_factory, init_db
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
         from orchestrator.workflow.event_logger import PersistentEventEmitter
@@ -413,9 +413,9 @@ steps:
         from orchestrator.runners.executor import AgentRunnerExecutor
         from orchestrator.config.enums import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
-        from orchestrator.db.connection import create_engine, create_session_factory, init_db
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import create_engine, create_session_factory, init_db
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
         from orchestrator.workflow.event_logger import PersistentEventEmitter

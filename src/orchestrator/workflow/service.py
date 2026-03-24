@@ -17,8 +17,8 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
-from orchestrator.db.event_store import EventStore
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import EventStore
+from orchestrator.db import RunRepository
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
@@ -2116,7 +2116,7 @@ class WorkflowService:
         """
         from sqlalchemy import func, select as sa_select
 
-        from orchestrator.db.models import ClarificationRequestModel
+        from orchestrator.db import ClarificationRequestModel
 
         run = await self._repo.get(run_id)
         task = self._find_task(run, task_id)

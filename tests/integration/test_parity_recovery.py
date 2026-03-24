@@ -22,8 +22,8 @@ from sqlalchemy.pool import NullPool
 
 from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
-from orchestrator.db.base import Base
-from orchestrator.db.connection import create_session_factory
+from orchestrator.db import Base
+from orchestrator.db import create_session_factory
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
 

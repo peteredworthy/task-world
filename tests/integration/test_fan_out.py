@@ -23,9 +23,9 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.models import RequirementConfig, StepConfig, TaskConfig
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db.base import Base
-from orchestrator.db.connection import create_session_factory
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import Base
+from orchestrator.db import create_session_factory
+from orchestrator.db import RunRepository
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config.routines.loader import load_routine_from_path
@@ -181,7 +181,7 @@ class TestExpandFanOut:
         run = _make_fan_out_run(routine, str(tmp_path))
 
         service = WorkflowService(session)
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
         await repo.save(run)
@@ -285,7 +285,7 @@ class TestExpandFanOut:
         run = _make_fan_out_run(routine, str(tmp_path))
 
         service = WorkflowService(session)
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
         await repo.save(run)
@@ -315,7 +315,7 @@ class TestScriptExecution:
         run = _make_script_run(routine, str(tmp_path))
 
         service = WorkflowService(session)
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
         await repo.save(run)
@@ -363,7 +363,7 @@ class TestScriptExecution:
         run = _make_script_run(routine, str(tmp_path), run_id="run-fail")
 
         service = WorkflowService(session)
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
         await repo.save(run)
@@ -422,7 +422,7 @@ class TestScriptExecution:
         run.worktree_path = str(tmp_path)
 
         service = WorkflowService(session)
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
         await repo.save(run)
@@ -458,7 +458,7 @@ class TestChildTaskStateManagement:
         (output_dir / "step-01.md").write_text("file 1")
 
         service = WorkflowService(session)
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
         await repo.save(run)
@@ -525,7 +525,7 @@ class TestChildTaskStateManagement:
         (output_dir / "step-02.md").write_text("file 2")
 
         service = WorkflowService(session)
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
         await repo.save(run)

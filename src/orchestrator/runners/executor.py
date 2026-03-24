@@ -157,8 +157,8 @@ class AgentRunnerExecutor:
 
     async def _create_service(self, session: AsyncSession) -> WorkflowService:
         """Create a WorkflowService for the given session."""
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
         from orchestrator.workflow.event_logger import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
@@ -440,7 +440,7 @@ class AgentRunnerExecutor:
 
                 try:
                     async with self._session_factory() as session:
-                        from orchestrator.db.repositories import RunRepository
+                        from orchestrator.db import RunRepository
 
                         repo = RunRepository(session)
                         run = await repo.get(run_id)
@@ -688,7 +688,7 @@ class AgentRunnerExecutor:
             from sqlalchemy import select as sa_select
 
             from orchestrator.config.enums import ModelProfile
-            from orchestrator.db.models import RunnerProfileDefaultModel
+            from orchestrator.db import RunnerProfileDefaultModel
             from orchestrator.runners.profile_resolution import resolve_model_for_profile
 
             rows = (

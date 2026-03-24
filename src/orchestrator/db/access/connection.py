@@ -14,12 +14,12 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.pool import NullPool, StaticPool
 
-from orchestrator.db.base import Base
+from orchestrator.db.orm.base import Base
 
 logger = logging.getLogger(__name__)
 
-# Path to Alembic migration scripts (sibling directory to this file)
-_MIGRATIONS_DIR = Path(__file__).parent / "migrations"
+# Path to Alembic migration scripts (two levels up from this file)
+_MIGRATIONS_DIR = Path(__file__).parent.parent / "migrations"
 
 
 def create_engine(db_path: Path | str = ":memory:") -> AsyncEngine:

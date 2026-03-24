@@ -8,9 +8,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from orchestrator.db.event_journal import parse_journal_timestamp, read_journal_entries
-from orchestrator.db.recovery import replay_events
-from orchestrator.db.repositories import CheckpointRepository, RunRepository
+from orchestrator.db.recovery.event_journal import parse_journal_timestamp, read_journal_entries
+from orchestrator.db.recovery.recovery import replay_events
+from orchestrator.db.access.repositories import CheckpointRepository, RunRepository
 from orchestrator.state.errors import RunNotFoundError
 
 logger = logging.getLogger(__name__)

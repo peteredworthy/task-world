@@ -111,8 +111,8 @@ class AgentRunnerMonitor:
                 Set to False when called from within the executor loop where
                 the error will propagate to _run_loop's exception handler.
         """
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
 
         async with self._session_factory() as session:
             repo = RunRepository(session)
@@ -291,7 +291,7 @@ class AgentRunnerMonitor:
         Returns:
             List of run IDs that were transitioned to PAUSED.
         """
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         paused_runs: list[str] = []
 

@@ -44,7 +44,7 @@ class EventBroadcaster:
         """Persist a log event and broadcast via WebSocket."""
         try:
             async with self._session_factory() as session:
-                from orchestrator.db.event_store import EventStore
+                from orchestrator.db import EventStore
 
                 store = EventStore(session)
                 await store.append(event)
