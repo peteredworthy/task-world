@@ -8,11 +8,17 @@ from typing import TYPE_CHECKING
 # ORM base and models (not in __all__ — use repositories for public API)
 # Imported here for backward compatibility with existing code that imports from db
 from orchestrator.db.orm.base import Base
-from orchestrator.db.orm.models import (
+from orchestrator.db.orm.models import (  # noqa: F401
+    AttemptModel,
     ClarificationRequestModel,
+    ClarificationResponseModel,
+    EventModel,
     PendingSignalModel,
+    ReplayCheckpointModel,
     RunModel,
     RunnerProfileDefaultModel,
+    StepModel,
+    TaskModel,
 )
 
 # Connection management
