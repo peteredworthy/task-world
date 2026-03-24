@@ -24,7 +24,7 @@ from orchestrator.api.deps import (
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
 from orchestrator.runners.executor import AgentRunnerExecutor
-from orchestrator.review.test_runner import TestRunner
+from orchestrator.git.testing import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
     AgentCancelledRequest,

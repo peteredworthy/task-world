@@ -3,16 +3,15 @@
 from pathlib import Path
 from typing import Any, Protocol
 
-from orchestrator.cache.lru_cache import Cache
-from orchestrator.git.diff_ops import (
-    CommitInfo,
-    ModifiedFile,
+from orchestrator.git.diff.diff_ops import (
     get_branch_diff,
     get_commit_diff,
     get_commit_log,
     get_modified_files,
     get_task_diff,
 )
+from orchestrator.git.diff.lru_cache import Cache
+from orchestrator.git.diff.models import CommitInfo, ModifiedFile
 
 
 class DiffOps(Protocol):

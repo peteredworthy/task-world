@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from orchestrator.git.diff_models import CommitInfo, FileStatus, ModifiedFile
+from orchestrator.git.diff.models import CommitInfo, FileStatus, ModifiedFile
 from orchestrator.git.errors import GitCommandError
 
 

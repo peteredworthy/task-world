@@ -6,6 +6,7 @@ from enum import Enum
 from pydantic import BaseModel
 
 
+# From diff_models.py (Phase 0)
 class FileStatus(str, Enum):
     """Status of a modified file."""
 
@@ -32,3 +33,20 @@ class CommitInfo(BaseModel):
     message: str
     author: str
     timestamp: datetime
+
+
+# From review/models.py
+class DiffScope(str, Enum):
+    """Scope of a diff operation."""
+
+    FILE = "file"
+    BRANCH = "branch"
+    COMMIT = "commit"
+
+
+class DiffResult(BaseModel):
+    """Result of a diff operation."""
+
+    raw_diff: str
+    file_path: str | None = None
+    scope: DiffScope = DiffScope.BRANCH

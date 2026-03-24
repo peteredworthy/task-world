@@ -22,7 +22,7 @@ from orchestrator.workflow.signals import DbSignalTransport, SignalTransport
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
-from orchestrator.review.test_runner import TestRunner
+from orchestrator.git.testing import TestRunner
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:

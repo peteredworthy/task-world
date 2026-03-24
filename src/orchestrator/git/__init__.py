@@ -1,13 +1,14 @@
 """Git integration for orchestrator."""
 
-from orchestrator.git.branch_ops import (
-    BackMergeResult,
-    BranchStatus,
-    RevertBackMergeResult,
-    back_merge,
-    get_branch_status,
-    merge_back,
-    revert_back_merge,
+from orchestrator.git.diff import (
+    Cache,
+    CommitInfo,
+    DiffResult,
+    DiffScope,
+    FileStatus,
+    GitDiffOps,
+    LRUCache,
+    ModifiedFile,
 )
 from orchestrator.git.errors import (
     BranchError,
@@ -16,24 +17,69 @@ from orchestrator.git.errors import (
     MergeConflictError,
     WorktreeError,
 )
+from orchestrator.git.ops import (
+    BackMergeResult,
+    BlockResolution,
+    BranchStatus,
+    RevertBackMergeResult,
+    back_merge,
+    get_branch_status,
+    get_conflict_blocks,
+    get_conflict_files,
+    merge_back,
+    resolve_conflict,
+    revert_back_merge,
+)
 from orchestrator.git.project_init import InitializedProject, init_project
+from orchestrator.git.repos import (
+    BranchInfo,
+    RepoInfo,
+    RepoNotFoundError,
+    branch_count,
+    get_repo,
+    list_branches,
+    list_repos,
+)
+from orchestrator.git.testing import TestRunResult, TestRunner, TestSummary
 from orchestrator.git.worktree import WorktreeInfo, WorktreeManager
 
 __all__ = [
     "BackMergeResult",
+    "BlockResolution",
     "BranchError",
+    "BranchInfo",
     "BranchNotFoundError",
     "BranchStatus",
+    "Cache",
+    "CommitInfo",
+    "DiffResult",
+    "DiffScope",
+    "FileStatus",
+    "GitDiffOps",
     "GitError",
     "InitializedProject",
+    "LRUCache",
     "MergeConflictError",
+    "ModifiedFile",
+    "RepoInfo",
+    "RepoNotFoundError",
     "RevertBackMergeResult",
+    "TestRunResult",
+    "TestRunner",
+    "TestSummary",
     "WorktreeError",
     "WorktreeInfo",
     "WorktreeManager",
     "back_merge",
+    "branch_count",
     "get_branch_status",
+    "get_conflict_blocks",
+    "get_conflict_files",
+    "get_repo",
     "init_project",
+    "list_branches",
+    "list_repos",
     "merge_back",
+    "resolve_conflict",
     "revert_back_merge",
 ]

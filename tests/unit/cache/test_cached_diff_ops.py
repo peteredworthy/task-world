@@ -6,8 +6,7 @@ Uses a real StubDiffOps (no MagicMock) together with a real LRUCache instance.
 from pathlib import Path
 
 
-from orchestrator.cache.lru_cache import LRUCache
-from orchestrator.git.cached_diff_ops import CachedDiffOps
+from orchestrator.git.diff import LRUCache, CachedDiffOps
 
 
 # ---------------------------------------------------------------------------

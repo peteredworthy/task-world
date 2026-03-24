@@ -499,7 +499,7 @@ def create_app(
     app.state.env_lifecycle = EnvFileLifecycle(app.state.envfile_store)
 
     # Test runner for review workbench test execution
-    from orchestrator.review.test_runner import TestRunner
+    from orchestrator.git.testing import TestRunner
 
     app.state.test_runner = TestRunner()
 

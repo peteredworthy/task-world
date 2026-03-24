@@ -40,18 +40,18 @@ from orchestrator.api.schemas.review import (
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
-from orchestrator.git.branch_ops import get_branch_status, revert_back_merge
-from orchestrator.state.models import Run
-from orchestrator.git.conflict_ops import (
+from orchestrator.git.ops import get_branch_status, revert_back_merge
+from orchestrator.git.ops.conflict_ops import (
     BlockResolution as ConflictBlockResolution,
     get_conflict_blocks,
     get_conflict_files,
     resolve_conflict,
 )
-from orchestrator.cache.lru_cache import LRUCache
-from orchestrator.git.cached_diff_ops import CachedDiffOps, DiffOps, GitDiffOps
+from orchestrator.state.models import Run
+from orchestrator.git import LRUCache
+from orchestrator.git.diff import CachedDiffOps, DiffOps, GitDiffOps
 from orchestrator.git.errors import GitCommandError
-from orchestrator.git.prune_ops import (
+from orchestrator.git.ops.prune_ops import (
     FileSelectionEntry,
     apply_prune,
     compute_selection_preview,
@@ -59,7 +59,7 @@ from orchestrator.git.prune_ops import (
     prune_lines,
     revert_file,
 )
-from orchestrator.review.test_runner import TestRunResult, TestRunner
+from orchestrator.git.testing import TestRunResult, TestRunner
 from orchestrator.workflow.event_logger import PersistentEventEmitter
 from orchestrator.workflow.events import (
     AgentFixStarted,

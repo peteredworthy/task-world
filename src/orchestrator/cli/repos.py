@@ -6,8 +6,8 @@ from pathlib import Path
 import click
 
 from orchestrator.config.global_config import load_global_config
-from orchestrator.repos.discovery import get_repo, list_branches, list_repos
-from orchestrator.repos.errors import RepoNotFoundError
+from orchestrator.git import get_repo, list_branches, list_repos
+from orchestrator.git.repos import RepoNotFoundError
 
 
 @click.group()

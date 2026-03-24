@@ -208,7 +208,7 @@ class TestStartTestRun:
         run_id = run_data["id"]
         worktree_path = run_data["worktree_path"]
 
-        from orchestrator.review.test_runner import TestRunner
+        from orchestrator.git.testing import TestRunner
 
         test_runner: TestRunner = app.state.test_runner
 
@@ -285,7 +285,7 @@ class TestGetTestRun:
         """A command that exits non-zero causes the test run to report 'failed'."""
         client, repo, app = client_with_auto_verify
 
-        from orchestrator.review.test_runner import TestRunner
+        from orchestrator.git.testing import TestRunner
 
         test_runner: TestRunner = app.state.test_runner
 
