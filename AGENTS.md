@@ -243,6 +243,8 @@ The 9 top-level modules are: `api`, `cli`, `config`, `db`, `envfiles`, `git`, `r
 
 The most common reason an issue appears "pre-existing" is that it was introduced earlier in the current session (possibly by a sub-agent) and then forgotten. Take ownership: read the error, find the cause, and fix it. If a lint error is in a file you didn't intend to modify, check your git diff — you almost certainly did modify it, or a sub-agent did on your behalf.
 
+**NEVER bypass pre-commit hooks.** Using `git commit --no-verify` is strictly forbidden under any circumstances — including sandbox permission errors, time pressure, or the belief that the failure is unrelated to your changes. If pre-commit cannot run due to an environmental issue (e.g. a permission error writing to `~/.cache/pre-commit`), stop and report the problem rather than bypassing it. Bypassing hooks defeats the entire safety net: type errors, lint violations, and broken tests will silently enter the codebase and cause failures that are much harder to diagnose later.
+
 **Do not skip, suppress, or work around failing checks.** Do not use `--no-verify`, add `# noqa` / `# type: ignore` to silence errors you introduced, or delete tests that fail because of your changes. Fix the underlying problem.
 
 ## Testing
