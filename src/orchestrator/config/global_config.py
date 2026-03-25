@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import yaml
 from pydantic import BaseModel
 
-if TYPE_CHECKING:
-    from orchestrator.runners.nudger import NudgerConfig as AgentNudgerConfig
+from orchestrator.config.models import NudgerConfig as AgentNudgerConfig
 
 
 class ServerConfig(BaseModel):
@@ -51,8 +50,6 @@ class NudgerConfig(BaseModel):
         uses timedeltas for more flexible configuration.
         """
         from datetime import timedelta
-
-        from orchestrator.runners.nudger import NudgerConfig as AgentNudgerConfig
 
         return AgentNudgerConfig(
             output_timeout=timedelta(seconds=self.nudge_after_seconds),

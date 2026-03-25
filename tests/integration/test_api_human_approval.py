@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import AgentRunnerType, GateType, RoutineSource, TaskStatus
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 from orchestrator.config.models import (
     GateConfig,
     RequirementConfig,
@@ -392,11 +392,11 @@ async def test_executor_stops_at_human_approval_gate(
     )
 
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
@@ -478,12 +478,12 @@ async def test_executor_proceeds_after_gate_approved(
     )
 
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.state.models import HumanApproval
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
@@ -647,11 +647,11 @@ async def test_step_without_gate_not_blocked(
     )
 
     async with session_factory() as session:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)

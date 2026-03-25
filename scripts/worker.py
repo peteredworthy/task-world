@@ -73,7 +73,7 @@ async def _poll_and_spawn(
     }
 
     async with session_factory() as session:  # type: ignore[operator]
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
         active_runs = await repo.list_by_status(RunStatus.ACTIVE)
@@ -110,7 +110,7 @@ async def _worker_main() -> None:
     # ------------------------------------------------------------------
     # Initialise DB
     # ------------------------------------------------------------------
-    from orchestrator.db.connection import create_engine, create_session_factory, init_db
+    from orchestrator.db import create_engine, create_session_factory, init_db
 
     db_url = f"sqlite+aiosqlite:///{db_path}" if not db_path.startswith("sqlite") else db_path
     engine = create_engine(db_url)

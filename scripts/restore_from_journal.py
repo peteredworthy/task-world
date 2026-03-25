@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import yaml
 
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db.recovery import replay_events
+from orchestrator.db import replay_events
 from orchestrator.state.models import Run, StepState, TaskState, ChecklistItem, Attempt
 from orchestrator.config.enums import TaskStatus
 
@@ -243,7 +243,7 @@ def build_run_skeleton(run_id: str, definition: dict) -> Run:
 
 def load_journal_events(run_id: str) -> list[dict]:
     """Load and parse journal events for a specific run."""
-    from orchestrator.db.event_journal import parse_journal_timestamp
+    from orchestrator.db import parse_journal_timestamp
 
     events = []
     with open(JOURNAL_PATH) as f:
@@ -276,7 +276,7 @@ def load_journal_events(run_id: str) -> list[dict]:
 
 async def restore_run(run_id: str, definition: dict, session) -> Run | None:
     """Restore a single run from journal."""
-    from orchestrator.db.repositories import RunRepository
+    from orchestrator.db import RunRepository
 
     print(f"\n{'=' * 60}")
     print(f"Restoring run: {run_id}")

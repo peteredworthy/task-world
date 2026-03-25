@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.runners.quota import FakeQuotaFetcher
+from orchestrator.runners import FakeQuotaFetcher
 from orchestrator.runners.types import AgentQuota
 
 

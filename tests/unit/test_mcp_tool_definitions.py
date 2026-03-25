@@ -1,6 +1,6 @@
 """Unit tests for MCP tool definitions — pure, zero I/O."""
 
-from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS
+from orchestrator.api.mcp.tools import ORCHESTRATOR_TOOLS
 
 
 def test_tool_definitions_well_formed() -> None:

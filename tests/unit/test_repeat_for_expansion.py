@@ -20,7 +20,7 @@ from orchestrator.config.models import (
 )
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run, StepState, TaskState, Attempt
-from orchestrator.workflow.transitions import (
+from orchestrator.workflow import (
     _parse_repeat_for_expression,
     _get_variable_value_for_repeat,
     _create_repeat_step_copies,

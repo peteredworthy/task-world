@@ -1,6 +1,6 @@
 """Tests for cost estimation."""
 
-from orchestrator.metrics.cost import estimate_cost
+from orchestrator.api.metrics import estimate_cost
 
 
 class TestEstimateCost:

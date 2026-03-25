@@ -27,9 +27,9 @@ from orchestrator.runners.types import (
     GradeCallback,
     LogLineCallback,
     SubmitCallback,
+    TaskSubmitCallback,
 )
 from orchestrator.config.enums import AgentRunnerType
-from orchestrator.workflow.service import WorkflowService
 
 
 class UserManagedAgent:
@@ -39,13 +39,14 @@ class UserManagedAgent:
     actor to interact with the orchestrator via REST API or MCP tools
     and eventually call submit.
 
-    The agent uses :meth:`WorkflowService.register_submit_event` to receive
-    a notification when ``submit_for_verification`` is called for its task.
+    The agent uses the TaskSubmitCallback protocol to register and wait for
+    submit events, allowing external actors to notify when
+    ``submit_for_verification`` is called for its task.
     """
 
     def __init__(
         self,
-        service: WorkflowService,
+        service: TaskSubmitCallback,
         callback_channel: str = "mcp",
         timeout_minutes: int = 60,
         poll_interval: float = 1.0,

@@ -3,7 +3,7 @@
 import pytest
 
 from orchestrator.config.enums import ModelProfile
-from orchestrator.runners.profile_resolution import resolve_model_for_profile
+from orchestrator.runners import resolve_model_for_profile
 
 
 class TestModelProfileEnum:

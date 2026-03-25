@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig, TaskConfig
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow.signals import InMemorySignalTransport

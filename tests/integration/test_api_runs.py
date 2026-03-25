@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 from orchestrator.workflow.signals import InMemorySignalTransport
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
@@ -800,7 +800,7 @@ async def test_run_response_includes_cost_estimation(client: AsyncClient) -> Non
     assert data["cost_disclaimer"] is None
 
     # Simulate task execution by updating the run state with token data
-    from orchestrator.db.repositories import RunRepository
+    from orchestrator.db import RunRepository
 
     app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
     session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)

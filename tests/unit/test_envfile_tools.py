@@ -2,10 +2,10 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
+from orchestrator.config.models import EnvFileSpec
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.tools import EnvFileToolExecutor
 from orchestrator.envfiles.models import (
-    EnvFileSpec,
     SnapshotManifest,
     SnapshotPoint,
     SnapshotPointType,

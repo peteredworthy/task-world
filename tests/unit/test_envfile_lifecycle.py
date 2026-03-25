@@ -3,8 +3,9 @@
 import pytest
 from pathlib import Path
 
+from orchestrator.config.models import EnvFileSpec
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
-from orchestrator.envfiles.models import EnvFileSpec, SnapshotPointType
+from orchestrator.envfiles.models import SnapshotPointType
 from orchestrator.envfiles.store import EnvFileStore
 
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.repos import (
+from orchestrator.git.repos import (
     RepoNotFoundError,
     branch_count,
     get_repo,

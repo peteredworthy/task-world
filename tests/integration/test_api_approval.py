@@ -14,7 +14,7 @@ from orchestrator.config.models import (
     StepConfig,
     TaskConfig,
 )
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 

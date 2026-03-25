@@ -7,13 +7,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from orchestrator.config.models import NudgerConfig
 from orchestrator.runners.agents.claude_cli.agent import CLIAgent
 from orchestrator.runners.agents.claude_cli.parser import ClaudeStreamParser
 from orchestrator.runners.agents.codex.parser import CodexStreamParser
-from orchestrator.runners.nudger import NudgerConfig
 
 if TYPE_CHECKING:
-    from orchestrator.runners.monitor import AgentRunnerMonitor
+    from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
     from orchestrator.config.global_config import GlobalConfig
 
 

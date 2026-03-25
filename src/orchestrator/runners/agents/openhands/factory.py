@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from orchestrator.runners.config_utils import coerce_llm_config
+from orchestrator.runners.detection.config_utils import coerce_llm_config
 
 
 def create_local(

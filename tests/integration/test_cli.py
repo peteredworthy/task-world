@@ -11,7 +11,7 @@ from httpx import AsyncClient
 
 from orchestrator.api.app import create_app
 from orchestrator.cli.main import cli
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 
 
 @pytest.fixture

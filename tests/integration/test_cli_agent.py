@@ -11,13 +11,13 @@ import pytest
 import uvicorn
 from httpx import AsyncClient
 
+from orchestrator.config.models import NudgerConfig
+from orchestrator.config.enums import ChecklistStatus, RoutineSource
+from orchestrator.api.app import create_app
+from orchestrator.db import init_db
 from orchestrator.runners import CLIAgent
 from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
-from orchestrator.runners.nudger import NudgerConfig
 from orchestrator.runners.types import ChecklistUpdateCallback, ExecutionContext, SubmitCallback
-from orchestrator.api.app import create_app
-from orchestrator.config.enums import ChecklistStatus, RoutineSource
-from orchestrator.db.connection import init_db
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -352,7 +352,7 @@ async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state() -> Non
         sock.bind(("127.0.0.1", 0))
         port = sock.getsockname()[1]
 
-    from orchestrator.workflow.signals import InMemorySignalTransport
+    from orchestrator.workflow import InMemorySignalTransport
 
     app = create_app(
         db_path=":memory:",

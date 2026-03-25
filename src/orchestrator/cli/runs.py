@@ -14,11 +14,11 @@ import httpx
 import websockets
 
 from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
-from orchestrator.db.event_journal import resolve_default_journal_path
-from orchestrator.db.journal_replay import replay_journal_to_repository
-from orchestrator.db.repositories import CheckpointRepository, RunRepository
-from orchestrator.routines.discovery import discover_routines
+from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import resolve_default_journal_path
+from orchestrator.db import replay_journal_to_repository
+from orchestrator.db import CheckpointRepository, RunRepository
+from orchestrator.config import discover_routines
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.locks import InMemoryLockManager
 from orchestrator.workflow.service import WorkflowService
@@ -438,7 +438,7 @@ def replay_journal(
                 existing_cp = await checkpoint_repo.get_checkpoint(str(selected_journal))
             if existing_cp is not None:
                 # Read max sequence from journal to validate consistency
-                from orchestrator.db.backup import scan_max_sequence
+                from orchestrator.db import scan_max_sequence
 
                 max_journal_seq = scan_max_sequence(selected_journal)
                 if existing_cp.last_applied_sequence > max_journal_seq:

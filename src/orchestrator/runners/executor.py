@@ -8,19 +8,17 @@ creates the appropriate agent and runs it in the background.
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import enum
 import logging
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
     AgentExecutionError,
 )
-from orchestrator.runners.types import ExecutionContext
+from orchestrator.runners.types import BroadcastCallback, ExecutionContext
 from orchestrator.config.enums import (
     AgentRunnerType,
     GateType,
@@ -33,15 +31,17 @@ from orchestrator.workflow.events import (
 from orchestrator.runners.execution.attempt_store import AttemptStore
 from orchestrator.runners.execution.event_broadcaster import EventBroadcaster
 from orchestrator.runners.execution.phase_handler import PhaseHandler
-from orchestrator.workflow.errors import InvalidTransitionError
-from orchestrator.workflow.prompts import generate_builder_prompt
-from orchestrator.workflow.summary_cache import SummaryCache
+from orchestrator.workflow import InvalidTransitionError
+from orchestrator.workflow import generate_builder_prompt, SummaryCache
+from orchestrator.workflow.signals import (
+    NoTaskReason,
+    resolve_no_task_action,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-    from orchestrator.runners.monitor import AgentRunnerMonitor
-    from orchestrator.api.websocket import ConnectionManager
+    from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
     from orchestrator.config.global_config import GlobalConfig
     from orchestrator.state.models import Run, StepState, TaskState
     from orchestrator.workflow.locks import LockManager
@@ -49,52 +49,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-class NoTaskReason(enum.Enum):
-    """Why _find_next_task returned no actionable task."""
-
-    ALL_COMPLETE = "all_complete"  # All steps are done
-    BLOCKED_BY_GATE = "blocked_by_gate"  # human_approval gate unsatisfied
-    PENDING_USER_ACTION = "pending_user_action"  # Waiting on user input
-    FAN_OUT_IN_PROGRESS = "fan_out_in_progress"  # Fan-out children running (crash recovery)
-    NO_ACTIONABLE_TASKS = "no_actionable_tasks"  # Step has tasks but none actionable
-
-
-@dataclasses.dataclass(frozen=True)
-class LoopAction:
-    """What the executor loop should do when _find_next_task returns no task."""
-
-    kind: Literal["pause", "complete", "fail"]
-    pause_reason: str | None = None  # for kind="pause"
-
-
-def resolve_no_task_action(run: Run, reason: NoTaskReason) -> LoopAction:
-    """Decide what the executor loop should do for a given NoTaskReason.
-
-    Pure function — no DB, no service, no side effects.  The only
-    external call is ``check_run_completion`` which mutates the Run
-    in-memory (sets status/completed_at) but performs no I/O.
-    """
-    if reason == NoTaskReason.BLOCKED_BY_GATE:
-        return LoopAction(kind="pause", pause_reason="awaiting_approval")
-    if reason == NoTaskReason.PENDING_USER_ACTION:
-        return LoopAction(kind="pause", pause_reason="awaiting_user_input")
-    if reason == NoTaskReason.FAN_OUT_IN_PROGRESS:
-        return LoopAction(kind="pause", pause_reason="fan_out_orphaned")
-    if reason == NoTaskReason.NO_ACTIONABLE_TASKS:
-        return LoopAction(kind="pause", pause_reason="no_actionable_tasks")
-    if reason == NoTaskReason.ALL_COMPLETE:
-        from orchestrator.workflow.transitions import check_run_completion
-
-        new_status = check_run_completion(run, datetime.now(timezone.utc))
-        if new_status == RunStatus.COMPLETED:
-            return LoopAction(kind="complete")
-        if new_status == RunStatus.FAILED:
-            return LoopAction(kind="fail")
-        # Still ACTIVE despite all steps done — shouldn't happen
-        return LoopAction(kind="pause", pause_reason="all_steps_complete_but_active")
-    # Defensive: unknown reason — pause rather than leave ACTIVE
-    return LoopAction(kind="pause", pause_reason=f"unknown_reason_{reason.value}")
+# Re-exports for backward compatibility
+__all__ = [
+    "AgentRunnerExecutor",
+    "NoTaskReason",
+    "resolve_no_task_action",
+]
 
 
 def resolve_verifier_config(
@@ -131,7 +91,7 @@ class AgentRunnerExecutor:
         lock_manager: LockManager | None = None,
         submit_event_registry: SubmitEventRegistry | None = None,
         runner_monitor: AgentRunnerMonitor | None = None,
-        connection_manager: ConnectionManager | None = None,
+        connection_manager: BroadcastCallback | None = None,
         api_base_url: str | None = None,
         *,
         spawn_agents: bool = True,
@@ -180,7 +140,7 @@ class AgentRunnerExecutor:
 
         # Lazy init - create monitor instance with session_factory and lock_manager
         try:
-            from orchestrator.runners.monitor import AgentRunnerMonitor
+            from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
 
             self._runner_monitor = AgentRunnerMonitor(
                 self._session_factory,
@@ -195,10 +155,10 @@ class AgentRunnerExecutor:
 
     async def _create_service(self, session: AsyncSession) -> WorkflowService:
         """Create a WorkflowService for the given session."""
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
@@ -398,7 +358,7 @@ class AgentRunnerExecutor:
                     # Copy scaffolding if routine has it
                     if run.routine_path and run.routine_commit:
                         try:
-                            from orchestrator.scaffolding.copier import copy_scaffolding
+                            from orchestrator.runners.scaffolding.copier import copy_scaffolding
 
                             scaffolding_result = copy_scaffolding(
                                 repo_path=repo_path,
@@ -478,7 +438,7 @@ class AgentRunnerExecutor:
 
                 try:
                     async with self._session_factory() as session:
-                        from orchestrator.db.repositories import RunRepository
+                        from orchestrator.db import RunRepository
 
                         repo = RunRepository(session)
                         run = await repo.get(run_id)
@@ -523,7 +483,7 @@ class AgentRunnerExecutor:
         RunWorkflow is the single owner of run execution and can manage the
         active-workflow registry for signal routing.
         """
-        from orchestrator.workflow.runtime import RunWorkflow
+        from orchestrator.workflow import RunWorkflow
 
         # Unpack private members here (inside AgentRunnerExecutor) and forward
         # as explicit keyword args so RunWorkflow stores them as public attributes,
@@ -726,8 +686,8 @@ class AgentRunnerExecutor:
             from sqlalchemy import select as sa_select
 
             from orchestrator.config.enums import ModelProfile
-            from orchestrator.db.models import RunnerProfileDefaultModel
-            from orchestrator.runners.profile_resolution import resolve_model_for_profile
+            from orchestrator.db import RunnerProfileDefaultModel
+            from orchestrator.runners.detection.profile_resolution import resolve_model_for_profile
 
             rows = (
                 (
@@ -805,7 +765,7 @@ class AgentRunnerExecutor:
         working_dir = run.worktree_path
 
         # Resolve clarifications artifact path if configured
-        from orchestrator.workflow.clarifications import (
+        from orchestrator.workflow import (
             decisions_from_config,
             resolve_artifact_path as _resolve_path,
         )
@@ -823,8 +783,8 @@ class AgentRunnerExecutor:
         # Build artifact context from context_from if configured
         run_config = dict(run.config)
         if task_config.context_from:
-            from orchestrator.artifacts.registry import ArtifactRegistry
-            from orchestrator.workflow.context_builder import TaskContextBuilder
+            from orchestrator.workflow.artifacts import ArtifactRegistry
+            from orchestrator.workflow import TaskContextBuilder
 
             worktree_path = Path(run.worktree_path) if run.worktree_path else None
             ctx_builder = TaskContextBuilder(ArtifactRegistry(), worktree_path=worktree_path)
@@ -1234,11 +1194,11 @@ class AgentRunnerExecutor:
         Builds the prompt, spawns agent, runs auto_verify.
         Returns True if auto_verify passes, False otherwise.
         """
-        from orchestrator.workflow.auto_verify import (
+        from orchestrator.workflow import (
             LocalAutoVerifyRunner,
             run_auto_verify,
+            resolve_template,
         )
-        from orchestrator.workflow.templates import resolve_template
 
         child_id = child.id
         input_path = child.fan_out_input or ""
@@ -1421,7 +1381,7 @@ class AgentRunnerExecutor:
         For tasks with no rubric (auto-verify only), automatically complete
         the verification. For tasks with a rubric, run the verifier agent.
         """
-        from orchestrator.workflow.prompts import generate_verifier_prompt
+        from orchestrator.workflow import generate_verifier_prompt
 
         # Check if task has a rubric that needs LLM evaluation
         has_rubric = bool(task_config.verifier.rubric)

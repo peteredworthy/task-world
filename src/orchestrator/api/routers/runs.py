@@ -24,7 +24,7 @@ from orchestrator.api.deps import (
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
 from orchestrator.runners.executor import AgentRunnerExecutor
-from orchestrator.review.test_runner import TestRunner
+from orchestrator.git.testing import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
     AgentCancelledRequest,
@@ -63,15 +63,15 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db.event_store import EventStore
-from orchestrator.db.repositories import RunRepository
-from orchestrator.metrics.cost import estimate_cost
-from orchestrator.routines.discovery import discover_routines
-from orchestrator.routines.errors import RoutineNotFoundError
+from orchestrator.db import EventStore
+from orchestrator.db import RunRepository
+from orchestrator.api.metrics import estimate_cost
+from orchestrator.config import discover_routines
+from orchestrator.config.routines.errors import RoutineNotFoundError
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.errors import RunNotFoundError, StepNotFoundError, TaskNotFoundError
 from orchestrator.state.models import HumanApproval, Run
-from orchestrator.workflow.errors import InvalidTransitionError
+from orchestrator.workflow import InvalidTransitionError
 from orchestrator.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
@@ -326,7 +326,7 @@ async def create_run(
     if request.agent_config:
         # Validate agent_config keys against the agent's known config schema
         if run.agent_type is not None:
-            from orchestrator.runners.detector import AGENT_CONFIG_FIELDS
+            from orchestrator.runners.detection import AGENT_CONFIG_FIELDS
 
             valid_fields = AGENT_CONFIG_FIELDS.get(run.agent_type, set())
             unknown = set(request.agent_config.keys()) - valid_fields
@@ -514,7 +514,7 @@ async def recover_run(
     agent_type = AgentRunnerType(body.agent_type) if body.agent_type else None
     agent_config = body.agent_config if body.agent_config else None
     try:
-        return await service.recover_run(
+        result = await service.recover_run(
             run_id=run_id,
             target_task_id=body.target_task_id,
             additional_attempts=body.additional_attempts,
@@ -523,6 +523,13 @@ async def recover_run(
             preserve_checklist=body.preserve_checklist,
             guidance=body.guidance,
             reset_branch=body.reset_branch,
+        )
+        # Translate RecoveryResult (workflow domain) to RecoverResponse (API schema)
+        return RecoverResponse(
+            run_id=result.run_id,
+            status=result.status,
+            pause_reason=result.pause_reason,
+            current_step_index=result.current_step_index,
         )
     except (RunNotFoundError, TaskNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -808,8 +815,8 @@ async def approve_step(
         "waiting_for_approval",
         "awaiting_approval",
     ):
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.db import EventStore
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         event_store = EventStore(session)
@@ -901,7 +908,7 @@ async def skip_step(
 
     # Mark the step as skipped
     from datetime import datetime, timezone
-    from orchestrator.workflow.transitions import check_step_progression
+    from orchestrator.workflow import check_step_progression
     from orchestrator.workflow.events import StepSkipped, BufferingEmitter
 
     step.skipped = True
@@ -980,7 +987,7 @@ async def get_guidance(
     - MCP URL for callbacks
     - Expected actions list
     """
-    from orchestrator.workflow.prompts import generate_builder_prompt, generate_verifier_prompt
+    from orchestrator.workflow import generate_builder_prompt, generate_verifier_prompt
 
     run = await service.get_run(run_id)
 
@@ -1150,7 +1157,7 @@ async def get_branch_status_endpoint(
 
     Requires: run has worktree_path and source_branch set.
     """
-    from orchestrator.git.branch_ops import get_branch_status
+    from orchestrator.git import get_branch_status
 
     run = await service.get_run(run_id)
 
@@ -1208,7 +1215,7 @@ async def back_merge_endpoint(
 
     Allowed when run is ACTIVE or PAUSED.
     """
-    from orchestrator.git.branch_ops import BackMergeResult, back_merge
+    from orchestrator.git import BackMergeResult, back_merge
 
     run = await service.get_run(run_id)
 
@@ -1262,7 +1269,7 @@ async def merge_back_endpoint(
     returns 409 if any gate is unmet.
     """
     from orchestrator.api.routers.review import compute_readiness
-    from orchestrator.git.branch_ops import merge_back
+    from orchestrator.git import merge_back
 
     run = await service.get_run(run_id)
 

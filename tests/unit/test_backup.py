@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from orchestrator.db.backup import (
+from orchestrator.db import (
     BackupError,
     BackupMetadata,
     create_backup,

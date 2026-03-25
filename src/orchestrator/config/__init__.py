@@ -28,6 +28,21 @@ from orchestrator.config.models import (
     TransitionCondition,
     VerifierConfig,
 )
+from orchestrator.config.routines import (
+    DiscoveredRoutine,
+    ProjectRoutine,
+    RoutineError,
+    RoutineNotFoundError,
+    RoutineParseError,
+    RoutineValidationError,
+    RoutineVersion,
+    discover_routines,
+    discover_routines_in_repo,
+    find_git_root,
+    get_routine_from_repo,
+    get_routine_version,
+    load_routine_from_path,
+)
 
 __all__ = [
     "AgentRunnerType",
@@ -42,8 +57,15 @@ __all__ = [
     "RequirementConfig",
     "RetryConfig",
     "RoutineConfig",
+    "DiscoveredRoutine",
+    "ProjectRoutine",
+    "RoutineError",
     "RoutineInputConfig",
+    "RoutineNotFoundError",
+    "RoutineParseError",
     "RoutineSource",
+    "RoutineValidationError",
+    "RoutineVersion",
     "RubricItemConfig",
     "RunStatus",
     "StepConfig",
@@ -54,4 +76,10 @@ __all__ = [
     "TaskStatus",
     "TransitionCondition",
     "VerifierConfig",
+    "discover_routines",
+    "discover_routines_in_repo",
+    "find_git_root",
+    "get_routine_from_repo",
+    "get_routine_version",
+    "load_routine_from_path",
 ]

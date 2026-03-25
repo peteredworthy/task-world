@@ -13,13 +13,14 @@ def create(
 ) -> UserManagedAgent:
     """Create a UserManagedAgent from agent_config.
 
-    Requires ``service`` in kwargs (the WorkflowService instance).
-    The executor does not spawn UserManagedAgent via _create_agent — it is
-    handled separately — but this factory supports programmatic creation.
+    Requires ``service`` in kwargs (a TaskSubmitCallback implementation).
+    WorkflowService implements this protocol.
     """
     service = kwargs.get("service")
     if service is None:
-        raise ValueError("UserManagedAgent factory requires 'service' kwarg (WorkflowService)")
+        raise ValueError(
+            "UserManagedAgent factory requires 'service' kwarg (TaskSubmitCallback implementation)"
+        )
 
     callback_channel = agent_config.get("callback_channel", "mcp")
     timeout_minutes = int(agent_config.get("timeout_minutes", 60))

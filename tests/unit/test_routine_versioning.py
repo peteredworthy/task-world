@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.routines.versioning import (
+from orchestrator.config import (
     RoutineVersion,
     find_git_root,
     get_routine_version,

@@ -7,11 +7,11 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 # Import the Base from ORM models
-from orchestrator.db.base import Base
+from orchestrator.db.orm.base import Base
 
 # Import all models so Alembic can detect them
-import orchestrator.db.models as _models  # noqa: F401
-import orchestrator.agents.models as _agent_models  # noqa: F401
+import orchestrator.db.orm.models as _models  # noqa: F401
+import orchestrator.runners.profiles.models as _agent_models  # noqa: F401
 
 _models_loaded = _models  # ensure pyright sees the import as used
 _agent_models_loaded = _agent_models  # ensure pyright sees the import as used

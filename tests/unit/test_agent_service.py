@@ -6,15 +6,15 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from orchestrator.agents.errors import (
+from orchestrator.runners.profiles.errors import (
     AgentNameConflictError,
     AgentNoDefaultPromptError,
     AgentNotFoundError,
 )
-from orchestrator.agents.schemas import CreateAgentRequest, UpdateAgentRequest
-from orchestrator.agents.service import AgentService, seed_default_agents
+from orchestrator.runners.profiles.schemas import CreateAgentRequest, UpdateAgentRequest
+from orchestrator.runners.profiles.service import AgentService, seed_default_agents
 from orchestrator.config.enums import ModelProfile
-from orchestrator.db.base import Base
+from orchestrator.db import Base
 
 
 @pytest.fixture

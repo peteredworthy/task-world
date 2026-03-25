@@ -2,7 +2,7 @@
 
 import json
 
-from orchestrator.runners.action_log import ActionEntryKind
+from orchestrator.state.models import ActionEntryKind
 from orchestrator.runners import ClaudeStreamParser
 
 

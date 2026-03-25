@@ -18,7 +18,7 @@ from orchestrator.state.models import (
 )
 from orchestrator.state.session import SessionStateManager
 from orchestrator.workflow.engine import WorkflowEngine
-from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.events import (
     GradesEvaluated,
     RunStatusChanged,

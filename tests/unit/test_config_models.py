@@ -476,7 +476,7 @@ def test_auto_grade_blocked_when_no_verification() -> None:
 
     from orchestrator.config.enums import ChecklistStatus, Priority, TaskStatus
     from orchestrator.state.models import ChecklistItem, TaskState
-    from orchestrator.workflow.transitions import transition_after_verification
+    from orchestrator.workflow import transition_after_verification
 
     task = TaskState(
         id="task-1",

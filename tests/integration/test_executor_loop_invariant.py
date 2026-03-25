@@ -31,8 +31,8 @@ from orchestrator.config.enums import (
     TaskStatus,
 )
 from orchestrator.config.models import GateConfig, RoutineConfig, StepConfig, TaskConfig
-from orchestrator.db.connection import init_db
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import init_db
+from orchestrator.db import RunRepository
 from orchestrator.runners.executor import AgentRunnerExecutor, NoTaskReason
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
@@ -64,9 +64,9 @@ async def _await_agent_loop(executor: AgentRunnerExecutor, run_id: str) -> None:
 
 
 def _make_service_args(session: AsyncSession) -> dict:
-    from orchestrator.db.event_store import EventStore
-    from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-    from orchestrator.workflow.event_logger import PersistentEventEmitter
+    from orchestrator.db import EventStore
+    from orchestrator.workflow import LocalAutoVerifyRunner
+    from orchestrator.workflow import PersistentEventEmitter
 
     repo = RunRepository(session)
     event_store = EventStore(session)

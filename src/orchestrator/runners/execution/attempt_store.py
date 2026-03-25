@@ -10,8 +10,8 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from orchestrator.db.models import RunModel
-from orchestrator.runners.action_log import ActionLog
+from orchestrator.state.models import ActionLog
+from orchestrator.db import RunModel
 from orchestrator.runners.types import ExecutionMetrics
 
 if TYPE_CHECKING:
@@ -41,7 +41,7 @@ class AttemptStore:
         """Store agent output, error, and optional structured action log on the current attempt."""
         try:
             async with self._session_factory() as session:
-                from orchestrator.db.repositories import RunRepository
+                from orchestrator.db import RunRepository
 
                 repo = RunRepository(session)
                 merged_action_log = action_log
@@ -85,7 +85,7 @@ class AttemptStore:
         than opening a new one.  This avoids StaticPool concurrency issues in
         tests where all sessions share the same underlying connection.
         """
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import RunRepository
 
         async def _do_store(s: "AsyncSession") -> None:
             repo = RunRepository(s)
@@ -115,7 +115,7 @@ class AttemptStore:
         """Store execution metrics on the current attempt and accumulate into run totals."""
         try:
             async with self._session_factory() as session:
-                from orchestrator.db.repositories import RunRepository
+                from orchestrator.db import RunRepository
 
                 repo = RunRepository(session)
                 await repo.update_latest_attempt(task_id, metrics=metrics)

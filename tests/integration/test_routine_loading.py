@@ -5,8 +5,8 @@ from pathlib import Path
 import pytest
 
 from orchestrator.config.enums import Priority
-from orchestrator.routines.errors import RoutineValidationError
-from orchestrator.routines.loader import load_routine_from_path
+from orchestrator.config.routines.errors import RoutineValidationError
+from orchestrator.config.routines.loader import load_routine_from_path
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 

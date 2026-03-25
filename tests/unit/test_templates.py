@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-from orchestrator.workflow.templates import derive_output_path, resolve_template
+from orchestrator.workflow import derive_output_path, resolve_template
 
 
 class TestResolveTemplate:

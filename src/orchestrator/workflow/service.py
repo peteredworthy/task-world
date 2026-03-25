@@ -2,13 +2,13 @@
 
 import asyncio
 import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.api import RecoverResponse
 from orchestrator.config.enums import (
     AgentRunnerType,
     ChecklistStatus,
@@ -18,19 +18,19 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
-from orchestrator.db.event_store import EventStore
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import EventStore
+from orchestrator.db import RunRepository
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
-from orchestrator.workflow.auto_verify import (
+from orchestrator.workflow.agent.auto_verify import (
     AutoVerifyResult,
     AutoVerifyRunner,
     evaluate_auto_verify,
     has_crashes,
     run_auto_verify,
 )
-from orchestrator.workflow.clarifications import (
+from orchestrator.workflow.agent.clarifications import (
     ClarificationAnswer,
     ClarificationQuestion,
     ClarificationRequest,
@@ -42,10 +42,10 @@ from orchestrator.workflow.clarifications import (
     resolve_artifact_path,
 )
 from orchestrator.workflow.engine import Clock, WorkflowEngine
-from orchestrator.workflow.prompts import generate_builder_prompt, generate_recovery_prompt
-from orchestrator.workflow.templates import resolve_template
-from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
-from orchestrator.workflow.event_logger import PersistentEventEmitter
+from orchestrator.workflow.agent.prompts import generate_builder_prompt, generate_recovery_prompt
+from orchestrator.workflow.agent.templates import resolve_template
+from orchestrator.workflow.engine.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow.events.logger import PersistentEventEmitter
 from orchestrator.workflow.events import (
     AgentChangedEvent,
     ApprovalDecision,
@@ -63,7 +63,7 @@ from orchestrator.workflow.events import (
     TaskStatusChanged,
 )
 from orchestrator.workflow.locks import LockManager
-from orchestrator.workflow.transitions import (
+from orchestrator.workflow.engine.transitions import (
     TransitionResult,
     transition_from_approval,
     transition_from_clarification,
@@ -104,6 +104,20 @@ class SubmitEventRegistry:
         event = self._events.get(task_id)
         if event is not None:
             event.set()
+
+
+@dataclass
+class RecoveryResult:
+    """Result of a run recovery operation.
+
+    Returned by WorkflowService.recover_run(); translated to RecoverResponse
+    by the API layer (api/routers/runs.py).
+    """
+
+    run_id: str
+    status: str
+    pause_reason: str | None = None
+    current_step_index: int | None = None
 
 
 def find_task_config(
@@ -546,7 +560,7 @@ class WorkflowService:
         preserve_checklist: bool = False,
         guidance: str | None = None,
         reset_branch: bool = True,
-    ) -> RecoverResponse:
+    ) -> RecoveryResult:
         """Recover a run by rewinding to a target task and pausing.
 
         Allowed when the run is FAILED or PAUSED. A common scenario for PAUSED:
@@ -679,7 +693,7 @@ class WorkflowService:
         await self._repo.save(run)
         await self._session.commit()
 
-        return RecoverResponse(
+        return RecoveryResult(
             run_id=run.id,
             status=run.status.value,
             pause_reason=run.pause_reason,
@@ -806,7 +820,7 @@ class WorkflowService:
         import glob as glob_mod
         import logging
 
-        from orchestrator.workflow.templates import derive_output_path
+        from orchestrator.workflow.agent.templates import derive_output_path
 
         logger = logging.getLogger(__name__)
 
@@ -875,7 +889,7 @@ class WorkflowService:
             output_path = derive_output_path(fan_out.output_pattern, rel_path, variables)
             input_name = Path(rel_path).name
 
-            from orchestrator.state.models import generate_id
+            from orchestrator.state._utils import generate_id
 
             child = TaskState(
                 id=generate_id(),
@@ -953,7 +967,7 @@ class WorkflowService:
             to_verifying: If True and all_passed, move to VERIFYING (for outer LLM verifier)
         """
         import logging
-        from orchestrator.workflow.transitions import (
+        from orchestrator.workflow.engine.transitions import (
             check_run_completion,
             check_step_progression,
         )
@@ -1395,7 +1409,7 @@ class WorkflowService:
             # Transition: BUILDING -> VERIFYING -> COMPLETED
             # Since script tasks have no verification, we go directly through
             # submit_for_verification and complete_verification via the engine
-            from orchestrator.workflow.transitions import (
+            from orchestrator.workflow.engine.transitions import (
                 check_run_completion,
                 check_step_progression,
             )
@@ -2103,7 +2117,7 @@ class WorkflowService:
         """
         from sqlalchemy import func, select as sa_select
 
-        from orchestrator.db.models import ClarificationRequestModel
+        from orchestrator.db import ClarificationRequestModel
 
         run = await self._repo.get(run_id)
         task = self._find_task(run, task_id)
@@ -2600,7 +2614,10 @@ class WorkflowService:
             run.pause_reason = None
 
         # Check step progression to advance to next task
-        from orchestrator.workflow.transitions import check_step_progression, check_run_completion
+        from orchestrator.workflow.engine.transitions import (
+            check_step_progression,
+            check_run_completion,
+        )
 
         # Load routine config if available for condition evaluation
         routine_config = None

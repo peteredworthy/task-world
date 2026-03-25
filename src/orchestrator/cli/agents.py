@@ -5,7 +5,7 @@ import json
 
 import click
 
-from orchestrator.runners.detector import ToolDetector
+from orchestrator.runners import ToolDetector
 
 
 @click.group()

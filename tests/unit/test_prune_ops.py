@@ -6,8 +6,15 @@ from pathlib import Path
 import pytest
 
 from orchestrator.git.errors import GitCommandError
-from orchestrator.git.prune_ops import (
+from orchestrator.git.ops import (
     Hunk,
+    apply_prune,
+    preview_prune,
+    prune_hunks,
+    prune_lines,
+    revert_file,
+)
+from orchestrator.git.ops.prune_ops import (
     _build_hunk_reverse_patch,
     _build_line_reverse_patch,
     _count_selected_hunk_lines,
@@ -16,11 +23,6 @@ from orchestrator.git.prune_ops import (
     _parse_diff_sections,
     _parse_file_diff_hunks,
     _parse_hunk_header,
-    apply_prune,
-    preview_prune,
-    prune_hunks,
-    prune_lines,
-    revert_file,
 )
 
 

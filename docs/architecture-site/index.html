@@ -545,7 +545,7 @@
 
 <header>
   <h1>Task-World Architecture</h1>
-  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 active modules + 1 dead shim, ~40K lines of Python</p>
+  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 active modules + 1 dead shim, ~40K lines of Python &mdash; 9-module canonical boundaries enforced via import discipline</p>
   <nav>
     <a href="#project-overview">Project</a>
     <a href="#overview">Stats</a>
@@ -710,8 +710,9 @@
 
 <!-- SUGGESTED REFACTORING MOVES -->
 <section id="suggested-moves">
-  <h2>Consolidation Plan: 19 &rarr; 9 Modules <span>Proposed — not yet implemented</span></h2>
-  <p class="section-desc">The current 19 active top-level modules include many &ldquo;phantom modules&rdquo; &mdash; tiny, single-consumer packages that inflate the dependency graph without providing meaningful boundaries. <strong>None of these moves have been executed yet.</strong> This plan absorbs 10 modules into their natural parents, producing 9 focused top-level packages with clean, obvious ownership.</p>
+  <h2>Consolidation Plan: 19 &rarr; 9 Modules <span>Phase 0 done &mdash; file moves pending</span></h2>
+  <p class="section-desc">The current 19 active top-level modules include many &ldquo;phantom modules&rdquo; &mdash; tiny, single-consumer packages that inflate the dependency graph without providing meaningful boundaries. <strong>File moves have not been executed yet.</strong> This plan absorbs 10 modules into their natural parents, producing 9 focused top-level packages with clean, obvious ownership.</p>
+  <p class="section-desc" style="margin-top:0.5rem;"><strong>Pre-step complete:</strong> Module import discipline has been enforced. <code>runners/__init__.py</code> and <code>api/__init__.py</code> now export public APIs for their sub-packages. A pre-commit hook (<code>scripts/check_module_imports.py</code>) rejects any import that reaches into a sub-package of a module it doesn&rsquo;t own. All cross-module imports now go through the top-level <code>__init__.py</code> — the 9 canonical module boundaries are enforced even before the physical moves happen.</p>
 
   <div class="diagram-container">
     <div class="diagram-header">
@@ -916,6 +917,13 @@
       <table class="concerns-table">
         <thead><tr><th>Phase</th><th>Moves</th><th>Risk</th><th>Effort</th><th>Impact</th></tr></thead>
         <tbody>
+          <tr style="background: rgba(166,227,161,0.05);">
+            <td><strong>Phase 0</strong> ✓</td>
+            <td>Enforce import discipline: add public exports to <code>runners/__init__.py</code> and <code>api/__init__.py</code>; add pre-commit hook (<code>scripts/check_module_imports.py</code>) to reject sub-package imports across module boundaries</td>
+            <td><span class="severity-low">Zero</span></td>
+            <td>Done</td>
+            <td>9 canonical boundaries enforced; file moves can now be done incrementally without breaking callers</td>
+          </tr>
           <tr>
             <td><strong>Phase 1</strong></td>
             <td>M1 (delete routers), M2 (scaffolding&rarr;runners), M3 (cache&rarr;git), M4 (artifacts&rarr;workflow)</td>
@@ -991,7 +999,7 @@
           <tr>
             <td><strong>Phantom Top-Level Modules</strong></td>
             <td><span class="severity-medium">Medium</span></td>
-            <td><code>scaffolding</code> (176 LOC), <code>cache</code> (88 LOC), <code>review</code> (261 LOC), <code>metrics</code> (70 LOC), <code>artifacts</code> (146 LOC), <code>repos</code> (268 LOC), <code>agents</code> (348 LOC), <code>routines</code> (555 LOC), and <code>mcp</code> (785 LOC) are top-level modules with 1&ndash;2 consumers each. They inflate the module count from 9 to 19. <strong>None of the planned consolidations have been executed yet.</strong></td>
+            <td><code>scaffolding</code> (176 LOC), <code>cache</code> (88 LOC), <code>review</code> (261 LOC), <code>metrics</code> (70 LOC), <code>artifacts</code> (146 LOC), <code>repos</code> (268 LOC), <code>agents</code> (348 LOC), <code>routines</code> (555 LOC), and <code>mcp</code> (785 LOC) are top-level modules with 1&ndash;2 consumers each. They inflate the module count from 9 to 19. Import discipline (Phase 0) is enforced &mdash; callers already import through the 9 canonical <code>__init__.py</code>s. <strong>Physical file moves (Phases 1&ndash;2) not yet executed.</strong></td>
             <td>Absorb into their natural parents (see <a href="#suggested-moves" style="color: var(--accent);">M1&ndash;M10</a>).</td>
           </tr>
           <tr>
@@ -1269,8 +1277,8 @@ flowchart TD
 
     <div class="td-card sev-medium">
       <h4><span class="td-id">TD-01</span> Backward-compat shims after module split</h4>
-      <div class="td-desc">After agents moved from <code>runners/*.py</code> to <code>runners/agents/*/</code>, the old flat paths remain as <code>import *</code> shim files (<code>runners/cli.py</code>, <code>runners/openhands.py</code>, etc.). Root-level <code>orchestrator/executor.py</code> and <code>orchestrator/routers/</code> are also shims. New code must never be added to shim files.</div>
-      <div class="td-fix">✦ Remove once all internal imports use canonical <code>agents/</code> paths.</div>
+      <div class="td-desc">After agents moved from <code>runners/*.py</code> to <code>runners/agents/*/</code>, the old flat paths remain as <code>import *</code> shim files (<code>runners/openhands.py</code>, <code>runners/openhands_docker.py</code>, <code>runners/openhands_common.py</code>, <code>runners/codex_server.py</code>, <code>runners/codex_server_common.py</code>, <code>runners/executor.py</code>). Root-level <code>orchestrator/executor.py</code> and <code>orchestrator/routers/</code> are also shims. New code must never be added to shim files.</div>
+      <div class="td-fix">✦ Remove once all internal imports use canonical <code>agents/</code> paths. <code>runners/__init__.py</code> now provides a public export surface — use it instead of reaching into sub-packages.</div>
     </div>
 
     <div class="td-card sev-medium">

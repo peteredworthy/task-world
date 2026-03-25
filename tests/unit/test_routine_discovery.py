@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from orchestrator.config.enums import RoutineSource
-from orchestrator.routines.discovery import discover_routines
+from orchestrator.config import discover_routines
 
 
 VALID_ROUTINE_YAML = """\

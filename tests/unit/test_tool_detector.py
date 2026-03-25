@@ -5,7 +5,7 @@ to avoid repeating expensive detection (docker info, model fetch, etc.) in
 every test.
 """
 
-from orchestrator.runners.detector import ToolDetector
+from orchestrator.runners import ToolDetector
 from orchestrator.runners.types import AgentOption
 from orchestrator.config.enums import AgentRunnerType
 

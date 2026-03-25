@@ -28,10 +28,10 @@ from orchestrator.config.models import (
     StepConfig,
     TaskConfig,
 )
-from orchestrator.db.base import Base
-from orchestrator.db.event_store import EventStore
-from orchestrator.db.recovery import replay_events
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import Base
+from orchestrator.db import EventStore
+from orchestrator.db import replay_events
+from orchestrator.db import RunRepository
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService
@@ -52,7 +52,7 @@ async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], 
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", poolclass=NullPool)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    from orchestrator.db.connection import create_session_factory
+    from orchestrator.db import create_session_factory
 
     yield create_session_factory(engine)
     await engine.dispose()
@@ -437,7 +437,7 @@ async def test_replay_handles_old_event_format(
     from datetime import datetime, timezone
 
     from orchestrator.config.enums import RunStatus, TaskStatus
-    from orchestrator.db.recovery import replay_events
+    from orchestrator.db import replay_events
 
     routine = _make_linear_routine()
     run = _make_run(routine, "compat-001")

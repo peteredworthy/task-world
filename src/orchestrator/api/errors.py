@@ -11,8 +11,8 @@ from orchestrator.runners.errors import (
 from orchestrator.api.auth import AuthError
 from orchestrator.envfiles.errors import SnapshotNotFoundError
 from orchestrator.git.errors import BranchNotFoundError, DirtyWorkingTreeError, MergeConflictError
-from orchestrator.repos.errors import RepoNotFoundError
-from orchestrator.routines.errors import RoutineNotFoundError, RoutineValidationError
+from orchestrator.git.repos import RepoNotFoundError
+from orchestrator.config import RoutineNotFoundError, RoutineValidationError
 from orchestrator.state.errors import (
     ChecklistItemNotFoundError,
     MissingRequiredInputError,
@@ -20,7 +20,7 @@ from orchestrator.state.errors import (
     StepNotFoundError,
     TaskNotFoundError,
 )
-from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.locks import TaskLockedError
 
 

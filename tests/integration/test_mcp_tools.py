@@ -15,8 +15,8 @@ from orchestrator.config.enums import (
     RunStatus,
     TaskStatus,
 )
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
-from orchestrator.mcp.tools import ToolHandler
+from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.api.mcp.tools import ToolHandler
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
 

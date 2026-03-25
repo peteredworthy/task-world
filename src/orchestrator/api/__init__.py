@@ -1,5 +1,7 @@
 """FastAPI application for the orchestrator."""
 
+from orchestrator.api.app import create_app
+from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.api.schemas.runs import (
     CreateRunRequest,
@@ -12,8 +14,12 @@ from orchestrator.api.schemas.tasks import CallbackInstructions
 __all__ = [
     "ApiModel",
     "CallbackInstructions",
+    "CostEstimate",
     "CreateRunRequest",
+    "PRICING",
     "RecoverResponse",
+    "create_app",
+    "estimate_cost",
     "get_agent_display_name",
     "get_agent_icon",
 ]
@@ -28,10 +34,16 @@ _TASKS_ROUTER_SYMBOLS = {
     "_parse_action_log_from_raw",
 }
 
+_MCP_SYMBOLS = {"ORCHESTRATOR_TOOLS"}
+
 
 def __getattr__(name: str) -> object:
     if name in _TASKS_ROUTER_SYMBOLS:
         import orchestrator.api.routers.tasks as _tasks  # noqa: PLC0415
 
         return getattr(_tasks, name)
+    if name in _MCP_SYMBOLS:
+        import orchestrator.api.mcp.tools as _mcp_tools  # noqa: PLC0415
+
+        return getattr(_mcp_tools, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

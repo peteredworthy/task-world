@@ -29,7 +29,7 @@ from orchestrator.config.enums import (
     RunStatus,
     TaskStatus,
 )
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import SubmitEventRegistry, WorkflowService
 
@@ -233,7 +233,7 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
     When that service calls submit_for_verification (via signal drain),
     the registry notifies the agent's event, waking it up.
     """
-    from orchestrator.workflow.signals import InMemorySignalTransport
+    from orchestrator.workflow import InMemorySignalTransport
     from tests.integration.signal_helpers import make_drain_fn
 
     signal_transport = InMemorySignalTransport()

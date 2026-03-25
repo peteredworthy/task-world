@@ -24,7 +24,7 @@ from orchestrator.api.errors import register_error_handlers
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
 from orchestrator.config.enums import RoutineSource, RunStatus
 from orchestrator.config.global_config import GlobalConfig, load_global_config
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.envfiles.cleanup import EnvFileCleanup
@@ -35,8 +35,8 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
-    from orchestrator.runners.monitor import AgentRunnerMonitor
-    from orchestrator.db.repositories import RunRepository
+    from orchestrator.runners import AgentRunnerMonitor
+    from orchestrator.db import RunRepository
 
     await init_db(app.state.engine)
 
@@ -44,7 +44,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     session_factory = app.state.session_factory
 
     # Seed factory-default agents (Planner, Builder, Verifier) if not present
-    from orchestrator.agents.service import seed_default_agents
+    from orchestrator.runners import seed_default_agents
 
     async with session_factory() as _seed_session:
         await seed_default_agents(_seed_session)
@@ -78,7 +78,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
             executor = app.state.runner_executor
             async with session_factory() as session:
-                from orchestrator.db.repositories import RunRepository as _RR
+                from orchestrator.db import RunRepository as _RR
 
                 repo = _RR(session)
                 active_runs = await repo.list_by_status(RunStatus.ACTIVE)
@@ -105,7 +105,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             # startup we restore them to ACTIVE and re-spawn the executor loop so
             # they continue from where they left off without user intervention.
             async with session_factory() as session:
-                from orchestrator.db.repositories import RunRepository as _RR2
+                from orchestrator.db import RunRepository as _RR2
 
                 repo2 = _RR2(session)
                 paused_runs_all = await repo2.list_by_status(RunStatus.PAUSED)
@@ -172,13 +172,11 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                                 continue
 
                     async with session_factory() as session:
-                        from orchestrator.db.repositories import RunRepository as _RR3
-                        from orchestrator.db.event_store import EventStore as _ES3
-                        from orchestrator.workflow.event_logger import (
-                            PersistentEventEmitter as _PEE3,
-                        )
+                        from orchestrator.db import RunRepository as _RR3
+                        from orchestrator.db import EventStore as _ES3
+                        from orchestrator.workflow import PersistentEventEmitter as _PEE3
                         from orchestrator.workflow.service import WorkflowService as _WS3
-                        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner as _AVR
+                        from orchestrator.workflow import LocalAutoVerifyRunner as _AVR
 
                         repo3 = _RR3(session)
                         event_store3 = _ES3(session)
@@ -312,11 +310,9 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         )
                         try:
                             async with session_factory() as session:
-                                from orchestrator.db.repositories import RunRepository as _RRS
-                                from orchestrator.db.event_store import EventStore as _ESS
-                                from orchestrator.workflow.event_logger import (
-                                    PersistentEventEmitter as _PEES,
-                                )
+                                from orchestrator.db import RunRepository as _RRS
+                                from orchestrator.db import EventStore as _ESS
+                                from orchestrator.workflow import PersistentEventEmitter as _PEES
                                 from orchestrator.workflow.service import (
                                     WorkflowService as _WSS,
                                 )
@@ -472,9 +468,9 @@ def create_app(
     discover_agents()
 
     # Agent tool detector
-    from orchestrator.runners import ClaudeCliQuotaAgent, ClaudeSDKAgent
+    from orchestrator.runners import ClaudeSDKAgent, ClaudeCliQuotaAgent
     from orchestrator.runners.codex_server import CodexServerAgent
-    from orchestrator.runners.detector import ToolDetector
+    from orchestrator.runners import ToolDetector
     from orchestrator.runners.openhands import OpenHandsAgent
 
     app.state.tool_detector = ToolDetector(
@@ -498,7 +494,7 @@ def create_app(
     app.state.env_lifecycle = EnvFileLifecycle(app.state.envfile_store)
 
     # Test runner for review workbench test execution
-    from orchestrator.review.test_runner import TestRunner
+    from orchestrator.git import TestRunner
 
     app.state.test_runner = TestRunner()
 
@@ -598,10 +594,10 @@ class _SessionPerCallHandler:
         self._app = app
 
     async def handle(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
-        from orchestrator.mcp.tools import ToolHandler
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
+        from orchestrator.api.mcp.tools import ToolHandler
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         session_factory = self._app.state.session_factory
@@ -639,7 +635,7 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
     from starlette.types import ASGIApp, Receive, Scope, Send
 
     from orchestrator.api.auth import InvalidTokenError, validate_token
-    from orchestrator.mcp.server import OrchestratorMCPServer
+    from orchestrator.api.mcp.server import OrchestratorMCPServer
 
     handler = _SessionPerCallHandler(app)
     mcp_server = OrchestratorMCPServer(handler=handler)  # type: ignore[arg-type]

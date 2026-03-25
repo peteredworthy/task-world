@@ -5,8 +5,7 @@ Resolves env file specs from routine config and request overrides.
 
 from typing import Any
 
-from orchestrator.config.models import EnvFileConfig
-from orchestrator.envfiles.models import EnvFileSpec
+from orchestrator.config.models import EnvFileConfig, EnvFileSpec
 
 
 def resolve_env_specs(

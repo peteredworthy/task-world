@@ -108,7 +108,7 @@ class PhaseHandler:
         session: Any = None,
     ) -> None:
         from orchestrator.runners.errors import AgentExecutionError
-        from orchestrator.workflow.errors import GateBlockedError
+        from orchestrator.workflow import GateBlockedError
 
         # Store the builder prompt BEFORE agent execution.
         await self._attempt_store.store_attempt_prompt(

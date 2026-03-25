@@ -2,7 +2,7 @@
 
 from orchestrator.config.enums import ChecklistStatus, Priority
 from orchestrator.state.models import ChecklistItem
-from orchestrator.workflow.gates import evaluate_checklist_gate
+from orchestrator.workflow import evaluate_checklist_gate
 
 
 def _item(

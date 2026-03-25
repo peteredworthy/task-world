@@ -15,11 +15,11 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners.executor import AgentRunnerExecutor
-from orchestrator.runners.monitor import AgentRunnerMonitor
+from orchestrator.runners import AgentRunnerMonitor
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
-from orchestrator.db.connection import create_engine, create_session_factory, init_db
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 
@@ -216,8 +216,8 @@ class TestCheckAgentAliveCodexLocal:
 @pytest.mark.asyncio
 async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
     """AgentRunnerMonitor.on_agent_died transitions a CODEX_SERVER run to PAUSED."""
-    from orchestrator.db.connection import create_engine, create_session_factory, init_db
-    from orchestrator.db.repositories import RunRepository
+    from orchestrator.db import create_engine, create_session_factory, init_db
+    from orchestrator.db import RunRepository
 
     engine = create_engine(":memory:")
     await init_db(engine)

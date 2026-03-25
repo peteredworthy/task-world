@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.agents.resolution import get_agent_system_prompt, resolve_agent_name
+from orchestrator.runners import get_agent_system_prompt, resolve_agent_name
 from orchestrator.api.deps import (
     get_current_user,
     get_routine_dirs,
@@ -40,26 +40,26 @@ from orchestrator.api.schemas.tasks import (
 )
 from orchestrator.config.enums import ChecklistStatus, RoutineSource, TaskStatus
 from orchestrator.config.models import MCPServerConfig, RoutineConfig
-from orchestrator.db.repositories import RunRepository
-from orchestrator.routines.discovery import discover_routines
-from orchestrator.routines.errors import RoutineNotFoundError
+from orchestrator.db import RunRepository
+from orchestrator.config import discover_routines, RoutineNotFoundError
 from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
-from orchestrator.artifacts.registry import ArtifactRegistry
-from orchestrator.workflow.clarifications import (
+from orchestrator.workflow.artifacts import ArtifactRegistry
+from orchestrator.workflow import (
     ClarificationRequest,
     ClarificationResponse,
     decisions_from_config,
     resolve_artifact_path,
+    InvalidTransitionError,
+    TaskContextBuilder,
+    generate_builder_prompt,
+    generate_verifier_prompt,
+    SummaryCache,
+    derive_output_path,
+    resolve_template,
 )
-from orchestrator.workflow.context_builder import TaskContextBuilder
-from orchestrator.workflow.errors import InvalidTransitionError
-from orchestrator.workflow.prompts import generate_builder_prompt, generate_verifier_prompt
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow.signals import SignalTransport, WorkflowSignal
 from orchestrator.workflow.service import find_task_config
-from orchestrator.workflow.summary_cache import SummaryCache
-from orchestrator.workflow.templates import derive_output_path
-from orchestrator.workflow.templates import resolve_template
 
 router = APIRouter(prefix="/api/runs", tags=["tasks"])
 

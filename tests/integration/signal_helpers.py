@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI
 
-from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
+from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow.signals import InMemorySignalTransport
 from orchestrator.workflow.service import WorkflowService
 
@@ -27,7 +27,7 @@ async def drain_signals(
     decorated methods (``handle_activity_completed``, ``handle_activity_verified``,
     etc.), which are the canonical transition path used in production.
     """
-    from orchestrator.workflow.runtime import RunWorkflow
+    from orchestrator.workflow import RunWorkflow
 
     rw = RunWorkflow(run_id=run_id, transport=transport)
     await rw.on_signal(session, service)

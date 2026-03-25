@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
-from orchestrator.db.connection import init_db
-from orchestrator.db.repositories import RunRepository
+from orchestrator.db import init_db
+from orchestrator.db import RunRepository
 from orchestrator.workflow.service import WorkflowService
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
@@ -62,9 +62,9 @@ async def _await_agent_loop(executor: AgentRunnerExecutor, run_id: str) -> None:
 
 def _make_service_args(session: AsyncSession) -> dict:
     """Build the kwargs dict for constructing a WorkflowService."""
-    from orchestrator.db.event_store import EventStore
-    from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-    from orchestrator.workflow.event_logger import PersistentEventEmitter
+    from orchestrator.db import EventStore
+    from orchestrator.workflow import LocalAutoVerifyRunner
+    from orchestrator.workflow import PersistentEventEmitter
 
     repo = RunRepository(session)
     event_store = EventStore(session)
@@ -125,7 +125,7 @@ async def test_executor_pauses_run_on_agent_not_available(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -177,7 +177,7 @@ async def test_executor_pauses_run_on_agent_execution_error(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -222,7 +222,7 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -272,7 +272,7 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -313,7 +313,7 @@ async def test_executor_persists_builder_prompt_before_execution(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -366,7 +366,7 @@ async def test_agent_metadata_persisted_immediately(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))
@@ -415,7 +415,7 @@ async def test_agent_death_detection_on_startup(
     )
 
     async with session_factory() as session:
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config.routines.discovery import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
         service = WorkflowService(**_make_service_args(session))

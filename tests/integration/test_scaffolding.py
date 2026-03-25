@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.scaffolding import copy_scaffolding, ensure_gitignore
+from orchestrator.runners.scaffolding import copy_scaffolding, ensure_gitignore
 
 
 def _git(args: list[str], cwd: Path) -> str:
@@ -267,12 +267,12 @@ class TestScaffoldingIntegration:
         from orchestrator.runners.executor import AgentRunnerExecutor
         from orchestrator.config.enums import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
-        from orchestrator.db.connection import create_engine, create_session_factory, init_db
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import create_engine, create_session_factory, init_db
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         # Create a test repo with routine and scaffolding
@@ -340,7 +340,7 @@ steps:
 
         # Create run
         async with session_factory() as session:
-            from orchestrator.routines.discovery import discover_routines_in_repo
+            from orchestrator.config.routines.discovery import discover_routines_in_repo
 
             # For PROJECT routines, use discover_routines_in_repo which finds directory-based routines
             project_routines = discover_routines_in_repo(repo, "main")
@@ -413,12 +413,12 @@ steps:
         from orchestrator.runners.executor import AgentRunnerExecutor
         from orchestrator.config.enums import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
-        from orchestrator.db.connection import create_engine, create_session_factory, init_db
-        from orchestrator.db.event_store import EventStore
-        from orchestrator.db.repositories import RunRepository
+        from orchestrator.db import create_engine, create_session_factory, init_db
+        from orchestrator.db import EventStore
+        from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         # Create a test repo with routine but NO scaffolding
@@ -480,7 +480,7 @@ steps:
 
         # Create run
         async with session_factory() as session:
-            from orchestrator.routines.discovery import discover_routines_in_repo
+            from orchestrator.config.routines.discovery import discover_routines_in_repo
 
             # For PROJECT routines, use discover_routines_in_repo which finds directory-based routines
             project_routines = discover_routines_in_repo(repo, "main")

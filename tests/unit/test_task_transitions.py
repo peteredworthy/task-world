@@ -6,8 +6,8 @@ import pytest
 
 from orchestrator.config.enums import ChecklistStatus, Priority, RunStatus, TaskStatus
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
-from orchestrator.workflow.errors import GateBlockedError
-from orchestrator.workflow.transitions import (
+from orchestrator.workflow import (
+    GateBlockedError,
     check_run_completion,
     check_step_progression,
     is_step_complete,

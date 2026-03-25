@@ -2,12 +2,12 @@
 
 import pytest
 
-from orchestrator.routines.errors import (
+from orchestrator.config import (
     RoutineNotFoundError,
     RoutineParseError,
     RoutineValidationError,
+    load_routine_from_path,
 )
-from orchestrator.routines.loader import load_routine_from_path
 
 
 def test_load_nonexistent_file(tmp_path: object) -> None:

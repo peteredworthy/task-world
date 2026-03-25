@@ -28,7 +28,7 @@ from orchestrator.config.models import (
     TaskConfig,
     StepCondition,
 )
-from orchestrator.db.connection import (
+from orchestrator.db import (
     create_engine,
     create_session_factory,
     init_db,
@@ -675,7 +675,7 @@ class TestRepeatForExpansionIntegration:
         run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
 
         # Simulate workflow progression with repeat_for expansion
-        from orchestrator.workflow.transitions import check_step_progression
+        from orchestrator.workflow import check_step_progression
 
         run.steps[0].completed = True
         run.current_step_index = 1
@@ -720,7 +720,7 @@ class TestRepeatForExpansionIntegration:
 
         run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
 
-        from orchestrator.workflow.transitions import check_step_progression
+        from orchestrator.workflow import check_step_progression
 
         run.steps[0].completed = True
         run.current_step_index = 1
@@ -769,7 +769,7 @@ class TestRepeatForExpansionIntegration:
         run.steps[0].completed = True
         run.current_step_index = 1
 
-        from orchestrator.workflow.transitions import check_step_progression
+        from orchestrator.workflow import check_step_progression
 
         # Trigger expansion - should resolve from S1's output
         check_step_progression(run, routine)
@@ -800,7 +800,7 @@ class TestRepeatForExpansionIntegration:
 
         run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
 
-        from orchestrator.workflow.transitions import check_step_progression
+        from orchestrator.workflow import check_step_progression
 
         run.steps[0].completed = True
         run.current_step_index = 1
@@ -836,7 +836,7 @@ class TestRepeatForExpansionIntegration:
 
         run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
 
-        from orchestrator.workflow.transitions import check_step_progression
+        from orchestrator.workflow import check_step_progression
 
         run.steps[0].completed = True
         run.current_step_index = 1
@@ -873,7 +873,7 @@ class TestRepeatForExpansionIntegration:
 
             run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
 
-            from orchestrator.workflow.transitions import check_step_progression
+            from orchestrator.workflow import check_step_progression
 
             run.steps[0].completed = True
             run.current_step_index = 1
@@ -908,7 +908,7 @@ class TestRepeatForExpansionIntegration:
 
         run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
 
-        from orchestrator.workflow.transitions import check_step_progression
+        from orchestrator.workflow import check_step_progression
 
         run.steps[0].completed = True
         run.current_step_index = 1
@@ -943,7 +943,7 @@ class TestRepeatForExpansionIntegration:
 
         run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
 
-        from orchestrator.workflow.transitions import check_step_progression
+        from orchestrator.workflow import check_step_progression
 
         run.steps[0].completed = True
         run.current_step_index = 1
@@ -977,7 +977,7 @@ class TestRepeatForExpansionIntegration:
 
         run = create_run_from_routine(routine, repo_name="test-repo", source_branch="main")
 
-        from orchestrator.workflow.transitions import check_step_progression
+        from orchestrator.workflow import check_step_progression
 
         run.steps[0].completed = True
         run.current_step_index = 1

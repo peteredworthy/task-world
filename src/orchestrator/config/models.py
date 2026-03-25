@@ -2,6 +2,8 @@
 
 import logging
 import re
+from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, cast
 
 from pydantic import BaseModel, Field, model_validator
@@ -16,6 +18,30 @@ from orchestrator.config.enums import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class NudgerConfig:
+    """Configuration for the nudger.
+
+    Attributes:
+        output_timeout: Time without output before considering agent stuck.
+        nudge_interval: Minimum time between nudges.
+        max_nudges: Maximum nudges before kill.
+        nudge_message: Message sent to nudge the agent.
+    """
+
+    output_timeout: timedelta = timedelta(seconds=60)
+    nudge_interval: timedelta = timedelta(seconds=30)
+    max_nudges: int = 3
+    nudge_message: str = "Please continue or call orchestrator tools to submit."
+
+
+class EnvFileSpec(BaseModel):
+    """Declares a file to be managed outside git."""
+
+    relative_path: str
+    promote_on_success: bool = False
 
 
 def _check_for_inheritance_keys(v: dict[str, Any]) -> None:

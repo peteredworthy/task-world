@@ -116,7 +116,7 @@ task-world/
 │   │   ├── models.py          # Artifact data models
 │   │   └── registry.py        # Registry for generated files
 │   ├── cache/                 # LRU cache utility (proposed: move to git/)
-│   │   └── lru.py             # Generic LRU cache used by cached_diff_ops
+│   │   └── lru_cache.py       # Generic LRU cache used by cached_diff_ops
 │   ├── cli/                   # Click CLI commands
 │   │   ├── main.py            # Entry point (orchestrator command)
 │   │   ├── runs.py            # Run management commands
@@ -441,6 +441,28 @@ External agents (REST/MCP) bypass the callback mechanism entirely — they call 
 
 ---
 
+## Module Import Discipline
+
+Even though 19 top-level modules still exist in the source tree, only the following **9 canonical modules** should be imported by code outside that module:
+
+`api`, `cli`, `config`, `db`, `envfiles`, `git`, `runners`, `state`, `workflow`
+
+Each canonical module exposes its public surface via its `__init__.py`. **Never reach into a module's sub-packages from outside that module.** If a symbol you need isn't exported yet, add it to the relevant `__init__.py` rather than importing from the internal sub-path.
+
+```python
+# ✓ correct — import from module top-level
+from orchestrator.runners import CLIAgent, ClaudeSDKAgent
+
+# ✗ wrong — reaching into sub-packages
+from orchestrator.runners.agents.claude_cli.agent import CLIAgent
+```
+
+The remaining 10 top-level modules (`agents`, `artifacts`, `cache`, `mcp`, `metrics`, `repos`, `review`, `routines`, `scaffolding`, and the dead `routers` shim) are candidates for absorption into their canonical parent per the [Consolidation Plan](architecture-site/index.html#suggested-moves). Until absorbed, code outside them should still import via their parent module's `__init__.py` where the symbol has been re-exported.
+
+A pre-commit hook (`scripts/check_module_imports.py`) enforces this rule and will fail if any file imports directly from a sub-package of a module it doesn't own.
+
+---
+
 ## Tech Debt
 
 ### TD-01: Backward-compat Shims After Module Reorganisation
@@ -449,7 +471,7 @@ After agent implementations were moved from `runners/*.py` to `runners/agents/*/
 
 These shims exist solely for backward compatibility and should be removed once all internal imports reference the canonical `agents/` paths. New code must never be added to shim files.
 
-**Affected files:** `runners/cli.py`, `runners/openhands.py`, `runners/openhands_docker.py`, `runners/openhands_common.py`, `runners/codex_server.py`, `runners/codex_server_common.py`, `runners/claude_sdk.py`, `runners/user_managed.py`, `runners/mock.py`, `runners/executor.py`, `runners/parsers/claude_parser.py`, `orchestrator/executor.py`, `orchestrator/routers/`.
+**Affected files:** `runners/openhands.py`, `runners/openhands_docker.py`, `runners/openhands_common.py`, `runners/codex_server.py`, `runners/codex_server_common.py`, `runners/executor.py`, `runners/parsers/claude_parser.py`, `orchestrator/executor.py`, `orchestrator/routers/`.
 
 ---
 
@@ -730,7 +752,7 @@ Both Codex Server agent variants (`codex_server.py` and `codex_server_remote.py`
 | Core workflow logic | `src/orchestrator/workflow/engine.py`, `workflow/service.py` |
 | Data models | `src/orchestrator/state/models.py`, `config/models.py` |
 | Database schema | `src/orchestrator/db/models.py` |
-| Agent implementations | `src/orchestrator/agents/*.py` |
+| Agent implementations | `src/orchestrator/runners/agents/*/` |
 | Frontend entry | `ui/src/App.tsx`, `ui/src/pages/*.tsx` |
 | Test examples | `tests/unit/*.py`, `tests/integration/*.py` |
 | Review API routes | `src/orchestrator/api/routers/review.py` |

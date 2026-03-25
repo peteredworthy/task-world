@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
-from orchestrator.db.connection import init_db
+from orchestrator.db import init_db
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -182,7 +182,7 @@ class TestStartTestRun:
         run_id = run_data["id"]
         worktree_path = run_data["worktree_path"]
 
-        from orchestrator.review.test_runner import TestRunner
+        from orchestrator.git.testing import TestRunner
 
         test_runner: TestRunner = app.state.test_runner
 
@@ -280,7 +280,7 @@ class TestGetTestRun:
 
         # Start a run using the auto-verify routine but inject a failing command
         # by directly invoking the test runner with a failing command
-        from orchestrator.review.test_runner import TestRunner
+        from orchestrator.git.testing import TestRunner
 
         test_runner: TestRunner = app.state.test_runner
 

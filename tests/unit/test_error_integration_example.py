@@ -6,9 +6,9 @@ can coexist with existing domain-specific exceptions for backward compatibility.
 
 from orchestrator.runners.errors import AgentExecutionError
 from orchestrator.errors import ErrorCode, OrchestratorError
-from orchestrator.routines.errors import RoutineNotFoundError
+from orchestrator.config.routines.errors import RoutineNotFoundError
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
-from orchestrator.workflow.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 
 
 class TestErrorIntegration:

@@ -1,12 +1,26 @@
 """Agent-related types for the orchestrator."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
+
+
+class BroadcastCallback(Protocol):
+    """Protocol for broadcasting run events to connected WebSocket clients.
+
+    Runners depend on this protocol rather than the concrete ConnectionManager
+    from api/, preserving the Execution → Interface layering boundary.
+    """
+
+    async def broadcast_event(self, event: object) -> None:
+        """Broadcast a WorkflowEvent to the relevant run's subscribers."""
+        ...
+
 
 # Callback type aliases.
 # run_id and task_id are captured in the closure by the caller,
@@ -30,6 +44,28 @@ AgentMetadataCallback = Callable[[dict[str, Any]], Awaitable[None]]
 
 EscalationCallback = Callable[[str, str], Awaitable[None]]
 """(requirement_id, reason) -> None. Called when agent flags a requirement as unfulfillable."""
+
+
+class TaskSubmitCallback(Protocol):
+    """Protocol for registering and unregistering task submit events.
+
+    Used by UserManagedAgent to decouple from WorkflowService.
+    Allows external actors (REST API, MCP tools) to notify the agent
+    when ``submit_for_verification`` is called.
+    """
+
+    def register_submit_event(self, task_id: str) -> asyncio.Event:
+        """Register and return an event for task submission.
+
+        The returned event will be set when an external actor calls
+        ``unregister_submit_event`` for the same task_id through a
+        submit endpoint.
+        """
+        ...
+
+    def unregister_submit_event(self, task_id: str) -> None:
+        """Unregister the submit event for a task (and set it if registered)."""
+        ...
 
 
 class ExecutionMetrics(BaseModel):
