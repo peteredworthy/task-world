@@ -3,7 +3,7 @@
 import json
 
 from orchestrator.runners.action_log import ActionEntryKind
-from orchestrator.runners.parsers.claude_parser import ClaudeStreamParser
+from orchestrator.runners import ClaudeStreamParser
 
 
 def _make_line(event: dict) -> str:

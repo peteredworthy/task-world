@@ -1,6 +1,6 @@
 """Tests for User-Managed MCP all-tools registration and prompt MCP info."""
 
-from orchestrator.api.schemas.tasks import CallbackInstructions
+from orchestrator.api import CallbackInstructions
 from orchestrator.config.models import MCPServerConfig
 
 

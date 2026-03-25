@@ -59,6 +59,18 @@ def find_src_root(filepath: Path) -> Path | None:
         return None
 
 
+def find_src_root_from_script() -> Path | None:
+    """Return src_root by looking for orchestrator/ relative to this script."""
+    script_dir = Path(__file__).resolve().parent  # scripts/
+    project_root = script_dir.parent
+    candidate = project_root / "src"
+    if (candidate / "orchestrator").is_dir():
+        return candidate
+    if (project_root / "orchestrator").is_dir():
+        return project_root
+    return None
+
+
 def goes_through_subpackage(import_parts: list[str], src_root: Path) -> bool:
     """
     Return True if the import path goes through a sub-package directory.
@@ -114,9 +126,14 @@ def check_file(filepath: Path, src_root: Path | None) -> list[str]:
 
 def main(paths: list[str]) -> int:
     all_violations: list[str] = []
-    src_root: Path | None = None
-    if paths:
-        src_root = find_src_root(Path(paths[0]))
+    # Try to find src_root from the script location first (works even when
+    # all input files are test files outside the orchestrator/ package).
+    src_root: Path | None = find_src_root_from_script()
+    if src_root is None:
+        for p in paths:
+            src_root = find_src_root(Path(p))
+            if src_root is not None:
+                break
 
     for path_str in paths:
         path = Path(path_str)

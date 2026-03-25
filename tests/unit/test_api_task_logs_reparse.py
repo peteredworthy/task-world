@@ -1,6 +1,6 @@
 """Unit tests for task log reparsing fallback in API router."""
 
-from orchestrator.api.routers.tasks import (
+from orchestrator.api import (
     _looks_like_ndjson_agent_stream,
     _parse_action_log_from_raw,
 )

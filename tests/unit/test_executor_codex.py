@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.runners.agents import discover as discover_agents
+from orchestrator.runners import discover_agents
 from orchestrator.runners.codex_server import CodexServerAgent
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.config.enums import AgentRunnerType

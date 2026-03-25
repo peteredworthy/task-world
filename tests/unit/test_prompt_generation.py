@@ -1,9 +1,9 @@
 """Tests for prompt generation."""
 
-from orchestrator.runners.agents.claude_sdk.agent import build_claude_sdk_prompt
+from orchestrator.runners import build_claude_sdk_prompt
 from orchestrator.runners.codex_server_common import build_codex_server_prompt
 from orchestrator.runners.openhands_common import build_openhands_prompt
-from orchestrator.runners.agents.claude_cli.agent import CLIAgent
+from orchestrator.runners import CLIAgent
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.models import (
     RequirementConfig,

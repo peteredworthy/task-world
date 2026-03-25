@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.api.schemas.runs import (
+from orchestrator.api import (
     CreateRunRequest,
     get_agent_display_name,
     get_agent_icon,

@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.runners.agents.mock.agent import MockAgent, MockBehavior
+from orchestrator.runners import MockAgent, MockBehavior
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import (
     ChecklistStatus,

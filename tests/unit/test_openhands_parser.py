@@ -1,7 +1,7 @@
 """Tests for OpenHands event parser (batch mode)."""
 
 from orchestrator.runners.action_log import ActionEntryKind
-from orchestrator.runners.parsers.openhands_parser import OpenHandsEventParser
+from orchestrator.runners import OpenHandsEventParser
 
 
 class MessageAction:

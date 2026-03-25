@@ -14,7 +14,7 @@ from typing import Any
 from orchestrator.runners.openhands import OpenHandsAgent
 from orchestrator.runners.quota import FakeQuotaFetcher
 from orchestrator.runners.types import AgentQuota
-from orchestrator.runners.agents.user_managed.agent import UserManagedAgent
+from orchestrator.runners import UserManagedAgent
 
 _API_KEY = "sk-test-openhands-quota"  # pragma: allowlist secret
 

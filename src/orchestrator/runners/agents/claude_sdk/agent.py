@@ -168,7 +168,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 
-def _build_orchestrator_mcp_server(
+def build_orchestrator_mcp_server(
     on_checklist_update: ChecklistUpdateCallback,
     on_submit: SubmitCallback,
     on_grade: GradeCallback | None,
@@ -242,7 +242,7 @@ def _build_orchestrator_mcp_server(
 # ---------------------------------------------------------------------------
 
 
-def _build_mcp_servers(
+def build_mcp_servers(
     orchestrator_server: Any,
     mcp_servers: list[Any] | None,
 ) -> dict[str, Any]:
@@ -493,10 +493,10 @@ class ClaudeSDKAgent:
             from claude_agent_sdk.types import TextBlock, ToolUseBlock
 
             # Build orchestrator MCP server with callback tools
-            orchestrator_server = _build_orchestrator_mcp_server(
+            orchestrator_server = build_orchestrator_mcp_server(
                 on_checklist_update, on_submit, on_grade
             )
-            mcp_servers = _build_mcp_servers(orchestrator_server, context.mcp_servers)
+            mcp_servers = build_mcp_servers(orchestrator_server, context.mcp_servers)
 
             full_prompt = build_claude_sdk_prompt(context, is_verifier=is_verifier)
 

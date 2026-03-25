@@ -3,7 +3,7 @@
 import re
 from datetime import timedelta
 
-from orchestrator.runners.agents.claude_cli.agent import CLIAgent
+from orchestrator.runners import CLIAgent
 from orchestrator.runners.nudger import NudgerConfig
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.config.enums import AgentRunnerType
@@ -183,7 +183,7 @@ def test_rest_prompt_routes_match_task_router() -> None:
     If someone renames an API route but forgets to update build_prompt,
     this test will fail.
     """
-    from orchestrator.api.routers.tasks import router
+    from orchestrator.api import router
 
     # Collect all registered route path templates
     route_paths: set[str] = set()

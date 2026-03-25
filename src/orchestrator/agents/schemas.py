@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import Field, field_validator
 
-from orchestrator.api.schemas.base import ApiModel
+from orchestrator.api import ApiModel
 from orchestrator.config.enums import ModelProfile
 
 

@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from orchestrator.api.routers.tasks import get_attempt_logs, get_task as get_task_detail
+from orchestrator.api import get_attempt_logs, get_task as get_task_detail
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.enums import (
     RoutineSource,

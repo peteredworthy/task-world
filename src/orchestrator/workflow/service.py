@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.api.schemas.runs import RecoverResponse
+from orchestrator.api import RecoverResponse
 from orchestrator.config.enums import (
     AgentRunnerType,
     ChecklistStatus,

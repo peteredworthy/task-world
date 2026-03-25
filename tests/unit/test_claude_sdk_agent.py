@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from orchestrator.runners.agents.claude_sdk.agent import (
+from orchestrator.runners import (
     ClaudeSDKAgent,
-    _build_orchestrator_mcp_server,
-    _build_mcp_servers,
+    build_orchestrator_mcp_server,
+    build_mcp_servers,
     build_claude_sdk_prompt,
 )
 from orchestrator.runners.errors import (
@@ -604,22 +604,22 @@ def test_claude_sdk_is_distinct_from_other_types() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _build_orchestrator_mcp_server — tool creation
+# build_orchestrator_mcp_server — tool creation
 # ---------------------------------------------------------------------------
 
 
 class TestBuildOrchestratorMcpServer:
-    """Tests for _build_orchestrator_mcp_server() — verifies tools are created correctly."""
+    """Tests for build_orchestrator_mcp_server() — verifies tools are created correctly."""
 
     async def test_builder_phase_creates_three_tools(self) -> None:
         """Builder phase (on_grade=None) creates update_checklist, submit, request_clarification."""
-        server = _build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=None)
+        server = build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=None)
         # The server is returned from create_sdk_mcp_server; it should exist.
         assert server is not None
 
     async def test_verifier_phase_creates_four_tools(self) -> None:
         """Verifier phase (on_grade provided) creates grade + the 3 builder tools."""
-        server = _build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=_noop_grade)
+        server = build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=_noop_grade)
         assert server is not None
 
     async def test_update_checklist_tool_calls_callback(self) -> None:
@@ -630,7 +630,7 @@ class TestBuildOrchestratorMcpServer:
             received.append((req_id, status, note))
 
         # Build the server — we need to test the tool functions directly.
-        # Since _build_orchestrator_mcp_server uses @tool decorator, we test
+        # Since build_orchestrator_mcp_server uses @tool decorator, we test
         # via the full execute() flow instead.
         agent = ClaudeSDKAgent(api_key="sk-ant-test", _query_fn=_tool_use_query)
         await agent.execute(
@@ -646,46 +646,46 @@ class TestBuildOrchestratorMcpServer:
         """Builder phase should not include grade tool in the MCP server."""
         # Verified indirectly: when on_grade is None, the server is built
         # with only 3 tools (update_checklist, submit, request_clarification).
-        server = _build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=None)
+        server = build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=None)
         assert server is not None
 
     async def test_grade_tool_created_for_verifier_phase(self) -> None:
         """Verifier phase should include grade tool in the MCP server."""
-        server = _build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=_noop_grade)
+        server = build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=_noop_grade)
         assert server is not None
 
 
 # ---------------------------------------------------------------------------
-# _build_mcp_servers — server dict assembly
+# build_mcp_servers — server dict assembly
 # ---------------------------------------------------------------------------
 
 
 class TestBuildMcpServers:
-    """Tests for _build_mcp_servers() — assembles MCP server dict for SDK options."""
+    """Tests for build_mcp_servers() — assembles MCP server dict for SDK options."""
 
     def test_orchestrator_always_included(self) -> None:
         """The orchestrator server is always included in the result."""
         sentinel = object()
-        result = _build_mcp_servers(sentinel, mcp_servers=None)
+        result = build_mcp_servers(sentinel, mcp_servers=None)
         assert result["orchestrator"] is sentinel
 
     def test_no_external_servers(self) -> None:
         """With no external servers, only orchestrator is in the result."""
         sentinel = object()
-        result = _build_mcp_servers(sentinel, mcp_servers=None)
+        result = build_mcp_servers(sentinel, mcp_servers=None)
         assert len(result) == 1
         assert "orchestrator" in result
 
     def test_empty_list_returns_only_orchestrator(self) -> None:
         """Empty mcp_servers list returns only orchestrator."""
         sentinel = object()
-        result = _build_mcp_servers(sentinel, mcp_servers=[])
+        result = build_mcp_servers(sentinel, mcp_servers=[])
         assert len(result) == 1
 
     def test_stdio_server_included(self) -> None:
         """stdio-transport MCP server is included with command config."""
         mcp = MCPServerConfig(name="local", command="context7-mcp", args=["--port", "3000"])
-        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        result = build_mcp_servers("orch", mcp_servers=[mcp])
         assert "local" in result
         assert result["local"]["command"] == "context7-mcp"
         assert result["local"]["args"] == ["--port", "3000"]
@@ -693,7 +693,7 @@ class TestBuildMcpServers:
     def test_url_server_included(self) -> None:
         """URL-based (SSE) MCP server is included with url config."""
         mcp = MCPServerConfig(name="remote", url="https://remote.example.com/mcp")
-        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        result = build_mcp_servers("orch", mcp_servers=[mcp])
         assert "remote" in result
         assert result["remote"]["url"] == "https://remote.example.com/mcp"
         assert result["remote"]["type"] == "sse"
@@ -702,7 +702,7 @@ class TestBuildMcpServers:
         """Multiple external servers are all included alongside orchestrator."""
         mcp1 = MCPServerConfig(name="srv1", url="https://srv1.example.com")
         mcp2 = MCPServerConfig(name="srv2", command="srv2-cmd")
-        result = _build_mcp_servers("orch", mcp_servers=[mcp1, mcp2])
+        result = build_mcp_servers("orch", mcp_servers=[mcp1, mcp2])
         assert len(result) == 3  # orchestrator + srv1 + srv2
         assert "srv1" in result
         assert "srv2" in result
@@ -715,7 +715,7 @@ class TestBuildMcpServers:
         os.environ["TEST_MCP_TOKEN"] = "secret123"
         try:
             mcp = MCPServerConfig(name="auth", command="auth-cmd", auth_token_env="TEST_MCP_TOKEN")
-            result = _build_mcp_servers("orch", mcp_servers=[mcp])
+            result = build_mcp_servers("orch", mcp_servers=[mcp])
             assert result["auth"]["env"]["TEST_MCP_TOKEN"] == "secret123"
         finally:
             if old is None:
@@ -733,7 +733,7 @@ class TestBuildMcpServers:
             mcp = MCPServerConfig(
                 name="auth", url="https://auth.example.com", auth_token_env="TEST_URL_TOKEN"
             )
-            result = _build_mcp_servers("orch", mcp_servers=[mcp])
+            result = build_mcp_servers("orch", mcp_servers=[mcp])
             assert result["auth"]["headers"]["Authorization"] == "Bearer bearer-secret"
         finally:
             if old is None:
@@ -747,7 +747,7 @@ class TestBuildMcpServers:
 
         os.environ.pop("NONEXISTENT_TOKEN", None)
         mcp = MCPServerConfig(name="noauth", command="cmd", auth_token_env="NONEXISTENT_TOKEN")
-        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        result = build_mcp_servers("orch", mcp_servers=[mcp])
         assert "env" not in result["noauth"]
 
     def test_missing_url_auth_token_no_headers(self) -> None:
@@ -758,7 +758,7 @@ class TestBuildMcpServers:
         mcp = MCPServerConfig(
             name="noauth", url="https://x.example.com", auth_token_env="NONEXISTENT_TOKEN_2"
         )
-        result = _build_mcp_servers("orch", mcp_servers=[mcp])
+        result = build_mcp_servers("orch", mcp_servers=[mcp])
         assert "headers" not in result["noauth"]
 
 

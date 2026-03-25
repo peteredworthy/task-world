@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from claude_agent_sdk import AssistantMessage, ResultMessage
 from claude_agent_sdk.types import TextBlock, ToolUseBlock
 
-from orchestrator.runners.agents.claude_sdk.agent import ClaudeSDKAgent
+from orchestrator.runners import ClaudeSDKAgent
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config.enums import (
     ChecklistStatus,

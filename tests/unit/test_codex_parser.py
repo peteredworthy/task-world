@@ -3,7 +3,7 @@
 import json
 
 from orchestrator.runners.action_log import ActionEntryKind
-from orchestrator.runners.parsers.codex_parser import CodexStreamParser
+from orchestrator.runners import CodexStreamParser
 
 
 def _make_line(event: dict) -> str:

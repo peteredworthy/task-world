@@ -467,13 +467,12 @@ def create_app(
     require_ws_auth = get_require_ws_auth(auth_config)
 
     # Auto-discover agent packages and register their factories
-    from orchestrator.runners.agents import discover as discover_agents
+    from orchestrator.runners import discover_agents
 
     discover_agents()
 
     # Agent tool detector
-    from orchestrator.runners.agents.claude_sdk.agent import ClaudeSDKAgent
-    from orchestrator.runners.agents.claude_cli.agent import ClaudeCliQuotaAgent
+    from orchestrator.runners import ClaudeCliQuotaAgent, ClaudeSDKAgent
     from orchestrator.runners.codex_server import CodexServerAgent
     from orchestrator.runners.detector import ToolDetector
     from orchestrator.runners.openhands import OpenHandsAgent
