@@ -229,6 +229,14 @@ All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_
 
 **Event sourcing for recovery.** Log transitions to JSONL first, then update state. Reconstruct from history on startup.
 
+**Import from module top-level only.** Never reach into a module's sub-packages from outside that module. Import from the public API the module exposes via its `__init__.py`:
+- CORRECT: `from orchestrator.config import discover_routines`
+- WRONG:   `from orchestrator.config.routines.discovery import discover_routines`
+- CORRECT: `from orchestrator.runners import AgentService`
+- WRONG:   `from orchestrator.runners.profiles.service import AgentService`
+
+The 9 top-level modules are: `api`, `cli`, `config`, `db`, `envfiles`, `git`, `runners`, `state`, `workflow`. Code within the same module may use direct sub-module imports to avoid circular imports. If a symbol you need is not yet exported from the module `__init__.py`, add it there — do not bypass the public API.
+
 ## Handling Errors and Failing Checks
 
 **Every failing check is your responsibility.** The commit process runs linters, type checks, and tests via pre-commit hooks. If any check fails, you must fix it before proceeding. Do not dismiss failures as "pre-existing" — the checks only run against your changes, so all failures are new.
