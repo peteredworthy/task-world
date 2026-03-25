@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.config.models import AutoVerifyConfig, AutoVerifyItemConfig
-from orchestrator.workflow.auto_verify import (
+from orchestrator.workflow import (
     AutoVerifyResult,
     LocalAutoVerifyRunner,
     evaluate_auto_verify,

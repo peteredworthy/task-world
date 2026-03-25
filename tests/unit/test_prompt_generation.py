@@ -13,8 +13,9 @@ from orchestrator.config.models import (
     VerifierConfig,
 )
 from orchestrator.state.models import Attempt, TaskState
-from orchestrator.workflow.clarifications import CompressedDecision, CompressedDecisions
-from orchestrator.workflow.prompts import (
+from orchestrator.workflow import (
+    CompressedDecision,
+    CompressedDecisions,
     generate_builder_prompt,
     generate_verifier_prompt,
     get_task_context,

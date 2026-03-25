@@ -6,7 +6,7 @@ import pytest
 
 from orchestrator.config.enums import ChecklistStatus, Priority, TaskStatus
 from orchestrator.state.models import Attempt, ChecklistItem, TaskState
-from orchestrator.workflow.transitions import (
+from orchestrator.workflow import (
     transition_from_approval,
     transition_from_clarification,
     transition_to_pending_approval,

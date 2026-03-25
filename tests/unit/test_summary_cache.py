@@ -9,8 +9,7 @@ import pytest
 
 from orchestrator.workflow.artifacts import ArtifactRegistry
 from orchestrator.config.models import ContextSource
-from orchestrator.workflow.context_builder import TaskContextBuilder
-from orchestrator.workflow.summary_cache import SummaryCache
+from orchestrator.workflow import TaskContextBuilder, SummaryCache
 
 
 # ---------------------------------------------------------------------------

@@ -22,7 +22,7 @@ from orchestrator.config.enums import (
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
-from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
+from orchestrator.workflow import LocalAutoVerifyRunner
 
 from orchestrator.workflow.service import (
     WorkflowService,

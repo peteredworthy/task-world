@@ -5,17 +5,15 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.runners.profiles.errors import (
+from orchestrator.runners import (
     AgentNameConflictError,
     AgentNoDefaultPromptError,
     AgentNotFoundError,
-)
-from orchestrator.runners.profiles.schemas import (
     AgentSchema,
+    AgentService,
     CreateAgentRequest,
     UpdateAgentRequest,
 )
-from orchestrator.runners.profiles.service import AgentService
 from orchestrator.api.deps import get_session
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])

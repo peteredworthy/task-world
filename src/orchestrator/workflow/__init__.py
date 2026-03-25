@@ -42,11 +42,11 @@ from orchestrator.workflow.engine import (
     transition_to_verifying,
 )
 from orchestrator.workflow.engine.transitions import (
-    _build_step_outcomes,
-    _create_repeat_step_copies,
-    _find_step_config,
-    _get_variable_value_for_repeat,
-    _parse_repeat_for_expression,
+    _build_step_outcomes,  # pyright: ignore[reportPrivateUsage]
+    _create_repeat_step_copies,  # pyright: ignore[reportPrivateUsage]
+    _find_step_config,  # pyright: ignore[reportPrivateUsage]
+    _get_variable_value_for_repeat,  # pyright: ignore[reportPrivateUsage]
+    _parse_repeat_for_expression,  # pyright: ignore[reportPrivateUsage]
 )
 from orchestrator.workflow.locks import (
     InMemoryLockManager,
@@ -288,6 +288,7 @@ __all__ = [
     "evaluate_auto_verify",
     "extract_section",
     "format_clarification_artifact",
+    "run_auto_verify",
     "generate_builder_prompt",
     "generate_recovery_prompt",
     "generate_verifier_prompt",

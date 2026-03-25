@@ -271,8 +271,8 @@ class TestScaffoldingIntegration:
         from orchestrator.db import EventStore
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         # Create a test repo with routine and scaffolding
@@ -417,8 +417,8 @@ steps:
         from orchestrator.db import EventStore
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         # Create a test repo with routine but NO scaffolding

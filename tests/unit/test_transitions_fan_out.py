@@ -2,7 +2,7 @@
 
 from orchestrator.config.enums import TaskStatus
 from orchestrator.state.models import StepState, TaskState
-from orchestrator.workflow.transitions import (
+from orchestrator.workflow import (
     VALID_TRANSITIONS,
     is_step_complete,
     step_has_failure,

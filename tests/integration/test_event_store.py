@@ -11,7 +11,7 @@ from orchestrator.config.enums import RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.db import RunModel
-from orchestrator.workflow.event_logger import PersistentEventEmitter
+from orchestrator.workflow import PersistentEventEmitter
 from orchestrator.workflow.events import (
     ChecklistGateEvaluated,
     GradesEvaluated,

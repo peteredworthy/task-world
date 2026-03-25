@@ -44,7 +44,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     session_factory = app.state.session_factory
 
     # Seed factory-default agents (Planner, Builder, Verifier) if not present
-    from orchestrator.runners.profiles.service import seed_default_agents
+    from orchestrator.runners import seed_default_agents
 
     async with session_factory() as _seed_session:
         await seed_default_agents(_seed_session)
@@ -468,8 +468,7 @@ def create_app(
     discover_agents()
 
     # Agent tool detector
-    from orchestrator.runners.agents.claude_sdk.agent import ClaudeSDKAgent
-    from orchestrator.runners.agents.claude_cli.agent import ClaudeCliQuotaAgent
+    from orchestrator.runners import ClaudeSDKAgent, ClaudeCliQuotaAgent
     from orchestrator.runners.codex_server import CodexServerAgent
     from orchestrator.runners import ToolDetector
     from orchestrator.runners.openhands import OpenHandsAgent

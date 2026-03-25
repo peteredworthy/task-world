@@ -183,7 +183,9 @@ def test_rest_prompt_routes_match_task_router() -> None:
     If someone renames an API route but forgets to update build_prompt,
     this test will fail.
     """
-    from orchestrator.api.routers.tasks import router
+    from orchestrator.api.routers import tasks as _tasks_mod
+
+    router = _tasks_mod.router
 
     # Collect all registered route path templates
     route_paths: set[str] = set()
@@ -220,7 +222,7 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
     If someone renames an MCP tool but forgets to update build_prompt,
     this test will fail.
     """
-    from orchestrator.api.mcp.tools import ORCHESTRATOR_TOOLS
+    from orchestrator.api.mcp import ORCHESTRATOR_TOOLS
 
     registered_names = {t["name"] for t in ORCHESTRATOR_TOOLS}
 

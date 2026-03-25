@@ -395,8 +395,8 @@ async def test_executor_stops_at_human_approval_gate(
         from orchestrator.db import EventStore
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
@@ -482,8 +482,8 @@ async def test_executor_proceeds_after_gate_approved(
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.state.models import HumanApproval
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
@@ -650,8 +650,8 @@ async def test_step_without_gate_not_blocked(
         from orchestrator.db import EventStore
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
-        from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-        from orchestrator.workflow.event_logger import PersistentEventEmitter
+        from orchestrator.workflow import LocalAutoVerifyRunner
+        from orchestrator.workflow import PersistentEventEmitter
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)

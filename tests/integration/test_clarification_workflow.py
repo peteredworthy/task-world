@@ -16,7 +16,7 @@ from orchestrator.config.enums import (
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
-from orchestrator.workflow.clarifications import (
+from orchestrator.workflow import (
     ClarificationAnswer,
     ClarificationQuestion,
     CompressedDecisions,
@@ -374,7 +374,7 @@ async def test_respond_to_clarification_passes_decisions_to_generate_builder_pro
     # The run has no routine_embedded so generate_builder_prompt is not called
     # (task_config_obj lookup returns None). Verify compress_clarifications is
     # still called and produces the right decisions regardless.
-    from orchestrator.workflow.clarifications import (
+    from orchestrator.workflow import (
         ClarificationResponse,
         compress_clarifications,
     )

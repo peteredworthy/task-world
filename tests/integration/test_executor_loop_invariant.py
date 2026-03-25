@@ -65,8 +65,8 @@ async def _await_agent_loop(executor: AgentRunnerExecutor, run_id: str) -> None:
 
 def _make_service_args(session: AsyncSession) -> dict:
     from orchestrator.db import EventStore
-    from orchestrator.workflow.auto_verify import LocalAutoVerifyRunner
-    from orchestrator.workflow.event_logger import PersistentEventEmitter
+    from orchestrator.workflow import LocalAutoVerifyRunner
+    from orchestrator.workflow import PersistentEventEmitter
 
     repo = RunRepository(session)
     event_store = EventStore(session)

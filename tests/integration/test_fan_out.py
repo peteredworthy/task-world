@@ -35,7 +35,7 @@ from orchestrator.state.models import (
     Run,
 )
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.workflow.templates import derive_output_path, resolve_template
+from orchestrator.workflow import derive_output_path, resolve_template
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 # Project-root tmp/ directory for test SQLite databases (git-ignored, cleaned up per test).

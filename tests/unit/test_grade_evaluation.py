@@ -2,7 +2,7 @@
 
 from orchestrator.config.enums import ChecklistStatus, Priority
 from orchestrator.state.models import ChecklistItem
-from orchestrator.workflow.grades import (
+from orchestrator.workflow import (
     evaluate_grades,
     grade_meets_threshold,
 )

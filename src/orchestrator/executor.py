@@ -9,11 +9,11 @@ orchestrator.workflow.runtime) rather than running the loop directly.
 
 from orchestrator.runners.executor import (  # noqa: F401
     AgentRunnerExecutor,
-    LoopAction,
     NoTaskReason,
     resolve_no_task_action,
     resolve_verifier_config,
 )
+from orchestrator.workflow.signals import LoopAction  # noqa: F401
 
 # RunWorkflow is imported by executor._run_agent_loop at runtime.
 # Listed here so static analysis tools can confirm the delegation.

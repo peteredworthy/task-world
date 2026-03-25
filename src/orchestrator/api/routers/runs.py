@@ -66,7 +66,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import EventStore
 from orchestrator.db import RunRepository
 from orchestrator.api.metrics import estimate_cost
-from orchestrator.config.routines.discovery import discover_routines
+from orchestrator.config import discover_routines
 from orchestrator.config.routines.errors import RoutineNotFoundError
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.errors import RunNotFoundError, StepNotFoundError, TaskNotFoundError

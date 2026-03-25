@@ -2,7 +2,7 @@
 
 import pytest
 
-from orchestrator.workflow.condition_evaluator import (
+from orchestrator.workflow import (
     ConditionEvalError,
     ConditionEvaluator,
     StepOutcome,

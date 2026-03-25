@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.git.diff import FileStatus
-from orchestrator.git.diff.diff_ops import (
+from orchestrator.git.diff import (
     get_branch_diff,
     get_commit_diff,
     get_commit_log,

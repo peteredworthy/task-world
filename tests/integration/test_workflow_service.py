@@ -26,7 +26,7 @@ from orchestrator.state.errors import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.workflow.errors import InvalidTransitionError
+from orchestrator.workflow import InvalidTransitionError
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.runners.profiles.resolution import get_agent_system_prompt, resolve_agent_name
+from orchestrator.runners import get_agent_system_prompt, resolve_agent_name
 from orchestrator.api.deps import (
     get_current_user,
     get_routine_dirs,
@@ -41,8 +41,7 @@ from orchestrator.api.schemas.tasks import (
 from orchestrator.config.enums import ChecklistStatus, RoutineSource, TaskStatus
 from orchestrator.config.models import MCPServerConfig, RoutineConfig
 from orchestrator.db import RunRepository
-from orchestrator.config.routines.discovery import discover_routines
-from orchestrator.config.routines.errors import RoutineNotFoundError
+from orchestrator.config import discover_routines, RoutineNotFoundError
 from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
 from orchestrator.workflow.artifacts import ArtifactRegistry
 from orchestrator.workflow import (
@@ -92,11 +91,11 @@ def _parse_action_log_from_raw(output: str, agent_settings: dict[str, Any]) -> A
     parser: Any | None = None
 
     if command == "codex":
-        from orchestrator.runners.parsers.codex_parser import CodexStreamParser
+        from orchestrator.runners import CodexStreamParser
 
         parser = CodexStreamParser()
     elif command == "claude":
-        from orchestrator.runners.parsers.claude_parser import ClaudeStreamParser
+        from orchestrator.runners import ClaudeStreamParser
 
         parser = ClaudeStreamParser()
     else:

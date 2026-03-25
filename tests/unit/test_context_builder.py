@@ -7,7 +7,7 @@ import pytest_asyncio  # noqa: F401
 
 from orchestrator.workflow.artifacts import ArtifactRegistry
 from orchestrator.config.models import ContextSource
-from orchestrator.workflow.context_builder import (
+from orchestrator.workflow import (
     ContextError,
     TaskContextBuilder,
     count_tokens,

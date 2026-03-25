@@ -83,8 +83,18 @@ def __getattr__(name: str):
 
 
 __all__ = [
-    # ORM
+    # ORM models (backward compat re-exports)
+    "AttemptModel",
     "Base",
+    "ClarificationRequestModel",
+    "ClarificationResponseModel",
+    "EventModel",
+    "PendingSignalModel",
+    "ReplayCheckpointModel",
+    "RunModel",
+    "RunnerProfileDefaultModel",
+    "StepModel",
+    "TaskModel",
     # access
     "create_engine",
     "create_session_factory",
