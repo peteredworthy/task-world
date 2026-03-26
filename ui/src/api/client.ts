@@ -3,6 +3,7 @@ import type {
   AgentLogsResponse,
   AgentRunnerOption,
   ApproveTaskRequest,
+  ArchiveRoutineResponse,
   BranchStatusResponse,
   BranchCountResponse,
   BranchesListResponse,
@@ -400,12 +401,23 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/prompt');
   },
 
-  listRoutines(): Promise<RoutineListResponse> {
-    return fetchApi('/api/routines');
+  listRoutines(params?: { includeArchived?: boolean }): Promise<RoutineListResponse> {
+    const sp = new URLSearchParams();
+    if (params?.includeArchived) sp.set('include_archived', 'true');
+    const qs = sp.toString();
+    return fetchApi('/api/routines' + (qs ? '?' + qs : ''));
   },
 
   getRoutine(routineId: string): Promise<RoutineDetail> {
     return fetchApi('/api/routines/' + routineId);
+  },
+
+  archiveRoutine(routineId: string): Promise<ArchiveRoutineResponse> {
+    return fetchApi('/api/routines/' + routineId + '/archive', { method: 'POST' });
+  },
+
+  unarchiveRoutine(routineId: string): Promise<ArchiveRoutineResponse> {
+    return fetchApi('/api/routines/' + routineId + '/unarchive', { method: 'POST' });
   },
 
   async validateRoutine(yamlContent: string): Promise<ValidationResult> {

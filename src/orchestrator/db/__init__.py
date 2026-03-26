@@ -17,6 +17,7 @@ from orchestrator.db.orm.models import (  # noqa: F401
     ReplayCheckpointModel,
     RunModel,
     RunnerProfileDefaultModel,
+    RoutineMetaModel,
     StepModel,
     TaskModel,
 )
@@ -93,6 +94,7 @@ __all__ = [
     "ReplayCheckpointModel",
     "RunModel",
     "RunnerProfileDefaultModel",
+    "RoutineMetaModel",
     "StepModel",
     "TaskModel",
     # access

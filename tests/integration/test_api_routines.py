@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
 from orchestrator.config.enums import RoutineSource
+from orchestrator.db import init_db
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -19,17 +20,21 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    await init_db(app.state.engine)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+    await app.state.engine.dispose()
 
 
 @pytest.fixture
 async def empty_client() -> AsyncGenerator[AsyncClient, None]:
     app = create_app(db_path=":memory:", routine_dirs=[])
+    await init_db(app.state.engine)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+    await app.state.engine.dispose()
 
 
 async def test_list_routines(client: AsyncClient) -> None:
@@ -189,3 +194,91 @@ async def test_validate_routine_empty_yaml(client: AsyncClient) -> None:
     assert data["valid"] is False
     assert any("Empty" in e for e in data["errors"])
     assert len(data["builder_feedback"]) > 0
+
+
+# --- Archive / unarchive endpoint tests ---
+
+
+async def test_list_routines_includes_is_archived_false_by_default(client: AsyncClient) -> None:
+    """Routines in list response include is_archived=false by default."""
+    response = await client.get("/api/routines")
+    assert response.status_code == 200
+    for r in response.json()["routines"]:
+        assert r["is_archived"] is False
+
+
+async def test_archive_routine(client: AsyncClient) -> None:
+    """Archiving a routine returns is_archived=true and hides it from default listing."""
+    response = await client.post("/api/routines/simple-routine/archive")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "simple-routine"
+    assert data["is_archived"] is True
+
+    # Default list should no longer include it
+    list_response = await client.get("/api/routines")
+    ids = {r["id"] for r in list_response.json()["routines"]}
+    assert "simple-routine" not in ids
+
+
+async def test_include_archived_shows_archived_routines(client: AsyncClient) -> None:
+    """include_archived=true returns archived routines with is_archived=true."""
+    await client.post("/api/routines/simple-routine/archive")
+
+    response = await client.get("/api/routines?include_archived=true")
+    assert response.status_code == 200
+    routines = response.json()["routines"]
+    archived = [r for r in routines if r["id"] == "simple-routine"]
+    assert len(archived) == 1
+    assert archived[0]["is_archived"] is True
+
+
+async def test_unarchive_routine(client: AsyncClient) -> None:
+    """Unarchiving a previously archived routine restores it to default listing."""
+    await client.post("/api/routines/simple-routine/archive")
+
+    response = await client.post("/api/routines/simple-routine/unarchive")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["id"] == "simple-routine"
+    assert data["is_archived"] is False
+
+    # Should appear in default listing again
+    list_response = await client.get("/api/routines")
+    ids = {r["id"] for r in list_response.json()["routines"]}
+    assert "simple-routine" in ids
+
+
+async def test_unarchive_never_archived_routine(client: AsyncClient) -> None:
+    """Unarchiving a routine that was never archived is a no-op returning is_archived=false."""
+    response = await client.post("/api/routines/simple-routine/unarchive")
+    assert response.status_code == 200
+    assert response.json()["is_archived"] is False
+
+
+async def test_archive_nonexistent_routine(client: AsyncClient) -> None:
+    """Archiving a routine that doesn't exist returns 404."""
+    response = await client.post("/api/routines/nonexistent/archive")
+    assert response.status_code == 404
+
+
+async def test_unarchive_nonexistent_routine(client: AsyncClient) -> None:
+    """Unarchiving a routine that doesn't exist returns 404."""
+    response = await client.post("/api/routines/nonexistent/unarchive")
+    assert response.status_code == 404
+
+
+async def test_get_routine_includes_is_archived(client: AsyncClient) -> None:
+    """GET /api/routines/{id} includes is_archived field."""
+    response = await client.get("/api/routines/simple-routine")
+    assert response.status_code == 200
+    assert "is_archived" in response.json()
+    assert response.json()["is_archived"] is False
+
+
+async def test_get_archived_routine_by_id(client: AsyncClient) -> None:
+    """GET /api/routines/{id} returns is_archived=true after archiving."""
+    await client.post("/api/routines/simple-routine/archive")
+    response = await client.get("/api/routines/simple-routine")
+    assert response.status_code == 200
+    assert response.json()["is_archived"] is True

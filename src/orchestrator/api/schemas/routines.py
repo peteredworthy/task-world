@@ -16,6 +16,7 @@ class RoutineSummary(ApiModel):
     source: str
     step_count: int
     input_count: int
+    is_archived: bool = False
 
 
 class RoutineDetail(ApiModel):
@@ -25,6 +26,13 @@ class RoutineDetail(ApiModel):
     source: str
     inputs: list[dict[str, object]]
     steps: list[StepSummarySchema]
+    is_archived: bool = False
+
+
+class ArchiveRoutineResponse(ApiModel):
+    id: str
+    source: str
+    is_archived: bool
 
 
 class RoutineListResponse(ApiModel):

@@ -3,6 +3,8 @@ import type { RoutineSummary } from '../../types/routines';
 interface RoutineCardProps {
   routine: RoutineSummary;
   onSelect: (routine: RoutineSummary) => void;
+  onArchive?: (routine: RoutineSummary) => void;
+  onUnarchive?: (routine: RoutineSummary) => void;
 }
 
 function SourceIcon({ source }: { source: string }) {
@@ -88,11 +90,16 @@ function SourceBadge({ source }: { source: string }) {
   );
 }
 
-export function RoutineCard({ routine, onSelect }: RoutineCardProps) {
-  const totalTasks = routine.step_count;
+export function RoutineCard({ routine, onSelect, onArchive, onUnarchive }: RoutineCardProps) {
+  const totalSteps = routine.step_count;
 
   return (
-    <div className="bg-bg-card border border-border rounded-lg p-4 flex flex-col justify-between hover:border-border-hover transition-colors">
+    <div className={
+      'bg-bg-card border rounded-lg p-4 flex flex-col justify-between transition-colors ' +
+      (routine.is_archived
+        ? 'border-border opacity-60 hover:opacity-80'
+        : 'border-border hover:border-border-hover')
+    }>
       {/* Header */}
       <div>
         <div className="flex items-start justify-between gap-2 mb-2">
@@ -102,7 +109,14 @@ export function RoutineCard({ routine, onSelect }: RoutineCardProps) {
               {routine.name}
             </h3>
           </div>
-          <SourceBadge source={routine.source} />
+          <div className="flex items-center gap-1.5 shrink-0">
+            {routine.is_archived && (
+              <span className="inline-flex items-center rounded-full border border-text-muted/30 px-2 py-0.5 text-[10px] font-medium text-text-muted bg-bg-elevated">
+                Archived
+              </span>
+            )}
+            <SourceBadge source={routine.source} />
+          </div>
         </div>
 
         {/* Description */}
@@ -114,7 +128,7 @@ export function RoutineCard({ routine, onSelect }: RoutineCardProps) {
       {/* Metadata */}
       <div>
         <div className="flex items-center gap-4 text-text-muted text-[11px] mb-3">
-          <span className="inline-flex items-center gap-1" title={`${totalTasks} step(s)`}>
+          <span className="inline-flex items-center gap-1" title={`${totalSteps} step(s)`}>
             <svg
               className="h-3 w-3"
               fill="none"
@@ -125,7 +139,7 @@ export function RoutineCard({ routine, onSelect }: RoutineCardProps) {
             >
               <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
             </svg>
-            {totalTasks} {totalTasks === 1 ? 'Step' : 'Steps'}
+            {totalSteps} {totalSteps === 1 ? 'Step' : 'Steps'}
           </span>
           <span className="inline-flex items-center gap-1" title={`${routine.input_count} input(s)`}>
             <svg
@@ -146,23 +160,58 @@ export function RoutineCard({ routine, onSelect }: RoutineCardProps) {
           </span>
         </div>
 
-        {/* Action button */}
-        <button
-          onClick={() => onSelect(routine)}
-          className="w-full bg-bg-elevated border border-border-hover rounded-md py-2 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors focus:outline-none focus:ring-2 focus:ring-accent-purple/50"
-        >
-          Use Routine
-          <svg
-            className="inline-block h-3 w-3 ml-1"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-            strokeWidth={2}
-            aria-hidden="true"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-          </svg>
-        </button>
+        {/* Action buttons */}
+        {(!routine.is_archived || onUnarchive) && <div className="flex gap-2">
+          {!routine.is_archived && (
+            <button
+              onClick={() => onSelect(routine)}
+              className="flex-1 bg-bg-elevated border border-border-hover rounded-md py-2 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors focus:outline-none focus:ring-2 focus:ring-accent-purple/50"
+            >
+              Use Routine
+              <svg
+                className="inline-block h-3 w-3 ml-1"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+                aria-hidden="true"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+              </svg>
+            </button>
+          )}
+
+          {routine.is_archived ? (
+            onUnarchive && (
+              <button
+                onClick={() => onUnarchive(routine)}
+                className="flex-1 bg-bg-elevated border border-border-hover rounded-md py-2 text-xs font-medium text-text-secondary hover:text-text-primary hover:bg-bg-hover transition-colors focus:outline-none focus:ring-2 focus:ring-accent-purple/50"
+                title="Restore this routine"
+              >
+                Unarchive
+              </button>
+            )
+          ) : (
+            onArchive && (
+              <button
+                onClick={() => onArchive(routine)}
+                className="px-3 bg-bg-elevated border border-border-hover rounded-md py-2 text-xs font-medium text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors focus:outline-none focus:ring-2 focus:ring-accent-purple/50"
+                title="Archive this routine"
+              >
+                <svg
+                  className="h-3.5 w-3.5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+                </svg>
+              </button>
+            )
+          )}
+        </div>}
       </div>
     </div>
   );

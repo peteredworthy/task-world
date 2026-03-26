@@ -8,15 +8,18 @@ from starlette.testclient import TestClient
 
 from orchestrator.api.app import create_app
 from orchestrator.api.auth import AuthConfig, create_token
+from orchestrator.db import init_db
 
 
 @pytest.fixture
 async def client_no_auth() -> AsyncGenerator[AsyncClient, None]:
     """Client with auth disabled (default)."""
     app = create_app(db_path=":memory:")
+    await init_db(app.state.engine)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+    await app.state.engine.dispose()
 
 
 @pytest.fixture
@@ -38,9 +41,11 @@ async def client_auth(auth_config: AuthConfig) -> AsyncGenerator[AsyncClient, No
         auth_disabled=False,
         jwt_secret=auth_config.jwt_secret,
     )
+    await init_db(app.state.engine)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+    await app.state.engine.dispose()
 
 
 async def test_auth_disabled_allows_all(client_no_auth: AsyncClient) -> None:

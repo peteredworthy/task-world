@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useRoutines } from '../hooks/useApi';
+import { useRoutines, useArchiveRoutine, useUnarchiveRoutine } from '../hooks/useApi';
 import { Spinner } from '../components/Spinner';
 import { EmptyState } from '../components/EmptyState';
 import { RoutineCard } from '../components/routines/RoutineCard';
@@ -15,24 +15,27 @@ const SOURCE_FILTERS: { key: SourceFilter; label: string }[] = [
   { key: 'external', label: 'External' },
 ];
 
-const SOURCE_SECTION_META: Record<string, { icon: string; label: string }> = {
-  local: { icon: 'folder', label: 'Local Routines' },
-  project: { icon: 'build', label: 'Project Routines' },
-  external: { icon: 'link', label: 'External Routines' },
+const SOURCE_SECTION_META: Record<string, { label: string }> = {
+  local: { label: 'Local Routines' },
+  project: { label: 'Project Routines' },
+  external: { label: 'External Routines' },
 };
 
 /** Order sources appear in the grouped view. */
 const SOURCE_ORDER = ['local', 'project', 'external'];
 
 export function RoutineLibrary() {
-  const { data, isLoading, error } = useRoutines();
+  const [showArchived, setShowArchived] = useState(false);
+  const { data, isLoading, error } = useRoutines({ includeArchived: showArchived });
   const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>('all');
+  const archiveMutation = useArchiveRoutine();
+  const unarchiveMutation = useUnarchiveRoutine();
 
   const routines = useMemo(() => data?.routines ?? [], [data]);
 
-  // Filter by search and source
+  // Filter by search and source (archived routines already filtered by API unless showArchived)
   const filtered = useMemo(() => {
     let result = routines;
 
@@ -76,7 +79,15 @@ export function RoutineLibrary() {
     navigate('/?routine=' + encodeURIComponent(routine.id));
   }
 
-  // Count per source (from unfiltered list)
+  function handleArchive(routine: RoutineSummary) {
+    archiveMutation.mutate(routine.id);
+  }
+
+  function handleUnarchive(routine: RoutineSummary) {
+    unarchiveMutation.mutate(routine.id);
+  }
+
+  // Count per source (from full list returned by API)
   const sourceCounts = useMemo(() => {
     const counts: Record<string, number> = { all: routines.length };
     for (const r of routines) {
@@ -142,44 +153,70 @@ export function RoutineLibrary() {
         />
       </div>
 
-      {/* Filter tabs */}
-      <div
-        className="flex items-center gap-1 mb-6"
-        role="tablist"
-        aria-label="Filter routines by source"
-      >
-        {SOURCE_FILTERS.map(({ key, label }) => {
-          const isActive = sourceFilter === key;
-          const count = sourceCounts[key] ?? 0;
-          return (
-            <button
-              key={key}
-              role="tab"
-              aria-selected={isActive}
-              onClick={() => setSourceFilter(key)}
-              className={
-                'px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent-purple/40 ' +
-                (isActive
-                  ? 'bg-accent-purple/20 text-text-primary'
-                  : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover')
-              }
-            >
-              {label}
-              {count > 0 && (
-                <span
-                  className={
-                    'ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-semibold ' +
-                    (isActive
-                      ? 'bg-accent-purple/30 text-accent-purple'
-                      : 'bg-bg-elevated text-text-muted')
-                  }
-                >
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
+      {/* Filter tabs + archived toggle */}
+      <div className="flex items-center justify-between mb-6">
+        <div
+          className="flex items-center gap-1"
+          role="tablist"
+          aria-label="Filter routines by source"
+        >
+          {SOURCE_FILTERS.map(({ key, label }) => {
+            const isActive = sourceFilter === key;
+            const count = sourceCounts[key] ?? 0;
+            return (
+              <button
+                key={key}
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setSourceFilter(key)}
+                className={
+                  'px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent-purple/40 ' +
+                  (isActive
+                    ? 'bg-accent-purple/20 text-text-primary'
+                    : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover')
+                }
+              >
+                {label}
+                {count > 0 && (
+                  <span
+                    className={
+                      'ml-1.5 inline-flex items-center justify-center min-w-[18px] h-[18px] rounded-full px-1 text-[10px] font-semibold ' +
+                      (isActive
+                        ? 'bg-accent-purple/30 text-accent-purple'
+                        : 'bg-bg-elevated text-text-muted')
+                    }
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Show archived toggle */}
+        <button
+          onClick={() => setShowArchived((v) => !v)}
+          className={
+            'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent-purple/40 ' +
+            (showArchived
+              ? 'bg-accent-purple/20 text-text-primary'
+              : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover')
+          }
+          aria-pressed={showArchived}
+        >
+          <svg
+            className="h-3.5 w-3.5"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+            strokeWidth={2}
+            aria-hidden="true"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 01-2.247 2.118H6.622a2.25 2.25 0 01-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125z" />
+          </svg>
+          {showArchived ? 'Hide Archived' : 'Show Archived'}
+        </button>
       </div>
 
       {/* Loading state */}
@@ -213,10 +250,7 @@ export function RoutineLibrary() {
         !error &&
         sortedSources.map((source) => {
           const items = grouped.get(source) ?? [];
-          const meta = SOURCE_SECTION_META[source] ?? {
-            icon: 'link',
-            label: source,
-          };
+          const meta = SOURCE_SECTION_META[source] ?? { label: source };
 
           return (
             <section key={source} className="mb-8" aria-label={meta.label}>
@@ -238,6 +272,8 @@ export function RoutineLibrary() {
                     key={routine.id}
                     routine={routine}
                     onSelect={handleSelect}
+                    onArchive={handleArchive}
+                    onUnarchive={handleUnarchive}
                   />
                 ))}
               </div>

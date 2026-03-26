@@ -72,10 +72,26 @@ export function useEnvDefaultTarget(runId: string | undefined) {
   });
 }
 
-export function useRoutines() {
+export function useRoutines(options?: { includeArchived?: boolean }) {
   return useQuery({
-    queryKey: ['routines'],
-    queryFn: () => api.listRoutines(),
+    queryKey: ['routines', options],
+    queryFn: () => api.listRoutines(options),
+  });
+}
+
+export function useArchiveRoutine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (routineId: string) => api.archiveRoutine(routineId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['routines'] }),
+  });
+}
+
+export function useUnarchiveRoutine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (routineId: string) => api.unarchiveRoutine(routineId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['routines'] }),
   });
 }
 

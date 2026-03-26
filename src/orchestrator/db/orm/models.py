@@ -290,6 +290,23 @@ class PendingSignalModel(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class RoutineMetaModel(Base):
+    """Stores user-managed metadata for routines (e.g. archive status).
+
+    Routines are discovered from YAML files and have no primary DB record.
+    This table stores supplementary metadata keyed by (routine_id, source).
+    """
+
+    __tablename__ = "routine_meta"
+    __table_args__ = (UniqueConstraint("routine_id", "source", name="uq_routine_meta_id_source"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    routine_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    is_archived: Mapped[bool] = mapped_column(Integer, default=0, nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class ClarificationResponseModel(Base):
     __tablename__ = "clarification_responses"
 

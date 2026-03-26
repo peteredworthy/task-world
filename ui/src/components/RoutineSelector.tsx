@@ -60,7 +60,7 @@ export function RoutineSelector({
   autoFocus = false,
   required = false,
 }: RoutineSelectorProps) {
-  const { data: templatesData, isLoading: loadingTemplates } = useRoutines();
+  const { data: templatesData, isLoading: loadingTemplates } = useRoutines({ includeArchived: false });
   const { data: projectData, isLoading: loadingProject } = useRepoRoutines(
     repoName ?? undefined,
     branch
