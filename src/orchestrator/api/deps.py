@@ -16,13 +16,12 @@ from orchestrator.db import EventStore
 from orchestrator.db import RunRepository
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow import PersistentEventEmitter
-from orchestrator.workflow.events import WorkflowEvent
+from orchestrator.workflow import DbSignalTransport, SignalTransport, WorkflowEvent
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.workflow.signals import DbSignalTransport, SignalTransport
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
-from orchestrator.git.testing import TestRunner
+from orchestrator.git import TestRunner
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:

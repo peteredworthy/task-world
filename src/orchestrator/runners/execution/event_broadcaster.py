@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
-from orchestrator.workflow.events import (
+from orchestrator.workflow import (
     AgentErrorEvent,
     WorkflowEvent,
 )
@@ -61,7 +61,7 @@ class EventBroadcaster:
 
     async def emit_health_check_event(self, run_id: str, phase: str, message: str) -> None:
         """Emit a health check event (started/completed/failed)."""
-        from orchestrator.workflow.events import HealthCheckEvent
+        from orchestrator.workflow import HealthCheckEvent
 
         event = HealthCheckEvent(
             timestamp=datetime.now(timezone.utc),

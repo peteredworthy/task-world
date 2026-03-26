@@ -5,15 +5,15 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.git.diff import FileStatus
-from orchestrator.git.diff import (
+from orchestrator.git import (
+    FileStatus,
+    GitCommandError,
     get_branch_diff,
     get_commit_diff,
     get_commit_log,
     get_modified_files,
     get_task_diff,
 )
-from orchestrator.git.errors import GitCommandError
 
 
 # ---------------------------------------------------------------------------

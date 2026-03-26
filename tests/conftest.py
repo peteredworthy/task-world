@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from dotenv import load_dotenv
 
-from orchestrator.workflow.events import WorkflowEvent
+from orchestrator.workflow import WorkflowEvent
 
 # Load .env before test collection so that skipif conditions
 # (e.g. os.getenv("OPENAI_API_KEY")) see the values.

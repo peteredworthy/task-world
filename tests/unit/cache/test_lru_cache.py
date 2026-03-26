@@ -3,7 +3,7 @@
 No mocking - all tests use real LRUCache instances.
 """
 
-from orchestrator.git.diff import LRUCache
+from orchestrator.git import LRUCache
 
 
 class TestLRUCacheBasics:

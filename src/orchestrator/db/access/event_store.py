@@ -1,11 +1,13 @@
 """Event store for persisting workflow events."""
 
+from __future__ import annotations
+
 import dataclasses
 import json
 import logging
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,7 +19,9 @@ from orchestrator.db.recovery.event_journal import (
 )
 from orchestrator.db.orm.models import EventModel
 from orchestrator.time_utils import ensure_utc, format_utc_datetime
-from orchestrator.workflow.events import WorkflowEvent
+
+if TYPE_CHECKING:
+    from orchestrator.workflow import WorkflowEvent
 
 logger = logging.getLogger(__name__)
 

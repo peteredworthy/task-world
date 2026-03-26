@@ -46,7 +46,7 @@ class EnvFileLifecycle:
         """
         if self._event_emitter is not None:
             from dataclasses import dataclass
-            from orchestrator.workflow.events import WorkflowEvent
+            from orchestrator.workflow import WorkflowEvent
 
             @dataclass
             class EnvFileSnapshotEvent(WorkflowEvent):

@@ -6,7 +6,7 @@ from pathlib import Path
 from orchestrator.config.models import EnvFileSpec
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.envfiles.store import EnvFileStore
-from orchestrator.workflow.events import BufferingEmitter
+from orchestrator.workflow import BufferingEmitter
 
 
 @pytest.fixture

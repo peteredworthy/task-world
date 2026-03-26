@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
 from orchestrator.runners.types import ExecutionContext, ExecutionMetrics
-from orchestrator.workflow.events import AgentOutputEvent
+from orchestrator.workflow import AgentOutputEvent
 
 if TYPE_CHECKING:
     from orchestrator.runners.execution.attempt_store import AttemptStore

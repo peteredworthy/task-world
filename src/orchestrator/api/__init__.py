@@ -35,7 +35,7 @@ _TASKS_ROUTER_SYMBOLS = {
 }
 
 _MCP_SYMBOLS = {"ORCHESTRATOR_TOOLS", "ToolHandler"}
-_MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer"}
+_MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer", "ALL_TOOLS"}
 
 
 def __getattr__(name: str) -> object:

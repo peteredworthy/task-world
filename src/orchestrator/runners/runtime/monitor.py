@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.state.models import Run
-from orchestrator.workflow.events import AgentDiedEvent, RunStatusChanged
+from orchestrator.workflow import AgentDiedEvent, RunStatusChanged
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker

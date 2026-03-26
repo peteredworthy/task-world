@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import FastAPI
 
 from orchestrator.workflow import LocalAutoVerifyRunner
-from orchestrator.workflow.signals import InMemorySignalTransport
+from orchestrator.workflow import InMemorySignalTransport
 from orchestrator.workflow.service import WorkflowService
 
 if TYPE_CHECKING:

@@ -1,7 +1,7 @@
 """Unit tests for conflict_ops: parsing and resolution logic."""
 
-from orchestrator.git.ops import BlockResolution, parse_conflict_blocks
-from orchestrator.git.ops.conflict_ops import _apply_resolutions
+from orchestrator.git import BlockResolution, parse_conflict_blocks
+from orchestrator.git import _apply_resolutions
 
 
 # ---------------------------------------------------------------------------

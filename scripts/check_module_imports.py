@@ -88,6 +88,26 @@ def goes_through_subpackage(import_parts: list[str], src_root: Path) -> bool:
     return candidate.is_dir() and (candidate / "__init__.py").exists()
 
 
+def get_type_checking_node_ids(tree: ast.AST) -> set[int]:
+    """Return id() of every AST node nested inside an ``if TYPE_CHECKING:`` block.
+
+    Imports guarded by TYPE_CHECKING are never executed at runtime, so they
+    cannot cause circular imports and should not be flagged as violations.
+    """
+    guarded: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        is_type_checking = (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+            isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+        )
+        if is_type_checking:
+            for child in ast.walk(node):
+                guarded.add(id(child))
+    return guarded
+
+
 def check_file(filepath: Path, src_root: Path | None) -> list[str]:
     violations = []
     file_module = get_file_module(filepath)
@@ -98,7 +118,11 @@ def check_file(filepath: Path, src_root: Path | None) -> list[str]:
     except (SyntaxError, OSError):
         return violations
 
+    type_checking_ids = get_type_checking_node_ids(tree)
+
     for node in ast.walk(tree):
+        if id(node) in type_checking_ids:
+            continue
         if not isinstance(node, ast.ImportFrom) or not node.module:
             continue
         parts = node.module.split(".")

@@ -5,7 +5,7 @@ All tools are registered regardless of phase. Runtime validation prevents phase-
 
 import pytest
 
-from orchestrator.api.mcp.server import ALL_TOOLS, OrchestratorMCPServer
+from orchestrator.api import ALL_TOOLS, OrchestratorMCPServer
 
 
 class _NoOpHandler:

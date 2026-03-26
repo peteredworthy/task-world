@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import WebSocket
-from orchestrator.workflow.events import ClarificationRequested, ClarificationResponded
+from orchestrator.workflow import ClarificationRequested, ClarificationResponded
 from orchestrator.time_utils import format_utc_datetime
 
 # Maximum updates per second per client (throttle interval in seconds)

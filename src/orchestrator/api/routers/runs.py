@@ -24,7 +24,7 @@ from orchestrator.api.deps import (
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
 from orchestrator.runners.executor import AgentRunnerExecutor
-from orchestrator.git.testing import TestRunner
+from orchestrator.git import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
     AgentCancelledRequest,
@@ -67,7 +67,7 @@ from orchestrator.db import EventStore
 from orchestrator.db import RunRepository
 from orchestrator.api.metrics import estimate_cost
 from orchestrator.config import discover_routines
-from orchestrator.config.routines.errors import RoutineNotFoundError
+from orchestrator.config import RoutineNotFoundError
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.errors import RunNotFoundError, StepNotFoundError, TaskNotFoundError
 from orchestrator.state.models import HumanApproval, Run
@@ -326,7 +326,7 @@ async def create_run(
     if request.agent_config:
         # Validate agent_config keys against the agent's known config schema
         if run.agent_type is not None:
-            from orchestrator.runners.detection import AGENT_CONFIG_FIELDS
+            from orchestrator.runners import AGENT_CONFIG_FIELDS
 
             valid_fields = AGENT_CONFIG_FIELDS.get(run.agent_type, set())
             unknown = set(request.agent_config.keys()) - valid_fields
@@ -909,7 +909,7 @@ async def skip_step(
     # Mark the step as skipped
     from datetime import datetime, timezone
     from orchestrator.workflow import check_step_progression
-    from orchestrator.workflow.events import StepSkipped, BufferingEmitter
+    from orchestrator.workflow import StepSkipped, BufferingEmitter
 
     step.skipped = True
     step.skip_reason = "manual_skip"

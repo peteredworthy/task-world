@@ -2,7 +2,9 @@
 
 from orchestrator.git.diff import (
     Cache,
+    CachedDiffOps,
     CommitInfo,
+    DiffOps,
     DiffResult,
     DiffScope,
     FileStatus,
@@ -18,6 +20,7 @@ from orchestrator.git.diff import (
 from orchestrator.git.errors import (
     BranchError,
     BranchNotFoundError,
+    GitCommandError,
     GitError,
     MergeConflictError,
     WorktreeError,
@@ -37,12 +40,26 @@ from orchestrator.git.ops import (
     get_conflict_blocks,
     get_conflict_files,
     merge_back,
+    parse_conflict_blocks,
     preview_prune,
     prune_hunks,
     prune_lines,
     resolve_conflict,
     revert_back_merge,
     revert_file,
+)
+from orchestrator.git.ops.conflict_ops import (
+    _apply_resolutions,  # pyright: ignore[reportPrivateUsage]
+)
+from orchestrator.git.ops.prune_ops import (
+    _build_hunk_reverse_patch,  # pyright: ignore[reportPrivateUsage]
+    _build_line_reverse_patch,  # pyright: ignore[reportPrivateUsage]
+    _count_selected_hunk_lines,  # pyright: ignore[reportPrivateUsage]
+    _count_selected_range_lines,  # pyright: ignore[reportPrivateUsage]
+    _file_exists_at_ref,  # pyright: ignore[reportPrivateUsage]
+    _parse_diff_sections,  # pyright: ignore[reportPrivateUsage]
+    _parse_file_diff_hunks,  # pyright: ignore[reportPrivateUsage]
+    _parse_hunk_header,  # pyright: ignore[reportPrivateUsage]
 )
 from orchestrator.git.project_init import InitializedProject, init_project
 from orchestrator.git.repos import (
@@ -58,8 +75,19 @@ from orchestrator.git.testing import TestRunResult, TestRunner, TestSummary
 from orchestrator.git.worktree import WorktreeInfo, WorktreeManager
 
 __all__ = [
+    "_apply_resolutions",
+    "_build_hunk_reverse_patch",
+    "_build_line_reverse_patch",
+    "_count_selected_hunk_lines",
+    "_count_selected_range_lines",
+    "_file_exists_at_ref",
+    "_parse_diff_sections",
+    "_parse_file_diff_hunks",
+    "_parse_hunk_header",
     "BackMergeResult",
     "BlockResolution",
+    "CachedDiffOps",
+    "DiffOps",
     "BranchError",
     "BranchInfo",
     "BranchNotFoundError",
@@ -69,6 +97,7 @@ __all__ = [
     "DiffResult",
     "DiffScope",
     "FileStatus",
+    "GitCommandError",
     "GitDiffOps",
     "GitError",
     "InitializedProject",
@@ -104,6 +133,7 @@ __all__ = [
     "list_branches",
     "list_repos",
     "merge_back",
+    "parse_conflict_blocks",
     "preview_prune",
     "prune_hunks",
     "prune_lines",
