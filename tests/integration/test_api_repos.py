@@ -136,7 +136,7 @@ class TestGetRepo:
 
 class TestListBranches:
     async def test_list_branches(self, sample_repo: Path, client: AsyncClient) -> None:
-        response = await client.get("/api/repos/sample-repo/branches?include_remote=false")
+        response = await client.get("/api/repos/sample-repo/branches?local_only=true")
         assert response.status_code == 200
         data = response.json()
         names = [b["name"] for b in data["branches"]]
@@ -145,7 +145,7 @@ class TestListBranches:
 
     async def test_pattern_filter(self, sample_repo: Path, client: AsyncClient) -> None:
         response = await client.get(
-            "/api/repos/sample-repo/branches?pattern=feature/*&include_remote=false"
+            "/api/repos/sample-repo/branches?pattern=feature/*&local_only=true"
         )
         assert response.status_code == 200
         data = response.json()
@@ -161,14 +161,14 @@ class TestListBranches:
 
 class TestBranchCount:
     async def test_count_all(self, sample_repo: Path, client: AsyncClient) -> None:
-        response = await client.get("/api/repos/sample-repo/branches/count?include_remote=false")
+        response = await client.get("/api/repos/sample-repo/branches/count?local_only=true")
         assert response.status_code == 200
         data = response.json()
         assert data["count"] >= 4  # main + feature/auth + feature/login + bugfix/typo
 
     async def test_count_with_pattern(self, sample_repo: Path, client: AsyncClient) -> None:
         response = await client.get(
-            "/api/repos/sample-repo/branches/count?pattern=feature/*&include_remote=false"
+            "/api/repos/sample-repo/branches/count?pattern=feature/*&local_only=true"
         )
         assert response.status_code == 200
         data = response.json()

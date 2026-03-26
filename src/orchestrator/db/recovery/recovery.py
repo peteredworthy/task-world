@@ -204,7 +204,7 @@ def _apply_step_skipped(run: Run, payload: dict[str, Any]) -> None:
         return
 
     # Idempotency: skip if step already marked as skipped with same reason
-    # Prefer skip_reason field; fall back to legacy reason field for old events
+    # Fall back to legacy "reason" field for old journal events that predate skip_reason
     skip_reason = payload.get("skip_reason") or payload.get("reason")
     if step.skipped and step.skip_reason == skip_reason:
         return

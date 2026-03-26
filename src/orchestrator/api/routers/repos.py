@@ -159,7 +159,7 @@ async def list_repository_branches(
     name: str,
     repos_path: Annotated[Path, Depends(get_repos_path)],
     pattern: Annotated[str, Query(description="Glob pattern to filter branches")] = "",
-    include_remote: Annotated[bool, Query(description="Include remote branches")] = True,
+    local_only: Annotated[bool, Query(description="Show only local branches")] = False,
 ) -> BranchesListResponse:
     """List branches in a repository.
 
@@ -170,7 +170,7 @@ async def list_repository_branches(
     - `release-*` - release branches
     """
     repo = get_repo(repos_path, name)
-    branches = list_branches(repo.path, pattern=pattern, include_remote=include_remote)
+    branches = list_branches(repo.path, pattern=pattern, local_only=local_only)
 
     truncated = len(branches) > MAX_BRANCHES
     if truncated:
@@ -185,7 +185,7 @@ async def list_repository_branches(
             )
             for b in branches
         ],
-        total=len(branches) if not truncated else branch_count(repo.path, pattern, include_remote),
+        total=len(branches) if not truncated else branch_count(repo.path, pattern, local_only),
         truncated=truncated,
     )
 
@@ -195,7 +195,7 @@ async def count_repository_branches(
     name: str,
     repos_path: Annotated[Path, Depends(get_repos_path)],
     pattern: Annotated[str, Query(description="Glob pattern to filter branches")] = "",
-    include_remote: Annotated[bool, Query(description="Include remote branches")] = True,
+    local_only: Annotated[bool, Query(description="Show only local branches")] = False,
 ) -> BranchCountResponse:
     """Count branches matching a pattern.
 
@@ -203,7 +203,7 @@ async def count_repository_branches(
     fetching the full branch list.
     """
     repo = get_repo(repos_path, name)
-    count = branch_count(repo.path, pattern=pattern, include_remote=include_remote)
+    count = branch_count(repo.path, pattern=pattern, local_only=local_only)
     return BranchCountResponse(count=count, pattern=pattern)
 
 

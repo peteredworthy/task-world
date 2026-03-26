@@ -87,33 +87,11 @@ class StepCompleted(WorkflowEvent):
 class StepSkipped(WorkflowEvent):
     """Emitted when a step is skipped due to a condition."""
 
+    event_type: str = "step_skipped"
     step_index: int = 0
     step_id: str = ""
     condition: str | None = None
-    skip_reason: str | None = None  # Why the step was skipped (preferred over legacy 'reason')
-    reason: str | None = None  # Legacy alias for skip_reason; kept for backward compatibility
-
-    def __init__(
-        self,
-        timestamp: datetime | None = None,
-        run_id: str = "",
-        event_type: str = "step_skipped",
-        step_index: int = 0,
-        step_id: str = "",
-        condition: str | None = None,
-        skip_reason: str | None = None,
-        reason: str | None = None,
-    ) -> None:
-        """Initialize StepSkipped event."""
-        self.timestamp = timestamp or datetime.now(timezone.utc)
-        self.run_id = run_id
-        self.event_type = event_type
-        self.step_index = step_index
-        self.step_id = step_id
-        self.condition = condition
-        # Prefer skip_reason; fall back to legacy reason param
-        self.skip_reason = skip_reason if skip_reason is not None else reason
-        self.reason = self.skip_reason  # keep in sync for backward compat
+    skip_reason: str | None = None  # Why the step was skipped
 
 
 @dataclass

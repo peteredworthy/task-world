@@ -903,16 +903,8 @@ def fetch_codex_models() -> list[str]:
         return []
 
 
-# Keep these as deprecated aliases so any remaining references don't break
-# immediately. They will be removed in a follow-up cleanup.
-def create_session_payload(prompt: str, model: str | None) -> dict[str, Any]:  # pragma: no cover
-    """Deprecated — HTTP-era session payload builder. Do not use."""
-    payload: dict[str, Any] = {"prompt": prompt}
-    if model:
-        payload["model"] = model
-    return payload
-
-
+# Keep extract_events as a deprecated alias so any remaining references don't break
+# immediately. It will be removed in a follow-up cleanup.
 def extract_events(events_payload: Any) -> list[dict[str, Any]]:  # pragma: no cover
     """Deprecated — HTTP-era event extractor. Do not use."""
     return cast(

@@ -9,7 +9,6 @@ for each active run.  It:
      pending signals before doing any task work.
   3. Contains the main while-True execution loop (previously in
      AgentRunnerExecutor._run_agent_loop).
-  4. Provides a stub for scheduled_resume_at polling.
 
 NoTaskReason and LoopAction define the executor's decision-making for pauses/completions.
 """
@@ -99,14 +98,35 @@ def resolve_no_task_action(run: Run, reason: NoTaskReason) -> LoopAction:
     return LoopAction(kind="pause", pause_reason=f"unknown_reason_{reason.value}")
 
 
+@dataclasses.dataclass
+class ExecutorCallbacks:
+    """Grouped callbacks and services passed from AgentRunnerExecutor to RunWorkflow.
+
+    All fields default to ``None`` so that a minimal ``RunWorkflow`` can be
+    created for signal-only use (e.g., ``on_signal()`` in integration tests)
+    without an executor context.
+    """
+
+    session_factory: async_sessionmaker[AsyncSession] | None = None
+    create_service: Callable[..., Any] | None = None
+    monitor_agent_health: Callable[..., Any] | None = None
+    heartbeat: Callable[[str], None] | None = None
+    find_next_task: Callable[..., Any] | None = None
+    broadcaster: EventBroadcaster | None = None
+    prepare_codex_config: Callable[..., Any] | None = None
+    execute_task: Callable[..., Any] | None = None
+    attempt_store: AttemptStore | None = None
+    running_tasks: dict[str, asyncio.Task[None]] | None = None
+    heartbeats: dict[str, datetime] | None = None
+
+
 class RunWorkflow:
     """Single owner of run execution for one active run.
 
-    All executor internals that RunWorkflow needs are passed explicitly via
-    __init__ parameters (bound to the executor's private members inside
-    AgentRunnerExecutor._run_agent_loop, which is fine since that method is
-    part of the same class).  This keeps RunWorkflow's own attributes public
-    so static type checkers do not raise reportPrivateUsage errors.
+    Executor services are grouped into an ``ExecutorCallbacks`` dataclass
+    which ``AgentRunnerExecutor`` constructs and passes in.  This avoids
+    15+ optional keyword parameters and keeps RunWorkflow's own attributes
+    public so static type checkers do not raise reportPrivateUsage errors.
     """
 
     def __init__(
@@ -115,38 +135,15 @@ class RunWorkflow:
         agent_type: AgentRunnerType | None = None,
         agent_config: dict[str, Any] | None = None,
         *,
-        # Executor services — provided by AgentRunnerExecutor._run_agent_loop
-        # All optional so that a minimal instance can be created for on_signal()
-        # use without an executor context (e.g., in integration tests).
-        session_factory: async_sessionmaker[AsyncSession] | None = None,
-        create_service: Callable[..., Any] | None = None,
-        monitor_agent_health: Callable[..., Any] | None = None,
-        heartbeat: Callable[[str], None] | None = None,
-        find_next_task: Callable[..., Any] | None = None,
-        broadcaster: EventBroadcaster | None = None,
-        prepare_codex_config: Callable[..., Any] | None = None,
-        execute_task: Callable[..., Any] | None = None,
-        attempt_store: AttemptStore | None = None,
-        running_tasks: dict[str, asyncio.Task[None]] | None = None,
-        heartbeats: dict[str, datetime] | None = None,
+        callbacks: ExecutorCallbacks | None = None,
         transport: SignalTransport | None = None,
     ) -> None:
         self.run_id = run_id
         self.agent_type = agent_type
         self.agent_config = agent_config if agent_config is not None else {}
 
-        # Executor services (public attributes — no underscore)
-        self.session_factory = session_factory
-        self.create_service = create_service
-        self.monitor_agent_health = monitor_agent_health
-        self.heartbeat = heartbeat
-        self.find_next_task = find_next_task
-        self.broadcaster = broadcaster
-        self.prepare_codex_config = prepare_codex_config
-        self.execute_task = execute_task
-        self.attempt_store = attempt_store
-        self.running_tasks = running_tasks if running_tasks is not None else {}
-        self.heartbeats = heartbeats if heartbeats is not None else {}
+        # Executor services grouped in a dataclass
+        self._callbacks = callbacks or ExecutorCallbacks()
 
         # Injectable signal transport — falls back to DbSignalTransport when None
         self._transport = transport
@@ -162,15 +159,19 @@ class RunWorkflow:
         background asyncio Task.
         """
         # These must be set when run() is called from an executor context.
-        assert self.session_factory is not None, "session_factory required for run()"
-        assert self.create_service is not None, "create_service required for run()"
-        assert self.monitor_agent_health is not None, "monitor_agent_health required for run()"
+        assert self._callbacks.session_factory is not None, "session_factory required for run()"
+        assert self._callbacks.create_service is not None, "create_service required for run()"
+        assert self._callbacks.monitor_agent_health is not None, (
+            "monitor_agent_health required for run()"
+        )
 
         run_id = self.run_id
         agent_type = self.agent_type
 
         # Background health monitor (same as before)
-        health_monitor_task = asyncio.create_task(self.monitor_agent_health(run_id, agent_type))
+        health_monitor_task = asyncio.create_task(
+            self._callbacks.monitor_agent_health(run_id, agent_type)
+        )
 
         register_active_run(run_id)
         try:
@@ -181,8 +182,8 @@ class RunWorkflow:
             logger.warning(f"Run {run_id}: agent loop cancelled (server shutdown?), pausing run")
             unregister_active_run(run_id)
             try:
-                async with self.session_factory() as session:
-                    service = await self.create_service(session)
+                async with self._callbacks.session_factory() as session:
+                    service = await self._callbacks.create_service(session)
                     await service.pause_run(run_id, reason="server_shutdown")
                     await session.commit()
             except Exception:
@@ -193,8 +194,8 @@ class RunWorkflow:
             logger.exception(f"Run {run_id}: unexpected error in agent loop: {e}")
             unregister_active_run(run_id)
             try:
-                async with self.session_factory() as session:
-                    service = await self.create_service(session)
+                async with self._callbacks.session_factory() as session:
+                    service = await self._callbacks.create_service(session)
                     await service.pause_run(run_id, reason="unexpected_error")
                     await session.commit()
             except Exception:
@@ -215,7 +216,7 @@ class RunWorkflow:
             # unregister_active_run() has already been called so service.pause_run()
             # uses the direct-DB path.
             try:
-                async with self.session_factory() as session:
+                async with self._callbacks.session_factory() as session:
                     from orchestrator.db import RunRepository
 
                     repo = RunRepository(session)
@@ -225,14 +226,16 @@ class RunWorkflow:
                             f"Run {run_id}: executor exiting with run still ACTIVE "
                             "— pausing (safety net)"
                         )
-                        service = await self.create_service(session)
+                        service = await self._callbacks.create_service(session)
                         await service.pause_run(run_id, reason="executor_exited")
                         await session.commit()
             except Exception:
                 logger.exception(f"Run {run_id}: safety-net pause failed — run may be left ACTIVE")
 
-            self.running_tasks.pop(run_id, None)
-            self.heartbeats.pop(run_id, None)
+            if self._callbacks.running_tasks is not None:
+                self._callbacks.running_tasks.pop(run_id, None)
+            if self._callbacks.heartbeats is not None:
+                self._callbacks.heartbeats.pop(run_id, None)
             logger.info(f"Run {run_id}: agent loop ended")
 
     async def on_signal(self, session: AsyncSession, service: WorkflowService) -> bool:
@@ -376,38 +379,6 @@ class RunWorkflow:
         return False
 
     # ------------------------------------------------------------------
-    # Scheduled-resume stub
-    # ------------------------------------------------------------------
-
-    async def _scheduled_resume_check(
-        self, session: AsyncSession, service: WorkflowService
-    ) -> None:
-        """Check scheduled_resume_at and auto-resume if the time has passed.
-
-        Stub implementation: reads the scheduled_resume_at column and logs
-        if it's in the past.  Full implementation would transition the run
-        back to ACTIVE — deferred to the timer milestone.
-        """
-        from sqlalchemy import select
-
-        from orchestrator.db import RunModel
-
-        stmt = select(RunModel.scheduled_resume_at).where(RunModel.id == self.run_id)
-        result = await session.execute(stmt)
-        scheduled_at: datetime | None = result.scalar_one_or_none()
-
-        if scheduled_at is not None:
-            now = datetime.now(timezone.utc)
-            # Normalise naive datetimes from SQLite
-            if scheduled_at.tzinfo is None:
-                scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
-            if scheduled_at <= now:
-                logger.info(
-                    f"Run {self.run_id}: scheduled_resume_at {scheduled_at} "
-                    "has passed — auto-resume pending (stub, not yet implemented)"
-                )
-
-    # ------------------------------------------------------------------
     # Main execution loop (previously AgentRunnerExecutor._run_agent_loop)
     # ------------------------------------------------------------------
 
@@ -423,16 +394,18 @@ class RunWorkflow:
         from orchestrator.workflow.events import ApprovalRequested
 
         # All executor services must be present when _run_loop() is called.
-        assert self.session_factory is not None, "session_factory required for _run_loop()"
-        assert self.create_service is not None, "create_service required for _run_loop()"
-        assert self.heartbeat is not None, "heartbeat required for _run_loop()"
-        assert self.find_next_task is not None, "find_next_task required for _run_loop()"
-        assert self.broadcaster is not None, "broadcaster required for _run_loop()"
-        assert self.prepare_codex_config is not None, (
+        assert self._callbacks.session_factory is not None, (
+            "session_factory required for _run_loop()"
+        )
+        assert self._callbacks.create_service is not None, "create_service required for _run_loop()"
+        assert self._callbacks.heartbeat is not None, "heartbeat required for _run_loop()"
+        assert self._callbacks.find_next_task is not None, "find_next_task required for _run_loop()"
+        assert self._callbacks.broadcaster is not None, "broadcaster required for _run_loop()"
+        assert self._callbacks.prepare_codex_config is not None, (
             "prepare_codex_config required for _run_loop()"
         )
-        assert self.execute_task is not None, "execute_task required for _run_loop()"
-        assert self.attempt_store is not None, "attempt_store required for _run_loop()"
+        assert self._callbacks.execute_task is not None, "execute_task required for _run_loop()"
+        assert self._callbacks.attempt_store is not None, "attempt_store required for _run_loop()"
 
         run_id = self.run_id
         agent_type = self.agent_type
@@ -445,8 +418,8 @@ class RunWorkflow:
         summary_cache = SummaryCache()
 
         while True:
-            async with self.session_factory() as session:
-                service = await self.create_service(session)
+            async with self._callbacks.session_factory() as session:
+                service = await self._callbacks.create_service(session)
                 repo = RunRepository(session)
 
                 run = await repo.get(run_id)
@@ -457,18 +430,15 @@ class RunWorkflow:
                     break
 
                 # Record heartbeat
-                self.heartbeat(run_id)
+                self._callbacks.heartbeat(run_id)
 
                 # Drain and apply pending signals at the top of each iteration
                 if await self.on_signal(session, service):
                     await session.commit()
                     break
 
-                # Scheduled-resume stub (no-op for now)
-                await self._scheduled_resume_check(session, service)
-
                 # Find the next actionable task
-                task_state, no_task_reason = self.find_next_task(run)
+                task_state, no_task_reason = self._callbacks.find_next_task(run)
 
                 if no_task_reason is not None:
                     action = resolve_no_task_action(run, no_task_reason)
@@ -498,7 +468,7 @@ class RunWorkflow:
                             event_type="approval_requested",
                             step_id=step_id,
                         )
-                        await self.broadcaster.emit_log_event(event)
+                        await self._callbacks.broadcaster.emit_log_event(event)
                     elif no_task_reason == NoTaskReason.ALL_COMPLETE:
                         logger.info(
                             f"Run {run_id}: all steps complete, ensuring run is in terminal state"
@@ -525,7 +495,9 @@ class RunWorkflow:
                 # no_task_reason is None → task_state is set
                 assert task_state is not None
 
-                effective_config, stale_reason = self.prepare_codex_config(agent_type, agent_config)
+                effective_config, stale_reason = self._callbacks.prepare_codex_config(
+                    agent_type, agent_config
+                )
                 if stale_reason is not None:
                     logger.info(
                         f"Run {run_id}: task {task_state.id}: Codex session "
@@ -551,7 +523,7 @@ class RunWorkflow:
                     recovery_attempted.add(task_state.id)
 
                 try:
-                    await self.execute_task(
+                    await self._callbacks.execute_task(
                         run,
                         task_state,
                         service,
@@ -579,10 +551,12 @@ class RunWorkflow:
                     break
                 except AgentNotAvailableError as e:
                     logger.error(f"Run {run_id}: agent not available: {e}")
-                    await self.broadcaster.emit_error_event(
+                    await self._callbacks.broadcaster.emit_error_event(
                         run_id, task_state, "AgentNotAvailableError", str(e)
                     )
-                    await self.attempt_store.store_attempt_output(run_id, task_state.id, [], str(e))
+                    await self._callbacks.attempt_store.store_attempt_output(
+                        run_id, task_state.id, [], str(e)
+                    )
                     unregister_active_run(run_id)
                     await service.pause_run(
                         run_id, reason="agent_not_available", error_detail=str(e)
@@ -591,10 +565,12 @@ class RunWorkflow:
                     break
                 except AgentExecutionError as e:
                     logger.error(f"Run {run_id}: agent execution error: {e}")
-                    await self.broadcaster.emit_error_event(
+                    await self._callbacks.broadcaster.emit_error_event(
                         run_id, task_state, "AgentExecutionError", str(e)
                     )
-                    await self.attempt_store.store_attempt_output(run_id, task_state.id, [], str(e))
+                    await self._callbacks.attempt_store.store_attempt_output(
+                        run_id, task_state.id, [], str(e)
+                    )
                     unregister_active_run(run_id)
                     await service.pause_run(
                         run_id, reason="agent_execution_error", error_detail=str(e)
@@ -603,7 +579,7 @@ class RunWorkflow:
                     break
                 except Exception as e:
                     logger.exception(f"Run {run_id}: unexpected error: {e}")
-                    await self.broadcaster.emit_error_event(
+                    await self._callbacks.broadcaster.emit_error_event(
                         run_id, task_state, type(e).__name__, str(e)
                     )
                     try:

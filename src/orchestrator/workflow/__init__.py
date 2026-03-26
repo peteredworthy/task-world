@@ -93,6 +93,7 @@ from orchestrator.workflow.events import (
 )
 from orchestrator.workflow.signals import (
     DbSignalTransport,
+    ExecutorCallbacks,
     InMemorySignalTransport,
     LoopAction,
     NoTaskReason,
@@ -250,6 +251,7 @@ __all__ = [
     "WorkflowEvent",
     # Signals & Runtime
     "DbSignalTransport",
+    "ExecutorCallbacks",
     "InMemorySignalTransport",
     "LoopAction",
     "NoTaskReason",

@@ -381,43 +381,6 @@
   .sm-label { font-size: 10px; fill: var(--text-dim); }
   .sm-node-label { font-size: 12px; font-weight: 600; pointer-events: none; }
 
-  /* Suggested moves */
-  .move-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 1.1rem 1.25rem;
-    margin-bottom: 0.75rem;
-  }
-  .move-card h4 {
-    color: #fff;
-    font-size: 0.92rem;
-    margin-bottom: 0.35rem;
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .move-card .from-to {
-    font-size: 0.82rem;
-    color: var(--accent);
-    margin-bottom: 0.35rem;
-  }
-  .move-card .rationale {
-    font-size: 0.82rem;
-    color: var(--text-dim);
-  }
-  .move-card .impact {
-    margin-top: 0.4rem;
-    font-size: 0.78rem;
-    padding: 0.3rem 0.6rem;
-    background: var(--surface2);
-    border-radius: 4px;
-    display: inline-block;
-  }
-  .impact-high { color: var(--accent4); }
-  .impact-medium { color: var(--accent3); }
-  .impact-low { color: var(--accent2); }
-
   /* Mermaid diagram wrapper */
   .mermaid-wrap {
     background: var(--surface);
@@ -552,7 +515,6 @@
     <a href="#state-machine">State Machine</a>
     <a href="#layers">Layers</a>
     <a href="#dependencies">Dependencies</a>
-    <a href="#suggested-moves">Refactoring</a>
     <a href="#modules">Modules</a>
     <a href="#sizes">Sizes</a>
     <a href="#concerns">Concerns</a>
@@ -708,249 +670,6 @@
   <div class="legend" id="dep-legend"></div>
 </section>
 
-<!-- SUGGESTED REFACTORING MOVES -->
-<section id="suggested-moves">
-  <h2>Consolidation Plan: 19 &rarr; 9 Modules <span>Phases 0&ndash;2 complete</span></h2>
-  <p class="section-desc">The original 19 active top-level modules included many &ldquo;phantom modules&rdquo; &mdash; tiny, single-consumer packages that inflated the dependency graph without providing meaningful boundaries. <strong>Phases 0&ndash;2 are done:</strong> 10 phantom modules have been absorbed into their natural parents, producing 9 focused top-level packages with clean, obvious ownership. Phase 3 (service extraction) remains as optional future cleanup.</p>
-  <p class="section-desc" style="margin-top:0.5rem;"><strong>Import discipline enforced:</strong> <code>runners/__init__.py</code> and <code>api/__init__.py</code> export public APIs for their sub-packages. A pre-commit hook (<code>scripts/check_module_imports.py</code>) rejects any import that reaches into a sub-package of a module it doesn&rsquo;t own. All cross-module imports go through the top-level <code>__init__.py</code>.</p>
-
-  <div class="diagram-container">
-    <div class="diagram-header">
-      <span>Target architecture: 9 modules</span>
-      <span>Each module has a clear, distinct responsibility</span>
-    </div>
-    <div class="diagram-body" style="padding: 0;">
-      <table class="concerns-table">
-        <thead><tr><th>Target Module</th><th>Absorbs</th><th>Result LOC</th><th>Responsibility</th></tr></thead>
-        <tbody>
-          <tr>
-            <td><strong><code>config</code></strong></td>
-            <td><code>+ routines</code></td>
-            <td>~1,390</td>
-            <td>All configuration: enums, models, global config, YAML routine loading &amp; discovery</td>
-          </tr>
-          <tr>
-            <td><strong><code>state</code></strong></td>
-            <td>&mdash;</td>
-            <td>~550</td>
-            <td>Core domain models: Run, StepState, TaskState, Attempt, ChecklistItem, SessionStateManager</td>
-          </tr>
-          <tr>
-            <td><strong><code>db</code></strong></td>
-            <td>&mdash;</td>
-            <td>~3,820</td>
-            <td>Persistence: SQLAlchemy ORM, repositories, event store, JSONL journal, migrations</td>
-          </tr>
-          <tr>
-            <td><strong><code>git</code></strong></td>
-            <td><code>+ repos + cache + review</code></td>
-            <td>~3,500</td>
-            <td>All git &amp; repository operations: worktrees, branches, diffs, conflicts, repo discovery, test execution, diff caching</td>
-          </tr>
-          <tr>
-            <td><strong><code>envfiles</code></strong></td>
-            <td>&mdash;</td>
-            <td>~910</td>
-            <td>Environment file management: snapshots, lifecycle, resolution, security filtering</td>
-          </tr>
-          <tr>
-            <td><strong><code>workflow</code></strong></td>
-            <td><code>+ artifacts</code></td>
-            <td>~8,550</td>
-            <td>State machine engine: transitions, gates, grades, locks, events, signals, prompts, condition evaluator, handlers, artifact registry</td>
-          </tr>
-          <tr>
-            <td><strong><code>runners</code></strong></td>
-            <td><code>+ scaffolding + agents</code></td>
-            <td>~12,170</td>
-            <td>Agent execution: all agent integrations, scaffolding, agent config CRUD, profiles, detection</td>
-          </tr>
-          <tr>
-            <td><strong><code>api</code></strong></td>
-            <td><code>+ metrics + mcp</code></td>
-            <td>~7,880</td>
-            <td>All external interfaces: FastAPI routers, schemas, WebSocket, MCP server, cost estimation</td>
-          </tr>
-          <tr>
-            <td><strong><code>cli</code></strong></td>
-            <td>&mdash;</td>
-            <td>~1,770</td>
-            <td>Command-line interface: run/agent/routine/repo commands, approval workflows</td>
-          </tr>
-          <tr style="background: rgba(243,139,168,0.05);">
-            <td><del><code>routers</code></del></td>
-            <td colspan="3" style="color: var(--accent4);">DELETE &mdash; 6 LOC dead shim, nothing imports it</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <h3 style="color: #fff; font-size: 1.1rem; margin: 1.5rem 0 1rem;">Phase 1: Zero-risk absorptions <span style="color: var(--accent2); font-size: 0.82rem; font-weight: 400;">&mdash; no external consumers, mechanical moves</span></h3>
-
-  <div class="move-card">
-    <h4>M1: Delete <code>routers</code></h4>
-    <div class="from-to"><code>orchestrator/routers/</code> &rarr; <del>deleted</del></div>
-    <div class="rationale">6 LOC legacy re-export shim. Nothing imports from it &mdash; verified via grep across the entire codebase. Pure dead code.</div>
-    <div class="impact impact-low">Zero risk &mdash; 0 files to update</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M2: Absorb <code>scaffolding</code> into <code>runners</code></h4>
-    <div class="from-to"><code>orchestrator/scaffolding/</code> &rarr; <code>orchestrator/runners/scaffolding/</code></div>
-    <div class="rationale">Scaffolding (template copying, .gitignore setup, workspace prep) is used exclusively by <code>runners/executor.py</code>. Zero external dependents. Already conceptually part of the execution pipeline.</div>
-    <div class="impact impact-low">Low risk &mdash; ~1 import path in executor.py</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M3: Absorb <code>cache</code> into <code>git</code></h4>
-    <div class="from-to"><code>orchestrator/cache/</code> &rarr; <code>orchestrator/git/cache.py</code></div>
-    <div class="rationale">88 LOC LRU cache used only by <code>git/cached_diff_ops.py</code> and <code>api/routers/review.py</code> (for git diff caching). It&rsquo;s a git implementation detail. The review router already depends on git &mdash; no new dependency edge.</div>
-    <div class="impact impact-low">Low risk &mdash; 2 import paths to update</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M4: Absorb <code>artifacts</code> into <code>workflow</code></h4>
-    <div class="from-to"><code>orchestrator/artifacts/</code> &rarr; <code>orchestrator/workflow/artifacts/</code></div>
-    <div class="rationale">146 LOC, self-contained artifact registry. Only consumed by <code>workflow/context_builder.py</code> and <code>runners/executor.py</code>. Both already depend on workflow. Artifacts are produced during the workflow lifecycle &mdash; they belong here.</div>
-    <div class="impact impact-low">Low risk &mdash; ~2 import paths to update</div>
-  </div>
-
-  <h3 style="color: #fff; font-size: 1.1rem; margin: 1.5rem 0 1rem;">Phase 2: Semantic consolidations <span style="color: var(--accent3); font-size: 0.82rem; font-weight: 400;">&mdash; single-consumer modules joining their natural parent</span></h3>
-
-  <div class="move-card">
-    <h4>M5: Absorb <code>review</code> into <code>git</code></h4>
-    <div class="from-to"><code>orchestrator/review/</code> &rarr; <code>orchestrator/git/review/</code></div>
-    <div class="rationale">261 LOC (test_runner.py + models.py) providing test execution in git worktrees. Only consumer is <code>api/routers/review.py</code>, which already imports from 5 git sub-modules. Consolidation reduces the API router&rsquo;s external dependency count from 2 (git + review) to 1 (git).</div>
-    <div class="impact impact-low">Low risk &mdash; ~3 import paths to update</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M6: Absorb <code>repos</code> into <code>git</code></h4>
-    <div class="from-to"><code>orchestrator/repos/</code> &rarr; <code>orchestrator/git/repos/</code></div>
-    <div class="rationale">268 LOC for git repository discovery and branch introspection. Self-contained (no dependencies beyond itself). Only consumed by <code>api/routers/repos.py</code>, <code>mcp/tools.py</code>, and <code>cli</code>. Semantically inseparable from git operations &mdash; it answers &ldquo;what git repos exist and what branches do they have?&rdquo;</div>
-    <div class="impact impact-low">Low risk &mdash; ~3 import paths to update</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M7: Absorb <code>metrics</code> into <code>api</code></h4>
-    <div class="from-to"><code>orchestrator/metrics/</code> &rarr; <code>orchestrator/api/metrics.py</code></div>
-    <div class="rationale">70 LOC cost estimation from token data. Only used by <code>api/routers/runs.py</code> to populate cost fields in responses. It&rsquo;s a presentation concern &mdash; transforming raw token counts into dollar amounts for the API consumer.</div>
-    <div class="impact impact-low">Low risk &mdash; 1 import path to update</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M8: Absorb <code>mcp</code> into <code>api</code></h4>
-    <div class="from-to"><code>orchestrator/mcp/</code> &rarr; <code>orchestrator/api/mcp/</code></div>
-    <div class="rationale">785 LOC MCP server mounted by <code>api/app.py</code>. It&rsquo;s an alternative API transport (like WebSocket) &mdash; it exposes workflow tools to external agents over SSE. Currently depends on workflow and repos (which will be in git). Keeping all external interfaces in <code>api</code> creates a single entry-point layer.</div>
-    <div class="impact impact-low">Low risk &mdash; 1 import in app.py to update</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M9: Absorb <code>agents</code> into <code>runners</code></h4>
-    <div class="from-to"><code>orchestrator/agents/</code> (config CRUD) &rarr; <code>orchestrator/runners/profiles/</code></div>
-    <div class="rationale">348 LOC agent configuration CRUD (profiles, seeding Planner/Builder/Verifier defaults). Only consumed by <code>api/routers/agents.py</code> and <code>app.py</code> (for seeding). Note: <code>runners/agents/</code> already exists as the canonical home of agent <em>implementations</em> (claude_cli, claude_sdk, codex, etc.) — this move is for the config/profiles layer. Renaming to <code>profiles</code> avoids collision with the existing sub-package.</div>
-    <div class="impact impact-low">Low risk &mdash; ~3 import paths to update</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M10: Absorb <code>routines</code> into <code>config</code></h4>
-    <div class="from-to"><code>orchestrator/routines/</code> &rarr; <code>orchestrator/config/routines/</code></div>
-    <div class="rationale">555 LOC routine discovery and YAML loading. Already depends only on <code>config.enums</code> and <code>config.models</code>. Both modules answer &ldquo;what is the system configured to do?&rdquo; &mdash; config defines the schema, routines loads and discovers instances of that schema. Consumed by <code>api</code>, <code>cli</code>, and <code>app.py</code>. Merging eliminates the quasi-circular risk where config imports from routines for type references.</div>
-    <div class="impact impact-medium">Medium effort &mdash; ~14 import paths to update, but mechanical find-replace</div>
-  </div>
-
-  <h3 style="color: #fff; font-size: 1.1rem; margin: 1.5rem 0 1rem;">Phase 3: Internal cleanup <span style="color: var(--accent); font-size: 0.82rem; font-weight: 400;">&mdash; reduce fan-out within surviving modules</span></h3>
-
-  <div class="move-card">
-    <h4>M11: Extract <code>ReviewService</code> from API router</h4>
-    <div class="from-to">Business logic in <code>api/routers/review.py</code> &rarr; <code>git/review_service.py</code></div>
-    <div class="rationale">The review router directly imports from 5 git sub-modules, workflow.event_logger, and workflow.service. After M3+M5, all review-related code lives in git. Extracting a ReviewService (diff orchestration, prune coordination, test dispatch) reduces the router to thin HTTP handling with 1&ndash;2 imports.</div>
-    <div class="impact impact-medium">Medium effort &mdash; ~400 LOC to extract</div>
-  </div>
-
-  <div class="move-card">
-    <h4>M12: Extract <code>RunService</code> from API router</h4>
-    <div class="from-to">Business logic in <code>api/routers/runs.py</code> &rarr; <code>workflow/run_service.py</code></div>
-    <div class="rationale"><code>runs.py</code> is the widest router &mdash; it directly imports from 15+ modules to orchestrate run creation, lifecycle transitions, activity queries, and branch management. A RunService would encapsulate these operations and reduce the router to request/response mapping. This is the highest-impact single change for API boundary health.</div>
-    <div class="impact impact-high">High effort &mdash; largest refactor, highest payoff for API boundary cleanup</div>
-  </div>
-
-  <div class="diagram-container" style="margin-top: 1.5rem;">
-    <div class="diagram-header">
-      <span>Consolidation impact</span>
-      <span>Before vs after all phases</span>
-    </div>
-    <div class="diagram-body" style="padding: 0;">
-      <table class="concerns-table">
-        <thead><tr><th>Metric</th><th>Before (19 modules)</th><th>Now &mdash; Phase 1&ndash;2 done (9 modules)</th><th>After Phase 3</th></tr></thead>
-        <tbody>
-          <tr><td>Top-level modules</td><td>19 active + 1 dead shim</td><td><strong>9 ✓</strong></td><td>9</td></tr>
-          <tr><td>Total LOC</td><td>~40K</td><td>~40K (same code, fewer dirs)</td><td>~40K</td></tr>
-          <tr><td><code>api</code> external deps</td><td>15</td><td>7 (config, state, db, git, envfiles, workflow, runners)</td><td>5&ndash;6 (via services)</td></tr>
-          <tr><td><code>git</code> external deps</td><td>2 (cache, review)</td><td>0 (both absorbed)</td><td>0</td></tr>
-          <tr><td><code>runners</code> external deps</td><td>7 + scaffolding + agents ext.</td><td>5 (config, state, db, git, workflow)</td><td>5</td></tr>
-          <tr><td>Cross-module edges</td><td>~45</td><td>~25</td><td>~20</td></tr>
-          <tr><td>Circular risk</td><td>config &harr; routines/runners</td><td>Eliminated (routines in config)</td><td>Eliminated</td></tr>
-          <tr><td>Files to update (total)</td><td>&mdash;</td><td>~25 import paths</td><td>+~800 LOC extracted</td></tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="diagram-container">
-    <div class="diagram-header">
-      <span>Target dependency graph</span>
-      <span>9 modules, clean layering, no phantom packages</span>
-    </div>
-    <div class="diagram-body">
-      <div id="target-dep-graph"></div>
-    </div>
-  </div>
-
-  <div class="diagram-container">
-    <div class="diagram-header">
-      <span>Execution order</span>
-      <span>Recommended phasing</span>
-    </div>
-    <div class="diagram-body" style="padding: 0;">
-      <table class="concerns-table">
-        <thead><tr><th>Phase</th><th>Moves</th><th>Risk</th><th>Effort</th><th>Impact</th></tr></thead>
-        <tbody>
-          <tr style="background: rgba(166,227,161,0.05);">
-            <td><strong>Phase 0</strong> ✓</td>
-            <td>Enforce import discipline: add public exports to <code>runners/__init__.py</code> and <code>api/__init__.py</code>; add pre-commit hook (<code>scripts/check_module_imports.py</code>) to reject sub-package imports across module boundaries</td>
-            <td><span class="severity-low">Zero</span></td>
-            <td>Done</td>
-            <td>9 canonical boundaries enforced; file moves can now be done incrementally without breaking callers</td>
-          </tr>
-          <tr style="background: rgba(166,227,161,0.05);">
-            <td><strong>Phase 1</strong> ✓</td>
-            <td>M1 (delete routers), M2 (scaffolding&rarr;runners), M3 (cache&rarr;git), M4 (artifacts&rarr;workflow)</td>
-            <td><span class="severity-low">Zero/Low</span></td>
-            <td>Done</td>
-            <td>19 &rarr; 15 modules</td>
-          </tr>
-          <tr style="background: rgba(166,227,161,0.05);">
-            <td><strong>Phase 2</strong> ✓</td>
-            <td>M5 (review&rarr;git), M6 (repos&rarr;git), M7 (metrics&rarr;api), M8 (mcp&rarr;api), M9 (agents&rarr;runners), M10 (routines&rarr;config)</td>
-            <td><span class="severity-low">Low</span></td>
-            <td>Done</td>
-            <td>15 &rarr; 9 modules</td>
-          </tr>
-          <tr>
-            <td><strong>Phase 3</strong></td>
-            <td>M11 (ReviewService), M12 (RunService)</td>
-            <td><span class="severity-medium">Medium</span></td>
-            <td>~1 day</td>
-            <td>API fan-out drops from 15 to 5&ndash;6 deps</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  </div>
-</section>
-
 <!-- MODULE CATALOG -->
 <section id="modules">
   <h2>Module Catalog <span>9 modules across 7 layers</span></h2>
@@ -976,7 +695,7 @@
 <!-- BOUNDARY CONCERNS -->
 <section id="concerns">
   <h2>Boundary Concerns <span>Identified coupling and cohesion issues</span></h2>
-  <p class="section-desc">Areas where module boundaries could be tightened. See <a href="#suggested-moves" style="color: var(--accent);">Suggested Moves</a> for concrete refactoring proposals.</p>
+  <p class="section-desc">Areas where module boundaries could be tightened. All consolidation phases (0&ndash;3) are complete: 19 modules collapsed to 9, import discipline enforced via pre-commit hook.</p>
   <div class="diagram-container">
     <div class="diagram-body" style="padding: 0;">
       <table class="concerns-table">
@@ -986,33 +705,21 @@
         <tbody>
           <tr>
             <td><strong>Wide API Router Dependencies</strong></td>
-            <td><span class="severity-high">High</span></td>
-            <td><code>api/routers/runs.py</code> imports from 15+ modules, creating a wide dependency fan-out at the presentation layer. <code>api/routers/review.py</code> imports from 8 modules including direct git sub-module access.</td>
-            <td>Extract RunService and ReviewService (see <a href="#suggested-moves" style="color: var(--accent);">M11, M12</a>). Absorb cache, review, metrics into their natural parents (M3, M5, M7).</td>
+            <td><span class="severity-medium">Medium</span></td>
+            <td><code>api/routers/runs.py</code> still imports from many modules to orchestrate run lifecycle, activity queries, and branch management. <code>api/routers/review.py</code> imports directly from several git sub-modules.</td>
+            <td>Extract RunService into <code>workflow/</code> and ReviewService into <code>git/</code> to thin the routers to pure HTTP mapping.</td>
           </tr>
           <tr>
             <td><strong>WorkflowService Scope</strong></td>
             <td><span class="severity-medium">Medium</span></td>
-            <td>The <code>workflow/</code> module has grown to 8,400 LOC across 22 files, encompassing state machine orchestration, verification, building, recovery, signal handling, condition evaluation, and summary caching. <code>WorkflowService</code> remains the primary entry point for all state mutations.</td>
+            <td>The <code>workflow/</code> module has grown to 8,400+ LOC across 22 files, encompassing state machine orchestration, verification, building, recovery, signal handling, condition evaluation, and summary caching. <code>WorkflowService</code> remains the primary entry point for all state mutations.</td>
             <td>Extract sub-services: VerificationService, RecoveryService, CompletionService. The module already has partial decomposition via <code>handlers.py</code>, <code>completion.py</code>, and <code>clarifications.py</code>.</td>
-          </tr>
-          <tr>
-            <td><strong>Wide API Router Dependencies</strong> (phase 3 target)</td>
-            <td><span class="severity-medium">Medium</span></td>
-            <td><code>api/routers/runs.py</code> and <code>api/routers/review.py</code> still import from many modules directly. The phantom-module absorption (phases 1&ndash;2) reduced cross-module edges but the routers themselves remain wide.</td>
-            <td>Extract RunService and ReviewService (see <a href="#suggested-moves" style="color: var(--accent);">M11, M12</a>).</td>
-          </tr>
-          <tr>
-            <td><strong>config Circular Risk</strong></td>
-            <td><span class="severity-low">Low</span></td>
-            <td><code>config</code> imports from <code>routines</code> and <code>runners</code> (for enum types), while both import from <code>config</code>. Currently not circular due to import structure.</td>
-            <td>Eliminated by absorbing <code>routines</code> into <code>config</code> (see <a href="#suggested-moves" style="color: var(--accent);">M10</a>).</td>
           </tr>
           <tr>
             <td><strong>State &rarr; Runners Dependency</strong></td>
             <td><span class="severity-low">Low</span></td>
-            <td><code>state.models</code> imports ActionLog from <code>runners</code>, creating a dependency from domain models to execution layer.</td>
-            <td>Move ActionLog to <code>state</code> or the proposed <code>types</code> module.</td>
+            <td><code>state.models</code> imports ActionLog from <code>runners</code>, creating a dependency from domain models to the execution layer.</td>
+            <td>Move ActionLog to <code>state</code>.</td>
           </tr>
         </tbody>
       </table>
@@ -1275,16 +982,16 @@ flowchart TD
   <p class="section-desc">These are documented, known issues — not surprises. Each item has a clear resolution path. Severity reflects impact on correctness or maintainability, not urgency.</p>
   <div class="td-grid">
 
-    <div class="td-card sev-medium">
-      <h4><span class="td-id">TD-01</span> Backward-compat shims after module consolidation</h4>
-      <div class="td-desc">After the 19&rarr;9 consolidation, several one-liner shim files remain inside <code>runners/</code>: <code>openhands.py</code>, <code>openhands_docker.py</code>, <code>openhands_common.py</code>, <code>codex_server.py</code>, <code>codex_server_common.py</code>, <code>executor.py</code>. The root-level <code>orchestrator/executor.py</code> is also a shim. New code must never be added to shim files.</div>
-      <div class="td-fix">✦ Remove once all internal imports use canonical <code>agents/</code> paths. <code>runners/__init__.py</code> now provides a public export surface — use it instead of reaching into sub-packages.</div>
+    <div class="td-card sev-low" style="opacity:0.65">
+      <h4><span class="td-id">TD-01</span> <s>Backward-compat shims after module consolidation</s> &mdash; <span style="color:var(--accent2)">RESOLVED</span></h4>
+      <div class="td-desc">All shim files removed in phase 3 (commit <code>38102b4</code>): <code>runners/openhands.py</code>, <code>openhands_docker.py</code>, <code>openhands_common.py</code>, <code>codex_server.py</code>, <code>codex_server_common.py</code>, and <code>orchestrator/executor.py</code>. Parser shims (<code>runners/parsers/claude_parser.py</code> etc.) also removed — parsers live in <code>agents/*/parser.py</code>, lazy-loaded via <code>runners/parsers/__init__.py</code>. Note: <code>runners/executor.py</code> is the real 1600+ LOC executor, not a shim.</div>
+      <div class="td-fix" style="color:var(--accent2)">&#10003; Resolved — all callers updated to canonical import paths.</div>
     </div>
 
-    <div class="td-card sev-medium">
-      <h4><span class="td-id">TD-02</span> Duplicate agent detection systems</h4>
-      <div class="td-desc"><code>runners/detection/detector.py</code> (legacy, wired to <code>GET /api/agent-runners</code>) and <code>runners/agent_detector.py</code> (registry-based, each package self-registers) both exist. Both must be kept in sync when adding a new runner type.</div>
-      <div class="td-fix">✦ Replace <code>detector.py</code> with <code>agent_detector.py</code> once the API route is updated.</div>
+    <div class="td-card sev-medium" style="opacity:0.65">
+      <h4><span class="td-id">TD-02</span> <s>Duplicate agent detection systems</s> &mdash; <span style="color:var(--accent2)">RESOLVED</span></h4>
+      <div class="td-desc"><code>runners/detection/detector.py</code> has been deleted. <code>ToolDetector</code> now lives solely in <code>runners/agent_detector.py</code>. The <code>detection/</code> sub-package re-exports from <code>agent_detector.py</code> for backward compatibility. The API route (<code>GET /api/agent-runners</code>) imports from <code>agent_detector.py</code> directly.</div>
+      <div class="td-fix" style="color:var(--accent2)">&#10003; Resolved — single detection system, duplicate removed.</div>
     </div>
 
     <div class="td-card sev-low">
@@ -1293,16 +1000,16 @@ flowchart TD
       <div class="td-fix">✦ Low impact today (single-process). Becomes a correctness bug if deployment model changes.</div>
     </div>
 
-    <div class="td-card sev-low">
-      <h4><span class="td-id">TD-04</span> StepSkipped dual-field inconsistency</h4>
-      <div class="td-desc"><code>StepSkipped</code> has both <code>skip_reason</code> (canonical) and <code>reason</code> (legacy alias), kept in sync manually in <code>__init__</code>. Recovery code has a matching fallback comment for old events in the JSONL journal.</div>
-      <div class="td-fix">✦ Remove <code>reason</code> once old events have aged out of production journals.</div>
+    <div class="td-card sev-low" style="opacity:0.65">
+      <h4><span class="td-id">TD-04</span> <s>StepSkipped dual-field inconsistency</s> &mdash; <span style="color:var(--accent2)">RESOLVED</span></h4>
+      <div class="td-desc">The legacy <code>reason</code> alias has been removed from <code>StepSkipped</code>; only <code>skip_reason</code> remains. Recovery code in <code>db/recovery/recovery.py</code> retains a fallback that maps old <code>reason</code> fields to <code>skip_reason</code> when replaying historical journal events.</div>
+      <div class="td-fix" style="color:var(--accent2)">&#10003; Resolved — legacy alias removed, recovery fallback retained for old journal events.</div>
     </div>
 
-    <div class="td-card sev-medium">
-      <h4><span class="td-id">TD-05</span> scheduled_resume_at is a stub</h4>
-      <div class="td-desc"><code>RunWorkflow._scheduled_resume_check()</code> reads the <code>scheduled_resume_at</code> DB column (migration applied) but only logs <em>"auto-resume pending (stub, not yet implemented)"</em> — no action is taken. The feature is not functional.</div>
-      <div class="td-fix">✦ Implement scheduled wakeup or remove the column and method.</div>
+    <div class="td-card sev-medium" style="opacity:0.65">
+      <h4><span class="td-id">TD-05</span> <s>scheduled_resume_at is a stub</s> &mdash; <span style="color:var(--accent2)">RESOLVED</span></h4>
+      <div class="td-desc">The stub <code>_scheduled_resume_check()</code> method has been removed from <code>workflow/signals/runtime.py</code>. The <code>scheduled_resume_at</code> DB column remains for future use but the dead stub code is gone.</div>
+      <div class="td-fix" style="color:var(--accent2)">&#10003; Resolved — dead stub removed.</div>
     </div>
 
     <div class="td-card sev-medium">
@@ -1317,10 +1024,10 @@ flowchart TD
       <div class="td-fix">✦ Implement or prune the unused enum values and fields.</div>
     </div>
 
-    <div class="td-card sev-low">
-      <h4><span class="td-id">TD-08</span> Dead Codex HTTP-era code</h4>
-      <div class="td-desc"><code>runners/agents/codex/common.py</code> contains <code>create_session_payload()</code>, marked deprecated and tagged <code># pragma: no cover</code>. It is dead code from a previous HTTP-based Codex integration. Never called.</div>
-      <div class="td-fix">✦ Delete the function.</div>
+    <div class="td-card sev-low" style="opacity:0.65">
+      <h4><span class="td-id">TD-08</span> <s>Dead Codex HTTP-era code</s> &mdash; <span style="color:var(--accent2)">RESOLVED</span></h4>
+      <div class="td-desc"><code>create_session_payload()</code> has been removed from <code>runners/agents/codex/common.py</code>. It was dead code from a previous HTTP-based Codex integration.</div>
+      <div class="td-fix" style="color:var(--accent2)">&#10003; Resolved — dead function deleted.</div>
     </div>
 
     <div class="td-card sev-medium">
@@ -1329,16 +1036,16 @@ flowchart TD
       <div class="td-fix">✦ Batch output events or reuse a dedicated session with a short-lived transaction.</div>
     </div>
 
-    <div class="td-card sev-low">
-      <h4><span class="td-id">TD-10</span> git/repos.py deprecated parameter</h4>
-      <div class="td-desc">The <code>include_remote</code> parameter in <code>git/repos.py</code> (<code>list_branches</code>) is marked deprecated in the docstring ("use <code>local_only</code>") but remains in the function signature. Callers passing <code>include_remote=True</code> receive stale behaviour silently.</div>
-      <div class="td-fix">✦ Remove parameter after updating all callers.</div>
+    <div class="td-card sev-low" style="opacity:0.65">
+      <h4><span class="td-id">TD-10</span> <s>git/repos.py deprecated parameter</s> &mdash; <span style="color:var(--accent2)">RESOLVED</span></h4>
+      <div class="td-desc">The deprecated <code>include_remote</code> parameter has been removed from <code>list_branches()</code> in <code>git/repos.py</code>. All callers have been updated to use <code>local_only</code> instead.</div>
+      <div class="td-fix" style="color:var(--accent2)">&#10003; Resolved — deprecated parameter removed, all callers updated.</div>
     </div>
 
-    <div class="td-card sev-low">
-      <h4><span class="td-id">TD-11</span> RunWorkflow constructor arity</h4>
-      <div class="td-desc"><code>RunWorkflow.__init__</code> accepts 15+ mostly-optional keyword-only <code>Callable | None</code> parameters — bound references to private methods of <code>AgentRunnerExecutor</code>, added to avoid <code>reportPrivateUsage</code> type-checker errors.</div>
-      <div class="td-fix">✦ Extract a small dataclass or protocol that <code>AgentRunnerExecutor</code> constructs and passes.</div>
+    <div class="td-card sev-low" style="opacity:0.65">
+      <h4><span class="td-id">TD-11</span> <s>RunWorkflow constructor arity</s> &mdash; <span style="color:var(--accent2)">RESOLVED</span></h4>
+      <div class="td-desc">The 15+ callback parameters have been consolidated into an <code>ExecutorCallbacks</code> dataclass in <code>workflow/signals/runtime.py</code>. <code>AgentRunnerExecutor</code> constructs an <code>ExecutorCallbacks</code> instance and passes it as a single <code>callbacks</code> parameter to <code>RunWorkflow</code>.</div>
+      <div class="td-fix" style="color:var(--accent2)">&#10003; Resolved — <code>ExecutorCallbacks</code> dataclass introduced.</div>
     </div>
 
   </div>
@@ -1356,12 +1063,12 @@ const modules = {
   // 9 canonical modules (post-consolidation)
   config:      { loc: 1392, files: 9,  layer: 'foundation', desc: 'Runtime enums (RunStatus, TaskStatus, Priority, AgentRunnerType, ModelProfile), Pydantic models for routine/step/task YAML, GlobalConfig for paths and settings. Includes config/routines/ sub-package (absorbed from routines/) for YAML loading and directory discovery.' },
   state:       { loc: 548,  files: 5,  layer: 'domain',     desc: 'In-memory runtime models: Run, StepState, TaskState, Attempt, ChecklistItem, ActionLog, ActionEntryKind. SessionStateManager for state mutations.' },
-  db:          { loc: 3817, files: 34, layer: 'infra',       desc: 'Persistence via SQLAlchemy ORM. RunModel, StepModel, TaskModel, AttemptModel. Repositories, event store, JSONL journal, journal replay, and Alembic migrations.' },
+  db:          { loc: 3817, files: 34, layer: 'infra',       desc: 'Persistence via SQLAlchemy ORM. RunModel, StepModel, TaskModel, AttemptModel, RoutineMetaModel (archive status). Repositories, event store, JSONL journal, journal replay, and Alembic migrations.' },
   git:         { loc: 3499, files: 19, layer: 'infra',       desc: 'All git operations: WorktreeManager, branch ops, diff computation (git/diff/ with LRU cache), conflict detection, prune ops, commit utilities, async test execution (git/testing/), and repository discovery (git/repos.py — RepoInfo, BranchInfo, list_repos, list_branches).' },
   envfiles:    { loc: 912,  files: 9,  layer: 'infra',       desc: 'Environment file management: snapshots, lifecycle (create/cleanup), resolution, security filtering, and tooling.' },
   workflow:    { loc: 8548, files: 25, layer: 'orchestration', desc: 'State machine engine: transitions, gates, grades, locks, events, signals, clarifications, auto-verify, prompts, condition_evaluator, handlers, summary_cache, and completion logic. Includes workflow/artifacts/ sub-package (absorbed from artifacts/).' },
   runners:     { loc: 12175, files: 68, layer: 'execution',  desc: 'Agent integrations and execution. Contains agents/ (claude_cli, claude_sdk, codex, openhands, user_managed, mock), execution/ (phase_handler, attempt_store, event_broadcaster), parsers/, profiles/ (absorbed from agents/ config CRUD), runtime/ (nudger, monitor, quota, repetition_detector), scaffolding/ (absorbed from scaffolding/), and detection/ (config_utils, detector, profile_resolution).' },
-  api:         { loc: 7883, files: 36, layer: 'api',         desc: 'FastAPI application: 11 routers (runs, tasks, agents, routines, repos, runners, model_profiles, review, clarifications, envfiles, config), schemas, dependency injection, auth, error handlers, WebSocket real-time events. Includes api/metrics.py (cost estimation, absorbed from metrics/) and api/mcp/ sub-package (MCP server, absorbed from mcp/).' },
+  api:         { loc: 7883, files: 36, layer: 'api',         desc: 'FastAPI application: 11 routers (runs, tasks, agents, routines, repos, runners, model_profiles, review, clarifications, envfiles, config), schemas, dependency injection, auth, error handlers, WebSocket real-time events. Routines router includes archive/unarchive endpoints (backed by RoutineMetaModel). Includes api/metrics.py (cost estimation, absorbed from metrics/) and api/mcp/ sub-package (MCP server, absorbed from mcp/).' },
   cli:         { loc: 1772, files: 8,  layer: 'integration', desc: 'Command-line interface: run, agent, routine, and repo commands. Approval workflows for human-in-the-loop.' },
   // Absorbed phantom modules — shown with containership for historical reference
   cache:       { loc: 88,   files: 2,  layer: 'foundation', desc: '⟳ Absorbed into git/diff/ — LRU cache for diff memoization.', parent: 'git' },
@@ -2310,124 +2017,6 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
 })();
 
 // ============================================================
-// TARGET DEPENDENCY GRAPH (after consolidation)
-// ============================================================
-(function drawTargetDepGraph() {
-  const container = document.getElementById('target-dep-graph');
-  if (!container) return;
-
-  const w = 900, h = 380;
-  const svg = d3.select('#target-dep-graph')
-    .append('svg')
-    .attr('viewBox', `0 0 ${w} ${h}`)
-    .attr('width', '100%')
-    .attr('style', 'max-width: 1000px;');
-
-  svg.append('defs').append('marker')
-    .attr('id', 'target-arrow')
-    .attr('viewBox', '0 0 10 6')
-    .attr('refX', 10).attr('refY', 3)
-    .attr('markerWidth', 8).attr('markerHeight', 6)
-    .attr('orient', 'auto')
-    .append('path')
-    .attr('d', 'M0,0 L10,3 L0,6 Z')
-    .attr('fill', '#4a4d5e');
-
-  // 9 target modules in layered layout
-  const targetModules = [
-    // Layer 1: Foundation
-    { id: 'config',   x: 400, y: 320, w: 140, h: 40, color: '#94e2d5', sub: '+ routines' },
-    // Layer 2: Domain + Infra
-    { id: 'state',    x: 80,  y: 230, w: 100, h: 40, color: '#a6e3a1', sub: '' },
-    { id: 'db',       x: 230, y: 230, w: 80,  h: 40, color: '#f9e2af', sub: '' },
-    { id: 'git',      x: 400, y: 230, w: 160, h: 40, color: '#f9e2af', sub: '+ repos, cache, review' },
-    { id: 'envfiles', x: 620, y: 230, w: 110, h: 40, color: '#f9e2af', sub: '' },
-    // Layer 3: Orchestration + Execution
-    { id: 'workflow', x: 180, y: 140, w: 180, h: 40, color: '#89b4fa', sub: '+ artifacts' },
-    { id: 'runners',  x: 500, y: 140, w: 210, h: 40, color: '#cba6f7', sub: '+ scaffolding, agents' },
-    // Layer 4: Interfaces
-    { id: 'api',      x: 250, y: 50,  w: 180, h: 40, color: '#f38ba8', sub: '+ metrics, mcp' },
-    { id: 'cli',      x: 530, y: 50,  w: 80,  h: 40, color: '#fab387', sub: '' },
-  ];
-
-  const targetDeps = [
-    // config is foundation - depended on by everything (shown selectively)
-    ['state', 'config'], ['db', 'config'], ['git', 'config'], ['envfiles', 'config'],
-    // Domain/infra cross-deps
-    ['db', 'state'], ['workflow', 'state'], ['workflow', 'db'], ['workflow', 'git'], ['workflow', 'envfiles'],
-    // Execution
-    ['runners', 'config'], ['runners', 'state'], ['runners', 'workflow'], ['runners', 'git'],
-    // API
-    ['api', 'config'], ['api', 'state'], ['api', 'db'], ['api', 'git'], ['api', 'envfiles'],
-    ['api', 'workflow'], ['api', 'runners'],
-    // CLI
-    ['cli', 'config'], ['cli', 'workflow'], ['cli', 'runners'],
-  ];
-
-  const modMap = {};
-  targetModules.forEach(m => modMap[m.id] = m);
-
-  // Draw edges
-  targetDeps.forEach(([fromId, toId]) => {
-    const from = modMap[fromId], to = modMap[toId];
-    if (!from || !to) return;
-    const fx = from.x + from.w / 2, fy = from.y + from.h / 2;
-    const tx = to.x + to.w / 2, ty = to.y + to.h / 2;
-    const dx = tx - fx, dy = ty - fy;
-    const len = Math.sqrt(dx*dx + dy*dy);
-    if (len === 0) return;
-    const padX = (dx/len) * (to.w/2 + 4), padY = (dy/len) * (to.h/2 + 4);
-
-    svg.append('line')
-      .attr('x1', fx).attr('y1', fy)
-      .attr('x2', tx - padX).attr('y2', ty - padY)
-      .attr('stroke', '#4a4d5e').attr('stroke-width', 1)
-      .attr('stroke-opacity', 0.35)
-      .attr('marker-end', 'url(#target-arrow)');
-  });
-
-  // Draw nodes
-  targetModules.forEach(m => {
-    svg.append('rect')
-      .attr('x', m.x).attr('y', m.y)
-      .attr('width', m.w).attr('height', m.h)
-      .attr('rx', 8)
-      .attr('fill', m.color).attr('fill-opacity', 0.12)
-      .attr('stroke', m.color).attr('stroke-opacity', 0.5).attr('stroke-width', 1.5);
-
-    svg.append('text')
-      .attr('x', m.x + m.w / 2).attr('y', m.y + (m.sub ? 16 : m.h / 2 + 4))
-      .attr('text-anchor', 'middle')
-      .attr('font-size', '13px').attr('font-weight', '600')
-      .attr('fill', m.color)
-      .text(m.id);
-
-    if (m.sub) {
-      svg.append('text')
-        .attr('x', m.x + m.w / 2).attr('y', m.y + 32)
-        .attr('text-anchor', 'middle')
-        .attr('font-size', '9px').attr('font-weight', '400')
-        .attr('fill', '#7f849c')
-        .text(m.sub);
-    }
-  });
-
-  // Layer labels
-  const layers = [
-    { label: 'Interfaces', y: 55, color: '#f38ba8' },
-    { label: 'Orchestration', y: 145, color: '#89b4fa' },
-    { label: 'Domain / Infra', y: 235, color: '#f9e2af' },
-    { label: 'Foundation', y: 325, color: '#94e2d5' },
-  ];
-  layers.forEach(l => {
-    svg.append('text')
-      .attr('x', 15).attr('y', l.y + 5)
-      .attr('font-size', '11px').attr('font-weight', '500')
-      .attr('fill', l.color).attr('opacity', 0.7)
-      .text(l.label);
-  });
-})();
-
 // ============================================================
 // MERMAID INIT
 // ============================================================

@@ -25,18 +25,16 @@ from orchestrator.config.enums import (
     RunStatus,
     TaskStatus,
 )
-from orchestrator.workflow.events import (
+from orchestrator.workflow import (
     WorkflowEvent,
+    NoTaskReason,
+    resolve_no_task_action,
 )
 from orchestrator.runners.execution.attempt_store import AttemptStore
 from orchestrator.runners.execution.event_broadcaster import EventBroadcaster
 from orchestrator.runners.execution.phase_handler import PhaseHandler
 from orchestrator.workflow import InvalidTransitionError
 from orchestrator.workflow import generate_builder_prompt, SummaryCache
-from orchestrator.workflow.signals import (
-    NoTaskReason,
-    resolve_no_task_action,
-)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -484,14 +482,9 @@ class AgentRunnerExecutor:
         active-workflow registry for signal routing.
         """
         from orchestrator.workflow import RunWorkflow
+        from orchestrator.workflow import ExecutorCallbacks
 
-        # Unpack private members here (inside AgentRunnerExecutor) and forward
-        # as explicit keyword args so RunWorkflow stores them as public attributes,
-        # avoiding reportPrivateUsage type errors.
-        workflow = RunWorkflow(
-            run_id,
-            agent_type,
-            agent_config,
+        callbacks = ExecutorCallbacks(
             session_factory=self._session_factory,
             create_service=self._create_service,
             monitor_agent_health=self._monitor_agent_health,
@@ -503,6 +496,12 @@ class AgentRunnerExecutor:
             attempt_store=self._attempt_store,
             running_tasks=self._running_tasks,
             heartbeats=self._heartbeats,
+        )
+        workflow = RunWorkflow(
+            run_id,
+            agent_type,
+            agent_config,
+            callbacks=callbacks,
         )
         await workflow.run()
 
@@ -783,7 +782,7 @@ class AgentRunnerExecutor:
         # Build artifact context from context_from if configured
         run_config = dict(run.config)
         if task_config.context_from:
-            from orchestrator.workflow.artifacts import ArtifactRegistry
+            from orchestrator.workflow import ArtifactRegistry
             from orchestrator.workflow import TaskContextBuilder
 
             worktree_path = Path(run.worktree_path) if run.worktree_path else None

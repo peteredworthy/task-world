@@ -16,6 +16,7 @@ from orchestrator.workflow.signals.handlers import (
     signal_handler,
 )
 from orchestrator.workflow.signals.runtime import (
+    ExecutorCallbacks,
     LoopAction,
     NoTaskReason,
     RunWorkflow,
@@ -24,6 +25,7 @@ from orchestrator.workflow.signals.runtime import (
 
 __all__ = [
     "DbSignalTransport",
+    "ExecutorCallbacks",
     "InMemorySignalTransport",
     "LoopAction",
     "NoTaskReason",

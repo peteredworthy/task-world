@@ -11,7 +11,7 @@ from orchestrator.config.models import (
 )
 from orchestrator.state.factory import create_run_from_routine, create_step_state
 from orchestrator.state.models import StepState
-from orchestrator.workflow.events import StepSkipped
+from orchestrator.workflow import StepSkipped
 
 
 class TestStepConditionModel:
@@ -147,7 +147,7 @@ class TestStepSkippedEvent:
             step_index=1,
             step_id="S2",
             condition="steps.S1.completed",
-            reason="Condition evaluated to false",
+            skip_reason="Condition evaluated to false",
         )
         assert event.timestamp == now
         assert event.run_id == "run-123"
@@ -155,7 +155,7 @@ class TestStepSkippedEvent:
         assert event.step_index == 1
         assert event.step_id == "S2"
         assert event.condition == "steps.S1.completed"
-        assert event.reason == "Condition evaluated to false"
+        assert event.skip_reason == "Condition evaluated to false"
 
     def test_step_skipped_event_default_values(self) -> None:
         """StepSkipped event should have reasonable defaults."""
@@ -163,7 +163,7 @@ class TestStepSkippedEvent:
         assert event.step_index == 0
         assert event.step_id == ""
         assert event.condition is None
-        assert event.reason is None
+        assert event.skip_reason is None
 
     def test_step_skipped_event_serializable(self) -> None:
         """StepSkipped event should be serializable to dict/JSON."""
@@ -174,7 +174,7 @@ class TestStepSkippedEvent:
             step_index=2,
             step_id="S3",
             condition="context.env == 'dev'",
-            reason="Development environment detected",
+            skip_reason="Development environment detected",
         )
 
         # Should be convertible to dict
@@ -185,7 +185,7 @@ class TestStepSkippedEvent:
             "step_index": 2,
             "step_id": "S3",
             "condition": "context.env == 'dev'",
-            "reason": "Development environment detected",
+            "skip_reason": "Development environment detected",
         }
 
         assert event.timestamp == event_dict["timestamp"]
@@ -193,7 +193,7 @@ class TestStepSkippedEvent:
         assert event.step_index == event_dict["step_index"]
         assert event.step_id == event_dict["step_id"]
         assert event.condition == event_dict["condition"]
-        assert event.reason == event_dict["reason"]
+        assert event.skip_reason == event_dict["skip_reason"]
 
     def test_step_skipped_event_fields_types(self) -> None:
         """StepSkipped event fields should have correct types."""
@@ -203,12 +203,12 @@ class TestStepSkippedEvent:
             step_index=1,
             step_id="S2",
             condition="when.condition",
-            reason="test reason",
+            skip_reason="test reason",
         )
         assert isinstance(event.step_index, int)
         assert isinstance(event.step_id, str)
         assert isinstance(event.condition, str) or event.condition is None
-        assert isinstance(event.reason, str) or event.reason is None
+        assert isinstance(event.skip_reason, str) or event.skip_reason is None
 
 
 class TestCreateRunFromRoutinePreservesCondition:
@@ -339,11 +339,11 @@ class TestConditionalStepsIntegration:
             step_index=1,
             step_id=step_state.id,
             condition="steps.S1.completed",
-            reason="Condition not met",
+            skip_reason="Condition not met",
         )
 
         # Verify consistency
         assert step_state.skipped is True
-        assert step_state.skip_reason == event.reason
+        assert step_state.skip_reason == event.skip_reason
         assert step_state.condition is not None
         assert step_state.condition["when"] == event.condition

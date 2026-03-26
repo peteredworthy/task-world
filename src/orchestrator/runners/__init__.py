@@ -84,12 +84,10 @@ from orchestrator.runners.profiles.service import seed_default_agents
 # Execution infrastructure
 from orchestrator.runners.execution import AttemptStore, EventBroadcaster
 
-# Detection sub-package
-from orchestrator.runners.detection import (
-    ToolDetector,
-    coerce_llm_config,
-    resolve_model_for_profile,
-)
+# Detection
+from orchestrator.runners.agent_detector import AGENT_CONFIG_FIELDS, ToolDetector
+from orchestrator.runners.detection.config_utils import coerce_llm_config
+from orchestrator.runners.detection.profile_resolution import resolve_model_for_profile
 
 # Runtime sub-package
 from orchestrator.runners.runtime import (
@@ -239,6 +237,7 @@ __all__ = [
     "AttemptStore",
     "EventBroadcaster",
     # Detection
+    "AGENT_CONFIG_FIELDS",
     "ToolDetector",
     "coerce_llm_config",
     "resolve_model_for_profile",

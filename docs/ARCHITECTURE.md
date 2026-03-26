@@ -46,7 +46,6 @@ task-world/
 ├── src/orchestrator/          # Python backend — 9 canonical modules
 │   ├── errors.py              # Root-level domain exceptions
 │   ├── time_utils.py          # Time utilities (injectable clocks for testing)
-│   ├── executor.py            # Backward-compat shim → runners/executor.py (TD-01)
 │   │
 │   ├── api/                   # All external interfaces
 │   │   ├── app.py             # Application factory, lifespan, startup recovery
@@ -96,7 +95,7 @@ task-world/
 │   ├── db/                    # Persistence: ORM, repositories, event store, recovery
 │   │   ├── orm/               # SQLAlchemy ORM definitions
 │   │   │   ├── base.py        # SQLAlchemy Base class
-│   │   │   └── models.py      # Run, Step, Task, Attempt, Event, Signal, Lock ORM models
+│   │   │   └── models.py      # Run, Step, Task, Attempt, Event, Signal, Lock, RoutineMeta ORM models
 │   │   ├── access/            # Data access layer
 │   │   │   ├── connection.py  # Async engine + session factory
 │   │   │   ├── repositories.py # RunRepository, AttemptRepository, etc.
@@ -136,8 +135,6 @@ task-world/
 │   │   ├── agent_factory.py   # Registry-based agent factory; each package self-registers
 │   │   ├── agent_detector.py  # Registry-based runner detection (preferred over detector.py)
 │   │   ├── errors.py          # Runner-specific error types
-│   │   ├── # Backward-compat shims (TD-01): openhands.py, openhands_docker.py,
-│   │   ├── # openhands_common.py, codex_server.py, codex_server_common.py, executor.py
 │   │   ├── agents/            # Concrete agent implementations
 │   │   │   ├── claude_cli/    # CLIAgent + ClaudeCliQuotaAgent (subprocess)
 │   │   │   ├── claude_sdk/    # ClaudeSDKAgent (in-process Anthropic SDK)
@@ -153,9 +150,8 @@ task-world/
 │   │   │   ├── phase_handler.py   # Wires agent callbacks to WorkflowService
 │   │   │   ├── attempt_store.py   # Persists attempt metrics and agent metadata
 │   │   │   └── event_broadcaster.py # Persists AgentOutputEvent per batch
-│   │   ├── parsers/           # Stream parser protocol + implementations
-│   │   │   ├── base.py        # Parser protocol
-│   │   │   ├── claude_parser.py, codex_parser.py, openhands_parser.py
+│   │   ├── parsers/           # Stream parser protocol
+│   │   │   ├── base.py        # Parser protocol (implementations live in agents/*/parser.py)
 │   │   ├── profiles/          # Agent config CRUD (absorbed from agents/)
 │   │   │   ├── models.py      # AgentConfigModel ORM model
 │   │   │   ├── schemas.py     # AgentSchema, CreateAgentRequest, UpdateAgentRequest
@@ -466,23 +462,15 @@ A pre-commit hook (`scripts/check_module_imports.py`) enforces this rule and wil
 
 ## Tech Debt
 
-### TD-01: Backward-compat Shims After Module Consolidation
+### ~~TD-01: Backward-compat Shims After Module Consolidation~~ — RESOLVED
 
-After the 19 → 9 module consolidation, several one-liner shim files remain inside `runners/` that re-export from the canonical `runners/agents/*/` sub-packages. A root-level `orchestrator/executor.py` shim also remains.
-
-These shims exist solely for backward compatibility and should be removed once all internal imports reference the canonical paths. New code must never be added to shim files.
-
-**Affected files:** `runners/openhands.py`, `runners/openhands_docker.py`, `runners/openhands_common.py`, `runners/codex_server.py`, `runners/codex_server_common.py`, `runners/executor.py`, `orchestrator/executor.py`.
+All backward-compat shim files have been removed as part of module consolidation phase 3 (commit `38102b4`). Removed: `runners/openhands.py`, `runners/openhands_docker.py`, `runners/openhands_common.py`, `runners/codex_server.py`, `runners/codex_server_common.py`, and the root-level `orchestrator/executor.py`. The parser shims (`runners/parsers/claude_parser.py`, `codex_parser.py`, `openhands_parser.py`) were also removed — parsers now live in their respective agent sub-packages (`agents/*/parser.py`) and are lazy-loaded via `runners/parsers/__init__.py`. Note: `runners/executor.py` is the real executor implementation (1600+ LOC), not a shim.
 
 ---
 
-### TD-02: Duplicate Agent Detection Systems
+### ~~TD-02: Duplicate Agent Detection Systems~~ — RESOLVED
 
-Two agent detection systems coexist:
-- `runners/detection/detector.py` — original; still wired to `GET /api/agent-runners`
-- `runners/agent_detector.py` — newer registry-based design; each agent package self-registers
-
-Both systems must be kept in sync when adding a new runner type. `detector.py` should be replaced by `agent_detector.py` once the API route is updated.
+`runners/detection/detector.py` has been deleted. `ToolDetector` now lives solely in `runners/agent_detector.py`. The `detection/` sub-package re-exports from `agent_detector.py` for backward compatibility. The API route (`GET /api/agent-runners`) imports from `agent_detector.py` directly.
 
 ---
 
@@ -494,17 +482,15 @@ Both systems must be kept in sync when adding a new runner type. `detector.py` s
 
 ---
 
-### TD-04: `StepSkipped` Dual-Field Inconsistency
+### ~~TD-04: `StepSkipped` Dual-Field Inconsistency~~ — RESOLVED
 
-`StepSkipped` carries both `skip_reason` (canonical) and `reason` (legacy alias), kept manually in sync in `__init__`. Recovery code (`db/recovery/recovery.py`) contains a matching fallback comment. This is a backward-compatibility wart for events already written to the JSONL journal and SQLite store.
-
-**Resolution path:** Once events older than the `skip_reason` introduction date have aged out of production journals, remove `reason` and the sync code.
+The legacy `reason` alias has been removed from `StepSkipped`; only `skip_reason` remains. Recovery code in `db/recovery/recovery.py` retains a fallback that maps old `reason` fields to `skip_reason` when replaying historical journal events.
 
 ---
 
-### TD-05: `scheduled_resume_at` Is a Stub
+### ~~TD-05: `scheduled_resume_at` Is a Stub~~ — RESOLVED
 
-`RunWorkflow._scheduled_resume_check()` reads the `scheduled_resume_at` DB column but only logs `"auto-resume pending (stub, not yet implemented)"` — no action is taken. The column exists and the migration is applied, but the feature is not functional.
+The stub `_scheduled_resume_check()` method has been removed from `workflow/signals/runtime.py`. The `scheduled_resume_at` DB column remains for future use but the dead stub code is gone.
 
 ---
 
@@ -522,7 +508,7 @@ Both systems must be kept in sync when adding a new runner type. `detector.py` s
 
 ### TD-08: Dead Codex HTTP-Era Code
 
-`runners/agents/codex/common.py` contains `create_session_payload()`, marked `"""Deprecated — HTTP-era session payload builder. Do not use."""` and tagged `# pragma: no cover`. It is never called. This is dead code from a previous HTTP-based Codex integration.
+RESOLVED: `create_session_payload()` has been removed from `runners/agents/codex/common.py`. It was dead code from a previous HTTP-based Codex integration.
 
 ---
 
@@ -534,15 +520,15 @@ Both systems must be kept in sync when adding a new runner type. `detector.py` s
 
 ---
 
-### TD-10: `git/repos.py` Deprecated Parameter
+### ~~TD-10: `git/repos.py` Deprecated Parameter~~ — RESOLVED
 
-The `include_remote` parameter in `git/repos.py` (`list_branches`) is marked `deprecated, use local_only` in the docstring but remains in the function signature. Callers that still pass `include_remote=True` receive the old (now incorrect) behaviour silently.
+The deprecated `include_remote` parameter has been removed from `list_branches()` in `git/repos.py`. All callers have been updated to use `local_only` instead.
 
 ---
 
-### TD-11: `RunWorkflow` Constructor Arity
+### ~~TD-11: `RunWorkflow` Constructor Arity~~ — RESOLVED
 
-`RunWorkflow.__init__` accepts 15+ mostly-optional keyword-only `Callable | None` parameters — bound references to private methods of `AgentRunnerExecutor`. This exists to avoid `reportPrivateUsage` type-checker errors. The correct fix is a small interface or dataclass that `AgentRunnerExecutor` constructs and passes to `RunWorkflow`.
+The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` dataclass in `workflow/signals/runtime.py`. `AgentRunnerExecutor` constructs an `ExecutorCallbacks` instance and passes it as a single `callbacks` parameter to `RunWorkflow`.
 
 ---
 
@@ -569,9 +555,11 @@ The `include_remote` parameter in `git/repos.py` (`list_branches`) is marked `de
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/routines` | List available routines |
+| GET | `/api/routines` | List available routines (supports `?include_archived=true`) |
 | GET | `/api/routines/{id}` | Get routine details |
 | POST | `/api/routines/validate` | Validate a routine YAML |
+| POST | `/api/routines/{id}/archive` | Archive a routine (hidden from listings) |
+| POST | `/api/routines/{id}/unarchive` | Unarchive a routine |
 
 ### Repositories
 
@@ -758,16 +746,16 @@ Both Codex Server agent variants (`codex_server.py` and `codex_server_remote.py`
 | Test examples | `tests/unit/*.py`, `tests/integration/*.py` |
 | Review API routes | `src/orchestrator/api/routers/review.py` |
 | Review schemas | `src/orchestrator/api/schemas/review.py` |
-| Git diff/prune/conflict ops | `src/orchestrator/git/diff_ops.py`, `prune_ops.py`, `conflict_ops.py` |
-| Review domain models | `src/orchestrator/review/models.py` |
-| Async test runner | `src/orchestrator/review/test_runner.py` |
+| Git diff/prune/conflict ops | `src/orchestrator/git/diff/diff_ops.py`, `git/ops/prune_ops.py`, `git/ops/conflict_ops.py` |
+| Review diff domain models | `src/orchestrator/git/diff/models.py` |
+| Async test runner | `src/orchestrator/git/testing/test_runner.py` |
 | Review frontend components | `ui/src/components/review/ReviewMergeTab.tsx` |
 | Review API client | `ui/src/api/reviewClient.ts` |
 | Review hooks | `ui/src/hooks/useReview.ts`, `ui/src/hooks/useReviewKeyboardShortcuts.ts` |
 
 ### Review Workflow Events
 
-The following event types (`src/orchestrator/workflow/events.py`) are emitted by review operations and persisted to the activity log:
+The following event types (`src/orchestrator/workflow/events/types.py`) are emitted by review operations and persisted to the activity log:
 
 | Event | Trigger | Key Fields |
 |-------|---------|------------|

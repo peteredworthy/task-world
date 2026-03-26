@@ -130,7 +130,7 @@ def list_branches_cmd(
             click.echo(f"Error: Repository '{name}' not found in {path}", err=True)
         raise SystemExit(1)
 
-    branches = list_branches(repo.path, pattern=pattern, include_remote=not local_only)
+    branches = list_branches(repo.path, pattern=pattern, local_only=local_only)
     total = len(branches)
     truncated = total > limit
     branches = branches[:limit]

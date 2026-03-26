@@ -116,30 +116,30 @@ class TestGetRepo:
 
 class TestListBranches:
     def test_list_local_branches(self, sample_repo: Path) -> None:
-        result = list_branches(sample_repo, include_remote=False)
+        result = list_branches(sample_repo, local_only=True)
 
         names = [b.name for b in result]
         assert "main" in names or "master" in names
         assert "feature/auth" in names
 
     def test_pattern_filter(self, sample_repo: Path) -> None:
-        result = list_branches(sample_repo, pattern="feature/*", include_remote=False)
+        result = list_branches(sample_repo, pattern="feature/*", local_only=True)
 
         assert len(result) == 1
         assert result[0].name == "feature/auth"
 
     def test_pattern_no_match(self, sample_repo: Path) -> None:
-        result = list_branches(sample_repo, pattern="release/*", include_remote=False)
+        result = list_branches(sample_repo, pattern="release/*", local_only=True)
         assert result == []
 
 
 class TestBranchCount:
     def test_count_all_branches(self, sample_repo: Path) -> None:
-        count = branch_count(sample_repo, include_remote=False)
+        count = branch_count(sample_repo, local_only=True)
         assert count >= 2  # main + feature/auth
 
     def test_count_with_pattern(self, sample_repo: Path) -> None:
-        count = branch_count(sample_repo, pattern="feature/*", include_remote=False)
+        count = branch_count(sample_repo, pattern="feature/*", local_only=True)
         assert count == 1
 
 

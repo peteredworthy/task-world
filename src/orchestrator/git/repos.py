@@ -80,14 +80,10 @@ def get_repo(repos_dir: Path, name: str) -> RepoInfo:
 def list_branches(
     repo_path: Path,
     pattern: str = "",
-    include_remote: bool = True,
     local_only: bool = False,
     limit: int = 0,
 ) -> list[BranchInfo]:
     """List branches in a repository."""
-    if local_only:
-        include_remote = False
-
     branches: list[BranchInfo] = []
 
     result = subprocess.run(
@@ -110,7 +106,7 @@ def list_branches(
         if len(parts) >= 2:
             branches.append(BranchInfo(name=parts[0], is_remote=False, commit=parts[1]))
 
-    if include_remote:
+    if not local_only:
         result = subprocess.run(
             [
                 "git",
@@ -143,9 +139,9 @@ def list_branches(
     return branches
 
 
-def branch_count(repo_path: Path, pattern: str = "", include_remote: bool = True) -> int:
+def branch_count(repo_path: Path, pattern: str = "", local_only: bool = False) -> int:
     """Count branches matching a pattern."""
-    return len(list_branches(repo_path, pattern, include_remote))
+    return len(list_branches(repo_path, pattern, local_only))
 
 
 def match_branches(branches: list[str], pattern: str) -> list[str]:
