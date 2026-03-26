@@ -14,7 +14,8 @@
     "filesystem": {
       "allowWrite": [
         "./",
-        "//tmp"
+        "//tmp",
+        "~/.cache/pre-commit"
       ]
     },
     "network": {

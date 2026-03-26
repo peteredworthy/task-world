@@ -38,13 +38,13 @@ from orchestrator.api.schemas.tasks import (
     TransitionResponse,
     UpdateChecklistRequest,
 )
-from orchestrator.config.enums import ChecklistStatus, RoutineSource, TaskStatus
+from orchestrator.config.enums import ChecklistStatus, RoutineSource, RunStatus, TaskStatus
 from orchestrator.config.models import MCPServerConfig, RoutineConfig
 from orchestrator.db import RunRepository
 from orchestrator.config import discover_routines, RoutineNotFoundError
 from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
-from orchestrator.workflow.artifacts import ArtifactRegistry
 from orchestrator.workflow import (
+    ArtifactRegistry,
     ClarificationRequest,
     ClarificationResponse,
     decisions_from_config,
@@ -56,9 +56,10 @@ from orchestrator.workflow import (
     SummaryCache,
     derive_output_path,
     resolve_template,
+    SignalTransport,
+    WorkflowSignal,
 )
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.workflow.signals import SignalTransport, WorkflowSignal
 from orchestrator.workflow.service import find_task_config
 
 router = APIRouter(prefix="/api/runs", tags=["tasks"])
@@ -324,6 +325,34 @@ async def complete_recovery(
         new_status=result.new_status.value,
         error=result.error,
     )
+
+
+@router.post(
+    "/{run_id}/tasks/{task_id}/retry",
+)
+async def retry_fan_out_child(
+    run_id: str,
+    task_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> dict[str, str]:
+    """Retry a failed fan-out child task.
+
+    Resets the child to PENDING and its parent to FAN_OUT_RUNNING.
+    If the run is active it will be paused so the executor restarts
+    from the correct step on resume.
+    """
+    run = await service.retry_fan_out_child(run_id, task_id)
+    return {
+        "status": run.status.value,
+        "message": (
+            "Child task reset to pending. "
+            + (
+                "Run paused — resume to re-execute the fan-out."
+                if run.status == RunStatus.PAUSED
+                else "Resume the run to re-execute the fan-out."
+            )
+        ),
+    }
 
 
 @router.patch(

@@ -545,7 +545,7 @@
 
 <header>
   <h1>Task-World Architecture</h1>
-  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 19 active modules + 1 dead shim, ~40K lines of Python &mdash; 9-module canonical boundaries enforced via import discipline</p>
+  <p>Modularity and boundary analysis of <code>src/orchestrator/</code> &mdash; 9 canonical modules, consolidation complete &mdash; ~40K lines of Python &mdash; import discipline enforced via pre-commit hook</p>
   <nav>
     <a href="#project-overview">Project</a>
     <a href="#overview">Stats</a>
@@ -614,7 +614,7 @@
 <section id="overview">
   <h2>Overview</h2>
   <div class="stats-grid">
-    <div class="stat-card"><div class="value">19</div><div class="label">Active Modules</div></div>
+    <div class="stat-card"><div class="value">9</div><div class="label">Canonical Modules</div></div>
     <div class="stat-card"><div class="value">230+</div><div class="label">Python Files</div></div>
     <div class="stat-card"><div class="value">~40K</div><div class="label">Lines of Code</div></div>
     <div class="stat-card"><div class="value">7</div><div class="label">Architecture Layers</div></div>
@@ -710,9 +710,9 @@
 
 <!-- SUGGESTED REFACTORING MOVES -->
 <section id="suggested-moves">
-  <h2>Consolidation Plan: 19 &rarr; 9 Modules <span>Phase 0 done &mdash; file moves pending</span></h2>
-  <p class="section-desc">The current 19 active top-level modules include many &ldquo;phantom modules&rdquo; &mdash; tiny, single-consumer packages that inflate the dependency graph without providing meaningful boundaries. <strong>File moves have not been executed yet.</strong> This plan absorbs 10 modules into their natural parents, producing 9 focused top-level packages with clean, obvious ownership.</p>
-  <p class="section-desc" style="margin-top:0.5rem;"><strong>Pre-step complete:</strong> Module import discipline has been enforced. <code>runners/__init__.py</code> and <code>api/__init__.py</code> now export public APIs for their sub-packages. A pre-commit hook (<code>scripts/check_module_imports.py</code>) rejects any import that reaches into a sub-package of a module it doesn&rsquo;t own. All cross-module imports now go through the top-level <code>__init__.py</code> — the 9 canonical module boundaries are enforced even before the physical moves happen.</p>
+  <h2>Consolidation Plan: 19 &rarr; 9 Modules <span>Phases 0&ndash;2 complete</span></h2>
+  <p class="section-desc">The original 19 active top-level modules included many &ldquo;phantom modules&rdquo; &mdash; tiny, single-consumer packages that inflated the dependency graph without providing meaningful boundaries. <strong>Phases 0&ndash;2 are done:</strong> 10 phantom modules have been absorbed into their natural parents, producing 9 focused top-level packages with clean, obvious ownership. Phase 3 (service extraction) remains as optional future cleanup.</p>
+  <p class="section-desc" style="margin-top:0.5rem;"><strong>Import discipline enforced:</strong> <code>runners/__init__.py</code> and <code>api/__init__.py</code> export public APIs for their sub-packages. A pre-commit hook (<code>scripts/check_module_imports.py</code>) rejects any import that reaches into a sub-package of a module it doesn&rsquo;t own. All cross-module imports go through the top-level <code>__init__.py</code>.</p>
 
   <div class="diagram-container">
     <div class="diagram-header">
@@ -883,9 +883,9 @@
     </div>
     <div class="diagram-body" style="padding: 0;">
       <table class="concerns-table">
-        <thead><tr><th>Metric</th><th>Current (19 modules, not yet moved)</th><th>After Phase 1&ndash;2 (9 modules)</th><th>After Phase 3</th></tr></thead>
+        <thead><tr><th>Metric</th><th>Before (19 modules)</th><th>Now &mdash; Phase 1&ndash;2 done (9 modules)</th><th>After Phase 3</th></tr></thead>
         <tbody>
-          <tr><td>Top-level modules</td><td>19 active + 1 dead shim</td><td><strong>9</strong></td><td>9</td></tr>
+          <tr><td>Top-level modules</td><td>19 active + 1 dead shim</td><td><strong>9 ✓</strong></td><td>9</td></tr>
           <tr><td>Total LOC</td><td>~40K</td><td>~40K (same code, fewer dirs)</td><td>~40K</td></tr>
           <tr><td><code>api</code> external deps</td><td>15</td><td>7 (config, state, db, git, envfiles, workflow, runners)</td><td>5&ndash;6 (via services)</td></tr>
           <tr><td><code>git</code> external deps</td><td>2 (cache, review)</td><td>0 (both absorbed)</td><td>0</td></tr>
@@ -924,18 +924,18 @@
             <td>Done</td>
             <td>9 canonical boundaries enforced; file moves can now be done incrementally without breaking callers</td>
           </tr>
-          <tr>
-            <td><strong>Phase 1</strong></td>
+          <tr style="background: rgba(166,227,161,0.05);">
+            <td><strong>Phase 1</strong> ✓</td>
             <td>M1 (delete routers), M2 (scaffolding&rarr;runners), M3 (cache&rarr;git), M4 (artifacts&rarr;workflow)</td>
             <td><span class="severity-low">Zero/Low</span></td>
-            <td>~1 hour</td>
+            <td>Done</td>
             <td>19 &rarr; 15 modules</td>
           </tr>
-          <tr>
-            <td><strong>Phase 2</strong></td>
+          <tr style="background: rgba(166,227,161,0.05);">
+            <td><strong>Phase 2</strong> ✓</td>
             <td>M5 (review&rarr;git), M6 (repos&rarr;git), M7 (metrics&rarr;api), M8 (mcp&rarr;api), M9 (agents&rarr;runners), M10 (routines&rarr;config)</td>
             <td><span class="severity-low">Low</span></td>
-            <td>~2&ndash;3 hours</td>
+            <td>Done</td>
             <td>15 &rarr; 9 modules</td>
           </tr>
           <tr>
@@ -953,7 +953,7 @@
 
 <!-- MODULE CATALOG -->
 <section id="modules">
-  <h2>Module Catalog <span>19 modules across 7 layers</span></h2>
+  <h2>Module Catalog <span>9 modules across 7 layers</span></h2>
   <p class="section-desc">Each module's purpose, size, and outbound dependencies. Grouped by architectural layer.</p>
   <div class="module-grid" id="module-grid"></div>
 </section>
@@ -997,10 +997,10 @@
             <td>Extract sub-services: VerificationService, RecoveryService, CompletionService. The module already has partial decomposition via <code>handlers.py</code>, <code>completion.py</code>, and <code>clarifications.py</code>.</td>
           </tr>
           <tr>
-            <td><strong>Phantom Top-Level Modules</strong></td>
+            <td><strong>Wide API Router Dependencies</strong> (phase 3 target)</td>
             <td><span class="severity-medium">Medium</span></td>
-            <td><code>scaffolding</code> (176 LOC), <code>cache</code> (88 LOC), <code>review</code> (261 LOC), <code>metrics</code> (70 LOC), <code>artifacts</code> (146 LOC), <code>repos</code> (268 LOC), <code>agents</code> (348 LOC), <code>routines</code> (555 LOC), and <code>mcp</code> (785 LOC) are top-level modules with 1&ndash;2 consumers each. They inflate the module count from 9 to 19. Import discipline (Phase 0) is enforced &mdash; callers already import through the 9 canonical <code>__init__.py</code>s. <strong>Physical file moves (Phases 1&ndash;2) not yet executed.</strong></td>
-            <td>Absorb into their natural parents (see <a href="#suggested-moves" style="color: var(--accent);">M1&ndash;M10</a>).</td>
+            <td><code>api/routers/runs.py</code> and <code>api/routers/review.py</code> still import from many modules directly. The phantom-module absorption (phases 1&ndash;2) reduced cross-module edges but the routers themselves remain wide.</td>
+            <td>Extract RunService and ReviewService (see <a href="#suggested-moves" style="color: var(--accent);">M11, M12</a>).</td>
           </tr>
           <tr>
             <td><strong>config Circular Risk</strong></td>
@@ -1276,20 +1276,20 @@ flowchart TD
   <div class="td-grid">
 
     <div class="td-card sev-medium">
-      <h4><span class="td-id">TD-01</span> Backward-compat shims after module split</h4>
-      <div class="td-desc">After agents moved from <code>runners/*.py</code> to <code>runners/agents/*/</code>, the old flat paths remain as <code>import *</code> shim files (<code>runners/openhands.py</code>, <code>runners/openhands_docker.py</code>, <code>runners/openhands_common.py</code>, <code>runners/codex_server.py</code>, <code>runners/codex_server_common.py</code>, <code>runners/executor.py</code>). Root-level <code>orchestrator/executor.py</code> and <code>orchestrator/routers/</code> are also shims. New code must never be added to shim files.</div>
+      <h4><span class="td-id">TD-01</span> Backward-compat shims after module consolidation</h4>
+      <div class="td-desc">After the 19&rarr;9 consolidation, several one-liner shim files remain inside <code>runners/</code>: <code>openhands.py</code>, <code>openhands_docker.py</code>, <code>openhands_common.py</code>, <code>codex_server.py</code>, <code>codex_server_common.py</code>, <code>executor.py</code>. The root-level <code>orchestrator/executor.py</code> is also a shim. New code must never be added to shim files.</div>
       <div class="td-fix">✦ Remove once all internal imports use canonical <code>agents/</code> paths. <code>runners/__init__.py</code> now provides a public export surface — use it instead of reaching into sub-packages.</div>
     </div>
 
     <div class="td-card sev-medium">
       <h4><span class="td-id">TD-02</span> Duplicate agent detection systems</h4>
-      <div class="td-desc"><code>runners/detector.py</code> (legacy, wired to <code>GET /api/agent-runners</code>) and <code>runners/agent_detector.py</code> (registry-based, each package self-registers) both exist. Both must be kept in sync when adding a new runner type.</div>
+      <div class="td-desc"><code>runners/detection/detector.py</code> (legacy, wired to <code>GET /api/agent-runners</code>) and <code>runners/agent_detector.py</code> (registry-based, each package self-registers) both exist. Both must be kept in sync when adding a new runner type.</div>
       <div class="td-fix">✦ Replace <code>detector.py</code> with <code>agent_detector.py</code> once the API route is updated.</div>
     </div>
 
     <div class="td-card sev-low">
       <h4><span class="td-id">TD-03</span> Process-local active-run registry</h4>
-      <div class="td-desc"><code>_active_run_ids</code> in <code>signals.py</code> is a module-level <code>set[str]</code>. It is lost on server restart and is incompatible with multi-worker deployments. Runs paused mid-transition when the process dies silently lose registry state.</div>
+      <div class="td-desc"><code>_active_run_ids</code> in <code>workflow/signals/signals.py</code> is a module-level <code>set[str]</code>. It is lost on server restart and is incompatible with multi-worker deployments. Runs paused mid-transition when the process dies silently lose registry state.</div>
       <div class="td-fix">✦ Low impact today (single-process). Becomes a correctness bug if deployment model changes.</div>
     </div>
 
@@ -1330,8 +1330,8 @@ flowchart TD
     </div>
 
     <div class="td-card sev-low">
-      <h4><span class="td-id">TD-10</span> repos/discovery.py deprecated parameter</h4>
-      <div class="td-desc">The <code>include_remote</code> parameter in <code>repos/discovery.py</code> is marked deprecated in the docstring ("use <code>local_only</code>") but remains in the function signature. Callers passing <code>include_remote=True</code> receive stale behaviour silently.</div>
+      <h4><span class="td-id">TD-10</span> git/repos.py deprecated parameter</h4>
+      <div class="td-desc">The <code>include_remote</code> parameter in <code>git/repos.py</code> (<code>list_branches</code>) is marked deprecated in the docstring ("use <code>local_only</code>") but remains in the function signature. Callers passing <code>include_remote=True</code> receive stale behaviour silently.</div>
       <div class="td-fix">✦ Remove parameter after updating all callers.</div>
     </div>
 
@@ -1353,42 +1353,49 @@ flowchart TD
 // DATA
 // ============================================================
 const modules = {
-  config:      { loc: 837,  files: 5,  layer: 'foundation', desc: 'Runtime enums (RunStatus, TaskStatus, Priority, AgentRunnerType, ModelProfile), Pydantic models for routine/step/task YAML, and GlobalConfig for paths and settings.' },
-  cache:       { loc: 88,   files: 2,  layer: 'foundation', desc: 'Simple LRU cache utility used by git operations for memoizing expensive diff computations.', parent: 'git' },
-  metrics:     { loc: 70,   files: 2,  layer: 'foundation', desc: 'Cost estimation from token usage data. Calculates USD costs using model pricing tables.', parent: 'api' },
-  state:       { loc: 548,  files: 5,  layer: 'domain',     desc: 'In-memory runtime models: Run, StepState, TaskState, Attempt, ChecklistItem. SessionStateManager for state mutations.' },
-  routines:    { loc: 555,  files: 5,  layer: 'domain',     desc: 'Routine discovery and loading from YAML files. Handles file resolution, inheritance, and semantic versioning.', parent: 'config' },
-  artifacts:   { loc: 146,  files: 3,  layer: 'domain',     desc: 'Structured output registry. Stores named artifacts (code snippets, configs) produced during task execution.', parent: 'workflow' },
-  repos:       { loc: 268,  files: 4,  layer: 'domain',     desc: 'Git repository discovery and introspection. Lists repos, branches, and provides RepoInfo data classes.', parent: 'git' },
-  review:      { loc: 261,  files: 3,  layer: 'domain',     desc: 'Code review models and test execution. Runs test commands in worktrees and provides diff/commit data.', parent: 'git' },
-  scaffolding: { loc: 176,  files: 4,  layer: 'domain',     desc: 'Project setup: copies template files, ensures .gitignore, prepares workspace for new tasks.', parent: 'runners' },
+  // 9 canonical modules (post-consolidation)
+  config:      { loc: 1392, files: 9,  layer: 'foundation', desc: 'Runtime enums (RunStatus, TaskStatus, Priority, AgentRunnerType, ModelProfile), Pydantic models for routine/step/task YAML, GlobalConfig for paths and settings. Includes config/routines/ sub-package (absorbed from routines/) for YAML loading and directory discovery.' },
+  state:       { loc: 548,  files: 5,  layer: 'domain',     desc: 'In-memory runtime models: Run, StepState, TaskState, Attempt, ChecklistItem, ActionLog, ActionEntryKind. SessionStateManager for state mutations.' },
   db:          { loc: 3817, files: 34, layer: 'infra',       desc: 'Persistence via SQLAlchemy ORM. RunModel, StepModel, TaskModel, AttemptModel. Repositories, event store, JSONL journal, journal replay, and Alembic migrations.' },
-  git:         { loc: 2882, files: 10, layer: 'infra',       desc: 'Low-level git operations: WorktreeManager, branch ops, diff computation (with LRU-cached variant), conflict detection, prune ops, and commit utilities.' },
+  git:         { loc: 3499, files: 19, layer: 'infra',       desc: 'All git operations: WorktreeManager, branch ops, diff computation (git/diff/ with LRU cache), conflict detection, prune ops, commit utilities, async test execution (git/testing/), and repository discovery (git/repos.py — RepoInfo, BranchInfo, list_repos, list_branches).' },
   envfiles:    { loc: 912,  files: 9,  layer: 'infra',       desc: 'Environment file management: snapshots, lifecycle (create/cleanup), resolution, security filtering, and tooling.' },
-  workflow:    { loc: 8402, files: 22, layer: 'orchestration', desc: 'State machine engine: transitions, gates, grades, locks, events, signals, clarifications, auto-verify, prompts, condition_evaluator, handlers, summary_cache, and completion logic.' },
-  runners:     { loc: 11651, files: 58, layer: 'execution',  desc: 'Agent integrations and execution. Contains agents/ (claude_cli, claude_sdk, codex, openhands, user_managed, mock), execution/ (phase_handler, attempt_store, event_broadcaster), parsers/, and shared utilities (quota, repetition_detector, config_utils, nudger, monitor).' },
-  agents:      { loc: 348,  files: 6,  layer: 'execution',   desc: 'Agent configuration CRUD. Manages named agent profiles (system_prompt + model_profile), seeding defaults (Planner, Builder, Verifier), and cascading name resolution.', parent: 'runners' },
-  api:         { loc: 7028, files: 30, layer: 'api',         desc: 'FastAPI application: 11 routers (runs, tasks, agents, routines, repos, runners, model_profiles, review, clarifications, envfiles, config), schemas, dependency injection, auth, error handlers, and WebSocket real-time events.' },
+  workflow:    { loc: 8548, files: 25, layer: 'orchestration', desc: 'State machine engine: transitions, gates, grades, locks, events, signals, clarifications, auto-verify, prompts, condition_evaluator, handlers, summary_cache, and completion logic. Includes workflow/artifacts/ sub-package (absorbed from artifacts/).' },
+  runners:     { loc: 12175, files: 68, layer: 'execution',  desc: 'Agent integrations and execution. Contains agents/ (claude_cli, claude_sdk, codex, openhands, user_managed, mock), execution/ (phase_handler, attempt_store, event_broadcaster), parsers/, profiles/ (absorbed from agents/ config CRUD), runtime/ (nudger, monitor, quota, repetition_detector), scaffolding/ (absorbed from scaffolding/), and detection/ (config_utils, detector, profile_resolution).' },
+  api:         { loc: 7883, files: 36, layer: 'api',         desc: 'FastAPI application: 11 routers (runs, tasks, agents, routines, repos, runners, model_profiles, review, clarifications, envfiles, config), schemas, dependency injection, auth, error handlers, WebSocket real-time events. Includes api/metrics.py (cost estimation, absorbed from metrics/) and api/mcp/ sub-package (MCP server, absorbed from mcp/).' },
   cli:         { loc: 1772, files: 8,  layer: 'integration', desc: 'Command-line interface: run, agent, routine, and repo commands. Approval workflows for human-in-the-loop.' },
-  mcp:         { loc: 785,  files: 4,  layer: 'integration', desc: 'Model Context Protocol server: exposes tools to external agents for run status, task context, and clarifications.', parent: 'api' },
-  routers:     { loc: 6,    files: 2,  layer: 'integration', desc: 'Dead shim (6 LOC). Re-exports from api.routers.tasks for backwards compatibility. Pending deletion.' },
+  // Absorbed phantom modules — shown with containership for historical reference
+  cache:       { loc: 88,   files: 2,  layer: 'foundation', desc: '⟳ Absorbed into git/diff/ — LRU cache for diff memoization.', parent: 'git' },
+  metrics:     { loc: 70,   files: 2,  layer: 'foundation', desc: '⟳ Absorbed into api/metrics.py — cost estimation from token data.', parent: 'api' },
+  routines:    { loc: 555,  files: 5,  layer: 'domain',     desc: '⟳ Absorbed into config/routines/ — YAML routine loading and discovery.', parent: 'config' },
+  artifacts:   { loc: 146,  files: 3,  layer: 'domain',     desc: '⟳ Absorbed into workflow/artifacts/ — structured output registry.', parent: 'workflow' },
+  repos:       { loc: 268,  files: 4,  layer: 'domain',     desc: '⟳ Absorbed into git/repos.py — repository discovery and branch introspection.', parent: 'git' },
+  review:      { loc: 261,  files: 3,  layer: 'domain',     desc: '⟳ Absorbed into git/testing/ — test execution in git worktrees.', parent: 'git' },
+  scaffolding: { loc: 176,  files: 4,  layer: 'domain',     desc: '⟳ Absorbed into runners/scaffolding/ — project setup and workspace prep.', parent: 'runners' },
+  agents:      { loc: 348,  files: 6,  layer: 'execution',   desc: '⟳ Absorbed into runners/profiles/ — agent config CRUD, seeding, cascading name resolution.', parent: 'runners' },
+  mcp:         { loc: 785,  files: 4,  layer: 'integration', desc: '⟳ Absorbed into api/mcp/ — MCP server exposing tools to external agents.', parent: 'api' },
 };
 
-// Dependencies: source depends on targets
+// Dependencies: source depends on targets (post-consolidation 9-module graph)
 const deps = {
-  config: ['routines','runners'],
-  state: ['config','envfiles','runners'],
-  db: ['config','envfiles','runners','state','workflow'],
-  git: ['cache','review'],
-  envfiles: ['config','workflow'],
+  config:   ['runners'],
+  state:    ['config','envfiles'],
+  db:       ['config','envfiles','state','workflow'],
+  git:      [],
+  envfiles: ['config'],
+  workflow: ['config','db','envfiles','git','state'],
+  runners:  ['config','db','git','state','workflow'],
+  api:      ['config','db','envfiles','git','runners','state','workflow'],
+  cli:      ['config','db','git','runners','state','workflow'],
+  // Absorbed modules — kept for containership visualization
+  cache:    [],
+  metrics:  [],
   routines: ['config'],
-  workflow: ['artifacts','config','db','envfiles','git','state'],
-  runners: ['artifacts','config','db','git','scaffolding','state','workflow'],
-  agents: ['config','db'],
-  api: ['agents','artifacts','cache','config','db','envfiles','git','mcp','metrics','repos','review','routines','runners','state','workflow'],
-  cli: ['config','db','repos','routines','runners','state','workflow'],
-  mcp: ['config','repos','workflow'],
-  routers: [],
+  artifacts:[],
+  repos:    [],
+  review:   [],
+  scaffolding:[],
+  agents:   ['config','db'],
+  mcp:      ['config','workflow'],
 };
 
 // Containership: child → parent (proposed consolidation targets)
@@ -2060,7 +2067,7 @@ const layerOrder = ['integration','api','execution','orchestration','infra','dom
   });
   const hullItem = legend.append('span').attr('class', 'legend-item');
   hullItem.append('span').attr('class', 'legend-dot').style('background', 'none').style('border', '2px dashed #7f849c').style('width', '14px').style('height', '10px').style('border-radius', '3px');
-  hullItem.append('span').text('Proposed containership');
+  hullItem.append('span').text('Absorbed sub-packages (shown for historical reference)');
 })();
 
 // ============================================================

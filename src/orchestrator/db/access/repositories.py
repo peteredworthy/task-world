@@ -494,7 +494,7 @@ class RunRepository:
         await self._session.merge(new_model)
         await self._session.flush()
 
-    async def _get_task_model(self, task_id: str) -> TaskModel:
+    async def get_task_model(self, task_id: str) -> TaskModel:
         """Load a task row with its attempts and owning run."""
         result = await self._session.execute(
             select(TaskModel)
@@ -517,7 +517,7 @@ class RunRepository:
         status: TaskStatus = TaskStatus.BUILDING,
     ) -> None:
         """Append a new attempt to a single task without rewriting the full run."""
-        task_model = await self._get_task_model(task_id)
+        task_model = await self.get_task_model(task_id)
         task_model.status = status.value
         task_model.current_attempt = attempt.attempt_num
         task_model.attempts.append(
@@ -609,10 +609,52 @@ class RunRepository:
 
     async def update_task_status(self, task_id: str, status: TaskStatus) -> None:
         """Update one task's status without rewriting sibling tasks."""
-        task_model = await self._get_task_model(task_id)
+        task_model = await self.get_task_model(task_id)
         task_model.status = status.value
         task_model.step.run.updated_at = datetime.now(timezone.utc)
         await self._session.flush()
+
+    async def rewind_step_index_if_needed(self, run_id: str, target_step_index: int) -> None:
+        """Set current_step_index to target if it's currently higher."""
+        result = await self._session.execute(select(RunModel).where(RunModel.id == run_id))
+        run_model = result.scalar_one()
+        if run_model.current_step_index > target_step_index:
+            run_model.current_step_index = target_step_index
+            run_model.updated_at = datetime.now(timezone.utc)
+            await self._session.flush()
+
+    async def update_run_status(
+        self,
+        run_id: str,
+        status: RunStatus,
+        *,
+        pause_reason: str | None = None,
+    ) -> None:
+        """Update a run's status without rewriting the full run graph."""
+        result = await self._session.execute(select(RunModel).where(RunModel.id == run_id))
+        run_model = result.scalar_one()
+        run_model.status = status.value
+        run_model.pause_reason = pause_reason
+        run_model.updated_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def count_fan_out_children(self, parent_task_id: str) -> tuple[int, int]:
+        """Return (completed_count, failed_count) for a fan-out parent's children."""
+        from sqlalchemy import func
+
+        result = await self._session.execute(
+            select(TaskModel.status, func.count(TaskModel.id))
+            .where(TaskModel.parent_task_id == parent_task_id)
+            .group_by(TaskModel.status)
+        )
+        completed = 0
+        failed = 0
+        for status_val, count in result.all():
+            if status_val == TaskStatus.COMPLETED.value:
+                completed += count
+            elif status_val == TaskStatus.FAILED.value:
+                failed += count
+        return completed, failed
 
     async def reset_fan_out_children(self, parent_task_id: str) -> None:
         """Reset non-completed fan-out children to PENDING and parent to FAN_OUT_RUNNING.
@@ -639,6 +681,62 @@ class RunRepository:
             run_model.updated_at = datetime.now(timezone.utc)
         await self._session.flush()
 
+    async def retry_fan_out_child(self, child_task_id: str) -> tuple[str, int]:
+        """Reset a single failed fan-out child to PENDING and its parent to FAN_OUT_RUNNING.
+
+        Also marks the parent's step as not completed so the executor will
+        re-enter the fan-out flow.
+
+        Returns (run_id, step_order_index) for the caller to adjust
+        current_step_index if needed.
+        """
+        from orchestrator.workflow import InvalidTransitionError
+
+        # Load child with parent, step, and run
+        result = await self._session.execute(
+            select(TaskModel)
+            .where(TaskModel.id == child_task_id)
+            .options(
+                selectinload(TaskModel.step).selectinload(StepModel.run),
+            )
+        )
+        child_model = result.scalar_one_or_none()
+        if child_model is None:
+            raise TaskNotFoundError("unknown", child_task_id)
+        if child_model.parent_task_id is None:
+            raise InvalidTransitionError(
+                child_model.status, "retry_fan_out_child (not a fan-out child)"
+            )
+        if child_model.status != TaskStatus.FAILED.value:
+            raise InvalidTransitionError(
+                child_model.status, "retry_fan_out_child (requires FAILED)"
+            )
+
+        # Load parent
+        parent_result = await self._session.execute(
+            select(TaskModel)
+            .where(TaskModel.id == child_model.parent_task_id)
+            .options(
+                selectinload(TaskModel.step).selectinload(StepModel.run),
+            )
+        )
+        parent_model = parent_result.scalar_one()
+
+        # Reset child to PENDING
+        child_model.status = TaskStatus.PENDING.value
+        # Reset parent to FAN_OUT_RUNNING so executor re-enters _execute_fan_out
+        parent_model.status = TaskStatus.FAN_OUT_RUNNING.value
+        # Mark step as not completed so it's picked up again
+        parent_model.step.completed = False
+
+        step_order_index = parent_model.step.order_index
+        run_model = parent_model.step.run
+        run_id = run_model.id
+        run_model.updated_at = datetime.now(timezone.utc)
+
+        await self._session.flush()
+        return run_id, step_order_index
+
     async def update_latest_attempt(
         self,
         task_id: str,
@@ -660,7 +758,7 @@ class RunRepository:
         Callers must not attempt to modify a completed attempt — corrections
         are tracked via append-only events rather than in-place updates.
         """
-        task_model = await self._get_task_model(task_id)
+        task_model = await self.get_task_model(task_id)
         attempt = task_model.attempts[-1] if task_model.attempts else None
         if attempt is not None and attempt.outcome is not None:
             # Attempt is already completed (outcome set). Guard against in-place mutation.

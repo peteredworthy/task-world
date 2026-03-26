@@ -43,168 +43,169 @@ npm run dev   # starts on port 5173
 
 ```
 task-world/
-├── src/orchestrator/          # Python backend (main application)
-│   ├── errors.py              # Root-level error definitions (domain exceptions)
+├── src/orchestrator/          # Python backend — 9 canonical modules
+│   ├── errors.py              # Root-level domain exceptions
 │   ├── time_utils.py          # Time utilities (injectable clocks for testing)
-│   ├── executor.py            # Backward-compat shim → runners/executor.py
-│   ├── agents/                # Agent configs (prompt + model profile, CRUD)
-│   │   ├── errors.py          # AgentNotFoundError, AgentNameConflictError, etc.
-│   │   ├── models.py          # AgentConfigModel ORM model
-│   │   ├── resolution.py      # Cascading agent resolution (task→step→routine→default)
-│   │   ├── schemas.py         # AgentSchema, CreateAgentRequest, UpdateAgentRequest
-│   │   └── service.py         # AgentService CRUD + seed_default_agents()
-│   ├── runners/               # Agent runner implementations (execution backends)
-│   │   ├── interface.py       # AgentRunner protocol definition
-│   │   ├── types.py           # ExecutionContext, ExecutionResult, AgentRunnerOption, etc.
-│   │   ├── agent_factory.py   # Registry-based agent factory; each package self-registers
-│   │   ├── agent_detector.py  # Registry-based runner detection (preferred over detector.py)
-│   │   ├── detector.py        # Legacy detector; still used by GET /api/agent-runners (TD-02)
-│   │   ├── profile_resolution.py # Model profile → model string resolution
-│   │   ├── monitor.py         # Dead runner detection/recovery
-│   │   ├── nudger.py          # Stuck runner nudging (timeout, nudge, kill)
-│   │   ├── action_log.py      # Structured runner activity log
-│   │   ├── quota.py           # Agent quota tracking and enforcement
-│   │   ├── repetition_detector.py # Detects agent stuck in output loops
-│   │   ├── config_utils.py    # Shared agent config helpers
-│   │   ├── errors.py          # Runner-specific error types
-│   │   ├── agents/            # Concrete agent implementations (canonical location)
-│   │   │   ├── claude_cli/    # CLIAgent: subprocess via stdin/stdout
-│   │   │   │   ├── agent.py   # Main CLIAgent; uses Nudger, ClaudeStreamParser
-│   │   │   │   ├── config.py  # CLIAgent config schema
-│   │   │   │   ├── factory.py # Self-registration with agent_factory
-│   │   │   │   └── parser.py  # ClaudeStreamParser: JSON stream → events
-│   │   │   ├── claude_sdk/    # In-process Anthropic SDK agent
-│   │   │   ├── codex/         # CodexServerAgent: managed `codex app-server` (stdio/JSON-RPC)
-│   │   │   ├── openhands/     # OpenHandsAgent (local in-process) + DockerOpenHandsAgent
-│   │   │   ├── user_managed/  # UserManagedAgent: passive wait-for-external-signal
-│   │   │   └── mock/          # Mock agent for testing
-│   │   ├── execution/         # Shared execution infrastructure
-│   │   │   ├── phase_handler.py   # Wires agent callbacks to WorkflowService calls
-│   │   │   ├── attempt_store.py   # Persists attempt metrics and agent metadata
-│   │   │   └── event_broadcaster.py # Persists AgentOutputEvent; one DB session per call
-│   │   ├── # Backward-compat shims pointing to agents/ — DO NOT add new code here (TD-01):
-│   │   ├── openhands.py, openhands_docker.py, openhands_common.py
-│   │   ├── codex_server.py, codex_server_common.py, executor.py
-│   │   └── parsers/           # Stream parser protocol + shims
-│   │       ├── base.py        # Base stream parser protocol (canonical)
-│   │       ├── claude_parser.py, codex_parser.py, openhands_parser.py
-│   ├── api/                   # FastAPI REST API
+│   ├── executor.py            # Backward-compat shim → runners/executor.py (TD-01)
+│   │
+│   ├── api/                   # All external interfaces
 │   │   ├── app.py             # Application factory, lifespan, startup recovery
 │   │   ├── auth.py            # JWT authentication
 │   │   ├── deps.py            # Dependency injection
 │   │   ├── errors.py          # Exception handlers
+│   │   ├── metrics.py         # Token counting and USD cost estimation
 │   │   ├── websocket.py       # WebSocket connection manager
+│   │   ├── mcp/               # MCP server (alternative transport to REST)
+│   │   │   ├── server.py      # FastMCP SSE server
+│   │   │   ├── tools.py       # Tool definitions (ORCHESTRATOR_TOOLS)
+│   │   │   └── clarification_tools.py
 │   │   ├── routers/           # API endpoints (11 routers)
-│   │   │   ├── agents.py      # GET/POST/PUT/DELETE /api/agents (agent CRUD)
-│   │   │   ├── runners.py     # GET /api/agent-runners (runner discovery)
+│   │   │   ├── agents.py      # GET/POST/PUT/DELETE /api/agents
+│   │   │   ├── runners.py     # GET /api/agent-runners
 │   │   │   ├── model_profiles.py # GET/PUT /api/agent-runners/{type}/profiles
 │   │   │   ├── routines.py    # /api/routines CRUD + validate
 │   │   │   ├── runs.py        # /api/runs CRUD + lifecycle
 │   │   │   ├── tasks.py       # Task operations, checklist, grades, prompts
 │   │   │   ├── repos.py       # /api/repos (repository browser)
 │   │   │   ├── config.py      # GET /api/config
-│   │   │   ├── clarifications.py # Clarification requests
-│   │   │   ├── envfiles.py    # Environment file operations
+│   │   │   ├── clarifications.py
+│   │   │   ├── envfiles.py
 │   │   │   └── review.py      # Review & merge workbench (13 endpoints)
 │   │   └── schemas/           # Pydantic request/response models
 │   │       ├── runs.py, tasks.py, steps.py, routines.py
 │   │       ├── repos.py, clarifications.py, envfiles.py
-│   │       ├── model_profiles.py  # Runner profile request/response schemas
-│   │       ├── activity.py    # Activity log schemas
-│   │       └── review.py      # Review schemas (diff, prune, conflicts, tests, merge)
-│   ├── artifacts/             # Artifact tracking (proposed: move to workflow/)
-│   │   ├── models.py          # Artifact data models
-│   │   └── registry.py        # Registry for generated files
-│   ├── cache/                 # LRU cache utility (proposed: move to git/)
-│   │   └── lru_cache.py       # Generic LRU cache used by cached_diff_ops
+│   │       ├── model_profiles.py, activity.py, review.py, base.py
+│   │
 │   ├── cli/                   # Click CLI commands
 │   │   ├── main.py            # Entry point (orchestrator command)
-│   │   ├── runs.py            # Run management commands
-│   │   ├── routines.py        # Routine listing commands
-│   │   ├── agents.py          # Agent listing commands
-│   │   ├── repos.py           # Repository commands
+│   │   ├── runs.py, routines.py, agents.py, repos.py
 │   │   ├── approve.py         # Human approval commands
-│   │   └── model_profiles.py  # Runner model profile commands
-│   ├── config/                # Configuration models
+│   │   └── db.py              # Database commands
+│   │
+│   ├── config/                # All configuration: enums, models, routine loading
 │   │   ├── enums.py           # RunStatus, TaskStatus, AgentRunnerType, ModelProfile, etc.
 │   │   ├── global_config.py   # config.json loader
 │   │   ├── loader.py          # Config loading helpers
-│   │   └── models.py          # RoutineConfig, StepConfig, TaskConfig
-│   ├── db/                    # Database layer (SQLAlchemy + SQLite)
-│   │   ├── base.py            # SQLAlchemy Base class
-│   │   ├── connection.py      # Async engine + session factory
-│   │   ├── models.py          # ORM models (Run, Step, Task, Attempt, Event, Signal, Lock…)
-│   │   ├── repositories.py    # RunRepository, AttemptRepository, etc.
-│   │   ├── event_store.py     # Event persistence + paginated queries
-│   │   ├── event_journal.py   # JSONL journal (append-only, recovery source)
-│   │   ├── journal_replay.py  # Replay JSONL journal onto DB snapshots
-│   │   ├── recovery.py        # State recovery from event history
-│   │   ├── backup.py          # DB backup utilities
+│   │   ├── models.py          # RoutineConfig, StepConfig, TaskConfig, NudgerConfig, etc.
+│   │   └── routines/          # YAML routine loading (absorbed from routines/)
+│   │       ├── loader.py      # YAML routine parser
+│   │       ├── discovery.py   # Directory scanning
+│   │       ├── versioning.py  # Git SHA versioning
+│   │       └── errors.py
+│   │
+│   ├── db/                    # Persistence: ORM, repositories, event store, recovery
+│   │   ├── orm/               # SQLAlchemy ORM definitions
+│   │   │   ├── base.py        # SQLAlchemy Base class
+│   │   │   └── models.py      # Run, Step, Task, Attempt, Event, Signal, Lock ORM models
+│   │   ├── access/            # Data access layer
+│   │   │   ├── connection.py  # Async engine + session factory
+│   │   │   ├── repositories.py # RunRepository, AttemptRepository, etc.
+│   │   │   └── event_store.py # Event persistence + paginated queries
+│   │   ├── recovery/          # Journal + replay + backup
+│   │   │   ├── event_journal.py # JSONL journal (append-only, recovery source)
+│   │   │   ├── journal_replay.py # Replay JSONL journal onto DB snapshots
+│   │   │   ├── recovery.py    # State recovery from event history
+│   │   │   └── backup.py
 │   │   └── migrations/        # Alembic migrations
+│   │
 │   ├── envfiles/              # Environment file management
-│   │   ├── models.py          # Env file data models
-│   │   ├── store.py           # Snapshot storage
-│   │   ├── lifecycle.py       # Run/task lifecycle hooks
-│   │   ├── resolution.py      # Variable resolution
-│   │   ├── security.py        # Secret filtering
-│   │   ├── cleanup.py         # Cleanup operations
-│   │   └── tools.py           # Env file management tools
-│   ├── git/                   # Git operations
+│   │   ├── models.py, store.py, lifecycle.py
+│   │   ├── resolution.py, security.py, cleanup.py, tools.py
+│   │
+│   ├── git/                   # All git & repository operations
 │   │   ├── worktree.py        # Git worktree management + ensure_exists()
-│   │   ├── branch_ops.py      # Branch operations (merge, back-merge)
-│   │   ├── cached_diff_ops.py # LRU-cached diff operations
 │   │   ├── project_init.py    # Project initialization
 │   │   ├── utils.py           # Git utility functions
-│   │   ├── diff_ops.py        # Diff generation (branch/commit/task scopes)
-│   │   ├── prune_ops.py       # Selective change removal (file/hunk/line granularity)
-│   │   ├── conflict_ops.py    # Merge conflict detection and resolution
-│   │   └── errors.py          # Git-specific error types
-│   ├── mcp/                   # MCP server (proposed: move to api/) (TD-01)
-│   │   ├── server.py          # FastMCP SSE server
-│   │   ├── tools.py           # Tool definitions
-│   │   └── clarification_tools.py # Clarification-specific tools
-│   ├── metrics/               # Cost tracking (proposed: move to api/) (TD-01)
-│   │   └── cost.py            # Token counting and USD pricing
-│   ├── repos/                 # Repository management (proposed: move to git/) (TD-01)
-│   │   ├── models.py          # RepoInfo, BranchInfo
-│   │   ├── discovery.py       # Repository discovery
-│   │   └── errors.py          # Repo-specific errors
-│   ├── review/                # Review subsystem (proposed: move to git/) (TD-01)
-│   │   ├── models.py          # Domain models (DiffScope, ModifiedFile, CommitInfo, FileStatus)
-│   │   └── test_runner.py     # Async test execution with result tracking and polling
-│   ├── routines/              # Routine loading (proposed: move to config/) (TD-01)
-│   │   ├── loader.py          # YAML routine parser
-│   │   ├── discovery.py       # Directory scanning
-│   │   └── versioning.py      # Git SHA versioning
-│   ├── routers/               # Dead shim — pending deletion (TD-01)
-│   ├── scaffolding/           # Project scaffolding (proposed: move to runners/) (TD-01)
-│   │   ├── copier.py          # Copier integration
-│   │   └── models.py          # Scaffolding models
-│   ├── state/                 # Runtime state models
-│   │   ├── models.py          # Run, StepState, TaskState
+│   │   ├── errors.py          # Git-specific error types
+│   │   ├── repos.py           # RepoInfo, BranchInfo, list_repos, get_repo, list_branches
+│   │   ├── diff/              # Diff generation (absorbed from diff_ops, cached_diff_ops, cache)
+│   │   │   ├── diff_ops.py    # Diff generation (branch/commit/task scopes)
+│   │   │   ├── cached_diff_ops.py # LRU-cached diff operations
+│   │   │   ├── lru_cache.py   # Generic LRU cache
+│   │   │   └── models.py      # Diff domain models (DiffScope, ModifiedFile, etc.)
+│   │   ├── ops/               # Branch, conflict, prune operations (absorbed from review)
+│   │   │   ├── branch_ops.py  # Branch operations (merge, back-merge)
+│   │   │   ├── conflict_ops.py # Merge conflict detection and resolution
+│   │   │   └── prune_ops.py   # Selective change removal (file/hunk/line granularity)
+│   │   └── testing/           # Async test execution (absorbed from review/test_runner)
+│   │       └── test_runner.py # TestRunner with polling and result tracking
+│   │
+│   ├── runners/               # Agent execution: all runner types, detection, profiles
+│   │   ├── interface.py       # AgentRunner protocol definition
+│   │   ├── types.py           # ExecutionContext, ExecutionResult, etc.
+│   │   ├── agent_factory.py   # Registry-based agent factory; each package self-registers
+│   │   ├── agent_detector.py  # Registry-based runner detection (preferred over detector.py)
+│   │   ├── errors.py          # Runner-specific error types
+│   │   ├── # Backward-compat shims (TD-01): openhands.py, openhands_docker.py,
+│   │   ├── # openhands_common.py, codex_server.py, codex_server_common.py, executor.py
+│   │   ├── agents/            # Concrete agent implementations
+│   │   │   ├── claude_cli/    # CLIAgent + ClaudeCliQuotaAgent (subprocess)
+│   │   │   ├── claude_sdk/    # ClaudeSDKAgent (in-process Anthropic SDK)
+│   │   │   ├── codex/         # CodexServerAgent (stdio/JSON-RPC)
+│   │   │   ├── openhands/     # OpenHandsAgent (local) + DockerOpenHandsAgent
+│   │   │   ├── user_managed/  # UserManagedAgent (waits for external REST/MCP callback)
+│   │   │   └── mock/          # Mock agent for testing
+│   │   ├── detection/         # Agent detection + config helpers (absorbed from flat runners/)
+│   │   │   ├── detector.py    # Legacy detector; wired to GET /api/agent-runners (TD-02)
+│   │   │   ├── config_utils.py
+│   │   │   └── profile_resolution.py # Model profile → model string resolution
+│   │   ├── execution/         # Shared execution infrastructure
+│   │   │   ├── phase_handler.py   # Wires agent callbacks to WorkflowService
+│   │   │   ├── attempt_store.py   # Persists attempt metrics and agent metadata
+│   │   │   └── event_broadcaster.py # Persists AgentOutputEvent per batch
+│   │   ├── parsers/           # Stream parser protocol + implementations
+│   │   │   ├── base.py        # Parser protocol
+│   │   │   ├── claude_parser.py, codex_parser.py, openhands_parser.py
+│   │   ├── profiles/          # Agent config CRUD (absorbed from agents/)
+│   │   │   ├── models.py      # AgentConfigModel ORM model
+│   │   │   ├── schemas.py     # AgentSchema, CreateAgentRequest, UpdateAgentRequest
+│   │   │   ├── service.py     # AgentService CRUD + seed_default_agents()
+│   │   │   ├── resolution.py  # Cascading agent resolution (task→step→routine→default)
+│   │   │   └── errors.py
+│   │   ├── runtime/           # Runtime health: monitor, nudger, quota, repetition detection
+│   │   │   ├── monitor.py     # Dead runner detection/recovery
+│   │   │   ├── nudger.py      # Stuck runner nudging (timeout, nudge, kill)
+│   │   │   ├── quota.py       # Agent quota tracking and enforcement
+│   │   │   └── repetition_detector.py # Detects agent stuck in output loops
+│   │   └── scaffolding/       # Project scaffolding (absorbed from scaffolding/)
+│   │       ├── copier.py      # Copier integration
+│   │       └── models.py
+│   │
+│   ├── state/                 # Runtime domain models (in-memory, not persisted by this module)
+│   │   ├── models.py          # Run, StepState, TaskState, ActionLog, ActionEntryKind
 │   │   ├── factory.py         # Create Run from RoutineConfig
-│   │   └── session.py         # In-memory state manager
-│   └── workflow/              # Workflow engine (~8,400 LOC, 22 files)
-│       ├── engine.py          # State machine orchestration (pure, no I/O)
+│   │   ├── session.py         # In-memory SessionStateManager
+│   │   └── errors.py
+│   │
+│   └── workflow/              # Workflow engine: state machine, signals, events, prompts
 │       ├── service.py         # WorkflowService (async wrapper; owns DB session)
-│       ├── runtime.py         # RunWorkflow: executor loop, signal dispatch, phase routing
-│       ├── signals.py         # WorkflowSignal enum, SignalTransport ABC, DbSignalTransport
-│       ├── handlers.py        # Typed signal handler dispatch
-│       ├── condition_evaluator.py # Step/task condition expression evaluator
-│       ├── gates.py           # Checklist gate evaluation
-│       ├── grades.py          # Grade threshold evaluation
-│       ├── transitions.py     # State transition functions
-│       ├── prompts.py         # Builder/verifier prompts
-│       ├── templates.py       # Prompt template rendering
-│       ├── context_builder.py # Build execution context for agents
-│       ├── auto_verify.py     # Automatic verification logic
-│       ├── clarifications.py  # Clarification workflow handling
 │       ├── completion.py      # Run completion logic
 │       ├── dry_run.py         # Dry run execution
-│       ├── summary_cache.py   # Cached run summaries for activity feed
-│       ├── events.py          # Event dataclasses + emitter ABC
-│       ├── event_logger.py    # PersistentEventEmitter: SQLite + JSONL dual write
-│       └── locks.py           # Task-level pessimistic locking
+│       ├── locks.py           # Task-level pessimistic locking
+│       ├── agent/             # Agent interaction layer
+│       │   ├── prompts.py     # Builder/verifier prompt generation
+│       │   ├── templates.py   # Prompt template rendering
+│       │   ├── context_builder.py # Build execution context for agents
+│       │   ├── auto_verify.py # Automatic verification logic
+│       │   ├── clarifications.py # Clarification workflow handling
+│       │   └── summary_cache.py # Cached run summaries for activity feed
+│       ├── artifacts/         # Artifact tracking (absorbed from artifacts/)
+│       │   ├── models.py      # Artifact data models
+│       │   └── registry.py    # Registry for generated files
+│       ├── engine/            # Pure state machine (no I/O)
+│       │   ├── engine.py      # WorkflowEngine: state machine orchestration
+│       │   ├── condition_evaluator.py # Step/task condition expression evaluator
+│       │   ├── gates.py       # Checklist gate evaluation
+│       │   ├── grades.py      # Grade threshold evaluation
+│       │   ├── transitions.py # State transition functions
+│       │   └── errors.py
+│       ├── events/            # Event dataclasses + persistence
+│       │   ├── types.py       # All WorkflowEvent subclasses
+│       │   └── logger.py      # PersistentEventEmitter: SQLite + JSONL dual write
+│       └── signals/           # Signal transport + executor loop
+│           ├── signals.py     # WorkflowSignal enum, SignalTransport ABC, DbSignalTransport
+│           ├── handlers.py    # Typed signal handler dispatch
+│           └── runtime.py     # RunWorkflow: executor loop, signal dispatch, phase routing
 │
 ├── ui/                        # React frontend
 │   ├── src/
@@ -317,7 +318,7 @@ The system uses two separate mechanisms for communicating about workflow state: 
 
 ### Events
 
-Events record every observable state change. All event types inherit from `WorkflowEvent` (`src/orchestrator/workflow/events.py`) and carry `timestamp`, `run_id`, and `event_type`.
+Events record every observable state change. All event types inherit from `WorkflowEvent` (`src/orchestrator/workflow/events/types.py`) and carry `timestamp`, `run_id`, and `event_type`.
 
 **Lifecycle events:**
 
@@ -354,7 +355,7 @@ Events record every observable state change. All event types inherit from `Workf
 ```
 WorkflowEngine.emit(event)          ← pure, synchronous, no I/O
         ↓
-PersistentEventEmitter              (src/orchestrator/workflow/event_logger.py)
+PersistentEventEmitter              (src/orchestrator/workflow/events/logger.py)
         ↓
 EventStore.append()                 ← writes to SQLite `events` table
         +
@@ -365,7 +366,7 @@ Registered listeners notified
 loop.create_task(manager.broadcast_event(event))   ← WebSocket fan-out to all connected UIs
 ```
 
-**Dual write rationale:** SQLite is the primary store for online queries (`EventStore.get_events_paginated()`). The JSONL journal is a secondary durable log used for recovery when the DB is unavailable or has been corrupted. Journal replay (`db/journal_replay.py`) can reconstruct DB state from the JSONL file.
+**Dual write rationale:** SQLite is the primary store for online queries (`EventStore.get_events_paginated()`). The JSONL journal is a secondary durable log used for recovery when the DB is unavailable or has been corrupted. Journal replay (`db/recovery/journal_replay.py`) can reconstruct DB state from the JSONL file.
 
 **Buffering emitter:** `WorkflowEngine` uses a `BufferingEmitter` during synchronous state transitions — it collects events in memory. The caller drains them with `emitter.drain()` and persists in a single batch, keeping the engine itself free of I/O.
 
@@ -375,7 +376,7 @@ loop.create_task(manager.broadcast_event(event))   ← WebSocket fan-out to all 
 
 Signals are **one-time control commands** sent to an active run's executor loop. Unlike events (append-only history), signals are consumed exactly once.
 
-**Signal types** (`WorkflowSignal` enum in `src/orchestrator/workflow/signals.py`):
+**Signal types** (`WorkflowSignal` enum in `src/orchestrator/workflow/signals/signals.py`):
 
 | Signal | Purpose |
 |--------|---------|
@@ -443,7 +444,7 @@ External agents (REST/MCP) bypass the callback mechanism entirely — they call 
 
 ## Module Import Discipline
 
-Even though 19 top-level modules still exist in the source tree, only the following **9 canonical modules** should be imported by code outside that module:
+The codebase is organized into exactly **9 canonical modules**:
 
 `api`, `cli`, `config`, `db`, `envfiles`, `git`, `runners`, `state`, `workflow`
 
@@ -457,7 +458,7 @@ from orchestrator.runners import CLIAgent, ClaudeSDKAgent
 from orchestrator.runners.agents.claude_cli.agent import CLIAgent
 ```
 
-The remaining 10 top-level modules (`agents`, `artifacts`, `cache`, `mcp`, `metrics`, `repos`, `review`, `routines`, `scaffolding`, and the dead `routers` shim) are candidates for absorption into their canonical parent per the [Consolidation Plan](architecture-site/index.html#suggested-moves). Until absorbed, code outside them should still import via their parent module's `__init__.py` where the symbol has been re-exported.
+Note: importing from a root-level `.py` file within a module (e.g., `from orchestrator.config.models import NudgerConfig`) is fine — the rule only applies to sub-package directories (directories with their own `__init__.py`).
 
 A pre-commit hook (`scripts/check_module_imports.py`) enforces this rule and will fail if any file imports directly from a sub-package of a module it doesn't own.
 
@@ -465,20 +466,20 @@ A pre-commit hook (`scripts/check_module_imports.py`) enforces this rule and wil
 
 ## Tech Debt
 
-### TD-01: Backward-compat Shims After Module Reorganisation
+### TD-01: Backward-compat Shims After Module Consolidation
 
-After agent implementations were moved from `runners/*.py` to `runners/agents/*/`, the original module paths were preserved as one-liner shim files that `import *` from the new location (e.g. `runners/openhands.py`, `runners/codex_server.py`, `runners/parsers/claude_parser.py`). The root-level `orchestrator/executor.py` and `orchestrator/routers/` are similarly stale shims.
+After the 19 → 9 module consolidation, several one-liner shim files remain inside `runners/` that re-export from the canonical `runners/agents/*/` sub-packages. A root-level `orchestrator/executor.py` shim also remains.
 
-These shims exist solely for backward compatibility and should be removed once all internal imports reference the canonical `agents/` paths. New code must never be added to shim files.
+These shims exist solely for backward compatibility and should be removed once all internal imports reference the canonical paths. New code must never be added to shim files.
 
-**Affected files:** `runners/openhands.py`, `runners/openhands_docker.py`, `runners/openhands_common.py`, `runners/codex_server.py`, `runners/codex_server_common.py`, `runners/executor.py`, `runners/parsers/claude_parser.py`, `orchestrator/executor.py`, `orchestrator/routers/`.
+**Affected files:** `runners/openhands.py`, `runners/openhands_docker.py`, `runners/openhands_common.py`, `runners/codex_server.py`, `runners/codex_server_common.py`, `runners/executor.py`, `orchestrator/executor.py`.
 
 ---
 
 ### TD-02: Duplicate Agent Detection Systems
 
 Two agent detection systems coexist:
-- `runners/detector.py` — original; still wired to `GET /api/agent-runners`
+- `runners/detection/detector.py` — original; still wired to `GET /api/agent-runners`
 - `runners/agent_detector.py` — newer registry-based design; each agent package self-registers
 
 Both systems must be kept in sync when adding a new runner type. `detector.py` should be replaced by `agent_detector.py` once the API route is updated.
@@ -487,7 +488,7 @@ Both systems must be kept in sync when adding a new runner type. `detector.py` s
 
 ### TD-03: Process-Local Active-Run Registry
 
-`_active_run_ids` in `signals.py` is a module-level `set[str]`. It is lost on server restart and is incompatible with multi-worker deployments. Runs paused by server shutdown are recovered via the `server_shutdown` pause reason, but if a run is mid-transition when the process dies, the registry state is gone.
+`_active_run_ids` in `workflow/signals/signals.py` is a module-level `set[str]`. It is lost on server restart and is incompatible with multi-worker deployments. Runs paused by server shutdown are recovered via the `server_shutdown` pause reason, but if a run is mid-transition when the process dies, the registry state is gone.
 
 **Impact today:** Low — single-process, single-worker deployment. Becomes a correctness problem if the deployment model changes.
 
@@ -495,7 +496,7 @@ Both systems must be kept in sync when adding a new runner type. `detector.py` s
 
 ### TD-04: `StepSkipped` Dual-Field Inconsistency
 
-`StepSkipped` carries both `skip_reason` (canonical) and `reason` (legacy alias), kept manually in sync in `__init__`. Recovery code (`db/recovery.py`) contains a matching fallback comment. This is a backward-compatibility wart for events already written to the JSONL journal and SQLite store.
+`StepSkipped` carries both `skip_reason` (canonical) and `reason` (legacy alias), kept manually in sync in `__init__`. Recovery code (`db/recovery/recovery.py`) contains a matching fallback comment. This is a backward-compatibility wart for events already written to the JSONL journal and SQLite store.
 
 **Resolution path:** Once events older than the `skip_reason` introduction date have aged out of production journals, remove `reason` and the sync code.
 
@@ -533,9 +534,9 @@ Both systems must be kept in sync when adding a new runner type. `detector.py` s
 
 ---
 
-### TD-10: `repos/discovery.py` Deprecated Parameter
+### TD-10: `git/repos.py` Deprecated Parameter
 
-The `include_remote` parameter in `repos/discovery.py` is marked `deprecated, use local_only` in the docstring but remains in the function signature. Callers that still pass `include_remote=True` receive the old (now incorrect) behaviour silently.
+The `include_remote` parameter in `git/repos.py` (`list_branches`) is marked `deprecated, use local_only` in the docstring but remains in the function signature. Callers that still pass `include_remote=True` receive the old (now incorrect) behaviour silently.
 
 ---
 

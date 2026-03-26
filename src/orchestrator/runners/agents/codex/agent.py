@@ -50,7 +50,7 @@ from orchestrator.runners.errors import (
     AgentNotAvailableError,
     AgentTimeoutError,
 )
-from orchestrator.workflow import GateBlockedError
+from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
@@ -525,6 +525,17 @@ class CodexServerAgent:
                 except ValueError:
                     # Disallowed tool — respond with failure to unblock the server.
                     await transport.send(build_dynamic_tool_call_response(req_id, success=False))
+                except InvalidTransitionError as cb_exc:
+                    # Agent called a tool that is invalid in the current task state
+                    # (e.g. update_checklist during the verifying phase).  Inform the
+                    # agent via a failure response and continue — this must not crash
+                    # the session.
+                    logger.warning(
+                        "CodexServerAgent: tool %r rejected (invalid state): %s — continuing",
+                        tool_name,
+                        cb_exc,
+                    )
+                    await transport.send(build_dynamic_tool_call_response(req_id, success=False))
                 except Exception as cb_exc:
                     # Callback raised an unexpected error (GateBlockedError, DB error, etc.).
                     # Send failure response to unblock the codex server, then re-raise
@@ -593,7 +604,11 @@ class CodexServerAgent:
         ):
             raise
         except asyncio.CancelledError:
-            raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
+            # Do NOT convert to AgentCancelledError — let it propagate as-is so
+            # the runtime's asyncio.CancelledError handler records the pause reason
+            # as "server_shutdown" (enabling auto-resume on next startup) rather
+            # than the non-recoverable "agent_cancelled".
+            raise
         except OSError as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             logger.debug(
@@ -862,6 +877,16 @@ class CodexServerAgent:
                 )
             except ValueError:
                 pass  # Disallowed tool — already logged by enforce_tool_allowlist.
+            except Exception as exc:
+                # Tool call raised an unexpected error (e.g. InvalidTransitionError when
+                # the agent calls update_checklist during the verifying phase).  Log and
+                # continue — a bad tool call must never crash the whole session.
+                logger.warning(
+                    "CodexServerAgent: tool call %r raised %s: %s — continuing session",
+                    tool_name,
+                    type(exc).__name__,
+                    exc,
+                )
 
         # Accumulate agent message text.
         delta = extract_agent_message_delta(msg)

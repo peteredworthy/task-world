@@ -209,6 +209,7 @@ function RunDetailInner({ runId }: { runId: string }) {
                       waiting_for_approval: 'Paused — waiting for step approval',
                       awaiting_approval: 'Paused — waiting for step approval',
                       awaiting_user_input: 'Paused — waiting for user input',
+                      fan_out_child_failed: 'Paused — one or more fan-out children failed',
                       fan_out_orphaned: 'Paused — fan-out task needs recovery',
                       all_steps_complete_but_active: 'Paused — all steps complete (investigating)',
                       no_actionable_tasks: 'Paused — no actionable tasks in current step',

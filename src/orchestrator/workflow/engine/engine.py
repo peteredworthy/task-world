@@ -280,6 +280,16 @@ class WorkflowEngine:
             if task_step_index is not None:
                 break
 
+        # Advance current_step_index past already-completed steps so the
+        # engine stays in sync with executor._find_next_task() which does the
+        # same skip.  This is needed after fan-out failures mark a step
+        # completed + pause the run without advancing the index.
+        effective_step_index = run.current_step_index
+        while effective_step_index < len(run.steps) and run.steps[effective_step_index].completed:
+            effective_step_index += 1
+        if effective_step_index != run.current_step_index:
+            run.current_step_index = effective_step_index
+
         # Reject if task belongs to a future step
         if task_step_index is not None and task_step_index > run.current_step_index:
             raise InvalidTransitionError(

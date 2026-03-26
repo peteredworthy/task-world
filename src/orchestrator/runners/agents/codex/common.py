@@ -354,28 +354,30 @@ def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
 
     logger.debug("extract_turn_usage: turn payload keys=%s", list(turn.keys()))
 
-    usage: dict[str, Any] = turn.get("usage", {})
+    # Protocol sends camelCase "tokenUsage"; fall back to snake_case "usage" for
+    # older/alternative server versions.
+    usage: dict[str, Any] = turn.get("tokenUsage") or turn.get("usage") or {}
     if not usage:
         return result
 
     logger.debug("extract_turn_usage: usage=%s", usage)
 
-    # Input/prompt tokens
-    for key in ("input_tokens", "prompt_tokens"):
+    # Input/prompt tokens — camelCase (protocol) then snake_case (fallback)
+    for key in ("inputTokens", "input_tokens", "prompt_tokens"):
         val = usage.get(key)
         if val is not None:
             result["tokens_read"] = int(val)
             break
 
-    # Output/completion tokens
-    for key in ("output_tokens", "completion_tokens"):
+    # Output/completion tokens — camelCase (protocol) then snake_case (fallback)
+    for key in ("outputTokens", "output_tokens", "completion_tokens"):
         val = usage.get(key)
         if val is not None:
             result["tokens_write"] = int(val)
             break
 
-    # Cache tokens
-    for key in ("cache_read_tokens", "cached_tokens", "cache_read_input_tokens"):
+    # Cache tokens — camelCase (protocol) then snake_case (fallback)
+    for key in ("cacheReadTokens", "cache_read_tokens", "cached_tokens", "cache_read_input_tokens"):
         val = usage.get(key)
         if val is not None:
             result["tokens_cache"] = int(val)

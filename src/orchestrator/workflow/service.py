@@ -960,6 +960,11 @@ class WorkflowService:
     ) -> None:
         """Transition a fan-out parent task after all children finish.
 
+        Uses targeted SQL updates (not a full run merge) to avoid the
+        delete-orphan cascade corruption that occurs when session.merge() is
+        called on the full run graph while concurrent child sessions may still
+        be in flight or have just committed.
+
         Args:
             run_id: The run ID
             task_id: The parent task ID (must be FAN_OUT_RUNNING)
@@ -967,46 +972,65 @@ class WorkflowService:
             to_verifying: If True and all_passed, move to VERIFYING (for outer LLM verifier)
         """
         import logging
-        from orchestrator.workflow.engine.transitions import (
-            check_run_completion,
-            check_step_progression,
-        )
         from orchestrator.workflow.events import StepCompleted
 
         logger = logging.getLogger(__name__)
 
-        run = await self._repo.get(run_id)
-        engine, state, buffer = self._build_engine(run)
+        # Determine new status up front.
+        if not all_passed:
+            new_status = TaskStatus.FAILED
+            pause_run = True
+            pause_reason: str | None = "fan_out_child_failed"
+        elif to_verifying:
+            new_status = TaskStatus.VERIFYING
+            pause_run = False
+            pause_reason = None
+        else:
+            new_status = TaskStatus.COMPLETED
+            pause_run = False
+            pause_reason = None
 
-        parent_task = state.get_task(run_id, task_id)
-        if parent_task.status != TaskStatus.FAN_OUT_RUNNING:
-            # Already transitioned (e.g. after resume) — skip silently
-            if parent_task.status in (TaskStatus.COMPLETED, TaskStatus.VERIFYING):
+        # Load just the parent task model with its step and run.
+        # Critically: get_task_model does NOT load sibling task rows, so there
+        # is no TaskModel.attempts cascade to clobber when we flush.  This avoids
+        # the delete-orphan corruption that the old repo.save(run) / session.merge()
+        # approach caused when concurrent child sessions had just committed.
+        task_model = await self._repo.get_task_model(task_id)
+
+        old_status_value = task_model.status
+        if old_status_value != TaskStatus.FAN_OUT_RUNNING.value:
+            if old_status_value in (TaskStatus.COMPLETED.value, TaskStatus.VERIFYING.value):
                 logger.info(
                     f"Run {run_id}: fan-out parent {task_id} already "
-                    f"{parent_task.status.value}, skipping complete_fan_out_parent"
+                    f"{old_status_value}, skipping complete_fan_out_parent"
                 )
                 return
             raise InvalidTransitionError(
-                parent_task.status.value,
+                old_status_value,
                 "complete_fan_out_parent (requires FAN_OUT_RUNNING)",
             )
 
-        old_status = parent_task.status
+        step_id = task_model.step.id
+        step_order_index = task_model.step.order_index
+        old_run_status_value = task_model.step.run.status
 
-        if not all_passed:
-            parent_task.status = TaskStatus.FAILED
-            new_status = TaskStatus.FAILED
-            # Pause the run
-            engine.pause_run(run_id, reason="fan_out_child_failed")
-        elif to_verifying:
-            parent_task.status = TaskStatus.VERIFYING
-            new_status = TaskStatus.VERIFYING
-        else:
-            parent_task.status = TaskStatus.COMPLETED
-            new_status = TaskStatus.COMPLETED
+        # Apply targeted updates: task status, step completed, run status/pause.
+        task_model.status = new_status.value
+        task_model.step.completed = True
+        if pause_run:
+            task_model.step.run.status = RunStatus.PAUSED.value
+            task_model.step.run.pause_reason = pause_reason
+        task_model.step.run.updated_at = self._clock.now()
+        await self._session.flush()
 
-        buffer.emit(
+        # Fetch child counts for the FanOutCompleted event via a targeted query.
+        completed_count, failed_count = await self._repo.count_fan_out_children(task_id)
+
+        # Emit all events (persisted via event store in the same transaction).
+        old_status = TaskStatus(old_status_value)
+        old_run_status = RunStatus(old_run_status_value)
+
+        events_to_emit: list[Any] = [
             TaskStatusChanged(
                 timestamp=self._clock.now(),
                 run_id=run_id,
@@ -1014,20 +1038,7 @@ class WorkflowService:
                 task_id=task_id,
                 old_status=old_status,
                 new_status=new_status,
-            )
-        )
-
-        # Emit FanOutCompleted parent aggregation event
-        updated_run_for_counts = state.get_run(run_id)
-        child_tasks = [
-            t
-            for step in updated_run_for_counts.steps
-            for t in step.tasks
-            if t.parent_task_id == task_id
-        ]
-        completed_count = sum(1 for t in child_tasks if t.status == TaskStatus.COMPLETED)
-        failed_count = sum(1 for t in child_tasks if t.status == TaskStatus.FAILED)
-        buffer.emit(
+            ),
             FanOutCompleted(
                 timestamp=self._clock.now(),
                 run_id=run_id,
@@ -1036,66 +1047,33 @@ class WorkflowService:
                 all_passed=all_passed,
                 completed_count=completed_count,
                 failed_count=failed_count,
-            )
-        )
+            ),
+            StepCompleted(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="step_completed",
+                step_index=step_order_index,
+                step_id=step_id,
+            ),
+        ]
 
-        # Check step/run completion for terminal states
-        if new_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
-            updated_run = state.get_run(run_id)
-            prev_step_index = updated_run.current_step_index
-
-            # Load routine config if available for condition evaluation
-            routine_config = None
-            if updated_run.routine_embedded is not None:
-                try:
-                    routine_config = RoutineConfig.model_validate(updated_run.routine_embedded)
-                except Exception:
-                    # If routine config can't be loaded, continue without condition evaluation
-                    pass
-
-            step_changed = check_step_progression(
-                updated_run,
-                routine_config=routine_config,
-                clock=self._clock,
-                emitter=buffer,
-                worktree_path=None,  # Service doesn't have worktree path at this level
-                run_config=updated_run.config,
+        if pause_run:
+            events_to_emit.append(
+                RunStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="run_status_changed",
+                    old_status=old_run_status,
+                    new_status=RunStatus.PAUSED,
+                )
             )
 
-            if step_changed:
-                for i in range(prev_step_index, updated_run.current_step_index + 1):
-                    step = updated_run.steps[i]
-                    if step.completed:
-                        buffer.emit(
-                            StepCompleted(
-                                timestamp=self._clock.now(),
-                                run_id=run_id,
-                                event_type="step_completed",
-                                step_index=i,
-                                step_id=step.id,
-                            )
-                        )
-
-                old_run_status = updated_run.status
-                new_run_status = check_run_completion(updated_run, self._clock.now())
-                if new_run_status is not None:
-                    buffer.emit(
-                        RunStatusChanged(
-                            timestamp=self._clock.now(),
-                            run_id=run_id,
-                            event_type="run_status_changed",
-                            old_status=old_run_status,
-                            new_status=new_run_status,
-                        )
-                    )
-
-            state.update_run(updated_run)
-
-        await self._persist(state, run_id, buffer)
+        await self._event_emitter.emit_batch(events_to_emit)
+        await self._session.commit()
 
         logger.info(
             f"Run {run_id}: fan-out parent {task_id} transitioned "
-            f"from {old_status.value} to {new_status.value}"
+            f"from {old_status_value} to {new_status.value}"
         )
 
     async def reset_fan_out_children(self, run_id: str, parent_task_id: str) -> None:
@@ -1105,6 +1083,68 @@ class WorkflowService:
         """
         await self._repo.reset_fan_out_children(parent_task_id)
         await self._session.commit()
+
+    async def retry_fan_out_child(self, run_id: str, child_task_id: str) -> Run:
+        """Retry a single failed fan-out child task.
+
+        Resets the child to PENDING, parent to FAN_OUT_RUNNING, and the step
+        to not-completed.  If the run has advanced past the fan-out step,
+        rewinds current_step_index.  If the run is active, pauses it so the
+        executor cleanly restarts from the correct step on resume.
+
+        Uses targeted SQL updates (not a full run merge) to avoid clobbering
+        concurrent fan-out child sessions.
+
+        Returns the updated run.
+        """
+        from orchestrator.workflow.signals import has_active_workflow
+
+        # retry_fan_out_child does targeted updates on child, parent, and step
+        run_id_from_db, step_order_index = await self._repo.retry_fan_out_child(child_task_id)
+        assert run_id_from_db == run_id
+
+        # Rewind current_step_index if needed — targeted update on run row
+        await self._repo.rewind_step_index_if_needed(run_id, step_order_index)
+
+        # Pause the run if active so the executor restarts from the right step
+        run = await self._repo.get(run_id)
+        if run.status == RunStatus.ACTIVE:
+            if has_active_workflow(run_id):
+                from orchestrator.workflow.signals import (
+                    DbSignalTransport,
+                    SignalQueue,
+                    WorkflowSignal,
+                )
+
+                transport = DbSignalTransport(self._session)
+                queue = SignalQueue(transport)
+                await queue.enqueue(
+                    run_id,
+                    WorkflowSignal.PAUSE,
+                    {"reason": "fan_out_child_retry"},
+                )
+            else:
+                await self._repo.update_run_status(
+                    run_id, RunStatus.PAUSED, pause_reason="fan_out_child_retry"
+                )
+
+        # Emit events
+        await self._event_emitter.emit_batch(
+            [
+                TaskStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="task_status_changed",
+                    task_id=child_task_id,
+                    old_status=TaskStatus.FAILED,
+                    new_status=TaskStatus.PENDING,
+                ),
+            ]
+        )
+
+        await self._session.commit()
+        # Return fresh run state after all changes committed
+        return await self._repo.get(run_id)
 
     async def start_fan_out_parent(self, run_id: str, task_id: str) -> TaskState:
         """Ensure a fan-out parent has an active attempt and FAN_OUT_RUNNING status."""
