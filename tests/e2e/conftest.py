@@ -14,9 +14,9 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
-from orchestrator.workflow.signals import InMemorySignalTransport
+from orchestrator.workflow import InMemorySignalTransport
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 

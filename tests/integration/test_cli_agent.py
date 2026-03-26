@@ -12,7 +12,7 @@ import uvicorn
 from httpx import AsyncClient
 
 from orchestrator.config.models import NudgerConfig
-from orchestrator.config.enums import ChecklistStatus, RoutineSource
+from orchestrator.config import ChecklistStatus, RoutineSource
 from orchestrator.api.app import create_app
 from orchestrator.db import init_db
 from orchestrator.runners import CLIAgent

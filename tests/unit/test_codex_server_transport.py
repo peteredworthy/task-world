@@ -19,11 +19,10 @@ from typing import Any
 
 import pytest
 
-from orchestrator.runners.codex_server import CodexServerAgent
+from orchestrator.runners import CodexServerAgent
 from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
-from orchestrator.config.enums import ChecklistStatus
-
+from orchestrator.config import ChecklistStatus
 
 # ---------------------------------------------------------------------------
 # Fake transport

@@ -19,12 +19,11 @@ from orchestrator.runners.errors import (
     AgentNotAvailableError,
 )
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
-from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
+from orchestrator.config import AgentRunnerType, ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
 
 from claude_agent_sdk import AssistantMessage, ResultMessage
 from claude_agent_sdk.types import TextBlock, ToolUseBlock
-
 
 # ---------------------------------------------------------------------------
 # Helpers

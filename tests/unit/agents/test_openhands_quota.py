@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from orchestrator.runners.openhands import OpenHandsAgent
+from orchestrator.runners import OpenHandsAgent
 from orchestrator.runners import FakeQuotaFetcher
 from orchestrator.runners.types import AgentQuota
 from orchestrator.runners import UserManagedAgent

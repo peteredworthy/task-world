@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from orchestrator.config.enums import ChecklistStatus, Priority, TaskStatus
+from orchestrator.config import ChecklistStatus, Priority, TaskStatus
 from orchestrator.state.models import Attempt, ChecklistItem, TaskState
 from orchestrator.workflow import (
     transition_from_approval,

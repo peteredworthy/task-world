@@ -17,11 +17,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import (
-    RunStatus,
-    TaskStatus,
-    RoutineSource,
-)
+from orchestrator.config import RunStatus, TaskStatus, RoutineSource
 from orchestrator.config.models import (
     RoutineConfig,
     StepConfig,
@@ -36,7 +32,7 @@ from orchestrator.db import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.workflow.signals import InMemorySignalTransport
+from orchestrator.workflow import InMemorySignalTransport
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 

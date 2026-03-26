@@ -23,13 +23,7 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import (
-    AgentRunnerType,
-    GateType,
-    RoutineSource,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import AgentRunnerType, GateType, RoutineSource, RunStatus, TaskStatus
 from orchestrator.config.models import GateConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import init_db
 from orchestrator.db import RunRepository
@@ -38,7 +32,6 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
 
 # ---------------------------------------------------------------------------
 # Helpers

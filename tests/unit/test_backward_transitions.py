@@ -4,13 +4,12 @@ import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from orchestrator.config.enums import ChecklistStatus, Priority, TaskStatus
+from orchestrator.config import ChecklistStatus, Priority, TaskStatus
 from orchestrator.config.models import StepConfig, StepTransitions, TaskConfig, TransitionCondition
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState, TransitionTracker
 from orchestrator.workflow import evaluate_condition, evaluate_transition_conditions
 
 NOW = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
-
 
 # --- TransitionTracker Tests ---
 
@@ -516,8 +515,8 @@ def test_evaluate_transition_conditions_with_worktree(tmp_path: Path) -> None:
 def test_transition_backward_basic() -> None:
     """Test basic backward transition."""
     from orchestrator.state.session import SessionStateManager
-    from orchestrator.workflow.engine import WorkflowEngine
-    from orchestrator.workflow.events import BufferingEmitter, RunStepBackward
+    from orchestrator.workflow import WorkflowEngine
+    from orchestrator.workflow import BufferingEmitter, RunStepBackward
 
     # Create a run with 3 steps
     run = Run(id="run-1", repo_name="proj-1")
@@ -581,7 +580,7 @@ def test_transition_backward_basic() -> None:
 def test_transition_backward_invalid_target_out_of_bounds() -> None:
     """Test backward transition with invalid target (out of bounds)."""
     from orchestrator.state.session import SessionStateManager
-    from orchestrator.workflow.engine import WorkflowEngine
+    from orchestrator.workflow import WorkflowEngine
     from orchestrator.workflow import InvalidTransitionError
 
     run = Run(id="run-1", repo_name="proj-1")
@@ -603,7 +602,7 @@ def test_transition_backward_invalid_target_out_of_bounds() -> None:
 def test_transition_backward_invalid_target_forward() -> None:
     """Test that transitioning forward raises error."""
     from orchestrator.state.session import SessionStateManager
-    from orchestrator.workflow.engine import WorkflowEngine
+    from orchestrator.workflow import WorkflowEngine
     from orchestrator.workflow import InvalidTransitionError
 
     run = Run(id="run-1", repo_name="proj-1")
@@ -625,7 +624,7 @@ def test_transition_backward_invalid_target_forward() -> None:
 def test_transition_backward_invalid_target_same_step() -> None:
     """Test that transitioning to same step raises error."""
     from orchestrator.state.session import SessionStateManager
-    from orchestrator.workflow.engine import WorkflowEngine
+    from orchestrator.workflow import WorkflowEngine
     from orchestrator.workflow import InvalidTransitionError
 
     run = Run(id="run-1", repo_name="proj-1")

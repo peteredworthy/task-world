@@ -2,7 +2,7 @@
 
 import pytest
 
-from orchestrator.config.enums import ModelProfile
+from orchestrator.config import ModelProfile
 from orchestrator.runners import resolve_model_for_profile
 
 

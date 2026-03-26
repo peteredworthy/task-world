@@ -2,8 +2,7 @@
 
 from pathlib import Path
 
-from orchestrator.config.enums import RoutineSource, RunStatus
-from orchestrator.config.routines.loader import load_routine_from_path
+from orchestrator.config import RoutineSource, RunStatus, load_routine_from_path
 from orchestrator.state.factory import create_run_from_routine
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"

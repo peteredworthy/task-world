@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource, RunStatus, TaskStatus
+from orchestrator.config import RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import init_db
 from orchestrator.db import resolve_default_journal_path
 from orchestrator.db import replay_journal_to_repository

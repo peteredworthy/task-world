@@ -4,12 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from orchestrator.config.enums import (
-    ChecklistStatus,
-    Priority,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import ChecklistStatus, Priority, RunStatus, TaskStatus
 from orchestrator.state.models import (
     ChecklistItem,
     Run,
@@ -17,14 +12,13 @@ from orchestrator.state.models import (
     TaskState,
 )
 from orchestrator.state.session import SessionStateManager
-from orchestrator.workflow.engine import WorkflowEngine
+from orchestrator.workflow import WorkflowEngine
 from orchestrator.workflow.locks import (
     InMemoryLockManager,
     LockTimeoutError,
     TaskLockedError,
 )
 from tests.conftest import CollectingEmitter, FakeClock
-
 
 # ---------- InMemoryLockManager unit tests ----------
 

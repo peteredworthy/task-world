@@ -7,7 +7,7 @@ and tool registration helpers.
 import asyncio
 from typing import Any
 
-from orchestrator.runners.openhands_common import (
+from orchestrator.runners import (
     DEFAULT_OPENHANDS_TOOLS,
     OPENHANDS_TOOL_IMPORTS,
     CallbackRegistry,
@@ -15,8 +15,7 @@ from orchestrator.runners.openhands_common import (
     extract_metrics,
 )
 from orchestrator.runners.types import ExecutionContext, ExecutionMetrics
-from orchestrator.config.enums import ChecklistStatus
-
+from orchestrator.config import ChecklistStatus
 
 # --- build_openhands_prompt ---
 
@@ -235,7 +234,7 @@ def test_openhands_tool_imports_has_expected_keys() -> None:
 
 def test_validate_routine_valid_yaml(tmp_path: Any) -> None:
     """Valid routine YAML returns success message."""
-    from orchestrator.runners.openhands_common import ValidateRoutineExecutor
+    from orchestrator.runners import ValidateRoutineExecutor
 
     routine_dir = tmp_path / "routines" / "test"
     routine_dir.mkdir(parents=True)
@@ -254,7 +253,7 @@ def test_validate_routine_valid_yaml(tmp_path: Any) -> None:
 
 def test_validate_routine_invalid_yaml(tmp_path: Any) -> None:
     """Invalid routine YAML returns validation errors."""
-    from orchestrator.runners.openhands_common import ValidateRoutineExecutor
+    from orchestrator.runners import ValidateRoutineExecutor
 
     routine_dir = tmp_path / "routines" / "test"
     routine_dir.mkdir(parents=True)
@@ -268,7 +267,7 @@ def test_validate_routine_invalid_yaml(tmp_path: Any) -> None:
 
 def test_validate_routine_missing_file(tmp_path: Any) -> None:
     """Missing file returns error."""
-    from orchestrator.runners.openhands_common import ValidateRoutineExecutor
+    from orchestrator.runners import ValidateRoutineExecutor
 
     executor = ValidateRoutineExecutor(str(tmp_path), observation_factory=lambda text: text)
     result = executor.validate("nonexistent.yaml")

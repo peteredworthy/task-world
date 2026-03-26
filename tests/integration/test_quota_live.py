@@ -7,7 +7,7 @@ import os
 
 import pytest
 
-from orchestrator.runners.openhands import OpenHandsAgent
+from orchestrator.runners import OpenHandsAgent
 from orchestrator.runners.types import AgentQuota
 
 

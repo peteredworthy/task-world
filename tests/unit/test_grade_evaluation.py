@@ -1,6 +1,6 @@
 """Tests for grade evaluation logic."""
 
-from orchestrator.config.enums import ChecklistStatus, Priority
+from orchestrator.config import ChecklistStatus, Priority
 from orchestrator.state.models import ChecklistItem
 from orchestrator.workflow import (
     evaluate_grades,

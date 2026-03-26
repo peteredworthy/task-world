@@ -7,7 +7,7 @@ every test.
 
 from orchestrator.runners import ToolDetector
 from orchestrator.runners.types import AgentOption
-from orchestrator.config.enums import AgentRunnerType
+from orchestrator.config import AgentRunnerType
 
 import pytest
 

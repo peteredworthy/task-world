@@ -4,8 +4,8 @@ import pydantic
 import pytest
 import yaml
 
-
-from orchestrator.config.enums import Complexity, Priority
+from orchestrator.config import Complexity
+from orchestrator.config import Priority
 from orchestrator.config.models import (
     GateConfig,
     RequirementConfig,
@@ -257,7 +257,7 @@ steps:
 
 def test_gate_config_with_summary_artifact() -> None:
     """Test GateConfig with summary_artifact field set."""
-    from orchestrator.config.enums import GateType
+    from orchestrator.config import GateType
 
     gate = GateConfig(
         type=GateType.HUMAN_APPROVAL,
@@ -271,7 +271,7 @@ def test_gate_config_with_summary_artifact() -> None:
 
 def test_gate_config_without_summary_artifact() -> None:
     """Test GateConfig with summary_artifact as None (default)."""
-    from orchestrator.config.enums import GateType
+    from orchestrator.config import GateType
 
     gate = GateConfig(
         type=GateType.HUMAN_APPROVAL,
@@ -282,7 +282,7 @@ def test_gate_config_without_summary_artifact() -> None:
 
 def test_gate_config_in_step_with_summary_artifact() -> None:
     """Test StepConfig with gate containing summary_artifact."""
-    from orchestrator.config.enums import GateType
+    from orchestrator.config import GateType
 
     step = StepConfig(
         id="S1",
@@ -474,7 +474,7 @@ def test_auto_grade_blocked_when_no_verification() -> None:
     """transition_after_verification blocks auto-grade when task has no verification."""
     from datetime import datetime, timezone
 
-    from orchestrator.config.enums import ChecklistStatus, Priority, TaskStatus
+    from orchestrator.config import ChecklistStatus, Priority, TaskStatus
     from orchestrator.state.models import ChecklistItem, TaskState
     from orchestrator.workflow import transition_after_verification
 

@@ -1,6 +1,6 @@
 """Unit tests for FAN_OUT_RUNNING transitions and step completion with children."""
 
-from orchestrator.config.enums import TaskStatus
+from orchestrator.config import TaskStatus
 from orchestrator.state.models import StepState, TaskState
 from orchestrator.workflow import (
     VALID_TRANSITIONS,

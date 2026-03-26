@@ -34,7 +34,8 @@ _TASKS_ROUTER_SYMBOLS = {
     "_parse_action_log_from_raw",
 }
 
-_MCP_SYMBOLS = {"ORCHESTRATOR_TOOLS"}
+_MCP_SYMBOLS = {"ORCHESTRATOR_TOOLS", "ToolHandler"}
+_MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer"}
 
 
 def __getattr__(name: str) -> object:
@@ -46,4 +47,8 @@ def __getattr__(name: str) -> object:
         import orchestrator.api.mcp.tools as _mcp_tools  # noqa: PLC0415
 
         return getattr(_mcp_tools, name)
+    if name in _MCP_SERVER_SYMBOLS:
+        import orchestrator.api.mcp.server as _mcp_server  # noqa: PLC0415
+
+        return getattr(_mcp_server, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

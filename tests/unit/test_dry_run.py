@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from orchestrator.config.enums import Priority, StepType
+from orchestrator.config import Priority, StepType
 from orchestrator.config.models import (
     DryRunConfig,
     RequirementConfig,

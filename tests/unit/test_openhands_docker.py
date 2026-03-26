@@ -4,13 +4,13 @@ These tests verify agent metadata, prompt construction, and platform detection
 without requiring Docker, the SDK, or any network access.
 """
 
-from orchestrator.runners.openhands_common import build_openhands_prompt
-from orchestrator.runners.openhands_docker import (
+from orchestrator.runners import (
     DockerOpenHandsAgent,
+    build_openhands_prompt,
     _detect_platform,  # pyright: ignore[reportPrivateUsage]
 )
 from orchestrator.runners.types import ExecutionContext
-from orchestrator.config.enums import AgentRunnerType
+from orchestrator.config import AgentRunnerType
 
 
 def test_docker_agent_info() -> None:

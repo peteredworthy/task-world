@@ -8,8 +8,7 @@ import pytest
 
 from orchestrator.runners import ToolDetector
 from orchestrator.runners.types import AgentOption, AgentQuota
-from orchestrator.config.enums import AgentRunnerType
-
+from orchestrator.config import AgentRunnerType
 
 # Patch out expensive detection methods (docker info, model fetching, etc.)
 # since quota tests only care about quota-attachment behavior.
@@ -224,7 +223,7 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     import time
 
     from orchestrator.runners.types import AgentOption as _AO
-    from orchestrator.config.enums import AgentRunnerType
+    from orchestrator.config import AgentRunnerType
 
     AGENT_NAMES = ["agent-alpha", "agent-beta", "agent-gamma"]
     SLEEP_S = 0.5

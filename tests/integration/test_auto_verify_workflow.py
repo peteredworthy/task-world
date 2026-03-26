@@ -12,13 +12,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config.enums import (
-    ChecklistStatus,
-    Priority,
-    RoutineSource,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
@@ -567,7 +561,7 @@ async def test_no_runner_skips_auto_verify(session: AsyncSession, tmp_path: Path
 
 async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: Path) -> None:
     """Full cycle: pre-gate auto-verify blocks, fix, auto-verify passes, complete."""
-    from orchestrator.config.enums import AgentRunnerType
+    from orchestrator.config import AgentRunnerType
 
     # Create a script that fails the first time and passes the second
     script = tmp_path / "check.sh"

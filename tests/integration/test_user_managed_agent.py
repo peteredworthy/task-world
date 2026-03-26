@@ -22,13 +22,7 @@ from orchestrator.runners.errors import AgentTimeoutError
 from orchestrator.runners import UserManagedAgent
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import (
-    ChecklistStatus,
-    Priority,
-    RoutineSource,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import SubmitEventRegistry, WorkflowService

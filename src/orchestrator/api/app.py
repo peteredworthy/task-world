@@ -469,9 +469,7 @@ def create_app(
 
     # Agent tool detector
     from orchestrator.runners import ClaudeSDKAgent, ClaudeCliQuotaAgent
-    from orchestrator.runners.codex_server import CodexServerAgent
-    from orchestrator.runners import ToolDetector
-    from orchestrator.runners.openhands import OpenHandsAgent
+    from orchestrator.runners import CodexServerAgent, ToolDetector, OpenHandsAgent
 
     app.state.tool_detector = ToolDetector(
         agents=[OpenHandsAgent(), CodexServerAgent(), ClaudeCliQuotaAgent(), ClaudeSDKAgent()]

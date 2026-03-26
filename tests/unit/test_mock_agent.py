@@ -6,7 +6,7 @@ from orchestrator.runners.errors import AgentExecutionError
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners import MockAgent, MockBehavior
 from orchestrator.runners.types import ExecutionContext
-from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
+from orchestrator.config import AgentRunnerType, ChecklistStatus
 
 
 def _make_context() -> ExecutionContext:

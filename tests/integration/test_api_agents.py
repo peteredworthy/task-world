@@ -30,7 +30,7 @@ class _NamedOpenHandsAgent:
     name = "OpenHands (local)"
 
     def get_quota(self) -> Any:
-        from orchestrator.runners.openhands import OpenHandsAgent
+        from orchestrator.runners import OpenHandsAgent
         from orchestrator.runners import FakeQuotaFetcher
 
         fetcher = FakeQuotaFetcher({"total_granted": 100.0, "total_used": 20.0})

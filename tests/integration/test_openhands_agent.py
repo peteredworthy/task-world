@@ -14,9 +14,9 @@ from pathlib import Path
 import pytest
 
 from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
-from orchestrator.runners.openhands import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
+from orchestrator.runners import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
 from orchestrator.runners.types import ExecutionContext
-from orchestrator.config.enums import ChecklistStatus
+from orchestrator.config import ChecklistStatus
 
 # Patterns in AgentExecutionError messages that indicate an environment issue
 # (bad/expired key, no credits, network unreachable) rather than a code bug.
@@ -50,7 +50,6 @@ _needs_api_key = pytest.mark.skipif(
     not os.getenv("OPENAI_API_KEY"),
     reason="No OPENAI_API_KEY",
 )
-
 
 # --- Error-path tests (SDK installed, no server needed) ---
 

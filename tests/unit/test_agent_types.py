@@ -15,7 +15,7 @@ from orchestrator.runners.types import (
     ExecutionMetrics,
     ExecutionResult,
 )
-from orchestrator.config.enums import AgentRunnerType
+from orchestrator.config import AgentRunnerType
 
 
 def test_execution_context_validation() -> None:

@@ -3,16 +3,15 @@
 from datetime import timedelta
 from pathlib import Path
 
-from orchestrator.config.enums import (
+from orchestrator.config import (
     ChecklistStatus,
     RunStatus,
     TaskStatus,
+    load_routine_from_path,
 )
-from orchestrator.config.routines.loader import load_routine_from_path
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.session import SessionStateManager
-from orchestrator.workflow.engine import WorkflowEngine
-from orchestrator.workflow.events import RunStatusChanged, TaskStatusChanged
+from orchestrator.workflow import WorkflowEngine, RunStatusChanged, TaskStatusChanged
 from tests.conftest import CollectingEmitter, FakeClock
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"

@@ -2,9 +2,7 @@
 
 from pathlib import Path
 
-from orchestrator.config.enums import RoutineSource
-from orchestrator.config import discover_routines
-
+from orchestrator.config import discover_routines, RoutineSource
 
 VALID_ROUTINE_YAML = """\
 routine:

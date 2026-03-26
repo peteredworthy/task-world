@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
+from orchestrator.config import ChecklistStatus, RunStatus, TaskStatus
 from orchestrator.config.models import (
     RequirementConfig,
     RoutineConfig,
@@ -37,7 +37,6 @@ from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService
 
 _TMP_DIR = Path(__file__).parent.parent.parent / "tmp"
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -436,7 +435,7 @@ async def test_replay_handles_old_event_format(
     """Old events without last_error/start_commit/end_commit replay without errors."""
     from datetime import datetime, timezone
 
-    from orchestrator.config.enums import RunStatus, TaskStatus
+    from orchestrator.config import RunStatus, TaskStatus
     from orchestrator.db import replay_events
 
     routine = _make_linear_routine()
@@ -543,7 +542,7 @@ async def test_child_event_types_in_replay(
 ) -> None:
     """Child lifecycle event types exist and replay without errors (informational)."""
     from datetime import datetime, timezone
-    from orchestrator.workflow.events import ChildSpawned, ChildCompleted, ChildFailed
+    from orchestrator.workflow import ChildSpawned, ChildCompleted, ChildFailed
 
     routine = _make_pause_routine()
     run = _make_run(routine, "child-001")

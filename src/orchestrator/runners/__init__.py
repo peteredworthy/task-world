@@ -20,8 +20,46 @@ from orchestrator.runners.agents.claude_sdk.agent import (
     build_orchestrator_mcp_server,
 )
 from orchestrator.runners.agents.mock.agent import MockAgent, MockBehavior
-from orchestrator.runners.parsers.claude_parser import ClaudeStreamParser
-from orchestrator.runners.parsers.codex_parser import CodexStreamParser
+from orchestrator.runners.agents.claude_cli.parser import ClaudeStreamParser
+from orchestrator.runners.agents.codex.parser import CodexStreamParser
+
+# OpenHands agent and helpers
+from orchestrator.runners.agents.openhands.agent import OpenHandsAgent
+from orchestrator.runners.agents.openhands.common import (
+    CallbackRegistry,
+    DEFAULT_OPENHANDS_TOOLS,
+    GetRequirementsExecutor,
+    OPENHANDS_TOOL_IMPORTS,
+    SetGradeExecutor,
+    SubmitExecutor,
+    UpdateChecklistExecutor,
+    ValidateRoutineExecutor,
+    build_openhands_prompt,
+    extract_metrics,
+    register_builtin_tools,
+)
+from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent
+
+# Codex agent and helpers
+from orchestrator.runners.agents.codex.agent import CodexServerAgent, RealStdioTransport
+from orchestrator.runners.agents.codex.common import (
+    CODEX_SERVER_TOOL_ALLOWLIST,
+    JsonRpcTransport,
+    build_codex_server_prompt,
+    build_dynamic_tool_call_response,
+    build_dynamic_tool_specs,
+    build_execution_result,
+    build_jsonrpc_request,
+    enforce_tool_allowlist,
+    extract_agent_message_delta,
+    extract_dynamic_tool_call,
+    extract_tool_call_from_notification,
+    extract_turn_usage,
+    fetch_codex_models,
+    is_allowed_tool,
+    normalize_codex_metrics,
+    normalize_codex_output_lines,
+)
 
 # Scaffolding and Profiles
 from orchestrator.runners.scaffolding import (
@@ -74,7 +112,7 @@ from orchestrator.runners.runtime import (
 
 if TYPE_CHECKING:
     from orchestrator.runners.agents.user_managed.agent import UserManagedAgent
-    from orchestrator.runners.parsers.openhands_parser import OpenHandsEventParser
+    from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
 
 
 def __getattr__(name: str):  # type: ignore[misc]
@@ -83,9 +121,46 @@ def __getattr__(name: str):  # type: ignore[misc]
 
         return UserManagedAgent
     if name == "OpenHandsEventParser":
-        from orchestrator.runners.parsers.openhands_parser import OpenHandsEventParser
+        from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
 
         return OpenHandsEventParser
+    # Private names from openhands.agent used in tests
+    if name == "_SDK_AVAILABLE":
+        try:
+            import orchestrator.runners.agents.openhands.agent as _oh_agent  # noqa: PLC0415
+
+            return getattr(_oh_agent, "_SDK_AVAILABLE")  # pyright: ignore[reportPrivateUsage]
+        except ImportError:
+            return False
+    if name == "_build_openhands_mcp_config":
+        import orchestrator.runners.agents.openhands.agent as _oh_agent  # noqa: PLC0415
+
+        return getattr(_oh_agent, "_build_openhands_mcp_config")  # pyright: ignore[reportPrivateUsage]
+    if name == "_obs_get_req":
+        import orchestrator.runners.agents.openhands.agent as _oh_agent  # noqa: PLC0415
+
+        return getattr(_oh_agent, "_obs_get_req")  # pyright: ignore[reportPrivateUsage]
+    # Private names from openhands.docker_agent used in tests
+    if name == "_DOCKER_WORKSPACE_AVAILABLE":
+        try:
+            import orchestrator.runners.agents.openhands.docker_agent as _oh_docker  # noqa: PLC0415
+
+            return getattr(_oh_docker, "_DOCKER_WORKSPACE_AVAILABLE")  # pyright: ignore[reportPrivateUsage]
+        except ImportError:
+            return False
+    if name == "_detect_platform":
+        import orchestrator.runners.agents.openhands.docker_agent as _oh_docker  # noqa: PLC0415
+
+        return getattr(_oh_docker, "_detect_platform")  # pyright: ignore[reportPrivateUsage]
+    # Private names from codex.common used in tests
+    if name == "_CODEX_FALLBACK_MODELS":
+        import orchestrator.runners.agents.codex.common as _codex_common  # noqa: PLC0415
+
+        return getattr(_codex_common, "_CODEX_FALLBACK_MODELS")  # pyright: ignore[reportPrivateUsage]
+    if name == "_sp":
+        import orchestrator.runners.agents.codex.common as _codex_common  # noqa: PLC0415
+
+        return getattr(_codex_common, "_sp")  # pyright: ignore[reportPrivateUsage]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
@@ -100,9 +175,13 @@ __all__ = [
     "CLIAgent",
     "ClaudeCliQuotaAgent",
     "ClaudeSDKAgent",
+    "CodexServerAgent",
+    "DockerOpenHandsAgent",
     "MockAgent",
     "MockBehavior",
+    "OpenHandsAgent",
     "OpenHandsEventParser",
+    "RealStdioTransport",
     "UserManagedAgent",
     "build_claude_sdk_prompt",
     "build_mcp_servers",
@@ -110,6 +189,35 @@ __all__ = [
     # Parsers
     "ClaudeStreamParser",
     "CodexStreamParser",
+    # OpenHands common
+    "CallbackRegistry",
+    "DEFAULT_OPENHANDS_TOOLS",
+    "GetRequirementsExecutor",
+    "OPENHANDS_TOOL_IMPORTS",
+    "SetGradeExecutor",
+    "SubmitExecutor",
+    "UpdateChecklistExecutor",
+    "ValidateRoutineExecutor",
+    "build_openhands_prompt",
+    "extract_metrics",
+    "register_builtin_tools",
+    # Codex common
+    "CODEX_SERVER_TOOL_ALLOWLIST",
+    "JsonRpcTransport",
+    "build_codex_server_prompt",
+    "build_dynamic_tool_call_response",
+    "build_dynamic_tool_specs",
+    "build_execution_result",
+    "build_jsonrpc_request",
+    "enforce_tool_allowlist",
+    "extract_agent_message_delta",
+    "extract_dynamic_tool_call",
+    "extract_tool_call_from_notification",
+    "extract_turn_usage",
+    "fetch_codex_models",
+    "is_allowed_tool",
+    "normalize_codex_metrics",
+    "normalize_codex_output_lines",
     # Scaffolding
     "ScaffoldingError",
     "ScaffoldingSpec",

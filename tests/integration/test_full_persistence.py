@@ -9,17 +9,17 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.config.enums import (
+from orchestrator.config import (
     ChecklistStatus,
     Priority,
     RoutineSource,
     RunStatus,
     TaskStatus,
+    load_routine_from_path,
 )
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.db import RunRepository
-from orchestrator.config.routines.loader import load_routine_from_path
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import (
     ChecklistItem,

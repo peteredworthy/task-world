@@ -19,12 +19,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource, RunStatus
+from orchestrator.config import RoutineSource, RunStatus
 from orchestrator.db import init_db
 from orchestrator.db import RunRepository
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
 
 # ---------------------------------------------------------------------------
 # Git helpers

@@ -16,13 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.runners import AgentRunnerMonitor
-from orchestrator.config.enums import AgentRunnerType, RunStatus
+from orchestrator.config import AgentRunnerType, RunStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
-
 
 # ---------------------------------------------------------------------------
 # DB fixture

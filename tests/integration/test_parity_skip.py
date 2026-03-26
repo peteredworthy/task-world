@@ -17,12 +17,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config import RoutineSource
 from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.workflow.signals import InMemorySignalTransport
+from orchestrator.workflow import InMemorySignalTransport
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
@@ -75,7 +75,6 @@ SKIP_ROUTINE: dict[str, Any] = {
         },
     ],
 }
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

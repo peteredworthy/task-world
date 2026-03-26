@@ -7,15 +7,14 @@ from typing import Any
 
 import pytest
 
-from orchestrator.runners.codex_server import CodexServerAgent
+from orchestrator.runners import CodexServerAgent
 from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
 )
 from orchestrator.runners.types import ExecutionContext
-from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
-
+from orchestrator.config import AgentRunnerType, ChecklistStatus
 
 # ---------------------------------------------------------------------------
 # Helpers

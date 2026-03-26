@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config.enums import ChecklistStatus, Priority, RunStatus, TaskStatus
+from orchestrator.config import ChecklistStatus, Priority, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig, PathsConfig
 from orchestrator.config.models import (
     RequirementConfig,

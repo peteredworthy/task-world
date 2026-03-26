@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from orchestrator.config.enums import ChecklistStatus, Priority, RunStatus, TaskStatus
+from orchestrator.config import ChecklistStatus, Priority, RunStatus, TaskStatus
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import (
     GateBlockedError,
@@ -517,7 +517,7 @@ def test_step_progression_stops_on_failed_task() -> None:
 def test_step_progression_with_false_condition_on_next_step() -> None:
     """When next step's condition is false, it should be skipped and progression continues."""
     from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig, TaskConfig
-    from orchestrator.workflow.events import BufferingEmitter
+    from orchestrator.workflow import BufferingEmitter
 
     # Create a routine with conditional step
     routine = RoutineConfig(
@@ -569,7 +569,7 @@ def test_step_progression_with_false_condition_on_next_step() -> None:
     )
 
     emitter = BufferingEmitter()
-    from orchestrator.workflow.engine import DefaultClock
+    from orchestrator.workflow import DefaultClock
 
     clock = DefaultClock()
     changed = check_step_progression(run, routine_config=routine, clock=clock, emitter=emitter)
@@ -584,7 +584,7 @@ def test_step_progression_with_false_condition_on_next_step() -> None:
     assert changed is True
 
     # Check that a StepSkipped event was emitted for step 2
-    from orchestrator.workflow.events import StepSkipped
+    from orchestrator.workflow import StepSkipped
 
     skipped_events = [e for e in emitter.events if isinstance(e, StepSkipped)]
     assert len(skipped_events) == 1
@@ -595,8 +595,8 @@ def test_step_progression_with_false_condition_on_next_step() -> None:
 def test_step_progression_multiple_consecutive_false_conditions() -> None:
     """Multiple consecutive false-condition steps should all be skipped in sequence."""
     from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig, TaskConfig
-    from orchestrator.workflow.events import BufferingEmitter, StepSkipped
-    from orchestrator.workflow.engine import DefaultClock
+    from orchestrator.workflow import BufferingEmitter, StepSkipped
+    from orchestrator.workflow import DefaultClock
 
     # Create a routine with multiple consecutive conditional steps
     routine = RoutineConfig(
@@ -668,8 +668,8 @@ def test_step_progression_multiple_consecutive_false_conditions() -> None:
 def test_step_progression_all_steps_skipped() -> None:
     """When all steps have false conditions, they should all be skipped and run completes."""
     from orchestrator.config.models import RoutineConfig, StepCondition, StepConfig, TaskConfig
-    from orchestrator.workflow.events import BufferingEmitter, StepSkipped
-    from orchestrator.workflow.engine import DefaultClock
+    from orchestrator.workflow import BufferingEmitter, StepSkipped
+    from orchestrator.workflow import DefaultClock
 
     # Create a routine where all steps have false conditions
     routine = RoutineConfig(

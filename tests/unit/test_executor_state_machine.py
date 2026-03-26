@@ -17,12 +17,7 @@ from typing import Callable
 
 import pytest
 
-from orchestrator.config.enums import (
-    AgentRunnerType,
-    GateType,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import AgentRunnerType, GateType, RunStatus, TaskStatus
 from orchestrator.config.models import (
     GateConfig,
     RoutineConfig,
@@ -36,7 +31,6 @@ from orchestrator.runners.executor import (
 )
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
-
 
 # ---------------------------------------------------------------------------
 # Run factories — one per NoTaskReason
@@ -143,7 +137,6 @@ REASON_FACTORIES: dict[NoTaskReason, Callable[[], Run]] = {
 
 _UNREACHABLE_REASONS = {NoTaskReason.FAN_OUT_IN_PROGRESS}
 
-
 # ---------------------------------------------------------------------------
 # TestFindNextTaskReasons
 # ---------------------------------------------------------------------------
@@ -209,7 +202,6 @@ class TestFindNextTaskReasons:
 # ---------------------------------------------------------------------------
 # TestResolveNoTaskAction
 # ---------------------------------------------------------------------------
-
 
 EXPECTED_ACTIONS: dict[NoTaskReason, tuple[str, str | None]] = {
     NoTaskReason.ALL_COMPLETE: ("complete", None),

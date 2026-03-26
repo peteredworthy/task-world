@@ -4,7 +4,7 @@ from typing import Callable
 
 import pytest
 
-from orchestrator.config.enums import Priority, RoutineSource
+from orchestrator.config import Priority, RoutineSource
 from orchestrator.config.models import (
     RequirementConfig,
     RoutineConfig,

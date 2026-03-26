@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import pytest
 
-from orchestrator.runners.codex_server import CodexServerAgent
+from orchestrator.runners import CodexServerAgent
 from orchestrator.runners.types import ExecutionContext
-from orchestrator.config.enums import ChecklistStatus
+from orchestrator.config import ChecklistStatus
 
 
 def _ctx() -> ExecutionContext:

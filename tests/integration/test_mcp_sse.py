@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
 from orchestrator.workflow.service import SubmitEventRegistry
 

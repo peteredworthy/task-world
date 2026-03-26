@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import AgentRunnerType, GateType, RoutineSource, TaskStatus
+from orchestrator.config import AgentRunnerType, GateType, RoutineSource, TaskStatus
 from orchestrator.db import init_db
 from orchestrator.config.models import (
     GateConfig,

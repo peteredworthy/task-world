@@ -4,12 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from orchestrator.config.enums import (
-    ChecklistStatus,
-    Priority,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import ChecklistStatus, Priority, RunStatus, TaskStatus
 from orchestrator.state.models import (
     ChecklistItem,
     Run,
@@ -17,9 +12,9 @@ from orchestrator.state.models import (
     TaskState,
 )
 from orchestrator.state.session import SessionStateManager
-from orchestrator.workflow.engine import WorkflowEngine
+from orchestrator.workflow import WorkflowEngine
 from orchestrator.workflow import GateBlockedError, InvalidTransitionError
-from orchestrator.workflow.events import (
+from orchestrator.workflow import (
     GradesEvaluated,
     RunStatusChanged,
     StepCompleted,
@@ -514,7 +509,7 @@ def test_cancel_run_from_draft_raises() -> None:
 
 def test_start_task_populates_agent_snapshot() -> None:
     """start_task populates agent_type, agent_model, agent_settings on new attempt."""
-    from orchestrator.config.enums import AgentRunnerType
+    from orchestrator.config import AgentRunnerType
 
     run = _make_run(status=RunStatus.ACTIVE)
     run.agent_type = AgentRunnerType.CLI_SUBPROCESS
@@ -548,7 +543,7 @@ def test_start_task_populates_agent_snapshot() -> None:
 
 def test_complete_verification_revision_populates_agent_snapshot() -> None:
     """complete_verification revision creates new attempt with agent snapshot."""
-    from orchestrator.config.enums import AgentRunnerType
+    from orchestrator.config import AgentRunnerType
 
     run = _make_run(status=RunStatus.ACTIVE)
     run.agent_type = AgentRunnerType.OPENHANDS_LOCAL

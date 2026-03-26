@@ -9,15 +9,9 @@ from pathlib import Path
 from starlette.testclient import TestClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config import RoutineSource, RunStatus
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
-from orchestrator.config.enums import RunStatus
-from orchestrator.workflow.events import (
-    ClarificationRequested,
-    ClarificationResponded,
-    RunStatusChanged,
-)
-
+from orchestrator.workflow import ClarificationRequested, ClarificationResponded, RunStatusChanged
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -181,11 +175,20 @@ def test_ws_clarification_requested() -> None:
             )
             assert create_resp.status_code == 200
 
-            msg = ws.receive_json()
-            events = _extract_events(msg)
-            clarification_event = next(
-                e for e in events if e.get("event_type") == "clarification_requested"
-            )
+            # The clarification_requested event may arrive in a later batch
+            # if other events (e.g. task_status_changed) arrive first, so we
+            # consume messages until we find it.
+            clarification_event = None
+            for _ in range(5):
+                msg = ws.receive_json()
+                events = _extract_events(msg)
+                clarification_event = next(
+                    (e for e in events if e.get("event_type") == "clarification_requested"),
+                    None,
+                )
+                if clarification_event is not None:
+                    break
+            assert clarification_event is not None, "clarification_requested event not received"
             assert clarification_event["task_id"] == task_id
             assert int(clarification_event["question_count"]) >= 1
 

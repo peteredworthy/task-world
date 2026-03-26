@@ -10,13 +10,13 @@ from dataclasses import dataclass
 
 import pytest
 
-from orchestrator.runners.openhands import _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
-from orchestrator.runners.openhands_common import (
+from orchestrator.runners import (  # pyright: ignore[reportPrivateUsage]
     GetRequirementsExecutor,
     SubmitExecutor,
     UpdateChecklistExecutor,
+    _SDK_AVAILABLE,  # pyright: ignore[reportPrivateUsage]
 )
-from orchestrator.config.enums import ChecklistStatus
+from orchestrator.config import ChecklistStatus
 
 
 # Simple observation stand-in for tests that don't need real SDK types.
@@ -56,7 +56,7 @@ def test_get_requirements_executor_call_with_factory() -> None:
 @pytest.mark.skipif(not _SDK_AVAILABLE, reason="openhands-ai not installed")
 def test_get_requirements_executor_call_returns_sdk_observation() -> None:
     """Calling the executor with the SDK factory returns a real SDK Observation."""
-    from orchestrator.runners.openhands import _obs_get_req  # pyright: ignore[reportPrivateUsage]
+    from orchestrator.runners import _obs_get_req  # pyright: ignore[reportPrivateUsage]
 
     executor = GetRequirementsExecutor(["R1", "R2"], observation_factory=_obs_get_req)
     result = executor(action=None)

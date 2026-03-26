@@ -7,7 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config import RoutineSource
 from orchestrator.config.models import (
     RequirementConfig,
     RoutineConfig,

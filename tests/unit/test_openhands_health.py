@@ -1,7 +1,7 @@
 """Tests for OpenHands agent health check and metadata."""
 
-from orchestrator.runners.openhands import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
-from orchestrator.config.enums import AgentRunnerType
+from orchestrator.runners import OpenHandsAgent, _SDK_AVAILABLE  # pyright: ignore[reportPrivateUsage]
+from orchestrator.config import AgentRunnerType
 
 
 async def test_health_check_with_api_key() -> None:

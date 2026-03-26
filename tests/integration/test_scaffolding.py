@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.runners.scaffolding import copy_scaffolding, ensure_gitignore
+from orchestrator.runners import copy_scaffolding, ensure_gitignore
 
 
 def _git(args: list[str], cwd: Path) -> str:
@@ -265,7 +265,7 @@ class TestScaffoldingIntegration:
         """Scaffolding is copied when worktree is created during run start."""
 
         from orchestrator.runners.executor import AgentRunnerExecutor
-        from orchestrator.config.enums import AgentRunnerType, RoutineSource
+        from orchestrator.config import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
         from orchestrator.db import create_engine, create_session_factory, init_db
         from orchestrator.db import EventStore
@@ -340,7 +340,7 @@ steps:
 
         # Create run
         async with session_factory() as session:
-            from orchestrator.config.routines.discovery import discover_routines_in_repo
+            from orchestrator.config import discover_routines_in_repo
 
             # For PROJECT routines, use discover_routines_in_repo which finds directory-based routines
             project_routines = discover_routines_in_repo(repo, "main")
@@ -411,7 +411,7 @@ steps:
     async def test_scaffolding_optional_if_missing(self, tmp_path: Path) -> None:
         """Run should succeed even if routine has no scaffolding."""
         from orchestrator.runners.executor import AgentRunnerExecutor
-        from orchestrator.config.enums import AgentRunnerType, RoutineSource
+        from orchestrator.config import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
         from orchestrator.db import create_engine, create_session_factory, init_db
         from orchestrator.db import EventStore
@@ -480,7 +480,7 @@ steps:
 
         # Create run
         async with session_factory() as session:
-            from orchestrator.config.routines.discovery import discover_routines_in_repo
+            from orchestrator.config import discover_routines_in_repo
 
             # For PROJECT routines, use discover_routines_in_repo which finds directory-based routines
             project_routines = discover_routines_in_repo(repo, "main")

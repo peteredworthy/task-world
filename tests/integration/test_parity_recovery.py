@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
+from orchestrator.config import ChecklistStatus, RunStatus, TaskStatus
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import Base
 from orchestrator.db import create_session_factory
@@ -29,7 +29,6 @@ from orchestrator.workflow.service import WorkflowService
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 _TMP_DIR = Path(__file__).parent.parent.parent / "tmp"
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

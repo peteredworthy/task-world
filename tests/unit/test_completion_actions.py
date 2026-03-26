@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.config.enums import RunStatus
+from orchestrator.config import RunStatus
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.state.models import Run
 from orchestrator.workflow.completion import handle_run_completion

@@ -11,7 +11,7 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.runners import UserManagedAgent
-from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
+from orchestrator.config import AgentRunnerType, ChecklistStatus
 from orchestrator.workflow.service import SubmitEventRegistry
 
 

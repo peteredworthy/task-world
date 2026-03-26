@@ -2,7 +2,7 @@
 
 import pytest
 
-from orchestrator.config.enums import ChecklistStatus, Priority
+from orchestrator.config import ChecklistStatus, Priority
 from orchestrator.state.errors import (
     ChecklistItemNotFoundError,
     RunNotFoundError,

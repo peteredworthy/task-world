@@ -6,7 +6,7 @@ from pathlib import Path
 from collections.abc import AsyncGenerator
 from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config import RoutineSource
 from orchestrator.config.models import EnvFileSpec
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.models import (

@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from orchestrator.config.enums import ChecklistStatus, GateType, Priority
+from orchestrator.config import ChecklistStatus, GateType, Priority
 from orchestrator.config.models import GateConfig
 from orchestrator.state.models import ChecklistItem, HumanApproval
 from orchestrator.workflow import evaluate_gate

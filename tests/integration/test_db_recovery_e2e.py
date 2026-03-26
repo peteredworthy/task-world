@@ -7,12 +7,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from orchestrator.config.enums import (
-    Priority,
-    RoutineSource,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import create_backup, restore_backup
 from orchestrator.db import Base
 from orchestrator.db import JsonlEventJournal
@@ -26,7 +21,7 @@ from orchestrator.state.models import (
     StepState,
     TaskState,
 )
-from orchestrator.workflow.events import (
+from orchestrator.workflow import (
     GradeDetail,
     GradesEvaluated,
     RunStatusChanged,

@@ -11,7 +11,7 @@ Tests verify that:
 
 import pytest
 
-from orchestrator.config.enums import RunStatus, TaskStatus
+from orchestrator.config import RunStatus, TaskStatus
 from orchestrator.config.models import (
     RoutineConfig,
     StepConfig,

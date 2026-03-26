@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from orchestrator.runners.errors import AgentNotAvailableError
-from orchestrator.runners.openhands_docker import (
+from orchestrator.runners import (
     DockerOpenHandsAgent,
     _DOCKER_WORKSPACE_AVAILABLE,  # pyright: ignore[reportPrivateUsage]
     _SDK_AVAILABLE,  # pyright: ignore[reportPrivateUsage]
@@ -97,7 +97,7 @@ def test_docker_workspace_lifecycle() -> None:
     """DockerWorkspace starts a container, serves health, and cleans up."""
     from openhands.workspace import DockerWorkspace  # pyright: ignore[reportMissingImports]
 
-    from orchestrator.runners.openhands_docker import _detect_platform  # pyright: ignore[reportPrivateUsage]
+    from orchestrator.runners import _detect_platform  # pyright: ignore[reportPrivateUsage]
 
     platform = _detect_platform()
     kwargs: dict[str, Any] = {}
@@ -142,7 +142,7 @@ def test_docker_workspace_cleanup_on_exception() -> None:
     """Container is cleaned up even when an exception occurs inside the block."""
     from openhands.workspace import DockerWorkspace  # pyright: ignore[reportMissingImports]
 
-    from orchestrator.runners.openhands_docker import _detect_platform  # pyright: ignore[reportPrivateUsage]
+    from orchestrator.runners import _detect_platform  # pyright: ignore[reportPrivateUsage]
 
     platform = _detect_platform()
     kwargs: dict[str, Any] = {}

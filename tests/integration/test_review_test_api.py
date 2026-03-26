@@ -14,11 +14,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -208,7 +207,7 @@ class TestStartTestRun:
         run_id = run_data["id"]
         worktree_path = run_data["worktree_path"]
 
-        from orchestrator.git.testing import TestRunner
+        from orchestrator.git import TestRunner
 
         test_runner: TestRunner = app.state.test_runner
 
@@ -285,7 +284,7 @@ class TestGetTestRun:
         """A command that exits non-zero causes the test run to report 'failed'."""
         client, repo, app = client_with_auto_verify
 
-        from orchestrator.git.testing import TestRunner
+        from orchestrator.git import TestRunner
 
         test_runner: TestRunner = app.state.test_runner
 

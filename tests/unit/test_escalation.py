@@ -2,12 +2,12 @@
 
 import pytest
 
-from orchestrator.config.enums import ChecklistStatus, Priority, RunStatus
+from orchestrator.config import ChecklistStatus, Priority, RunStatus
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
-from orchestrator.workflow.engine import WorkflowEngine
+from orchestrator.workflow import WorkflowEngine
 from orchestrator.workflow import InvalidTransitionError
-from orchestrator.workflow.events import RunStatusChanged
+from orchestrator.workflow import RunStatusChanged
 from tests.conftest import CollectingEmitter, FakeClock
 
 

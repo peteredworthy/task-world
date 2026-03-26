@@ -6,7 +6,7 @@ from orchestrator.config.models import MCPServerConfig
 
 
 # Import the conversion function
-from orchestrator.runners.openhands import _build_openhands_mcp_config
+from orchestrator.runners import _build_openhands_mcp_config  # pyright: ignore[reportPrivateUsage]
 
 
 class TestOpenHandsMCPConfig:

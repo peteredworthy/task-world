@@ -9,13 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import (
-    AgentRunnerType,
-    Priority,
-    RoutineSource,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import AgentRunnerType, Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.db import replay_events
@@ -27,7 +21,7 @@ from orchestrator.state.models import (
     StepState,
     TaskState,
 )
-from orchestrator.workflow.events import AgentErrorEvent, AgentOutputEvent
+from orchestrator.workflow import AgentErrorEvent, AgentOutputEvent
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 

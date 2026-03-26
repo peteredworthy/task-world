@@ -8,16 +8,16 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config.enums import (
+from orchestrator.config import (
     ChecklistStatus,
     Priority,
     RoutineSource,
     RunStatus,
     TaskStatus,
+    load_routine_from_path,
 )
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
-from orchestrator.config.routines.loader import load_routine_from_path
 from orchestrator.state.errors import (
     ChecklistItemNotFoundError,
     RunNotFoundError,

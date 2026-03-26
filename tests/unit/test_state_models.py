@@ -1,11 +1,6 @@
 """Tests for runtime state models."""
 
-from orchestrator.config.enums import (
-    AgentRunnerType,
-    ChecklistStatus,
-    Priority,
-    RunStatus,
-)
+from orchestrator.config import AgentRunnerType, ChecklistStatus, Priority, RunStatus
 from orchestrator.state.models import (
     Attempt,
     AttemptMetrics,

@@ -17,10 +17,10 @@ from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource
+from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
 from orchestrator.workflow.locks import InMemoryLockManager
-from orchestrator.workflow.signals import InMemorySignalTransport
+from orchestrator.workflow import InMemorySignalTransport
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
@@ -610,7 +610,6 @@ async def test_lock_manager_prevents_concurrent_task_start(client: AsyncClient) 
 # Test 9: Auto-verify results appear in task detail response (gap-fix wiring)
 # ---------------------------------------------------------------------------
 
-
 EMBEDDED_ROUTINE_WITH_AUTO_VERIFY: dict[str, Any] = {
     "id": "auto-verify-routine",
     "name": "Auto Verify Routine",
@@ -830,7 +829,6 @@ async def test_activity_events_recorded_for_all_transitions(
 # ---------------------------------------------------------------------------
 # Test 11: Embedded routine persists across requests (gap-fix wiring)
 # ---------------------------------------------------------------------------
-
 
 EMBEDDED_ROUTINE_PERSIST: dict[str, Any] = {
     "id": "persist-test",

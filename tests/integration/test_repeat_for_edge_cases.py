@@ -14,9 +14,7 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config.enums import (
-    RunStatus,
-)
+from orchestrator.config import RunStatus
 from orchestrator.config.models import (
     RoutineConfig,
     StepConfig,

@@ -7,12 +7,7 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config.enums import (
-    Priority,
-    RoutineSource,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState

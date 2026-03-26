@@ -4,9 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.config.models import RoutineConfig, StepConfig
-from orchestrator.config.routines.errors import RoutineValidationError
-from orchestrator.config.routines.loader import load_routine_from_path
+from orchestrator.config import (
+    RoutineConfig,
+    StepConfig,
+    RoutineValidationError,
+    load_routine_from_path,
+)
 
 
 # ---------------------------------------------------------------------------

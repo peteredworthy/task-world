@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners import AgentRunnerMonitor
-from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
+from orchestrator.config import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.config.global_config import AgentsConfig, GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db

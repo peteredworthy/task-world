@@ -43,8 +43,22 @@ def test_runs_list_empty(runner: CliRunner, tmp_path: Path) -> None:
 
 def test_runs_list_json(runner: CliRunner, tmp_path: Path) -> None:
     """Test runs list with JSON output."""
+    import logging
+
     db_path = tmp_path / "test.db"
-    result = runner.invoke(cli, ["--db", str(db_path), "--json", "runs", "list"])
+    # Temporarily suppress SQLAlchemy/Alembic INFO logs that can bleed into
+    # CliRunner's output capture when tests run in parallel.
+    sqla_logger = logging.getLogger("sqlalchemy")
+    alembic_logger = logging.getLogger("alembic")
+    sqla_level = sqla_logger.level
+    alembic_level = alembic_logger.level
+    sqla_logger.setLevel(logging.WARNING)
+    alembic_logger.setLevel(logging.WARNING)
+    try:
+        result = runner.invoke(cli, ["--db", str(db_path), "--json", "runs", "list"])
+    finally:
+        sqla_logger.setLevel(sqla_level)
+        alembic_logger.setLevel(alembic_level)
     assert result.exit_code == 0
     data: list[object] = json.loads(result.output)
     assert isinstance(data, list)

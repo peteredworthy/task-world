@@ -15,22 +15,15 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import (
-    ChecklistStatus,
-    Priority,
-    RoutineSource,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.workflow.signals import InMemorySignalTransport
+from orchestrator.workflow import InMemorySignalTransport
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
-
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers

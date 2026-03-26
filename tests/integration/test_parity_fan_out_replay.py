@@ -18,13 +18,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config.enums import RoutineSource, RunStatus, TaskStatus
+from orchestrator.config import RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import init_db
 from orchestrator.db import resolve_default_journal_path
 from orchestrator.db import replay_journal_to_repository
 from orchestrator.db import RunRepository
 from orchestrator.state.models import Run
-from orchestrator.workflow.signals import InMemorySignalTransport
+from orchestrator.workflow import InMemorySignalTransport
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 

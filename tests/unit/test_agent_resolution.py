@@ -6,8 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from orchestrator.runners.profiles.models import AgentConfigModel
-from orchestrator.runners.profiles.resolution import get_agent_system_prompt, resolve_agent_name
+from orchestrator.runners import AgentConfigModel, get_agent_system_prompt, resolve_agent_name
 from orchestrator.db import Base
 
 

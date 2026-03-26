@@ -8,19 +8,12 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config.enums import (
-    ChecklistStatus,
-    Priority,
-    RoutineSource,
-    RunStatus,
-    TaskStatus,
-)
+from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.config.models import AutoVerifyItemConfig, RoutineConfig, StepConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow.service import WorkflowService, find_step_config
-
 
 # --- Unit tests for StepConfig schema ---
 

@@ -8,8 +8,7 @@ from orchestrator.api import (
     get_agent_display_name,
     get_agent_icon,
 )
-from orchestrator.config.enums import AgentRunnerType
-
+from orchestrator.config import AgentRunnerType
 
 VALID_EMBEDDED_ROUTINE = {
     "id": "embedded-test",

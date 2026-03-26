@@ -12,9 +12,8 @@ from orchestrator.runners import (
     build_orchestrator_mcp_server,
     build_mcp_servers,
 )
-from orchestrator.config.enums import ChecklistStatus
+from orchestrator.config import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
-
 
 # ---------------------------------------------------------------------------
 # Callbacks
