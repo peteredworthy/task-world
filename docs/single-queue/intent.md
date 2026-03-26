@@ -10,201 +10,61 @@ true when the work is complete.
 
 ---
 
-## Out of Scope
+## Goals
 
-- Separate runner processes. The goal is to not make that move harder, not to do it now.
-- Event broadcast decoupling (`EventBroadcaster` / WebSocket/SSE). That is the remaining
-  coupling point for future runner separation and is left for a follow-on piece of work.
-- Any performance optimisation of the queue.
-
----
-
-## The Target Model
-
-All signals for all run lifecycle transitions are written to `pending_signals` before
-any state change occurs. A consumer (the existing executor, restructured) reads from
-the queue and routes each signal to the appropriate handler. The consumer is the sole
-entity that creates and destroys `RunWorkflow` instances.
-
-```
-API / service layer
-  └── writes signal to pending_signals (always, no routing decision)
-
-Consumer (runs inside the executor process)
-  └── reads signals in FIFO order per run_id
-       ├── RUN_START / RUN_RESUME  →  create RunWorkflow, transition DB state
-       ├── PAUSE / CANCEL          →  set run to STOPPING, deliver to RunWorkflow if active
-       │                              OR apply directly to DB if no RunWorkflow is running
-       ├── ACTIVITY_COMPLETED      →  deliver to RunWorkflow (as today)
-       └── ACTIVITY_VERIFIED       →  deliver to RunWorkflow (as today)
-```
+- Eliminate sender-side routing: all lifecycle signals (start, pause, resume, cancel) are enqueued to `pending_signals` unconditionally, removing the `has_active_workflow` branch in `WorkflowService`. [I-01 → S-03/T-01/R1]
+- Introduce a single consumer that reads from the queue and is the sole entity creating/destroying `RunWorkflow` instances. [I-02 → S-02/T-01/R1, S-02/T-01/R2]
+- Add a `STOPPING` run state so that pause/cancel of an active run is observable and race-free. [I-03 → S-01/T-01/R3, S-06/T-01/R5]
+- Move active-run registry management (`register_active_run`, `unregister_active_run`) exclusively into the consumer module, removing it from the public API surface. [I-04 → S-04/T-01/R1, S-04/T-01/R2]
+- Add signal delivery tracking (`delivered_at`, `handled_at`) to support crash recovery and redelivery. [I-05 → S-01/T-01/R2, S-02/T-01/R3]
+- Lay groundwork for future multi-worker separation without requiring it now. [I-06 → NO-REQ: emergent property of the single-queue design; no dedicated step needed]
 
 ---
 
-## Requirements
+## Scope
 
-### Signal table
+### In Scope
 
-**R1.** The `pending_signals` table primary key is a monotonically increasing integer
-assigned by the database at insert time (`INTEGER PRIMARY KEY` / `BIGSERIAL`). The
-current UUID string PK is removed.
+- Restructure `pending_signals` table: integer PK, `delivered_at`/`handled_at` columns, ordering by PK not `created_at`. [I-07 → S-01/T-01/R1, S-01/T-01/R2]
+- Add `STOPPING` to `RunStatus` with defined transitions (ACTIVE -> STOPPING -> PAUSED/FAILED). [I-08 → S-01/T-01/R3]
+- Add `RUN_START` signal type; make `RESUME` signal functional (not a no-op). [I-09 → S-01/T-01/R5, S-03/T-01/R1]
+- Rewrite `WorkflowService.start_run()`, `pause_run()`, `resume_run()`, `cancel_run()` to always enqueue signals instead of branching. [I-10 → S-03/T-01/R1]
+- Remove `has_active_workflow` usage from `WorkflowService`, routers, and all API-request code paths. [I-11 → S-03/T-01/R5]
+- Build the consumer loop: serial per-run FIFO processing, concurrent across runs, startup redelivery of unhandled signals. [I-12 → S-02/T-01/R1, S-02/T-01/R4]
+- Remove `unregister_active_run()` call from `RunWorkflow.handle_pause`. [I-13 → S-03/T-01/R4]
+- Add `scripts/check_signal_routing.py` pre-commit guard to prevent registry function imports outside the consumer module. [I-14 → S-05/T-01/R1, S-05/T-01/R2]
+- Add AGENTS.md rules for signal queue and runner isolation. [I-15 → S-05/T-01/R3]
+- Alembic migration for `pending_signals` schema changes and `STOPPING` status. [I-16 → S-01/T-01/R1]
+- Update `retry_fan_out_child()` to remove its `has_active_workflow` check. [I-17 → S-03/T-01/R2]
 
-**R2.** All drain queries order by the integer PK, not by `created_at`.
+### Out of Scope
 
-**R3.** The table gains two nullable timestamp columns: `delivered_at` (set when the
-consumer dispatches the signal to a handler) and `handled_at` (set when the handler
-returns without error). A signal with `handled_at IS NULL` and `delivered_at IS NOT NULL`
-represents a signal that was dispatched but not yet acknowledged.
-
-**R4.** `created_at` is retained as an audit field but is not used for ordering.
-
-### Run state machine
-
-**R5.** `RunStatus` gains a `STOPPING` value. It is entered from `ACTIVE` only, when
-the consumer picks up a `PAUSE` or `CANCEL` signal for a run that has an active
-`RunWorkflow`.
-
-**R6.** The following transitions are the only valid ones involving `STOPPING`:
-
-| From     | Signal / event                        | To       |
-|----------|---------------------------------------|----------|
-| ACTIVE   | consumer picks up PAUSE or CANCEL     | STOPPING |
-| STOPPING | RunWorkflow acknowledges pause        | PAUSED   |
-| STOPPING | RunWorkflow acknowledges cancel       | FAILED   |
-| STOPPING | RunWorkflow crashes during stopping   | FAILED   |
-
-**R7.** `WorkflowEngine.start_task()` rejects a run in `STOPPING` state with the same
-class of error as it would for a `PAUSED` run.
-
-**R8.** `WorkflowEngine.submit_for_verification()` rejects a run in `STOPPING` state.
-
-**R9.** No other state machine transition accepts `STOPPING` as a source state. A run
-in `STOPPING` cannot be resumed, restarted, or have a second PAUSE or CANCEL enqueued
-by the API.
-
-### Signal types
-
-**R10.** A new `RUN_START` signal is added to `WorkflowSignal`. It is enqueued when a
-run transitions from `DRAFT` to `ACTIVE` (`POST /runs/{id}/start`). The consumer
-handles it by applying the DRAFT → ACTIVE DB transition and creating a `RunWorkflow`.
-
-**R11.** The `RESUME` signal is no longer a no-op. The consumer handles it by applying
-the PAUSED → ACTIVE DB transition and creating a `RunWorkflow`. The `handle_resume`
-handler on `RunWorkflow` that currently logs "ignoring RESUME signal (already running)"
-is removed.
-
-**R12.** `PAUSE` and `CANCEL` signals carry the same payload fields they do today.
-No new payload fields are required by this change.
-
-### Sender-side routing removed
-
-**R13.** `WorkflowService.pause_run()` always enqueues a `PAUSE` signal. The
-`has_active_workflow` check and the direct-DB branch are removed.
-
-**R14.** `WorkflowService.cancel_run()` always enqueues a `CANCEL` signal. The
-`has_active_workflow` check and the direct-DB branch are removed.
-
-**R15.** `WorkflowService.resume_run()` always enqueues a `RESUME` signal. The
-`has_active_workflow` check and the direct-DB branch are removed.
-
-**R16.** `WorkflowService.start_run()` always enqueues a `RUN_START` signal. It no
-longer calls `executor.spawn_run()` directly or transitions run state itself.
-
-**R17.** `retry_fan_out_child()` in `WorkflowService` removes its own
-`has_active_workflow` check. If the run is ACTIVE it enqueues a `PAUSE` signal;
-the consumer handles the ACTIVE → STOPPING → PAUSED transition.
-
-### Consumer
-
-**R18.** The consumer processes signals for each `run_id` serially (FIFO). It may
-process signals for different runs concurrently.
-
-**R19.** The consumer is the sole place that calls `register_active_run()` and
-`unregister_active_run()`. No other code calls these functions.
-
-**R20.** Before delivering a `PAUSE` or `CANCEL` signal to an active `RunWorkflow`,
-the consumer updates the run status to `STOPPING` in the DB and commits that change.
-It then delivers the signal. If no `RunWorkflow` is active, the consumer applies the
-appropriate terminal transition (PAUSED or FAILED) directly without going through
-STOPPING.
-
-**R21.** The consumer sets `delivered_at` on a signal before invoking the handler and
-`handled_at` after the handler returns successfully. If the handler raises, `handled_at`
-is left null and the signal is eligible for redelivery on the next consumer pass.
-
-**R22.** On startup, the consumer drains any signals with `delivered_at IS NOT NULL AND
-handled_at IS NULL` for runs that are not currently being driven (i.e., the server
-restarted mid-delivery). These are re-delivered.
-
-**R23.** The `RunWorkflow.handle_pause` handler no longer calls
-`unregister_active_run()` before delegating to `service.pause_run()`. The consumer
-manages registration state; the handler only applies the state transition.
-
-### Active-run registry
-
-**R24.** `register_active_run()` and `unregister_active_run()` are moved or restricted
-to the consumer module. They are not exported from `workflow/signals/signals.py` as part
-of the public surface available to `WorkflowService`, routers, or any code outside the
-consumer.
-
-**R25.** `has_active_workflow()` is not called from `WorkflowService`, routers, or any
-code path initiated by an API request. Its only callers are the consumer and tests that
-exercise consumer behaviour directly.
+- Separate runner processes (future work; this change makes it easier but does not do it). [I-18 → NO-REQ: explicitly out of scope]
+- Event broadcast decoupling (`EventBroadcaster` / WebSocket/SSE). [I-19 → NO-REQ: explicitly out of scope]
+- Performance optimization of the queue. [I-20 → NO-REQ: explicitly out of scope]
 
 ---
 
-## Guards
+## Constraints
 
-### Automated check (pre-commit)
-
-A new script `scripts/check_signal_routing.py` is added to the pre-commit hook list.
-It statically checks every Python source file and fails if any of the following symbols
-are imported or called outside the consumer module
-(`src/orchestrator/workflow/signals/consumer.py` or equivalent):
-
-- `has_active_workflow`
-- `register_active_run`
-- `unregister_active_run`
-
-The check follows the same structure as `scripts/check_module_imports.py`: it uses `ast`
-to parse imports and call sites, prints the offending file and line, and exits non-zero
-on any violation.
-
-### AGENTS.md rules
-
-The following rules are added to `AGENTS.md` under a new section
-**"Signal Queue and Runner Isolation"**:
-
-1. **Do not call `has_active_workflow`, `register_active_run`, or `unregister_active_run`
-   outside the consumer module.** These are consumer-internal. The pre-commit check
-   enforces this automatically.
-
-2. **Do not add process-local state that both the API layer and the executor need to
-   read.** If the API needs to know something about a running workflow, it reads from the
-   DB. In-memory shared state (module-level sets, dicts keyed by run_id) that crosses
-   the API/executor boundary re-introduces the coupling this change removed.
-
-3. **`RunWorkflow` and `AgentRunnerExecutor` must not access `app.state` or any object
-   that only exists in the FastAPI application context.** All dependencies the executor
-   needs (DB session factory, config, broadcaster) are injected at construction time via
-   `ExecutorCallbacks` or equivalent. Adding a new `app.state.X` access from within
-   executor or workflow code is a violation.
-
-4. **All run lifecycle transitions (start, resume, pause, cancel) are initiated by
-   enqueueing a signal.** Do not add new code paths that bypass the queue and transition
-   run state directly from an API route or service method. Direct DB state changes are
-   only valid inside the consumer's own handlers.
+- All existing tests must continue to pass after each phase of implementation. [I-21 → S-06/T-01/R1]
+- The `STOPPING` state must not be a valid source for resume, restart, or duplicate pause/cancel signals via the API. [I-22 → S-01/T-01/R4]
+- `RunWorkflow` and `AgentRunnerExecutor` must not access `app.state` or any FastAPI application-context object directly; dependencies are injected at construction. [I-23 → S-05/T-01/R5]
+- No new process-local shared state that crosses the API/executor boundary. [I-24 → S-05/T-01/R3]
+- The consumer must handle crash recovery: signals with `delivered_at IS NOT NULL AND handled_at IS NULL` for inactive runs are re-delivered on startup. [I-25 → S-02/T-01/R4]
+- `created_at` is retained on `pending_signals` for audit but must not be used for ordering. [I-26 → S-01/T-01/R2]
 
 ---
 
-## Relationship to Temporal Alignment
+## Definition of Complete
 
-This change closes the specific gaps called out in `docs/distributed-work-queue/temporal-alignment.md`:
-
-- Signal race condition (section on Signals) — resolved by queue-driven delivery and STOPPING state.
-- `RunWorkflow` as a named runtime owner — the consumer making it the sole creator
-  of `RunWorkflow` instances reinforces this boundary.
-- Process-local registry incompatible with multi-worker — eliminated by R24/R25.
-
-The remaining gap from that document — `EventBroadcaster` relying on in-process
-WebSocket connections — is explicitly deferred and not addressed here.
+- All lifecycle signals (start, pause, resume, cancel) are routed through `pending_signals` with no direct-DB branching in `WorkflowService`. [I-27 → S-03/T-01/R1, S-06/T-01/R4]
+- `has_active_workflow()` is not called from `WorkflowService`, routers, or any API-initiated code path. [I-28 → S-03/T-01/R5, S-06/T-01/R3]
+- `register_active_run()` and `unregister_active_run()` are only called from the consumer module. [I-29 → S-04/T-01/R1, S-04/T-01/R2]
+- The `STOPPING` state exists in `RunStatus` and the defined transitions (R5-R9 from the PRD) are enforced. [I-30 → S-01/T-01/R3, S-01/T-01/R4]
+- The consumer processes signals per-run FIFO, sets `delivered_at`/`handled_at`, and redelivers unhandled signals on startup. [I-31 → S-02/T-01/R1, S-02/T-01/R3, S-02/T-01/R4]
+- `scripts/check_signal_routing.py` runs as a pre-commit hook and catches disallowed imports/calls outside the consumer module. [I-32 → S-05/T-01/R1, S-05/T-01/R2, S-05/T-01/R4]
+- AGENTS.md contains the four signal-queue and runner-isolation rules. [I-33 → S-05/T-01/R3]
+- All existing tests pass after each phase. [I-34 → S-06/T-01/R1]
+- An Alembic migration exists for the `pending_signals` schema changes and `STOPPING` status value. [I-35 → S-01/T-01/R1]
+- `RUN_START` and `RESUME` signals are functional and handled by the consumer (not no-ops). [I-36 → S-02/T-01/R2, S-06/T-01/R4]
