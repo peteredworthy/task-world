@@ -9,6 +9,11 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
 
+# All tests share an agents_data fixture that calls detect_all(), which spawns
+# a codex app-server subprocess (15 s select timeout internally per call).
+# Any test may be first in its worker process, so the whole module needs 60 s.
+pytestmark = pytest.mark.timeout(60)
+
 
 # ---------------------------------------------------------------------------
 # Helpers for quota tests

@@ -11,6 +11,11 @@ from orchestrator.config import AgentRunnerType
 
 import pytest
 
+# All tests in this module share a detect_all() call that spawns a codex
+# app-server subprocess (15 s timeout internally), so they need more than
+# the default 30 s pytest-timeout.
+pytestmark = pytest.mark.timeout(60)
+
 # Module-level cache for detect_all() results to avoid re-running expensive
 # detection (docker info, model fetch, shutil.which, etc.) in every test.
 _cached_options: list[AgentOption] | None = None

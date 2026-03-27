@@ -568,7 +568,7 @@ class OpenHandsAgent:
             # When using a local LLM server (base_url set), LiteLLM requires
             # a provider prefix. Local servers speak the OpenAI-compatible API.
             model = self._model
-            if using_local_llm and "/" not in model:
+            if using_local_llm and not model.startswith("openai/"):
                 model = f"openai/{model}"
             llm_kwargs: dict[str, Any] = {"model": model, **self._llm_config}
             if self._api_key:
@@ -833,6 +833,14 @@ class OpenHandsAgent:
         except Exception as exc:
             raise AgentExecutionError("openhands_local", str(exc)) from exc
         finally:
+            # Signal the background thread to stop before clearing the reference.
+            # conversation.run() runs in a thread via asyncio.to_thread(); Python
+            # threads cannot be interrupted, so we must ask the conversation to
+            # pause itself.  This handles both normal exit and CancelledError
+            # (which bypasses the except-Exception block).
+            _conv = self._conversation  # pyright: ignore[reportUnknownVariableType, reportUnknownMemberType]
+            if _conv is not None:  # pyright: ignore[reportUnknownMemberType]
+                _conv.pause()  # pyright: ignore[reportUnknownMemberType]
             _callback_registry.pop(registry_key)
             self._conversation = None  # pyright: ignore[reportUnknownMemberType]
 

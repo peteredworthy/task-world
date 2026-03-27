@@ -21,6 +21,7 @@ import asyncio
 import json
 import logging
 import os
+import select
 import shutil
 import tempfile
 import time
@@ -262,6 +263,9 @@ class CodexServerAgent:
             result: dict[str, Any] | None = None
             assert proc.stdout is not None
             for _ in range(20):
+                ready, _, _ = select.select([proc.stdout], [], [], 15.0)
+                if not ready:
+                    break
                 line = proc.stdout.readline()
                 if not line:
                     break

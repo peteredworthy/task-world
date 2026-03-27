@@ -23,10 +23,10 @@ steps:
         title: "Alembic migration for pending_signals and STOPPING status"
         context_from:
           - artifact: "docs/single-queue/plan.md"
-            as: "plan"
+            as: "context.plan"
             required: true
           - artifact: "docs/single-queue/plan-summary.md"
-            as: "summary"
+            as: "context.summary"
             required: true
         task_context: |
           Implement Phase 1 of the single-queue signal model: schema changes and state machine additions.
@@ -153,13 +153,13 @@ steps:
         title: "Implement signal consumer module with handlers and startup redelivery"
         context_from:
           - artifact: "docs/single-queue/plan.md"
-            as: "plan"
+            as: "context.plan"
             required: true
           - artifact: "docs/single-queue/plan-summary.md"
-            as: "summary"
+            as: "context.summary"
             required: true
           - artifact: "docs/single-queue/architecture.md"
-            as: "arch"
+            as: "context.arch"
             required: false
         task_context: |
           Implement Phase 2 of the single-queue signal model: the consumer loop.
@@ -293,10 +293,10 @@ steps:
         title: "Rewire WorkflowService and wire consumer into executor"
         context_from:
           - artifact: "docs/single-queue/plan.md"
-            as: "plan"
+            as: "context.plan"
             required: true
           - artifact: "docs/single-queue/plan-summary.md"
-            as: "summary"
+            as: "context.summary"
             required: true
         task_context: |
           Implement Phase 3 of the single-queue signal model: sender rewiring.
@@ -430,7 +430,7 @@ steps:
         title: "Move registry functions to consumer-only scope"
         context_from:
           - artifact: "docs/single-queue/plan.md"
-            as: "plan"
+            as: "context.plan"
             required: true
         task_context: |
           Implement Phase 4 of the single-queue signal model: registry isolation.
@@ -529,7 +529,7 @@ steps:
         title: "Pre-commit guard script and AGENTS.md signal-queue rules"
         context_from:
           - artifact: "docs/single-queue/plan.md"
-            as: "plan"
+            as: "context.plan"
             required: true
         task_context: |
           Implement Phase 5 of the single-queue signal model: guards and documentation.
@@ -646,10 +646,10 @@ steps:
         title: "Full test suite, dead code removal, and traceability audit"
         context_from:
           - artifact: "docs/single-queue/intent.md"
-            as: "intent"
+            as: "context.intent"
             required: true
           - artifact: "docs/single-queue/plan-summary.md"
-            as: "summary"
+            as: "context.summary"
             required: true
         task_context: |
           Implement Phase 6 of the single-queue signal model: validation and cleanup.
