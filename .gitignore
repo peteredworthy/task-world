@@ -62,3 +62,6 @@ worktrees/
 
 # Orchestrator runtime state (append-only, not source — must not be git-managed)
 .orchestrator/state/history.jsonl
+
+# Playwright MCP artifacts
+.playwright-mcp/
