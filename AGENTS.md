@@ -249,6 +249,8 @@ The most common reason an issue appears "pre-existing" is that it was introduced
 
 ## Testing
 
+**Run tests with the foreground `Bash` tool directly — never as background Tasks.** The full test suite completes in under 60 seconds and can be awaited synchronously. Using background Tasks for test commands forces the agent to schedule cascading `sleep N && cat output_file` pollers to retrieve results, which wastes time and produces stale notifications long after the tests have finished. Reserve background Tasks for operations that genuinely take multiple minutes.
+
 Three strict levels:
 
 | Level | Dependencies | Speed |
