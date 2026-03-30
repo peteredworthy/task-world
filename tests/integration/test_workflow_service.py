@@ -87,7 +87,7 @@ async def test_full_lifecycle(service: WorkflowService) -> None:
     await service.create_run(run)
 
     # Start run
-    started = await service.start_run("run-1")
+    started = await service.apply_start_run("run-1")
     assert started.status == RunStatus.ACTIVE
 
     # Start task
@@ -119,7 +119,7 @@ async def test_state_survives_restart(session: AsyncSession) -> None:
 
     run = _make_simple_run()
     await service1.create_run(run)
-    await service1.start_run("run-1")
+    await service1.apply_start_run("run-1")
 
     # Simulate restart by creating a new service with same session
     service2 = WorkflowService(session)
@@ -132,7 +132,7 @@ async def test_events_logged(service: WorkflowService, session: AsyncSession) ->
     """Events are persisted to the event store."""
     run = _make_simple_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     store = EventStore(session)
@@ -149,7 +149,7 @@ async def test_error_propagation(service: WorkflowService) -> None:
         await service.get_run("nonexistent")
 
     with pytest.raises(RunNotFoundError):
-        await service.start_run("nonexistent")
+        await service.apply_start_run("nonexistent")
 
 
 async def test_task_not_found(service: WorkflowService) -> None:
@@ -163,7 +163,7 @@ async def test_task_not_found(service: WorkflowService) -> None:
 async def test_checklist_item_not_found(service: WorkflowService) -> None:
     run = _make_simple_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     with pytest.raises(ChecklistItemNotFoundError):
@@ -175,7 +175,7 @@ async def test_checklist_item_not_found(service: WorkflowService) -> None:
 async def test_set_grade_not_found(service: WorkflowService) -> None:
     run = _make_simple_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
     await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
     await service.submit_for_verification("run-1", "task-1")
@@ -188,7 +188,7 @@ async def test_flexible_numeric_req_id_formats(service: WorkflowService) -> None
     """Numeric checklist IDs should accept R1/R-01/1 style inputs."""
     run = _make_simple_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     # Update using dashed format resolves to canonical checklist item R1.
@@ -220,7 +220,7 @@ async def test_multi_step_routine(service: WorkflowService) -> None:
     assert len(created.steps[0].tasks) == 1
     assert len(created.steps[1].tasks) == 2
 
-    await service.start_run(created.id)
+    await service.apply_start_run(created.id)
     task_id = created.steps[0].tasks[0].id
 
     result = await service.start_task(created.id, task_id)
@@ -263,7 +263,7 @@ async def test_revision_cycle(service: WorkflowService) -> None:
     """Test revision: fail grades -> go back to BUILDING -> fix -> pass."""
     run = _make_simple_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     # Pass checklist gate

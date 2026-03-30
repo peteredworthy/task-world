@@ -38,7 +38,7 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
     return client_and_drain[0]
 
 
-async def _setup_active_run(client: AsyncClient) -> tuple[str, str]:
+async def _setup_active_run(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run and start it, returning (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
@@ -47,7 +47,9 @@ async def _setup_active_run(client: AsyncClient) -> tuple[str, str]:
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
     return run_id, task_id
 
 
@@ -67,9 +69,12 @@ async def test_activity_empty_for_new_run(client: AsyncClient) -> None:
     assert data["has_more"] is False
 
 
-async def test_activity_after_task_lifecycle(client: AsyncClient) -> None:
+async def test_activity_after_task_lifecycle(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Starting a run and progressing a task produces the expected events."""
-    run_id, task_id = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Start task (pending -> building)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -99,7 +104,7 @@ async def test_activity_after_task_lifecycle(client: AsyncClient) -> None:
 async def test_activity_pagination(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Cursor pagination with limit returns correct subsets."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Generate more events
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -108,7 +113,7 @@ async def test_activity_pagination(client_and_drain: tuple[AsyncClient, DrainFn]
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Fetch with small limit
@@ -131,9 +136,12 @@ async def test_activity_pagination(client_and_drain: tuple[AsyncClient, DrainFn]
     assert page1_ids.isdisjoint(page2_ids)
 
 
-async def test_activity_event_type_filter(client: AsyncClient) -> None:
+async def test_activity_event_type_filter(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Filtering by event_type returns only matching events."""
-    run_id, task_id = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_active_run(client, drain)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
     # Filter to only run_status_changed events
@@ -144,9 +152,12 @@ async def test_activity_event_type_filter(client: AsyncClient) -> None:
     assert len(data["events"]) >= 1
 
 
-async def test_activity_enrichment(client: AsyncClient) -> None:
+async def test_activity_enrichment(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Task and step titles are populated in activity events."""
-    run_id, task_id = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_active_run(client, drain)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
     resp = await client.get(f"/api/runs/{run_id}/activity")
@@ -169,9 +180,12 @@ async def test_activity_run_not_found(client: AsyncClient) -> None:
 # --- SSE Streaming Tests ---
 
 
-async def test_sse_stream_endpoint_exists(client: AsyncClient) -> None:
+async def test_sse_stream_endpoint_exists(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """The SSE stream endpoint returns text/event-stream."""
-    run_id, _ = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, _ = await _setup_active_run(client, drain)
 
     # Use once=true for testing with ASGI transport
     async with client.stream("GET", f"/api/runs/{run_id}/activity/stream?once=true") as response:
@@ -179,9 +193,12 @@ async def test_sse_stream_endpoint_exists(client: AsyncClient) -> None:
         assert "text/event-stream" in response.headers.get("content-type", "")
 
 
-async def test_sse_stream_sends_events(client: AsyncClient) -> None:
+async def test_sse_stream_sends_events(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """SSE stream sends events as they occur."""
-    run_id, _task_id = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, _task_id = await _setup_active_run(client, drain)
 
     # Use once=true to get all existing events
     events_received: list[dict[str, Any]] = []
@@ -197,9 +214,12 @@ async def test_sse_stream_sends_events(client: AsyncClient) -> None:
     assert all(e["timestamp"].endswith("Z") for e in events_received)
 
 
-async def test_sse_stream_since_id_resumption(client: AsyncClient) -> None:
+async def test_sse_stream_since_id_resumption(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """SSE stream resumes from since_id parameter."""
-    run_id, task_id = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Start task to generate more events
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -226,9 +246,12 @@ async def test_sse_stream_since_id_resumption(client: AsyncClient) -> None:
     assert all(e["id"] > checkpoint_id for e in events_received)
 
 
-async def test_sse_stream_event_type_filter(client: AsyncClient) -> None:
+async def test_sse_stream_event_type_filter(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """SSE stream respects event_type filter."""
-    run_id, task_id = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Start task to generate events
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -247,9 +270,12 @@ async def test_sse_stream_event_type_filter(client: AsyncClient) -> None:
     assert all(e["event_type"] == "task_status_changed" for e in events_received)
 
 
-async def test_sse_stream_enrichment(client: AsyncClient) -> None:
+async def test_sse_stream_enrichment(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """SSE stream events include task_title and step_title."""
-    run_id, task_id = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_active_run(client, drain)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
     events_received: list[dict[str, Any]] = []
@@ -276,9 +302,12 @@ async def test_sse_stream_run_not_found(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_sse_stream_client_disconnect(client: AsyncClient) -> None:
+async def test_sse_stream_client_disconnect(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """SSE stream handles client disconnect gracefully."""
-    run_id, _ = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, _ = await _setup_active_run(client, drain)
 
     # Read partial stream (simulate disconnect by breaking early)
     async with client.stream("GET", f"/api/runs/{run_id}/activity/stream?once=true") as response:

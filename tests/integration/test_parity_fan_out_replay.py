@@ -7,26 +7,26 @@ that replaying the event journal correctly reconstructs:
   - The third child as PENDING (not yet done)
   - The fan-out step as NOT completed (still in progress)
   - The run as ACTIVE
+
+Uses a file-based DB (required for journal writing) but drives state changes
+through WorkflowService directly — no HTTP overhead or signal drain cycles.
 """
 
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
-from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from orchestrator.api.app import create_app
-from orchestrator.config import RoutineSource, RunStatus, TaskStatus
-from orchestrator.db import init_db
+from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
+from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import resolve_default_journal_path
 from orchestrator.db import replay_journal_to_repository
 from orchestrator.db import RunRepository
-from orchestrator.state.models import Run
-from orchestrator.workflow import InMemorySignalTransport
-
-from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
+from orchestrator.workflow.service import WorkflowService
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -88,49 +88,104 @@ FAN_OUT_ROUTINE: dict[str, Any] = {
 
 
 @pytest.fixture
-async def file_db_client(
+async def file_db(
     tmp_path: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, FastAPI, DrainFn], None]:
+) -> AsyncGenerator[tuple[async_sessionmaker[AsyncSession], Path], None]:
+    """File-based DB so the event journal is written to disk for replay tests."""
     db_path = tmp_path / "orchestrator.db"
-    transport = InMemorySignalTransport()
-    app = create_app(
-        db_path=str(db_path),
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-        spawn_agents=False,
+    engine = create_engine(str(db_path))
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    yield factory, db_path
+    await engine.dispose()
+
+
+def _now() -> datetime:
+    return datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _checklist(req_id: str = "R1") -> list[ChecklistItem]:
+    return [ChecklistItem(req_id=req_id, desc="Done", priority=Priority.CRITICAL)]
+
+
+def _make_run(run_id: str = "run-replay") -> Run:
+    now = _now()
+    return Run(
+        id=run_id,
+        repo_name="replay-fan-out-repo",
+        status=RunStatus.DRAFT,
+        routine_id="replay-fan-out",
+        routine_source=RoutineSource.EMBEDDED,
+        routine_embedded=FAN_OUT_ROUTINE,
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S-01",
+                tasks=[
+                    TaskState(
+                        id="task-setup",
+                        config_id="T-01",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    )
+                ],
+            ),
+            StepState(
+                id="step-2",
+                config_id="S-02",
+                tasks=[
+                    TaskState(
+                        id="task-child-a",
+                        config_id="T-02",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    ),
+                    TaskState(
+                        id="task-child-b",
+                        config_id="T-03",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    ),
+                    TaskState(
+                        id="task-child-c",
+                        config_id="T-04",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    ),
+                ],
+            ),
+            StepState(
+                id="step-3",
+                config_id="S-03",
+                tasks=[
+                    TaskState(
+                        id="task-combine",
+                        config_id="T-05",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    )
+                ],
+            ),
+        ],
+        created_at=now,
+        updated_at=now,
     )
-    app.state.signal_transport = transport
-    await init_db(app.state.engine)
-    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
-    drain = make_drain_fn(app, transport)
-    async with AsyncClient(transport=asgi, base_url="http://test") as c:
-        yield c, db_path, app, drain
-    await app.state.engine.dispose()
 
 
-async def _complete_task(
-    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn, req_id: str = "R1"
-) -> None:
-    """Drive a task through start → submit → grade → complete-verification."""
-    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
-    assert resp.status_code == 200, f"start failed: {resp.text}"
-    await client.patch(
-        f"/api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}",
-        json={"status": "done"},
-    )
-    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
-    await drain(run_id)
-
-    await client.put(
-        f"/api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}/grade",
-        json={"grade": "A"},
-    )
-    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
-    await drain(run_id)
-
-    task = (await client.get(f"/api/runs/{run_id}/tasks/{task_id}")).json()
-    assert task["status"] == "completed"
+async def _complete_task(service: WorkflowService, run_id: str, task_id: str) -> None:
+    """Drive a task through start → submit → grade → complete-verification via service."""
+    await service.start_task(run_id, task_id)
+    await service.update_checklist_item(run_id, task_id, "R1", ChecklistStatus.DONE)
+    await service.apply_submission(run_id, task_id)
+    await service.set_grade(run_id, task_id, "R1", "A", "done")
+    await service.apply_verification(run_id, task_id)
+    task = await service.get_task(run_id, task_id)
+    assert task.status == TaskStatus.COMPLETED
 
 
 def _corrupt_run_to_draft(run: Run) -> None:
@@ -147,7 +202,7 @@ def _corrupt_run_to_draft(run: Run) -> None:
 
 
 async def test_partial_fan_out_replay_reconstructs_correct_state(
-    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
+    file_db: tuple[async_sessionmaker[AsyncSession], Path],
 ) -> None:
     """After restart, completed fan-out children stay COMPLETED; pending stay PENDING.
 
@@ -159,54 +214,37 @@ async def test_partial_fan_out_replay_reconstructs_correct_state(
     5. Assert: run=ACTIVE, step 1=completed, child A=completed, child B=completed,
        child C=pending, fan-out step NOT completed
     """
-    client, db_path, app, drain = file_db_client
+    factory, db_path = file_db
+    run_id = "run-replay-partial"
 
-    # Create and start run
-    resp = await client.post(
-        "/api/runs",
-        json={
-            "routine_embedded": FAN_OUT_ROUTINE,
-            "repo_name": "replay-fan-out-repo",
-            "branch": "main",
-        },
-    )
-    assert resp.status_code == 201
-    run = resp.json()
-    run_id = run["id"]
-    setup_task_id = run["steps"][0]["tasks"][0]["id"]
-    child_a_id = run["steps"][1]["tasks"][0]["id"]
-    child_b_id = run["steps"][1]["tasks"][1]["id"]
-    child_c_id = run["steps"][1]["tasks"][2]["id"]
+    async with factory() as session:
+        service = WorkflowService(session)
+        run = _make_run(run_id)
+        await service.create_run(run)
+        await service.apply_start_run(run_id)
 
-    # Start run
-    start_resp = await client.post(f"/api/runs/{run_id}/start")
-    assert start_resp.status_code == 200
+        await _complete_task(service, run_id, "task-setup")
 
-    # Complete setup step
-    await _complete_task(client, run_id, setup_task_id, drain)
+        loaded = await service.get_run(run_id)
+        assert loaded.current_step_index == 1
 
-    # Verify we're on step 2
-    run_state = (await client.get(f"/api/runs/{run_id}")).json()
-    assert run_state["current_step_index"] == 1
+        # Complete child A and child B (but NOT child C — partial completion)
+        await _complete_task(service, run_id, "task-child-a")
+        await _complete_task(service, run_id, "task-child-b")
 
-    # Complete child A and child B (but NOT child C — partial completion)
-    await _complete_task(client, run_id, child_a_id, drain)
-    await _complete_task(client, run_id, child_b_id, drain)
-
-    # Verify partial state: step 2 not completed yet, child C still pending
-    run_state = (await client.get(f"/api/runs/{run_id}")).json()
-    assert run_state["steps"][1]["completed"] is False, "Fan-out step should not be completed yet"
-    assert run_state["current_step_index"] == 1, "Should still be on fan-out step"
-
-    task_c = (await client.get(f"/api/runs/{run_id}/tasks/{child_c_id}")).json()
-    assert task_c["status"] == "pending", f"Child C should be pending, got {task_c['status']}"
+        # Verify partial state
+        loaded = await service.get_run(run_id)
+        assert loaded.steps[1].completed is False, "Fan-out step should not be completed yet"
+        assert loaded.current_step_index == 1
+        child_c = await service.get_task(run_id, "task-child-c")
+        assert child_c.status == TaskStatus.PENDING
 
     # Verify journal was written
     journal_path = resolve_default_journal_path(db_path)
     assert journal_path is not None and journal_path.exists(), "Journal file must exist"
 
     # --- Simulate executor restart: corrupt all state to DRAFT/PENDING ---
-    async with app.state.session_factory() as session:
+    async with factory() as session:
         repo = RunRepository(session)
         stale_run = await repo.get(run_id)
         _corrupt_run_to_draft(stale_run)
@@ -214,11 +252,13 @@ async def test_partial_fan_out_replay_reconstructs_correct_state(
         await session.commit()
 
     # Verify state is now corrupted
-    corrupted = (await client.get(f"/api/runs/{run_id}")).json()
-    assert corrupted["status"] == "draft"
+    async with factory() as session:
+        repo = RunRepository(session)
+        corrupted = await repo.get(run_id)
+        assert corrupted.status == RunStatus.DRAFT
 
     # --- Replay journal to reconstruct state ---
-    async with app.state.session_factory() as session:
+    async with factory() as session:
         repo = RunRepository(session)
         summary = await replay_journal_to_repository(
             repo,
@@ -231,80 +271,61 @@ async def test_partial_fan_out_replay_reconstructs_correct_state(
     assert summary.updated_runs == 1, "Run should have been updated by replay"
 
     # --- Assert correct reconstruction ---
-    restored = (await client.get(f"/api/runs/{run_id}")).json()
+    async with factory() as session:
+        repo = RunRepository(session)
+        restored = await repo.get(run_id)
 
-    # Run should be active (not draft, not completed)
-    assert restored["status"] == "active", f"Run should be active, got {restored['status']}"
-
-    # Step 1 (setup) should be completed
-    assert restored["steps"][0]["completed"] is True, "Setup step should be completed"
-
-    # Step 2 (fan-out) should NOT be completed (child C still pending)
-    assert restored["steps"][1]["completed"] is False, (
+    assert restored.status == RunStatus.ACTIVE, f"Run should be active, got {restored.status}"
+    assert restored.steps[0].completed is True, "Setup step should be completed"
+    assert restored.steps[1].completed is False, (
         "Fan-out step should NOT be completed (child C still pending)"
     )
-
-    # Should still be on fan-out step
-    assert restored["current_step_index"] == 1, (
-        f"Should still be on fan-out step, got index {restored['current_step_index']}"
+    assert restored.current_step_index == 1, (
+        f"Should still be on fan-out step, got index {restored.current_step_index}"
     )
 
-    # Child A and B should be COMPLETED
-    child_a_state = (await client.get(f"/api/runs/{run_id}/tasks/{child_a_id}")).json()
-    assert child_a_state["status"] == "completed", (
-        f"Child A should be completed after replay, got {child_a_state['status']}"
-    )
+    child_a = next(t for t in restored.steps[1].tasks if t.id == "task-child-a")
+    child_b = next(t for t in restored.steps[1].tasks if t.id == "task-child-b")
+    child_c = next(t for t in restored.steps[1].tasks if t.id == "task-child-c")
 
-    child_b_state = (await client.get(f"/api/runs/{run_id}/tasks/{child_b_id}")).json()
-    assert child_b_state["status"] == "completed", (
-        f"Child B should be completed after replay, got {child_b_state['status']}"
+    assert child_a.status == TaskStatus.COMPLETED, (
+        f"Child A should be completed, got {child_a.status}"
     )
-
-    # Child C should still be PENDING (not yet completed before restart)
-    child_c_state = (await client.get(f"/api/runs/{run_id}/tasks/{child_c_id}")).json()
-    assert child_c_state["status"] == "pending", (
-        f"Child C should remain pending after replay, got {child_c_state['status']}"
+    assert child_b.status == TaskStatus.COMPLETED, (
+        f"Child B should be completed, got {child_b.status}"
+    )
+    assert child_c.status == TaskStatus.PENDING, (
+        f"Child C should remain pending, got {child_c.status}"
     )
 
 
 async def test_all_fan_out_children_completed_replay(
-    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
+    file_db: tuple[async_sessionmaker[AsyncSession], Path],
 ) -> None:
     """Replay after all children complete advances step index correctly."""
-    client, db_path, app, drain = file_db_client
+    factory, db_path = file_db
+    run_id = "run-replay-all"
 
-    resp = await client.post(
-        "/api/runs",
-        json={
-            "routine_embedded": FAN_OUT_ROUTINE,
-            "repo_name": "replay-fan-out-all-repo",
-            "branch": "main",
-        },
-    )
-    assert resp.status_code == 201
-    run = resp.json()
-    run_id = run["id"]
-    setup_task_id = run["steps"][0]["tasks"][0]["id"]
-    child_a_id = run["steps"][1]["tasks"][0]["id"]
-    child_b_id = run["steps"][1]["tasks"][1]["id"]
-    child_c_id = run["steps"][1]["tasks"][2]["id"]
+    async with factory() as session:
+        service = WorkflowService(session)
+        run = _make_run(run_id)
+        await service.create_run(run)
+        await service.apply_start_run(run_id)
 
-    await client.post(f"/api/runs/{run_id}/start")
-    await _complete_task(client, run_id, setup_task_id, drain)
-    await _complete_task(client, run_id, child_a_id, drain)
-    await _complete_task(client, run_id, child_b_id, drain)
-    await _complete_task(client, run_id, child_c_id, drain)
+        await _complete_task(service, run_id, "task-setup")
+        await _complete_task(service, run_id, "task-child-a")
+        await _complete_task(service, run_id, "task-child-b")
+        await _complete_task(service, run_id, "task-child-c")
 
-    # Verify all done before restart
-    run_state = (await client.get(f"/api/runs/{run_id}")).json()
-    assert run_state["steps"][1]["completed"] is True
-    assert run_state["current_step_index"] == 2  # Advanced to combine step
+        loaded = await service.get_run(run_id)
+        assert loaded.steps[1].completed is True
+        assert loaded.current_step_index == 2
 
     journal_path = resolve_default_journal_path(db_path)
     assert journal_path is not None
 
     # Corrupt state
-    async with app.state.session_factory() as session:
+    async with factory() as session:
         repo = RunRepository(session)
         stale_run = await repo.get(run_id)
         _corrupt_run_to_draft(stale_run)
@@ -312,7 +333,7 @@ async def test_all_fan_out_children_completed_replay(
         await session.commit()
 
     # Replay
-    async with app.state.session_factory() as session:
+    async with factory() as session:
         repo = RunRepository(session)
         await replay_journal_to_repository(
             repo,
@@ -321,14 +342,17 @@ async def test_all_fan_out_children_completed_replay(
         )
         await session.commit()
 
-    restored = (await client.get(f"/api/runs/{run_id}")).json()
-    assert restored["status"] == "active"
-    assert restored["steps"][0]["completed"] is True
-    assert restored["steps"][1]["completed"] is True
-    assert restored["current_step_index"] == 2
+    async with factory() as session:
+        repo = RunRepository(session)
+        restored = await repo.get(run_id)
 
-    for child_id in (child_a_id, child_b_id, child_c_id):
-        child_state = (await client.get(f"/api/runs/{run_id}/tasks/{child_id}")).json()
-        assert child_state["status"] == "completed", (
-            f"Child {child_id} should be completed, got {child_state['status']}"
+    assert restored.status == RunStatus.ACTIVE
+    assert restored.steps[0].completed is True
+    assert restored.steps[1].completed is True
+    assert restored.current_step_index == 2
+
+    for child_id in ("task-child-a", "task-child-b", "task-child-c"):
+        child = next(t for step in restored.steps for t in step.tasks if t.id == child_id)
+        assert child.status == TaskStatus.COMPLETED, (
+            f"Child {child_id} should be completed, got {child.status}"
         )

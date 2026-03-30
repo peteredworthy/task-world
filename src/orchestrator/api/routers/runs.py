@@ -409,55 +409,60 @@ async def get_run(
     return _run_to_response(run)
 
 
-@router.post("/{run_id}/start", response_model=RunResponse)
+@router.post("/{run_id}/start", response_model=RunResponse, status_code=202)
 async def start_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> RunResponse:
     """Start a run (DRAFT -> ACTIVE).
 
-    For managed agents (CLI, OpenHands), this also spawns the agent process
-    in the background. For user-managed/external agents, the agent should
-    poll the /tasks/{id}/prompt endpoint to get work.
+    Enqueues a RUN_START signal and returns 202 Accepted.
+    The signal consumer will apply the DRAFT→ACTIVE transition asynchronously.
     """
-    logger.info(f"API: Starting run {run_id}")
-    run = await executor.start_run_with_agent(run_id, service)
-    logger.info(
-        f"API: Run {run_id} started - status={run.status.value}, "
-        f"agent_type={run.agent_type.value if run.agent_type else 'none'}, "
-        f"agent_spawned={executor.is_running(run_id)}"
-    )
+    logger.info(f"API: Enqueueing RUN_START for run {run_id}")
+    run = await service.start_run(run_id)
     return _run_to_response(run)
 
 
-@router.post("/{run_id}/cancel", response_model=RunResponse)
+@router.post("/{run_id}/cancel", response_model=RunResponse, status_code=202)
 async def cancel_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> RunResponse:
-    """Cancel a run (ACTIVE/PAUSED -> FAILED)."""
+    """Cancel a run (ACTIVE/PAUSED -> FAILED).
+
+    Enqueues a CANCEL signal and returns 202 Accepted.
+    """
+    run = await service.get_run(run_id)
+    if run.status == RunStatus.STOPPING:
+        raise HTTPException(status_code=409, detail="Cannot cancel a run in STOPPING state")
     # Cancel any running agent first
     await executor.cancel_run(run_id)
     run = await service.cancel_run(run_id)
     return _run_to_response(run)
 
 
-@router.post("/{run_id}/pause", response_model=RunResponse)
+@router.post("/{run_id}/pause", response_model=RunResponse, status_code=202)
 async def pause_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
 ) -> RunResponse:
-    """Pause a run (ACTIVE -> PAUSED)."""
+    """Pause a run (ACTIVE -> PAUSED).
+
+    Enqueues a PAUSE signal and returns 202 Accepted.
+    """
+    run = await service.get_run(run_id)
+    if run.status == RunStatus.STOPPING:
+        raise HTTPException(status_code=409, detail="Cannot pause a run in STOPPING state")
     # Cancel any running agent first
     await executor.cancel_run(run_id)
     run = await service.pause_run(run_id)
     return _run_to_response(run)
 
 
-@router.post("/{run_id}/resume", response_model=RunResponse)
+@router.post("/{run_id}/resume", response_model=RunResponse, status_code=202)
 async def resume_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
@@ -467,10 +472,13 @@ async def resume_run(
 ) -> RunResponse:
     """Resume a run (PAUSED -> ACTIVE), optionally changing the agent.
 
-    For managed agents (CLI, OpenHands), this also spawns the agent process
-    in the background. For user-managed/external agents, the agent should
-    poll the /tasks/{id}/prompt endpoint to get work.
+    Enqueues a RESUME signal and returns 202 Accepted.
+    Returns 409 if the run is in STOPPING state.
     """
+    current_run = await service.get_run(run_id)
+    if current_run.status == RunStatus.STOPPING:
+        raise HTTPException(status_code=409, detail="Cannot resume a run in STOPPING state")
+
     # Schema validator normalizes agent_type to a valid lowercase value
     agent_type = AgentRunnerType(request.agent_type) if request and request.agent_type else None
     agent_config = request.agent_config if request and request.agent_config else None
@@ -478,7 +486,6 @@ async def resume_run(
 
     # Handle worktree reset before changing run state
     if resume_strategy == "reset_worktree":
-        current_run = await repository.get(run_id)
         if current_run.worktree_path:
             AgentRunnerExecutor.reset_worktree(current_run.worktree_path)
             logger.info(f"API: Reset worktree for run {run_id}")
@@ -490,16 +497,6 @@ async def resume_run(
         resume_strategy=resume_strategy,
     )
 
-    # Spawn agent if this is a managed agent type
-    if run.agent_type is not None:
-        spawned = executor.spawn_for_run(
-            run.id,
-            run.agent_type,
-            run.agent_config,
-        )
-        if spawned:
-            logger.info(f"API: Spawned {run.agent_type.value} agent for resumed run {run_id}")
-
     return _run_to_response(run)
 
 
@@ -510,6 +507,9 @@ async def recover_run(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
 ) -> RecoverResponse:
     """Recover a FAILED run by rewinding to a target task and pausing."""
+    run = await service.get_run(run_id)
+    if run.status == RunStatus.STOPPING:
+        raise HTTPException(status_code=409, detail="Cannot recover a run in STOPPING state")
     # Schema validator normalizes agent_type to a valid lowercase value
     agent_type = AgentRunnerType(body.agent_type) if body.agent_type else None
     agent_config = body.agent_config if body.agent_config else None
@@ -747,6 +747,7 @@ async def approve_step(
     repository: Annotated[RunRepository, Depends(get_run_repository)],
     session: Annotated[AsyncSession, Depends(get_session)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
 ) -> StepResponse:
     """Human approval for a step gate.
 
@@ -815,19 +816,7 @@ async def approve_step(
         "waiting_for_approval",
         "awaiting_approval",
     ):
-        from orchestrator.db import EventStore
-        from orchestrator.workflow import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
-
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-        svc = WorkflowService(
-            session=session,
-            repo=repository,
-            event_store=event_store,
-            event_emitter=emitter,
-        )
-        run = await svc.resume_run(run_id)
+        run = await service.resume_run(run_id)
         await session.commit()
         logger.info(f"API: Auto-resumed run {run_id} after step approval")
 
@@ -963,9 +952,9 @@ async def skip_step(
         await event_store.append_batch(events)
 
     # If the run is still paused (e.g., at another manual gate), don't resume it
-    # Otherwise, resume the run
+    # Otherwise, resume the run (direct apply — gate approval is synchronous)
     if run.status != RunStatus.PAUSED:
-        await service.resume_run(run_id)
+        await service.apply_resume_run(run_id)
     else:
         # Just make sure the run is reloaded from the database
         run = await repository.get(run_id)
@@ -1124,8 +1113,8 @@ async def agent_cancelled(
 
     Transitions the run to FAILED with a cancellation reason.
     """
-    # Cancel the run (this will transition to FAILED)
-    run = await service.cancel_run(run_id)
+    # Cancel the run (direct apply — synchronous cancellation for agent_cancelled endpoint)
+    run = await service.apply_cancel_run(run_id)
 
     # Note: The cancellation reason could be stored in a future field like
     # `cancellation_reason` on the Run model if needed for audit trails

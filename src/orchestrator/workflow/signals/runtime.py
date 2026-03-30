@@ -28,15 +28,12 @@ from orchestrator.runners.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
-from orchestrator.workflow.engine.errors import GateBlockedError
 from orchestrator.workflow.signals.handlers import build_registry, signal_handler
 from orchestrator.workflow.signals.signals import (
     DbSignalTransport,
     SignalQueue,
     SignalTransport,
     WorkflowSignal,
-    register_active_run,
-    unregister_active_run,
 )
 from orchestrator.workflow.agent.summary_cache import SummaryCache
 
@@ -173,18 +170,16 @@ class RunWorkflow:
             self._callbacks.monitor_agent_health(run_id, agent_type)
         )
 
-        register_active_run(run_id)
         try:
             await self._run_loop()
         except asyncio.CancelledError:
             # Server shutdown/reload cancels asyncio tasks. Use "server_shutdown"
             # reason so startup recovery can auto-resume these runs.
             logger.warning(f"Run {run_id}: agent loop cancelled (server shutdown?), pausing run")
-            unregister_active_run(run_id)
             try:
                 async with self._callbacks.session_factory() as session:
                     service = await self._callbacks.create_service(session)
-                    await service.pause_run(run_id, reason="server_shutdown")
+                    await service.apply_pause_run(run_id, reason="server_shutdown")
                     await session.commit()
             except Exception:
                 # DB/engine might be shutting down too.
@@ -192,18 +187,14 @@ class RunWorkflow:
             raise  # Re-raise so the task is marked as cancelled
         except Exception as e:
             logger.exception(f"Run {run_id}: unexpected error in agent loop: {e}")
-            unregister_active_run(run_id)
             try:
                 async with self._callbacks.session_factory() as session:
                     service = await self._callbacks.create_service(session)
-                    await service.pause_run(run_id, reason="unexpected_error")
+                    await service.apply_pause_run(run_id, reason="unexpected_error")
                     await session.commit()
             except Exception:
                 logger.exception(f"Run {run_id}: failed to pause run after outer error")
         finally:
-            # Always unregister (may already be done in exception handlers above)
-            unregister_active_run(run_id)
-
             # Cancel health monitor
             health_monitor_task.cancel()
             try:
@@ -213,8 +204,7 @@ class RunWorkflow:
 
             # Safety net: if the run is still ACTIVE when the executor exits,
             # pause it so the sweeper doesn't find an orphaned ACTIVE run.
-            # unregister_active_run() has already been called so service.pause_run()
-            # uses the direct-DB path.
+            # Registry unregistration is handled by the consumer (_safe_run_workflow).
             try:
                 async with self._callbacks.session_factory() as session:
                     from orchestrator.db import RunRepository
@@ -227,7 +217,7 @@ class RunWorkflow:
                             "— pausing (safety net)"
                         )
                         service = await self._callbacks.create_service(session)
-                        await service.pause_run(run_id, reason="executor_exited")
+                        await service.apply_pause_run(run_id, reason="executor_exited")
                         await session.commit()
             except Exception:
                 logger.exception(f"Run {run_id}: safety-net pause failed — run may be left ACTIVE")
@@ -283,20 +273,8 @@ class RunWorkflow:
         raw_reason: Any = payload.get("reason") if payload else None
         reason: str = raw_reason if isinstance(raw_reason, str) else "signal_pause"
         logger.info(f"Run {self.run_id}: applying PAUSE signal (reason={reason})")
-        unregister_active_run(self.run_id)
-        await service.pause_run(self.run_id, reason=reason)
+        await service.apply_pause_run(self.run_id, reason=reason)
         return True
-
-    @signal_handler(WorkflowSignal.RESUME)
-    async def handle_resume(
-        self,
-        session: AsyncSession,
-        service: WorkflowService,
-        payload: dict[str, Any] | None,
-    ) -> bool:
-        """Ignore RESUME while already running (no-op)."""
-        logger.debug(f"Run {self.run_id}: ignoring RESUME signal (already running)")
-        return False
 
     @signal_handler(WorkflowSignal.CANCEL)
     async def handle_cancel(
@@ -307,8 +285,7 @@ class RunWorkflow:
     ) -> bool:
         """Apply cancelled state and emit RunStatusChanged."""
         logger.info(f"Run {self.run_id}: applying CANCEL signal")
-        unregister_active_run(self.run_id)
-        await service.cancel_run(self.run_id)
+        await service.apply_cancel_run(self.run_id)
         return True
 
     @signal_handler(WorkflowSignal.ACTIVITY_COMPLETED)
@@ -318,13 +295,17 @@ class RunWorkflow:
         service: WorkflowService,
         payload: dict[str, Any] | None,
     ) -> bool:
-        """Transition task from BUILDING → VERIFYING on ACTIVITY_COMPLETED signal."""
+        """Apply BUILDING → VERIFYING transition on ACTIVITY_COMPLETED signal.
+
+        The gate check and auto-verify already ran synchronously at the HTTP
+        endpoint (check_submission).  This handler only applies the transition.
+        """
         task_id: str | None = payload.get("task_id") if payload else None
         if not task_id:
             logger.warning(f"Run {self.run_id}: ACTIVITY_COMPLETED signal missing task_id")
             return False
         try:
-            result = await service.submit_for_verification(self.run_id, task_id)
+            result = await service.apply_submission(self.run_id, task_id)
             if result.success:
                 logger.info(
                     f"Run {self.run_id}: task {task_id} transitioned to "
@@ -335,13 +316,6 @@ class RunWorkflow:
                     f"Run {self.run_id}: ACTIVITY_COMPLETED for task {task_id} "
                     f"failed: {result.error}"
                 )
-        except GateBlockedError as e:
-            logger.warning(
-                f"Run {self.run_id}: task {task_id} checklist gate blocked on submit: {e}. "
-                "Pausing run."
-            )
-            await service.pause_run(self.run_id, reason="gate_blocked")
-            await session.commit()
         except Exception as e:
             logger.warning(
                 f"Run {self.run_id}: error handling ACTIVITY_COMPLETED for task {task_id}: {e}"
@@ -355,13 +329,18 @@ class RunWorkflow:
         service: WorkflowService,
         payload: dict[str, Any] | None,
     ) -> bool:
-        """Process verification outcome on ACTIVITY_VERIFIED signal."""
+        """Apply verification outcome on ACTIVITY_VERIFIED signal.
+
+        The state validation already ran synchronously at the HTTP endpoint
+        (check_verification).  This handler evaluates grades and applies the
+        VERIFYING → outcome transition.
+        """
         task_id: str | None = payload.get("task_id") if payload else None
         if not task_id:
             logger.warning(f"Run {self.run_id}: ACTIVITY_VERIFIED signal missing task_id")
             return False
         try:
-            result = await service.complete_verification(self.run_id, task_id)
+            result = await service.apply_verification(self.run_id, task_id)
             if result.success:
                 logger.info(
                     f"Run {self.run_id}: task {task_id} verification completed → "
@@ -386,9 +365,7 @@ class RunWorkflow:
         """Execution loop: find task → execute → repeat until done/paused/failed.
 
         Moved from AgentRunnerExecutor._run_agent_loop().  All internal
-        calls to service.pause_run() unregister_active_run() first so
-        that the signal-routing check in WorkflowService uses the direct-DB
-        path (not the signal queue).
+        pause/cancel calls go through the signal queue.
         """
         from orchestrator.db import RunRepository
         from orchestrator.workflow.events import ApprovalRequested
@@ -481,10 +458,11 @@ class RunWorkflow:
                     else:
                         logger.info(f"Run {run_id}: no task — {no_task_reason.value}")
 
-                    # Act on the decision — unregister before internal pauses
+                    # Act on the decision
                     if action.kind == "pause":
-                        unregister_active_run(run_id)
-                        await service.pause_run(run_id, reason=action.pause_reason or "unknown")
+                        await service.apply_pause_run(
+                            run_id, reason=action.pause_reason or "unknown"
+                        )
                         await session.commit()
                     elif action.kind in ("complete", "fail"):
                         await repo.save(run)
@@ -515,8 +493,7 @@ class RunWorkflow:
                         f"Run {run_id}: task {task_state.id} still RECOVERING "
                         "after previous recovery attempt — pausing"
                     )
-                    unregister_active_run(run_id)
-                    await service.pause_run(run_id, reason="recovery_loop")
+                    await service.apply_pause_run(run_id, reason="recovery_loop")
                     await session.commit()
                     break
                 if was_recovering:
@@ -533,20 +510,9 @@ class RunWorkflow:
                         session=session,
                     )
                     await session.commit()
-                except GateBlockedError as e:
-                    logger.warning(
-                        f"Run {run_id}: task {task_state.id} checklist gate "
-                        f"blocked on submit: {e}. "
-                        "Agent ran but could not satisfy the gate — pausing run."
-                    )
-                    unregister_active_run(run_id)
-                    await service.pause_run(run_id, reason="gate_blocked")
-                    await session.commit()
-                    break
                 except AgentCancelledError:
                     logger.info(f"Run {run_id}: agent cancelled — pausing run")
-                    unregister_active_run(run_id)
-                    await service.pause_run(run_id, reason="agent_cancelled")
+                    await service.apply_pause_run(run_id, reason="agent_cancelled")
                     await session.commit()
                     break
                 except AgentNotAvailableError as e:
@@ -557,8 +523,7 @@ class RunWorkflow:
                     await self._callbacks.attempt_store.store_attempt_output(
                         run_id, task_state.id, [], str(e)
                     )
-                    unregister_active_run(run_id)
-                    await service.pause_run(
+                    await service.apply_pause_run(
                         run_id, reason="agent_not_available", error_detail=str(e)
                     )
                     await session.commit()
@@ -571,8 +536,7 @@ class RunWorkflow:
                     await self._callbacks.attempt_store.store_attempt_output(
                         run_id, task_state.id, [], str(e)
                     )
-                    unregister_active_run(run_id)
-                    await service.pause_run(
+                    await service.apply_pause_run(
                         run_id, reason="agent_execution_error", error_detail=str(e)
                     )
                     await session.commit()
@@ -583,8 +547,7 @@ class RunWorkflow:
                         run_id, task_state, type(e).__name__, str(e)
                     )
                     try:
-                        unregister_active_run(run_id)
-                        await service.pause_run(
+                        await service.apply_pause_run(
                             run_id,
                             reason="unexpected_error",
                             error_detail=str(e),

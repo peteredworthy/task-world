@@ -165,7 +165,7 @@ async def test_full_workflow_through_mcp_server(
         updated_at=now,
     )
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     call = server.mcp.call_tool

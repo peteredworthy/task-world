@@ -60,7 +60,9 @@ async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None
     await app.state.engine.dispose()
 
 
-async def _create_and_start_run(client: AsyncClient, repo: str = "parity-pause-repo") -> str:
+async def _create_and_start_run(
+    client: AsyncClient, drain: DrainFn, repo: str = "parity-pause-repo"
+) -> str:
     resp = await client.post(
         "/api/runs",
         json={
@@ -73,8 +75,10 @@ async def _create_and_start_run(client: AsyncClient, repo: str = "parity-pause-r
     run_id = resp.json()["id"]
 
     resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "active"
+    assert resp.status_code == 202
+    await drain(run_id)
+    run = await client.get(f"/api/runs/{run_id}")
+    assert run.json()["status"] == "active"
     return run_id
 
 
@@ -93,19 +97,17 @@ async def test_pause_sets_status_and_reason(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Pausing an active run sets status=paused with pause_reason persisted."""
-    client, _drain = client_and_drain
-    run_id = await _create_and_start_run(client)
+    client, drain = client_and_drain
+    run_id = await _create_and_start_run(client, drain)
 
     resp = await client.post(f"/api/runs/{run_id}/pause")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "paused"
-    # The API pause endpoint uses "manual_pause" as the default reason
-    assert data["pause_reason"] == "manual_pause"
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Verify state persisted via GET
     run = await _get_run(client, run_id)
     assert run["status"] == "paused"
+    # The API pause endpoint uses "manual_pause" as the default reason
     assert run["pause_reason"] == "manual_pause"
 
 
@@ -113,15 +115,16 @@ async def test_resume_clears_paused_state(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Resuming a paused run restores status=active and clears pause_reason."""
-    client, _drain = client_and_drain
-    run_id = await _create_and_start_run(client, repo="parity-resume-repo")
+    client, drain = client_and_drain
+    run_id = await _create_and_start_run(client, drain, repo="parity-resume-repo")
 
-    await client.post(f"/api/runs/{run_id}/pause")
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     resp = await client.post(f"/api/runs/{run_id}/resume")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "active"
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Verify via GET
     run = await _get_run(client, run_id)
@@ -135,17 +138,21 @@ async def test_pause_resume_then_complete(
 ) -> None:
     """Full workflow: start → pause → resume → complete task → run completed."""
     client, drain = client_and_drain
-    run_id = await _create_and_start_run(client, repo="parity-full-pause-repo")
+    run_id = await _create_and_start_run(client, drain, repo="parity-full-pause-repo")
     run_data = await _get_run(client, run_id)
     task_id = run_data["steps"][0]["tasks"][0]["id"]
 
     # Pause
     resp = await client.post(f"/api/runs/{run_id}/pause")
-    assert resp.json()["status"] == "paused"
+    assert resp.status_code == 202
+    await drain(run_id)
+    assert (await _get_run(client, run_id))["status"] == "paused"
 
     # Resume
     resp = await client.post(f"/api/runs/{run_id}/resume")
-    assert resp.json()["status"] == "active"
+    assert resp.status_code == 202
+    await drain(run_id)
+    assert (await _get_run(client, run_id))["status"] == "active"
 
     # Complete the task
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -154,7 +161,7 @@ async def test_pause_resume_then_complete(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     await client.put(
@@ -162,7 +169,7 @@ async def test_pause_resume_then_complete(
         json={"grade": "A"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     run = await _get_run(client, run_id)
@@ -173,11 +180,15 @@ async def test_pause_events_recorded(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Pause and resume events appear in the activity log."""
-    client, _drain = client_and_drain
-    run_id = await _create_and_start_run(client, repo="parity-events-repo")
+    client, drain = client_and_drain
+    run_id = await _create_and_start_run(client, drain, repo="parity-events-repo")
 
-    await client.post(f"/api/runs/{run_id}/pause")
-    await client.post(f"/api/runs/{run_id}/resume")
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
+    resp = await client.post(f"/api/runs/{run_id}/resume")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     resp = await client.get(f"/api/runs/{run_id}/activity")
     assert resp.status_code == 200
@@ -194,30 +205,33 @@ async def test_cancel_active_run(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Cancelling an active run sets status=failed."""
-    client, _drain = client_and_drain
-    run_id = await _create_and_start_run(client, repo="parity-cancel-repo")
+    client, drain = client_and_drain
+    run_id = await _create_and_start_run(client, drain, repo="parity-cancel-repo")
 
     resp = await client.post(f"/api/runs/{run_id}/cancel")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["status"] == "failed", "Cancelled run should have status=failed"
-    assert data["completed_at"] is not None
+    assert resp.status_code == 202
+    await drain(run_id)
 
     run = await _get_run(client, run_id)
-    assert run["status"] == "failed"
+    assert run["status"] == "failed", "Cancelled run should have status=failed"
+    assert run["completed_at"] is not None
 
 
 async def test_cancel_paused_run(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Cancelling a paused run also sets status=failed."""
-    client, _drain = client_and_drain
-    run_id = await _create_and_start_run(client, repo="parity-cancel-paused-repo")
+    client, drain = client_and_drain
+    run_id = await _create_and_start_run(client, drain, repo="parity-cancel-paused-repo")
 
-    await client.post(f"/api/runs/{run_id}/pause")
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
     run = await _get_run(client, run_id)
     assert run["status"] == "paused"
 
     resp = await client.post(f"/api/runs/{run_id}/cancel")
-    assert resp.status_code == 200
-    assert resp.json()["status"] == "failed"
+    assert resp.status_code == 202
+    await drain(run_id)
+    run = await _get_run(client, run_id)
+    assert run["status"] == "failed"

@@ -12,6 +12,8 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -57,10 +59,8 @@ def git_repo(tmp_path: Path) -> Path:
 @pytest.fixture
 async def client_with_auto_verify(
     git_repo: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, Any], None]:
+) -> AsyncGenerator[tuple[AsyncClient, Path, Any, DrainFn], None]:
     """Test client wired to a routine that has auto_verify commands."""
-    from fastapi import FastAPI
-
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
     repos_dir = git_repo.parent
@@ -74,21 +74,25 @@ async def client_with_auto_verify(
         )
     )
 
-    app: FastAPI = create_app(
+    signal_transport = InMemorySignalTransport()
+    app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         global_config=global_config,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo, app
+        yield c, git_repo, app, drain
     await app.state.engine.dispose()
 
 
 async def _create_and_start_run(
     client: AsyncClient,
     project_path: Path,
+    drain: DrainFn,
     routine_id: str = "auto-verify-routine",
 ) -> dict[str, Any]:
     """Helper: create and start a run for the given routine."""
@@ -104,8 +108,9 @@ async def _create_and_start_run(
     run_id = resp.json()["id"]
 
     resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
+    assert resp.status_code == 202, resp.text
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
     assert data["worktree_path"] is not None
     return data
@@ -118,11 +123,11 @@ async def _create_and_start_run(
 
 class TestStartTestRun:
     async def test_start_test_run_returns_id(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """POST /review/test returns a test_run_id and 'running' status."""
-        client, repo, _app = client_with_auto_verify
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, _app, drain = client_with_auto_verify
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.post(f"/api/runs/{run_id}/review/test", json={})
@@ -134,11 +139,11 @@ class TestStartTestRun:
         assert data["status"] == "running"
 
     async def test_no_auto_verify_returns_422(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """422 when the routine has no auto_verify commands configured."""
-        client, repo, _app = client_with_auto_verify
-        run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+        client, repo, _app, drain = client_with_auto_verify
+        run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
         run_id = run_data["id"]
 
         resp = await client.post(f"/api/runs/{run_id}/review/test", json={})
@@ -146,17 +151,17 @@ class TestStartTestRun:
         assert "auto_verify" in resp.json()["detail"].lower()
 
     async def test_run_not_found_returns_404(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
-        client, _repo, _app = client_with_auto_verify
+        client, _repo, _app, _drain = client_with_auto_verify
         resp = await client.post("/api/runs/nonexistent-run/review/test", json={})
         assert resp.status_code == 404
 
     async def test_run_without_worktree_returns_409(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """409 when the run has no active worktree."""
-        client, repo, _app = client_with_auto_verify
+        client, repo, _app, _drain = client_with_auto_verify
         # Create run but don't start it (so no worktree)
         resp = await client.post(
             "/api/runs",
@@ -173,11 +178,11 @@ class TestStartTestRun:
         assert resp.status_code == 409
 
     async def test_concurrent_test_run_returns_409(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """409 when a test run is already in progress for this run."""
-        client, repo, app = client_with_auto_verify
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, app, drain = client_with_auto_verify
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = run_data["worktree_path"]
 
@@ -205,11 +210,11 @@ class TestStartTestRun:
 
 class TestGetTestRun:
     async def test_get_test_run_returns_running_status(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """GET immediately after POST returns 'running' or completed status."""
-        client, repo, _app = client_with_auto_verify
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, _app, drain = client_with_auto_verify
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         post_resp = await client.post(f"/api/runs/{run_id}/review/test", json={})
@@ -223,11 +228,11 @@ class TestGetTestRun:
         assert data["status"] in {"running", "passed", "failed", "error"}
 
     async def test_test_run_completes_with_results(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """After completion, GET returns final status with log_output."""
-        client, repo, _app = client_with_auto_verify
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, _app, drain = client_with_auto_verify
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         post_resp = await client.post(f"/api/runs/{run_id}/review/test", json={})
@@ -248,11 +253,11 @@ class TestGetTestRun:
         assert data["log_output"] != "" or data["status"] == "error"
 
     async def test_test_run_captures_output(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """log_output contains actual stdout from the test command."""
-        client, repo, _app = client_with_auto_verify
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, _app, drain = client_with_auto_verify
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         post_resp = await client.post(f"/api/runs/{run_id}/review/test", json={})
@@ -272,18 +277,16 @@ class TestGetTestRun:
         assert "tests passed" in data["log_output"]
 
     async def test_test_run_reports_failure(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """A command that exits non-zero produces 'failed' status."""
-        client, repo, app = client_with_auto_verify
+        client, repo, app, drain = client_with_auto_verify
 
-        # Start a run using the auto-verify routine but inject a failing command
-        # by directly invoking the test runner with a failing command
         from orchestrator.git import TestRunner
 
         test_runner: TestRunner = app.state.test_runner
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = run_data["worktree_path"]
 
@@ -306,22 +309,22 @@ class TestGetTestRun:
         assert data["status"] == "failed"
 
     async def test_test_run_not_found_returns_404(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """GET with unknown test_run_id returns 404."""
-        client, repo, _app = client_with_auto_verify
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, _app, drain = client_with_auto_verify
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/test/nonexistent-id")
         assert resp.status_code == 404
 
     async def test_test_run_schema_fields(
-        self, client_with_auto_verify: tuple[AsyncClient, Path, Any]
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """TestRunResult response contains all required schema fields."""
-        client, repo, _app = client_with_auto_verify
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, _app, drain = client_with_auto_verify
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         post_resp = await client.post(f"/api/runs/{run_id}/review/test", json={})

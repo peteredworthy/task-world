@@ -36,7 +36,7 @@ async def test_full_workflow_happy_path(api_client: AsyncClient, drain: DrainFn)
     assert run_data["current_step_index"] == 0
 
     # 2. Start the run (DRAFT → ACTIVE)
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
     assert run_data["status"] == "active"
 
     # 3. Get the first task
@@ -99,7 +99,7 @@ async def test_workflow_with_task_context(api_client: AsyncClient, drain: DrainF
     # Create and start run
     run_data = await create_run(api_client, routine_id="simple-routine", repo_name="test-proj-2")
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start task
     task_id = get_first_task_id(run_data)
@@ -132,7 +132,7 @@ async def test_workflow_tracks_attempts(api_client: AsyncClient, drain: DrainFn)
     # Create and start run
     run_data = await create_run(api_client, routine_id="simple-routine", repo_name="test-proj-3")
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start and complete task
     task_id = get_first_task_id(run_data)
@@ -170,7 +170,7 @@ async def test_run_progression_updates_current_step(
     run_id = run_data["id"]
     assert run_data["current_step_index"] == 0
 
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
     assert run_data["current_step_index"] == 0
 
     # Complete the task

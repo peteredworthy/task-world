@@ -69,7 +69,7 @@ async def test_mock_agent_completes_task(service: WorkflowService) -> None:
     """MockAgent completes requirements and submits, driving task to VERIFYING."""
     run = _make_run_with_requirements(["R1", "R2"])
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     # Build callbacks that call into WorkflowService
@@ -107,7 +107,7 @@ async def test_mock_agent_partial_completion(service: WorkflowService) -> None:
     """MockAgent completes some requirements, blocks others, doesn't submit."""
     run = _make_run_with_requirements(["R1", "R2", "R3"])
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     async def on_checklist_update(req_id: str, status: ChecklistStatus, note: str | None) -> None:
@@ -144,7 +144,7 @@ async def test_mock_agent_full_lifecycle(service: WorkflowService) -> None:
     """Full lifecycle: mock agent builds, verifier grades, task completes."""
     run = _make_run_with_requirements(["R1"])
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     async def on_checklist_update(req_id: str, status: ChecklistStatus, note: str | None) -> None:

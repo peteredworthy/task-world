@@ -71,10 +71,16 @@ async def _create_run(
     return resp.json()
 
 
-async def _start_run(client: AsyncClient, run_id: str) -> dict[str, Any]:
+async def _start_run(
+    client: AsyncClient, run_id: str, drain: DrainFn | None = None
+) -> dict[str, Any]:
     resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200, f"Failed to start run: {resp.text}"
-    return resp.json()
+    assert resp.status_code == 202, f"Failed to start run: {resp.text}"
+    if drain is not None:
+        await drain(run_id)
+    resp2 = await client.get(f"/api/runs/{run_id}")
+    assert resp2.status_code == 200
+    return resp2.json()
 
 
 async def _start_task(client: AsyncClient, run_id: str, task_id: str) -> dict[str, Any]:
@@ -100,7 +106,7 @@ async def _submit_task(
     client: AsyncClient, run_id: str, task_id: str, drain: DrainFn | None = None
 ) -> dict[str, Any]:
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202, f"Failed to submit task: {resp.text}"
+    assert resp.status_code == 200, f"Failed to submit task: {resp.text}"
     if drain is not None:
         await drain(run_id)
     return {"success": True}
@@ -129,7 +135,7 @@ async def _complete_verification(
     client: AsyncClient, run_id: str, task_id: str, drain: DrainFn | None = None
 ) -> dict[str, Any]:
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202, f"Failed to complete verification: {resp.text}"
+    assert resp.status_code == 200, f"Failed to complete verification: {resp.text}"
     if drain is not None:
         await drain(run_id)
     return {"success": True}
@@ -170,7 +176,7 @@ async def test_full_lifecycle_builder_verifier_pass(
     assert len(run_data["steps"][0]["tasks"]) == 1, "simple-routine has one task"
 
     # 2. Start run
-    started = await _start_run(client, run_id)
+    started = await _start_run(client, run_id, drain=drain)
     assert started["status"] == "active", "Run should be active after start"
 
     # 3. Verify run status via GET
@@ -268,7 +274,7 @@ async def test_full_lifecycle_with_revision(client_and_drain: tuple[AsyncClient,
     run_data = await _create_run(client)
     run_id = run_data["id"]
     task_id = run_data["steps"][0]["tasks"][0]["id"]
-    await _start_run(client, run_id)
+    await _start_run(client, run_id, drain=drain)
 
     # Attempt 1: start task, submit, fail verification
     await _start_task(client, run_id, task_id)
@@ -328,13 +334,16 @@ async def test_full_lifecycle_with_revision(client_and_drain: tuple[AsyncClient,
 # ---------------------------------------------------------------------------
 
 
-async def test_full_lifecycle_cancel_active_run(client: AsyncClient) -> None:
+async def test_full_lifecycle_cancel_active_run(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Create, start, begin a task, then cancel the run."""
+    client, drain = client_and_drain
     # 1. Create and start run
     run_data = await _create_run(client)
     run_id = run_data["id"]
     task_id = run_data["steps"][0]["tasks"][0]["id"]
-    await _start_run(client, run_id)
+    await _start_run(client, run_id, drain=drain)
 
     # 2. Start a task (put it in building state)
     await _start_task(client, run_id, task_id)
@@ -345,14 +354,14 @@ async def test_full_lifecycle_cancel_active_run(client: AsyncClient) -> None:
 
     # 3. Cancel the run
     cancel_resp = await client.post(f"/api/runs/{run_id}/cancel")
-    assert cancel_resp.status_code == 200
-    cancel_data = cancel_resp.json()
-    assert cancel_data["status"] == "failed", "Cancelled run should be in failed status"
-    assert cancel_data["completed_at"] is not None, "completed_at should be set on cancel"
+    assert cancel_resp.status_code == 202
+    await drain(run_id)
 
     # 4. Verify via GET
     run_resp = await client.get(f"/api/runs/{run_id}")
-    assert run_resp.json()["status"] == "failed"
+    cancel_data = run_resp.json()
+    assert cancel_data["status"] == "failed", "Cancelled run should be in failed status"
+    assert cancel_data["completed_at"] is not None, "completed_at should be set on cancel"
 
     # 5. Verify activity includes the cancellation event
     activity_resp = await client.get(f"/api/runs/{run_id}/activity")
@@ -373,25 +382,25 @@ async def test_full_lifecycle_pause_resume(client_and_drain: tuple[AsyncClient, 
     run_data = await _create_run(client)
     run_id = run_data["id"]
     task_id = run_data["steps"][0]["tasks"][0]["id"]
-    await _start_run(client, run_id)
+    await _start_run(client, run_id, drain=drain)
 
     # 2. Pause
     pause_resp = await client.post(f"/api/runs/{run_id}/pause")
-    assert pause_resp.status_code == 200
-    assert pause_resp.json()["status"] == "paused", "Run should be paused"
+    assert pause_resp.status_code == 202
+    await drain(run_id)
 
     # 3. Verify paused via GET
     get_resp = await client.get(f"/api/runs/{run_id}")
-    assert get_resp.json()["status"] == "paused"
+    assert get_resp.json()["status"] == "paused", "Run should be paused"
 
     # 4. Resume
     resume_resp = await client.post(f"/api/runs/{run_id}/resume")
-    assert resume_resp.status_code == 200
-    assert resume_resp.json()["status"] == "active", "Run should be active after resume"
+    assert resume_resp.status_code == 202
+    await drain(run_id)
 
     # 5. Verify active via GET
     get_resp = await client.get(f"/api/runs/{run_id}")
-    assert get_resp.json()["status"] == "active"
+    assert get_resp.json()["status"] == "active", "Run should be active after resume"
 
     # 6. Complete the workflow
     await _complete_task_successfully(client, run_id, task_id, drain=drain)
@@ -417,7 +426,7 @@ async def test_cost_estimation_in_response(client_and_drain: tuple[AsyncClient, 
     run_data = await _create_run(client)
     run_id = run_data["id"]
     task_id = run_data["steps"][0]["tasks"][0]["id"]
-    await _start_run(client, run_id)
+    await _start_run(client, run_id, drain=drain)
     await _complete_task_successfully(client, run_id, task_id, drain=drain)
 
     # Verify initially no cost estimate (no tokens used through API)
@@ -510,7 +519,7 @@ async def test_embedded_routine_full_lifecycle(
     task_id = run_data["steps"][0]["tasks"][0]["id"]
 
     # 2. Start the run
-    started = await _start_run(client, run_id)
+    started = await _start_run(client, run_id, drain=drain)
     assert started["status"] == "active"
 
     # 3. Start task
@@ -552,7 +561,9 @@ async def test_embedded_routine_full_lifecycle(
 # ---------------------------------------------------------------------------
 
 
-async def test_lock_manager_prevents_concurrent_task_start(client: AsyncClient) -> None:
+async def test_lock_manager_prevents_concurrent_task_start(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Verify that the lock manager is wired into the app and prevents
     a different agent from starting the same task.
 
@@ -567,11 +578,12 @@ async def test_lock_manager_prevents_concurrent_task_start(client: AsyncClient) 
     that the API's start_task call (which uses agent_id="default") returns
     409 with TaskLockedError.
     """
+    client, drain = client_and_drain
     # 1. Create and start a run
     run_data = await _create_run(client)
     run_id = run_data["id"]
     task_id = run_data["steps"][0]["tasks"][0]["id"]
-    await _start_run(client, run_id)
+    await _start_run(client, run_id, drain=drain)
 
     # 2. Acquire the lock as a different agent (simulating another agent holding the lock)
     app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
@@ -677,7 +689,7 @@ async def test_auto_verify_results_in_response(
         await session.commit()
 
     # 2. Start the run and task
-    await _start_run(client, run_id)
+    await _start_run(client, run_id, drain=drain)
     await _start_task(client, run_id, task_id)
 
     # 3. Mark checklist done and submit (triggers auto-verify), then drain
@@ -742,7 +754,7 @@ async def test_activity_events_recorded_for_all_transitions(
     task_id = run_data["steps"][0]["tasks"][0]["id"]
 
     # 2. Start run
-    await _start_run(client, run_id)
+    await _start_run(client, run_id, drain=drain)
 
     # 3. Start task
     await _start_task(client, run_id, task_id)
@@ -887,7 +899,7 @@ async def test_embedded_routine_persists_across_requests(
     )
 
     # 3. Start the run
-    await _start_run(client, run_id)
+    await _start_run(client, run_id, drain=drain)
 
     # GET again - still there after status change
     get_resp = await client.get(f"/api/runs/{run_id}")

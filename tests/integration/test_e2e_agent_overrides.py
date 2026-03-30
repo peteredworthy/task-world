@@ -80,6 +80,7 @@ async def _create_agent(
 async def _setup_run(
     client: AsyncClient,
     routine: dict[str, Any],
+    drain: DrainFn,
 ) -> tuple[str, str]:
     """Create run with embedded routine, start run, start first task.
 
@@ -94,7 +95,8 @@ async def _setup_run(
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
     start_run = await client.post(f"/api/runs/{run_id}/start")
-    assert start_run.status_code == 200, f"Run start failed: {start_run.text}"
+    assert start_run.status_code == 202, f"Run start failed: {start_run.text}"
+    await drain(run_id)
 
     start_task = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     assert start_task.status_code == 200, f"Task start failed: {start_task.text}"
@@ -158,8 +160,11 @@ class TestAgentOverridesAllLevels:
     level and that model_profile defaults are stored and returned correctly.
     """
 
-    async def test_task_level_wins_over_step_and_routine(self, client: AsyncClient) -> None:
+    async def test_task_level_wins_over_step_and_routine(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
         """Task-level agent overrides both step and routine-level agents for builder."""
+        client, drain = client_and_drain
         routine_agent = await _create_agent(
             client, "E2E-RoutineBuilder", "ROUTINE-BUILDER system prompt", "architect"
         )
@@ -181,7 +186,7 @@ class TestAgentOverridesAllLevels:
             step_builder_agent="E2E-StepBuilder",
             task_builder_agent="E2E-TaskBuilder",
         )
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
         assert resp.status_code == 200
@@ -199,9 +204,10 @@ class TestAgentOverridesAllLevels:
         assert "STEP-BUILDER system prompt" not in system
 
     async def test_step_level_wins_over_routine_when_no_task_override(
-        self, client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """Step-level agent overrides routine-level when task has no builder_agent."""
+        client, drain = client_and_drain
         await _create_agent(client, "E2E-RoutineBuilder2", "ROUTINE2 system prompt", "architect")
         await _create_agent(client, "E2E-StepBuilder2", "STEP2 system prompt", "coder")
 
@@ -211,7 +217,7 @@ class TestAgentOverridesAllLevels:
             step_builder_agent="E2E-StepBuilder2",
             # No task-level override
         )
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
         assert resp.status_code == 200
@@ -222,9 +228,10 @@ class TestAgentOverridesAllLevels:
         assert "ROUTINE2 system prompt" not in system
 
     async def test_routine_level_used_when_no_step_or_task_override(
-        self, client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """Routine-level agent is used when neither step nor task override is set."""
+        client, drain = client_and_drain
         await _create_agent(client, "E2E-RoutineBuilder3", "ROUTINE3 system prompt", "summarizer")
 
         routine = _make_routine(
@@ -232,7 +239,7 @@ class TestAgentOverridesAllLevels:
             routine_builder_agent="E2E-RoutineBuilder3",
             # No step or task override
         )
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
         assert resp.status_code == 200
@@ -261,7 +268,7 @@ class TestAgentOverridesAllLevels:
             step_verifier_agent="E2E-StepVerifier",
             task_verifier_agent="E2E-TaskVerifier",
         )
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         # Advance task to VERIFYING
         patch_resp = await client.patch(
@@ -270,7 +277,7 @@ class TestAgentOverridesAllLevels:
         )
         assert patch_resp.status_code == 200
         submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-        assert submit_resp.status_code == 202
+        assert submit_resp.status_code == 200
         await drain(run_id)
         # Verify task is now in verifying state
         task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
@@ -316,9 +323,10 @@ class TestAgentOverridesAllLevels:
             )
 
     async def test_prompt_contains_task_context_after_agent_prefix(
-        self, client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """The agent system prompt is prepended; task content still follows after separator."""
+        client, drain = client_and_drain
         agent_data = await _create_agent(client, "E2E-PrefixCheck", "PREFIX system prompt", "coder")
         assert agent_data["model_profile"] == "coder"
 
@@ -326,7 +334,7 @@ class TestAgentOverridesAllLevels:
             "e2e-prefix-check",
             task_builder_agent="E2E-PrefixCheck",
         )
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
         assert resp.status_code == 200
@@ -354,9 +362,10 @@ class TestBackwardCompatibleRoutine:
     """
 
     async def test_builder_system_default_applied_when_no_agent_fields(
-        self, client: AsyncClient
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
     ) -> None:
         """System default Builder agent's prompt is prepended for building phase."""
+        client, drain = client_and_drain
         # Confirm Builder agent exists (seeded)
         agents_resp = await client.get("/api/agents")
         agents = agents_resp.json()
@@ -364,7 +373,7 @@ class TestBackwardCompatibleRoutine:
         assert builder is not None, "Seeded Builder agent must exist"
 
         routine = _make_routine("compat-no-agent-fields-builder")
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
         assert resp.status_code == 200
@@ -392,7 +401,7 @@ class TestBackwardCompatibleRoutine:
         assert verifier is not None, "Seeded Verifier agent must exist"
 
         routine = _make_routine("compat-no-agent-fields-verifier")
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         # Advance to VERIFYING
         patch_resp = await client.patch(
@@ -401,7 +410,7 @@ class TestBackwardCompatibleRoutine:
         )
         assert patch_resp.status_code == 200
         submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-        assert submit_resp.status_code == 202
+        assert submit_resp.status_code == 200
         await drain(run_id)
         # Verify task is in verifying state
         task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
@@ -431,7 +440,7 @@ class TestBackwardCompatibleRoutine:
         """
         client, drain = client_and_drain
         routine = _make_routine("compat-full-lifecycle")
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         # --- Building phase ---
         prompt_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
@@ -448,7 +457,7 @@ class TestBackwardCompatibleRoutine:
 
         # Submit for verification (202 async) then drain
         submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-        assert submit_resp.status_code == 202
+        assert submit_resp.status_code == 200
         await drain(run_id)
         # Verify task is in verifying state
         task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
@@ -470,7 +479,7 @@ class TestBackwardCompatibleRoutine:
         complete_resp = await client.post(
             f"/api/runs/{run_id}/tasks/{task_id}/complete-verification"
         )
-        assert complete_resp.status_code == 202
+        assert complete_resp.status_code == 200
         await drain(run_id)
         # Verify task is completed
         task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
@@ -497,7 +506,7 @@ class TestBackwardCompatibleRoutine:
             "compat-upgrade",
             routine_builder_agent="E2E-CompatUpgrade",
         )
-        run_id, task_id = await _setup_run(client, routine)
+        run_id, task_id = await _setup_run(client, routine, drain)
 
         prompt_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
         assert prompt_resp.status_code == 200
@@ -511,7 +520,7 @@ class TestBackwardCompatibleRoutine:
             json={"status": "done"},
         )
         submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-        assert submit_resp.status_code == 202
+        assert submit_resp.status_code == 200
         await drain(run_id)
         task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
         assert task_resp.json()["status"] == "verifying"
@@ -523,7 +532,7 @@ class TestBackwardCompatibleRoutine:
         complete_resp = await client.post(
             f"/api/runs/{run_id}/tasks/{task_id}/complete-verification"
         )
-        assert complete_resp.status_code == 202
+        assert complete_resp.status_code == 200
         await drain(run_id)
         task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
         assert task_resp.json()["status"] == "completed"

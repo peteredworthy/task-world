@@ -1073,9 +1073,10 @@ async def _create_run_with_manual_gate_for_api(
     assert create_resp.status_code == 201
     run_id = create_resp.json()["id"]
 
-    # Start run
+    # Start run (async — enqueues RUN_START signal, returns 202)
     start_resp = await client.post(f"/api/runs/{run_id}/start")
-    assert start_resp.status_code == 200
+    assert start_resp.status_code == 202
+    await drain(run_id)
 
     # Complete step 1
     task1_id = create_resp.json()["steps"][0]["tasks"][0]["id"]
@@ -1092,7 +1093,7 @@ async def _create_run_with_manual_gate_for_api(
             "completion_reason": "Completed task",
         },
     )
-    assert submit_resp.status_code == 202
+    assert submit_resp.status_code == 200
     await drain(run_id)
 
     # Complete verification (auto-verify should pass)
@@ -1100,7 +1101,7 @@ async def _create_run_with_manual_gate_for_api(
         f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
         json={"passing_grades": []},
     )
-    assert complete_resp.status_code == 202
+    assert complete_resp.status_code == 200
     await drain(run_id)
 
     # Now check that run is paused at manual gate
@@ -1400,8 +1401,10 @@ class TestSkipStepAPISurface:
         step3_id = next(s["id"] for s in initial_steps if s["config_id"] == "step3")
         step4_id = next(s["id"] for s in initial_steps if s["config_id"] == "step4")
 
-        # Start run
-        await api_client.post(f"/api/runs/{run_id}/start")
+        # Start run (async — enqueues RUN_START signal, returns 202)
+        start_resp = await api_client.post(f"/api/runs/{run_id}/start")
+        assert start_resp.status_code == 202
+        await drain(run_id)
 
         # Complete step 1
         task1_id = create_resp.json()["steps"][0]["tasks"][0]["id"]
@@ -1411,13 +1414,13 @@ class TestSkipStepAPISurface:
             f"/api/runs/{run_id}/tasks/{task1_id}/submit",
             json={"artifacts": [], "completion_reason": "Completed task"},
         )
-        assert submit_resp.status_code == 202
+        assert submit_resp.status_code == 200
         await drain(run_id)
         complete_resp = await api_client.post(
             f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
             json={"passing_grades": []},
         )
-        assert complete_resp.status_code == 202
+        assert complete_resp.status_code == 200
         await drain(run_id)
 
         # Skip step 2

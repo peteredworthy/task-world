@@ -37,11 +37,30 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
     from orchestrator.runners import AgentRunnerMonitor
     from orchestrator.db import RunRepository
+    from orchestrator.api.deps import make_service_factory, make_workflow_runner
 
     await init_db(app.state.engine)
 
     # Recover active runs on startup - check for dead agents and pause them
     session_factory = app.state.session_factory
+
+    # Build and store the shared WorkflowService factory for background tasks
+    # (signal consumer, stale-run sweeper, startup recovery, MCP handler).
+    # Request handlers continue to use get_workflow_service() via Depends().
+    service_factory = make_service_factory(
+        submit_event_registry=app.state.submit_event_registry,
+        connection_manager=app.state.connection_manager,
+        lock_manager=getattr(app.state, "lock_manager", None),
+        signal_transport_override=getattr(app.state, "signal_transport", None),
+        global_config=app.state.global_config,
+        env_lifecycle=getattr(app.state, "env_lifecycle", None),
+    )
+    app.state.service_factory = service_factory
+
+    # Inject factory into executor so it uses the same service construction path
+    # as the signal consumer and request handlers.
+    if hasattr(app.state, "runner_executor"):
+        app.state.runner_executor.set_service_factory(service_factory)
 
     # Seed factory-default agents (Planner, Builder, Verifier) if not present
     from orchestrator.runners import seed_default_agents
@@ -172,25 +191,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                                 continue
 
                     async with session_factory() as session:
-                        from orchestrator.db import RunRepository as _RR3
-                        from orchestrator.db import EventStore as _ES3
-                        from orchestrator.workflow import PersistentEventEmitter as _PEE3
-                        from orchestrator.workflow.service import WorkflowService as _WS3
-                        from orchestrator.workflow import LocalAutoVerifyRunner as _AVR
-
-                        repo3 = _RR3(session)
-                        event_store3 = _ES3(session)
-                        emitter3 = _PEE3(event_store3)
-                        svc = _WS3(
-                            session=session,
-                            repo=repo3,
-                            event_store=event_store3,
-                            event_emitter=emitter3,
-                            submit_event_registry=app.state.submit_event_registry,
-                            auto_verify_runner=_AVR(),
-                            lock_manager=getattr(app.state, "lock_manager", None),
-                        )
-                        await svc.resume_run(run.id)
+                        svc = await service_factory(session)
+                        await svc.apply_resume_run(run.id)
                         await session.commit()
 
                     _agent_type = run.agent_type
@@ -310,25 +312,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         )
                         try:
                             async with session_factory() as session:
-                                from orchestrator.db import RunRepository as _RRS
-                                from orchestrator.db import EventStore as _ESS
-                                from orchestrator.workflow import PersistentEventEmitter as _PEES
-                                from orchestrator.workflow.service import (
-                                    WorkflowService as _WSS,
-                                )
-
-                                repo_s = _RRS(session)
-                                event_store_s = _ESS(session)
-                                emitter_s = _PEES(event_store_s)
-                                svc = _WSS(
-                                    session=session,
-                                    repo=repo_s,
-                                    event_store=event_store_s,
-                                    event_emitter=emitter_s,
-                                    submit_event_registry=app.state.submit_event_registry,
-                                    lock_manager=getattr(app.state, "lock_manager", None),
-                                )
-                                await svc.pause_run(run.id, reason="no_executor_running")
+                                svc = await service_factory(session)
+                                await svc.apply_pause_run(run.id, reason="no_executor_running")
                                 await session.commit()
                                 logger.info(f"Stale run sweeper: paused run {run.id}")
                         except Exception as e:
@@ -340,7 +325,21 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         stale_run_sweeper = _asyncio.create_task(_sweep_stale_runs())
 
+    # Start signal consumer — must start before any signals can be enqueued (R3).
+    from orchestrator.workflow import SignalConsumer
+
+    signal_consumer = SignalConsumer(
+        session_factory=session_factory,
+        create_service=service_factory,
+        workflow_runner=make_workflow_runner(getattr(app.state, "runner_executor", None)),
+    )
+    app.state.signal_consumer = signal_consumer
+    await signal_consumer.start()
+
     yield
+
+    # Stop signal consumer
+    await signal_consumer.stop()
 
     # Cancel stale-run sweeper
     if stale_run_sweeper is not None:
@@ -496,6 +495,24 @@ def create_app(
 
     app.state.test_runner = TestRunner()
 
+    # Run-scoped summary caches (keyed by run_id) for context_from artifact summaries.
+    # Shared across requests so repeated prompt calls for the same run reuse cached results.
+    app.state.summary_caches = {}  # dict[str, Any] — keyed by run_id
+
+    # Create a preliminary service factory so background components (MCP handler,
+    # executor) have a usable factory even in tests that skip the lifespan.
+    # The lifespan will replace this with a fully-configured factory that includes
+    # any signal_transport override injected by tests after create_app() returns.
+    from orchestrator.api.deps import make_service_factory as _make_sf
+
+    app.state.service_factory = _make_sf(
+        submit_event_registry=app.state.submit_event_registry,
+        connection_manager=app.state.connection_manager,
+        lock_manager=app.state.lock_manager,
+        global_config=global_cfg,
+        env_lifecycle=app.state.env_lifecycle,
+    )
+
     # Agent executor for spawning managed agents (created here so it's available
     # in tests that don't run the lifespan).
     # When WORKER_SEPARATE=true the executor runs in a separate worker process;
@@ -517,9 +534,9 @@ def create_app(
         session_factory=app.state.session_factory,
         global_config=global_cfg,
         lock_manager=app.state.lock_manager,
-        submit_event_registry=app.state.submit_event_registry,
         runner_monitor=getattr(app.state, "runner_monitor", None),
         connection_manager=app.state.connection_manager,
+        service_factory=app.state.service_factory,
         spawn_agents=spawn_agents,
     )
 
@@ -592,29 +609,14 @@ class _SessionPerCallHandler:
         self._app = app
 
     async def handle(self, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        from orchestrator.db import EventStore
-        from orchestrator.db import RunRepository
         from orchestrator.api.mcp.tools import ToolHandler
-        from orchestrator.workflow import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
 
         session_factory = self._app.state.session_factory
-        env_lifecycle = getattr(self._app.state, "env_lifecycle", None)
+        service_factory = self._app.state.service_factory
         settings = getattr(self._app.state, "settings", None)
         repos_dir = settings.repos_dir if settings else None
         async with session_factory() as session:
-            repo = RunRepository(session)
-            event_store = EventStore(session)
-            emitter = PersistentEventEmitter(event_store)
-            service = WorkflowService(
-                session=session,
-                repo=repo,
-                event_store=event_store,
-                event_emitter=emitter,
-                submit_event_registry=self._app.state.submit_event_registry,
-                lock_manager=self._app.state.lock_manager,
-                env_lifecycle=env_lifecycle,
-            )
+            service = await service_factory(session)
             handler = ToolHandler(service, repos_dir=repos_dir)
             return await handler.handle(tool_name, arguments)
 

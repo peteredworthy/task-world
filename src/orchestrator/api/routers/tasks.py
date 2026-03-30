@@ -16,6 +16,7 @@ from orchestrator.api.deps import (
     get_run_repository,
     get_session,
     get_signal_transport,
+    get_summary_caches,
     get_workflow_service,
 )
 from orchestrator.api.schemas.tasks import (
@@ -49,6 +50,7 @@ from orchestrator.workflow import (
     ClarificationResponse,
     decisions_from_config,
     resolve_artifact_path,
+    GateBlockedError,
     InvalidTransitionError,
     TaskContextBuilder,
     generate_builder_prompt,
@@ -248,47 +250,94 @@ async def start_task(
     )
 
 
-@router.post("/{run_id}/tasks/{task_id}/submit", status_code=202)
+@router.post("/{run_id}/tasks/{task_id}/submit", response_model=TransitionResponse)
 async def submit_task(
     run_id: str,
     task_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
-) -> dict[str, str]:
+) -> TransitionResponse:
     """Submit task for verification (BUILDING → VERIFYING).
 
-    Enqueues an ACTIVITY_COMPLETED signal for the RunWorkflow to process.
-    Returns HTTP 202 (Accepted) immediately; the actual state transition
-    happens when the signal queue is drained.
+    Runs pre-submission checks (auto-verify + checklist gate) synchronously.
+    On success, enqueues an ACTIVITY_COMPLETED signal and returns the current
+    outcome. The actual BUILDING → VERIFYING state transition is applied when
+    the signal is processed.
+
+    On failure, returns error details to the agent without changing state.
     """
-    await signal_transport.enqueue(
-        run_id,
-        WorkflowSignal.ACTIVITY_COMPLETED,
-        payload={"task_id": task_id},
+    try:
+        result = await service.check_submission(run_id, task_id)
+    except InvalidTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except GateBlockedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    if not result.success:
+        raise HTTPException(
+            status_code=422,
+            detail=result.error or "Submission check failed",
+        )
+
+    # Gate passed — enqueue signal for the BUILDING → VERIFYING transition.
+    # Skip for idempotent (already VERIFYING) and recovery (already handled) cases.
+    if result.new_status == TaskStatus.BUILDING:
+        await signal_transport.enqueue(
+            run_id,
+            WorkflowSignal.ACTIVITY_COMPLETED,
+            payload={"task_id": task_id},
+        )
+
+    return TransitionResponse(
+        success=result.success,
+        new_status=result.new_status.value,
+        error=result.error,
     )
-    return {"status": "accepted"}
 
 
 @router.post(
     "/{run_id}/tasks/{task_id}/complete-verification",
-    status_code=202,
+    response_model=TransitionResponse,
 )
 async def complete_verification_endpoint(
     run_id: str,
     task_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
-) -> dict[str, str]:
+) -> TransitionResponse:
     """Complete verification phase and transition task to its outcome state.
 
-    Enqueues an ACTIVITY_VERIFIED signal for the RunWorkflow to process.
-    Returns HTTP 202 (Accepted) immediately; the actual state transition
-    happens when the signal queue is drained.
+    Validates that the run and task are in states that allow completing
+    verification.  On success, enqueues an ACTIVITY_VERIFIED signal; the actual
+    grade evaluation and VERIFYING → outcome transition happen when the signal
+    is processed.
     """
-    await signal_transport.enqueue(
-        run_id,
-        WorkflowSignal.ACTIVITY_VERIFIED,
-        payload={"task_id": task_id},
+    try:
+        result = await service.check_verification(run_id, task_id)
+    except InvalidTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except TaskNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    if not result.success:
+        raise HTTPException(
+            status_code=422,
+            detail=result.error or "Verification check failed",
+        )
+
+    # Enqueue signal only if task is still awaiting verification outcome
+    if result.new_status == TaskStatus.VERIFYING:
+        await signal_transport.enqueue(
+            run_id,
+            WorkflowSignal.ACTIVITY_VERIFIED,
+            payload={"task_id": task_id},
+        )
+
+    return TransitionResponse(
+        success=result.success,
+        new_status=result.new_status.value,
+        error=result.error,
     )
-    return {"status": "accepted"}
 
 
 class CompleteRecoveryRequest(BaseModel):
@@ -547,6 +596,7 @@ async def get_task_prompt(
     repo: Annotated[RunRepository, Depends(get_run_repository)],
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    summary_caches: Annotated[dict[str, Any], Depends(get_summary_caches)],
 ) -> PromptResponse:
     """Get the appropriate prompt for a task based on its current status.
 
@@ -618,9 +668,6 @@ async def get_task_prompt(
         context_builder = TaskContextBuilder(ArtifactRegistry(), worktree_path=worktree_path)
         # Use a run-scoped SummaryCache so repeated prompt calls for the same
         # run reuse cached summaries instead of re-generating them each time.
-        summary_caches: dict[str, SummaryCache] = getattr(request.app.state, "summary_caches", {})
-        if not hasattr(request.app.state, "summary_caches"):
-            request.app.state.summary_caches = summary_caches
         if run_id not in summary_caches:
             summary_caches[run_id] = SummaryCache()
         summary_cache = summary_caches[run_id]

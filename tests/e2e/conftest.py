@@ -113,22 +113,31 @@ async def create_run(
     return response.json()
 
 
-async def start_run(client: httpx.AsyncClient, run_id: str) -> dict[str, Any]:
-    """Start a run via API.
+async def start_run(
+    client: httpx.AsyncClient,
+    run_id: str,
+    drain: DrainFn | None = None,
+) -> dict[str, Any]:
+    """Start a run via API, then drain signals to apply the transition.
 
     Args:
         client: HTTP client
         run_id: Run identifier
+        drain: Signal drain function (required for state transition to occur)
 
     Returns:
-        Response JSON data
+        Run state from GET after draining
 
     Raises:
         AssertionError: If the request fails
     """
     response = await client.post(f"/api/runs/{run_id}/start")
-    assert response.status_code == 200, f"Failed to start run: {response.text}"
-    return response.json()
+    assert response.status_code == 202, f"Failed to start run: {response.text}"
+    if drain is not None:
+        await drain(run_id)
+    get_resp = await client.get(f"/api/runs/{run_id}")
+    assert get_resp.status_code == 200
+    return get_resp.json()
 
 
 async def start_task(client: httpx.AsyncClient, run_id: str, task_id: str) -> dict[str, Any]:
@@ -198,7 +207,7 @@ async def submit_task(
         AssertionError: If the request fails
     """
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert response.status_code == 202, f"Failed to submit task: {response.text}"
+    assert response.status_code == 200, f"Failed to submit task: {response.text}"
     if drain is not None:
         await drain(run_id)
     return {"success": True}
@@ -260,7 +269,7 @@ async def complete_verification(
         AssertionError: If the request fails
     """
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert response.status_code == 202, f"Failed to complete verification: {response.text}"
+    assert response.status_code == 200, f"Failed to complete verification: {response.text}"
     if drain is not None:
         await drain(run_id)
     return {"success": True}

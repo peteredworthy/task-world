@@ -98,7 +98,8 @@ async def test_transition_backward_basic(
 
     # Start the run
     start_resp = await client.post(f"/api/runs/{run_id}/start")
-    assert start_resp.status_code == 200
+    assert start_resp.status_code == 202
+    await drain(run_id)
 
     # Start task 1 and complete it to progress step 0
     task1_id = run_data["steps"][0]["tasks"][0]["id"]
@@ -110,7 +111,7 @@ async def test_transition_backward_basic(
     )
     # Submit for verification
     submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/submit")
-    assert submit_resp.status_code == 202
+    assert submit_resp.status_code == 200
     await drain(run_id)
     # Set grade and complete
     await client.put(
@@ -118,7 +119,7 @@ async def test_transition_backward_basic(
         json={"grade": "A"},
     )
     complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification")
-    assert complete_resp.status_code == 202
+    assert complete_resp.status_code == 200
     await drain(run_id)
 
     # Check we're now at step 1
@@ -283,7 +284,9 @@ async def test_transition_backward_event_emitted(
     run_id = run_data["id"]
 
     # Start and complete step 0
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     task1_id = run_data["steps"][0]["tasks"][0]["id"]
     await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/start")
     await client.patch(
@@ -291,14 +294,14 @@ async def test_transition_backward_event_emitted(
         json={"status": "done"},
     )
     submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/submit")
-    assert submit_resp.status_code == 202
+    assert submit_resp.status_code == 200
     await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task1_id}/checklist/req-1/grade",
         json={"grade": "A"},
     )
     complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification")
-    assert complete_resp.status_code == 202
+    assert complete_resp.status_code == 200
     await drain(run_id)
 
     # Transition backward

@@ -94,7 +94,7 @@ def _make_run() -> Run:
 async def test_submit_notification_fires_event(service: WorkflowService) -> None:
     """When submit_for_verification is called, the registered event fires."""
     run = await service.create_run(_make_run())
-    await service.start_run(run.id)
+    await service.apply_start_run(run.id)
     await service.start_task(run.id, "task-1")
     await service.update_checklist_item(run.id, "task-1", "R1", ChecklistStatus.DONE)
 
@@ -108,7 +108,7 @@ async def test_submit_notification_fires_event(service: WorkflowService) -> None
 async def test_submit_notification_no_event_registered(service: WorkflowService) -> None:
     """submit_for_verification works normally when no event is registered."""
     run = await service.create_run(_make_run())
-    await service.start_run(run.id)
+    await service.apply_start_run(run.id)
     await service.start_task(run.id, "task-1")
     await service.update_checklist_item(run.id, "task-1", "R1", ChecklistStatus.DONE)
 
@@ -131,7 +131,7 @@ async def test_cross_instance_submit_notification(
     service_b = WorkflowService(session, submit_event_registry=registry)
 
     run = await service_a.create_run(_make_run())
-    await service_a.start_run(run.id)
+    await service_a.apply_start_run(run.id)
     await service_a.start_task(run.id, "task-1")
     await service_a.update_checklist_item(run.id, "task-1", "R1", ChecklistStatus.DONE)
 
@@ -155,7 +155,7 @@ async def test_user_managed_agent_cross_instance(
     service_api = WorkflowService(session, submit_event_registry=registry)
 
     run = await service_agent.create_run(_make_run())
-    await service_agent.start_run(run.id)
+    await service_agent.apply_start_run(run.id)
     await service_agent.start_task(run.id, "task-1")
     await service_agent.update_checklist_item(run.id, "task-1", "R1", ChecklistStatus.DONE)
 
@@ -192,7 +192,7 @@ async def test_user_managed_agent_timeout_with_real_service(
 ) -> None:
     """UserManagedAgent times out when no submit is called."""
     run = await service.create_run(_make_run())
-    await service.start_run(run.id)
+    await service.apply_start_run(run.id)
     await service.start_task(run.id, "task-1")
 
     agent = UserManagedAgent(service=service, timeout_minutes=0)
@@ -250,7 +250,9 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
         run_id = resp.json()["id"]
         task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
-        await client.post(f"/api/runs/{run_id}/start")
+        start_resp = await client.post(f"/api/runs/{run_id}/start")
+        assert start_resp.status_code == 202
+        await drain(run_id)
         await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
         await client.patch(
             f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
@@ -281,8 +283,8 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
             async def submit_via_rest_api_and_drain() -> None:
                 await asyncio.sleep(0.05)
                 resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-                assert resp.status_code == 202
-                # Drain signals so submit_for_verification is called and the agent wakes up
+                assert resp.status_code == 200
+                # Drain signals so apply_submission is called and the agent wakes up
                 await drain(run_id)
 
             bg = asyncio.create_task(submit_via_rest_api_and_drain())

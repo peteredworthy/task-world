@@ -338,7 +338,9 @@ async def test_claude_simple_output(tmp_path: Path) -> None:
 
 
 @_needs_socket
-async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state() -> None:
+async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state(
+    tmp_path: Path,
+) -> None:
     """Full integration: CLIAgent subprocess parses enriched prompt, calls REST API,
     workflow state transitions from BUILDING to VERIFYING.
 
@@ -354,8 +356,9 @@ async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state() -> Non
 
     from orchestrator.workflow import InMemorySignalTransport
 
+    db_path = tmp_path / "orchestrator.db"
     app = create_app(
-        db_path=":memory:",
+        db_path=str(db_path),
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     await init_db(app.state.engine)
@@ -392,7 +395,15 @@ async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state() -> Non
             task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
             resp = await client.post(f"/api/runs/{run_id}/start")
-            assert resp.status_code == 200
+            assert resp.status_code == 202
+            # Manually drain RUN_START signal (InMemorySignalTransport, not DB-backed)
+            from tests.integration.signal_helpers import drain_signals
+            from orchestrator.workflow.service import WorkflowService
+
+            async with app.state.session_factory() as drain_session:
+                drain_service = WorkflowService(drain_session, signal_transport=signal_transport)
+                await drain_signals(run_id, signal_transport, drain_session, drain_service)
+                await drain_session.commit()
             resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
             assert resp.status_code == 200
 

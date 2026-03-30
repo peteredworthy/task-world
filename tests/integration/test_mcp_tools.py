@@ -97,7 +97,7 @@ async def test_get_requirements(handler: ToolHandler, service: WorkflowService) 
 async def test_update_checklist(handler: ToolHandler, service: WorkflowService) -> None:
     run = _make_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     result = await handler.handle(
@@ -123,7 +123,7 @@ async def test_update_checklist(handler: ToolHandler, service: WorkflowService) 
 async def test_submit(handler: ToolHandler, service: WorkflowService) -> None:
     run = _make_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     # Complete all critical requirements first
@@ -142,7 +142,7 @@ async def test_submit(handler: ToolHandler, service: WorkflowService) -> None:
 async def test_set_grade(handler: ToolHandler, service: WorkflowService) -> None:
     run = _make_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     # Complete and submit
@@ -175,7 +175,7 @@ async def test_full_workflow_via_tools(handler: ToolHandler, service: WorkflowSe
     """Full workflow: get requirements -> update -> submit -> grade -> verify."""
     run = _make_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     # 1. Get requirements

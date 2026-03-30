@@ -5,11 +5,11 @@ import uuid
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.api.deps import get_session
+from orchestrator.api.deps import get_session, get_tool_detector
 from orchestrator.api.schemas.model_profiles import RunnerProfileDefaultsSchema
 from orchestrator.config.enums import ModelProfile
 from orchestrator.db import RunnerProfileDefaultModel
@@ -22,9 +22,10 @@ router = APIRouter(prefix="/api/agent-runners", tags=["agent-runners"])
 
 
 @router.get("", response_model=list[AgentRunnerOption])
-async def list_agent_runners(request: Request) -> list[AgentRunnerOption]:
+async def list_agent_runners(
+    detector: Annotated[ToolDetector, Depends(get_tool_detector)],
+) -> list[AgentRunnerOption]:
     """List available agent runner backends."""
-    detector: ToolDetector = request.app.state.tool_detector
     return await detector.detect_all()
 
 

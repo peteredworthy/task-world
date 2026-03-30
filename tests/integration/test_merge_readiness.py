@@ -22,6 +22,8 @@ from orchestrator.config import RoutineSource, RunStatus
 from orchestrator.db import init_db
 from orchestrator.db import RunRepository
 from orchestrator.git import TestRunResult
+from orchestrator.workflow import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -78,7 +80,7 @@ def git_repo(tmp_path: Path) -> Path:
 @pytest.fixture
 async def app_and_client(
     git_repo: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, Any], None]:
+) -> AsyncGenerator[tuple[AsyncClient, Path, Any, DrainFn], None]:
     """Test client and app backed by a real git repo."""
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
@@ -93,21 +95,25 @@ async def app_and_client(
         )
     )
 
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         global_config=global_config,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo, app
+        yield c, git_repo, app, drain
     await app.state.engine.dispose()
 
 
 async def _create_and_start_run(
     client: AsyncClient,
     project_path: Path,
+    drain: DrainFn,
     routine_id: str = "simple-routine",
 ) -> dict[str, Any]:
     """Helper: create and start a run pointing at a real git repo."""
@@ -123,8 +129,9 @@ async def _create_and_start_run(
     run_id = resp.json()["id"]
 
     resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200
-    data = resp.json()
+    assert resp.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
     assert data["worktree_path"] is not None
     return data
@@ -146,11 +153,11 @@ async def _mark_run_completed(app: Any, run_id: str) -> None:
 
 
 async def test_merge_readiness_all_pass(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """All gates pass in a clean state (simple-routine, no conflicts, idle)."""
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
 
     resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -179,11 +186,11 @@ async def test_merge_readiness_all_pass(
 
 
 async def test_merge_readiness_conflicts_fail(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """no_unresolved_conflicts gate fails when the worktree has conflict files."""
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
     worktree_path = Path(run_data["worktree_path"])
 
@@ -206,7 +213,7 @@ async def test_merge_readiness_conflicts_fail(
 
 
 async def test_merge_readiness_tests_fail(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """tests_pass gate is 'pending' when tests are configured but have not been run.
 
@@ -215,8 +222,8 @@ async def test_merge_readiness_tests_fail(
     verify the 'pending' state (tests configured, never run) which is the
     start of the 'tests fail' scenario before any run occurs.
     """
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="auto-verify-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="auto-verify-routine")
     run_id = run_data["id"]
 
     resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -231,11 +238,11 @@ async def test_merge_readiness_tests_fail(
 
 
 async def test_merge_readiness_jobs_running(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """no_active_jobs gate passes when no agent or test jobs are running."""
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
 
     resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -252,11 +259,11 @@ async def test_merge_readiness_jobs_running(
 
 
 async def test_merge_back_with_strategy_squash(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """Squash merge creates a single commit on source branch (squashes run history)."""
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
     worktree_path = Path(run_data["worktree_path"])
 
@@ -283,11 +290,11 @@ async def test_merge_back_with_strategy_squash(
 
 
 async def test_merge_back_with_strategy_merge(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """Merge strategy preserves full run branch commit history on source branch."""
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
     worktree_path = Path(run_data["worktree_path"])
 
@@ -318,11 +325,11 @@ async def test_merge_back_with_strategy_merge(
 
 
 async def test_merge_back_rejects_unmet_gates(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """merge-back returns 409 when readiness gates are not met (unresolved conflicts)."""
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
     worktree_path = Path(run_data["worktree_path"])
 
@@ -349,11 +356,11 @@ async def test_merge_back_rejects_unmet_gates(
 
 
 async def test_merge_readiness_no_active_jobs_fail(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """no_active_jobs gate fails when a test job is actively running for the run."""
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
 
     # Inject a "running" test job directly into the TestRunner's in-memory state
@@ -381,11 +388,11 @@ async def test_merge_readiness_no_active_jobs_fail(
 
 
 async def test_merge_readiness_clean_merge_fail(
-    app_and_client: tuple[AsyncClient, Path, Any],
+    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
     """clean_merge gate fails when source branch has diverged with conflicting changes."""
-    client, repo, app = app_and_client
-    run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+    client, repo, app, drain = app_and_client
+    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
     worktree_path = Path(run_data["worktree_path"])
 

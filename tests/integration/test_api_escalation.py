@@ -38,7 +38,7 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
     return c
 
 
-async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
+async def _setup_building_task(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run, start it, and start the task. Returns (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
@@ -49,14 +49,19 @@ async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
     run_id = data["id"]
     task_id = data["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     return run_id, task_id
 
 
-async def test_escalate_pauses_run_and_marks_requirement(client: AsyncClient) -> None:
+async def test_escalate_pauses_run_and_marks_requirement(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """POST escalation marks requirement as escalated and pauses the run."""
-    run_id, task_id = await _setup_building_task(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_building_task(client, drain)
 
     resp = await client.post(
         f"/api/runs/{run_id}/tasks/{task_id}/escalate",
@@ -83,9 +88,12 @@ async def test_escalate_pauses_run_and_marks_requirement(client: AsyncClient) ->
     assert r1["note"] == "Cannot find the relevant API"
 
 
-async def test_escalation_resume_after_human_intervention(client: AsyncClient) -> None:
+async def test_escalation_resume_after_human_intervention(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """After escalation, human resumes run; then can modify requirement (run is active again)."""
-    run_id, task_id = await _setup_building_task(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Agent escalates a requirement
     resp = await client.post(
@@ -102,8 +110,10 @@ async def test_escalation_resume_after_human_intervention(client: AsyncClient) -
 
     # Human resumes the run
     resume_resp = await client.post(f"/api/runs/{run_id}/resume")
-    assert resume_resp.status_code == 200
-    assert resume_resp.json()["status"] == "active"
+    assert resume_resp.status_code == 202
+    await drain(run_id)
+    run_data = (await client.get(f"/api/runs/{run_id}")).json()
+    assert run_data["status"] == "active"
 
     # Now that the run is active again, human can modify the escalated requirement
     patch_resp = await client.patch(
@@ -119,7 +129,7 @@ async def test_escalation_on_completed_run_returns_409(
 ) -> None:
     """Escalation on a completed run returns 409 InvalidTransition."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Complete the full lifecycle: building -> verifying -> completed
     await client.patch(
@@ -127,14 +137,14 @@ async def test_escalation_on_completed_run_returns_409(
         json={"status": "done"},
     )
     submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert submit_resp.status_code == 202
+    assert submit_resp.status_code == 200
     await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
         json={"grade": "A"},
     )
     complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert complete_resp.status_code == 202
+    assert complete_resp.status_code == 200
     await drain(run_id)
 
     # Run is now completed (or at minimum the task is completed and run may be too)
@@ -153,9 +163,12 @@ async def test_escalation_on_completed_run_returns_409(
     assert resp.status_code == 409
 
 
-async def test_escalation_on_nonexistent_task_returns_404(client: AsyncClient) -> None:
+async def test_escalation_on_nonexistent_task_returns_404(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Escalation with a nonexistent task_id returns 404."""
-    run_id, _ = await _setup_building_task(client)
+    client, drain = client_and_drain
+    run_id, _ = await _setup_building_task(client, drain)
 
     resp = await client.post(
         f"/api/runs/{run_id}/tasks/nonexistent-task/escalate",
@@ -164,9 +177,12 @@ async def test_escalation_on_nonexistent_task_returns_404(client: AsyncClient) -
     assert resp.status_code == 404
 
 
-async def test_escalation_on_nonexistent_requirement_returns_404(client: AsyncClient) -> None:
+async def test_escalation_on_nonexistent_requirement_returns_404(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Escalation with a nonexistent requirement_id returns 404."""
-    run_id, task_id = await _setup_building_task(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_building_task(client, drain)
 
     resp = await client.post(
         f"/api/runs/{run_id}/tasks/{task_id}/escalate",

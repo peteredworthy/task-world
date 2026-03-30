@@ -37,7 +37,7 @@ async def test_state_persists_across_requests(
     run_id = run_data["id"]
 
     # Start the run
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start a task
     task_id = get_first_task_id(run_data)
@@ -85,7 +85,7 @@ async def test_multiple_runs_persist_independently(
     run3_id = run3_data["id"]
 
     # Start only run1
-    run1_data = await start_run(api_client, run1_id)
+    run1_data = await start_run(api_client, run1_id, drain=drain)
 
     # Verify states
     run2_data = await get_run(api_client, run2_id)
@@ -125,7 +125,7 @@ async def test_task_attempts_persisted(api_client: httpx.AsyncClient, drain: Dra
         api_client, routine_id="simple-routine", repo_name="attempts-proj-1"
     )
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start task
     task_id = get_first_task_id(run_data)
@@ -167,7 +167,7 @@ async def test_checklist_state_persisted(api_client: httpx.AsyncClient, drain: D
         api_client, routine_id="simple-routine", repo_name="checklist-proj-1"
     )
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start task
     task_id = get_first_task_id(run_data)
@@ -210,13 +210,13 @@ async def test_run_list_reflects_persisted_state(
         api_client, routine_id="simple-routine", repo_name="list-proj-active"
     )
     active_run_id = active_run["id"]
-    await start_run(api_client, active_run_id)
+    await start_run(api_client, active_run_id, drain=drain)
 
     completed_run = await create_run(
         api_client, routine_id="simple-routine", repo_name="list-proj-completed"
     )
     completed_run_id = completed_run["id"]
-    completed_run = await start_run(api_client, completed_run_id)
+    completed_run = await start_run(api_client, completed_run_id, drain=drain)
     task_id = get_first_task_id(completed_run)
     await start_task(api_client, completed_run_id, task_id)
     await mark_checklist_done(api_client, completed_run_id, task_id, "R1")

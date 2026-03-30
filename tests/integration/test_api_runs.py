@@ -121,23 +121,28 @@ async def test_get_run_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_start_run(client: AsyncClient) -> None:
+async def test_start_run(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
     response = await client.post(f"/api/runs/{run_id}/start")
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
     assert data["started_at"] is not None
 
 
-async def test_start_run_invalid_state(client: AsyncClient) -> None:
+async def test_start_run_invalid_state(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
     # Start it first
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Try to start again -> 409
     response = await client.post(f"/api/runs/{run_id}/start")
@@ -160,31 +165,41 @@ async def test_delete_run_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_pause_run(client: AsyncClient) -> None:
+async def test_pause_run(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
     # Start the run first
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Pause it
     response = await client.post(f"/api/runs/{run_id}/pause")
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "paused"
 
 
-async def test_resume_run(client: AsyncClient) -> None:
+async def test_resume_run(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
     # Start, then pause, then resume
-    await client.post(f"/api/runs/{run_id}/start")
-    await client.post(f"/api/runs/{run_id}/pause")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     response = await client.post(f"/api/runs/{run_id}/resume")
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
 
 
@@ -207,12 +222,15 @@ async def test_pause_invalid_state(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
-async def test_resume_invalid_state(client: AsyncClient) -> None:
+async def test_resume_invalid_state(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
-    # Start the run (ACTIVE), try to resume without pausing -> 409
-    await client.post(f"/api/runs/{run_id}/start")
+    # Start the run (ACTIVE), then try to resume without pausing -> 409
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     response = await client.post(f"/api/runs/{run_id}/resume")
     assert response.status_code == 409
 
@@ -223,7 +241,9 @@ async def _drive_run_to_failed(client: AsyncClient, drain: DrainFn) -> tuple[str
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
     for _ in range(3):
@@ -232,14 +252,14 @@ async def _drive_run_to_failed(client: AsyncClient, drain: DrainFn) -> tuple[str
             json={"status": "done"},
         )
         resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-        assert resp.status_code == 202
+        assert resp.status_code == 200
         await drain(run_id)
         await client.put(
             f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
             json={"grade": "D", "grade_reason": "force failure"},
         )
         resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-        assert resp.status_code == 202
+        assert resp.status_code == 200
         await drain(run_id)
 
     return run_id, task_id
@@ -251,21 +271,23 @@ async def _drive_run_to_completed(client: AsyncClient, drain: DrainFn) -> tuple[
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     await client.patch(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
         json={"grade": "A"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
     return run_id, task_id
 
@@ -290,23 +312,35 @@ async def test_recover_run_success_from_failed(
     assert data["pause_reason"] == "recovered"
 
 
-async def test_recover_run_conflict_when_active(client: AsyncClient) -> None:
+async def test_recover_run_conflict_when_active(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     response = await client.post(f"/api/runs/{run_id}/recover", json={"target_task_id": task_id})
     assert response.status_code == 409
 
 
-async def test_recover_run_succeeds_when_paused(client: AsyncClient) -> None:
+async def test_recover_run_succeeds_when_paused(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Recovery is allowed on PAUSED runs (e.g., a task failed while the run was paused)."""
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
-    await client.post(f"/api/runs/{run_id}/start")
-    await client.post(f"/api/runs/{run_id}/pause")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     response = await client.post(f"/api/runs/{run_id}/recover", json={"target_task_id": task_id})
     assert response.status_code == 200
@@ -349,8 +383,9 @@ async def test_recover_run_not_found_when_target_task_missing(
     assert response.status_code == 404
 
 
-async def test_resume_with_agent_change(client: AsyncClient) -> None:
+async def test_resume_with_agent_change(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Resume a paused run while changing the agent type and config."""
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
@@ -369,8 +404,12 @@ async def test_resume_with_agent_change(client: AsyncClient) -> None:
     run_id = response.json()["id"]
 
     # Start and pause the run
-    await client.post(f"/api/runs/{run_id}/start")
-    await client.post(f"/api/runs/{run_id}/pause")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Resume with a different agent
     response = await client.post(
@@ -380,8 +419,9 @@ async def test_resume_with_agent_change(client: AsyncClient) -> None:
             "agent_config": {"timeout_minutes": 30},
         },
     )
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
 
     # Verify the run is active with new agent
     assert data["status"] == "active"
@@ -403,8 +443,9 @@ async def test_resume_with_agent_change(client: AsyncClient) -> None:
     assert event["payload"]["new_agent_config"] == {"timeout_minutes": 30}
 
 
-async def test_resume_without_agent_change(client: AsyncClient) -> None:
+async def test_resume_without_agent_change(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Resume a paused run without changing the agent (no body or empty body)."""
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
@@ -423,13 +464,18 @@ async def test_resume_without_agent_change(client: AsyncClient) -> None:
     run_id = response.json()["id"]
 
     # Start and pause the run
-    await client.post(f"/api/runs/{run_id}/start")
-    await client.post(f"/api/runs/{run_id}/pause")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Resume without changing agent (no request body)
     response = await client.post(f"/api/runs/{run_id}/resume")
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
 
     # Verify the run is active with the same agent
     assert data["status"] == "active"
@@ -444,8 +490,11 @@ async def test_resume_without_agent_change(client: AsyncClient) -> None:
     assert len(agent_changed_events) == 0
 
 
-async def test_resume_with_config_only_change(client: AsyncClient) -> None:
+async def test_resume_with_config_only_change(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Resume a paused run while changing only the agent config (not the type)."""
+    client, drain = client_and_drain
     # Create a run with initial agent config
     response = await client.post(
         "/api/runs",
@@ -461,8 +510,12 @@ async def test_resume_with_config_only_change(client: AsyncClient) -> None:
     run_id = response.json()["id"]
 
     # Start and pause the run
-    await client.post(f"/api/runs/{run_id}/start")
-    await client.post(f"/api/runs/{run_id}/pause")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Resume with updated config only (no agent_type change)
     response = await client.post(
@@ -471,8 +524,9 @@ async def test_resume_with_config_only_change(client: AsyncClient) -> None:
             "agent_config": {"stdin_mode": "open", "model": "claude-3"},
         },
     )
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
 
     # Verify the run is active with same agent type but updated config
     assert data["status"] == "active"
@@ -522,31 +576,41 @@ async def test_create_run_agent_config_defaults_to_empty(client: AsyncClient) ->
 # --- B2: cancel_run and recent_hours tests ---
 
 
-async def test_cancel_run_from_active(client: AsyncClient) -> None:
+async def test_cancel_run_from_active(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Cancel an active run -> FAILED."""
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     response = await client.post(f"/api/runs/{run_id}/cancel")
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "failed"
     assert data["completed_at"] is not None
 
 
-async def test_cancel_run_from_paused(client: AsyncClient) -> None:
+async def test_cancel_run_from_paused(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Cancel a paused run -> FAILED."""
+    client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
-    await client.post(f"/api/runs/{run_id}/pause")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
+    resp = await client.post(f"/api/runs/{run_id}/pause")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     response = await client.post(f"/api/runs/{run_id}/cancel")
-    assert response.status_code == 200
-    data = response.json()
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "failed"
     assert data["completed_at"] is not None
 

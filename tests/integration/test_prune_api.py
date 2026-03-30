@@ -18,6 +18,9 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -72,7 +75,9 @@ def git_repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-async def client_with_repo(git_repo: Path) -> AsyncGenerator[tuple[AsyncClient, Path], None]:
+async def client_with_repo(
+    git_repo: Path,
+) -> AsyncGenerator[tuple[AsyncClient, Path, DrainFn], None]:
     """Test client with a real git repo as project."""
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
@@ -87,19 +92,24 @@ async def client_with_repo(git_repo: Path) -> AsyncGenerator[tuple[AsyncClient, 
         )
     )
 
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         global_config=global_config,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo
+        yield c, git_repo, drain
     await app.state.engine.dispose()
 
 
-async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict[str, Any]:
+async def _create_and_start_run(
+    client: AsyncClient, project_path: Path, drain: DrainFn
+) -> dict[str, Any]:
     """Helper: create and start a run pointing at a real git repo."""
     resp = await client.post(
         "/api/runs",
@@ -112,9 +122,10 @@ async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict
     assert resp.status_code == 201
     run_id = resp.json()["id"]
 
-    resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200
-    data = resp.json()
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
     assert data["worktree_path"] is not None
     return data
@@ -127,11 +138,11 @@ async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict
 
 class TestPrunePreview:
     async def test_preview_file_mode_returns_stats(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Preview with file mode returns files_affected, hunks_removed, lines_removed."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -152,16 +163,16 @@ class TestPrunePreview:
         assert "feature.py" not in data["resulting_diff"]
 
     async def test_preview_hunk_mode_returns_stats(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Preview with hunk mode returns stats for the selected hunks."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
 
         # Add the base file to main so it exists at merge-base (enables multi-hunk diffs)
         base_lines = [f"line{i}\n" for i in range(1, 21)]
         _commit_file(repo, "hunky.py", "".join(base_lines), "Add hunky.py to main")
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -187,15 +198,15 @@ class TestPrunePreview:
         assert data["lines_removed"] == 1
 
     async def test_preview_line_mode_returns_stats(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Preview with line mode returns stats for the selected line range."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
 
         # Add base file to main so it exists at merge-base
         _commit_file(repo, "lined.py", "keep\n", "Add lined.py to main")
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -224,11 +235,11 @@ class TestPrunePreview:
         assert data["lines_removed"] == 1
 
     async def test_preview_empty_files_returns_zero_stats(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Empty files list returns zero stats and the full current diff."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -245,11 +256,11 @@ class TestPrunePreview:
         assert data["lines_removed"] == 0
 
     async def test_preview_does_not_modify_worktree(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Preview is read-only: HEAD and file content unchanged after preview."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -269,10 +280,12 @@ class TestPrunePreview:
         assert _git(["rev-parse", "HEAD"], cwd=worktree_path) == head_before
         assert (worktree_path / "ro.py").read_text() == content_before
 
-    async def test_preview_schema_fields(self, client_with_repo: tuple[AsyncClient, Path]) -> None:
+    async def test_preview_schema_fields(
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
+    ) -> None:
         """PrunePreviewResponse includes all required fields with correct types."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -295,9 +308,9 @@ class TestPrunePreview:
         assert isinstance(data["lines_removed"], int)
 
     async def test_preview_run_not_found_returns_404(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        client, _repo = client_with_repo
+        client, _repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs/nonexistent-run-id/review/prune/preview",
             json={"scope": "aggregate", "files": []},
@@ -305,10 +318,10 @@ class TestPrunePreview:
         assert resp.status_code == 404
 
     async def test_preview_no_worktree_returns_409(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Preview on a DRAFT run (no worktree) returns 409."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs",
             json={
@@ -327,11 +340,11 @@ class TestPrunePreview:
         assert resp.status_code == 409
 
     async def test_preview_resulting_diff_excludes_pruned_file(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """resulting_diff does not contain the pruned file but keeps other files."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -351,16 +364,16 @@ class TestPrunePreview:
         assert "keep_me.py" in data["resulting_diff"]
 
     async def test_preview_multi_hunk_file_hunk_selection(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Preview with hunk mode accurately counts lines for selected hunks only."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
 
         # Add base file to main so it exists at merge-base (enables multi-hunk diff)
         base_lines = [f"ln{i}\n" for i in range(1, 21)]
         _commit_file(repo, "mh.py", "".join(base_lines), "Add mh.py to main")
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -392,11 +405,11 @@ class TestPrunePreview:
 
 class TestPruneApply:
     async def test_apply_file_mode_removes_added_file(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """File-mode apply removes a newly added file from the worktree."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -414,11 +427,11 @@ class TestPruneApply:
         assert not (worktree_path / "new_feat.py").exists()
 
     async def test_apply_file_mode_restores_modified_file(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """File-mode apply restores a modified file to its base content."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -438,10 +451,12 @@ class TestPruneApply:
         # README should be restored to "# Test\n"
         assert (worktree_path / "README.md").read_text() == "# Test\n"
 
-    async def test_apply_creates_commit(self, client_with_repo: tuple[AsyncClient, Path]) -> None:
+    async def test_apply_creates_commit(
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
+    ) -> None:
         """apply creates a new commit on the branch."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -463,11 +478,11 @@ class TestPruneApply:
         assert len(data["commit_sha"]) == 40
 
     async def test_apply_returns_correct_stats(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """apply returns files_affected, hunks_removed, lines_removed."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -488,11 +503,11 @@ class TestPruneApply:
         assert isinstance(data["event_id"], str)
 
     async def test_apply_empty_selection_returns_400(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Empty files selection returns 400."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.post(
@@ -502,11 +517,11 @@ class TestPruneApply:
         assert resp.status_code == 400
 
     async def test_apply_preserves_unselected_files(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Files not in selection are not modified."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -526,16 +541,16 @@ class TestPruneApply:
         assert (worktree_path / "keep.py").read_text() == "keep\n"
 
     async def test_apply_hunk_mode_removes_selected_hunk(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Hunk-mode apply removes the selected hunk while keeping others."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
 
         # Add base file to main so it exists at merge-base (enables multi-hunk diff)
         base_lines = [f"L{i}\n" for i in range(1, 21)]
         _commit_file(repo, "hunky.py", "".join(base_lines), "Add hunky.py to main")
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -560,15 +575,15 @@ class TestPruneApply:
         assert "bot_add" in content
 
     async def test_apply_line_mode_removes_selected_lines(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Line-mode apply removes only the selected lines."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
 
         # Add base file to main so it exists at merge-base (diff shows only added line)
         _commit_file(repo, "lined.py", "keep1\nkeep2\n", "Add lined.py to main")
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -597,9 +612,9 @@ class TestPruneApply:
         assert "keep2" in content
 
     async def test_apply_run_not_found_returns_404(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        client, _repo = client_with_repo
+        client, _repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs/nonexistent/review/prune/apply",
             json={"scope": "aggregate", "files": []},
@@ -607,9 +622,9 @@ class TestPruneApply:
         assert resp.status_code == 404
 
     async def test_apply_no_worktree_returns_409(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs",
             json={
@@ -628,16 +643,16 @@ class TestPruneApply:
         assert resp.status_code == 409
 
     async def test_apply_multi_hunk_partial_prune(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Apply can prune a subset of hunks from a multi-hunk file."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
 
         # Add base file to main so it exists at merge-base (enables multi-hunk diff)
         base_lines = [f"x{i}\n" for i in range(1, 25)]
         _commit_file(repo, "partial.py", "".join(base_lines), "Add partial.py to main")
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -661,15 +676,15 @@ class TestPruneApply:
         assert "HUNK1" not in content
 
     async def test_apply_adjacent_line_prune(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Apply line-mode correctly removes a subset of adjacent added lines."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
 
         # Add base file to main so it exists at merge-base
         _commit_file(repo, "adj.py", "before\nafter\n", "Add adj.py to main")
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -708,11 +723,11 @@ class TestPruneApply:
 
 class TestRevertFileEndpoint:
     async def test_revert_removes_added_file(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """revert-file removes a newly added file from the worktree."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -727,11 +742,11 @@ class TestRevertFileEndpoint:
         assert not (worktree_path / "fresh.py").exists()
 
     async def test_revert_restores_modified_file(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """revert-file restores a modified file to its base content."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -746,10 +761,12 @@ class TestRevertFileEndpoint:
         assert resp.status_code == 200
         assert (worktree_path / "README.md").read_text() == "# Test\n"
 
-    async def test_revert_creates_commit(self, client_with_repo: tuple[AsyncClient, Path]) -> None:
+    async def test_revert_creates_commit(
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
+    ) -> None:
         """revert-file creates a new commit and returns its SHA."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -767,10 +784,12 @@ class TestRevertFileEndpoint:
         assert data["commit_sha"] == head_after
         assert len(data["commit_sha"]) == 40
 
-    async def test_revert_response_schema(self, client_with_repo: tuple[AsyncClient, Path]) -> None:
+    async def test_revert_response_schema(
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
+    ) -> None:
         """revert-file response contains commit_sha, file_path, and reverted_to."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -789,11 +808,11 @@ class TestRevertFileEndpoint:
         assert len(data["reverted_to"]) == 40
 
     async def test_revert_missing_file_path_returns_422(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Request body without file_path returns 422."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.post(
@@ -803,9 +822,9 @@ class TestRevertFileEndpoint:
         assert resp.status_code == 422
 
     async def test_revert_run_not_found_returns_404(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        client, _repo = client_with_repo
+        client, _repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs/nonexistent/review/revert-file",
             json={"file_path": "any.py"},
@@ -813,9 +832,9 @@ class TestRevertFileEndpoint:
         assert resp.status_code == 404
 
     async def test_revert_no_worktree_returns_409(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs",
             json={
@@ -834,11 +853,11 @@ class TestRevertFileEndpoint:
         assert resp.status_code == 409
 
     async def test_revert_file_already_at_base_returns_500(
-        self, client_with_repo: tuple[AsyncClient, Path]
+        self, client_with_repo: tuple[AsyncClient, Path, DrainFn]
     ) -> None:
         """Reverting a file with no diff from base returns 500 (GitCommandError)."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         # README.md has no changes on the run branch — already at base

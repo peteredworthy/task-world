@@ -8,23 +8,22 @@ children finish; the run then advances past the fan-out step.
 Note: This test uses an embedded routine with multiple tasks in a single
 step (the simplest form of "fan-out" that the orchestrator supports natively
 via the API, without requiring filesystem glob expansion).
+
+Tests operate at the WorkflowService level — no HTTP overhead or signal drain
+cycles, since the assertions are purely about state machine properties.
 """
 
 from collections.abc import AsyncGenerator
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.api.app import create_app
-from orchestrator.config import RoutineSource
-from orchestrator.db import init_db
-from orchestrator.workflow import InMemorySignalTransport
-
-from tests.integration.signal_helpers import DrainFn, make_drain_fn
-
-FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
+from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
+from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
+from orchestrator.workflow.service import WorkflowService
 
 # Routine: Step 1 has a single setup task; Step 2 has 3 child tasks (fan-out).
 # Step 3 is the combine/finalise step after the fan-out.
@@ -85,195 +84,190 @@ FAN_OUT_ROUTINE: dict[str, Any] = {
 
 
 @pytest.fixture
-async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
-    transport = InMemorySignalTransport()
-    app = create_app(
-        db_path=":memory:",
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+async def session() -> AsyncGenerator[AsyncSession, None]:
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    async with factory() as s:
+        yield s
+    await engine.dispose()
+
+
+def _now() -> datetime:
+    return datetime(2025, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+
+def _checklist(req_id: str = "R1") -> list[ChecklistItem]:
+    return [ChecklistItem(req_id=req_id, desc="Done", priority=Priority.CRITICAL)]
+
+
+def _make_run(run_id: str = "run-fanout") -> Run:
+    now = _now()
+    return Run(
+        id=run_id,
+        repo_name="parity-fan-out-repo",
+        status=RunStatus.DRAFT,
+        routine_id="parity-fan-out",
+        routine_source=RoutineSource.EMBEDDED,
+        routine_embedded=FAN_OUT_ROUTINE,
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S-01",
+                tasks=[
+                    TaskState(
+                        id="task-setup",
+                        config_id="T-01",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    )
+                ],
+            ),
+            StepState(
+                id="step-2",
+                config_id="S-02",
+                tasks=[
+                    TaskState(
+                        id="task-child-a",
+                        config_id="T-02",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    ),
+                    TaskState(
+                        id="task-child-b",
+                        config_id="T-03",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    ),
+                    TaskState(
+                        id="task-child-c",
+                        config_id="T-04",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    ),
+                ],
+            ),
+            StepState(
+                id="step-3",
+                config_id="S-03",
+                tasks=[
+                    TaskState(
+                        id="task-combine",
+                        config_id="T-05",
+                        status=TaskStatus.PENDING,
+                        checklist=_checklist(),
+                        max_attempts=3,
+                    )
+                ],
+            ),
+        ],
+        created_at=now,
+        updated_at=now,
     )
-    app.state.signal_transport = transport
-    await init_db(app.state.engine)
-    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
-    drain = make_drain_fn(app, transport)
-    async with AsyncClient(transport=asgi, base_url="http://test") as c:
-        yield c, drain
-    await app.state.engine.dispose()
 
 
-async def _get_run(client: AsyncClient, run_id: str) -> dict[str, Any]:
-    resp = await client.get(f"/api/runs/{run_id}")
-    assert resp.status_code == 200
-    return resp.json()
+async def _complete_task(service: WorkflowService, run_id: str, task_id: str) -> None:
+    """Drive a task through start → submit → grade → complete-verification via service."""
+    await service.start_task(run_id, task_id)
+    await service.update_checklist_item(run_id, task_id, "R1", ChecklistStatus.DONE)
+    await service.apply_submission(run_id, task_id)
+    await service.set_grade(run_id, task_id, "R1", "A", "done")
+    await service.apply_verification(run_id, task_id)
+    task = await service.get_task(run_id, task_id)
+    assert task.status == TaskStatus.COMPLETED
 
 
-async def _get_task(client: AsyncClient, run_id: str, task_id: str) -> dict[str, Any]:
-    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
-    assert resp.status_code == 200
-    return resp.json()
-
-
-async def _complete_task(
-    client: AsyncClient, run_id: str, task_id: str, drain: DrainFn, req_id: str = "R1"
-) -> None:
-    """Drive a task through the full build → verify → complete cycle."""
-    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
-    assert resp.status_code == 200, f"start failed: {resp.text}"
-    await client.patch(
-        f"/api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}",
-        json={"status": "done"},
-    )
-    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
-    await drain(run_id)
-
-    await client.put(
-        f"/api/runs/{run_id}/tasks/{task_id}/checklist/{req_id}/grade",
-        json={"grade": "A"},
-    )
-    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
-    await drain(run_id)
-
-    task = await _get_task(client, run_id, task_id)
-    assert task["status"] == "completed"
-
-
-async def test_fan_out_step_structure(
-    client_and_drain: tuple[AsyncClient, DrainFn],
-) -> None:
+async def test_fan_out_step_structure(session: AsyncSession) -> None:
     """Fan-out step contains exactly 3 child tasks at creation."""
-    client, _drain = client_and_drain
-    resp = await client.post(
-        "/api/runs",
-        json={
-            "routine_embedded": FAN_OUT_ROUTINE,
-            "repo_name": "parity-fan-out-repo",
-            "branch": "main",
-        },
-    )
-    assert resp.status_code == 201
-    run = resp.json()
+    service = WorkflowService(session)
+    run = _make_run()
+    await service.create_run(run)
 
-    assert len(run["steps"]) == 3
-    assert len(run["steps"][1]["tasks"]) == 3, "Fan-out step should have 3 child tasks"
-    assert run["steps"][1]["completed"] is False
+    loaded = await service.get_run(run.id)
+    assert len(loaded.steps) == 3
+    assert len(loaded.steps[1].tasks) == 3, "Fan-out step should have 3 child tasks"
+    assert loaded.steps[1].completed is False
 
 
 async def test_fan_out_step_incomplete_while_children_pending(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    session: AsyncSession,
 ) -> None:
     """Fan-out step not completed while child tasks are still pending."""
-    client, drain = client_and_drain
-    resp = await client.post(
-        "/api/runs",
-        json={
-            "routine_embedded": FAN_OUT_ROUTINE,
-            "repo_name": "parity-fan-out-partial-repo",
-            "branch": "main",
-        },
-    )
-    run = resp.json()
-    run_id = run["id"]
-    task1_id = run["steps"][0]["tasks"][0]["id"]
-    child_a_id = run["steps"][1]["tasks"][0]["id"]
-    child_b_id = run["steps"][1]["tasks"][1]["id"]
+    service = WorkflowService(session)
+    run = _make_run()
+    await service.create_run(run)
+    await service.apply_start_run(run.id)
 
-    await client.post(f"/api/runs/{run_id}/start")
-    await _complete_task(client, run_id, task1_id, drain)
+    await _complete_task(service, run.id, "task-setup")
 
-    # Complete only first child
-    await _complete_task(client, run_id, child_a_id, drain)
+    loaded = await service.get_run(run.id)
+    assert loaded.current_step_index == 1, "Should have advanced to the fan-out step"
 
-    run_state = await _get_run(client, run_id)
-    # current_step_index should still be on step index 1 (fan-out step)
-    assert run_state["current_step_index"] == 1, (
+    # Complete only the first child
+    await _complete_task(service, run.id, "task-child-a")
+
+    loaded = await service.get_run(run.id)
+    assert loaded.current_step_index == 1, (
         "Should still be on fan-out step while child tasks are incomplete"
     )
-    assert run_state["steps"][1]["completed"] is False
+    assert loaded.steps[1].completed is False
 
-    # Second child still pending
-    task_b = await _get_task(client, run_id, child_b_id)
-    assert task_b["status"] == "pending"
+    child_b = await service.get_task(run.id, "task-child-b")
+    assert child_b.status == TaskStatus.PENDING
 
 
 async def test_fan_out_step_completes_when_all_children_done(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    session: AsyncSession,
 ) -> None:
     """Fan-out step marked completed only after all child tasks finish."""
-    client, drain = client_and_drain
-    resp = await client.post(
-        "/api/runs",
-        json={
-            "routine_embedded": FAN_OUT_ROUTINE,
-            "repo_name": "parity-fan-out-complete-repo",
-            "branch": "main",
-        },
-    )
-    run = resp.json()
-    run_id = run["id"]
-    task1_id = run["steps"][0]["tasks"][0]["id"]
-    child_a_id = run["steps"][1]["tasks"][0]["id"]
-    child_b_id = run["steps"][1]["tasks"][1]["id"]
-    child_c_id = run["steps"][1]["tasks"][2]["id"]
+    service = WorkflowService(session)
+    run = _make_run()
+    await service.create_run(run)
+    await service.apply_start_run(run.id)
 
-    await client.post(f"/api/runs/{run_id}/start")
+    await _complete_task(service, run.id, "task-setup")
 
-    # Complete setup step
-    await _complete_task(client, run_id, task1_id, drain)
-    run_state = await _get_run(client, run_id)
-    assert run_state["current_step_index"] == 1
+    loaded = await service.get_run(run.id)
+    assert loaded.current_step_index == 1
 
-    # Complete all fan-out children in order
-    await _complete_task(client, run_id, child_a_id, drain)
-    await _complete_task(client, run_id, child_b_id, drain)
-    await _complete_task(client, run_id, child_c_id, drain)
+    await _complete_task(service, run.id, "task-child-a")
+    await _complete_task(service, run.id, "task-child-b")
+    await _complete_task(service, run.id, "task-child-c")
 
-    # Fan-out step should now be completed and run should advance
-    run_state = await _get_run(client, run_id)
-    assert run_state["steps"][1]["completed"] is True, (
+    loaded = await service.get_run(run.id)
+    assert loaded.steps[1].completed is True, (
         "Fan-out step should be completed when all children finish"
     )
-    assert run_state["current_step_index"] == 2, "Run should advance past the fan-out step"
-    assert run_state["status"] == "active", "Run still active (combine step not done)"
+    assert loaded.current_step_index == 2, "Run should advance past the fan-out step"
+    assert loaded.status == RunStatus.ACTIVE, "Run still active (combine step not done)"
 
 
 async def test_fan_out_run_completes_after_all_steps(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    session: AsyncSession,
 ) -> None:
     """Full workflow: setup → fan-out (3 children) → combine → run completed."""
-    client, drain = client_and_drain
-    resp = await client.post(
-        "/api/runs",
-        json={
-            "routine_embedded": FAN_OUT_ROUTINE,
-            "repo_name": "parity-fan-out-full-repo",
-            "branch": "main",
-        },
-    )
-    run = resp.json()
-    run_id = run["id"]
-    task1_id = run["steps"][0]["tasks"][0]["id"]
-    child_a_id = run["steps"][1]["tasks"][0]["id"]
-    child_b_id = run["steps"][1]["tasks"][1]["id"]
-    child_c_id = run["steps"][1]["tasks"][2]["id"]
-    combine_id = run["steps"][2]["tasks"][0]["id"]
+    service = WorkflowService(session)
+    run = _make_run()
+    await service.create_run(run)
+    await service.apply_start_run(run.id)
 
-    await client.post(f"/api/runs/{run_id}/start")
+    await _complete_task(service, run.id, "task-setup")
+    await _complete_task(service, run.id, "task-child-a")
+    await _complete_task(service, run.id, "task-child-b")
+    await _complete_task(service, run.id, "task-child-c")
+    await _complete_task(service, run.id, "task-combine")
 
-    await _complete_task(client, run_id, task1_id, drain)
-    await _complete_task(client, run_id, child_a_id, drain)
-    await _complete_task(client, run_id, child_b_id, drain)
-    await _complete_task(client, run_id, child_c_id, drain)
-    await _complete_task(client, run_id, combine_id, drain)
+    loaded = await service.get_run(run.id)
+    assert loaded.status == RunStatus.COMPLETED
+    assert loaded.completed_at is not None
+    for step in loaded.steps:
+        assert step.completed is True
 
-    run_state = await _get_run(client, run_id)
-    assert run_state["status"] == "completed"
-    assert run_state["completed_at"] is not None
-    for step in run_state["steps"]:
-        assert step["completed"] is True
-
-    # All fan-out children completed with 1 attempt each
-    for child_id in (child_a_id, child_b_id, child_c_id):
-        task = await _get_task(client, run_id, child_id)
-        assert task["status"] == "completed"
-        assert task["current_attempt"] == 1
+    for child_id in ("task-child-a", "task-child-b", "task-child-c"):
+        task = await service.get_task(run.id, child_id)
+        assert task.status == TaskStatus.COMPLETED
+        assert task.current_attempt == 1

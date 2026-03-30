@@ -58,6 +58,7 @@ async def _create_agent(client: AsyncClient, name: str, system_prompt: str) -> s
 async def _setup_run_with_embedded_routine(
     client: AsyncClient,
     routine: dict[str, Any],
+    drain: DrainFn,
 ) -> tuple[str, str]:
     """Create run with embedded routine, start it, start first task. Returns (run_id, task_id)."""
     resp = await client.post(
@@ -68,7 +69,9 @@ async def _setup_run_with_embedded_routine(
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     return run_id, task_id
 
@@ -78,8 +81,11 @@ async def _setup_run_with_embedded_routine(
 # ---------------------------------------------------------------------------
 
 
-async def test_prompt_unchanged_when_no_agent_fields(client: AsyncClient) -> None:
+async def test_prompt_unchanged_when_no_agent_fields(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """When the routine has no agent fields, the prompt is returned as-is."""
+    client, drain = client_and_drain
     routine: dict[str, Any] = {
         "id": "no-agent-routine",
         "name": "No Agent Routine",
@@ -98,7 +104,7 @@ async def test_prompt_unchanged_when_no_agent_fields(client: AsyncClient) -> Non
             }
         ],
     }
-    run_id, task_id = await _setup_run_with_embedded_routine(client, routine)
+    run_id, task_id = await _setup_run_with_embedded_routine(client, routine, drain)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
     assert resp.status_code == 200
@@ -108,8 +114,11 @@ async def test_prompt_unchanged_when_no_agent_fields(client: AsyncClient) -> Non
     assert _SEPARATOR not in data["system"]
 
 
-async def test_prompt_unchanged_via_file_based_routine(client: AsyncClient) -> None:
+async def test_prompt_unchanged_via_file_based_routine(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """File-based routine without agent fields also returns prompt unchanged."""
+    client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
         json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
@@ -118,7 +127,9 @@ async def test_prompt_unchanged_via_file_based_routine(client: AsyncClient) -> N
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
@@ -133,9 +144,10 @@ async def test_prompt_unchanged_via_file_based_routine(client: AsyncClient) -> N
 
 
 async def test_prompt_includes_agent_system_prompt_via_routine_level(
-    client: AsyncClient,
+    client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Routine-level builder_agent system_prompt is prepended to the builder prompt."""
+    client, drain = client_and_drain
     agent_system = "You are a specialist builder agent."
     await _create_agent(client, "SpecialistBuilder", agent_system)
 
@@ -158,7 +170,7 @@ async def test_prompt_includes_agent_system_prompt_via_routine_level(
             }
         ],
     }
-    run_id, task_id = await _setup_run_with_embedded_routine(client, routine)
+    run_id, task_id = await _setup_run_with_embedded_routine(client, routine, drain)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
     assert resp.status_code == 200
@@ -176,8 +188,11 @@ async def test_prompt_includes_agent_system_prompt_via_routine_level(
 # ---------------------------------------------------------------------------
 
 
-async def test_task_level_agent_overrides_routine_level(client: AsyncClient) -> None:
+async def test_task_level_agent_overrides_routine_level(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Task-level builder_agent takes priority over routine-level."""
+    client, drain = client_and_drain
     await _create_agent(client, "RoutineBuilderX", "ROUTINE prompt")
     await _create_agent(client, "TaskBuilderX", "TASK prompt")
 
@@ -201,7 +216,7 @@ async def test_task_level_agent_overrides_routine_level(client: AsyncClient) -> 
             }
         ],
     }
-    run_id, task_id = await _setup_run_with_embedded_routine(client, routine)
+    run_id, task_id = await _setup_run_with_embedded_routine(client, routine, drain)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
     assert resp.status_code == 200
@@ -215,8 +230,11 @@ async def test_task_level_agent_overrides_routine_level(client: AsyncClient) -> 
 # ---------------------------------------------------------------------------
 
 
-async def test_step_level_agent_overrides_routine_level(client: AsyncClient) -> None:
+async def test_step_level_agent_overrides_routine_level(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Step-level builder_agent takes priority over routine-level when task has none."""
+    client, drain = client_and_drain
     await _create_agent(client, "RoutineBuilderY", "ROUTINE-Y prompt")
     await _create_agent(client, "StepBuilderY", "STEP-Y prompt")
 
@@ -240,7 +258,7 @@ async def test_step_level_agent_overrides_routine_level(client: AsyncClient) -> 
             }
         ],
     }
-    run_id, task_id = await _setup_run_with_embedded_routine(client, routine)
+    run_id, task_id = await _setup_run_with_embedded_routine(client, routine, drain)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
     assert resp.status_code == 200
@@ -281,7 +299,7 @@ async def test_verifier_prompt_includes_agent_system_prompt(
             }
         ],
     }
-    run_id, task_id = await _setup_run_with_embedded_routine(client, routine)
+    run_id, task_id = await _setup_run_with_embedded_routine(client, routine, drain)
 
     # Advance to VERIFYING
     await client.patch(
@@ -289,7 +307,7 @@ async def test_verifier_prompt_includes_agent_system_prompt(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
     task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
     assert task_resp.json()["status"] == "verifying"
@@ -308,8 +326,11 @@ async def test_verifier_prompt_includes_agent_system_prompt(
 # ---------------------------------------------------------------------------
 
 
-async def test_prompt_unchanged_when_agent_not_in_db(client: AsyncClient) -> None:
+async def test_prompt_unchanged_when_agent_not_in_db(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """When the named agent doesn't exist in DB, prompt is returned unchanged (no crash)."""
+    client, drain = client_and_drain
     routine: dict[str, Any] = {
         "id": "missing-agent-routine",
         "name": "Missing Agent Routine",
@@ -329,7 +350,7 @@ async def test_prompt_unchanged_when_agent_not_in_db(client: AsyncClient) -> Non
             }
         ],
     }
-    run_id, task_id = await _setup_run_with_embedded_routine(client, routine)
+    run_id, task_id = await _setup_run_with_embedded_routine(client, routine, drain)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
     assert resp.status_code == 200

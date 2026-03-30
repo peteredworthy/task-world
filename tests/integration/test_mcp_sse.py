@@ -16,20 +16,30 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
 from orchestrator.workflow.service import SubmitEventRegistry
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
 async def app() -> AsyncGenerator[FastAPI, None]:
+    signal_transport = InMemorySignalTransport()
     _app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    _app.state.signal_transport = signal_transport
     await init_db(_app.state.engine)
     yield _app
     await _app.state.engine.dispose()
+
+
+@pytest.fixture
+async def drain(app: FastAPI) -> DrainFn:
+    return make_drain_fn(app, app.state.signal_transport)
 
 
 @pytest.fixture
@@ -82,7 +92,7 @@ async def test_api_runs_still_works_with_mcp_mounted(client: AsyncClient) -> Non
 # --- MCP tool dispatch tests ---
 
 
-async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
+async def _setup_building_task(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run with a building task via the REST API, returning (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
@@ -91,7 +101,9 @@ async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     await client.patch(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
@@ -103,6 +115,7 @@ async def _setup_building_task(client: AsyncClient) -> tuple[str, str]:
 async def test_mcp_handler_submit_fires_registry_event(
     app: FastAPI,
     client: AsyncClient,
+    drain: DrainFn,
 ) -> None:
     """_SessionPerCallHandler creates services sharing the SubmitEventRegistry.
 
@@ -112,7 +125,7 @@ async def test_mcp_handler_submit_fires_registry_event(
     """
     from orchestrator.api.app import _SessionPerCallHandler  # pyright: ignore[reportPrivateUsage]
 
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Register an event on the shared registry (simulating UserManagedAgent)
     registry: SubmitEventRegistry = app.state.submit_event_registry
@@ -138,6 +151,7 @@ async def test_mcp_handler_submit_fires_registry_event(
 async def test_mcp_handler_updates_database_state(
     app: FastAPI,
     client: AsyncClient,
+    drain: DrainFn,
 ) -> None:
     """MCP tool dispatch through _SessionPerCallHandler persists state to the DB.
 
@@ -154,7 +168,9 @@ async def test_mcp_handler_updates_database_state(
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
     # Update checklist via MCP handler (not REST API)

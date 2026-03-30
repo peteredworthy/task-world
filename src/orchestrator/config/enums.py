@@ -7,6 +7,7 @@ class RunStatus(str, Enum):
     DRAFT = "draft"
     ACTIVE = "active"
     PAUSED = "paused"
+    STOPPING = "stopping"
     COMPLETED = "completed"
     FAILED = "failed"
 

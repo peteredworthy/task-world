@@ -21,7 +21,8 @@ from orchestrator.state.models import (
     StepState,
     TaskState,
 )
-from orchestrator.workflow import AgentErrorEvent, AgentOutputEvent
+from orchestrator.workflow import AgentErrorEvent, AgentOutputEvent, InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -47,16 +48,24 @@ def event_store(session: AsyncSession) -> EventStore:
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+        yield c, drain
     await app.state.engine.dispose()
+
+
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    return client_and_drain[0]
 
 
 def _make_run_with_attempt(
@@ -252,7 +261,7 @@ async def test_recovery_agent_output_event_noop() -> None:
     assert attempt.agent_output is None  # Not modified by replay
 
 
-async def _setup_run_with_logs(client: AsyncClient) -> tuple[str, str]:
+async def _setup_run_with_logs(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run, start it, start the task, and store some output."""
     # Create the run
     resp = await client.post(
@@ -264,7 +273,9 @@ async def _setup_run_with_logs(client: AsyncClient) -> tuple[str, str]:
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
     # Start the run
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Start the task (creates attempt)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -273,9 +284,10 @@ async def _setup_run_with_logs(client: AsyncClient) -> tuple[str, str]:
     return run_id, task_id
 
 
-async def test_get_attempt_logs_endpoint(client: AsyncClient) -> None:
+async def test_get_attempt_logs_endpoint(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """GET .../attempts/{num}/logs returns stored output."""
-    run_id, task_id = await _setup_run_with_logs(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_run_with_logs(client, drain)
 
     # The attempt is created but has no output yet - should return empty
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/attempts/1/logs")
@@ -289,17 +301,21 @@ async def test_get_attempt_logs_endpoint(client: AsyncClient) -> None:
     assert data["line_count"] == 0
 
 
-async def test_get_attempt_logs_not_found(client: AsyncClient) -> None:
+async def test_get_attempt_logs_not_found(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """GET .../attempts/{num}/logs returns 404 for nonexistent attempt."""
-    run_id, task_id = await _setup_run_with_logs(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_run_with_logs(client, drain)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/attempts/999/logs")
     assert resp.status_code == 404
 
 
-async def test_get_task_shows_has_output_and_error(client: AsyncClient) -> None:
+async def test_get_task_shows_has_output_and_error(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """GET task endpoint includes has_output and error fields in attempt."""
-    run_id, task_id = await _setup_run_with_logs(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_run_with_logs(client, drain)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
     assert resp.status_code == 200

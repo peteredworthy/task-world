@@ -231,8 +231,8 @@ def start_run(ctx: click.Context, run_id: str) -> None:
             )
 
             try:
-                # Start the run
-                run = await service.start_run(run_id=run_id)
+                # Start the run (direct apply, CLI is synchronous)
+                run = await service.apply_start_run(run_id=run_id)
                 await session.commit()
 
             except Exception as e:

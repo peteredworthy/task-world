@@ -7,9 +7,6 @@ from orchestrator.workflow.signals.signals import (
     SignalQueue,
     SignalTransport,
     WorkflowSignal,
-    has_active_workflow,
-    register_active_run,
-    unregister_active_run,
 )
 from orchestrator.workflow.signals.handlers import (
     build_registry,
@@ -23,6 +20,10 @@ from orchestrator.workflow.signals.runtime import (
     resolve_no_task_action,
 )
 
+# Consumer must be imported AFTER signals.signals and handlers are loaded
+# to avoid circular imports (handlers.py imports WorkflowSignal from this __init__)
+from orchestrator.workflow.signals.consumer import SignalConsumer
+
 __all__ = [
     "DbSignalTransport",
     "ExecutorCallbacks",
@@ -31,13 +32,11 @@ __all__ = [
     "NoTaskReason",
     "PendingSignal",
     "RunWorkflow",
+    "SignalConsumer",
     "SignalQueue",
     "SignalTransport",
     "WorkflowSignal",
     "build_registry",
-    "has_active_workflow",
-    "register_active_run",
     "resolve_no_task_action",
     "signal_handler",
-    "unregister_active_run",
 ]

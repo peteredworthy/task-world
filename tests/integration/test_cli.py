@@ -12,16 +12,20 @@ from httpx import AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.cli.main import cli
 from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
+from tests.integration.signal_helpers import make_drain_fn
 
 
 @pytest.fixture
 async def test_app() -> AsyncIterator[FastAPI]:
     """Create a test FastAPI app with in-memory database."""
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[],
         auth_disabled=True,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
     yield app
     await app.state.engine.dispose()
@@ -118,6 +122,9 @@ async def test_pause_resume_cancel_via_api(test_app: FastAPI) -> None:
     """Test pause/resume/cancel commands via API endpoints."""
     from httpx import ASGITransport
 
+    signal_transport: InMemorySignalTransport = test_app.state.signal_transport
+    drain = make_drain_fn(test_app, signal_transport)
+
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
         # Create a run (correct schema)
         create_response = await client.post(
@@ -155,29 +162,36 @@ async def test_pause_resume_cancel_via_api(test_app: FastAPI) -> None:
 
         # Start the run
         start_response = await client.post(f"/api/runs/{run_id}/start")
-        assert start_response.status_code == 200
-        assert start_response.json()["status"] == "active"
+        assert start_response.status_code == 202
+        await drain(run_id)
+        assert (await client.get(f"/api/runs/{run_id}")).json()["status"] == "active"
 
         # Pause the run
         pause_response = await client.post(f"/api/runs/{run_id}/pause")
-        assert pause_response.status_code == 200
-        assert pause_response.json()["status"] == "paused"
+        assert pause_response.status_code == 202
+        await drain(run_id)
+        assert (await client.get(f"/api/runs/{run_id}")).json()["status"] == "paused"
 
         # Resume the run
         resume_response = await client.post(f"/api/runs/{run_id}/resume")
-        assert resume_response.status_code == 200
-        assert resume_response.json()["status"] == "active"
+        assert resume_response.status_code == 202
+        await drain(run_id)
+        assert (await client.get(f"/api/runs/{run_id}")).json()["status"] == "active"
 
         # Cancel the run
         cancel_response = await client.post(f"/api/runs/{run_id}/cancel")
-        assert cancel_response.status_code == 200
-        assert cancel_response.json()["status"] == "failed"
+        assert cancel_response.status_code == 202
+        await drain(run_id)
+        assert (await client.get(f"/api/runs/{run_id}")).json()["status"] == "failed"
 
 
 @pytest.mark.asyncio
 async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
     """Test resume command with agent switching."""
     from httpx import ASGITransport
+
+    signal_transport: InMemorySignalTransport = test_app.state.signal_transport
+    drain = make_drain_fn(test_app, signal_transport)
 
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
         # Create a run with user_managed agent
@@ -217,30 +231,36 @@ async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
 
         # Start the run
         start_response = await client.post(f"/api/runs/{run_id}/start")
-        assert start_response.status_code == 200
+        assert start_response.status_code == 202
+        await drain(run_id)
 
         # Pause the run
         pause_response = await client.post(f"/api/runs/{run_id}/pause")
-        assert pause_response.status_code == 200
+        assert pause_response.status_code == 202
+        await drain(run_id)
 
         # Resume with agent switch to cli_subprocess
         resume_response = await client.post(
             f"/api/runs/{run_id}/resume",
             json={"agent_type": "cli_subprocess", "agent_config": {"timeout": "300"}},
         )
-        assert resume_response.status_code == 200
-        assert resume_response.json()["status"] == "active"
-        assert resume_response.json()["agent_type"] == "cli_subprocess"
-        assert resume_response.json()["agent_config"] == {"timeout": "300"}
+        assert resume_response.status_code == 202
+        await drain(run_id)
+        run_data = (await client.get(f"/api/runs/{run_id}")).json()
+        assert run_data["status"] == "active"
+        assert run_data["agent_type"] == "cli_subprocess"
+        assert run_data["agent_config"] == {"timeout": "300"}
 
         # Pause again
         pause_response2 = await client.post(f"/api/runs/{run_id}/pause")
-        assert pause_response2.status_code == 200
+        assert pause_response2.status_code == 202
+        await drain(run_id)
 
         # Resume without changing agent (should keep cli_subprocess)
         resume_response2 = await client.post(f"/api/runs/{run_id}/resume")
-        assert resume_response2.status_code == 200
-        assert resume_response2.json()["agent_type"] == "cli_subprocess"
+        assert resume_response2.status_code == 202
+        await drain(run_id)
+        assert (await client.get(f"/api/runs/{run_id}")).json()["agent_type"] == "cli_subprocess"
 
 
 def test_routines_list(runner: CliRunner, tmp_path: Path) -> None:

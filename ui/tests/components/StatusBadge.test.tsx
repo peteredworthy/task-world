@@ -3,7 +3,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { RunStatusBadge, TaskStatusBadge } from '../../src/components/StatusBadge';
 
 describe('RunStatusBadge', () => {
-  it.each(['draft', 'queued', 'active', 'paused', 'completed', 'failed'] as const)(
+  it.each(['draft', 'active', 'paused', 'stopping', 'completed', 'failed'] as const)(
     'renders %s status text',
     (status) => {
       cleanup();

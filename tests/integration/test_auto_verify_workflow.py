@@ -361,7 +361,7 @@ async def test_submit_without_auto_verify_unchanged(session: AsyncSession, tmp_p
 
     run = _make_run_without_auto_verify(str(tmp_path))
     await service.create_run(run)
-    await service.start_run("run-no-av")
+    await service.apply_start_run("run-no-av")
     await service.start_task("run-no-av", "task-1")
     await service.update_checklist_item("run-no-av", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -387,7 +387,7 @@ async def test_submit_with_passing_auto_verify(session: AsyncSession, tmp_path: 
         ],
     )
     await service.create_run(run)
-    await service.start_run("run-av")
+    await service.apply_start_run("run-av")
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -418,7 +418,7 @@ async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_p
         ],
     )
     await service.create_run(run)
-    await service.start_run("run-av")
+    await service.apply_start_run("run-av")
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -460,7 +460,7 @@ async def test_submit_with_failing_non_must_still_verifying(
         ],
     )
     await service.create_run(run)
-    await service.start_run("run-av")
+    await service.apply_start_run("run-av")
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -485,7 +485,7 @@ async def test_auto_verify_events_emitted(session: AsyncSession, tmp_path: Path)
         [{"id": "check1", "cmd": "echo ok", "must": True}],
     )
     await service.create_run(run)
-    await service.start_run("run-av")
+    await service.apply_start_run("run-av")
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
     await service.submit_for_verification("run-av", "task-1")
@@ -513,7 +513,7 @@ async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path)
         [{"id": "check1", "cmd": "false", "must": True}],
     )
     await service.create_run(run)
-    await service.start_run("run-av")
+    await service.apply_start_run("run-av")
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -549,7 +549,7 @@ async def test_no_runner_skips_auto_verify(session: AsyncSession, tmp_path: Path
         [{"id": "check1", "cmd": "false", "must": True}],
     )
     await service.create_run(run)
-    await service.start_run("run-av")
+    await service.apply_start_run("run-av")
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -589,7 +589,7 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
     }
 
     await service.create_run(run)
-    await service.start_run("run-av")
+    await service.apply_start_run("run-av")
     await service.start_task("run-av", "task-1")
     await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -650,7 +650,7 @@ async def test_auto_verify_results_persist_across_sessions(
             [{"id": "check1", "cmd": "echo hello", "must": True}],
         )
         await service1.create_run(run)
-        await service1.start_run("run-av")
+        await service1.apply_start_run("run-av")
         await service1.start_task("run-av", "task-1")
         await service1.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
         await service1.submit_for_verification("run-av", "task-1")

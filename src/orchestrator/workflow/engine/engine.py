@@ -109,10 +109,31 @@ class WorkflowEngine:
 
         return sanitized
 
-    def cancel_run(self, run_id: str, reason: str | None = None) -> Run:
-        """Cancel a run - move from ACTIVE/PAUSED to FAILED."""
+    def stop_run(self, run_id: str) -> Run:
+        """Begin graceful shutdown of a run - move from ACTIVE to STOPPING."""
         run = self._state.get_run(run_id)
-        cancellable = (RunStatus.ACTIVE, RunStatus.PAUSED)
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(run.status.value, RunStatus.STOPPING.value)
+
+        old_status = run.status
+        run.status = RunStatus.STOPPING
+        self._state.update_run(run)
+
+        self._emitter.emit(
+            RunStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="run_status_changed",
+                old_status=old_status,
+                new_status=RunStatus.STOPPING,
+            )
+        )
+        return run
+
+    def cancel_run(self, run_id: str, reason: str | None = None) -> Run:
+        """Cancel a run - move from ACTIVE/PAUSED/STOPPING to FAILED."""
+        run = self._state.get_run(run_id)
+        cancellable = (RunStatus.ACTIVE, RunStatus.PAUSED, RunStatus.STOPPING)
         if run.status not in cancellable:
             raise InvalidTransitionError(run.status.value, RunStatus.FAILED.value)
 
@@ -160,11 +181,11 @@ class WorkflowEngine:
         reason: str = "manual_pause",
         error_detail: str | None = None,
     ) -> Run:
-        """Pause a run - move from ACTIVE to PAUSED. Idempotent if already PAUSED."""
+        """Pause a run - move from ACTIVE/STOPPING to PAUSED. Idempotent if already PAUSED."""
         run = self._state.get_run(run_id)
         if run.status == RunStatus.PAUSED:
             return run
-        if run.status != RunStatus.ACTIVE:
+        if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
             raise InvalidTransitionError(run.status.value, RunStatus.PAUSED.value)
 
         old_status = run.status

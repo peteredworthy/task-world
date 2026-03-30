@@ -41,7 +41,7 @@ async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None
 # ---------------------------------------------------------------------------
 
 
-async def _create_and_start_run(client: AsyncClient) -> tuple[str, str]:
+async def _create_and_start_run(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run, start it, return (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
@@ -53,7 +53,8 @@ async def _create_and_start_run(client: AsyncClient) -> tuple[str, str]:
     task_id = run_data["steps"][0]["tasks"][0]["id"]
 
     start = await client.post(f"/api/runs/{run_id}/start")
-    assert start.status_code == 200
+    assert start.status_code == 202
+    await drain(run_id)
     return run_id, task_id
 
 
@@ -71,7 +72,7 @@ async def _drive_to_verifying(
     assert resp.status_code == 200
 
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Verify task is now verifying
@@ -90,7 +91,7 @@ async def _drive_to_completed(
     assert resp.status_code == 200
 
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Verify task is now completed
@@ -108,7 +109,7 @@ async def test_submit_twice(
 ) -> None:
     """Calling submit twice must advance task exactly once; second call is a no-op."""
     client, drain = client_and_drain
-    run_id, task_id = await _create_and_start_run(client)
+    run_id, task_id = await _create_and_start_run(client, drain)
 
     # First submit: task moves BUILDING -> VERIFYING
     await _drive_to_verifying(client, run_id, task_id, drain)
@@ -118,9 +119,9 @@ async def test_submit_twice(
     assert resp.json()["status"] == "verifying"
     attempts_after_first = len(resp.json()["attempts"])
 
-    # Second submit: enqueues signal, drain applies it (idempotent)
+    # Second submit: idempotent, returns 200 with new_status=verifying
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Attempt count must not have increased
@@ -145,7 +146,7 @@ async def test_verify_twice(
 ) -> None:
     """Calling complete-verification twice must not create a second attempt or error."""
     client, drain = client_and_drain
-    run_id, task_id = await _create_and_start_run(client)
+    run_id, task_id = await _create_and_start_run(client, drain)
 
     # Drive to VERIFYING
     await _drive_to_verifying(client, run_id, task_id, drain)
@@ -160,9 +161,9 @@ async def test_verify_twice(
     assert task_data["status"] == "completed"
     attempts_after_first = len(task_data["attempts"])
 
-    # Second complete-verification: enqueues signal, drain applies it (idempotent)
+    # Second complete-verification: idempotent, returns 200 with new_status=completed
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Attempt count and status must be unchanged
@@ -184,20 +185,22 @@ async def test_cancel_twice(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Cancelling an already-cancelled run must return success without error."""
-    client, _drain = client_and_drain
-    run_id, _ = await _create_and_start_run(client)
+    client, drain = client_and_drain
+    run_id, _ = await _create_and_start_run(client, drain)
 
     # First cancel: run moves ACTIVE -> FAILED
     resp = await client.post(f"/api/runs/{run_id}/cancel")
-    assert resp.status_code == 200, f"First cancel should succeed: {resp.text}"
-    first = resp.json()
-    assert first["status"] == "failed", "Run should be failed after cancel"
+    assert resp.status_code == 202, f"First cancel should succeed: {resp.text}"
+    await drain(run_id)
+    run = (await client.get(f"/api/runs/{run_id}")).json()
+    assert run["status"] == "failed", "Run should be failed after cancel"
 
-    # Second cancel: must also succeed (HTTP 200), no error, run stays failed
+    # Second cancel: must also succeed (HTTP 202), no error, run stays failed
     resp = await client.post(f"/api/runs/{run_id}/cancel")
-    assert resp.status_code == 200, (
-        f"Second cancel should return 200, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 202, (
+        f"Second cancel should return 202, got {resp.status_code}: {resp.text}"
     )
-    second = resp.json()
-    assert second["status"] == "failed", "Run must remain failed after duplicate cancel"
-    assert second["id"] == run_id, "Response must refer to the same run"
+    await drain(run_id)
+    run = (await client.get(f"/api/runs/{run_id}")).json()
+    assert run["status"] == "failed", "Run must remain failed after duplicate cancel"
+    assert run["id"] == run_id, "Response must refer to the same run"

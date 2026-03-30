@@ -9,25 +9,37 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client() -> AsyncGenerator[AsyncClient, None]:
+async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+    asgi = ASGITransport(app=app)  # type: ignore[arg-type]
+    drain = make_drain_fn(app, signal_transport)
+    async with AsyncClient(transport=asgi, base_url="http://test") as c:
+        yield c, drain
     await app.state.engine.dispose()
 
 
+@pytest.fixture
+async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
+    c, _ = client_and_drain
+    return c
+
+
 async def _setup_building_task(
-    client: AsyncClient, routine_id: str = "simple-routine"
+    client: AsyncClient, drain: DrainFn, routine_id: str = "simple-routine"
 ) -> tuple[str, str]:
     """Create a run, start it, and start building a task. Returns (run_id, task_id)."""
     resp = await client.post(
@@ -37,14 +49,17 @@ async def _setup_building_task(
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     return run_id, task_id
 
 
-async def test_create_clarification(client: AsyncClient) -> None:
+async def test_create_clarification(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     """Test creating a clarification request."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create clarification request
     resp = await client.post(
@@ -84,9 +99,10 @@ async def test_create_clarification(client: AsyncClient) -> None:
     assert task_resp.json()["status"] == "pending_user_action"
 
 
-async def test_get_pending_clarification(client: AsyncClient) -> None:
+async def test_get_pending_clarification(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     """Test retrieving a pending clarification request."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # No pending clarification initially
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/clarifications/pending")
@@ -117,9 +133,10 @@ async def test_get_pending_clarification(client: AsyncClient) -> None:
     assert len(data["questions"]) == 1
 
 
-async def test_respond_to_clarification(client: AsyncClient) -> None:
+async def test_respond_to_clarification(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     """Test responding to a clarification request."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create a clarification
     create_resp = await client.post(
@@ -175,7 +192,8 @@ async def test_respond_to_clarification(client: AsyncClient) -> None:
     assert pending_resp.json() is None
 
 
-async def test_get_pending_actions_empty(client: AsyncClient) -> None:
+async def test_get_pending_actions_empty(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     """Test getting pending actions when there are none."""
     resp = await client.post(
         "/api/runs",
@@ -188,9 +206,12 @@ async def test_get_pending_actions_empty(client: AsyncClient) -> None:
     assert resp.json() == []
 
 
-async def test_get_pending_actions_with_clarification(client: AsyncClient) -> None:
+async def test_get_pending_actions_with_clarification(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     """Test getting pending actions when there's a clarification."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create a clarification
     await client.post(
@@ -220,10 +241,11 @@ async def test_get_pending_actions_with_clarification(client: AsyncClient) -> No
 
 
 async def test_respond_to_clarification_invalid_request_id(
-    client: AsyncClient,
+    client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Test responding to a non-existent clarification request."""
-    run_id, task_id = await _setup_building_task(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create a clarification first
     await client.post(
@@ -256,7 +278,10 @@ async def test_respond_to_clarification_invalid_request_id(
     assert resp.status_code == 404
 
 
-async def test_create_clarification_invalid_task(client: AsyncClient) -> None:
+async def test_create_clarification_invalid_task(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     """Test creating a clarification for a non-existent task."""
     resp = await client.post(
         "/api/runs",
@@ -281,9 +306,12 @@ async def test_create_clarification_invalid_task(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_create_clarification_free_text_type(client: AsyncClient) -> None:
+async def test_create_clarification_free_text_type(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     """Create a clarification with question_type='free_text'; assert stored question has correct type and no options."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     resp = await client.post(
         f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
@@ -309,10 +337,11 @@ async def test_create_clarification_free_text_type(client: AsyncClient) -> None:
 
 
 async def test_create_clarification_multi_select_empty_options_returns_422(
-    client: AsyncClient,
+    client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Create a clarification with question_type='multi_select' and empty options; assert 422 response."""
-    run_id, task_id = await _setup_building_task(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_building_task(client, drain)
 
     resp = await client.post(
         f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
@@ -332,9 +361,10 @@ async def test_create_clarification_multi_select_empty_options_returns_422(
     assert resp.status_code == 422
 
 
-async def test_respond_with_selected_options(client: AsyncClient) -> None:
+async def test_respond_with_selected_options(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     """Respond with selected_options=['A', 'B']; assert task transitions to BUILDING."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create a multi_select clarification
     create_resp = await client.post(
@@ -378,9 +408,10 @@ async def test_respond_with_selected_options(client: AsyncClient) -> None:
     assert task_resp.json()["status"] == "building"
 
 
-async def test_respond_with_skipped_true(client: AsyncClient) -> None:
+async def test_respond_with_skipped_true(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
     """Respond with skipped=True and skip_reason; assert task transitions back to BUILDING."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create a clarification
     create_resp = await client.post(
@@ -422,10 +453,13 @@ async def test_respond_with_skipped_true(client: AsyncClient) -> None:
 
 
 async def test_respond_with_skipped_true_includes_skip_message_in_builder_prompt(
-    client: AsyncClient,
+    client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Respond with skipped=True; task prompt includes declined-to-answer context."""
-    run_id, task_id = await _setup_building_task(client, routine_id="routine-with-clarifications")
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_building_task(
+        client, drain, routine_id="routine-with-clarifications"
+    )
 
     create_resp = await client.post(
         f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
@@ -470,9 +504,12 @@ async def test_respond_with_skipped_true_includes_skip_message_in_builder_prompt
 # --- GET .../clarifications history endpoint tests ---
 
 
-async def test_get_clarification_history_empty(client: AsyncClient) -> None:
+async def test_get_clarification_history_empty(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     """GET .../clarifications returns empty list when no rounds exist."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/clarifications")
     assert resp.status_code == 200
@@ -480,9 +517,12 @@ async def test_get_clarification_history_empty(client: AsyncClient) -> None:
     assert data == {"items": []}
 
 
-async def test_get_clarification_history_with_completed_round(client: AsyncClient) -> None:
+async def test_get_clarification_history_with_completed_round(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     """Complete a clarification round; GET .../clarifications returns 1 item with non-null response."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create a clarification
     create_resp = await client.post(
@@ -529,9 +569,12 @@ async def test_get_clarification_history_with_completed_round(client: AsyncClien
     assert item["response"]["answers"][0]["selected_option"] == "TypeScript"
 
 
-async def test_get_clarification_history_with_pending_round(client: AsyncClient) -> None:
+async def test_get_clarification_history_with_pending_round(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     """Submit a pending clarification; GET .../clarifications returns item with response=null."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create a clarification but don't respond
     create_resp = await client.post(
@@ -560,7 +603,10 @@ async def test_get_clarification_history_with_pending_round(client: AsyncClient)
     assert item["response"] is None
 
 
-async def test_get_clarification_history_nonexistent_run_returns_404(client: AsyncClient) -> None:
+async def test_get_clarification_history_nonexistent_run_returns_404(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     """GET .../clarifications with nonexistent run_id returns 404."""
     resp = await client.get("/api/runs/nonexistent-run/tasks/some-task/clarifications")
     assert resp.status_code == 404
@@ -581,9 +627,12 @@ async def test_get_clarification_history_nonexistent_task_returns_404(
     assert resp.status_code == 404
 
 
-async def test_get_clarification_history_multiple_rounds(client: AsyncClient) -> None:
+async def test_get_clarification_history_multiple_rounds(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
+    client, drain = client_and_drain
     """History returns multiple rounds in ascending creation order."""
-    run_id, task_id = await _setup_building_task(client)
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # First round: create and complete
     create1 = await client.post(
@@ -644,10 +693,11 @@ async def test_get_clarification_history_multiple_rounds(client: AsyncClient) ->
 
 
 async def test_get_clarification_history_skipped_answer_response(
-    client: AsyncClient,
+    client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
     """Respond with individual answer skipped=True; GET history shows response with skipped answer."""
-    run_id, task_id = await _setup_building_task(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_building_task(client, drain)
 
     # Create a clarification
     create_resp = await client.post(

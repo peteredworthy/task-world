@@ -106,21 +106,23 @@ async def _create_recover_run(client: AsyncClient, repo_name: str) -> tuple[str,
 async def _fail_run_on_first_task(
     client: AsyncClient, run_id: str, task_1_id: str, drain: DrainFn
 ) -> None:
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/start")
     await client.patch(
         f"/api/runs/{run_id}/tasks/{task_1_id}/checklist/R1",
         json={"status": "done"},
     )
     submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/submit")
-    assert submit_resp.status_code == 202
+    assert submit_resp.status_code == 200
     await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_1_id}/checklist/R1/grade",
         json={"grade": "D", "grade_reason": "force failure"},
     )
     complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/complete-verification")
-    assert complete_resp.status_code == 202
+    assert complete_resp.status_code == 200
     await drain(run_id)
 
     run_response = await client.get(f"/api/runs/{run_id}")
@@ -175,7 +177,9 @@ async def test_recover_preserve_checklist_true_keeps_downstream_items(
     run_id, task_1_id, task_2_id, task_3_id = await _create_recover_run(client, "recover-preserve")
 
     # Pre-mark downstream checklist while run is ACTIVE; recover should retain this when requested.
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     preset_resp = await client.patch(
         f"/api/runs/{run_id}/tasks/{task_3_id}/checklist/R3",
         json={"status": "done", "note": "keep me"},
@@ -188,14 +192,14 @@ async def test_recover_preserve_checklist_true_keeps_downstream_items(
         json={"status": "done"},
     )
     submit_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/submit")
-    assert submit_resp.status_code == 202
+    assert submit_resp.status_code == 200
     await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_1_id}/checklist/R1/grade",
         json={"grade": "D", "grade_reason": "force failure"},
     )
     complete_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_1_id}/complete-verification")
-    assert complete_resp.status_code == 202
+    assert complete_resp.status_code == 200
     await drain(run_id)
 
     failed_run = await client.get(f"/api/runs/{run_id}")
@@ -220,7 +224,9 @@ async def test_recover_non_failed_run_returns_409(client: AsyncClient) -> None:
         client, "recover-conflict"
     )
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    # Don't drain - the run stays in DRAFT state which is also not failed/paused -> 409
 
     response = await client.post(
         f"/api/runs/{run_id}/recover",

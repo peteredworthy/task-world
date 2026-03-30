@@ -128,7 +128,7 @@ async def _complete_task(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     await client.put(
@@ -136,7 +136,7 @@ async def _complete_task(
         json={"grade": "A"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     task = (await client.get(f"/api/runs/{run_id}/tasks/{task_id}")).json()
@@ -173,7 +173,9 @@ async def test_skip_step_not_executed(
     task1_id = run["steps"][0]["tasks"][0]["id"]
     task2_id = run["steps"][1]["tasks"][0]["id"]  # task in skipped step
 
-    await client.post(f"/api/runs/{run_id}/start")
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
 
     # Complete step 1 → triggers condition evaluation on step 2
     await _complete_task(client, run_id, task1_id, drain)
@@ -206,7 +208,9 @@ async def test_skip_step_run_advances_to_next(
     run_id = run["id"]
     task1_id = run["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
     await _complete_task(client, run_id, task1_id, drain)
 
     # Run should have jumped to step index 2 (step 3), skipping step index 1
@@ -234,7 +238,9 @@ async def test_skip_reason_recorded(
     run_id = run["id"]
     task1_id = run["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
     await _complete_task(client, run_id, task1_id, drain)
 
     run_state = await _get_run(client, run_id)
@@ -263,7 +269,9 @@ async def test_skip_step_full_workflow_completes(
     task1_id = run["steps"][0]["tasks"][0]["id"]
     task3_id = run["steps"][2]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
 
     # Complete step 1 (step 2 auto-skipped)
     await _complete_task(client, run_id, task1_id, drain)

@@ -32,30 +32,25 @@ async def test_revision_flow_gate_blocked(api_client: AsyncClient, drain: DrainF
     # Create and start run
     run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-1")
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start task
     task_id = get_first_task_id(run_data)
     await start_task(api_client, run_id, task_id)
 
-    # Submit WITHOUT completing checklist — 202 (async), then drain → gate blocked → run paused
+    # Submit WITHOUT completing checklist — gate check runs synchronously → 409
     response = await api_client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert response.status_code == 202
-    await drain(run_id)
+    assert response.status_code == 409
 
-    # Run should be paused with gate_blocked reason
+    # Run should still be ACTIVE (gate is checked synchronously; no state change)
     run_data = await get_run(api_client, run_id)
-    assert run_data["status"] == "paused"
-    assert run_data["pause_reason"] == "gate_blocked"
+    assert run_data["status"] == "active"
 
     # Task should still be in BUILDING state
     task_data = await get_task(api_client, run_id, task_id)
     assert task_data["status"] == "building"
 
-    # Resume the run, complete the checklist, and try again
-    resume_resp = await api_client.post(f"/api/runs/{run_id}/resume")
-    assert resume_resp.status_code == 200
-
+    # Complete the checklist and try again
     await mark_checklist_done(api_client, run_id, task_id, "R1")
     result = await submit_task(api_client, run_id, task_id, drain=drain)
     assert result["success"] is True
@@ -75,7 +70,7 @@ async def test_revision_flow_failed_grades(api_client: AsyncClient, drain: Drain
     # Create and start run
     run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-2")
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start task and complete building phase
     task_id = get_first_task_id(run_data)
@@ -124,7 +119,7 @@ async def test_revision_flow_multiple_rounds(api_client: AsyncClient, drain: Dra
     # Create and start run
     run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-3")
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start task
     task_id = get_first_task_id(run_data)
@@ -173,7 +168,7 @@ async def test_revision_preserves_checklist_state(api_client: AsyncClient, drain
     # Create and start run
     run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-4")
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start task and complete first attempt
     task_id = get_first_task_id(run_data)
@@ -214,7 +209,7 @@ async def test_revision_preserves_task_context(api_client: AsyncClient, drain: D
     # Create and start run
     run_data = await create_run(api_client, routine_id="simple-routine", repo_name="rev-proj-5")
     run_id = run_data["id"]
-    run_data = await start_run(api_client, run_id)
+    run_data = await start_run(api_client, run_id, drain=drain)
 
     # Start task
     task_id = get_first_task_id(run_data)

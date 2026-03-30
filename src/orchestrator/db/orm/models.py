@@ -280,14 +280,15 @@ class PendingSignalModel(Base):
         Index("ix_pending_signals_run_id", "run_id"),
     )
 
-    id: Mapped[str] = mapped_column(String, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[str] = mapped_column(
         String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
     )
     signal_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class RoutineMetaModel(Base):

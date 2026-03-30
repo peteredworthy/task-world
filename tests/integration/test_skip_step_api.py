@@ -86,7 +86,8 @@ async def _create_run_with_manual_gate(client: AsyncClient, drain: DrainFn) -> t
 
     # Start run
     start_resp = await client.post(f"/api/runs/{run_id}/start")
-    assert start_resp.status_code == 200
+    assert start_resp.status_code == 202
+    await drain(run_id)
 
     # Complete step 1
     task1_id = create_resp.json()["steps"][0]["tasks"][0]["id"]
@@ -103,7 +104,7 @@ async def _create_run_with_manual_gate(client: AsyncClient, drain: DrainFn) -> t
             "completion_reason": "Completed task",
         },
     )
-    assert submit_resp.status_code == 202
+    assert submit_resp.status_code == 200
     await drain(run_id)
 
     # Complete verification (auto-verify should pass)
@@ -111,7 +112,7 @@ async def _create_run_with_manual_gate(client: AsyncClient, drain: DrainFn) -> t
         f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
         json={"passing_grades": []},
     )
-    assert complete_resp.status_code == 202
+    assert complete_resp.status_code == 200
     await drain(run_id)
 
     # Now check that run is paused at manual gate
@@ -292,7 +293,8 @@ class TestSkipStepAPI:
 
         # Start run
         start_resp = await client.post(f"/api/runs/{run_id}/start")
-        assert start_resp.status_code == 200
+        assert start_resp.status_code == 202
+        await drain(run_id)
 
         # Complete step 1
         task1_id = create_resp.json()["steps"][0]["tasks"][0]["id"]
@@ -304,14 +306,14 @@ class TestSkipStepAPI:
             f"/api/runs/{run_id}/tasks/{task1_id}/submit",
             json={"artifacts": [], "completion_reason": "Completed task"},
         )
-        assert submit_resp.status_code == 202
+        assert submit_resp.status_code == 200
         await drain(run_id)
 
         complete_resp = await client.post(
             f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
             json={"passing_grades": []},
         )
-        assert complete_resp.status_code == 202
+        assert complete_resp.status_code == 200
         await drain(run_id)
 
         # Now run is paused at step 2 (manual gate)

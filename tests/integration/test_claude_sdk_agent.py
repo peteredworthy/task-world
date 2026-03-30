@@ -137,7 +137,7 @@ async def test_claude_sdk_builder_phase_completes_task(service: WorkflowService)
     req_ids = ["R-01", "R-02"]
     run = _make_run(req_ids)
     await service.create_run(run)
-    await service.start_run("run-sdk-1")
+    await service.apply_start_run("run-sdk-1")
     await service.start_task("run-sdk-1", "task-1")
 
     updates: list[tuple[str, ChecklistStatus]] = []
@@ -199,7 +199,7 @@ async def test_claude_sdk_verifier_phase_completes_task(service: WorkflowService
     req_ids = ["R-01"]
     run = _make_run(req_ids, run_id="run-sdk-2")
     await service.create_run(run)
-    await service.start_run("run-sdk-2")
+    await service.apply_start_run("run-sdk-2")
     await service.start_task("run-sdk-2", "task-1")
 
     # Builder phase: directly advance state via service (not testing builder here).
@@ -274,7 +274,7 @@ async def test_claude_sdk_end_turn_auto_submit(service: WorkflowService) -> None
     req_ids = ["R-01"]
     run = _make_run(req_ids, run_id="run-sdk-3")
     await service.create_run(run)
-    await service.start_run("run-sdk-3")
+    await service.apply_start_run("run-sdk-3")
     await service.start_task("run-sdk-3", "task-1")
 
     # Mark checklist done manually so gate check passes on submit.
@@ -331,7 +331,7 @@ async def test_claude_sdk_token_metrics_accumulated(service: WorkflowService) ->
     req_ids = ["R-01"]
     run = _make_run(req_ids, run_id="run-sdk-4")
     await service.create_run(run)
-    await service.start_run("run-sdk-4")
+    await service.apply_start_run("run-sdk-4")
     await service.start_task("run-sdk-4", "task-1")
 
     async def on_checklist_update(req_id: str, status: ChecklistStatus, note: str | None) -> None:
@@ -399,7 +399,7 @@ async def test_claude_sdk_full_builder_verifier_lifecycle(service: WorkflowServi
     req_ids = ["R-01", "R-02"]
     run = _make_run(req_ids, run_id="run-sdk-5")
     await service.create_run(run)
-    await service.start_run("run-sdk-5")
+    await service.apply_start_run("run-sdk-5")
     await service.start_task("run-sdk-5", "task-1")
 
     # --- Builder phase ---

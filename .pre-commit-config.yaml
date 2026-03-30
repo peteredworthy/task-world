@@ -31,6 +31,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
+      - id: signal-routing
+        name: signal-routing
+        entry: uv run python scripts/check_signal_routing.py
+        language: system
+        types: [python]
+        pass_filenames: true
       - id: ui-lint
         name: ui-lint
         entry: bash -c 'test -d ui/node_modules && npm --prefix ui run lint || echo "Skipping ui-lint (node_modules not installed)"'

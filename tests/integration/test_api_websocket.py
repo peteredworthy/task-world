@@ -8,6 +8,7 @@ from pathlib import Path
 
 from starlette.testclient import TestClient
 
+
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource, RunStatus
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
@@ -29,7 +30,15 @@ def _setup_building_task(client: TestClient) -> tuple[str, str]:
     task_id = run_data["steps"][0]["tasks"][0]["id"]
 
     start_run_resp = client.post(f"/api/runs/{run_id}/start")
-    assert start_run_resp.status_code == 200
+    assert start_run_resp.status_code == 202
+    # Poll until the run becomes ACTIVE (signal consumer may take time under load)
+    for _ in range(30):
+        run_resp = client.get(f"/api/runs/{run_id}")
+        if run_resp.json().get("status") == "active":
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError(f"Run {run_id} never became active")
 
     start_task_resp = client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     assert start_task_resp.status_code == 200
@@ -193,10 +202,11 @@ def test_ws_clarification_requested() -> None:
             assert int(clarification_event["question_count"]) >= 1
 
 
-def test_ws_clarification_responded() -> None:
+def test_ws_clarification_responded(tmp_path: Path) -> None:
     """WebSocket receives clarification_responded when a response is submitted."""
+    db_path = tmp_path / "orchestrator.db"
     app = create_app(
-        db_path=":memory:",
+        db_path=str(db_path),
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
 

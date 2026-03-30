@@ -45,7 +45,14 @@ from orchestrator.workflow.engine import Clock, WorkflowEngine
 from orchestrator.workflow.agent.prompts import generate_builder_prompt, generate_recovery_prompt
 from orchestrator.workflow.agent.templates import resolve_template
 from orchestrator.workflow.engine.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow.engine.gates import evaluate_checklist_gate
 from orchestrator.workflow.events.logger import PersistentEventEmitter
+from orchestrator.workflow.signals.signals import (
+    DbSignalTransport,
+    SignalQueue,
+    SignalTransport,
+    WorkflowSignal,
+)
 from orchestrator.workflow.events import (
     AgentChangedEvent,
     ApprovalDecision,
@@ -218,6 +225,7 @@ class WorkflowService:
         lock_manager: LockManager | None = None,
         global_config: GlobalConfig | None = None,
         env_lifecycle: EnvFileLifecycle | None = None,
+        signal_transport: SignalTransport | None = None,
     ) -> None:
         self._session = session
         self._repo = repo or RunRepository(session)
@@ -229,6 +237,7 @@ class WorkflowService:
         self._lock_manager = lock_manager
         self._global_config = global_config
         self._env_lifecycle = env_lifecycle
+        self._signal_transport = signal_transport
 
     def _build_engine(
         self, run: Run
@@ -300,33 +309,38 @@ class WorkflowService:
             worktree_base_port=self._global_config.server.worktree_base_port,
         )
 
+    def _get_signal_queue(self) -> SignalQueue:
+        """Return a SignalQueue backed by the injected transport or the default DbSignalTransport."""
+        transport = self._signal_transport or DbSignalTransport(self._session)
+        return SignalQueue(transport)
+
     # --- Delegating to WorkflowEngine ---
 
     async def cancel_run(self, run_id: str, reason: str | None = None) -> Run:
-        """Cancel a run (ACTIVE/PAUSED -> FAILED).
+        """Cancel a run (ACTIVE/PAUSED -> FAILED) via signal queue.
 
-        If a RunWorkflow is actively executing, enqueues a CANCEL signal so
-        the workflow can apply the transition at a safe iteration boundary.
-        Otherwise falls back to direct DB mutation.
+        Enqueues a CANCEL signal; the consumer applies the DB transition.
+        Returns the run in its current (pre-transition) state.
+        """
+        run = await self._repo.get(run_id)
+        # Idempotency: if run is already in a terminal state, return it as-is.
+        if run.status in (RunStatus.FAILED, RunStatus.COMPLETED):
+            return run
+        # DRAFT runs cannot be cancelled.
+        if run.status == RunStatus.DRAFT:
+            raise InvalidTransitionError(run.status.value, "failed")
+        queue = self._get_signal_queue()
+        payload: dict[str, Any] | None = {"reason": reason} if reason else None
+        await queue.enqueue(run_id, WorkflowSignal.CANCEL, payload)
+        await self._session.commit()
+        return run
 
+    async def apply_cancel_run(self, run_id: str, reason: str | None = None) -> Run:
+        """Cancel a run (ACTIVE/PAUSED -> FAILED) via direct DB mutation.
+
+        Called by the signal consumer and internal executor code.
         Handles worktree cleanup if the run has a worktree configured.
         """
-        from orchestrator.workflow.signals import (
-            DbSignalTransport,
-            SignalQueue,
-            WorkflowSignal,
-            has_active_workflow,
-        )
-
-        if has_active_workflow(run_id):
-            transport = DbSignalTransport(self._session)
-            queue = SignalQueue(transport)
-            payload: dict[str, object] = {}
-            if reason is not None:
-                payload["reason"] = reason
-            await queue.enqueue(run_id, WorkflowSignal.CANCEL, payload or None)
-            return await self._repo.get(run_id)
-
         run = await self._repo.get(run_id)
 
         # Idempotency: if run is already in a terminal state, return it as-is.
@@ -364,11 +378,23 @@ class WorkflowService:
         return result
 
     async def start_run(self, run_id: str) -> Run:
-        """Start a run (DRAFT -> ACTIVE).
+        """Start a run (DRAFT -> ACTIVE) via signal queue.
 
-        Note: This only changes the run status. For managed agents (CLI, OpenHands),
-        the agent must be spawned separately. For user-managed agents, an external
-        agent must poll the API.
+        Enqueues a RUN_START signal; the consumer applies the DB transition.
+        Returns the run in its current (pre-transition) state.
+        """
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.DRAFT:
+            raise InvalidTransitionError(run.status.value, "start_run (requires DRAFT)")
+        queue = self._get_signal_queue()
+        await queue.enqueue(run_id, WorkflowSignal.RUN_START)
+        await self._session.commit()
+        return run
+
+    async def apply_start_run(self, run_id: str) -> Run:
+        """Start a run (DRAFT -> ACTIVE) via direct DB mutation.
+
+        Called by the signal consumer and internal executor code.
         """
         import logging
 
@@ -380,12 +406,25 @@ class WorkflowService:
             f"repo={run.repo_name}, routine={run.routine_id}"
         )
 
-        engine, state, buffer = self._build_engine(run)
-        engine.start_run(run_id)
+        if run.status != RunStatus.DRAFT:
+            raise InvalidTransitionError(run.status.value, RunStatus.ACTIVE.value)
 
-        # Note: worktree creation is now handled by the caller (API layer)
-        # who has access to the repos_dir configuration
-        result = await self._persist(state, run_id, buffer)
+        old_status = run.status
+        run.status = RunStatus.ACTIVE
+        run.started_at = self._clock.now()
+        await self._repo.save(run)
+        now = self._clock.now()
+        await self._event_emitter.emit(
+            RunStatusChanged(
+                timestamp=now,
+                run_id=run_id,
+                event_type="run_status_changed",
+                old_status=old_status,
+                new_status=RunStatus.ACTIVE,
+            )
+        )
+        await self._session.commit()
+        result = run
 
         # Call env_lifecycle hook if configured and worktree is available
         if self._env_lifecycle is not None and result.worktree_path and result.env_file_specs:
@@ -399,20 +438,18 @@ class WorkflowService:
                 source_dir=source_dir,
             )
 
-        # Warn if using a managed agent that requires spawning
-        if run.agent_type in (
-            AgentRunnerType.CLI_SUBPROCESS,
-            AgentRunnerType.OPENHANDS_LOCAL,
-            AgentRunnerType.OPENHANDS_DOCKER,
-        ):
-            agent_type_str = run.agent_type.value if run.agent_type else "unknown"
-            logger.warning(
-                f"Run {run_id} started with managed agent {agent_type_str}. "
-                f"Agent must be spawned separately (via CLI or agent launcher). "
-                f"Run will remain ACTIVE with no progress until agent connects."
-            )
-
         return result
+
+    async def apply_stop_run(self, run_id: str) -> Run:
+        """Transition a run from ACTIVE to STOPPING via direct DB mutation.
+
+        Called from pause_run() to make the stop observable before the
+        PAUSE signal is processed by the consumer.
+        """
+        run = await self._repo.get(run_id)
+        engine, state, buffer = self._build_engine(run)
+        engine.stop_run(run_id)
+        return await self._persist(state, run_id, buffer)
 
     async def pause_run(
         self,
@@ -420,32 +457,36 @@ class WorkflowService:
         reason: str = "manual_pause",
         error_detail: str | None = None,
     ) -> Run:
-        """Pause a run (ACTIVE -> PAUSED).
+        """Pause a run (ACTIVE -> STOPPING -> PAUSED) via signal queue.
 
-        If a RunWorkflow is actively executing for this run, the signal is
-        enqueued so the workflow applies the pause at a safe iteration
-        boundary.  Otherwise the state change is applied directly to the DB
-        (existing behaviour, used for already-paused/queued runs and for
-        internal pauses initiated from within the RunWorkflow itself).
+        Immediately transitions ACTIVE → STOPPING so the stop is observable,
+        then enqueues a PAUSE signal for the consumer to apply STOPPING → PAUSED.
+        Returns the run in STOPPING state.
+        Raises InvalidTransitionError if the run is not ACTIVE.
         """
-        from orchestrator.workflow.signals import (
-            DbSignalTransport,
-            SignalQueue,
-            WorkflowSignal,
-            has_active_workflow,
-        )
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(run.status.value, "paused")
+        # Immediately visible: ACTIVE → STOPPING
+        stopping_run = await self.apply_stop_run(run_id)
+        queue = self._get_signal_queue()
+        payload: dict[str, Any] = {"reason": reason}
+        if error_detail:
+            payload["error_detail"] = error_detail
+        await queue.enqueue(run_id, WorkflowSignal.PAUSE, payload)
+        await self._session.commit()
+        return stopping_run
 
-        if has_active_workflow(run_id):
-            transport = DbSignalTransport(self._session)
-            queue = SignalQueue(transport)
-            payload: dict[str, object] = {"reason": reason}
-            if error_detail is not None:
-                payload["error_detail"] = error_detail
-            await queue.enqueue(run_id, WorkflowSignal.PAUSE, payload)
-            # Return the current run state (transition happens asynchronously)
-            return await self._repo.get(run_id)
+    async def apply_pause_run(
+        self,
+        run_id: str,
+        reason: str = "manual_pause",
+        error_detail: str | None = None,
+    ) -> Run:
+        """Pause a run (ACTIVE -> PAUSED) via direct DB mutation.
 
-        # Direct DB mutation (no active workflow, or internal call after unregister)
+        Called by the signal consumer and internal executor code.
+        """
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
         engine.pause_run(run_id, reason=reason, error_detail=error_detail)
@@ -458,12 +499,37 @@ class WorkflowService:
         agent_config: dict[str, object] | None = None,
         resume_strategy: str | None = None,
     ) -> Run:
-        """Resume a run (PAUSED -> ACTIVE), optionally changing the agent.
+        """Resume a run (PAUSED -> ACTIVE) via signal queue.
 
-        If a RunWorkflow is already active for this run (unusual — the run
-        should be PAUSED when resuming), enqueues a RESUME signal.  In
-        practice resume_run is always called on a PAUSED run (no active
-        workflow), so this falls through to the direct DB path.
+        Enqueues a RESUME signal; the consumer applies the DB transition.
+        Returns the run in its current (pre-transition) state.
+        Raises InvalidTransitionError if the run is not in a resumable state.
+        """
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.PAUSED:
+            raise InvalidTransitionError(run.status.value, "active")
+        queue = self._get_signal_queue()
+        payload: dict[str, Any] = {}
+        if agent_type is not None:
+            payload["agent_type"] = agent_type.value
+        if agent_config is not None:
+            payload["agent_config"] = agent_config
+        if resume_strategy is not None:
+            payload["resume_strategy"] = resume_strategy
+        await queue.enqueue(run_id, WorkflowSignal.RESUME, payload or None)
+        await self._session.commit()
+        return run
+
+    async def apply_resume_run(
+        self,
+        run_id: str,
+        agent_type: AgentRunnerType | None = None,
+        agent_config: dict[str, object] | None = None,
+        resume_strategy: str | None = None,
+    ) -> Run:
+        """Resume a run (PAUSED -> ACTIVE) via direct DB mutation.
+
+        Called by the signal consumer and internal executor code.
 
         Args:
             run_id: The run ID
@@ -474,19 +540,6 @@ class WorkflowService:
         Returns:
             The updated run
         """
-        from orchestrator.workflow.signals import (
-            DbSignalTransport,
-            SignalQueue,
-            WorkflowSignal,
-            has_active_workflow,
-        )
-
-        if has_active_workflow(run_id):
-            transport = DbSignalTransport(self._session)
-            queue = SignalQueue(transport)
-            await queue.enqueue(run_id, WorkflowSignal.RESUME, None)
-            return await self._repo.get(run_id)
-
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
 
@@ -1097,8 +1150,6 @@ class WorkflowService:
 
         Returns the updated run.
         """
-        from orchestrator.workflow.signals import has_active_workflow
-
         # retry_fan_out_child does targeted updates on child, parent, and step
         run_id_from_db, step_order_index = await self._repo.retry_fan_out_child(child_task_id)
         assert run_id_from_db == run_id
@@ -1109,24 +1160,8 @@ class WorkflowService:
         # Pause the run if active so the executor restarts from the right step
         run = await self._repo.get(run_id)
         if run.status == RunStatus.ACTIVE:
-            if has_active_workflow(run_id):
-                from orchestrator.workflow.signals import (
-                    DbSignalTransport,
-                    SignalQueue,
-                    WorkflowSignal,
-                )
-
-                transport = DbSignalTransport(self._session)
-                queue = SignalQueue(transport)
-                await queue.enqueue(
-                    run_id,
-                    WorkflowSignal.PAUSE,
-                    {"reason": "fan_out_child_retry"},
-                )
-            else:
-                await self._repo.update_run_status(
-                    run_id, RunStatus.PAUSED, pause_reason="fan_out_child_retry"
-                )
+            queue = self._get_signal_queue()
+            await queue.enqueue(run_id, WorkflowSignal.PAUSE, {"reason": "fan_out_child_retry"})
 
         # Emit events
         await self._event_emitter.emit_batch(
@@ -1567,9 +1602,9 @@ class WorkflowService:
             GateBlockedError: If the checklist gate does not pass.
         """
         run = await self._repo.get(run_id)
-        if run.status != RunStatus.ACTIVE:
+        if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
             raise InvalidTransitionError(
-                run.status.value, "submit_for_verification (requires ACTIVE run)"
+                run.status.value, "submit_for_verification (requires ACTIVE or STOPPING run)"
             )
         engine, state, buffer = self._build_engine(run)
 
@@ -1766,9 +1801,9 @@ class WorkflowService:
                 ):
                     return TransitionResult(success=True, new_status=_task.status)
 
-        if run.status != RunStatus.ACTIVE:
+        if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING, RunStatus.PAUSED):
             raise InvalidTransitionError(
-                run.status.value, "complete_verification (requires ACTIVE run)"
+                run.status.value, "complete_verification (requires ACTIVE, STOPPING, or PAUSED run)"
             )
 
         # Capture which steps were already completed before the engine runs
@@ -1848,6 +1883,246 @@ class WorkflowService:
 
         return result
 
+    # --- Check/apply split methods for synchronous-check + async-signal pattern ---
+
+    async def check_submission(self, run_id: str, task_id: str) -> TransitionResult:
+        """Check submission readiness without transitioning task state.
+
+        Runs auto-verify, auto-marks checklist items, and validates the checklist
+        gate.  On success, persists updated checklist and auto-verify results so
+        that a subsequent apply_submission call (via signal) can apply the
+        BUILDING → VERIFYING transition.
+
+        Returns:
+            success=True, new_status=BUILDING  — gate ready; caller should enqueue
+                                                 ACTIVITY_COMPLETED signal.
+            success=True, new_status=VERIFYING — idempotent; task already VERIFYING.
+            success=True, new_status=RECOVERING — crash recovery triggered.
+            success=False, new_status=BUILDING — auto-verify must-items failed;
+                                                  error details returned to agent.
+
+        Raises:
+            InvalidTransitionError: Run is not ACTIVE or STOPPING.
+            GateBlockedError: Checklist gate does not pass after auto-verify.
+        """
+        run = await self._repo.get(run_id)
+        if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
+            raise InvalidTransitionError(
+                run.status.value, "check_submission (requires ACTIVE or STOPPING run)"
+            )
+        _, state, buffer = self._build_engine(run)
+
+        task = state.get_task(run_id, task_id)
+        if task.status == TaskStatus.VERIFYING:
+            return TransitionResult(success=True, new_status=TaskStatus.VERIFYING)
+
+        step_config_id_pre = None
+        for step in run.steps:
+            for t in step.tasks:
+                if t.id == task_id:
+                    step_config_id_pre = step.config_id
+                    break
+            if step_config_id_pre is not None:
+                break
+
+        auto_verify_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
+        if auto_verify_config is not None and self._auto_verify_runner is not None:
+            project_path = _resolve_working_path(run)
+            if project_path is not None:
+                if run.worktree_path:
+                    commit_uncommitted_changes(
+                        Path(run.worktree_path),
+                        f"Auto-commit builder changes for task {task_id}",
+                    )
+
+                av_results = await run_auto_verify(
+                    auto_verify_config,
+                    self._auto_verify_runner,
+                    project_path,
+                    variables=run.config,
+                )
+
+                if task.attempts:
+                    task.attempts[-1].auto_verify_results = [r.model_dump() for r in av_results]
+
+                all_must_passed, failing_must_ids = evaluate_auto_verify(
+                    auto_verify_config, av_results
+                )
+
+                buffer.emit(
+                    AutoVerifyCompleted(
+                        timestamp=self._clock.now(),
+                        run_id=run_id,
+                        event_type="auto_verify_completed",
+                        task_id=task_id,
+                        passed=all_must_passed,
+                        failing_must_items=failing_must_ids,
+                        results=[r.model_dump() for r in av_results],
+                    )
+                )
+
+                if has_crashes(av_results):
+                    crash_lines: list[str] = []
+                    for av in av_results:
+                        if av.crashed:
+                            crash_lines.append(
+                                f"- [{av.item_id}] command `{av.cmd}` CRASHED\n"
+                                f"  Error: {av.crash_error or '(unknown)'}"
+                            )
+                    crash_detail = "Validation script(s) crashed during auto-verify:\n" + "\n".join(
+                        crash_lines
+                    )
+                    await self._persist(state, run_id, buffer)
+                    self._notify_submit(task_id)
+                    await self.trigger_recovery(run_id, task_id, crash_detail)
+                    return TransitionResult(
+                        success=True,
+                        new_status=TaskStatus.RECOVERING,
+                        error="Auto-verify script crashed; recovery triggered",
+                    )
+
+                if all_must_passed:
+                    for item in task.checklist:
+                        if item.status == ChecklistStatus.OPEN:
+                            item.status = ChecklistStatus.DONE
+                else:
+                    if task.attempts:
+                        failing_lines: list[str] = []
+                        for av in av_results:
+                            if av.item_id not in failing_must_ids:
+                                continue
+                            output = av.output.strip() if av.output else ""
+                            snippet = output if output else "(no command output)"
+                            failing_lines.append(
+                                f"- [{av.item_id}] command `{av.cmd}` failed "
+                                f"(exit {av.exit_code})\n  Output:\n{snippet}"
+                            )
+                        if failing_lines:
+                            task.attempts[-1].verifier_comment = (
+                                "Auto-verify failed. Fix the following and resubmit:\n"
+                                + "\n".join(failing_lines)
+                            )
+
+                    await self._persist(state, run_id, buffer)
+                    self._notify_submit(task_id)
+                    return TransitionResult(
+                        success=False,
+                        new_status=TaskStatus.BUILDING,
+                        error="Auto-verify must-items failed (pre-gate)",
+                    )
+
+        # Re-fetch task after potential auto-mark updates
+        task = state.get_task(run_id, task_id)
+
+        # Validate the checklist gate without transitioning state
+        gate_result = evaluate_checklist_gate(task.checklist)
+        if not gate_result.passed:
+            await self._persist(state, run_id, buffer)
+            raise GateBlockedError("checklist", gate_result.blocking_items)
+
+        # Gate passes — persist updated state (auto-verify results, checklist, events)
+        await self._persist(state, run_id, buffer)
+        return TransitionResult(success=True, new_status=TaskStatus.BUILDING)
+
+    async def apply_submission(self, run_id: str, task_id: str) -> TransitionResult:
+        """Apply BUILDING → VERIFYING transition after a validated ACTIVITY_COMPLETED signal.
+
+        Called by the signal handler.  Assumes check_submission has already
+        validated the gate and persisted updated checklist state.
+
+        Raises:
+            InvalidTransitionError: Run is not ACTIVE or STOPPING.
+        """
+        run = await self._repo.get(run_id)
+        if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
+            raise InvalidTransitionError(
+                run.status.value, "apply_submission (requires ACTIVE or STOPPING run)"
+            )
+        engine, state, buffer = self._build_engine(run)
+
+        task = state.get_task(run_id, task_id)
+        if task.status == TaskStatus.VERIFYING:
+            return TransitionResult(success=True, new_status=TaskStatus.VERIFYING)
+
+        end_commit: str | None = None
+        if run.worktree_path and task.attempts:
+            worktree_path_obj = Path(run.worktree_path)
+            commit_uncommitted_changes(
+                worktree_path_obj, f"Auto-commit builder changes for task {task_id}"
+            )
+            end_commit = get_head_commit(worktree_path_obj)
+
+        try:
+            result = engine.submit_for_verification(run_id, task_id, end_commit=end_commit)
+        except GateBlockedError:
+            await self._persist(state, run_id, buffer)
+            raise
+
+        if not result.success:
+            await self._persist(state, run_id, buffer)
+            return result
+
+        task = state.get_task(run_id, task_id)
+        if end_commit and task.attempts:
+            task.attempts[-1].end_commit = end_commit
+
+        await self._persist(state, run_id, buffer)
+        self._notify_submit(task_id)
+        return result
+
+    async def check_verification(self, run_id: str, task_id: str) -> TransitionResult:
+        """Validate that verification can be completed; does not change state.
+
+        Called synchronously by the HTTP endpoint before enqueuing
+        ACTIVITY_VERIFIED.
+
+        Returns:
+            success=True, new_status=VERIFYING   — task ready; enqueue signal.
+            success=True, new_status=COMPLETED   — idempotent; already completed.
+            success=True, new_status=FAILED      — idempotent; already failed.
+
+        Raises:
+            InvalidTransitionError: Run or task is not in a valid state.
+            TaskNotFoundError: Task not found in the run.
+        """
+        run = await self._repo.get(run_id)
+
+        for step in run.steps:
+            for task in step.tasks:
+                if task.id == task_id and task.status in (
+                    TaskStatus.COMPLETED,
+                    TaskStatus.FAILED,
+                ):
+                    return TransitionResult(success=True, new_status=task.status)
+
+        if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING, RunStatus.PAUSED):
+            raise InvalidTransitionError(
+                run.status.value,
+                "check_verification (requires ACTIVE, STOPPING, or PAUSED run)",
+            )
+
+        for step in run.steps:
+            for task in step.tasks:
+                if task.id == task_id:
+                    if task.status != TaskStatus.VERIFYING:
+                        raise InvalidTransitionError(
+                            task.status.value,
+                            "check_verification (task must be VERIFYING)",
+                        )
+                    return TransitionResult(success=True, new_status=TaskStatus.VERIFYING)
+
+        raise TaskNotFoundError(run_id, task_id)
+
+    async def apply_verification(self, run_id: str, task_id: str) -> TransitionResult:
+        """Apply verification outcome after a validated ACTIVITY_VERIFIED signal.
+
+        Called by the signal handler.  Delegates to complete_verification which
+        evaluates grades and applies the VERIFYING → outcome transition plus all
+        post-transition side effects (step auto-verify, env_lifecycle, worktree
+        cleanup).
+        """
+        return await self.complete_verification(run_id, task_id)
+
     # --- Direct state operations ---
 
     async def get_run(self, run_id: str) -> Run:
@@ -1891,7 +2166,7 @@ class WorkflowService:
         """Persist a new run."""
         await self._repo.save(run)
         await self._session.commit()
-        return await self._repo.get(run.id)
+        return run
 
     async def set_worktree_path(self, run_id: str, worktree_path: str) -> Run:
         """Set the worktree path on a run after worktree creation."""

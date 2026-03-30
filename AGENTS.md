@@ -330,6 +330,22 @@ git -C <worktree_path> log --oneline -5
 
 When adding new modules, API routes, or CLI commands, update `docs/ARCHITECTURE.md` (directory map, API routes table) and the key modules table above in this file. Keep the directory map and route table in sync with the actual codebase.
 
+## Signal Queue and Runner Isolation
+
+These rules lock in the invariants of the single-queue signal model. Violations are caught by `scripts/check_signal_routing.py` (enforced as a pre-commit hook).
+
+**Rule 1 — No registry function calls outside consumer.py.**
+`register_active_run`, `unregister_active_run`, and `has_active_workflow` are consumer-internal. Only `consumer.py` and its dedicated test files (`test_signal_consumer.py`, `test_signal_redelivery.py`) may import or call them. All other code must treat the active-workflow registry as an opaque implementation detail of the consumer.
+
+**Rule 2 — No process-local shared state that crosses the API/executor boundary.**
+In-memory state (sets, dicts, locks) must not be shared between the HTTP request handlers and the executor/consumer. Dependencies are passed via constructor injection or FastAPI `Depends`. Never read another component's internal `_` fields from a different component.
+
+**Rule 3 — No `app.state` access from RunWorkflow or AgentRunnerExecutor.**
+`RunWorkflow` and `AgentRunnerExecutor` must not access `app.state` or `request.app.state`. All dependencies (session factory, lock manager, connection manager, etc.) are injected via their constructors. This makes these components testable without a running ASGI app.
+
+**Rule 4 — All lifecycle transitions go through the signal queue.**
+`start`, `pause`, `resume`, and `cancel` transitions must be enacted by enqueuing a signal via `SignalQueue` / `DbSignalTransport`. `WorkflowService` must not directly mutate run status for lifecycle transitions. The signal consumer is the sole writer of lifecycle state in the DB.
+
 ## Routine Authoring
 
 When writing or reviewing routine YAML files, keep `step_context` short (one or two sentences). It is duplicated into every task prompt in the step, so verbosity multiplies quickly. See **[docs/step-context-guide.md](docs/step-context-guide.md)** for guidance and good/bad examples.

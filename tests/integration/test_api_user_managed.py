@@ -36,7 +36,7 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
     return client_and_drain[0]
 
 
-async def _create_and_start_run(client: AsyncClient) -> tuple[str, str]:
+async def _create_and_start_run(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Helper: create, start a run, and return (run_id, task_id)."""
     response = await client.post(
         "/api/runs",
@@ -48,14 +48,16 @@ async def _create_and_start_run(client: AsyncClient) -> tuple[str, str]:
     task_id = data["steps"][0]["tasks"][0]["id"]
 
     response = await client.post(f"/api/runs/{run_id}/start")
-    assert response.status_code == 200
+    assert response.status_code == 202
+    await drain(run_id)
 
     return run_id, task_id
 
 
-async def test_agent_started_sets_timestamp(client: AsyncClient) -> None:
+async def test_agent_started_sets_timestamp(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """POST /runs/{id}/agent-started sets agent_started_at timestamp."""
-    run_id, _ = await _create_and_start_run(client)
+    client, drain = client_and_drain
+    run_id, _ = await _create_and_start_run(client, drain)
 
     # Before marking agent started, timestamp should be None
     response = await client.get(f"/api/runs/{run_id}")
@@ -78,9 +80,12 @@ async def test_agent_started_sets_timestamp(client: AsyncClient) -> None:
     assert data["agent_started_at"].endswith("Z")
 
 
-async def test_agent_started_can_be_called_multiple_times(client: AsyncClient) -> None:
+async def test_agent_started_can_be_called_multiple_times(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """agent-started can be called multiple times (idempotent with timestamp update)."""
-    run_id, _ = await _create_and_start_run(client)
+    client, drain = client_and_drain
+    run_id, _ = await _create_and_start_run(client, drain)
 
     # First call
     response = await client.post(f"/api/runs/{run_id}/agent-started")
@@ -96,9 +101,12 @@ async def test_agent_started_can_be_called_multiple_times(client: AsyncClient) -
     # Note: timestamps might be the same if called quickly, but that's OK
 
 
-async def test_agent_cancelled_transitions_to_failed(client: AsyncClient) -> None:
+async def test_agent_cancelled_transitions_to_failed(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """POST /runs/{id}/agent-cancelled transitions run to FAILED."""
-    run_id, _ = await _create_and_start_run(client)
+    client, drain = client_and_drain
+    run_id, _ = await _create_and_start_run(client, drain)
 
     # Verify run is ACTIVE
     response = await client.get(f"/api/runs/{run_id}")
@@ -120,18 +128,24 @@ async def test_agent_cancelled_transitions_to_failed(client: AsyncClient) -> Non
     assert response.json()["status"] == "failed"
 
 
-async def test_agent_cancelled_without_reason(client: AsyncClient) -> None:
+async def test_agent_cancelled_without_reason(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """agent-cancelled works without a reason."""
-    run_id, _ = await _create_and_start_run(client)
+    client, drain = client_and_drain
+    run_id, _ = await _create_and_start_run(client, drain)
 
     response = await client.post(f"/api/runs/{run_id}/agent-cancelled", json={})
     assert response.status_code == 200
     assert response.json()["status"] == "failed"
 
 
-async def test_guidance_with_building_task(client: AsyncClient) -> None:
+async def test_guidance_with_building_task(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """GET /runs/{id}/guidance returns prompt and actions for BUILDING task."""
-    run_id, task_id = await _create_and_start_run(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _create_and_start_run(client, drain)
 
     # Start the first task (BUILDING)
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -156,7 +170,7 @@ async def test_guidance_with_building_task(client: AsyncClient) -> None:
 async def test_guidance_with_verifying_task(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """GET /runs/{id}/guidance returns prompt and actions for VERIFYING task."""
     client, drain = client_and_drain
-    run_id, task_id = await _create_and_start_run(client)
+    run_id, task_id = await _create_and_start_run(client, drain)
 
     # Start task and submit for verification
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -165,7 +179,7 @@ async def test_guidance_with_verifying_task(client_and_drain: tuple[AsyncClient,
         json={"status": "done"},
     )
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert response.status_code == 202
+    assert response.status_code == 200
     await drain(run_id)
 
     # Get guidance (should now be VERIFYING)
@@ -244,7 +258,9 @@ async def test_full_user_managed_lifecycle(client_and_drain: tuple[AsyncClient, 
     run_id = response.json()["id"]
     task_id = response.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    response = await client.post(f"/api/runs/{run_id}/start")
+    assert response.status_code == 202
+    await drain(run_id)
 
     # Mark agent started
     response = await client.post(f"/api/runs/{run_id}/agent-started")
@@ -275,7 +291,7 @@ async def test_full_user_managed_lifecycle(client_and_drain: tuple[AsyncClient, 
 
     # Submit for verification (202 async) then drain
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert response.status_code == 202
+    assert response.status_code == 200
     await drain(run_id)
 
     # Get guidance (should be verifying now)
@@ -291,9 +307,9 @@ async def test_full_user_managed_lifecycle(client_and_drain: tuple[AsyncClient, 
         json={"grade": "A", "grade_reason": "Perfect work"},
     )
 
-    # Complete verification (202 async) then drain
+    # Complete verification (200 sync) then drain
     response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert response.status_code == 202
+    assert response.status_code == 200
     await drain(run_id)
 
     # Verify task is completed
@@ -302,8 +318,11 @@ async def test_full_user_managed_lifecycle(client_and_drain: tuple[AsyncClient, 
     assert response.json()["status"] == "completed"
 
 
-async def test_guidance_with_embedded_routine(client: AsyncClient) -> None:
+async def test_guidance_with_embedded_routine(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """GET /runs/{id}/guidance works with embedded routines."""
+    client, drain = client_and_drain
     # Create run with embedded routine
     embedded = {
         "id": "embedded-test",
@@ -343,7 +362,9 @@ async def test_guidance_with_embedded_routine(client: AsyncClient) -> None:
     run_id = response.json()["id"]
     task_id = response.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
     # Get guidance (should work with embedded routine)

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import enum
 import json
-import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,18 +28,20 @@ class WorkflowSignal(enum.Enum):
     CANCEL = "cancel"
     ACTIVITY_COMPLETED = "activity_completed"
     ACTIVITY_VERIFIED = "activity_verified"
+    RUN_START = "run_start"
 
 
 @dataclass
 class PendingSignal:
     """A signal pending consumption by a RunWorkflow."""
 
-    id: str
+    id: int
     run_id: str
     signal_type: WorkflowSignal
     payload: dict[str, Any] | None
     created_at: datetime
-    processed_at: datetime | None = field(default=None)
+    delivered_at: datetime | None = field(default=None)
+    handled_at: datetime | None = field(default=None)
 
 
 class SignalTransport(ABC):
@@ -89,24 +90,24 @@ class DbSignalTransport(SignalTransport):
         from orchestrator.db import PendingSignalModel
 
         now = datetime.now(timezone.utc)
-        signal_id = str(uuid.uuid4())
         model = PendingSignalModel(
-            id=signal_id,
             run_id=run_id,
             signal_type=signal_type.value,
             payload=json.dumps(payload) if payload is not None else None,
             created_at=now,
-            processed_at=None,
+            delivered_at=None,
+            handled_at=None,
         )
         self._session.add(model)
         await self._session.flush()
         return PendingSignal(
-            id=signal_id,
+            id=model.id,
             run_id=run_id,
             signal_type=signal_type,
             payload=payload,
             created_at=now,
-            processed_at=None,
+            delivered_at=None,
+            handled_at=None,
         )
 
     async def drain(self, run_id: str) -> list[PendingSignal]:
@@ -119,16 +120,16 @@ class DbSignalTransport(SignalTransport):
             select(PendingSignalModel)
             .where(
                 PendingSignalModel.run_id == run_id,
-                PendingSignalModel.processed_at.is_(None),
+                PendingSignalModel.handled_at.is_(None),
             )
-            .order_by(PendingSignalModel.created_at)
+            .order_by(PendingSignalModel.id)
         )
         result = await self._session.execute(stmt)
         models = list(result.scalars().all())
 
         signals: list[PendingSignal] = []
         for model in models:
-            model.processed_at = now
+            model.handled_at = now
             payload = json.loads(model.payload) if model.payload is not None else None
             signals.append(
                 PendingSignal(
@@ -137,7 +138,8 @@ class DbSignalTransport(SignalTransport):
                     signal_type=WorkflowSignal(model.signal_type),
                     payload=payload,
                     created_at=model.created_at,
-                    processed_at=now,
+                    delivered_at=model.delivered_at,
+                    handled_at=now,
                 )
             )
 
@@ -152,6 +154,7 @@ class InMemorySignalTransport(SignalTransport):
 
     def __init__(self) -> None:
         self._queue: list[PendingSignal] = []
+        self._next_id: int = 1
 
     async def enqueue(
         self,
@@ -161,22 +164,24 @@ class InMemorySignalTransport(SignalTransport):
     ) -> PendingSignal:
         now = datetime.now(timezone.utc)
         signal = PendingSignal(
-            id=str(uuid.uuid4()),
+            id=self._next_id,
             run_id=run_id,
             signal_type=signal_type,
             payload=payload,
             created_at=now,
-            processed_at=None,
+            delivered_at=None,
+            handled_at=None,
         )
+        self._next_id += 1
         self._queue.append(signal)
         return signal
 
     async def drain(self, run_id: str) -> list[PendingSignal]:
         now = datetime.now(timezone.utc)
-        pending = [s for s in self._queue if s.run_id == run_id and s.processed_at is None]
+        pending = [s for s in self._queue if s.run_id == run_id and s.handled_at is None]
         result: list[PendingSignal] = []
         for signal in pending:
-            signal.processed_at = now
+            signal.handled_at = now
             result.append(signal)
         return result
 
@@ -208,29 +213,3 @@ class SignalQueue:
         timestamp to guarantee exactly-once consumption.
         """
         return await self._transport.drain(run_id)
-
-
-# ---------------------------------------------------------------------------
-# Registry of active RunWorkflow instances
-#
-# Maintained as a module-level set so that WorkflowService can decide whether
-# to route pause/resume/cancel through the signal queue (active run) or apply
-# the state change directly to the DB (already paused / queued run).
-# ---------------------------------------------------------------------------
-
-_active_run_ids: set[str] = set()
-
-
-def register_active_run(run_id: str) -> None:
-    """Mark a run as having an active RunWorkflow driving it."""
-    _active_run_ids.add(run_id)
-
-
-def unregister_active_run(run_id: str) -> None:
-    """Remove a run from the active-workflow registry."""
-    _active_run_ids.discard(run_id)
-
-
-def has_active_workflow(run_id: str) -> bool:
-    """Return True if a RunWorkflow is currently executing for run_id."""
-    return run_id in _active_run_ids

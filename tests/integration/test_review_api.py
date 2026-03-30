@@ -11,6 +11,9 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -65,7 +68,9 @@ def git_repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-async def client_with_repo(git_repo: Path) -> AsyncGenerator[tuple[AsyncClient, Path], None]:
+async def client_with_repo(
+    git_repo: Path,
+) -> AsyncGenerator[tuple[AsyncClient, Path, DrainFn], None]:
     """Test client with a real git repo as project."""
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
@@ -80,19 +85,24 @@ async def client_with_repo(git_repo: Path) -> AsyncGenerator[tuple[AsyncClient, 
         )
     )
 
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         global_config=global_config,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo
+        yield c, git_repo, drain
     await app.state.engine.dispose()
 
 
-async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict[str, Any]:
+async def _create_and_start_run(
+    client: AsyncClient, project_path: Path, drain: DrainFn
+) -> dict[str, Any]:
     """Helper: create and start a run pointing at a real git repo."""
     resp = await client.post(
         "/api/runs",
@@ -105,9 +115,10 @@ async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict
     assert resp.status_code == 201
     run_id = resp.json()["id"]
 
-    resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200
-    data = resp.json()
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
     assert data["worktree_path"] is not None
     return data
@@ -121,11 +132,11 @@ async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict
 class TestGetDiff:
     async def test_aggregate_diff_empty_branch(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Aggregate diff on a branch with no changes returns empty diff."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/diff")
@@ -138,11 +149,11 @@ class TestGetDiff:
 
     async def test_aggregate_diff_with_changes(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Aggregate diff contains the changed file."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -158,11 +169,11 @@ class TestGetDiff:
 
     async def test_aggregate_diff_schema_fields(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """DiffResponse includes diff, scope, and optional file_path."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/diff")
@@ -174,11 +185,11 @@ class TestGetDiff:
 
     async def test_commit_scope_requires_ref(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """commit scope without ref returns 400."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/diff?scope=commit")
@@ -186,11 +197,11 @@ class TestGetDiff:
 
     async def test_commit_scope_with_ref(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """commit scope with valid ref returns diff for that single commit."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -208,11 +219,11 @@ class TestGetDiff:
 
     async def test_task_scope_with_ref(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """task scope with ref returns diff from merge-base to that commit."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -227,11 +238,11 @@ class TestGetDiff:
 
     async def test_task_scope_without_ref_falls_back_to_aggregate(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """task scope without ref behaves like aggregate."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -244,18 +255,18 @@ class TestGetDiff:
 
     async def test_run_not_found_returns_404(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        client, _repo = client_with_repo
+        client, _repo, drain = client_with_repo
         resp = await client.get("/api/runs/nonexistent-run-id/review/diff")
         assert resp.status_code == 404
 
     async def test_run_without_worktree_returns_409(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Diff on a DRAFT run (no worktree) returns 409."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs",
             json={
@@ -273,11 +284,11 @@ class TestGetDiff:
 
     async def test_multiple_commits_in_aggregate_diff(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Multiple commits on run branch all appear in aggregate diff."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -299,11 +310,11 @@ class TestGetDiff:
 class TestGetDiffFiles:
     async def test_empty_branch_returns_empty_list(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """No changes → empty file list."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
@@ -312,11 +323,11 @@ class TestGetDiffFiles:
 
     async def test_added_file_appears(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """An added file shows up with status 'added' and non-zero additions."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -334,11 +345,11 @@ class TestGetDiffFiles:
 
     async def test_modified_file_appears(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """A modified file shows status 'modified' with additions and deletions."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -358,11 +369,11 @@ class TestGetDiffFiles:
 
     async def test_multiple_files_listed(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Multiple changed files all appear in the listing."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -378,11 +389,11 @@ class TestGetDiffFiles:
 
     async def test_response_schema(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Each file entry has required DiffFileEntry schema fields."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -401,17 +412,17 @@ class TestGetDiffFiles:
 
     async def test_run_not_found_returns_404(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        client, _repo = client_with_repo
+        client, _repo, drain = client_with_repo
         resp = await client.get("/api/runs/nonexistent/review/diff/files")
         assert resp.status_code == 404
 
     async def test_run_without_worktree_returns_409(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs",
             json={
@@ -428,11 +439,11 @@ class TestGetDiffFiles:
 
     async def test_additions_and_deletions_counted(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Additions and deletions are accurately counted."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -460,11 +471,11 @@ class TestGetDiffFiles:
 class TestGetCommits:
     async def test_empty_branch_returns_empty_list(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """No commits beyond merge-base → empty commit list."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/commits")
@@ -473,11 +484,11 @@ class TestGetCommits:
 
     async def test_single_commit_listed(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """A single commit shows up with correct SHA and message."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -493,11 +504,11 @@ class TestGetCommits:
 
     async def test_multiple_commits_newest_first(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Multiple commits appear in reverse chronological order (newest first)."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -514,11 +525,11 @@ class TestGetCommits:
 
     async def test_commit_schema_fields(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Each commit entry contains all CommitEntry schema fields."""
-        client, repo = client_with_repo
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -541,17 +552,17 @@ class TestGetCommits:
 
     async def test_run_not_found_returns_404(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        client, _repo = client_with_repo
+        client, _repo, drain = client_with_repo
         resp = await client.get("/api/runs/nonexistent/review/commits")
         assert resp.status_code == 404
 
     async def test_run_without_worktree_returns_409(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
         resp = await client.post(
             "/api/runs",
             json={
@@ -568,15 +579,15 @@ class TestGetCommits:
 
     async def test_commit_not_listed_if_on_source_branch(
         self,
-        client_with_repo: tuple[AsyncClient, Path],
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
     ) -> None:
         """Commits from source branch (before branch point) are excluded."""
-        client, repo = client_with_repo
+        client, repo, drain = client_with_repo
 
         # Add a commit to main BEFORE creating the run
         _commit_file(repo, "main_file.py", "# on main\n", "Commit on main")
 
-        run_data = await _create_and_start_run(client, repo)
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         # No commits on run branch yet

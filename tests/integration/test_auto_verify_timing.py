@@ -176,7 +176,7 @@ async def test_failing_auto_verify_blocks_transition_even_with_done_checklist(
     # 'false' always exits non-zero → must:true item will fail
     run = _make_run_with_auto_verify(str(tmp_path), auto_verify_cmd="false")
     await service.create_run(run)
-    await service.start_run("run-timing")
+    await service.apply_start_run("run-timing")
     await service.start_task("run-timing", "task-1")
 
     # Builder self-reports all checklist items as done; without the timing fix
@@ -205,7 +205,7 @@ async def test_failing_auto_verify_never_bounces_through_verifying(
 
     run = _make_run_with_auto_verify(str(tmp_path), auto_verify_cmd="false")
     await service.create_run(run)
-    await service.start_run("run-timing")
+    await service.apply_start_run("run-timing")
     await service.start_task("run-timing", "task-1")
     await service.update_checklist_item("run-timing", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -236,7 +236,7 @@ async def test_passing_auto_verify_allows_transition(session: AsyncSession, tmp_
     # 'echo ok' always exits zero → must:true item will pass
     run = _make_run_with_auto_verify(str(tmp_path), auto_verify_cmd="echo ok")
     await service.create_run(run)
-    await service.start_run("run-timing")
+    await service.apply_start_run("run-timing")
     await service.start_task("run-timing", "task-1")
     await service.update_checklist_item("run-timing", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -258,11 +258,12 @@ async def test_passing_auto_verify_allows_transition(session: AsyncSession, tmp_
 async def test_api_auto_verify_configured_failure_returns_409(
     api_client_and_drain: tuple[AsyncClient, DrainFn], tmp_path: Path
 ) -> None:
-    """API pauses run with gate_blocked when auto_verify fails and checklist is not done.
+    """Submit returns 409 synchronously when checklist gate is blocked.
 
-    When auto_verify is configured with a failing command the checklist gate has
-    no opportunity to auto-mark items, so any OPEN critical items cause a
-    GateBlockedError which pauses the run with pause_reason="gate_blocked".
+    When auto_verify is configured but has no working directory (no worktree),
+    auto-verify is skipped and any OPEN critical checklist items cause a
+    GateBlockedError to be returned synchronously as a 409 response.
+    The run stays active; no drain is needed.
     """
     api_client, drain = api_client_and_drain
     # Create a run with an embedded routine containing a failing auto_verify command
@@ -279,22 +280,18 @@ async def test_api_auto_verify_configured_failure_returns_409(
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
     # Start the run and the task
-    await api_client.post(f"/api/runs/{run_id}/start")
+    start_resp = await api_client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
     await api_client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
-    # Submit WITHOUT marking the checklist done — returns 202 (async).
-    # auto_verify fails (cmd="false") → no auto-marking → OPEN critical item → GateBlockedError
+    # Submit WITHOUT marking the checklist done — returns 409 synchronously.
+    # No worktree → auto-verify skipped → OPEN critical item → GateBlockedError → 409.
     resp = await api_client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202, f"Expected 202 from submit, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 409, f"Expected 409 from submit, got {resp.status_code}: {resp.text}"
 
-    # Drain signals — the GateBlockedError will pause the run with reason="gate_blocked"
-    await drain(run_id)
-
-    # Verify the run is now paused due to gate blocked
+    # Run stays active — no state change on gate failure
     run_resp = await api_client.get(f"/api/runs/{run_id}")
     assert run_resp.status_code == 200
     run_data = run_resp.json()
-    assert run_data["status"] == "paused", f"Expected paused, got {run_data['status']}"
-    assert run_data["pause_reason"] == "gate_blocked", (
-        f"Expected gate_blocked pause_reason, got {run_data['pause_reason']}"
-    )
+    assert run_data["status"] == "active", f"Expected active, got {run_data['status']}"

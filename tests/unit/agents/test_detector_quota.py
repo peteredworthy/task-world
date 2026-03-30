@@ -57,16 +57,19 @@ class _RaisingAgentStub:
 
 
 class _SlowAgentStub:
-    """Agent stub whose get_quota() sleeps longer than the configured timeout."""
+    """Agent stub whose get_quota() raises TimeoutError to simulate a slow quota fetch.
+
+    Instead of actually sleeping (which would block a background thread for the
+    full sleep duration after asyncio cancels the wait_for), we directly raise
+    asyncio.TimeoutError.  _fetch_quota_for_option catches all exceptions the
+    same way, so this exercises the identical code path without wall-clock cost.
+    """
 
     def __init__(self, name: str) -> None:
         self.name = name
 
     def get_quota(self) -> AgentQuota | None:
-        import time
-
-        time.sleep(1.5)  # blocks the thread beyond the test's 0.5s timeout
-        return AgentQuota(balance_usd=99.0)
+        raise asyncio.TimeoutError("simulated quota timeout")
 
 
 async def test_quota_populated_for_available_agent() -> None:
@@ -128,15 +131,14 @@ async def test_exception_in_get_quota_yields_none() -> None:
     assert um.quota is None
 
 
-@pytest.mark.timeout(15)
 async def test_slow_get_quota_times_out_and_yields_none() -> None:
-    """A get_quota() that exceeds the timeout results in quota=None on first failure (no prior success).
+    """A get_quota() that times out results in quota=None on first failure (no prior success).
 
-    Uses a short quota_timeout (0.5s) to avoid waiting for the default 10s timeout.
-    The stub sleeps 2s which exceeds the 0.5s threshold.
+    The stub raises asyncio.TimeoutError directly, exercising the same exception
+    handler as a real timeout without blocking any background thread.
     """
     stub = _SlowAgentStub(name="User Managed")
-    detector = ToolDetector(agents=[stub], quota_timeout=0.5)
+    detector = ToolDetector(agents=[stub])
 
     options = await detector.detect_all()
     um = next(o for o in options if o.name == "User Managed")

@@ -118,7 +118,7 @@ async def _create_active_run(
         run_id = run.id
 
         # Start the run to make it ACTIVE
-        await service.start_run(run_id)
+        await service.apply_start_run(run_id)
         await session.commit()
         return run_id
 
@@ -230,6 +230,7 @@ class TestExecutorLoopNeverLeavesActive:
         # 3. Spawn executor — it will read DB, hit _find_next_task, and exit
         executor = AgentRunnerExecutor(
             session_factory=session_factory,
+            service_factory=app.state.service_factory,
             spawn_agents=True,
         )
         executor.spawn_for_run(run_id, AgentRunnerType.CLI_SUBPROCESS, {})
@@ -275,6 +276,7 @@ class TestExecutorLoopNeverLeavesActive:
 
         executor = AgentRunnerExecutor(
             session_factory=session_factory,
+            service_factory=app.state.service_factory,
             spawn_agents=True,
         )
         executor.spawn_for_run(run_id, AgentRunnerType.CLI_SUBPROCESS, {})

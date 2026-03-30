@@ -75,7 +75,7 @@ async def _create_run_with_approval_task(client: AsyncClient) -> tuple[str, str]
 
     # Start the run
     resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200
+    assert resp.status_code == 202
 
     return run_id, task_id
 

@@ -99,16 +99,25 @@ from orchestrator.workflow.signals import (
     NoTaskReason,
     PendingSignal,
     RunWorkflow,
+    SignalConsumer,
     SignalQueue,
     SignalTransport,
     WorkflowSignal,
     build_registry,
-    has_active_workflow,
-    register_active_run,
     resolve_no_task_action,
     signal_handler,
-    unregister_active_run,
 )
+
+# Registry helpers live in consumer.py — not part of public API.
+# Re-exported here so test files can import via orchestrator.workflow (required
+# by the module-imports pre-commit hook). NOT in __all__. Business logic must
+# not import these — enforced by the signal-routing pre-commit hook.
+from orchestrator.workflow.signals.consumer import (
+    has_active_workflow as has_active_workflow,  # consumer.py
+    register_active_run as register_active_run,  # consumer.py
+    unregister_active_run as unregister_active_run,  # consumer.py
+)
+
 from orchestrator.workflow.agent import (
     AutoVerifyResult,
     AutoVerifyRunner,
@@ -257,15 +266,13 @@ __all__ = [
     "NoTaskReason",
     "PendingSignal",
     "RunWorkflow",
+    "SignalConsumer",
     "SignalQueue",
     "SignalTransport",
     "WorkflowSignal",
     "build_registry",
-    "has_active_workflow",
-    "register_active_run",
     "resolve_no_task_action",
     "signal_handler",
-    "unregister_active_run",
     # Agent (prompts, templates, context, clarifications, auto-verify, summary cache)
     "AutoVerifyResult",
     "AutoVerifyRunner",

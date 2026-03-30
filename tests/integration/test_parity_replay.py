@@ -225,7 +225,7 @@ async def test_replay_linear_lifecycle(
     async with session_factory() as session:
         svc = WorkflowService(session)
         await svc.create_run(run)
-        await svc.start_run(run_id)
+        await svc.apply_start_run(run_id)
         await _complete_task(svc, run_id, task1_id)
         await _complete_task(svc, run_id, task2_id)
 
@@ -302,11 +302,11 @@ async def test_replay_pause_resume_lifecycle(
     async with session_factory() as session:
         svc = WorkflowService(session)
         await svc.create_run(run)
-        await svc.start_run(run_id)
+        await svc.apply_start_run(run_id)
         # Pause with a specific reason
-        await svc.pause_run(run_id, reason="server_shutdown")
+        await svc.apply_pause_run(run_id, reason="server_shutdown")
         # Resume
-        await svc.resume_run(run_id)
+        await svc.apply_resume_run(run_id)
 
     async with session_factory() as session:
         repo = RunRepository(session)
@@ -380,7 +380,7 @@ async def test_replay_step_skip_lifecycle(
     async with session_factory() as session:
         svc = WorkflowService(session)
         await svc.create_run(run)
-        await svc.start_run(run_id)
+        await svc.apply_start_run(run_id)
         # Complete step 1 (step 2 auto-skipped by condition=false)
         await _complete_task(svc, run_id, task1_id)
         # Complete step 3

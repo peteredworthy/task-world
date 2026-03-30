@@ -1,4 +1,4 @@
-export type RunStatus = 'draft' | 'active' | 'paused' | 'completed' | 'failed';
+export type RunStatus = 'draft' | 'active' | 'paused' | 'stopping' | 'completed' | 'failed';
 
 export type TaskStatus = 'pending' | 'building' | 'verifying' | 'recovering' | 'fan_out_running' | 'completed' | 'failed';
 

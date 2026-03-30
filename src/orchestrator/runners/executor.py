@@ -26,7 +26,6 @@ from orchestrator.config.enums import (
     TaskStatus,
 )
 from orchestrator.workflow import (
-    WorkflowEvent,
     NoTaskReason,
     resolve_no_task_action,
 )
@@ -37,13 +36,15 @@ from orchestrator.workflow import InvalidTransitionError
 from orchestrator.workflow import generate_builder_prompt, SummaryCache
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
     from orchestrator.config.global_config import GlobalConfig
     from orchestrator.state.models import Run, StepState, TaskState
     from orchestrator.workflow.locks import LockManager
-    from orchestrator.workflow.service import SubmitEventRegistry, WorkflowService
+    from orchestrator.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
 
@@ -87,17 +88,16 @@ class AgentRunnerExecutor:
         session_factory: async_sessionmaker[AsyncSession],
         global_config: GlobalConfig | None = None,
         lock_manager: LockManager | None = None,
-        submit_event_registry: SubmitEventRegistry | None = None,
         runner_monitor: AgentRunnerMonitor | None = None,
         connection_manager: BroadcastCallback | None = None,
         api_base_url: str | None = None,
+        service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]] | None = None,
         *,
         spawn_agents: bool = True,
     ) -> None:
         self._session_factory = session_factory
         self._global_config = global_config
         self._lock_manager = lock_manager
-        self._submit_event_registry = submit_event_registry
         self._connection_manager = connection_manager
         # Derive from config if not explicitly provided
         if api_base_url is None and global_config is not None:
@@ -115,12 +115,25 @@ class AgentRunnerExecutor:
         self._runner_monitor = runner_monitor
         self._lazy_runner_monitor_init = runner_monitor is None
 
+        self._service_factory = service_factory
+
         # Extracted sub-components
         self._attempt_store = AttemptStore(session_factory)
         self._broadcaster = EventBroadcaster(session_factory, connection_manager)
         self._phase_handler = PhaseHandler(
             self._attempt_store, self._broadcaster, self._api_base_url
         )
+
+    def set_service_factory(
+        self, factory: Callable[[AsyncSession], Awaitable[WorkflowService]]
+    ) -> None:
+        """Replace the WorkflowService factory.
+
+        Called from the app lifespan after the shared factory is built so that
+        the executor uses the same construction path as request handlers and the
+        signal consumer.
+        """
+        self._service_factory = factory
 
     async def _append_task_log(self, run_id: str, task_id: str, lines: list[str]) -> None:
         """Persist lightweight log lines for tasks that do not stream agent output directly."""
@@ -152,41 +165,8 @@ class AgentRunnerExecutor:
             return None
 
     async def _create_service(self, session: AsyncSession) -> WorkflowService:
-        """Create a WorkflowService for the given session."""
-        from orchestrator.db import EventStore
-        from orchestrator.db import RunRepository
-        from orchestrator.workflow import LocalAutoVerifyRunner
-        from orchestrator.workflow import PersistentEventEmitter
-        from orchestrator.workflow.service import WorkflowService
-
-        repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
-
-        # Wire events to WebSocket broadcast so the frontend receives real-time
-        # updates for agent-driven state changes (task completions, grade
-        # evaluations, step transitions, etc.).
-        if self._connection_manager is not None:
-            manager = self._connection_manager
-
-            def _on_event(event: WorkflowEvent) -> None:
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(manager.broadcast_event(event))
-                except RuntimeError:
-                    pass
-
-            emitter.add_listener(_on_event)
-
-        return WorkflowService(
-            session=session,
-            repo=repo,
-            event_store=event_store,
-            event_emitter=emitter,
-            submit_event_registry=self._submit_event_registry,
-            auto_verify_runner=LocalAutoVerifyRunner(),
-            lock_manager=self._lock_manager,
-        )
+        """Create a WorkflowService for the given session via the injected factory."""
+        return await self._service_factory(session)  # type: ignore[misc]
 
     @staticmethod
     def _is_worktree_dirty(project_dir: str) -> bool:
@@ -314,8 +294,8 @@ class AgentRunnerExecutor:
         Returns:
             The started run
         """
-        # First, start the run (changes status to ACTIVE)
-        run = await service.start_run(run_id)
+        # First, start the run (changes status to ACTIVE via direct apply)
+        run = await service.apply_start_run(run_id)
 
         # Create worktree if enabled and we have config for repo/worktree paths
         if run.worktree_enabled and run.source_branch and self._global_config is not None:
@@ -417,6 +397,108 @@ class AgentRunnerExecutor:
             logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
 
         return run
+
+    async def setup_and_spawn(self, run_id: str) -> None:
+        """Create worktree (if not already present) and spawn agent for an ACTIVE run.
+
+        Called by the signal consumer (via workflow_runner) after RUN_START or RESUME
+        has already been applied.  Does NOT perform any state transition.
+        """
+        # Load the run to inspect worktree settings and agent config.
+        async with self._session_factory() as session:
+            service = await self._create_service(session)
+            run = await service.get_run(run_id)
+
+            # Create worktree only if enabled, source_branch is known, no existing path,
+            # and global_config provides the directory layout.
+            if (
+                run.worktree_enabled
+                and run.source_branch
+                and run.worktree_path is None
+                and self._global_config is not None
+            ):
+                try:
+                    from orchestrator.git.worktree import WorktreeManager
+
+                    repos_dir = self._global_config.paths.get_repos_path()
+                    worktrees_dir = self._global_config.paths.get_worktrees_path()
+                    repo_path = repos_dir / run.repo_name
+
+                    if repo_path.is_dir():
+                        wt_mgr = WorktreeManager(
+                            repo_path,
+                            worktrees_dir,
+                            server_port=self._global_config.server.port,
+                            worktree_base_port=self._global_config.server.worktree_base_port,
+                        )
+                        try:
+                            wt_info = wt_mgr.create(run.id, run.source_branch)
+                        except Exception as e:
+                            logger.warning(f"Run {run_id}: worktree creation failed: {e}")
+                            raise
+
+                        try:
+                            run = await service.set_worktree_path(run_id, str(wt_info.path))
+                        except Exception as e:
+                            logger.error(
+                                f"Run {run_id}: worktree created at {wt_info.path} but "
+                                f"failed to save worktree_path to DB: {e}"
+                            )
+                            raise
+
+                        logger.info(
+                            f"Run {run_id}: created worktree at {wt_info.path} "
+                            f"(branch={wt_info.branch})"
+                        )
+
+                        # Copy scaffolding if routine has it
+                        if run.routine_path and run.routine_commit:
+                            try:
+                                from orchestrator.runners.scaffolding.copier import (
+                                    copy_scaffolding,
+                                )
+
+                                scaffolding_result = copy_scaffolding(
+                                    repo_path=repo_path,
+                                    routine_path=run.routine_path,
+                                    routine_commit=run.routine_commit,
+                                    worktree_path=wt_info.path,
+                                )
+                                if scaffolding_result.files_copied > 0:
+                                    logger.info(
+                                        f"Run {run_id}: copied "
+                                        f"{scaffolding_result.files_copied} scaffolding "
+                                        f"files to {scaffolding_result.target_path}"
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Run {run_id}: scaffolding copy failed: {e}")
+                    else:
+                        logger.info(
+                            f"Run {run_id}: repo {run.repo_name} not found at "
+                            f"{repo_path}, skipping worktree creation"
+                        )
+                except Exception as e:
+                    logger.warning(f"Run {run_id}: worktree setup failed: {e}")
+
+        # Spawn agent loop (no-op when spawn_agents=False or USER_MANAGED)
+        if not self._spawn_agents:
+            logger.info(f"Run {run_id}: agent spawning disabled, skipping")
+            return
+
+        if run.agent_type == AgentRunnerType.USER_MANAGED:
+            logger.info(f"Run {run_id}: user-managed agent, waiting for external connection")
+            return
+
+        agent_type = run.agent_type
+        if agent_type in (
+            AgentRunnerType.CLI_SUBPROCESS,
+            AgentRunnerType.OPENHANDS_LOCAL,
+            AgentRunnerType.OPENHANDS_DOCKER,
+            AgentRunnerType.CODEX_SERVER,
+            AgentRunnerType.CLAUDE_SDK,
+        ):
+            assert agent_type is not None  # narrowed by membership test above
+            self.spawn_for_run(run_id, agent_type, run.agent_config or {})
 
     async def _monitor_agent_health(
         self, run_id: str, agent_type: AgentRunnerType, check_interval: float = 30.0
@@ -1614,7 +1696,7 @@ class AgentRunnerExecutor:
                 service = await self._create_service(session)
                 run = await service.get_run(run_id)
                 if run.status == RunStatus.ACTIVE:
-                    await service.pause_run(run_id, reason="executor_crash")
+                    await service.apply_pause_run(run_id, reason="executor_crash")
                     await session.commit()
                     logger.info(f"Run {run_id}: emergency-paused after executor crash")
         except Exception:

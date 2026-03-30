@@ -188,7 +188,7 @@ def _make_run_with_step_auto_verify(
 
 async def _run_task_to_verified(svc: WorkflowService, run_id: str, task_id: str) -> None:
     """Bring a task from PENDING through to complete_verification with passing grade."""
-    await svc.start_run(run_id)
+    await svc.apply_start_run(run_id)
     await svc.start_task(run_id, task_id)
     await svc.update_checklist_item(run_id, task_id, "R1", ChecklistStatus.DONE)
     await svc.submit_for_verification(run_id, task_id)

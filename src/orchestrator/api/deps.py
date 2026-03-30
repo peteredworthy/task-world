@@ -1,9 +1,9 @@
 """Dependency injection for FastAPI endpoints."""
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -17,11 +17,12 @@ from orchestrator.db import RunRepository
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow import PersistentEventEmitter
 from orchestrator.workflow import DbSignalTransport, SignalTransport, WorkflowEvent
-from orchestrator.workflow.service import WorkflowService
+from orchestrator.workflow.service import WorkflowService, SubmitEventRegistry
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.git import TestRunner
+from orchestrator.runners.agent_detector import ToolDetector
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -82,6 +83,7 @@ async def get_workflow_service(
     event_store: Annotated[EventStore, Depends(get_event_store)],
     env_lifecycle: Annotated[EnvFileLifecycle | None, Depends(get_env_lifecycle)],
     global_config: Annotated[GlobalConfig, Depends(get_global_config)],
+    signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
 ) -> WorkflowService:
     emitter = PersistentEventEmitter(event_store)
 
@@ -108,6 +110,7 @@ async def get_workflow_service(
         lock_manager=request.app.state.lock_manager,
         global_config=global_config,
         env_lifecycle=env_lifecycle,
+        signal_transport=signal_transport,
     )
 
 
@@ -167,9 +170,105 @@ def get_test_runner(request: Request) -> TestRunner:
     return request.app.state.test_runner  # type: ignore[no-any-return]
 
 
+def get_tool_detector(request: Request) -> ToolDetector:
+    """Get the ToolDetector singleton from app state."""
+    return request.app.state.tool_detector  # type: ignore[no-any-return]
+
+
+def get_summary_caches(request: Request) -> dict[str, Any]:
+    """Get the run-scoped SummaryCache dict from app state."""
+    return request.app.state.summary_caches  # type: ignore[no-any-return]
+
+
 def get_current_user() -> str:
     """Get current user for human interaction actions.
 
     For now, returns a default user. Will be wired to auth system later.
     """
     return "default-user"
+
+
+def make_service_factory(
+    submit_event_registry: SubmitEventRegistry,
+    *,
+    connection_manager: ConnectionManager | None = None,
+    lock_manager: Any | None = None,
+    signal_transport_override: SignalTransport | None = None,
+    global_config: GlobalConfig | None = None,
+    env_lifecycle: EnvFileLifecycle | None = None,
+) -> Callable[[AsyncSession], Awaitable[WorkflowService]]:
+    """Return a WorkflowService factory for background tasks.
+
+    Unlike ``get_workflow_service`` (request-scoped via ``Depends``), this
+    factory is for components that manage their own sessions: the signal
+    consumer, stale-run sweeper, startup recovery, and MCP tool handler.
+
+    The returned callable is ``async (session) -> WorkflowService`` and can
+    be passed directly to ``SignalConsumer(create_service=...)``.
+
+    Parameters
+    ----------
+    submit_event_registry:
+        Shared singleton; the same instance used by request handlers.
+    connection_manager:
+        When provided, emitted events are broadcast to WebSocket clients.
+    lock_manager:
+        Shared pessimistic lock manager, or ``None`` to disable locking.
+    signal_transport_override:
+        In-memory transport injected by tests.  When ``None`` a
+        ``DbSignalTransport`` bound to the session is used instead.
+    global_config:
+        Application-wide configuration, forwarded to ``WorkflowService``.
+    env_lifecycle:
+        Env-file lifecycle manager, forwarded to ``WorkflowService``.
+    """
+
+    async def _create(session: AsyncSession) -> WorkflowService:
+        repo = RunRepository(session)
+        event_store = EventStore(session)
+        emitter = PersistentEventEmitter(event_store)
+
+        if connection_manager is not None:
+            manager = connection_manager  # narrow type for pyright (closures don't re-check guard)
+
+            def _on_event(event: WorkflowEvent) -> None:
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(manager.broadcast_event(event))
+                except RuntimeError:
+                    pass
+
+            emitter.add_listener(_on_event)
+
+        transport: SignalTransport = signal_transport_override or DbSignalTransport(session)
+
+        return WorkflowService(
+            session=session,
+            repo=repo,
+            event_store=event_store,
+            event_emitter=emitter,
+            submit_event_registry=submit_event_registry,
+            auto_verify_runner=LocalAutoVerifyRunner(),
+            lock_manager=lock_manager,
+            signal_transport=transport,
+            global_config=global_config,
+            env_lifecycle=env_lifecycle,
+        )
+
+    return _create
+
+
+def make_workflow_runner(
+    executor: AgentRunnerExecutor | None,
+) -> Callable[[Any], Awaitable[None]]:
+    """Return a workflow runner callback for ``SignalConsumer``.
+
+    Called by the consumer after ``RUN_START`` / ``RESUME`` to set up a
+    worktree (if needed) and spawn the agent executor loop.
+    """
+
+    async def _run(workflow: Any) -> None:
+        if executor is not None:
+            await executor.setup_and_spawn(workflow.run_id)
+
+    return _run

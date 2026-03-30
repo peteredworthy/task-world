@@ -82,7 +82,7 @@ async def test_recovery_from_events(session: AsyncSession) -> None:
     service = WorkflowService(session)
     run = _make_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
 
     # Verify current state before "crash"
@@ -115,7 +115,7 @@ async def test_recovery_full_lifecycle(session: AsyncSession) -> None:
     service = WorkflowService(session)
     run = _make_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
     await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
     await service.submit_for_verification("run-1", "task-1")
@@ -146,7 +146,7 @@ async def test_recovery_revision_cycle(session: AsyncSession) -> None:
     service = WorkflowService(session)
     run = _make_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
     await service.start_task("run-1", "task-1")
     await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
     await service.submit_for_verification("run-1", "task-1")
@@ -179,7 +179,7 @@ async def test_recovery_preserves_grade_snapshots(session: AsyncSession) -> None
     service = WorkflowService(session)
     run = _make_run()
     await service.create_run(run)
-    await service.start_run("run-1")
+    await service.apply_start_run("run-1")
 
     # Attempt 1: build, verify with bad grade -> revision
     await service.start_task("run-1", "task-1")
@@ -231,7 +231,7 @@ async def test_recovery_with_routine_fixture(session: AsyncSession) -> None:
 
     service = WorkflowService(session)
     await service.create_run(run)
-    await service.start_run(run.id)
+    await service.apply_start_run(run.id)
 
     task_id = run.steps[0].tasks[0].id
     await service.start_task(run.id, task_id)

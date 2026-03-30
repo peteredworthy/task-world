@@ -13,6 +13,8 @@ from orchestrator.db import init_db
 from orchestrator.db import resolve_default_journal_path
 from orchestrator.db import replay_journal_to_repository
 from orchestrator.db import CheckpointRepository, RunRepository
+from orchestrator.workflow import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -20,24 +22,27 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 @pytest.fixture
 async def file_db_client(
     tmp_path: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, FastAPI], None]:
+) -> AsyncGenerator[tuple[AsyncClient, Path, FastAPI, DrainFn], None]:
     db_path = tmp_path / "orchestrator.db"
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=str(db_path),
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         spawn_agents=False,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, db_path, app
+        yield c, db_path, app, drain
     await app.state.engine.dispose()
 
 
 async def test_event_journal_written_and_replay_restores_run_state(
-    file_db_client: tuple[AsyncClient, Path, FastAPI],
+    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
 ) -> None:
-    client, db_path, app = file_db_client
+    client, db_path, app, drain = file_db_client
 
     create_resp = await client.post(
         "/api/runs",
@@ -49,7 +54,8 @@ async def test_event_journal_written_and_replay_restores_run_state(
     task_id = run["steps"][0]["tasks"][0]["id"]
 
     start_resp = await client.post(f"/api/runs/{run_id}/start")
-    assert start_resp.status_code == 200
+    assert start_resp.status_code == 202
+    await drain(run_id)
     task_start_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     assert task_start_resp.status_code == 200
 
@@ -94,6 +100,7 @@ async def test_event_journal_written_and_replay_restores_run_state(
 
 async def _create_run_and_generate_events(
     client: AsyncClient,
+    drain: DrainFn,
 ) -> tuple[str, str]:
     """Helper: create a run, start it, start the task. Returns (run_id, task_id)."""
     create_resp = await client.post(
@@ -106,7 +113,8 @@ async def _create_run_and_generate_events(
     task_id = run["steps"][0]["tasks"][0]["id"]
 
     start_resp = await client.post(f"/api/runs/{run_id}/start")
-    assert start_resp.status_code == 200
+    assert start_resp.status_code == 202
+    await drain(run_id)
     task_start_resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     assert task_start_resp.status_code == 200
     return run_id, task_id
@@ -127,11 +135,11 @@ from orchestrator.state.models import Run  # noqa: E402
 
 
 async def test_batch_replay_with_checkpoint(
-    file_db_client: tuple[AsyncClient, Path, FastAPI],
+    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
 ) -> None:
     """Batch replay writes a checkpoint after each batch and restores state."""
-    client, db_path, app = file_db_client
-    run_id, task_id = await _create_run_and_generate_events(client)
+    client, db_path, app, drain = file_db_client
+    run_id, task_id = await _create_run_and_generate_events(client, drain)
 
     journal_path = resolve_default_journal_path(db_path)
     assert journal_path is not None
@@ -180,11 +188,11 @@ async def test_batch_replay_with_checkpoint(
 
 
 async def test_checkpoint_resume_skips_already_applied(
-    file_db_client: tuple[AsyncClient, Path, FastAPI],
+    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
 ) -> None:
     """Second replay with from_checkpoint resumes from checkpoint and skips already-applied events."""
-    client, db_path, app = file_db_client
-    run_id, task_id = await _create_run_and_generate_events(client)
+    client, db_path, app, drain = file_db_client
+    run_id, task_id = await _create_run_and_generate_events(client, drain)
 
     journal_path = resolve_default_journal_path(db_path)
     assert journal_path is not None
@@ -231,11 +239,11 @@ async def test_checkpoint_resume_skips_already_applied(
 
 
 async def test_checkpoint_not_written_on_dry_run(
-    file_db_client: tuple[AsyncClient, Path, FastAPI],
+    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
 ) -> None:
     """Dry run with from_checkpoint should not persist checkpoint."""
-    client, db_path, app = file_db_client
-    run_id, task_id = await _create_run_and_generate_events(client)
+    client, db_path, app, drain = file_db_client
+    run_id, task_id = await _create_run_and_generate_events(client, drain)
 
     journal_path = resolve_default_journal_path(db_path)
     assert journal_path is not None
@@ -264,11 +272,11 @@ async def test_checkpoint_not_written_on_dry_run(
 
 
 async def test_summary_includes_checkpoint_fields(
-    file_db_client: tuple[AsyncClient, Path, FastAPI],
+    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
 ) -> None:
     """JournalReplaySummary includes checkpoint_sequence and resumed_from_sequence."""
-    client, db_path, app = file_db_client
-    run_id, task_id = await _create_run_and_generate_events(client)
+    client, db_path, app, drain = file_db_client
+    run_id, task_id = await _create_run_and_generate_events(client, drain)
 
     journal_path = resolve_default_journal_path(db_path)
     assert journal_path is not None
@@ -288,14 +296,14 @@ async def test_summary_includes_checkpoint_fields(
 
 
 async def test_batch_replay_multiple_runs(
-    file_db_client: tuple[AsyncClient, Path, FastAPI],
+    file_db_client: tuple[AsyncClient, Path, FastAPI, DrainFn],
 ) -> None:
     """Batch replay handles events for multiple runs in same journal."""
-    client, db_path, app = file_db_client
+    client, db_path, app, drain = file_db_client
 
     # Create two runs
-    run_id_1, _ = await _create_run_and_generate_events(client)
-    run_id_2, _ = await _create_run_and_generate_events(client)
+    run_id_1, _ = await _create_run_and_generate_events(client, drain)
+    run_id_2, _ = await _create_run_and_generate_events(client, drain)
 
     journal_path = resolve_default_journal_path(db_path)
     assert journal_path is not None

@@ -37,7 +37,7 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
     return client_and_drain[0]
 
 
-async def _setup_active_run(client: AsyncClient) -> tuple[str, str]:
+async def _setup_active_run(client: AsyncClient, drain: DrainFn | None = None) -> tuple[str, str]:
     """Create a run and start it, returning (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
@@ -46,7 +46,10 @@ async def _setup_active_run(client: AsyncClient) -> tuple[str, str]:
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    if drain is not None:
+        await drain(run_id)
     return run_id, task_id
 
 
@@ -72,7 +75,7 @@ async def test_get_task_not_found(client: AsyncClient) -> None:
 async def test_full_task_lifecycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Full lifecycle: start -> checklist update -> submit -> grade -> complete."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Start task
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -94,9 +97,9 @@ async def test_full_task_lifecycle(client_and_drain: tuple[AsyncClient, DrainFn]
     assert resp.json()["status"] == "done"
     assert resp.json()["note"] == "Completed"
 
-    # Submit for verification (202 async) then drain
+    # Submit for verification (200 sync)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Verify task is now verifying
@@ -111,9 +114,9 @@ async def test_full_task_lifecycle(client_and_drain: tuple[AsyncClient, DrainFn]
     assert resp.status_code == 200
     assert resp.json()["grade"] == "A"
 
-    # Complete verification (202 async) then drain
+    # Complete verification (200 sync)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Verify task is now completed
@@ -122,30 +125,26 @@ async def test_full_task_lifecycle(client_and_drain: tuple[AsyncClient, DrainFn]
 
 
 async def test_gate_failure_response(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
-    """Submit with open checklist item: 202 accepted, drain → run paused with gate_blocked."""
+    """Submit with open checklist item: returns 409 directly (synchronous gate check)."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Start task
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
-    # Submit without completing checklist — accepted (202)
+    # Submit without completing checklist — gate check fails immediately (409)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 409
 
-    # Drain signals — GateBlockedError causes run to pause
-    await drain(run_id)
-
-    # Run should be paused with gate_blocked reason
+    # Run should remain active (no drain needed, no pause)
     run_resp = await client.get(f"/api/runs/{run_id}")
-    assert run_resp.json()["status"] == "paused"
-    assert run_resp.json()["pause_reason"] == "gate_blocked"
+    assert run_resp.json()["status"] == "active"
 
 
 async def test_revision_cycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Fail verification with bad grade, then retry and pass."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Attempt 1: start, submit, fail verification
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -154,7 +153,7 @@ async def test_revision_cycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> 
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     await client.put(
@@ -162,7 +161,7 @@ async def test_revision_cycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> 
         json={"grade": "D", "grade_reason": "Poor"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Task should be back in building (revision)
@@ -175,7 +174,7 @@ async def test_revision_cycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> 
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     await client.put(
@@ -183,15 +182,16 @@ async def test_revision_cycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> 
         json={"grade": "A"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     task_resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
     assert task_resp.json()["status"] == "completed"
 
 
-async def test_checklist_not_found(client: AsyncClient) -> None:
-    run_id, task_id = await _setup_active_run(client)
+async def test_checklist_not_found(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_active_run(client, drain)
     resp = await client.patch(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/NONEXISTENT",
         json={"status": "done"},
@@ -201,7 +201,7 @@ async def test_checklist_not_found(client: AsyncClient) -> None:
 
 async def test_grade_not_found(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
     # Advance task to VERIFYING so set_grade guard passes
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     await client.patch(
@@ -209,7 +209,7 @@ async def test_grade_not_found(client_and_drain: tuple[AsyncClient, DrainFn]) ->
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
     resp = await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/NONEXISTENT/grade",
@@ -223,7 +223,7 @@ async def test_flexible_req_id_formats_in_api(
 ) -> None:
     """API should accept numeric req_id variants for checklist/grade endpoints."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
 
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
@@ -236,7 +236,7 @@ async def test_flexible_req_id_formats_in_api(
     assert resp.json()["req_id"] == "R1"
 
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Dashed format should resolve to R1.
@@ -253,9 +253,12 @@ async def test_run_not_found_for_task(client: AsyncClient) -> None:
     assert resp.status_code == 404
 
 
-async def test_prompt_returns_builder_when_building(client: AsyncClient) -> None:
+async def test_prompt_returns_builder_when_building(
+    client_and_drain: tuple[AsyncClient, DrainFn],
+) -> None:
     """Prompt endpoint returns builder prompt when task is in BUILDING state."""
-    run_id, task_id = await _setup_active_run(client)
+    client, drain = client_and_drain
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Start task -> BUILDING
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -274,7 +277,7 @@ async def test_prompt_returns_verifier_when_verifying(
 ) -> None:
     """Prompt endpoint returns verifier prompt when task is in VERIFYING state."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Start task -> BUILDING
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -285,7 +288,7 @@ async def test_prompt_returns_verifier_when_verifying(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
@@ -311,7 +314,7 @@ async def test_prompt_rejects_pending_task(client: AsyncClient) -> None:
 async def test_prompt_rejects_completed_task(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     """Prompt endpoint returns 409 when task is in COMPLETED state."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # Full lifecycle to reach COMPLETED
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -320,14 +323,14 @@ async def test_prompt_rejects_completed_task(client_and_drain: tuple[AsyncClient
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
     await client.put(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
         json={"grade": "A"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Task is now COMPLETED
@@ -341,10 +344,10 @@ async def test_prompt_rejects_completed_task(client_and_drain: tuple[AsyncClient
 async def test_submit_with_unfinished_checklist_returns_409(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
-    """Submit task when checklist gate fails: 202 accepted, drain → run paused with gate_blocked."""
+    """Submit task when checklist gate fails: returns 409 directly (synchronous gate check)."""
     client, drain = client_and_drain
     # 1. Create and start a run
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, drain)
 
     # 2. Start the first task (status becomes BUILDING)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -353,15 +356,11 @@ async def test_submit_with_unfinished_checklist_returns_409(
 
     # 3. DO NOT mark checklist items as done (checklist gate will fail)
 
-    # 4. Submit — accepted (202) since processing is async
+    # 4. Submit — gate check fails immediately, returns 409
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 409
 
-    # 5. Drain signals — GateBlockedError causes run to pause
-    await drain(run_id)
-
-    # 6. Verify run is paused with gate_blocked reason
+    # 5. Verify run remains active (no drain needed, no pause)
     run_resp = await client.get(f"/api/runs/{run_id}")
     data = run_resp.json()
-    assert data["status"] == "paused"
-    assert data["pause_reason"] == "gate_blocked"
+    assert data["status"] == "active"

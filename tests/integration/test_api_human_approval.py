@@ -13,6 +13,7 @@ from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
 from orchestrator.config import AgentRunnerType, GateType, RoutineSource, TaskStatus
 from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
 from orchestrator.config.models import (
     GateConfig,
     RequirementConfig,
@@ -20,6 +21,7 @@ from orchestrator.config.models import (
     StepConfig,
     TaskConfig,
 )
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -27,10 +29,12 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 @pytest.fixture
 async def app() -> AsyncGenerator[FastAPI, None]:
     """Create a test app with in-memory database."""
+    signal_transport = InMemorySignalTransport()
     application = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    application.state.signal_transport = signal_transport
     await init_db(application.state.engine)
     yield application
     await application.state.engine.dispose()
@@ -42,6 +46,13 @@ async def client(app: FastAPI) -> AsyncGenerator[AsyncClient, None]:
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest.fixture
+def drain(app: FastAPI) -> DrainFn:
+    """Return a drain callable for the test app."""
+    transport = app.state.signal_transport
+    return make_drain_fn(app, transport)
 
 
 @pytest.fixture
@@ -422,7 +433,7 @@ async def test_executor_stops_at_human_approval_gate(
         await session.commit()
 
         # Start the run (just changes status, no agent spawned because spawn_agents=False)
-        run = await service.start_run(run.id)
+        run = await service.apply_start_run(run.id)
         await session.commit()
 
         # Verify tasks are PENDING
@@ -508,7 +519,7 @@ async def test_executor_proceeds_after_gate_approved(
         run = await service.create_run(run)
         await session.commit()
 
-        run = await service.start_run(run.id)
+        run = await service.apply_start_run(run.id)
         await session.commit()
 
         # Before approval: blocked
@@ -536,6 +547,7 @@ async def test_executor_proceeds_after_gate_approved(
 async def test_approve_step_respawns_agent_for_active_run(
     app: FastAPI,
     client: AsyncClient,
+    drain: DrainFn,
 ) -> None:
     """Approving a step on an ACTIVE run should attempt to re-spawn the agent."""
     routine = RoutineConfig(
@@ -581,8 +593,8 @@ async def test_approve_step_respawns_agent_for_active_run(
 
     # Start the run (spawn_agents is False for :memory: DB, so no agent actually runs)
     start_resp = await client.post(f"/api/runs/{run_id}/start")
-    assert start_resp.status_code == 200
-    assert start_resp.json()["status"] == "active"
+    assert start_resp.status_code == 202
+    await drain(run_id)
 
     # All tasks should still be PENDING (agent didn't run because spawn_agents=False)
     run_resp = await client.get(f"/api/runs/{run_id}")
@@ -676,7 +688,7 @@ async def test_step_without_gate_not_blocked(
         run = await service.create_run(run)
         await session.commit()
 
-        run = await service.start_run(run.id)
+        run = await service.apply_start_run(run.id)
         await session.commit()
 
         # No gate - should not be blocked

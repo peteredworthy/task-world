@@ -22,6 +22,8 @@ from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource, RunStatus
 from orchestrator.db import init_db
 from orchestrator.db import RunRepository
+from orchestrator.workflow import InMemorySignalTransport
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -78,10 +80,10 @@ def git_repo(tmp_path: Path) -> Path:
 @pytest.fixture
 async def app_and_client(
     git_repo: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, Any], None]:
+) -> AsyncGenerator[tuple[AsyncClient, Path, Any, DrainFn], None]:
     """Test client and app backed by a real git repo.
 
-    Yields (client, git_repo, app) so tests can access app.state directly.
+    Yields (client, git_repo, app, drain) so tests can access app.state directly.
     """
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
@@ -96,21 +98,25 @@ async def app_and_client(
         )
     )
 
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         global_config=global_config,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo, app
+        yield c, git_repo, app, drain
     await app.state.engine.dispose()
 
 
 async def _create_and_start_run(
     client: AsyncClient,
     project_path: Path,
+    drain: DrainFn,
     routine_id: str = "simple-routine",
 ) -> dict[str, Any]:
     """Helper: create and start a run pointing at a real git repo."""
@@ -126,8 +132,9 @@ async def _create_and_start_run(
     run_id = resp.json()["id"]
 
     resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200
-    data = resp.json()
+    assert resp.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
     assert data["worktree_path"] is not None
     return data
@@ -151,11 +158,11 @@ async def _mark_run_completed(app: Any, run_id: str) -> None:
 class TestMergeReadinessEndpoint:
     async def test_returns_four_gates(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """The merge-readiness endpoint returns a response with exactly 4 named gates."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -172,11 +179,11 @@ class TestMergeReadinessEndpoint:
 
     async def test_gate_structure(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """Each gate has name, status, and description fields."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -191,11 +198,11 @@ class TestMergeReadinessEndpoint:
 
     async def test_no_unresolved_conflicts_pass_when_clean(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """no_unresolved_conflicts gate passes when no conflict files in worktree."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -207,11 +214,11 @@ class TestMergeReadinessEndpoint:
 
     async def test_no_unresolved_conflicts_fail_when_conflicts_present(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """no_unresolved_conflicts gate fails when conflict files are present."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -234,12 +241,12 @@ class TestMergeReadinessEndpoint:
 
     async def test_tests_pass_gate_when_no_tests_configured(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """tests_pass gate is 'pass' when no auto_verify commands are configured."""
-        client, repo, app = app_and_client
+        client, repo, app, drain = app_and_client
         # simple-routine has no auto_verify commands
-        run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+        run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -251,12 +258,14 @@ class TestMergeReadinessEndpoint:
 
     async def test_tests_pass_gate_pending_when_tests_not_run(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """tests_pass gate is 'pending' when tests are configured but not yet run."""
-        client, repo, app = app_and_client
+        client, repo, app, drain = app_and_client
         # auto-verify-routine has auto_verify commands configured
-        run_data = await _create_and_start_run(client, repo, routine_id="auto-verify-routine")
+        run_data = await _create_and_start_run(
+            client, repo, drain, routine_id="auto-verify-routine"
+        )
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -268,11 +277,11 @@ class TestMergeReadinessEndpoint:
 
     async def test_no_active_jobs_pass_when_idle(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """no_active_jobs gate passes when no agent or test jobs are running."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -284,11 +293,11 @@ class TestMergeReadinessEndpoint:
 
     async def test_clean_merge_gate_pass_when_no_conflicts_predicted(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """clean_merge gate passes when the run branch has no predicted conflicts with source."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo)
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -304,12 +313,12 @@ class TestMergeReadinessEndpoint:
 
     async def test_ready_true_when_all_gates_pass(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """ready is True when all gates pass (simple-routine, no conflicts, no jobs)."""
-        client, repo, app = app_and_client
+        client, repo, app, drain = app_and_client
         # simple-routine: no auto_verify, so tests_pass = pass
-        run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+        run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
         run_id = run_data["id"]
 
         resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
@@ -335,11 +344,11 @@ class TestMergeReadinessEndpoint:
 class TestMergeBackStrategy:
     async def test_merge_back_squash_strategy(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """merge-back with squash strategy creates a single commit on source branch."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -365,11 +374,11 @@ class TestMergeBackStrategy:
 
     async def test_merge_back_merge_strategy(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """merge-back with merge strategy preserves run branch commit history."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 
@@ -395,11 +404,11 @@ class TestMergeBackStrategy:
 
     async def test_merge_back_rejects_non_completed_run(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """merge-back returns 409 for a run that is not COMPLETED."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
         run_id = run_data["id"]
 
         resp = await client.post(
@@ -411,11 +420,11 @@ class TestMergeBackStrategy:
 
     async def test_merge_back_rejects_unmet_gates(
         self,
-        app_and_client: tuple[AsyncClient, Path, Any],
+        app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
     ) -> None:
         """merge-back returns 409 when readiness gates are not met (unresolved conflicts)."""
-        client, repo, app = app_and_client
-        run_data = await _create_and_start_run(client, repo, routine_id="simple-routine")
+        client, repo, app, drain = app_and_client
+        run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
         run_id = run_data["id"]
         worktree_path = Path(run_data["worktree_path"])
 

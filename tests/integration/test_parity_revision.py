@@ -92,7 +92,9 @@ async def test_revision_attempt_count_and_outcomes(
     run_id = run["id"]
     task_id = run["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # ---------------------------------------------------------------
     # Attempt 1: fail verification
@@ -112,7 +114,7 @@ async def test_revision_attempt_count_and_outcomes(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     task = await _get_task(client, run_id, task_id)
@@ -124,7 +126,7 @@ async def test_revision_attempt_count_and_outcomes(
         json={"grade": "F", "grade_reason": "Completely wrong"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Task should now be on attempt 2 with attempt 1 marked as revision_needed
@@ -149,7 +151,7 @@ async def test_revision_attempt_count_and_outcomes(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     task = await _get_task(client, run_id, task_id)
@@ -160,7 +162,7 @@ async def test_revision_attempt_count_and_outcomes(
         json={"grade": "A", "grade_reason": "Much better"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Final assertions
@@ -195,7 +197,9 @@ async def test_revision_feedback_available_on_second_attempt(
     run_id = run["id"]
     task_id = run["steps"][0]["tasks"][0]["id"]
 
-    await client.post(f"/api/runs/{run_id}/start")
+    resp = await client.post(f"/api/runs/{run_id}/start")
+    assert resp.status_code == 202
+    await drain(run_id)
 
     # Attempt 1: fail with a specific reason
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -204,7 +208,7 @@ async def test_revision_feedback_available_on_second_attempt(
         json={"status": "done"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     await client.put(
@@ -212,7 +216,7 @@ async def test_revision_feedback_available_on_second_attempt(
         json={"grade": "D", "grade_reason": "Missing key functionality"},
     )
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
-    assert resp.status_code == 202
+    assert resp.status_code == 200
     await drain(run_id)
 
     # Verify that attempt 1 captured the grade reason

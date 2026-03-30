@@ -42,9 +42,9 @@ async def test_multiple_runs_independent_state(api_client: AsyncClient, drain: D
     run3_id = run3_data["id"]
 
     # Start all runs
-    run1_data = await start_run(api_client, run1_id)
-    run2_data = await start_run(api_client, run2_id)
-    run3_data = await start_run(api_client, run3_id)
+    run1_data = await start_run(api_client, run1_id, drain=drain)
+    run2_data = await start_run(api_client, run2_id, drain=drain)
+    run3_data = await start_run(api_client, run3_id, drain=drain)
 
     # Get task IDs for each run
     task1_id = get_first_task_id(run1_data)
@@ -95,7 +95,7 @@ async def test_concurrent_task_operations(api_client: AsyncClient, drain: DrainF
         run_data = await create_run(
             api_client, routine_id="simple-routine", repo_name=f"concurrent-{i}"
         )
-        run_data = await start_run(api_client, run_data["id"])
+        run_data = await start_run(api_client, run_data["id"], drain=drain)
         task_id = get_first_task_id(run_data)
         run_tasks.append((run_data["id"], task_id))
 
@@ -166,8 +166,8 @@ async def test_run_isolation_with_revisions(api_client: AsyncClient, drain: Drai
     run2_id = run2_data["id"]
 
     # Start both
-    run1_data = await start_run(api_client, run1_id)
-    run2_data = await start_run(api_client, run2_id)
+    run1_data = await start_run(api_client, run1_id, drain=drain)
+    run2_data = await start_run(api_client, run2_id, drain=drain)
 
     # Start both tasks
     task1_id = get_first_task_id(run1_data)
@@ -237,7 +237,7 @@ async def test_run_list_filtering(api_client: AsyncClient, drain: DrainFn) -> No
         run_data = await create_run(
             api_client, routine_id="simple-routine", repo_name=f"filter-active-{i}"
         )
-        await start_run(api_client, run_data["id"])
+        await start_run(api_client, run_data["id"], drain=drain)
         active_runs.append(run_data["id"])
 
     # Create 2 completed runs
@@ -246,7 +246,7 @@ async def test_run_list_filtering(api_client: AsyncClient, drain: DrainFn) -> No
             api_client, routine_id="simple-routine", repo_name=f"filter-completed-{i}"
         )
         run_id = run_data["id"]
-        run_data = await start_run(api_client, run_id)
+        run_data = await start_run(api_client, run_id, drain=drain)
         task_id = get_first_task_id(run_data)
         await start_task(api_client, run_id, task_id)
         await mark_checklist_done(api_client, run_id, task_id, "R1")
@@ -281,7 +281,7 @@ async def test_run_list_filtering(api_client: AsyncClient, drain: DrainFn) -> No
 
 
 @pytest.mark.e2e
-async def test_concurrent_checklist_updates(api_client: AsyncClient) -> None:
+async def test_concurrent_checklist_updates(api_client: AsyncClient, drain: DrainFn) -> None:
     """Test that checklist updates on different runs are isolated.
 
     Updates checklists on multiple runs concurrently and verifies that
@@ -295,7 +295,7 @@ async def test_concurrent_checklist_updates(api_client: AsyncClient) -> None:
         run_data = await create_run(
             api_client, routine_id="simple-routine", repo_name=f"checklist-{i}"
         )
-        run_data = await start_run(api_client, run_data["id"])
+        run_data = await start_run(api_client, run_data["id"], drain=drain)
         task_id = get_first_task_id(run_data)
         await start_task(api_client, run_data["id"], task_id)
         run_tasks.append((run_data["id"], task_id))

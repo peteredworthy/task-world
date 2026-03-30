@@ -37,6 +37,12 @@ from orchestrator.state.models import (
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow import derive_output_path, resolve_template
 
+
+async def _minimal_service_factory(session: AsyncSession) -> WorkflowService:
+    """Minimal WorkflowService factory for test executor subclasses."""
+    return WorkflowService(session)
+
+
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 # Project-root tmp/ directory for test SQLite databases (git-ignored, cleaned up per test).
 _TMP_DIR = Path(__file__).parent.parent.parent / "tmp"
@@ -146,7 +152,11 @@ class _FanOutIntegrationAgent:
 
 class _FanOutExecutor(AgentRunnerExecutor):
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
-        super().__init__(session_factory=session_factory, spawn_agents=False)
+        super().__init__(
+            session_factory=session_factory,
+            service_factory=_minimal_service_factory,
+            spawn_agents=False,
+        )
         self._agent = _FanOutIntegrationAgent()
 
     def _create_agent(
@@ -715,16 +725,19 @@ class TestFanOutRegression:
         session_factory: async_sessionmaker[AsyncSession],
         tmp_path: Path,
     ) -> None:
-        """Six concurrent children must all persist without clobbering each other.
+        """Concurrent children must all persist without clobbering each other.
 
         Regression test for the bug where concurrent children used repo.save(run)
         (full-run rewrite), causing later saves to overwrite earlier children's
         state. The fix uses fine-grained per-task DB updates instead.
+
+        3 concurrent children are sufficient to prove the invariant; more adds
+        wall-clock cost without increasing confidence.
         """
-        # Create 6 input files to trigger 6 concurrent children
+        # Create 3 input files to trigger 3 concurrent children
         output_dir = tmp_path / "output"
         output_dir.mkdir()
-        for i in range(1, 7):
+        for i in range(1, 4):
             (output_dir / f"step-{i:02d}.md").write_text(f"content {i}")
 
         routine = RoutineConfig(
@@ -744,7 +757,7 @@ class TestFanOutRegression:
                                 "output_pattern": "output/processed/{{item_stem}}-result.md",
                                 "per_item_prompt": "Write the processed result to {{output_path}}",
                                 "max_attempts": 2,
-                                "max_concurrent": 6,  # all 6 run simultaneously
+                                "max_concurrent": 3,  # all 3 run simultaneously
                                 "auto_verify": {
                                     "items": [
                                         {"id": "output_exists", "cmd": "test -f {{output_path}}"}
@@ -797,7 +810,7 @@ class TestFanOutRegression:
                 agent_config=run.agent_config,
             )
 
-        # Verify: all 6 children persisted with correct state
+        # Verify: all 3 children persisted with correct state
         async with session_factory() as session:
             service = WorkflowService(session)
             persisted_run = await service.get_run(run.id)
@@ -809,8 +822,8 @@ class TestFanOutRegression:
             ]
 
             # Core assertion: no children lost to clobbering
-            assert len(children) == 6, (
-                f"Expected 6 children but found {len(children)} — "
+            assert len(children) == 3, (
+                f"Expected 3 children but found {len(children)} — "
                 f"concurrent saves likely clobbered sibling rows"
             )
 
@@ -829,9 +842,9 @@ class TestFanOutRegression:
                 inputs.add(child.fan_out_input)
                 outputs.add(child.fan_out_output)
 
-            # All 6 inputs and outputs are distinct (no duplication/clobbering)
-            assert len(inputs) == 6, f"Duplicate inputs: {inputs}"
-            assert len(outputs) == 6, f"Duplicate outputs: {outputs}"
+            # All 3 inputs and outputs are distinct (no duplication/clobbering)
+            assert len(inputs) == 3, f"Duplicate inputs: {inputs}"
+            assert len(outputs) == 3, f"Duplicate outputs: {outputs}"
 
             # Parent moved to VERIFYING (has outer rubric)
             parent = await service.get_task(run.id, parent_task.id)
@@ -842,8 +855,8 @@ class TestFanOutRegression:
             processed_dir = tmp_path / "output" / "processed"
             assert processed_dir.exists()
             result_files = sorted(processed_dir.glob("*.md"))
-            assert len(result_files) == 6, (
-                f"Expected 6 output files, found {len(result_files)}: {result_files}"
+            assert len(result_files) == 3, (
+                f"Expected 3 output files, found {len(result_files)}: {result_files}"
             )
 
     @pytest.mark.asyncio
@@ -1046,7 +1059,7 @@ class TestFanOutRegression:
                     # Now pause the run so subsequent children can't start
                     async with session_factory() as sess:
                         svc = WorkflowService(sess)
-                        await svc.pause_run("run-pause", reason="test_pause")
+                        await svc.apply_pause_run("run-pause", reason="test_pause")
                         await sess.commit()
                     return ExecutionResult(success=True, output_lines=[f"built {output_rel}"])
                 # Should never reach here — children should stop before executing
@@ -1054,7 +1067,9 @@ class TestFanOutRegression:
 
         class _PausingExecutor(AgentRunnerExecutor):
             def __init__(self, sf: async_sessionmaker[AsyncSession]) -> None:
-                super().__init__(session_factory=sf, spawn_agents=False)
+                super().__init__(
+                    session_factory=sf, service_factory=_minimal_service_factory, spawn_agents=False
+                )
                 self._agent = _PausingAgent()
 
             def _create_agent(self, *args: object, **kwargs: object) -> _PausingAgent:

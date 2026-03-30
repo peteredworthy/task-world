@@ -51,6 +51,15 @@ function StatusIcon({ status }: { status: string }) {
     );
   }
 
+  if (status === 'stopping') {
+    return (
+      <span
+        className="inline-block h-2.5 w-2.5 rounded-full bg-status-paused animate-pulse-dot shrink-0"
+        aria-hidden="true"
+      />
+    );
+  }
+
   if (status === 'paused') {
     return (
       <svg

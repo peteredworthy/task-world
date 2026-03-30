@@ -265,7 +265,7 @@ async def test_worktree_deleted_on_cancelled_run(
     await service.create_run(run)
 
     # Cancel the run
-    cancelled_run = await service.cancel_run(run.id, reason="Test cancellation")
+    cancelled_run = await service.apply_cancel_run(run.id, reason="Test cancellation")
 
     # Verify run failed
     assert cancelled_run.status == RunStatus.FAILED

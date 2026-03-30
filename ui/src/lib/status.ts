@@ -5,6 +5,7 @@ export function runStatusColor(status: RunStatus): string {
     case 'draft': return 'bg-status-pending/20 text-status-pending';
     case 'active': return 'bg-status-active/20 text-status-active';
     case 'paused': return 'bg-status-paused/20 text-status-paused';
+    case 'stopping': return 'bg-status-paused/20 text-status-paused';
     case 'completed': return 'bg-status-completed/20 text-status-completed';
     case 'failed': return 'bg-status-failed/20 text-status-failed';
   }
@@ -69,6 +70,7 @@ export function statusHexColor(status: RunStatus | TaskStatus): string {
     case 'building':
       return '#22c55e';
     case 'paused':
+    case 'stopping':
     case 'verifying':
       return '#eab308';
     case 'recovering':

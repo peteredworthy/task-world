@@ -120,6 +120,7 @@ async def test_executor_pauses_run_on_agent_not_available(
     """AgentNotAvailableError should pause the run."""
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
+        service_factory=app.state.service_factory,
         spawn_agents=True,
     )
 
@@ -172,6 +173,7 @@ async def test_executor_pauses_run_on_agent_execution_error(
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
         global_config=global_config,
+        service_factory=app.state.service_factory,
         spawn_agents=True,
     )
 
@@ -217,6 +219,7 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
     """Non-zero subprocess exit should pause the run instead of retry-looping."""
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
+        service_factory=app.state.service_factory,
         spawn_agents=True,
     )
 
@@ -267,6 +270,7 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
     """
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
+        service_factory=app.state.service_factory,
         spawn_agents=True,
     )
 
@@ -308,6 +312,7 @@ async def test_executor_persists_builder_prompt_before_execution(
     """Builder prompt should be persisted before agent execution starts."""
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
+        service_factory=app.state.service_factory,
         spawn_agents=True,
     )
 
@@ -361,6 +366,7 @@ async def test_agent_metadata_persisted_immediately(
     """Agent metadata (PID) should be persisted immediately when subprocess is created."""
     executor = AgentRunnerExecutor(
         session_factory=session_factory,
+        service_factory=app.state.service_factory,
         spawn_agents=True,
     )
 
@@ -410,6 +416,7 @@ async def test_agent_death_detection_on_startup(
     """On startup recovery, runs with dead agents should be paused."""
     executor1 = AgentRunnerExecutor(
         session_factory=session_factory,
+        service_factory=app.state.service_factory,
         spawn_agents=True,
     )
 

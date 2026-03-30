@@ -12,6 +12,7 @@ import { RunStatusBadge } from '../StatusBadge';
 import { ConnectionIndicator } from '../ConnectionIndicator';
 import { AgentGuidancePanel } from '../guidance/AgentGuidancePanel';
 import { ResumeDialog } from '../run/ResumeDialog';
+import { HealthCheckDialog } from '../run/HealthCheckDialog';
 import { ClarificationModal } from '../detail/ClarificationModal';
 import { ApprovalModal } from '../detail/ApprovalModal';
 import { ApprovalReviewDialog } from '../detail/ApprovalReviewDialog';
@@ -80,6 +81,8 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { data: branchStatus } = useBranchStatus(runId);
   const { isPruneMode, onTogglePruneMode, onOpenBackMergeModal } = useReviewMerge();
   const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [showHealthCheckDialog, setShowHealthCheckDialog] = useState(false);
+  const [healthCheckDismissedForReason, setHealthCheckDismissedForReason] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
@@ -124,6 +127,19 @@ function RunDetailInner({ runId }: { runId: string }) {
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams, selectedPendingAction, taskPendingActions]);
+
+  // Auto-open health check dialog when run is paused due to health check failure
+  useEffect(() => {
+    if (!run) return;
+    const reason = run.pause_reason;
+    if (
+      run.status === 'paused' &&
+      (reason === 'health_check_failed' || reason === 'health_check_dirty') &&
+      reason !== healthCheckDismissedForReason
+    ) {
+      setShowHealthCheckDialog(true);
+    }
+  }, [run, healthCheckDismissedForReason]);
 
   if (isLoading) {
     return (
@@ -201,8 +217,11 @@ function RunDetailInner({ runId }: { runId: string }) {
                       manual_gate: 'Paused — waiting at manual gate',
                       recovery_loop: 'Paused — recovery loop detected',
                       unexpected_error: 'Paused — unexpected error',
+                      health_check_failed: 'Paused — pre-run health check failed',
+                      health_check_dirty: 'Paused — worktree has uncommitted changes and health check failed',
                       agent_health_check_failed: 'Paused — agent health check failed',
                       agent_not_running_on_startup: 'Paused — agent was not running on startup',
+                      no_executor_running: 'Paused — agent process not running',
                       recovered: 'Paused — recovered from failure',
                       recovery_triggered: 'Paused — recovery triggered',
                       requirement_escalated: 'Paused — agent flagged an unfulfillable requirement',
@@ -574,6 +593,15 @@ function RunDetailInner({ runId }: { runId: string }) {
         open={showResumeDialog}
         run={run}
         onClose={() => setShowResumeDialog(false)}
+      />
+
+      <HealthCheckDialog
+        open={showHealthCheckDialog}
+        run={run}
+        onClose={() => {
+          setShowHealthCheckDialog(false);
+          setHealthCheckDismissedForReason(run.pause_reason);
+        }}
       />
 
       {/* Clarification Modal */}

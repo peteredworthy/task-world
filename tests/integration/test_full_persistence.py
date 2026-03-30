@@ -83,7 +83,7 @@ async def test_state_survives_restart(db_path: Path) -> None:
         service1 = WorkflowService(session1)
         run = _make_run()
         await service1.create_run(run)
-        await service1.start_run("run-1")
+        await service1.apply_start_run("run-1")
         await service1.start_task("run-1", "task-1")
 
     await engine1.dispose()
@@ -115,7 +115,7 @@ async def test_full_lifecycle_survives_restart(db_path: Path) -> None:
         service1 = WorkflowService(session1)
         run = _make_run()
         await service1.create_run(run)
-        await service1.start_run("run-1")
+        await service1.apply_start_run("run-1")
         await service1.start_task("run-1", "task-1")
         await service1.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
         await service1.submit_for_verification("run-1", "task-1")
@@ -158,7 +158,7 @@ async def test_events_survive_restart(db_path: Path) -> None:
         service1 = WorkflowService(session1)
         run = _make_run()
         await service1.create_run(run)
-        await service1.start_run("run-1")
+        await service1.apply_start_run("run-1")
         await service1.start_task("run-1", "task-1")
 
     await engine1.dispose()

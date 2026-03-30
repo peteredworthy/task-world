@@ -125,7 +125,7 @@ async def test_recovery_state_persists_across_service_restart(
     async with session_factory() as session1:
         svc1 = WorkflowService(session1)
         await svc1.create_run(run)
-        await svc1.start_run(run_id)
+        await svc1.apply_start_run(run_id)
         await _complete_task_via_service(svc1, run_id, task1_id)
 
     # --- Phase 2: simulate restart — new service from same DB ---
@@ -166,7 +166,7 @@ async def test_recovery_can_continue_from_correct_step(
     async with session_factory() as session1:
         svc1 = WorkflowService(session1)
         await svc1.create_run(run)
-        await svc1.start_run(run_id)
+        await svc1.apply_start_run(run_id)
         await _complete_task_via_service(svc1, run_id, task1_id)
 
     # Phase 2: restart — continue with task 2 on service instance 2
@@ -203,7 +203,7 @@ async def test_recovery_task1_not_restarted_after_restart(
     async with session_factory() as session1:
         svc1 = WorkflowService(session1)
         await svc1.create_run(run)
-        await svc1.start_run(run_id)
+        await svc1.apply_start_run(run_id)
         await _complete_task_via_service(svc1, run_id, task1_id)
 
     # After restart, verify task 1 has exactly one attempt

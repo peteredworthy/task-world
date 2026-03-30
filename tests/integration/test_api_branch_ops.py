@@ -11,6 +11,9 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
+
+from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -56,7 +59,9 @@ def git_repo(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-async def client_with_repo(git_repo: Path) -> AsyncGenerator[tuple[AsyncClient, Path], None]:
+async def client_with_repo(
+    git_repo: Path,
+) -> AsyncGenerator[tuple[AsyncClient, Path, DrainFn], None]:
     """Create test client with a real git repo as project."""
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
@@ -72,19 +77,24 @@ async def client_with_repo(git_repo: Path) -> AsyncGenerator[tuple[AsyncClient, 
         )
     )
 
+    signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
         global_config=global_config,
     )
+    app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo
+        yield c, git_repo, drain
     await app.state.engine.dispose()
 
 
-async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict[str, Any]:
+async def _create_and_start_run(
+    client: AsyncClient, project_path: Path, drain: DrainFn
+) -> dict[str, Any]:
     """Helper: create and start a run pointing at a real git repo."""
     resp = await client.post(
         "/api/runs",
@@ -97,19 +107,20 @@ async def _create_and_start_run(client: AsyncClient, project_path: Path) -> dict
     assert resp.status_code == 201
     run_id = resp.json()["id"]
 
-    resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 200
-    data = resp.json()
+    start_resp = await client.post(f"/api/runs/{run_id}/start")
+    assert start_resp.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
     assert data["worktree_path"] is not None
     return data
 
 
 async def test_branch_status_no_divergence(
-    client_with_repo: tuple[AsyncClient, Path],
+    client_with_repo: tuple[AsyncClient, Path, DrainFn],
 ) -> None:
-    client, repo = client_with_repo
-    run_data = await _create_and_start_run(client, repo)
+    client, repo, drain = client_with_repo
+    run_data = await _create_and_start_run(client, repo, drain)
     run_id = run_data["id"]
 
     resp = await client.get(f"/api/runs/{run_id}/branch-status")
@@ -123,10 +134,10 @@ async def test_branch_status_no_divergence(
 
 
 async def test_branch_status_behind(
-    client_with_repo: tuple[AsyncClient, Path],
+    client_with_repo: tuple[AsyncClient, Path, DrainFn],
 ) -> None:
-    client, repo = client_with_repo
-    run_data = await _create_and_start_run(client, repo)
+    client, repo, drain = client_with_repo
+    run_data = await _create_and_start_run(client, repo, drain)
     run_id = run_data["id"]
 
     # Add a commit on main
@@ -143,10 +154,10 @@ async def test_branch_status_behind(
 
 
 async def test_back_merge(
-    client_with_repo: tuple[AsyncClient, Path],
+    client_with_repo: tuple[AsyncClient, Path, DrainFn],
 ) -> None:
-    client, repo = client_with_repo
-    run_data = await _create_and_start_run(client, repo)
+    client, repo, drain = client_with_repo
+    run_data = await _create_and_start_run(client, repo, drain)
     run_id = run_data["id"]
     worktree_path = Path(run_data["worktree_path"])
 
@@ -166,10 +177,10 @@ async def test_back_merge(
 
 
 async def test_back_merge_requires_active_or_paused(
-    client_with_repo: tuple[AsyncClient, Path],
+    client_with_repo: tuple[AsyncClient, Path, DrainFn],
 ) -> None:
     """Back-merge should fail for non-ACTIVE/PAUSED runs."""
-    client, repo = client_with_repo
+    client, repo, drain = client_with_repo
 
     # Create run but don't start it (stays DRAFT)
     resp = await client.post(
@@ -187,10 +198,10 @@ async def test_back_merge_requires_active_or_paused(
 
 
 async def test_branch_status_no_worktree(
-    client_with_repo: tuple[AsyncClient, Path],
+    client_with_repo: tuple[AsyncClient, Path, DrainFn],
 ) -> None:
     """Branch status should fail when run has no worktree."""
-    client, _repo = client_with_repo
+    client, _repo, drain = client_with_repo
 
     resp = await client.post(
         "/api/runs",
