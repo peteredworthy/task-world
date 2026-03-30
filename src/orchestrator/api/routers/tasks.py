@@ -630,8 +630,10 @@ async def get_task_prompt(
             variables=run.config,
             summary_cache=summary_cache,
         )
-        # Merge artifact context into run config so {{var}} substitution picks it up
+        # Merge artifact context into run config so {{var}} substitution picks it up.
+        # Also expose keys under "context.<name>" namespace for templates using {{context.foo}}.
         run_config.update(artifact_context)
+        run_config.update({f"context.{k}": v for k, v in artifact_context.items()})
 
     if task_state.status == TaskStatus.BUILDING:
         (

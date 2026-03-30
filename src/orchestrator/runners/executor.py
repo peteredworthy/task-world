@@ -794,6 +794,9 @@ class AgentRunnerExecutor:
                 summary_cache=summary_cache,
             )
             run_config.update(artifact_context)
+            # Also expose artifact keys under "context.<name>" namespace so that
+            # templates using {{context.summary}}, {{context.plan}}, etc. resolve correctly.
+            run_config.update({f"context.{k}": v for k, v in artifact_context.items()})
 
         prompt = generate_builder_prompt(
             task_config,
