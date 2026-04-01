@@ -1,7 +1,7 @@
 """API router for repository management."""
 
-import asyncio
 import shutil
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.api.deps import get_repos_path, get_session
+from orchestrator.api.deps import get_git_cloner, get_repos_path, get_session
 from orchestrator.api.schemas.repos import (
     AddRepoRequest,
     BranchCountResponse,
@@ -53,6 +53,7 @@ async def list_repositories(
 async def add_repository(
     body: AddRepoRequest,
     repos_path: Annotated[Path, Depends(get_repos_path)],
+    git_clone: Annotated[Callable[[str, Path], Awaitable[None]], Depends(get_git_cloner)],
 ) -> RepoResponse:
     """Add a repository by cloning a URL or symlinking a local path."""
     if body.url:
@@ -72,18 +73,7 @@ async def add_repository(
         if dest.exists():
             raise HTTPException(status_code=409, detail="Repository already exists")
 
-        proc = await asyncio.create_subprocess_exec(
-            "git",
-            "clone",
-            body.url,
-            str(dest),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr_bytes = await proc.communicate()
-        if proc.returncode != 0:
-            stderr = stderr_bytes.decode(errors="replace").strip()
-            raise HTTPException(status_code=422, detail=f"Failed to clone: {stderr}")
+        await git_clone(body.url, dest)
 
         repo = get_repo(repos_path, name)
         return RepoResponse(

@@ -158,6 +158,11 @@ class TaskModel(Base):
     fan_out_output: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     child_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
 
+    # Optimistic locking — incremented by SQLAlchemy on every UPDATE
+    version: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+
+    __mapper_args__ = {"version_id_col": version}
+
     # Relationships
     step: Mapped["StepModel"] = relationship("StepModel", back_populates="tasks")
     attempts: Mapped[list["AttemptModel"]] = relationship(
@@ -179,6 +184,7 @@ class AttemptModel(Base):
     attempt_id: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     builder_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     verifier_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     verifier_comment: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -490,6 +490,23 @@ class WorkflowService:
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
         engine.pause_run(run_id, reason=reason, error_detail=error_detail)
+
+        # Stamp paused_at + outcome=paused on open attempts for in-progress tasks.
+        # Skip fan-out children (parent_task_id is not None) — they are managed
+        # by the executor directly and may have already committed a terminal outcome.
+        now = datetime.now(timezone.utc)
+        for step in run.steps:
+            for task in step.tasks:
+                if task.parent_task_id is not None:
+                    continue  # fan-out child: skip, executor owns its attempts
+                if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                    if task.attempts:
+                        current = task.attempts[-1]
+                        if current.completed_at is None:  # only open attempts
+                            current.paused_at = now
+                            current.outcome = "paused"
+        state.update_run(run)
+
         return await self._persist(state, run_id, buffer)
 
     async def resume_run(
@@ -565,6 +582,22 @@ class WorkflowService:
                 break
 
             # Update the run in the state manager after revert
+            state.update_run(run)
+
+        # For continue strategy: clear paused_at/outcome on paused attempts so they
+        # can continue where they left off.
+        # Skip fan-out children — they are managed by the executor directly.
+        if resume_strategy != "revert":
+            for step in run.steps:
+                for task in step.tasks:
+                    if task.parent_task_id is not None:
+                        continue  # fan-out child: skip
+                    if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                        if task.attempts:
+                            current = task.attempts[-1]
+                            if current.outcome == "paused":
+                                current.paused_at = None
+                                current.outcome = None
             state.update_run(run)
 
         # If agent is being changed (type or config), emit AgentChangedEvent and update run

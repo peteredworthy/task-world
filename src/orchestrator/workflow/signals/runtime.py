@@ -170,6 +170,21 @@ class RunWorkflow:
             self._callbacks.monitor_agent_health(run_id, agent_type)
         )
 
+        # FIX-6: Write a safety pause BEFORE entering the loop so that if the
+        # process is killed between task creation and the first loop iteration
+        # the run is left PAUSED rather than stuck ACTIVE.  The loop's first
+        # iteration detects and clears this marker atomically.
+        try:
+            async with self._callbacks.session_factory() as session:
+                service = await self._callbacks.create_service(session)
+                await service.apply_pause_run(run_id, reason="executor_not_started")
+                await session.commit()
+        except Exception:
+            logger.warning(
+                f"Run {run_id}: could not write executor_not_started safety pause "
+                "(will rely on finally-block fallback)"
+            )
+
         try:
             await self._run_loop()
         except asyncio.CancelledError:
@@ -400,6 +415,17 @@ class RunWorkflow:
                 repo = RunRepository(session)
 
                 run = await repo.get(run_id)
+
+                # FIX-6: Clear the executor_not_started safety pause written
+                # just before entering this loop.  We do this atomically on the
+                # first (and only) iteration where the marker is present so
+                # that the run is back to ACTIVE before any task work begins.
+                if run.status == RunStatus.PAUSED and run.pause_reason == "executor_not_started":
+                    logger.info(f"Run {run_id}: clearing executor_not_started safety pause")
+                    await service.apply_resume_run(run_id)
+                    await session.commit()
+                    # Re-fetch to get the updated status
+                    run = await repo.get(run_id)
 
                 # Stop if run is no longer active
                 if run.status != RunStatus.ACTIVE:

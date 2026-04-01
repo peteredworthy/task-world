@@ -4,6 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import ValidationError
+from sqlalchemy.orm.exc import StaleDataError
 
 import logging
 
@@ -292,7 +293,10 @@ async def respond_to_clarification(
         )
         for a in request.answers
     ]
-    result = await service.respond_to_clarification(run_id, task_id, request_id, answers, user)
+    try:
+        result = await service.respond_to_clarification(run_id, task_id, request_id, answers, user)
+    except StaleDataError:
+        raise HTTPException(status_code=409, detail="Concurrent modification — please retry")
     # Re-fetch run after clarification response to get up-to-date status
     run = await repo.get(run_id)
     # If the run is paused, resume it before spawning the agent (direct apply)

@@ -206,11 +206,20 @@ class SignalConsumer:
 
         This is the single dispatch path used by both the normal poll loop
         and the startup redelivery code, satisfying R3.
+
+        Two separate transactions are used:
+        - Transaction 1: stamp delivered_at and commit — persists regardless of
+          handler outcome, preventing same-process re-polling of this signal.
+        - Transaction 2: re-fetch signal, run handler, stamp handled_at on success.
+          On any exception, rollback discards handler mutations and handled_at,
+          but delivered_at from T1 is already committed and persists.
+          handled_at stays NULL → signal eligible for redelivery on next startup.
         """
         from sqlalchemy import select
 
         from orchestrator.db import PendingSignalModel
 
+        # --- Transaction 1: stamp delivered_at and commit immediately ---
         async with self._session_factory() as session:
             stmt = select(PendingSignalModel).where(PendingSignalModel.id == signal_id)
             result = await session.execute(stmt)
@@ -218,30 +227,39 @@ class SignalConsumer:
             if signal_model is None:
                 return
 
-            # R3: stamp delivered_at BEFORE handler invocation
-            signal_model.delivered_at = datetime.now(timezone.utc)
-            await session.flush()
-
-            service = await self._create_service(session)
             payload: dict[str, Any] | None = (
                 json.loads(signal_model.payload) if signal_model.payload else None
             )
             signal_type = WorkflowSignal(signal_model.signal_type)
             run_id = signal_model.run_id
 
+            signal_model.delivered_at = datetime.now(timezone.utc)
+            await session.commit()
+
+        # --- Transaction 2: run handler, stamp handled_at on success ---
+        async with self._session_factory() as session:
+            stmt = select(PendingSignalModel).where(PendingSignalModel.id == signal_id)
+            result = await session.execute(stmt)
+            signal_model = result.scalar_one_or_none()
+            if signal_model is None:
+                return
+
+            service = await self._create_service(session)
+
             try:
                 await self._handle_signal(run_id, signal_type, payload, session, service)
-                # R3: stamp handled_at AFTER successful handler completion
+                # stamp handled_at AFTER successful handler completion
                 signal_model.handled_at = datetime.now(timezone.utc)
+                await session.commit()
             except Exception:
+                await session.rollback()
                 logger.exception(
-                    "SignalConsumer: error handling %s for run %s",
+                    "SignalConsumer: error handling %s for run %s — rolled back, signal eligible for redelivery",
                     signal_type.value,
                     run_id,
                 )
-                # R3: handled_at stays NULL — eligible for redelivery
-
-            await session.commit()
+                # handled_at stays NULL → signal will be redelivered on next startup
+                # All handler mutations rolled back → clean state for redelivery
 
     async def _handle_signal(
         self,

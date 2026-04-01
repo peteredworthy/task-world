@@ -180,6 +180,40 @@ def get_summary_caches(request: Request) -> dict[str, Any]:
     return request.app.state.summary_caches  # type: ignore[no-any-return]
 
 
+def get_git_cloner(request: Request) -> "Callable[[str, Path], Awaitable[None]]":
+    """Return the git-clone callable.
+
+    In production this runs ``git clone`` as a subprocess.  Tests override it
+    by setting ``app.state.git_cloner`` to a no-op or error-raising stub,
+    removing any real I/O from the test suite.
+    """
+    return getattr(request.app.state, "git_cloner", _default_git_clone)  # type: ignore[no-any-return]
+
+
+async def _default_git_clone(url: str, dest: Path) -> None:
+    """Clone *url* into *dest* using a subprocess git clone."""
+    import asyncio as _asyncio
+    from fastapi import HTTPException as _HTTPException
+
+    proc = await _asyncio.create_subprocess_exec(
+        "git",
+        "clone",
+        url,
+        str(dest),
+        stdout=_asyncio.subprocess.PIPE,
+        stderr=_asyncio.subprocess.PIPE,
+    )
+    try:
+        _, stderr_bytes = await _asyncio.wait_for(proc.communicate(), timeout=60.0)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise _HTTPException(status_code=422, detail="Failed to clone: timed out")
+    if proc.returncode != 0:
+        stderr = stderr_bytes.decode(errors="replace").strip()
+        raise _HTTPException(status_code=422, detail=f"Failed to clone: {stderr}")
+
+
 def get_current_user() -> str:
     """Get current user for human interaction actions.
 

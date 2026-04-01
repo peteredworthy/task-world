@@ -128,6 +128,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                         attempt_num=att_model.attempt_num,
                         started_at=_ensure_utc_optional(att_model.started_at),
                         completed_at=_ensure_utc_optional(att_model.completed_at),
+                        paused_at=_ensure_utc_optional(att_model.paused_at),
                         builder_prompt=att_model.builder_prompt if action_logs_loaded else None,
                         verifier_prompt=att_model.verifier_prompt if action_logs_loaded else None,
                         verifier_comment=att_model.verifier_comment,
@@ -289,6 +290,7 @@ def _to_model(run: Run) -> RunModel:
                         attempt_num=att.attempt_num,
                         started_at=att.started_at,
                         completed_at=att.completed_at,
+                        paused_at=att.paused_at,
                         builder_prompt=att.builder_prompt,
                         verifier_prompt=att.verifier_prompt,
                         verifier_comment=att.verifier_comment,
@@ -528,6 +530,7 @@ class RunRepository:
                 attempt_id=attempt.id,  # Stable UUID for Temporal Activity ID mapping
                 started_at=attempt.started_at,
                 completed_at=attempt.completed_at,
+                paused_at=attempt.paused_at,
                 builder_prompt=attempt.builder_prompt,
                 verifier_prompt=attempt.verifier_prompt,
                 verifier_comment=attempt.verifier_comment,

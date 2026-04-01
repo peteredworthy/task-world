@@ -6,7 +6,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
-
+from sqlalchemy.orm.exc import StaleDataError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.runners import get_agent_system_prompt, resolve_agent_name
@@ -314,6 +314,8 @@ async def complete_verification_endpoint(
     """
     try:
         result = await service.check_verification(run_id, task_id)
+    except StaleDataError:
+        raise HTTPException(status_code=409, detail="Concurrent modification — please retry")
     except InvalidTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except TaskNotFoundError as e:

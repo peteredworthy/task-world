@@ -146,10 +146,11 @@ class Attempt(BaseModel):
     attempt_num: int
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    paused_at: datetime | None = None
     builder_prompt: str | None = None
     verifier_prompt: str | None = None
     verifier_comment: str | None = None
-    outcome: str | None = None  # "passed", "revision_needed", "failed"
+    outcome: str | None = None  # "passed", "revision_needed", "failed", "paused", "reverted"
     metrics: AttemptMetrics = Field(default_factory=AttemptMetrics)
     grade_snapshot: list[GradeSnapshotItem] = Field(default_factory=lambda: [])
     auto_verify_results: list[dict[str, Any]] = Field(default_factory=lambda: [])

@@ -14,6 +14,8 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.orm.exc import StaleDataError
+
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
     AgentExecutionError,
@@ -1009,10 +1011,27 @@ class AgentRunnerExecutor:
             )
         else:
             # 1. Expand: create child tasks (first time)
-            children = await service.expand_fan_out_task(run.id, parent_task.id)
+            try:
+                children = await service.expand_fan_out_task(run.id, parent_task.id)
+            except StaleDataError:
+                # Another concurrent caller already expanded this fan-out task.
+                # Discard this expansion attempt and reload existing children.
+                logger.warning(
+                    f"Run {run.id}: StaleDataError expanding fan-out task {parent_task.id} "
+                    "— another caller already expanded; reloading existing children."
+                )
+                if session is not None:
+                    await session.rollback()
+                run = await service.get_run(run.id)
+                children = [
+                    task
+                    for step in run.steps
+                    for task in step.tasks
+                    if task.parent_task_id == parent_task.id
+                ]
             verifier_feedback = None
-            children_to_run = children
-            already_done = []
+            children_to_run = [c for c in children if c.status not in {TaskStatus.COMPLETED}]
+            already_done = [c for c in children if c.status in {TaskStatus.COMPLETED}]
             await self._append_task_log(
                 run.id,
                 parent_task.id,
