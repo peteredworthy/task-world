@@ -15,6 +15,13 @@ routine:
 
     Primary process references live in docs/plan-runner/.
 
+    CROSS-REPO USE: When running against a repo other than task-world, set the
+    TASK_WORLD_ROOT environment variable to the task-world checkout path before
+    starting the server:
+      export TASK_WORLD_ROOT=/path/to/task-world
+    This allows the validation script to be bootstrapped into the target worktree.
+    Without it, S-03 auto_verify will fail in external repos.
+
   inputs:
     - name: "feature"
       required: true
@@ -303,10 +310,15 @@ routine:
               step, include it. The cost of a missed relevant section is higher than
               the cost of a few extra lines.
 
-            After tagging, run the validation/extraction script to confirm annotations
-            are correct and to produce the per-step context packets for S-04 and S-05:
+            After tagging, bootstrap and run the validation/extraction script to confirm
+            annotations are correct and produce the per-step context packets for S-04 and S-05:
 
-              python routines/idea-to-plan-scoped/scripts/extract_ctx.py docs/{{feature}}
+              # Bootstrap the script into the feature docs directory (works in any repo):
+              mkdir -p docs/{{feature}}/scripts
+              cp routines/idea-to-plan-scoped/scripts/extract_ctx.py docs/{{feature}}/scripts/ 2>/dev/null || \
+                cp "$TASK_WORLD_ROOT/routines/idea-to-plan-scoped/scripts/extract_ctx.py" docs/{{feature}}/scripts/
+
+              python docs/{{feature}}/scripts/extract_ctx.py docs/{{feature}}
 
             The script will:
             1. Fail with clear error messages if any ## section is untagged, or if
@@ -350,7 +362,12 @@ routine:
                 cmd: "grep -q '\\[I-.*→' docs/{{feature}}/intent.md"
                 must: true
               - id: "arch_annotations_and_split"
-                cmd: "python routines/idea-to-plan-scoped/scripts/extract_ctx.py docs/{{feature}}"
+                cmd: |
+                  mkdir -p docs/{{feature}}/scripts &&
+                  (cp routines/idea-to-plan-scoped/scripts/extract_ctx.py docs/{{feature}}/scripts/ 2>/dev/null ||
+                   cp "$TASK_WORLD_ROOT/routines/idea-to-plan-scoped/scripts/extract_ctx.py" docs/{{feature}}/scripts/ 2>/dev/null ||
+                   (echo "ERROR: extract_ctx.py not found. Set TASK_WORLD_ROOT=/path/to/task-world" >&2 && exit 1)) &&
+                  python docs/{{feature}}/scripts/extract_ctx.py docs/{{feature}}
                 must: true
           verifier:
             rubric:
@@ -1149,23 +1166,25 @@ routine:
                   F: any unresolved [I-XX], dangling IDs, or systematic misalignment.
 
         - id: "T-03"
-          title: "Clean up per-step context packets"
+          title: "Clean up per-step context packets and helper scripts"
           profile: "summarizer"
           task_context: |
-            Remove the temporary per-step context packet directory created during S-03.
-            This directory was used by S-04 and S-05 fan-out agents and is no longer needed.
+            Remove the temporary directories created during S-03: the per-step context
+            packets (ctx/) and the bootstrapped helper scripts (scripts/). Both were
+            used by S-04 and S-05 fan-out agents and are no longer needed.
 
             Run exactly:
               rm -rf docs/{{feature}}/ctx
+              rm -rf docs/{{feature}}/scripts
 
-            Then confirm the directory is gone, mark R1 done, and submit.
+            Then confirm both directories are gone, mark R1 done, and submit.
             Do not modify any other files.
           requirements:
             - id: "R1"
-              desc: "docs/{{feature}}/ctx/ directory removed"
+              desc: "docs/{{feature}}/ctx/ and docs/{{feature}}/scripts/ directories removed"
               priority: critical
           auto_verify:
             items:
               - id: "ctx_dir_removed"
-                cmd: "test ! -d docs/{{feature}}/ctx"
+                cmd: "test ! -d docs/{{feature}}/ctx && test ! -d docs/{{feature}}/scripts"
                 must: true
