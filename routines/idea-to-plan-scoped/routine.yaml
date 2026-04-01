@@ -1,0 +1,1171 @@
+routine:
+  id: "idea-to-plan-scoped"
+  name: "Idea to Implementation Plan (Scoped Context)"
+  description: |
+    Transform an initial idea into a structured, executable plan through an 8-stage
+    workflow with human review gates. Produces step files and a validated routine
+    YAML ready for execution.
+
+    Extends idea-to-plan-optimized with scoped context delivery for fan-out steps:
+    at S-03, architecture.md sections are annotated with the step(s) they serve,
+    and intent.md items already carry step annotations. A bundled script validates
+    those annotations and splits both documents into per-step context packets so
+    each fan-out agent receives only the content relevant to its step, not the full
+    docs. The ctx/ directory is removed by the cleanup task at the end of S-08.
+
+    Primary process references live in docs/plan-runner/.
+
+  inputs:
+    - name: "feature"
+      required: true
+      description: "Feature name used for directory structure (docs/{feature}/ and routines/{feature}/)"
+    - name: "idea"
+      required: true
+      description: "Initial idea, request, or prompt to plan"
+    - name: "codebase_context"
+      required: false
+      description: "Brief description of existing codebase architecture"
+
+  clarifications:
+    artifact_path: "docs/{{feature}}/clarifications.md"
+
+  steps:
+    - id: "S-01"
+      title: "Initial Plan"
+      step_context: |
+        Create the three foundational planning documents from the idea.
+        Front-load uncertainty — surface unknowns now, not during execution.
+      tasks:
+        - id: "T-01"
+          title: "Generate Initial Artifacts"
+          profile: "architect"
+          context_from:
+            - artifact: "docs/plan-runner/idea_to_plan_stripped.md"
+              as: "context.process_checklist"
+              required: false
+            - artifact: "docs/plan-runner/idea_to_plan_detailed.md"
+              as: "context.process_detailed"
+              required: false
+          task_context: |
+            Create initial planning artifacts based on the idea and codebase context.
+
+            IMPORTANT: Do NOT read source code files. Focus only on the idea, codebase
+            context description, and the process reference documents provided below.
+
+            IDEA:
+            {{idea}}
+
+            CODEBASE CONTEXT:
+            {{codebase_context}}
+
+            PROCESS CHECKLIST (Stage 1):
+            {{context.process_checklist}}
+
+            PROCESS PRINCIPLES:
+            {{context.process_detailed}}
+
+            Create these files in docs/{{feature}}/:
+            1. intent.md
+            2. plan.md
+            3. architecture.md
+
+            Follow docs/planner/templates/*.md for artifact structure.
+
+            Ensure content is specific to the project and actionable.
+
+            === INTENT ITEM NUMBERING ===
+
+            After writing intent.md, assign a sequential [I-XX] identifier to every
+            discrete element: each goal, each scope item, each constraint, and every
+            line in the Definition of Complete. Append the ID inline at the end of
+            the sentence or bullet it applies to.
+
+              Before: "All tests pass after each phase."
+              After:  "All tests pass after each phase. [I-07]"
+
+            These IDs are stable handles used by later steps to trace each intent
+            element to a requirement. Assign them now so the traceability chain
+            flows forward, not backward.
+
+            === END INTENT ITEM NUMBERING ===
+          requirements:
+            - id: "R1"
+              desc: "Create intent.md with goal, scope, and completion criteria"
+              priority: critical
+            - id: "R2"
+              desc: "Create plan.md with iterative milestones and implementation order"
+              priority: critical
+            - id: "R3"
+              desc: "Create architecture.md with integration and testing strategy"
+              priority: expected
+            - id: "R4"
+              desc: "Every goal, constraint, and Definition of Complete criterion in intent.md is assigned a sequential [I-XX] identifier"
+              priority: critical
+          artifacts:
+            - path: "docs/{{feature}}/intent.md"
+              required: true
+            - path: "docs/{{feature}}/plan.md"
+              required: true
+            - path: "docs/{{feature}}/architecture.md"
+              required: false
+          auto_verify:
+            items:
+              - id: "files_exist"
+                cmd: "test -f docs/{{feature}}/intent.md && test -f docs/{{feature}}/plan.md"
+                must: true
+              - id: "intent_items_numbered"
+                cmd: "grep -q '\\[I-' docs/{{feature}}/intent.md"
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 (intent.md) — A: has a concrete goal statement, bounded scope with explicit exclusions,
+                  and measurable completion criteria (e.g. "game renders at 60fps"). B: has goal/scope/criteria
+                  but they are vague or unmeasurable (e.g. "game works well"). F: file missing or only headings.
+              - id: "R2"
+                text: |
+                  R2 (plan.md) — A: milestones are ordered with explicit dependencies, each milestone has
+                  a concrete deliverable. B: milestones listed but ordering rationale or deliverables are unclear.
+                  F: file missing or only headings.
+              - id: "R3"
+                text: |
+                  R3 (architecture.md) — A: names specific files/modules to create, testing approach references
+                  concrete tools or patterns. B: describes architecture in general terms without file-level specifics.
+                  F: file missing or only headings.
+              - id: "R4"
+                text: |
+                  R4 — A: every goal, scope item, constraint, and Definition of Complete line in intent.md
+                  has an [I-XX] identifier appended inline. IDs are sequential with no gaps or duplicates.
+                  B: most items numbered but 1-2 are missing. F: no numbering applied.
+          retry:
+            max_attempts: 2
+
+    - id: "S-02"
+      title: "Requirements Gathering"
+      step_context: |
+        Resolve all open design questions with the human via clarifications.
+        Update intent, plan, and architecture to reflect answers consistently.
+      tasks:
+        - id: "T-01"
+          title: "Gather Requirements and Update Docs"
+          profile: "architect"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: false
+          task_context: |
+            Review the planning artifacts and gather all open design questions from the human.
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            ARCHITECTURE:
+            {{context.architecture}}
+
+            ## If no clarifications file exists yet (first run):
+            1. Read the planning documents above carefully.
+            2. Identify every open design question or decision that cannot be answered
+               without human input (technology choices, business priorities, constraints, etc.).
+            3. If there are open questions: call orchestrator_request_clarification with all
+               questions. Use appropriate question types (single_select, multi_select, free_text,
+               or number). Then stop — do NOT mark requirements done yet.
+            4. If there are genuinely no open questions: note this explicitly, update all
+               documents for consistency, mark R1 and R2 done, and submit.
+
+            ## If clarifications file exists (subsequent run):
+            1. Read docs/{{feature}}/clarifications.md to review answers received.
+            2. Decide if the answers are complete enough to proceed:
+               - If more questions are needed: call orchestrator_request_clarification with
+                 the new questions, then stop.
+               - If satisfied with all answers: continue to step 3.
+            3. Update docs/{{feature}}/intent.md, plan.md, and architecture.md to reflect
+               all decisions made in the Q&A. Ensure they are mutually consistent —
+               no contradictions between intent, plan, and architecture.
+            4. Mark R1 and R2 as done and submit.
+          requirements:
+            - id: "R1"
+              desc: "All open design questions have been resolved with human input"
+              priority: critical
+            - id: "R2"
+              desc: "intent.md, plan.md, and architecture.md are updated and mutually consistent"
+              priority: critical
+          artifacts:
+            - path: "docs/{{feature}}/clarifications.md"
+              required: false
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: clarifications.md exists and shows at least one answered question round;
+                  OR the agent has documented that no open questions exist. All questions in the
+                  clarifications log have answers. B: clarifications file exists but some questions
+                  are unanswered or the agent skipped asking questions that are clearly open.
+              - id: "R2"
+                text: |
+                  R2 — Grade on BOTH dimensions:
+                  (a) Cross-consistency: intent.md, plan.md, and architecture.md are cross-consistent —
+                  the intent is reflected in the plan milestones, the architecture supports
+                  the plan, and no document contradicts another.
+                  (b) Feedback incorporation: every answer from the clarifications Q&A is visibly
+                  reflected in the planning documents (decisions are incorporated, not just noted).
+                  A: both (a) and (b) fully satisfied. B: documents are individually reasonable but
+                  contain minor inconsistencies, or one or two Q&A answers are noted without being
+                  fully integrated into the plan or architecture. F: major contradictions between
+                  documents.
+          retry:
+            max_attempts: 3
+
+    - id: "S-03"
+      title: "Step Planning"
+      step_context: |
+        Break the plan into step-level plans with contracts (inputs/outputs/errors)
+        and verification strategies. Each step delivers a coherent capability.
+      tasks:
+        - id: "T-01"
+          title: "Create Step Plans"
+          profile: "architect"
+          context_from:
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "plan"
+              required: true
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "architecture"
+              required: true
+          task_context: |
+            Create docs/{{feature}}/step-XX-plan.md files from the implementation plan.
+
+            PLAN:
+            {{context.plan}}
+
+            ARCHITECTURE:
+            {{context.architecture}}
+
+            Each step plan must include:
+            - Purpose and functionality
+            - Prerequisites/dependencies
+            - Functional contract (inputs/outputs/errors)
+            - Verification strategy
+
+            Follow docs/planner/templates/step-plan.md.
+
+            === PROVISIONAL INTENT COVERAGE ===
+
+            After creating all step plans, annotate docs/{{feature}}/intent.md to
+            record which step covers each [I-XX] item. Add the step reference inline
+            after the existing [I-XX] identifier:
+
+              Before: "All tests pass after each phase. [I-07]"
+              After:  "All tests pass after each phase. [I-07 → S-05]"
+
+            For items covered by multiple steps, list all:
+              "Zero backward-compatibility stubs remain. [I-12 → S-02, S-04]"
+
+            For items no step addresses, mark explicitly:
+              "Out of scope: frontend changes. [I-15 → NO-REQ: excluded by scope]"
+
+            Every [I-XX] must resolve to either a step reference or NO-REQ. Any
+            unresolved [I-XX] is a coverage gap — either add a step that covers it
+            or mark it NO-REQ with justification.
+
+            === END PROVISIONAL INTENT COVERAGE ===
+
+            === ARCHITECTURE SECTION ANNOTATION ===
+
+            After annotating intent.md, annotate every ## section header in
+            docs/{{feature}}/architecture.md to record which step(s) depend on it.
+            Use an HTML comment tag appended to the heading line:
+
+              ## Overview  <!-- steps: S-01, S-02, S-03, S-04, S-05, S-06 -->
+              ## FIX-4: Atomic Signal Handlers  <!-- steps: S-01 -->
+              ## Database Migration Strategy  <!-- steps: S-02, S-04, S-05 -->
+
+            Rules:
+            - EVERY ## section must receive a <!-- steps: ... --> tag. The validation
+              script will fail if any ## section is left untagged.
+            - Use the step IDs you just created (S-01, S-02, etc.).
+            - If a section is needed by ALL steps (e.g., an overview or integration
+              map), list every step ID explicitly rather than using a wildcard.
+            - If a section serves MULTIPLE but not all steps (e.g., a migration
+              strategy shared by S-02, S-04, and S-06), list each applicable step ID.
+            - ### sub-headings are part of their parent ## section's body — do not
+              tag them separately; they inherit their parent's step set.
+            - Err on the side of inclusion: if a section is plausibly useful to a
+              step, include it. The cost of a missed relevant section is higher than
+              the cost of a few extra lines.
+
+            After tagging, run the validation/extraction script to confirm annotations
+            are correct and to produce the per-step context packets for S-04 and S-05:
+
+              python routines/idea-to-plan-scoped/scripts/extract_ctx.py docs/{{feature}}
+
+            The script will:
+            1. Fail with clear error messages if any ## section is untagged, or if
+               any [I-XX] in intent.md lacks a → annotation.
+            2. On success, write docs/{{feature}}/ctx/<stem>-arch.md and
+               docs/{{feature}}/ctx/<stem>-intent.md for each step plan file.
+            3. Print a summary of shared sections and per-step line counts.
+
+            If the script fails, fix the annotations it identifies and re-run.
+            Do NOT mark S-03 requirements done until the script exits 0.
+
+            The ctx/ files are consumed by S-04 and S-05 fan-out agents and removed
+            by the cleanup task at the end of S-08.
+
+            === END ARCHITECTURE SECTION ANNOTATION ===
+          requirements:
+            - id: "R1"
+              desc: "Create step-XX-plan.md for each plan step"
+              priority: critical
+            - id: "R2"
+              desc: "Each step plan defines input/output/error contracts"
+              priority: critical
+            - id: "R3"
+              desc: "Each step plan contains verification approach"
+              priority: expected
+            - id: "R4"
+              desc: "Dependencies between steps are explicit"
+              priority: expected
+            - id: "R5"
+              desc: "intent.md updated — every [I-XX] item is annotated with the step(s) that address it, or marked [I-XX → NO-REQ: justification]. No [I-XX] left unresolved."
+              priority: critical
+            - id: "R6"
+              desc: "architecture.md updated — every ## section has a <!-- steps: S-XX, ... --> annotation. The extract_ctx.py script exits 0 and ctx/ packets are written."
+              priority: critical
+          auto_verify:
+            items:
+              - id: "step_plans_exist"
+                cmd: "ls docs/{{feature}}/step-*-plan.md >/dev/null 2>&1"
+                must: true
+              - id: "intent_coverage_started"
+                cmd: "grep -q '\\[I-.*→' docs/{{feature}}/intent.md"
+                must: true
+              - id: "arch_annotations_and_split"
+                cmd: "python routines/idea-to-plan-scoped/scripts/extract_ctx.py docs/{{feature}}"
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: each step-XX-plan.md has a clear purpose, concrete prerequisites,
+                  and names specific files/modules. B: files exist but purpose is generic or
+                  prerequisites are vague. F: step plan files missing.
+              - id: "R2"
+                text: |
+                  R2 — A: each plan has explicit "Inputs", "Outputs", and "Error handling" sections
+                  with concrete types or file paths. B: contracts are mentioned but described in
+                  prose rather than structured sections. F: no contract information.
+              - id: "R3"
+                text: |
+                  R3 — A: verification approach names specific commands, test patterns, or manual
+                  checks. B: verification says "test it" without specifics.
+              - id: "R4"
+                text: |
+                  R4 — A: each plan states which prior steps must complete first and why.
+                  B: ordering is implied by numbering but not stated.
+              - id: "R5"
+                text: |
+                  R5 — A: every [I-XX] in intent.md has a [→ S-XX] or [→ NO-REQ] annotation.
+                  Read the DoC section specifically — each criterion must be covered.
+                  B: most items covered but 1-2 [I-XX] remain unresolved.
+                  F: multiple unresolved [I-XX] items, or DoC criteria left without step coverage.
+              - id: "R6"
+                text: |
+                  R6 — A: every ## section in architecture.md has a <!-- steps: S-XX, ... -->
+                  annotation; the extract_ctx.py script exits 0 and docs/{{feature}}/ctx/
+                  contains one -arch.md and one -intent.md per step plan. Verify by checking
+                  that docs/{{feature}}/ctx/ is non-empty and contains the expected file count.
+                  B: all sections annotated but one or two ctx files are missing or empty.
+                  F: any ## section lacks an annotation tag, or the script exits non-zero.
+          retry:
+            max_attempts: 2
+      transitions:
+        on_complete: "S-04"
+        on_condition:
+          - condition: "has_unresolved_conflicts"
+            target: "S-02"
+            max_iterations: 2
+            message: "Conflicts discovered during step planning"
+
+    - id: "S-04"
+      title: "Task Breakdown"
+      step_context: |
+        Convert step plans into atomic tasks (<5 files, <500 LOC each).
+        Each task must be independently verifiable and keep the system runnable.
+      tasks:
+        - id: "T-01"
+          title: "Create Step Files (Fan-Out)"
+          profile: "coder"
+          fan_out:
+            input_glob: "docs/{{feature}}/step-*-plan.md"
+            output_pattern: "docs/{{feature}}/steps/{{item_stem}}.md"
+            per_item_prompt: |
+              Convert the following step plan into a step file following the step-files format guide.
+
+              STEP PLAN:
+              {{item_content}}
+
+              ARCHITECTURE CONTEXT (sections relevant to this step only):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-arch.md}}
+
+              INTENT ITEMS (traced to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-intent.md}}
+
+              Create the output file at {{output_path}}.
+
+              Each task must be:
+              - Atomic (<5 files, <500 LOC)
+              - Independently verifiable
+              - Runnable in sequence
+              - Linked to relevant context
+
+              Follow the step-files format guide provided in shared context.
+            shared_context:
+              - "{{file:docs/{{feature}}/clarifications.md}}"
+              - "{{file:docs/plan-runner/step-files.md}}"
+            max_concurrent: 4
+            max_turns: 25
+            auto_verify:
+              items:
+                - id: "step_file_exists"
+                  cmd: "test -f {{output_path}}"
+                  must: true
+          requirements:
+            - id: "R1"
+              desc: "Create steps/step-XX.md for each step plan"
+              priority: critical
+            - id: "R2"
+              desc: "Tasks are atomic and independently verifiable"
+              priority: critical
+            - id: "R3"
+              desc: "Tasks keep system runnable after each change"
+              priority: critical
+            - id: "R4"
+              desc: "Tasks include references to planning context"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "step_files_exist"
+                cmd: "ls docs/{{feature}}/steps/step-*.md >/dev/null 2>&1"
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: step files exist and each contains a clear task description with specific
+                  file paths and expected changes. B: files exist but descriptions are abstract.
+                  F: step files missing.
+              - id: "R2"
+                text: |
+                  R2 — A: every task changes ≤5 files and has a specific verification command or
+                  check listed. B: tasks are reasonably scoped but some bundle multiple concerns
+                  or lack a verification step.
+              - id: "R3"
+                text: |
+                  R3 — A: each task's changes keep the system runnable — no step introduces a
+                  broken state. B: mostly runnable but one task might temporarily break something
+                  that the next task fixes.
+              - id: "R4"
+                text: |
+                  R4 — A: each task references the step-plan or design doc it implements.
+                  B: tasks are self-contained but don't link back to planning context.
+          retry:
+            max_attempts: 2
+      transitions:
+        on_complete: "S-05"
+        on_condition:
+          - condition: "has_unresolved_conflicts"
+            target: "S-02"
+            max_iterations: 2
+
+    - id: "S-05"
+      title: "Dry Run & Failure Mode Analysis"
+      step_context: |
+        Simulate execution, identify gaps, and analyze failure modes.
+        Then harden the plan to minimize likelihood of failures.
+      tasks:
+        - id: "T-01"
+          title: "Simulate Execution Per Step"
+          profile: "architect"
+          fan_out:
+            input_glob: "docs/{{feature}}/steps/step-*-plan.md"
+            output_pattern: "docs/{{feature}}/dry-run/{{item_stem}}-notes.md"
+            per_item_prompt: |
+              Simulate execution of the following step file. For each task in the step:
+
+              1. Walk through the tasks and capture:
+                 - Assumptions being made
+                 - Expected outputs
+                 - Blockers and mitigation
+
+              2. Identify failure modes:
+                 - Are file references correct?
+                 - Are model/class names correct against actual source?
+                 - Does "create" vs "update" match file existence?
+                 - Are format-dependent interfaces specified explicitly?
+                 - Will existing tests break?
+                 - Are async/infrastructure dependencies resolved?
+                 - Persistence layer complete? (DB column, repo write, repo read for new fields)
+                 - Integration test assertions specified?
+                 - COMPONENT WIRING: for every new class, protocol, adapter, or handler
+                   introduced by this step, is there a call site in the ACTIVE code path
+                   that will actually use it? A common LLM failure mode is to build all
+                   specified components correctly (imports work, hasattr passes, tests pass
+                   via the old path), while the system continues using the old implementation.
+                   Ask: what replaces what? If this step introduces a new handler/adapter/
+                   protocol to replace old code, does the step explicitly require removing
+                   or replacing the old call site? If existing tests can still pass without
+                   the new component being used, the wiring is not verified.
+
+              3. For each failure mode, propose a concrete hardening action.
+
+              Do NOT modify the step file or any source code. Write analysis only.
+
+              STEP FILE:
+              {{item_content}}
+
+              CORRESPONDING STEP PLAN:
+              {{file:docs/{{feature}}/{{item_stem}}.md}}
+
+              ARCHITECTURE CONTEXT (sections relevant to this step only):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-arch.md}}
+
+              INTENT ITEMS (traced to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-intent.md}}
+
+              Save notes to {{output_path}}.
+            shared_context:
+              - "{{file:docs/{{feature}}/clarifications.md}}"
+            max_concurrent: 4
+            max_turns: 20
+            auto_verify:
+              items:
+                - id: "dry_run_notes_exist"
+                  cmd: "test -f {{output_path}}"
+                  must: true
+          requirements:
+            - id: "R1"
+              desc: "Per-step dry-run notes created for each step file"
+              priority: critical
+            - id: "R2"
+              desc: "Gaps identified with hardening actions applied to step files"
+              priority: critical
+            - id: "R3"
+              desc: "Failure modes identified per step with concrete hardening actions"
+              priority: critical
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: dry-run notes exist for each step file and each identifies at least one
+                  concrete assumption or risk. B: notes exist but analysis is high-level without
+                  step-specific detail.
+              - id: "R2"
+                text: |
+                  R2 — A: each identified gap has a specific, actionable remediation described
+                  in the notes. B: gaps have remediations but some are vague or generic.
+                  F: gaps documented but no remediations proposed.
+              - id: "R3"
+                text: |
+                  R3 — A: failure mode analysis covers each task in the step, each failure mode has
+                  a concrete hardening action. B: failure modes listed but hardening actions are vague.
+
+        - id: "T-02"
+          title: "Merge Dry Run Notes"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+          task_context: |
+            Merge all per-step dry-run notes from docs/{{feature}}/dry-run/ into a single
+            consolidated file at docs/{{feature}}/dry-run-notes.md.
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            The merged file must include:
+            - Per-step simulation results
+            - Persistence mapping audit (table, or N/A if no new state fields)
+            - Failure mode analysis (table: step, failure mode, likelihood, hardening action)
+            - Cross-step risk synthesis (dependencies and risks that span multiple steps)
+            - Plan changes recommended (with confirmation each is applied)
+          requirements:
+            - id: "R1"
+              desc: "Merged dry-run-notes.md contains all per-step simulation results"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "merged_notes_exist"
+                cmd: "test -f docs/{{feature}}/dry-run-notes.md"
+                must: true
+      transitions:
+        on_complete: "S-06"
+
+    - id: "S-06"
+      title: "Final Check"
+      step_context: |
+        Cross-check all artifacts for mutual consistency and execution readiness.
+        Verify intent→plan→steps alignment and that dry-run gaps are resolved.
+      tasks:
+        - id: "T-01"
+          title: "Cross-Check All Artifacts"
+          profile: "coder"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/dry-run-notes.md"
+              as: "context.dry_run"
+              required: false
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: false
+            - artifact: "docs/{{feature}}/clarifications.md"
+              as: "context.clarifications"
+              required: false
+          task_context: |
+            Verify alignment across intent, plan, step files, and dry run output.
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            DRY RUN NOTES:
+            {{context.dry_run}}
+
+            Create docs/{{feature}}/verification-report.md.
+
+            CRITICAL: The verification report must confirm that every dry-run gap
+            has been APPLIED to step files — not just documented. Check each gap's
+            "Applied to step files" field. If any critical or significant gap shows
+            "NO" or is missing this field, the report MUST fail with status
+            "✗ Needs Work". Do not mark as ready.
+
+            Also verify the persistence mapping audit from dry-run-notes.md:
+            - If the feature adds new state model fields, every cell in the
+              persistence mapping table must be filled (no MISSING).
+            - If any cell is MISSING, the corresponding step file must be updated
+              to include instructions for the missing mapping.
+
+            Also verify integration test quality:
+            - For each step that includes integration tests, check that the step
+              file specifies assertion logic (what the test must assert), not just
+              scenario names (what to test). Step files that say "test budget
+              exhaustion" without specifying "make N+1 calls, assert Nth+1 returns
+              429" are insufficient.
+
+            Also verify intent coverage completeness:
+            - Read intent.md and confirm every [I-XX] has a [→ S-XX] or [→ NO-REQ]
+              annotation from S-03. Any bare [I-XX] with no arrow is a gap.
+            - For each [I-XX → S-XX] annotation, confirm that the referenced step
+              file actually addresses the intent item. A step reference that does
+              not match the step file content is a traceability error.
+            - List any gaps in the verification-report.md under an "Intent Coverage
+              Gaps" section. If no gaps: note "Intent coverage: complete."
+          requirements:
+            - id: "R1"
+              desc: "Step files align with plan and intent"
+              priority: critical
+            - id: "R2"
+              desc: "All critical/significant dry-run gaps are applied to step files (not just documented)"
+              priority: critical
+            - id: "R3"
+              desc: "No unresolved critical conflicts remain"
+              priority: critical
+            - id: "R4"
+              desc: "Persistence mapping audit has no MISSING cells (or N/A if no new fields)"
+              priority: critical
+            - id: "R5"
+              desc: "Integration test step files specify assertion logic, not just scenario names"
+              priority: expected
+            - id: "R6"
+              desc: "Every [I-XX] in intent.md is annotated with a step reference or NO-REQ; referenced steps actually cover the intent item"
+              priority: critical
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: verification report explicitly maps each step file back to the plan
+                  and confirms alignment. An implementation agent could pick up the step files
+                  and execute them without needing to ask clarifying questions. B: report says
+                  things align but doesn't show the mapping, or some steps would need
+                  interpretation. F: no mapping attempted.
+              - id: "R2"
+                text: |
+                  R2 (BLOCKING GATE) — A: every dry-run gap has "Applied to step files: YES" and
+                  the verification report confirms the fixes are present in the step file text.
+                  B: most gaps applied but one moderate gap is deferred with justification.
+                  F: any critical or significant gap is NOT applied to step files. This is the
+                  #1 cause of implementation failures — gaps identified during planning but
+                  never wired into the execution artifacts. Grade F if the report says "READY
+                  WITH REQUIRED FIXES" — that phrase means the fixes were NOT applied.
+              - id: "R3"
+                text: |
+                  R3 — A: report confirms no critical conflicts remain, or lists remaining ones
+                  with justification for why they are acceptable. B: conflicts mentioned but not
+                  explicitly resolved or justified. F: unresolved critical conflicts.
+              - id: "R4"
+                text: |
+                  R4 — A: persistence mapping audit table copied from dry-run-notes.md, all cells
+                  filled, no MISSING entries. Or explicitly N/A with justification (no new state
+                  fields in this feature). B: table present with minor uncertainties noted.
+                  F: table missing, has MISSING cells, or new state fields exist but no audit
+                  was performed.
+              - id: "R5"
+                text: |
+                  R5 — A: integration test step files specify assertion logic (e.g. "make N calls,
+                  assert call N+1 returns 429 with limit_type in body"). B: most test steps specify
+                  assertions but one or two use scenario names only. F: test steps say "test X"
+                  without specifying what the test must assert.
+              - id: "R6"
+                text: |
+                  R6 — A: verification-report.md has an "Intent Coverage" section; every [I-XX] in
+                  intent.md resolves to a step reference or NO-REQ; each referenced step file
+                  actually contains content addressing that intent item. B: all [I-XX] annotated
+                  but 1-2 step references are loose (step exists but coverage is indirect).
+                  F: any bare [I-XX] with no arrow, or a step reference that clearly does not
+                  cover the intent item it claims to.
+            submission_template:
+              grade_scale: [A, B, C, D, F]
+              require_reason_if_below: A
+              require_remediation_if_below: B
+          auto_verify:
+            items:
+              - id: "report_exists"
+                cmd: "test -f docs/{{feature}}/verification-report.md"
+                must: true
+              - id: "no_bare_intent_items"
+                cmd: "uv run python -c \"import re,sys; txt=open('docs/{{feature}}/intent.md').read(); bare=[m.group() for m in re.finditer(r'\\[I-\\d+\\](?!\\s*[→\\-]|[^\\]]*→)', txt)]; print(f'Bare [I-XX] items with no step annotation: {bare}',file=sys.stderr) if bare else None; sys.exit(1 if bare else 0)\""
+                must: true
+          retry:
+            max_attempts: 2
+      transitions:
+        on_condition:
+          - condition: "has_unresolved_conflicts"
+            target: "S-02"
+            max_iterations: 2
+            message: "Unresolved conflicts detected; return to requirements gathering"
+
+    - id: "S-07"
+      title: "Final Plan Review"
+      step_context: |
+        Human approval gate before final routine packaging.
+      gate:
+        type: human_approval
+        approval_prompt: |
+          The plan is complete. Review before routine packaging:
+          - docs/{{feature}}/intent.md
+          - docs/{{feature}}/plan.md
+          - docs/{{feature}}/verification-report.md
+          - docs/{{feature}}/steps/*.md
+
+          Approve to proceed, or reject with comments.
+        require_comment: false
+      tasks:
+        - id: "T-01"
+          title: "Human Final Approval"
+          profile: "summarizer"
+          task_context: |
+            You are running because the human has already approved the step gate above.
+            Your only job is to acknowledge the approval and hand off to the next stage.
+            Mark R1 as done, then submit immediately — do not make any other changes.
+          requirements:
+            - id: "R1"
+              desc: "Human approval received — mark done and submit"
+              priority: critical
+
+    - id: "S-08"
+      title: "Execution Ready"
+      step_context: |
+        Produce the execution summary and validated routine YAML.
+        The routine must have contract-level auto_verify on every task.
+      tasks:
+        - id: "T-01"
+          title: "Generate Summary"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/dry-run-notes.md"
+              as: "context.dry_run"
+              required: false
+            - artifact: "docs/{{feature}}/verification-report.md"
+              as: "context.verification_report"
+              required: false
+          task_context: |
+            Create docs/{{feature}}/plan-summary.md including:
+            - Intent satisfaction summary
+            - Ordered step list with task counts
+            - Key decisions
+            - Risks and mitigations
+            - Caveats for execution
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            DRY RUN NOTES:
+            {{context.dry_run}}
+
+            VERIFICATION REPORT:
+            {{context.verification_report}}
+          requirements:
+            - id: "R1"
+              desc: "Create plan-summary.md with complete execution summary"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "summary_exists"
+                cmd: "test -f docs/planning-routine-improvements/plan-summary.md"
+                must: true
+              - id: "has_sections"
+                cmd: "grep -q 'Intent' docs/planning-routine-improvements/plan-summary.md && grep -q 'Risks' docs/planning-routine-improvements/plan-summary.md"
+                must: true
+
+        - id: "T-02"
+          title: "Create and Validate Routine YAML"
+          profile: "coder"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: false
+          task_context: |
+            Create the execution routine file for this feature:
+            - routines/{{feature}}/routine.yaml
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN (M1 section):
+            {{context.plan}}
+
+            ARCHITECTURE (context_from injection section):
+            {{context.architecture}}
+
+            The routine must encode the generated steps so another run can execute them.
+
+            === INTENT-REQUIREMENT TRACEABILITY ===
+
+            intent.md already has [I-XX] identifiers on every intent element (from S-01)
+            and provisional [I-XX → S-XX] step annotations (from S-03). Your job here
+            is to refine those provisional annotations to full requirement IDs now that
+            the routine YAML exists.
+
+            For each [I-XX → S-XX] annotation, replace the provisional step reference
+            with the specific requirement ID(s) from the routine that cover it:
+
+              Before: "All tests pass after each phase. [I-07 → S-05]"
+              After:  "All tests pass after each phase. [I-07 → S-05/T-01/R4]"
+
+            For items covered by multiple requirements:
+              "Zero backward-compatibility stubs remain. [I-12 → S-02/T-01/R1, S-04/T-01/R3]"
+
+            Items already marked NO-REQ stay as-is.
+
+            Rules:
+            - Every [I-XX] must resolve to at least one [S-XX/T-YY/RN] or remain NO-REQ.
+            - Every requirement ID referenced must exist in the routine YAML.
+            - If an [I-XX] item has no matching requirement after the routine is written,
+              you must EITHER add a requirement to the routine OR mark it [NO-REQ] with
+              justification. A bare [I-XX → S-XX] with no task/requirement is insufficient.
+
+            This is the final verification that every intent element is enforced by a
+            specific, testable requirement — not just claimed by a step reference.
+
+            === END INTENT-REQUIREMENT TRACEABILITY ===
+
+            After writing routine.yaml and annotating intent.md, validate the routine
+            and fix errors until it passes:
+            uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml
+
+            If validation fails, use exact error output to correct the YAML structure.
+
+            === ROUTINE YAML FORMAT GUIDE ===
+
+            Top-level shape (either wrapped or unwrapped):
+
+            ```yaml
+            id: "my-routine"
+            name: "My Routine"
+            description: "..."
+            inputs: []
+            steps: []
+            ```
+
+            Required top-level fields: id (string), name (string), steps (array, >=1 step).
+            Optional: description, inputs (array of {name, required, default, description}).
+
+            Step shape — each step must have:
+            - id (string, e.g. "S-01")
+            - title (string)
+            - tasks (array, >=1 task)
+            Optional: step_context, type (standard|dry_run), gate, transitions,
+                      mcp_servers (array of MCP server configs), available_tools (array of strings).
+
+            mcp_servers — attach external tool servers to a step (all tasks inherit):
+              mcp_servers:
+                - name: "browser"                    # unique name (required)
+                  command: "npx"                     # stdio transport
+                  args: ["-y", "@playwright/mcp@latest", "--headless"]
+                - name: "my-api"                     # OR url transport (not both)
+                  url: "https://api.example.com/mcp/sse"
+                  auth_token_env: "MY_API_TOKEN"     # env var name, never inline token
+            Use mcp_servers when tasks need browser control, external APIs, or tools
+            not built into the agent. See docs/planner/mcp-server-guide.md for details.
+
+            Task shape — each task must have:
+            - id (string, e.g. "T-01")
+            - title (string)
+            - task_context (string) — REQUIRED, describes what the agent should do
+            Optional:
+            - requirements (array of {id, desc, priority: critical|expected|nice_to_have})
+            - artifacts (array of {path, required})
+            - auto_verify: {items: [{id, cmd, must}]}
+            - verifier: {rubric: [{id, text}], submission_template: {grade_scale, require_reason_if_below, require_remediation_if_below}}
+            - retry: {max_attempts: N}
+            - context_from (array of {artifact, as, required})
+
+            IMPORTANT — Rubric item IDs MUST exactly match requirement IDs:
+            - If a task has requirements R1, R2, R3, the rubric items must use ids "R1", "R2", "R3"
+            - Do NOT use descriptive suffixes like "R1_enum", "R2_config", "R1_schema"
+            - The descriptive context belongs in the rubric `text` field, not the `id`
+            - Mismatched IDs cause CLI validation warnings which block the run
+
+            Example step with one task:
+
+            ```yaml
+            steps:
+              - id: "S-01"
+                title: "Setup"
+                step_context: "Initialize project files"
+                tasks:
+                  - id: "T-01"
+                    title: "Create base files"
+                    task_context: "Create the initial project structure"
+                    requirements:
+                      - id: "R1"
+                        desc: "Project files are created correctly"
+                        priority: critical
+                      - id: "R2"
+                        desc: "Files follow project conventions"
+                        priority: expected
+                    auto_verify:
+                      items:
+                        - id: "files_exist"
+                          cmd: "test -f README.md"
+                          must: true
+                    verifier:
+                      rubric:
+                        - id: "R1"
+                          text: "R1 — A: all files created with correct content. B: files exist but incomplete."
+                        - id: "R2"
+                          text: "R2 — A: files follow naming and structure conventions. B: minor deviations."
+                    retry:
+                      max_attempts: 2
+            ```
+
+            Auto-verify path rules:
+            - All paths in auto_verify commands MUST be relative to the project root.
+              Auto-verify commands run with cwd set to the worktree root, so relative
+              paths resolve correctly. NEVER use absolute paths or hardcoded worktree
+              paths like /path/to/worktrees/r25/... — the worktree number changes
+              between runs and will break the check.
+            - BAD:  `grep -q 'foo' /home/user/project/worktrees/r25/src/main.py`
+            - GOOD: `grep -q 'foo' src/main.py`
+            - BAD:  `cd /home/user/project/worktrees/r25/ui && npx tsc --noEmit`
+            - GOOD: `cd ui && npx tsc --noEmit`
+
+            Auto-verify exit code rules:
+            - The exit code of the command determines pass/fail. Exit 0 = pass, non-zero = fail.
+            - NEVER use shell pipes (|) in auto_verify commands. In a pipeline, the exit code
+              comes from the LAST command only. For example, `pytest ... | tail -5` always
+              returns exit 0 because tail succeeds even when pytest fails. This silently
+              hides test failures from the verification system.
+            - The runner already captures the last N lines of output (tail_lines config),
+              so piping through tail/head is unnecessary and harmful.
+            - BAD:  `uv run pytest tests/ -q 2>&1 | tail -5`  (exit code = tail = always 0)
+            - GOOD: `uv run pytest tests/ -q`  (exit code = pytest = correct)
+            - BAD:  `ls *.md | wc -l | awk '{if ($1>=1) exit 0; else exit 1}'`
+            - GOOD: `ls *.md >/dev/null 2>&1`  (ls exits non-zero when no files match)
+
+            Common validation failures:
+            - Missing task_context (REQUIRED on every task)
+            - Empty tasks list
+            - Wrong types (tasks as object instead of list)
+            - Unknown fields (schema_version, owner, tags, critical, verify are NOT valid)
+            - Shell pipes in auto_verify commands (use direct commands instead)
+
+            === AUTO_VERIFY QUALITY GUIDE ===
+
+            Every task MUST have at least one auto_verify item or a verifier rubric.
+            Tasks without either can pass via self-report alone — this is a critical gap.
+
+            Prefer contract-level checks over existence checks:
+            - BAD:  `test -f src/models.py` (file exists but may be empty/wrong)
+            - GOOD: `uv run python -c "from mymodule.models import MyModel; m = MyModel(name='test'); assert m.name == 'test'"` (tests the contract)
+            - GOOD: `uv run pytest tests/unit/test_models.py -v` (runs behavioral tests)
+            - GOOD: `uv run python -c "import mymodule; assert hasattr(mymodule, 'expected_function')"` (tests API surface)
+
+            Contract-level means: test public API signatures, return types, schema
+            fields/defaults, import paths, and integration boundaries. Do NOT test
+            internal implementation details — those break when the builder makes
+            reasonable implementation choices that differ from the planner's assumptions.
+
+            === WIRING VERIFICATION ===
+
+            When a task introduces a new component (handler, adapter, protocol) to REPLACE
+            existing functionality, structural checks alone are insufficient. A builder can
+            satisfy every hasattr(), import, and structural assertion while the system
+            continues using the old code path — making the new component dead code that
+            passes all checks.
+
+            For any task that replaces an existing code path, the routine MUST include at
+            least one of:
+            - A grep/AST check confirming the old call site is gone (e.g., the router no
+              longer calls the service method directly)
+            - An integration test that exercises the full path through the NEW component
+              and would fail if the old path were still active
+            - A verifier rubric item explicitly instructing the verifier to read both the
+              old call site AND the new component and confirm the transition happened
+
+            Structural checks (method exists, class is importable, hasattr passes) do NOT
+            verify wiring. Parity tests that pass via the old code path do NOT verify that
+            the new component is in use. Mark wiring requirements as critical and use the
+            verifier rubric to require the human verifier to confirm the switchover by
+            reading source, not just running tests.
+
+            === END WIRING VERIFICATION ===
+
+            === END FORMAT GUIDE ===
+          requirements:
+            - id: "R1"
+              desc: "Create routines/{{feature}}/routine.yaml matching the routine schema"
+              priority: critical
+            - id: "R2"
+              desc: "Routine YAML passes CLI validation"
+              priority: critical
+            - id: "R3"
+              desc: "Every task has contract-level auto_verify commands (not just existence checks); tasks that replace an existing code path include a wiring check confirming the old path is gone or the new component is the active one"
+              priority: critical
+            - id: "R4"
+              desc: "intent.md annotated with requirement IDs — every element of intent maps to at least one requirement, and every referenced ID exists in the routine"
+              priority: critical
+          artifacts:
+            - path: "routines/{{feature}}/routine.yaml"
+              required: true
+          auto_verify:
+            items:
+              - id: "routine_exists"
+                cmd: "test -f routines/{{feature}}/routine.yaml"
+                must: true
+              - id: "routine_yaml_valid"
+                cmd: "uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml"
+                must: true
+              - id: "intent_annotated"
+                cmd: "uv run python -c \"import re,sys; txt=open('docs/{{feature}}/intent.md').read(); unresolved=[m.group() for m in re.finditer(r'\\[I-\\d+\\s*→\\s*S-\\d+\\]', txt)]; print(f'Provisional [I-XX → S-XX] annotations not yet resolved to requirements: {unresolved}',file=sys.stderr) if unresolved else None; sys.exit(1 if unresolved else 0)\""
+                must: true
+              - id: "no_existence_only_verify"
+                cmd: "uv run python -c \"import yaml,sys; r=yaml.safe_load(open('routines/{{feature}}/routine.yaml')); root=r.get('routine',r); ep=('test -f','test -d','grep -q','grep -c','ls '); weak=[f\\\"{s['id']}/{t['id']}\\\" for s in root['steps'] for t in s.get('tasks',[]) for items in [(t.get('auto_verify')or{}).get('items',[])] if items and all(any(c['cmd'].strip().startswith(p) for p in ep) for c in items)]; print(f'Tasks with ONLY existence-level auto_verify: {weak}',file=sys.stderr) if weak else None; sys.exit(1 if weak else 0)\""
+                must: true
+              - id: "no_worktree_paths"
+                cmd: "uv run python -c \"import yaml,sys; r=yaml.safe_load(open('routines/{{feature}}/routine.yaml')); root=r.get('routine',r); import re; bad=[f\\\"{s['id']}/{t['id']}/{c['id']}: {c['cmd']}\\\" for s in root['steps'] for t in s.get('tasks',[]) for c in (t.get('auto_verify')or{}).get('items',[]) if re.search(r'/worktrees/r\\d+',c['cmd'])]; sys.exit(1) if bad else sys.exit(0)\" 2>&1"
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: routine.yaml has correct structure, each step has task_context,
+                  requirements with priorities, and routine steps map 1:1 to generated step
+                  files. B: structure correct but some tasks have thin contexts or mapping
+                  diverges from step files.
+              - id: "R2"
+                text: |
+                  R2 — A: routine.yaml passes CLI validation with zero errors and zero warnings.
+                  B: passes with warnings only. F: validation fails.
+              - id: "R3"
+                text: |
+                  R3 — Evaluate EVERY task's auto_verify commands individually. In your
+                  grade_reason, list each task (S-XX/T-YY) and classify its strongest check:
+                  - contract-level: import/assertion, test run, type check, schema validation
+                  - existence-only: test -f, grep -q, grep -c, ls
+                  A: every task's strongest check is contract-level. No shell pipes. AND any
+                  task that replaces an existing code path includes a wiring check (grep for
+                  absence of old call site, or a rubric item requiring the verifier to confirm
+                  the switchover by reading source).
+                  B: ANY task's strongest check is existence-only (even if paired with others).
+                  Also B: a task replaces existing functionality but has no wiring check —
+                  the new component could be dead code while old path remains active.
+                  F: tasks missing auto_verify entirely.
+                  You MUST list every task and its classification — do not say "some tasks".
+              - id: "R4"
+                text: |
+                  R4 (intent-requirement traceability) — check three things:
+                  1. RESOLUTION: Every [I-XX] in intent.md must be fully resolved — either
+                     [I-XX → S-XX/T-YY/RN] with a real requirement ID, or [NO-REQ: reason].
+                     Any provisional [I-XX → S-XX] without a task/requirement suffix = F.
+                     Any bare [I-XX] with no arrow at all = F.
+                  2. VALIDITY: Every [S-XX/T-YY/RN] referenced in an annotation must exist
+                     in the routine YAML. Extract all references and confirm each corresponds
+                     to a real requirement. Any dangling reference = F.
+                  3. ALIGNMENT: For each annotation, verify the requirement's desc actually
+                     captures the intent element it is tagged against. A requirement that
+                     is technically present but too narrow to cover the full intent = B.
+                  A: all three checks pass — every [I-XX] fully resolved, all IDs valid,
+                  all alignments accurate. B: resolution and validity pass but one or two
+                  alignments are loose (requirement is narrower than the intent element).
+                  F: any unresolved [I-XX], dangling IDs, or systematic misalignment.
+
+        - id: "T-03"
+          title: "Clean up per-step context packets"
+          profile: "summarizer"
+          task_context: |
+            Remove the temporary per-step context packet directory created during S-03.
+            This directory was used by S-04 and S-05 fan-out agents and is no longer needed.
+
+            Run exactly:
+              rm -rf docs/{{feature}}/ctx
+
+            Then confirm the directory is gone, mark R1 done, and submit.
+            Do not modify any other files.
+          requirements:
+            - id: "R1"
+              desc: "docs/{{feature}}/ctx/ directory removed"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "ctx_dir_removed"
+                cmd: "test ! -d docs/{{feature}}/ctx"
+                must: true
