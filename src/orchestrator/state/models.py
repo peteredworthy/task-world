@@ -259,6 +259,9 @@ class Run(BaseModel):
     # Routine traceability (for project routines)
     routine_path: str | None = None  # Path within repo (e.g., "routines/feature.yaml")
     routine_commit: str | None = None  # Commit SHA when routine was read
+    routine_source_dir: str | None = (
+        None  # Absolute path to routine dir on disk (transient, not persisted)
+    )
 
     # Agent configuration
     agent_type: AgentRunnerType | None = None

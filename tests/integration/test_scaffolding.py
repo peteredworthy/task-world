@@ -389,15 +389,17 @@ steps:
             worktree_path = Path(run.worktree_path)
             assert worktree_path.exists()
 
-            # Check scaffolding files were copied
-            scaffolding_path = worktree_path / ".orchestrator" / "scaffolding"
-            assert scaffolding_path.exists()
-            assert (scaffolding_path / "template.md").exists()
-            assert (scaffolding_path / "guide.md").exists()
+            # Check routine files were copied to .orchestrator/routine-files/
+            routine_files_path = worktree_path / ".orchestrator" / "routine-files"
+            assert routine_files_path.exists()
+            assert (routine_files_path / "scaffolding" / "template.md").exists()
+            assert (routine_files_path / "scaffolding" / "guide.md").exists()
 
             # Verify content
-            assert (scaffolding_path / "template.md").read_text() == "# Template File\n"
-            assert (scaffolding_path / "guide.md").read_text() == "# Guide\n"
+            assert (
+                routine_files_path / "scaffolding" / "template.md"
+            ).read_text() == "# Template File\n"
+            assert (routine_files_path / "scaffolding" / "guide.md").read_text() == "# Guide\n"
 
             # Verify .gitignore was updated
             gitignore = worktree_path / ".gitignore"

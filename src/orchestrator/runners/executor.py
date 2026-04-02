@@ -280,6 +280,65 @@ class AgentRunnerExecutor:
             logger.warning(f"Health check: unexpected error: {e}")
             return f"Pre-run health check error: {e}\nCommand: {test_command}"
 
+    def _resolve_routine_source_dir(self, run: "Run") -> str | None:
+        """Re-derive routine_source_dir from routine_id for the recovery path.
+
+        Called by ``setup_and_spawn`` when the transient field is not set
+        (e.g., after server restart).  Scans the configured routine dirs.
+        """
+        if not run.routine_id or self._global_config is None:
+            return None
+
+        routine_dir_paths = self._global_config.routines.dirs
+        if not routine_dir_paths:
+            return None
+
+        from orchestrator.config import RoutineSource, discover_routines
+
+        dirs = [(Path(d), RoutineSource.LOCAL) for d in routine_dir_paths]
+        for routine in discover_routines(dirs):
+            if routine.config.id == run.routine_id and isinstance(routine.path, Path):
+                return str(routine.path.parent)
+        return None
+
+    def _copy_routine_files(self, run: "Run", repo_path: Path, worktree_path: Path) -> None:
+        """Copy routine-adjacent files into the worktree.
+
+        Handles both LOCAL routines (filesystem copy via routine_source_dir)
+        and PROJECT routines (git-based copy via routine_path + routine_commit).
+        """
+        run_id = run.id
+        try:
+            from orchestrator.runners.scaffolding.routine_files import (
+                copy_routine_files_git,
+                copy_routine_files_local,
+            )
+
+            result = None
+            if run.routine_source_dir:
+                result = copy_routine_files_local(
+                    source_dir=Path(run.routine_source_dir),
+                    worktree_path=worktree_path,
+                )
+            elif run.routine_path and run.routine_commit:
+                result = copy_routine_files_git(
+                    repo_path=repo_path,
+                    routine_path=run.routine_path,
+                    routine_commit=run.routine_commit,
+                    worktree_path=worktree_path,
+                )
+
+            if result and result.files_copied > 0:
+                logger.info(
+                    f"Run {run_id}: copied {result.files_copied} routine "
+                    f"files to {result.target_path}"
+                )
+            elif result:
+                logger.debug(f"Run {run_id}: no routine files to copy")
+        except Exception as e:
+            # Routine file copy is optional — log but don't fail the run
+            logger.warning(f"Run {run_id}: routine files copy failed: {e}")
+
     async def start_run_with_agent(self, run_id: str, service: WorkflowService) -> Run:
         """Start a run and spawn the appropriate agent.
 
@@ -335,29 +394,8 @@ class AgentRunnerExecutor:
                         f"(branch={wt_info.branch})"
                     )
 
-                    # Copy scaffolding if routine has it
-                    if run.routine_path and run.routine_commit:
-                        try:
-                            from orchestrator.runners.scaffolding.copier import copy_scaffolding
-
-                            scaffolding_result = copy_scaffolding(
-                                repo_path=repo_path,
-                                routine_path=run.routine_path,
-                                routine_commit=run.routine_commit,
-                                worktree_path=wt_info.path,
-                            )
-                            if scaffolding_result.files_copied > 0:
-                                logger.info(
-                                    f"Run {run_id}: copied {scaffolding_result.files_copied} "
-                                    f"scaffolding files to {scaffolding_result.target_path}"
-                                )
-                            else:
-                                logger.debug(
-                                    f"Run {run_id}: no scaffolding files found for routine"
-                                )
-                        except Exception as e:
-                            # Scaffolding is optional - log but don't fail the run
-                            logger.warning(f"Run {run_id}: scaffolding copy failed: {e}")
+                    # Copy routine-adjacent files (scripts, scaffolding, etc.)
+                    self._copy_routine_files(run, repo_path, wt_info.path)
                 else:
                     logger.info(
                         f"Run {run_id}: repo {run.repo_name} not found at {repo_path}, "
@@ -453,27 +491,12 @@ class AgentRunnerExecutor:
                             f"(branch={wt_info.branch})"
                         )
 
-                        # Copy scaffolding if routine has it
-                        if run.routine_path and run.routine_commit:
-                            try:
-                                from orchestrator.runners.scaffolding.copier import (
-                                    copy_scaffolding,
-                                )
-
-                                scaffolding_result = copy_scaffolding(
-                                    repo_path=repo_path,
-                                    routine_path=run.routine_path,
-                                    routine_commit=run.routine_commit,
-                                    worktree_path=wt_info.path,
-                                )
-                                if scaffolding_result.files_copied > 0:
-                                    logger.info(
-                                        f"Run {run_id}: copied "
-                                        f"{scaffolding_result.files_copied} scaffolding "
-                                        f"files to {scaffolding_result.target_path}"
-                                    )
-                            except Exception as e:
-                                logger.warning(f"Run {run_id}: scaffolding copy failed: {e}")
+                        # Copy routine-adjacent files (scripts, scaffolding, etc.)
+                        # routine_source_dir is transient (not in DB), so re-derive
+                        # for the recovery path.
+                        if not run.routine_source_dir:
+                            run.routine_source_dir = self._resolve_routine_source_dir(run)
+                        self._copy_routine_files(run, repo_path, wt_info.path)
                     else:
                         logger.info(
                             f"Run {run_id}: repo {run.repo_name} not found at "

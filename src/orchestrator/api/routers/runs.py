@@ -297,14 +297,16 @@ async def create_run(
         # Lookup routine by ID from discovered routines
         found = discover_routines(routine_dirs)
         routine_config = None
+        matched_routine = None
         source = RoutineSource.LOCAL
         for routine in found:
             if routine.config.id == request.routine_id:
                 routine_config = routine.config
+                matched_routine = routine
                 source = routine.source
                 break
 
-        if routine_config is None:
+        if routine_config is None or matched_routine is None:
             raise RoutineNotFoundError(request.routine_id or "")
 
         run = create_run_from_routine(
@@ -313,7 +315,12 @@ async def create_run(
             source_branch=request.branch,
             config=request.config if request.config else None,
             routine_source=source,
+            routine_path=str(matched_routine.path) if matched_routine.commit else None,
+            routine_commit=matched_routine.commit,
         )
+        # For LOCAL routines, capture the source directory for file copying
+        if isinstance(matched_routine.path, Path):
+            run.routine_source_dir = str(matched_routine.path.parent)
         # Store routine config for auto-verify and prompt generation
         run.routine_embedded = routine_config.model_dump(mode="json", by_alias=True)
 

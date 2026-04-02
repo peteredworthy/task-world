@@ -306,7 +306,7 @@ routine:
             After tagging, run the validation/extraction script to confirm annotations
             are correct and to produce the per-step context packets for S-04 and S-05:
 
-              python routines/idea-to-plan-scoped/scripts/extract_ctx.py docs/{{feature}}
+              python .orchestrator/routine-files/scripts/extract_ctx.py docs/{{feature}}
 
             The script will:
             1. Fail with clear error messages if any ## section is untagged, or if
@@ -350,7 +350,7 @@ routine:
                 cmd: "grep -q '\\[I-.*→' docs/{{feature}}/intent.md"
                 must: true
               - id: "arch_annotations_and_split"
-                cmd: "python routines/idea-to-plan-scoped/scripts/extract_ctx.py docs/{{feature}}"
+                cmd: "python .orchestrator/routine-files/scripts/extract_ctx.py docs/{{feature}}"
                 must: true
           verifier:
             rubric:

@@ -63,8 +63,11 @@ from orchestrator.runners.agents.codex.common import (
 
 # Scaffolding and Profiles
 from orchestrator.runners.scaffolding import (
+    RoutineFilesResult as RoutineFilesResult,
     ScaffoldingError,
     ScaffoldingSpec,
+    copy_routine_files_git as copy_routine_files_git,
+    copy_routine_files_local as copy_routine_files_local,
     copy_scaffolding,
     ensure_gitignore,
 )
