@@ -172,6 +172,25 @@ routine:
             ARCHITECTURE:
             {{context.architecture}}
 
+            === CODE MAP ===
+
+            As you read source files to validate the plan, build a code map at
+            docs/{{feature}}/code-map.md. For every function, class, or file you read
+            that is directly relevant to the implementation, record:
+
+              ## [Fix ID or Component Name]
+              - `path/to/file.py` — `ClassName.method_name()` lines N–M: one-line description
+              - `path/to/other.py` — `standalone_function()` lines N–M: one-line description
+
+            Write (or update) this file after your exploration pass. Include only
+            implementation-relevant symbols — skip test boilerplate, imports, and utility
+            helpers unless the plan specifically calls them out.
+
+            Precise line numbers are worth the effort: this file will be given to all
+            later agents so they do not need to re-discover the same locations.
+
+            === END CODE MAP ===
+
             ## If no clarifications file exists yet (first run):
             1. Read the planning documents above carefully.
             2. Identify every open design question or decision that cannot be answered
@@ -199,8 +218,13 @@ routine:
             - id: "R2"
               desc: "intent.md, plan.md, and architecture.md are updated and mutually consistent"
               priority: critical
+            - id: "R3"
+              desc: "Produce docs/{{feature}}/code-map.md mapping each planned fix/component to source file paths, function names, and line ranges"
+              priority: expected
           artifacts:
             - path: "docs/{{feature}}/clarifications.md"
+              required: false
+            - path: "docs/{{feature}}/code-map.md"
               required: false
           verifier:
             rubric:
@@ -222,6 +246,14 @@ routine:
                   contain minor inconsistencies, or one or two Q&A answers are noted without being
                   fully integrated into the plan or architecture. F: major contradictions between
                   documents.
+              - id: "R3"
+                text: |
+                  R3 — A: code-map.md exists and lists specific file paths, function names, and
+                  approximate line ranges for every symbol mentioned in the plan. An implementation
+                  agent could navigate directly to each change site without re-reading the file first.
+                  B: code-map.md exists but uses vague references ("the service layer") or omits
+                  line numbers for most entries. F: file missing or contains only filenames without
+                  symbol-level detail.
           retry:
             max_attempts: 3
 
@@ -281,27 +313,41 @@ routine:
 
             === ARCHITECTURE SECTION ANNOTATION ===
 
-            After annotating intent.md, annotate every ## section header in
-            docs/{{feature}}/architecture.md to record which step(s) depend on it.
-            Use an HTML comment tag appended to the heading line:
+            After annotating intent.md, annotate headings in
+            docs/{{feature}}/architecture.md to record which step(s) depend on each
+            section. Use an HTML comment tag appended to the heading line:
 
-              ## Overview  <!-- steps: S-01, S-02, S-03, S-04, S-05, S-06 -->
+              ## Overview  <!-- steps: ALL -->
               ## FIX-4: Atomic Signal Handlers  <!-- steps: S-01 -->
               ## Database Migration Strategy  <!-- steps: S-02, S-04, S-05 -->
+              ### Migration rollback  <!-- steps: S-04 -->
 
-            Rules:
-            - EVERY ## section must receive a <!-- steps: ... --> tag. The validation
-              script will fail if any ## section is left untagged.
+            Tags may appear at ANY heading level (H1–H6). Rules:
+
+            - EVERY heading with content must be covered — either by its own tag
+              or by inheriting from a tagged ancestor. The validation script fails
+              on uncovered headings.
             - Use the step IDs you just created (S-01, S-02, etc.).
-            - If a section is needed by ALL steps (e.g., an overview or integration
-              map), list every step ID explicitly rather than using a wildcard.
-            - If a section serves MULTIPLE but not all steps (e.g., a migration
-              strategy shared by S-02, S-04, and S-06), list each applicable step ID.
-            - ### sub-headings are part of their parent ## section's body — do not
-              tag them separately; they inherit their parent's step set.
+            - Special values:
+                ALL  — include this section for every step
+                NONE — exclude this section from every step (child tags can still
+                       opt back in to override)
+            - A child tag overrides the ancestor for that entire subtree.
+            - Inheritance flows down: tagging a parent covers all untagged
+              descendants automatically.
+            - SHORTCUT: If the entire document is broadly relevant to all steps,
+              tag only the H1 (document title) with <!-- steps: ALL --> and every
+              section inherits that. No need to tag every heading individually.
+            - For finer control, tag at ## or ### level so sections that are truly
+              specific to one step don't get delivered to every agent.
             - Err on the side of inclusion: if a section is plausibly useful to a
-              step, include it. The cost of a missed relevant section is higher than
-              the cost of a few extra lines.
+              step, include it.
+
+            Optionally, you may also annotate docs/{{feature}}/plan.md the same
+            way. If plan.md has any <!-- steps: ... --> tags, the script will
+            produce per-step plan context packets in addition to architecture packets.
+            This is useful when different milestones or implementation-order sections
+            are only relevant to specific steps.
 
             After tagging, run the validation/extraction script to confirm annotations
             are correct and to produce the per-step context packets for S-04 and S-05:
@@ -309,11 +355,13 @@ routine:
               python .orchestrator/routine-files/scripts/extract_ctx.py docs/{{feature}}
 
             The script will:
-            1. Fail with clear error messages if any ## section is untagged, or if
-               any [I-XX] in intent.md lacks a → annotation.
-            2. On success, write docs/{{feature}}/ctx/<stem>-arch.md and
-               docs/{{feature}}/ctx/<stem>-intent.md for each step plan file.
-            3. Print a summary of shared sections and per-step line counts.
+            1. Fail with clear error messages if any heading with content is uncovered,
+               or if any [I-XX] in intent.md lacks a → annotation.
+            2. On success, write for each step plan file:
+                 docs/{{feature}}/ctx/<stem>-architecture-context.md
+                 docs/{{feature}}/ctx/<stem>-intent.md
+                 docs/{{feature}}/ctx/<stem>-plan-context.md  (if plan.md is tagged)
+            3. Print a summary of full vs breadcrumb sections and per-step line counts.
 
             If the script fails, fix the annotations it identifies and re-run.
             Do NOT mark S-03 requirements done until the script exits 0.
@@ -380,14 +428,58 @@ routine:
                   F: multiple unresolved [I-XX] items, or DoC criteria left without step coverage.
               - id: "R6"
                 text: |
-                  R6 — A: every ## section in architecture.md has a <!-- steps: S-XX, ... -->
-                  annotation; the extract_ctx.py script exits 0 and docs/{{feature}}/ctx/
-                  contains one -arch.md and one -intent.md per step plan. Verify by checking
-                  that docs/{{feature}}/ctx/ is non-empty and contains the expected file count.
-                  B: all sections annotated but one or two ctx files are missing or empty.
-                  F: any ## section lacks an annotation tag, or the script exits non-zero.
+                  R6 — A: every heading with content in architecture.md is covered by a
+                  <!-- steps: ... --> tag (own or inherited from an ancestor); the
+                  extract_ctx.py script exits 0 and docs/{{feature}}/ctx/ contains one
+                  -architecture-context.md and one -intent.md per step plan file. Verify
+                  by checking that docs/{{feature}}/ctx/ is non-empty and contains the
+                  expected file count.
+                  B: all headings covered but one or two ctx files are missing or empty.
+                  F: any heading with content is uncovered, or the script exits non-zero.
           retry:
             max_attempts: 2
+
+        - id: "T-02"
+          title: "Generate Per-Step Code Context Files"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/code-map.md"
+              as: "context.code_map"
+              required: false
+          task_context: |
+            For each step plan file in docs/{{feature}}/step-*-plan.md, produce a targeted
+            code context file at docs/{{feature}}/ctx/step-XX-plan-code-context.md.
+
+            CODE MAP (source file/function/line index from requirements gathering):
+            {{context.code_map}}
+
+            For each step-XX-plan.md file:
+            1. Read the step plan to identify which fixes, components, and symbols it touches.
+            2. Filter the code map to only entries directly relevant to that step.
+            3. Write docs/{{feature}}/ctx/step-XX-plan-code-context.md with just those entries:
+
+                 ## Code Locations
+                 - `src/path/to/file.py` — `ClassName.method_name()` lines N–M: what to change
+                 - `src/path/to/other.py` — `standalone_function()` lines N–M: what to add
+
+            4. Keep each file under 300 words — precise navigation pointers only, no explanation.
+
+            If code-map.md does not exist or is empty, write a minimal placeholder for each step:
+            "No code map available — agent should explore source files as needed."
+
+            Use the smallest/fastest available model — this is pure extraction, not reasoning.
+          requirements:
+            - id: "R1"
+              desc: "docs/{{feature}}/ctx/step-*-plan-code-context.md exists for each step plan file"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "code_context_files_exist"
+                cmd: "ls docs/{{feature}}/ctx/*-code-context.md >/dev/null 2>&1"
+                must: false
+          retry:
+            max_attempts: 2
+
       transitions:
         on_complete: "S-04"
         on_condition:
@@ -411,14 +503,21 @@ routine:
             per_item_prompt: |
               Convert the following step plan into a step file following the step-files format guide.
 
-              STEP PLAN:
-              {{item_content}}
-
-              ARCHITECTURE CONTEXT (sections relevant to this step only):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-arch.md}}
-
               INTENT ITEMS (traced to this step):
               {{file:docs/{{feature}}/ctx/{{item_stem}}-intent.md}}
+
+              PLAN CONTEXT (plan sections relevant to this step, if available):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-plan-context.md}}
+
+              ARCHITECTURE CONTEXT (sections relevant to this step only):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-architecture-context.md}}
+
+              CODE CONTEXT (source file/function/line pointers for this step — use these
+              to navigate directly to change sites without re-reading source files):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-code-context.md}}
+
+              STEP PLAN:
+              {{item_content}}
 
               Create the output file at {{output_path}}.
 
@@ -530,17 +629,20 @@ routine:
 
               Do NOT modify the step file or any source code. Write analysis only.
 
-              STEP FILE:
-              {{item_content}}
+              INTENT ITEMS (traced to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-intent.md}}
+
+              PLAN CONTEXT (plan sections relevant to this step, if available):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-plan-context.md}}
+
+              ARCHITECTURE CONTEXT (sections relevant to this step only):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-architecture-context.md}}
 
               CORRESPONDING STEP PLAN:
               {{file:docs/{{feature}}/{{item_stem}}.md}}
 
-              ARCHITECTURE CONTEXT (sections relevant to this step only):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-arch.md}}
-
-              INTENT ITEMS (traced to this step):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-intent.md}}
+              STEP FILE:
+              {{item_content}}
 
               Save notes to {{output_path}}.
             shared_context:
