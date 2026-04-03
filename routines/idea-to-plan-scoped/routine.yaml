@@ -735,6 +735,9 @@ routine:
             - artifact: "docs/{{feature}}/plan.md"
               as: "context.plan"
               required: true
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: false
             - artifact: "docs/{{feature}}/dry-run-notes.md"
               as: "context.dry_run"
               required: false
@@ -744,11 +747,23 @@ routine:
           task_context: |
             Verify alignment across intent, plan, step files, and dry run output.
 
+            IMPORTANT — scope of files to read:
+            - Read step files from docs/{{feature}}/steps/ only.
+            - Do NOT read docs/{{feature}}/ctx/ files (these are scoped context packets
+              generated for fan-out agents in earlier steps — they are redundant here).
+            - Do NOT read docs/{{feature}}/code-map.md (source navigation aid for
+              implementation agents — not relevant to verification).
+            - Do NOT read docs/{{feature}}/step-*-plan.md (step plan inputs — the step
+              files in steps/ are the authoritative output and are what you should check).
+
             INTENT:
             {{context.intent}}
 
             PLAN:
             {{context.plan}}
+
+            ARCHITECTURE:
+            {{context.architecture}}
 
             DRY RUN NOTES:
             {{context.dry_run}}
