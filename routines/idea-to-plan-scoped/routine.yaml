@@ -738,9 +738,6 @@ routine:
             - artifact: "docs/{{feature}}/dry-run-notes.md"
               as: "context.dry_run"
               required: false
-            - artifact: "docs/{{feature}}/architecture.md"
-              as: "context.architecture"
-              required: false
             - artifact: "docs/{{feature}}/clarifications.md"
               as: "context.clarifications"
               required: false
