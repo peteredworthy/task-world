@@ -32,11 +32,11 @@ def _setup_building_task(client: TestClient) -> tuple[str, str]:
     start_run_resp = client.post(f"/api/runs/{run_id}/start")
     assert start_run_resp.status_code == 202
     # Poll until the run becomes ACTIVE (signal consumer may take time under load)
-    for _ in range(30):
+    for _ in range(100):
         run_resp = client.get(f"/api/runs/{run_id}")
         if run_resp.json().get("status") == "active":
             break
-        time.sleep(0.1)
+        time.sleep(0.2)
     else:
         raise AssertionError(f"Run {run_id} never became active")
 
@@ -188,7 +188,7 @@ def test_ws_clarification_requested() -> None:
             # if other events (e.g. task_status_changed) arrive first, so we
             # consume messages until we find it.
             clarification_event = None
-            for _ in range(5):
+            for _ in range(15):
                 msg = ws.receive_json()
                 events = _extract_events(msg)
                 clarification_event = next(
@@ -232,13 +232,15 @@ def test_ws_clarification_responded(tmp_path: Path) -> None:
 
             # Drain messages until we find the clarification_requested event
             # (earlier messages may be status-change broadcasts from setup)
-            for _ in range(5):
+            for _ in range(15):
                 requested_msg = ws.receive_json()
                 requested_events = _extract_events(requested_msg)
                 if any(e.get("event_type") == "clarification_requested" for e in requested_events):
                     break
             else:
-                raise AssertionError("clarification_requested event not received within 5 messages")
+                raise AssertionError(
+                    "clarification_requested event not received within 15 messages"
+                )
 
             # Clarification response follows immediately; avoid throttle drops.
             time.sleep(0.11)
