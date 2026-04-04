@@ -34,14 +34,16 @@ def _utcnow() -> datetime:
 
 
 async def clone_run(ref_run_id: str, start: bool) -> None:
+    # WorkflowService must be imported first to avoid circular import:
+    # RunRepository → repositories.py → orchestrator.workflow → service.py → RunRepository
+    from orchestrator.workflow.service import WorkflowService
+    from orchestrator.workflow import PersistentEventEmitter
     from orchestrator.config.enums import RoutineSource, RunStatus, TaskStatus
     from orchestrator.config.models import RoutineConfig
     from orchestrator.db import create_engine, create_session_factory, init_db, EventStore
     from orchestrator.db import RunRepository
     from orchestrator.state.factory import create_run_from_routine
     from orchestrator.state.models import Attempt, AttemptMetrics
-    from orchestrator.workflow.event_logger import PersistentEventEmitter
-    from orchestrator.workflow.service import WorkflowService
 
     engine = create_engine(DB_PATH)
     session_factory = create_session_factory(engine)
