@@ -280,6 +280,16 @@ routine:
             ARCHITECTURE:
             {{context.architecture}}
 
+            Step count guidance:
+            - Target approximately 4 step plans for this run.
+            - The correct criterion for splitting into separate steps is context isolation:
+              split when two parts of the plan touch largely non-overlapping sets of files
+              and symbols (less than ~30% shared). When two changes both require deep
+              understanding of the same module or subsystem, keep them in one step —
+              splitting increases total cost without improving clarity.
+            - Prefer 3–5 coarser steps over 8–13 fine-grained steps. Coarser steps
+              reduce parallel execution overhead and cache warm-up cost significantly.
+
             Each step plan must include:
             - Purpose and functionality
             - Prerequisites/dependencies
@@ -329,6 +339,79 @@ routine:
             max_attempts: 2
 
         - id: "T-02"
+          title: "Codebase Discovery"
+          profile: "coder"
+          task_context: |
+            Read the step plans that were just created and build a comprehensive codebase
+            discovery document that pre-answers every question an implementation agent is
+            likely to ask before writing code.
+
+            1. Read all docs/{{feature}}/step-*-plan.md files to understand what the
+               implementation will touch.
+
+            2. For every source file, class, function, or symbol mentioned in the plans:
+               a. Read the actual file and capture the COMPLETE signature for each relevant
+                  function/method: name, parameters with types, return type, decorators.
+               b. For classes: capture the class definition line, base classes/protocols,
+                  and the full signature of every method (one line each — not the body).
+               c. Capture the exact import statement needed to use each symbol.
+               d. Note whether the symbol already exists or is new (to be created).
+
+            3. For each source file touched: find its test file(s) using Grep/Glob.
+               Record the test file path, the names of fixtures defined in it, and any
+               relevant mock/patch patterns used (e.g. mock_db, fake_client, AsyncMock).
+
+            4. For any database model or SQLAlchemy table touched: capture current column
+               names, types, and constraints.
+
+            5. Capture any relevant constants, enums, or config values referenced in
+               the plans.
+
+            DEPTH GUARD RAILS — strictly follow these limits:
+            - Direct symbol references from the step plans: read and capture in full
+            - One level of imports used by those symbols: capture signatures only, not bodies
+            - Recursive dependencies (what those call, and so on): skip entirely
+            - Third-party library or stdlib internals: skip entirely
+            - __init__.py re-exports and generated/migration files: skip
+            - When in doubt about depth: err on the side of less. The goal is to answer
+              "what does this function look like?" not to document the whole codebase.
+
+            Write docs/{{feature}}/codebase-discovery.md with these sections:
+
+            ## Source File Signatures
+            For each relevant source file: its path as a header, then each function/class
+            signature that will be touched or referenced, with one-line description.
+
+            ## Test Coverage Map
+            For each source file: its test file path(s), key fixture names, and any mock
+            patterns that tests of that file use.
+
+            ## Import Reference Table
+            Symbol → exact import statement to use (e.g. `from orchestrator.x import Y`).
+
+            ## Database Schema Snapshot
+            Only include if DB models are touched. For each relevant table: column names,
+            types, and any constraints (nullable, default, FK).
+
+            ## Constants & Enums
+            Any constants, enum values, or config keys referenced in the step plans:
+            name → value or definition location.
+
+            Keep the document dense and precise — it is a lookup reference, not prose.
+            Aim for 1,500–4,000 words. Do not summarise or add editorial commentary.
+          requirements:
+            - id: "R1"
+              desc: "docs/{{feature}}/codebase-discovery.md created with function signatures and test coverage map"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "discovery_exists"
+                cmd: "test -f docs/{{feature}}/codebase-discovery.md"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
           title: "Generate Per-Step Code and Architecture Context"
           profile: "summarizer"
           context_from:
@@ -382,7 +465,7 @@ routine:
           retry:
             max_attempts: 2
 
-        - id: "T-03"
+        - id: "T-04"
           title: "Generate Per-Step Plan Context"
           profile: "summarizer"
           context_from:
@@ -461,6 +544,7 @@ routine:
 
               Follow the step-files format guide provided in shared context.
             shared_context:
+              - "{{file:docs/{{feature}}/codebase-discovery.md}}"
               - "{{file:docs/{{feature}}/intent.md}}"
               - "{{file:docs/{{feature}}/clarifications.md}}"
               - "{{file:docs/plan-runner/step-files.md}}"
@@ -576,6 +660,7 @@ routine:
 
               Save notes to {{output_path}}.
             shared_context:
+              - "{{file:docs/{{feature}}/codebase-discovery.md}}"
               - "{{file:docs/{{feature}}/intent.md}}"
               - "{{file:docs/{{feature}}/clarifications.md}}"
             max_concurrent: 4
@@ -655,6 +740,20 @@ routine:
       step_context: |
         Cross-check all artifacts for mutual consistency and execution readiness.
         Verify intent→plan→steps alignment and that dry-run gaps are resolved.
+      gate:
+        type: human_approval
+        approval_prompt: |
+          S3/S4/S5 complete. Review the planning output before proceeding to final
+          verification (S6+):
+
+            - docs/{{feature}}/step-*-plan.md       (step plans from S3)
+            - docs/{{feature}}/codebase-discovery.md (discovery document from S3)
+            - docs/{{feature}}/steps/                (task breakdown from S4)
+            - docs/{{feature}}/dry-run-notes.md      (failure mode analysis from S5)
+
+          Approve to continue to S6 cross-check and final packaging.
+          Reject (with comment) to iterate on S3–S5.
+        require_comment: false
       tasks:
         - id: "T-01"
           title: "Cross-Check All Artifacts"
