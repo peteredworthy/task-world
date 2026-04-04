@@ -79,7 +79,7 @@ async def clone_run(ref_run_id: str, start: bool) -> None:
         # ── Load current routine from disk (NOT from reference run's snapshot) ──
         # We always use the current routine.yaml so that V6/V7/... experiments
         # pick up the latest changes, not the frozen config from V5.
-        from orchestrator.routines.discovery import discover_routines
+        from orchestrator.config import discover_routines
 
         routine_dirs_list = [
             (Path(__file__).parent.parent / "routines", RoutineSource.LOCAL),
