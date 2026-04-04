@@ -450,6 +450,93 @@
 
   .s2-layout { display: flex; flex-direction: column; height: calc(100vh - 120px); gap: 8px; }
   .s2-heatmap-area { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+  /* Run toggle */
+  .run-toggle { display: inline-flex; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin-left: 12px; }
+  .run-toggle button {
+    background: var(--surface2); border: none; color: var(--muted);
+    padding: 4px 12px; font-size: 11px; font-weight: 500; cursor: pointer;
+    transition: background 0.15s, color 0.15s; white-space: nowrap;
+  }
+  .run-toggle button:hover { color: var(--text); }
+  .run-toggle button.active { background: var(--accent); color: #fff; }
+  .run-toggle button + button { border-left: 1px solid var(--border); }
+
+  /* Comparison overlay */
+  #scoped-overlay {
+    display: none; position: absolute; inset: 0; background: var(--canvas-bg);
+    z-index: 5; overflow-y: auto; padding: 20px 24px;
+  }
+  #scoped-overlay.visible { display: block; }
+  #scoped2-overlay {
+    display: none; position: absolute; inset: 0; background: var(--canvas-bg);
+    z-index: 5; overflow-y: auto; padding: 20px 24px;
+  }
+  #scoped2-overlay.visible { display: block; }
+  .cmp-header { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .cmp-subtitle { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
+  .cmp-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+  .cmp-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px;
+  }
+  .cmp-card h4 { font-size: 13px; margin-bottom: 8px; font-weight: 600; }
+  .cmp-card .cmp-big { font-size: 28px; font-weight: 700; line-height: 1.1; }
+  .cmp-card .cmp-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .cmp-bar-row { display: flex; align-items: center; gap: 8px; margin: 5px 0; font-size: 11px; }
+  .cmp-bar-label { width: 120px; text-align: right; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+  .cmp-bar-track { flex: 1; height: 16px; background: var(--surface2); border-radius: 3px; position: relative; overflow: hidden; }
+  .cmp-bar-fill { height: 100%; border-radius: 3px; transition: width 0.4s ease; }
+  .cmp-bar-val { width: 60px; font-family: monospace; color: var(--muted); flex-shrink: 0; }
+  .cmp-diagnosis {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    padding: 16px 18px; margin-top: 16px;
+  }
+  .cmp-diagnosis h4 { font-size: 13px; font-weight: 600; margin-bottom: 8px; color: var(--red); }
+  .cmp-diagnosis ul { list-style: none; padding: 0; }
+  .cmp-diagnosis li { font-size: 12px; color: var(--muted); margin: 6px 0; padding-left: 16px; position: relative; }
+  .cmp-diagnosis li::before { content: "▸"; position: absolute; left: 0; color: var(--red); }
+
+  /* ── SLIDE 7: S4 Fan-Out Deep Dive ── */
+  .s7-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; flex-wrap:wrap; gap:8px; }
+  .s7-filters { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .s7-toggle { background:var(--surface2); border:1px solid var(--border); color:var(--muted); padding:4px 12px; border-radius:20px; cursor:pointer; font-size:11px; font-weight:500; transition:all 0.15s; }
+  .s7-toggle.on { background:rgba(59,130,246,0.15); border-color:#3b82f6; color:#93c5fd; }
+  .s7-run-btn { background:var(--surface2); border:1px solid var(--border); color:var(--muted); padding:4px 10px; border-radius:4px; cursor:pointer; font-size:11px; font-weight:500; transition:all 0.15s; }
+  .s7-run-btn.on { border-color:var(--accent); color:var(--text); }
+  .s7-panel { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 16px; margin-bottom:10px; }
+  .s7-panel h3 { font-size:13px; font-weight:600; margin-bottom:3px; color:var(--text); }
+  .s7-panel .s7-desc { font-size:11px; color:var(--muted); margin-bottom:8px; }
+  .s7-legend { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
+  .s7-legend-item { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--muted); }
+  .s7-legend-swatch { width:11px; height:11px; border-radius:2px; flex-shrink:0; }
+  .s7-group-label { font-size:10px; font-weight:600; margin:5px 0 2px 138px; }
+  .filmstrip-row { display:flex; align-items:center; gap:8px; margin-bottom:2px; }
+  .filmstrip-label { font-size:10px; color:var(--muted); width:130px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .filmstrip-strip { flex:1; height:14px; display:flex; overflow:hidden; border-radius:2px; }
+  .filmstrip-strip.fail-row { opacity:0.5; outline:1px solid rgba(239,68,68,0.5); outline-offset:-1px; }
+  .filmstrip-turn { height:100%; flex-shrink:0; display:flex; flex-direction:column; }
+  .filmstrip-tick { width:1px; background:rgba(255,255,255,0.15); flex-shrink:0; height:100%; }
+  .tax-row { display:flex; align-items:center; gap:6px; margin-bottom:3px; }
+  .tax-label { font-size:10px; color:var(--muted); width:130px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tax-bar { flex:1; height:13px; display:flex; border-radius:2px; overflow:hidden; }
+  .tax-seg { height:100%; }
+  .tax-count { font-size:10px; color:var(--muted); width:26px; text-align:right; flex-shrink:0; }
+  .tax-outcome { font-size:10px; width:22px; text-align:center; flex-shrink:0; }
+  .grid-wrap { overflow-x:auto; }
+  .cost-grid { border-collapse:collapse; font-size:10px; min-width:100%; }
+  .cost-grid th { font-size:9px; color:var(--muted); font-weight:500; padding:3px 5px; text-align:center; white-space:nowrap; border-bottom:1px solid var(--border); }
+  .cost-grid td { padding:2px 3px; }
+  .g-cell { width:100%; height:26px; border-radius:3px; display:flex; align-items:center; justify-content:center; font-size:9px; font-weight:600; position:relative; }
+  .g-empty { background:rgba(255,255,255,0.03); color:rgba(255,255,255,0.12); }
+  .g-retry-bar { position:absolute; bottom:0; left:0; right:0; height:4px; background:rgba(239,68,68,0.6); border-radius:0 0 3px 3px; }
+  .g-row-label { font-size:11px; color:var(--muted); text-align:left; padding:3px 8px 3px 0; white-space:nowrap; font-weight:500; }
+  .g-totals { display:flex; gap:10px; margin-top:8px; }
+  .g-total-bar { flex:1; }
+  .g-total-label { font-size:10px; color:var(--muted); margin-bottom:3px; }
+  .g-total-track { height:8px; background:var(--canvas-bg); border-radius:3px; overflow:hidden; }
+  .g-total-fill { height:100%; border-radius:3px; transition:width 0.8s ease; }
+
 </style>
 </head>
 <body>
@@ -459,7 +546,7 @@
     <div class="controls">
       <button id="btn-prev" disabled>&#8592; Prev</button>
       <div class="indicator">
-        <span id="slide-num">1 / 5</span>
+        <span id="slide-num">1 / 7</span>
         <div style="display:flex;gap:4px;margin-left:8px" id="dots"></div>
       </div>
       <button id="btn-next">Next &#8594;</button>
@@ -506,12 +593,17 @@
     <!-- SLIDE 2: Context Read Heatmap -->
     <div class="slide" id="slide-2">
       <h1>Context Read Heatmap</h1>
-      <p class="slide-subtitle">Every line across 10 planning docs — colored by stage, full color = relevant, dimmed = irrelevant, dark = not read</p>
+      <p class="slide-subtitle" id="s2-subtitle">Every line across 10 planning docs — colored by stage, full color = relevant, dimmed = irrelevant, dark = not read</p>
 
       <div class="s2-layout">
         <div class="s2-heatmap-area heatmap-outer">
           <div class="heatmap-toolbar">
-            <span>Zoom:</span>
+            <div class="run-toggle" id="run-toggle">
+              <button class="active" data-run="baseline">Baseline (2e47c1ff)</button>
+              <button data-run="scoped">Scoped V1 (b8935595)</button>
+              <button data-run="scoped2">Scoped V2 (2e3762dd)</button>
+            </div>
+            <span style="margin-left:8px">Zoom:</span>
             <button id="zoom-out">−</button>
             <span id="zoom-label">1.5×</span>
             <button id="zoom-in">+</button>
@@ -524,6 +616,8 @@
           </div>
           <div class="heatmap-scroll" id="heatmap-scroll">
             <canvas id="heatmapCanvas"></canvas>
+            <div id="scoped-overlay"></div>
+            <div id="scoped2-overlay"></div>
           </div>
           <div id="heatmap-detail">
             <span style="color:var(--muted);font-size:12px">Click any cell to see line content</span>
@@ -613,93 +707,172 @@
       </div>
     </div>
 
-    <!-- SLIDE 5: Recommended Action Plan -->
+    <!-- SLIDE 5: 3-Run Comparison -->
     <div class="slide" id="slide-5">
+      <h1>3-Run Comparison: Token Cost &amp; Tool Calls Per Stage</h1>
+      <p class="slide-subtitle">V5 (3acffefe, 13 steps) vs V4 (23aeef99, 3 steps, failed) vs Baseline (2e47c1ff, 7 steps) — stage-by-stage breakdown</p>
+      <div id="s5-content"></div>
+    </div>
+
+    <!-- SLIDE 6: Recommended Action Plan -->
+    <div class="slide" id="slide-6">
       <h1>Recommended Action Plan</h1>
-      <p class="slide-subtitle">Prioritized by impact-to-effort ratio — start with quick wins, layer in complexity</p>
+      <p class="slide-subtitle">Updated based on 3-run analysis — the real cost drivers are cache sharing loss, retry tax, and output growth</p>
 
       <div class="action-plan">
         <div class="action-group">
-          <div class="action-group-title">Quick Wins — Low Complexity</div>
-          <div class="action-item">
-            <div class="action-num">1</div>
+          <div class="action-group-title">Immediate Fix — Highest ROI</div>
+          <div class="action-item" style="border-left-color:#f59e0b">
+            <div class="action-num" style="background:#b45309">1</div>
             <div class="action-body">
-              <h4>Scope-pinned prompts for fan-out agents</h4>
-              <p>Each fan-out child loads only its own step plan, not the full 10-doc set. Router strips unneeded docs before agent invocation. No new infrastructure required.</p>
+              <h4>Fix the persistent fan-out failure (step-05 child)</h4>
+              <p>One fan-out child failed 2× in both V1 and V2, burning ~2.3M extra tokens per run in retries. The baseline never failed here. Identify the root cause (likely ambiguous prompt or missing context) and harden specifically for this step. Zero infrastructure changes needed.</p>
             </div>
-            <div class="action-savings">−62%</div>
+            <div class="action-savings">−12%</div>
+          </div>
+        </div>
+
+        <div class="action-group">
+          <div class="action-group-title">Architecture Fix — Restore Cache Sharing</div>
+          <div class="action-item" style="border-left-color:var(--accent)">
+            <div class="action-num" style="background:#1d4ed8">2</div>
+            <div class="action-body">
+              <h4>Shared-prefix + step-specific suffix for fan-out</h4>
+              <p>The baseline's real advantage: all fan-out children share the same large context prefix, so it's written to cache once and read N times cheaply. Scoped V2 broke this — each child got a unique prefix, creating N separate cache writes. Fix: give all children an identical base context (full shared docs), append a tiny per-step annotation. Preserve the 82% cache amortization efficiency.</p>
+            </div>
+            <div class="action-savings">−22%</div>
           </div>
           <div class="action-item">
-            <div class="action-num">2</div>
+            <div class="action-num" style="background:#6d28d9">3</div>
             <div class="action-body">
-              <h4>Doc compression pipeline</h4>
-              <p>One-time pre-run pass: collapse traceability annotations, remove verbatim architecture quotes, deduplicate boilerplate verification sections. One-time effort per run.</p>
+              <h4>Output verbosity constraints</h4>
+              <p>Step files produced by V2 are measurably larger than baseline, causing the Final Check (S-06) to process 5.2M tokens vs 2.5M. Add explicit token budgets or conciseness instructions to step-writing prompts ("max 400 words per task"). Output token growth compounds into cache creation for every downstream stage.</p>
             </div>
-            <div class="action-savings">−45%</div>
+            <div class="action-savings">−11%</div>
           </div>
         </div>
 
         <div class="action-group">
           <div class="action-group-title">Medium Investment</div>
-          <div class="action-item" style="border-left-color: var(--accent); border-left-width: 3px;">
-            <div class="action-num" style="background: #a23b72">3</div>
-            <div class="action-body">
-              <h4>Progressive context assembly</h4>
-              <p>Agents start with compressed ToC (~10K tokens). They fetch specific sections via tool calls only when needed. Adds latency but delivers the biggest overall reduction.</p>
-            </div>
-            <div class="action-savings">−71%</div>
-          </div>
           <div class="action-item">
-            <div class="action-num" style="background: #d62828">4</div>
+            <div class="action-num" style="background: #a23b72">4</div>
             <div class="action-body">
-              <h4>Cross-task context cache</h4>
-              <p>Parent fan-out task builds a structured 5–10K context object. All children inherit shared decisions as structured data, not prose. Scales with parallelism.</p>
+              <h4>Model tiering for dry-run fan-out (S-05)</h4>
+              <p>The dry-run simulation stage (5.8M tokens in V2) is primarily read-and-summarize work. Switching these fan-out children from Sonnet to Haiku reduces per-token cost 5-8×. Cache creation tokens don't change but the cost per token drops dramatically. No prompt changes required.</p>
             </div>
-            <div class="action-savings">−58%</div>
+            <div class="action-savings">−9%</div>
+          </div>
+          <div class="action-item" style="border-left-color:#ef4444">
+            <div class="action-num" style="background: #d62828">5</div>
+            <div class="action-body">
+              <h4>Fix annotation quality — the extraction script never fired</h4>
+              <p>Root cause of V2's excess: the ctx/ packets are 11,818 bytes vs architecture.md at 12,046 bytes (98% retained). Every H2 section was tagged <code>steps: S-01…S-06</code> — all steps — so the extractor had nothing to exclude. Scoping never actually happened. Fix: (a) add a post-extraction check that fails if any packet exceeds 70% of the source file size; (b) annotate at H3/H4 granularity (individual fixes/components), not H2; (c) prompt the annotation LLM with explicit examples of narrow tags like <code>steps: S-03</code>.</p>
+            </div>
+            <div class="action-savings">Core fix</div>
           </div>
         </div>
       </div>
 
       <div style="margin-top:16px">
-        <h3 style="margin-bottom:12px">The Combined Effect — Cascading Reduction</h3>
+        <h3 style="margin-bottom:12px">The Combined Effect — Cascading Reduction from 18.8M baseline</h3>
         <div class="cascade-chart" id="cascade-chart">
           <div class="cascade-row">
-            <div class="cascade-label">Current baseline</div>
+            <div class="cascade-label">Current baseline (18.8M)</div>
             <div class="cascade-bar" id="cb-0" style="background: #334155; width:0px">
-              <span>16.4M</span>
+              <span>18.8M</span>
             </div>
             <div class="cascade-delta"></div>
           </div>
           <div class="cascade-row">
-            <div class="cascade-label">After scope-pinning (−38%)</div>
-            <div class="cascade-bar" id="cb-1" style="background: #2E86AB; width:0px">
-              <span>10.2M</span>
+            <div class="cascade-label">After fixing retries (−12%)</div>
+            <div class="cascade-bar" id="cb-1" style="background: #b45309; width:0px">
+              <span>16.5M</span>
             </div>
-            <div class="cascade-delta" style="color: #6ee7b7">−6.2M tokens</div>
+            <div class="cascade-delta" style="color: #6ee7b7">−2.3M tokens</div>
           </div>
           <div class="cascade-row">
-            <div class="cascade-label">After compression (−55%)</div>
-            <div class="cascade-bar" id="cb-2" style="background: #06A77D; width:0px">
-              <span>7.4M</span>
+            <div class="cascade-label">After shared-prefix arch (−34%)</div>
+            <div class="cascade-bar" id="cb-2" style="background: #1d4ed8; width:0px">
+              <span>12.4M</span>
             </div>
-            <div class="cascade-delta" style="color: #6ee7b7">−2.8M tokens</div>
+            <div class="cascade-delta" style="color: #6ee7b7">−4.1M tokens</div>
           </div>
           <div class="cascade-row">
-            <div class="cascade-label">After progressive loading (−68%)</div>
-            <div class="cascade-bar" id="cb-3" style="background: #A23B72; width:0px">
-              <span>5.2M</span>
+            <div class="cascade-label">After verbosity constraints (−44%)</div>
+            <div class="cascade-bar" id="cb-3" style="background: #6d28d9; width:0px">
+              <span>10.5M</span>
             </div>
-            <div class="cascade-delta" style="color: #6ee7b7">−2.2M tokens</div>
+            <div class="cascade-delta" style="color: #6ee7b7">−1.9M tokens</div>
           </div>
         </div>
       </div>
 
       <div class="closing-statement">
-        Context targeting is the <strong>highest-leverage optimization</strong> for multi-agent planning runs.<br>
-        The fan-out pattern amplifies any context inefficiency by <strong>N&times;</strong> the number of parallel agents.<br>
-        <span style="color:var(--muted);font-size:13px">Starting with scope-pinning alone recovers more than half the wasted token budget with minimal code changes.</span>
+        Two compounding failures: <strong>annotations didn't discriminate</strong> (packets = 98% of full docs), and <strong>cache sharing was broken</strong> (N unique prefixes instead of 1 shared).<br>
+        Fix annotations first to validate scoping actually works, then re-measure before any further architectural changes.<br>
+        <span style="color:var(--muted);font-size:13px">Add a size-check assertion: if ctx/ packet &gt; 70% of source file, the annotation step failed — abort and re-annotate.</span>
       </div>
     </div>
+
+    <!-- SLIDE 7: S4 Fan-Out Deep Dive -->
+    <div class="slide" id="slide-7">
+      <div class="s7-header">
+        <div>
+          <h1>S4 Fan-Out: Per-Agent Token Deep Dive</h1>
+          <p class="slide-subtitle" style="margin-bottom:0">Turn-by-turn cost flow · action taxonomy · cross-run step heatmap &mdash; filter noise from failures</p>
+        </div>
+        <div class="s7-filters">
+          <button class="s7-toggle on" id="s7-fail-btn" onclick="s7ToggleFailed()">Show Failed</button>
+          <span style="font-size:10px;color:var(--muted)">Run:</span>
+          <button class="s7-run-btn on" data-run="0" onclick="s7ToggleRun(0)">Baseline</button>
+          <button class="s7-run-btn on" data-run="1" onclick="s7ToggleRun(1)">V4</button>
+          <button class="s7-run-btn on" data-run="2" onclick="s7ToggleRun(2)">V5</button>
+        </div>
+      </div>
+
+      <div class="s7-panel">
+        <h3>&#9312; Token Flow Filmstrip &mdash; each segment = one API call, width &prop; &radic;cost</h3>
+        <p class="s7-desc">Width = &radic;(cache_read + cache_create + new_input&times;8 + output&times;30). Four height bands per turn show token mix.</p>
+        <div class="s7-legend">
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#78350f"></div>cache read (~0.3&times;)</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#d97706"></div>cache create (3&times;)</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#3b82f6"></div>new input (8&times;)</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#10b981"></div>output (30&times;)</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:rgba(255,255,255,0.15)"></div>turn boundary</div>
+        </div>
+        <div id="s7-filmstrip"></div>
+      </div>
+
+      <div class="s7-panel">
+        <h3>&#9313; Action Taxonomy &mdash; what each agent actually did</h3>
+        <p class="s7-desc">Bar width = proportion of actions by type. Shows whether children are exploring the codebase vs writing output vs testing.</p>
+        <div class="s7-legend">
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#8b5cf6"></div>Explore (Read/Grep/Glob)</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#f59e0b"></div>Execute (Bash)</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#10b981"></div>Write</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#94a3b8"></div>Reason (think/text)</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#3b82f6"></div>Complete (result)</div>
+          <div class="s7-legend-item"><div class="s7-legend-swatch" style="background:#ec4899"></div>Delegate (Agent)</div>
+        </div>
+        <div id="s7-taxonomy"></div>
+      </div>
+
+      <div class="s7-panel">
+        <h3>&#9314; Cross-Run Step Cost Grid &mdash; 3 &rarr; 7 &rarr; 13 step variability visible at a glance</h3>
+        <p class="s7-desc">Cell = weighted token cost (darker=costlier). Red stripe = retried. Gray = step absent in that run. Explains why V5 (13 steps) costs more than Baseline (7 steps) despite 50% smaller prompts.</p>
+        <div class="grid-wrap"><div id="s7-grid"></div></div>
+        <div class="g-totals" id="s7-totals"></div>
+        <p style="font-size:11px;color:var(--muted);margin-top:10px;padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:rgba(255,255,255,0.02)">
+          <strong style="color:var(--text)">Sub-agent note:</strong>
+          Tokens shown here are parent-session totals only. The S4 fan-out children used the <code>Agent</code> tool (subagent_type: <em>Explore</em>), spawning sub-agents running <strong>claude-haiku-4-5</strong> as separate processes.
+          Those sub-agent costs are <em>not</em> reflected in the grid above — they were previously untracked.
+          Verified sub-agent overhead: Baseline +34.1M tokens (21 agents), V4 +15.5M (16 agents), V5 +18.5M (17 agents).
+          Sub-agents account for roughly 64%, 51%, and 48% of each run's true token total respectively.
+          See Slide 5 for the full tracked + sub-agent breakdown.
+        </p>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -716,10 +889,16 @@ const VIZ_DATA = {"stages":[{"id":"S-01","label":"Generate Initial Artifacts","c
 const FIVE_APPROACHES = {"approaches":[{"id":1,"name":"Scope-Pinned Prompts","tagline":"Each task loads only the sections it directly owns, not the full doc set.","mechanism":"Partition planning documents by scope: each step-N task receives only step-N-plan.md plus core metadata (intent.md, shared context). Exclude step-1 through step-7 files that are not relevant. Router strips unneeded docs from the prompt context before agent invocation.","how_it_applies":"The 7 fan-out child agents at steps 4–5 currently each load all 7 step plans (~140K–200K tokens per agent just for step files). Step-4 agents only need step-04-plan.md. Step-5 agents only need step-05-plan.md. Cross-check task still needs full doc set to correlate, but build/verify agents at steps 1–3 also benefit: they only request intent + their own step plan, not all downstream plans.","estimated_token_reduction_pct":62,"trade_offs":{"gains":["Massive cache token savings: estimated 10.2M tokens freed (62% of 16.4M).","Faster agent cold-starts: smaller prompt = quicker tokenization and injection.","Clearer agent focus: agents see only relevant information, less distraction."],"risks":["Cross-references break: if step-4 plan references step-7 decision, agent can't see it. Requires careful doc design or fallback to full context for dependent tasks.","Initial doc partitioning overhead: requires explicit scope annotation in plan YAML or post-generation doc splitting logic.","Debugging complexity: agent behavior becomes harder to trace if it lacks context for its dependencies."]},"implementation_complexity":"Medium","best_for":"Fan-out parallelism, large plan sets with many steps, workflows where each task has a clear, non-overlapping ownership domain.","color":"#2E86AB"},{"id":2,"name":"Progressive Context Assembly","tagline":"Start with a compressed index; agents fetch full sections on demand via tool calls.","mechanism":"Agent receives a compact table-of-contents (ToC) with 1-2 sentence summaries of each doc section (~10–20K tokens total). Agent can call a fetch_section(name, range) tool to retrieve full text for sections it needs. Sections are fetched and injected into context only when explicitly requested, reducing upfront context load.","how_it_applies":"Cross-check task, for example, currently loads all 23K tokens of intent + plan + architecture + step files upfront. With progressive assembly, it starts with a 2K-token ToC showing 'Step-4 Output: 3 design options'. Task calls fetch_section('step-4-output', 'options') only for sections it needs to cross-validate. Each fan-out agent receives the ToC plus step-specific summaries (~5K tokens), then fetches detailed plans on demand.","estimated_token_reduction_pct":71,"trade_offs":{"gains":["Lowest upfront context size: agents start light, load only what they need.","Natural human parity: mimics how humans skim docs then deep-dive. Agents can be cheaper for short tasks.","Better for long-running tasks: if agent needs more context late in reasoning, it's available without re-spawning."],"risks":["Multiple round-trips: agent must call tool, wait for fetch, resume reasoning. Adds latency (50–300ms per fetch × N fetches).","Fetch granularity risk: if ToC is too coarse, agent fetches whole section when it only needs a subsection. Requires well-designed indexing.","No guaranteed relevance: agent must know what to fetch. Bad ToC or misleading summaries lead agent to request wrong sections or miss key data."]},"implementation_complexity":"High","best_for":"Long planning documents, cross-check and synthesis tasks that only reference specific findings, workflows where not all agents need all context.","color":"#A23B72"},{"id":3,"name":"Semantic Chunking + Retrieval","tagline":"Pre-index docs with embeddings; inject only the top-K chunks most relevant to task description.","mechanism":"Before the run, embed all planning docs into semantic chunks (300–500 token windows with overlap). At task prompt time, embed the task description, use similarity search to retrieve top-K most relevant chunks (~3–5K tokens), and inject only those into the prompt. Agent gets a curated, task-relevant context slice instead of the full doc set.","how_it_applies":"Fan-out agent for 'Validate step-4 design option A' gets task description embedded. Semantic search returns chunks about 'Step-4 Design Options', 'Requirements for option A', and 'Cross-check criteria' (top-3 or top-5 hits), ~3–4K tokens. Excludes step-2 context, step-7 plans, unrelated architecture notes.","estimated_token_reduction_pct":68,"trade_offs":{"gains":["Highly adaptive: embedding captures semantic intent, not just keyword matching. Agents get exactly what they need.","Works across doc reorganizations: if you rename sections or split files, embedding still finds relevant content.","Reduces noise: agent ignores verbose tangents or outdated notes not semantically matched to its task."],"risks":["Embedding latency & cost: need embedding API calls (OpenAI, local model) upfront and per-task. Adds 100–500ms and small $ cost per task.","Retrieval brittleness: if chunk boundaries are poor or embedding model is weak, relevant info gets filtered out. Hard to debug why agent 'missed' something.","Hallucination on missing context: agent may confidently invent details for sections it can't retrieve. Requires careful prompt framing."]},"implementation_complexity":"Medium","best_for":"Large, varied document sets, tasks with clear (but non-obvious) dependencies, scenarios where doc organization changes frequently or is not strictly hierarchical.","color":"#F18F01"},{"id":4,"name":"Doc Compression Pipeline","tagline":"Pre-run, auto-compress planning docs: deduplicate, trim filler, extract structured data. All agents inherit smaller docs.","mechanism":"Before agents run, a compression pass processes all planning docs: extract structured summaries (decision tables, requirement lists, output checksums), remove redundant explanations, collapse verbose sections to bullet points, deduplicate repeated rationale. Resulting docs are 30–50% smaller while retaining all decision-critical info.","how_it_applies":"Intent.md might drop narrative background, keep only goals + constraints. Each step-N-plan.md summarizes options as a table instead of prose, reduces step-X requirements to bulleted checklist. Architecture.md extracts only system diagram + key trade-off decisions, removes historical context. Compressed set is ~30–50% of original size. All 23 tasks load this compressed set, so 16.4M × 0.45 ≈ 7.4M saved.","estimated_token_reduction_pct":45,"trade_offs":{"gains":["Universal benefit: all 23 tasks inherit smaller docs immediately, no task-specific logic needed.","One-time cost: compression happens once per run, reused by all agents (no per-task fetch overhead).","Cleaner docs: filler removal makes docs easier to reason over, even at higher cache sizes."],"risks":["Information loss risk: automated compression may drop subtle context or examples agents rely on. Requires human review or tuning.","Manual overhead: if compression is semi-manual, adds latency before run starts (5–30 min per run).","Diminishing returns with other techniques: combining compression with scope-pinning or semantic retrieval yields smaller gains (not multiplicative if already compressed)."]},"implementation_complexity":"Low","best_for":"Planning runs with lengthy, explanatory docs; situations where run is repeated (compression is reused); runs with low novelty.","color":"#06A77D"},{"id":5,"name":"Cross-Task Context Cache","tagline":"Build shared context once; pass structured summary object to all fan-out children. Focus each only on its delta.","mechanism":"At a fan-out step, the parent task builds a structured context object (key decisions, output paths, shared assumptions, ~5–10K tokens of condensed data). This object is serialized and passed to all child agents as a parameter or file reference. Each child inherits shared context and only loads task-specific sub-documents (~2–3K tokens delta).","how_it_applies":"Steps 4–5 fan-out: parent task at step 3 produces a context summary: 'Step-3 Decisions: { design_approach: modular, key_constraint: latency < 100ms }'. All 7 step-4 agents receive this object + their own task-specific scope. Each loads only its own 2K-token validation rubric, not the full 200K intent+plan+architecture set.","estimated_token_reduction_pct":58,"trade_offs":{"gains":["Parallel efficiency: child agents share context without network/disk overhead, fully local within each agent.","Metadata-rich: structured context (JSON/dict) enables richer information density than text, agents can query specific fields.","Scales with parallelism: more child agents = bigger savings (amortized cost of shared context)."],"risks":["Schema brittleness: shared context object schema must be known in advance and stable. Changes to schema break child agents until they're updated.","Consistency burden: parent task must maintain accurate summary. Errors in summary propagate to all children (no independent verification).","Nested context: if fan-out is deep, context cache nesting adds complexity, and summaries of summaries may lose fidelity."]},"implementation_complexity":"Medium","best_for":"Fan-out parallelism, multi-stage workflows where decision context is stable across parallel branches, scenarios where all children share the same upstream context.","color":"#D62828"}]};
 
 // ============================================================
+// SHARED UTILITIES
+// ============================================================
+function fmtM(n) { return (n / 1e6).toFixed(1) + 'M'; }
+function fmtK(n) { return n >= 1e6 ? fmtM(n) : (n / 1e3).toFixed(0) + 'K'; }
+
+// ============================================================
 // NAVIGATION
 // ============================================================
 let currentSlide = 0;
-const TOTAL_SLIDES = 5;
+const TOTAL_SLIDES = 7;
 const slides = document.querySelectorAll('.slide');
 const btnPrev = document.getElementById('btn-prev');
 const btnNext = document.getElementById('btn-next');
@@ -764,6 +943,8 @@ function initSlide(n) {
   if (n === 2) initSlide3();
   if (n === 3) initSlide4();
   if (n === 4) initSlide5();
+  if (n === 5) initSlide6();
+  if (n === 6) initSlide7();
 }
 
 // ============================================================
@@ -1155,6 +1336,246 @@ function initSlide2() {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   }
 
+  // ── Run toggle logic ──
+  const overlay = document.getElementById('scoped-overlay');
+  const subtitle = document.getElementById('s2-subtitle');
+  const toggleBtns = document.querySelectorAll('#run-toggle button');
+  let currentRun = 'baseline';
+
+  // Comparison data from actual DB queries
+  const COMPARISON = {
+    baseline: {
+      id: '2e47c1ff', name: 'idea-to-plan-optimized', status: 'COMPLETED',
+      totalCache: 18800626, totalWrite: 250370, totalRead: 2579, totalActions: 1081,
+      totalAttempts: 24,
+      // Sub-agent tokens (r57: 21 sub-agents — 20× haiku + 1× sonnet)
+      subAgentCount: 21, subAgentCache: 30671593, subAgentCreate: 3284461, subAgentInput: 58622, subAgentOutput: 120567,
+      stageCache: [59995, 2545903, 661848, 3148549, 5178670, 2541652, 625711, 4038298],
+      stageActions: [51, 125, 30, 274, 379, 97, 14, 111],
+      fanout: [
+        { task: 'step-01', cache: 45522, attempts: 1, outcome: 'passed' },
+        { task: 'step-02', cache: 171468, attempts: 1, outcome: 'passed' },
+        { task: 'step-03', cache: 442954, attempts: 1, outcome: 'passed' },
+        { task: 'step-04', cache: 53154, attempts: 1, outcome: 'passed' },
+        { task: 'step-05', cache: 1415683, attempts: 1, outcome: 'passed' },
+        { task: 'step-06', cache: 746278, attempts: 1, outcome: 'passed' },
+        { task: 'step-07', cache: 273490, attempts: 1, outcome: 'passed' },
+      ]
+    },
+    scoped: {
+      id: '23aeef99', name: 'idea-to-plan-scoped (V4)', status: 'FAILED (flaky test)',
+      totalCache: 14740012, totalWrite: 170885, totalRead: 502, totalActions: 736,
+      totalAttempts: 17,
+      // Sub-agent tokens (r61: 16 sub-agents — all haiku)
+      subAgentCount: 16, subAgentCache: 13560732, subAgentCreate: 1816022, subAgentInput: 19312, subAgentOutput: 73572,
+      stageCache: [41504, 1888285, 2186771, 6229715, 834596, 3559141, 0, 0],
+      stageActions: [24, 205, 72, 229, 156, 50, 0, 0],
+      fanout: [
+        { task: 'step-01', cache: 706933, attempts: 1, outcome: 'passed' },
+        { task: 'step-02', cache: 5485935, attempts: 4, outcome: '4 failures (flaky test)' },
+        { task: 'step-03', cache: 837847, attempts: 1, outcome: 'passed' },
+      ]
+    },
+    scoped2: {
+      id: '3acffefe', name: 'idea-to-plan-scoped (V5)', status: 'AWAITING APPROVAL',
+      totalCache: 19713422, totalWrite: 197278, totalRead: 2335, totalActions: 1160,
+      totalAttempts: 36,
+      // Sub-agent tokens (r62: 17 sub-agents — all haiku)
+      subAgentCount: 17, subAgentCache: 16663088, subAgentCreate: 1793360, subAgentInput: 21127, subAgentOutput: 70319,
+      stageCache: [63867, 650739, 4284334, 5200742, 4599866, 4913874, 0, 0],
+      stageActions: [35, 58, 119, 376, 489, 83, 0, 0],
+      fanout: [
+        { task: 'step-01', cache: 64239, attempts: 1, outcome: 'passed' },
+        { task: 'step-02', cache: 238162, attempts: 1, outcome: 'passed' },
+        { task: 'step-03', cache: 50967, attempts: 1, outcome: 'passed' },
+        { task: 'step-04', cache: 56412, attempts: 1, outcome: 'passed' },
+        { task: 'step-05', cache: 45280, attempts: 1, outcome: 'passed' },
+        { task: 'step-06', cache: 1972867, attempts: 3, outcome: '2 failures + pass' },
+        { task: 'step-07', cache: 51319, attempts: 1, outcome: 'passed' },
+        { task: 'step-08', cache: 38965, attempts: 1, outcome: 'passed' },
+        { task: 'step-09', cache: 35503, attempts: 1, outcome: 'passed' },
+        { task: 'step-10', cache: 50808, attempts: 1, outcome: 'passed' },
+        { task: 'step-11', cache: 1138422, attempts: 1, outcome: 'passed' },
+        { task: 'step-12', cache: 746081, attempts: 1, outcome: 'passed' },
+        { task: 'step-13', cache: 711717, attempts: 1, outcome: 'passed' },
+      ]
+    }
+  };
+
+  const overlay2 = document.getElementById('scoped2-overlay');
+
+  function buildFanOutBars(fanoutB, fanoutS, labelB, labelC, maxCache) {
+    let html = '';
+    const allSteps = ['step-01','step-02','step-03','step-04','step-05','step-06','step-07'];
+    allSteps.forEach(step => {
+      const bf = fanoutB.find(f => f.task === step);
+      const sf = fanoutS.find(f => f.task === step);
+      const bVal = bf ? bf.cache : 0;
+      const sVal = sf ? sf.cache : 0;
+      if (bVal === 0 && sVal === 0) return;
+      const bPct = (bVal / maxCache * 100).toFixed(1);
+      const sPct = (sVal / maxCache * 100).toFixed(1);
+      const sAttempts = sf ? sf.attempts : 0;
+      const retryBadge = sAttempts > 1 ? ` <span style="color:var(--red);font-weight:600">${sAttempts} att</span>` : '';
+      const ratio = bVal > 0 ? (sVal / bVal).toFixed(1) + 'x' : '—';
+      html += `
+        <div style="margin: 10px 0 2px; font-size:11px; color:var(--muted)">${step} <span style="color:var(--text);margin-left:4px">${ratio}</span>${retryBadge}</div>
+        <div class="cmp-bar-row">
+          <div class="cmp-bar-label" style="color:var(--green)">${labelB}</div>
+          <div class="cmp-bar-track"><div class="cmp-bar-fill" style="width:${bPct}%;background:var(--green)"></div></div>
+          <div class="cmp-bar-val">${fmtK(bVal)}</div>
+        </div>
+        <div class="cmp-bar-row">
+          <div class="cmp-bar-label" style="color:var(--red)">${labelC}</div>
+          <div class="cmp-bar-track"><div class="cmp-bar-fill" style="width:${sPct}%;background:var(--red)"></div></div>
+          <div class="cmp-bar-val">${fmtK(sVal)}</div>
+        </div>`;
+    });
+    return html;
+  }
+
+  function buildScopedOverlay() {
+    const b = COMPARISON.baseline;
+    const s = COMPARISON.scoped;
+    const maxCache = Math.max(...[...b.fanout, ...s.fanout].map(f => f.cache));
+    const pct = ((s.totalCache - b.totalCache) / b.totalCache * 100).toFixed(0);
+
+    let html = `
+      <div class="cmp-header">Run Comparison: Baseline vs V4</div>
+      <div class="cmp-subtitle">V4 intended to reduce tokens via scoped context. Failed at step-02 due to flaky test (4 retries). Actual result: +${pct}% tokens.</div>
+      <div class="cmp-grid">
+        <div class="cmp-card">
+          <h4 style="color:var(--green)">Baseline <span style="font-weight:400;color:var(--muted)">(${b.id})</span></h4>
+          <div class="cmp-big" style="color:var(--green)">${fmtM(b.totalCache)}</div>
+          <div class="cmp-label">cache tokens · ${b.totalAttempts} att · ${b.totalActions} actions · ${b.status}</div>
+        </div>
+        <div class="cmp-card">
+          <h4 style="color:var(--red)">V4 <span style="font-weight:400;color:var(--muted)">(${s.id})</span></h4>
+          <div class="cmp-big" style="color:var(--red)">${fmtM(s.totalCache)}</div>
+          <div class="cmp-label">cache tokens · ${s.totalAttempts} att · ${s.totalActions} actions · ${s.status}</div>
+        </div>
+      </div>
+      <div class="cmp-card" style="margin-bottom:16px">
+        <h4>S-04 Fan-Out: Per-Task Cache Tokens</h4>
+        ${buildFanOutBars(b.fanout, s.fanout, 'base', 'v1', maxCache)}
+      </div>
+      <div class="cmp-diagnosis">
+        <h4>Why Scoping V1 Backfired</h4>
+        <ul>
+          <li><strong style="color:var(--text)">Rate limit cascade (8.5M wasted):</strong> step-06 hit quota on attempt 3 — 7 consecutive failures, each burning ~1.2M cache tokens before dying.</li>
+          <li><strong style="color:var(--text)">Agent exploration (2-6x per task):</strong> Agents given scoped packets compensated by reading files themselves via tool calls — 12,806 read ops vs 2,579 in baseline. Full conversation context accumulated with each read.</li>
+          <li><strong style="color:var(--text)">Downstream revision cascade (6M extra):</strong> Cross-Check ballooned to 8.4M vs 2.5M baseline — inconsistencies from agents with incomplete context forced multiple revision cycles.</li>
+          <li><strong style="color:var(--text)">Wrong bottleneck targeted:</strong> Heatmap identified 80% irrelevant reads in fan-out — but those were cache reads (~$0.30/MTok). Real cost driver is cache creation from conversation growth, which scoping made worse.</li>
+        </ul>
+      </div>`;
+    overlay.innerHTML = html;
+  }
+
+  function buildScoped2Overlay() {
+    const b = COMPARISON.baseline;
+    const s2 = COMPARISON.scoped2;
+    const s1 = COMPARISON.scoped;
+    const maxCache = Math.max(...[...b.fanout, ...s2.fanout].map(f => f.cache));
+    const pctVsBase = ((s2.totalCache - b.totalCache) / b.totalCache * 100).toFixed(0);
+    const pctVsV1 = ((s2.totalCache - s1.totalCache) / s1.totalCache * 100).toFixed(0);
+    const stageLabels = ['S-01 Initial Plan', 'S-02 Requirements', 'S-03 Step Planning', 'S-04 Task Breakdown', 'S-05 Dry Run', 'S-06 Final Check', 'S-07 Plan Review', 'S-08 Exec Ready'];
+
+    let stageRows = '';
+    stageLabels.forEach((lbl, i) => {
+      const bv = b.stageCache[i] || 0;
+      const s1v = s1.stageCache[i] || 0;
+      const s2v = s2.stageCache[i] || 0;
+      const delta = s2v - bv;
+      const sign = delta > 0 ? '+' : '';
+      const color = delta > 0 ? 'var(--red)' : 'var(--green)';
+      stageRows += `<tr>
+        <td style="padding:4px 8px;font-size:11px;color:var(--muted)">${lbl}</td>
+        <td style="padding:4px 8px;text-align:right;font-size:11px">${fmtK(bv)}</td>
+        <td style="padding:4px 8px;text-align:right;font-size:11px;color:#f87171">${fmtK(s1v)}</td>
+        <td style="padding:4px 8px;text-align:right;font-size:11px;color:#60a5fa">${fmtK(s2v)}</td>
+        <td style="padding:4px 8px;text-align:right;font-size:11px;color:${color}">${sign}${fmtK(delta)}</td>
+      </tr>`;
+    });
+
+    let html = `
+      <div class="cmp-header">Run Comparison: Baseline vs V5</div>
+      <div class="cmp-subtitle">V2 fixed agent exploration (583 vs 12,806 read ops) and most retry failures. Result: ${pctVsBase > 0 ? '+' : ''}${pctVsBase}% vs baseline, ${pctVsV1}% vs V1.</div>
+      <div class="cmp-grid" style="grid-template-columns:1fr 1fr 1fr">
+        <div class="cmp-card">
+          <h4 style="color:var(--green)">Baseline</h4>
+          <div class="cmp-big" style="color:var(--green)">${fmtM(b.totalCache)}</div>
+          <div class="cmp-label">${b.totalAttempts} att · ${b.totalActions} actions</div>
+        </div>
+        <div class="cmp-card">
+          <h4 style="color:#f87171">V4</h4>
+          <div class="cmp-big" style="color:#f87171">${fmtM(s1.totalCache)}</div>
+          <div class="cmp-label">${s1.totalAttempts} att · ${s1.totalActions} actions</div>
+        </div>
+        <div class="cmp-card">
+          <h4 style="color:#60a5fa">V5</h4>
+          <div class="cmp-big" style="color:#60a5fa">${fmtM(s2.totalCache)}</div>
+          <div class="cmp-label">${s2.totalAttempts} att · ${s2.totalActions} actions</div>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <div class="cmp-card">
+          <h4>S-04 Fan-Out: Per-Task Cache Tokens (V2 vs Baseline)</h4>
+          ${buildFanOutBars(b.fanout, s2.fanout, 'base', 'v2', maxCache)}
+        </div>
+        <div class="cmp-card">
+          <h4>Cache Tokens by Stage: V2 vs Baseline</h4>
+          <table style="width:100%;border-collapse:collapse">
+            <tr style="color:var(--muted);font-size:10px">
+              <th style="text-align:left;padding:4px 8px">Stage</th>
+              <th style="text-align:right;padding:4px 8px">Base</th>
+              <th style="text-align:right;padding:4px 8px;color:#f87171">V1</th>
+              <th style="text-align:right;padding:4px 8px;color:#60a5fa">V2</th>
+              <th style="text-align:right;padding:4px 8px">V2 delta</th>
+            </tr>
+            ${stageRows}
+          </table>
+        </div>
+      </div>
+      <div class="cmp-diagnosis">
+        <h4>Deep Dive: Why Total Tokens Still Didn't Drop</h4>
+        <ul>
+          <li><strong style="color:var(--text)">V2 wins (−3.8M total):</strong> Requirements saved 1.6M (scoped context was genuinely smaller), Execution Ready saved 2.1M. V2 fixed the agent exploration problem — read ops dropped from 12,806 (V1) to 583.</li>
+          <li><strong style="color:var(--text)">Cache sharing was destroyed:</strong> In baseline, all 7 fan-out children share the same context prefix → one cache write, 7 cheap reads. In scoped runs, each child gets unique ctx/ packets → 6 separate cache writes. The cache amortization that made baseline efficient is gone.</li>
+          <li><strong style="color:var(--text)">Annotations failed — packets are virtually identical to full docs:</strong> The ctx/ architecture-context files are 11,818 bytes vs the source architecture.md at 12,046 bytes (98% of the original). Every top-level section was tagged <code>steps: S-01, S-02, S-03, S-04, S-05, S-06</code> — i.e., all steps — so the extraction script had nothing to exclude. The scoping never actually happened.</li>
+          <li><strong style="color:var(--text)">Final Check still 2.1× baseline (5.2M vs 2.5M):</strong> Cross-Check reads all step files, which V2 produced at greater length/detail. Output verbosity grew with the longer prompts.</li>
+          <li><strong style="color:var(--text)">Retry tax persists:</strong> Step-05 fan-out child failed twice in both V1 and V2. Each retry re-writes full conversation history to cache. Baseline had zero failures here. Root cause of this specific step's failures was not addressed.</li>
+        </ul>
+      </div>`;
+    overlay2.innerHTML = html;
+  }
+
+  buildScopedOverlay();
+  buildScoped2Overlay();
+
+  toggleBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      const run = btn.dataset.run;
+      if (run === currentRun) return;
+      currentRun = run;
+      toggleBtns.forEach(b => b.classList.toggle('active', b.dataset.run === run));
+
+      overlay.classList.remove('visible');
+      overlay2.classList.remove('visible');
+      canvas.style.display = 'none';
+
+      if (run === 'baseline') {
+        canvas.style.display = 'block';
+        subtitle.textContent = 'Every line across 10 planning docs — colored by stage, full color = relevant, dimmed = irrelevant, dark = not read';
+      } else if (run === 'scoped') {
+        overlay.classList.add('visible');
+        subtitle.textContent = 'V4 — failed at step-02 (4 retries due to flaky test), 3 steps vs baseline\'s 7';
+      } else {
+        overlay2.classList.add('visible');
+        subtitle.textContent = 'V5 — 13 steps (vs baseline 7), 50% smaller prompts, step-06 retried 2×. Still higher total due to more children.';
+      }
+    });
+  });
+
   redraw();
 }
 
@@ -1400,25 +1821,421 @@ function hexToRgbaSlide4(hex, alpha) {
 // SLIDE 5: Action Plan
 // ============================================================
 function initSlide5() {
+  const container = document.getElementById('s5-content');
+  const b = COMPARISON.baseline;
+  const s1 = COMPARISON.scoped;
+  const s2 = COMPARISON.scoped2;
+
+  const stageLabels = ['S-01\nInit', 'S-02\nReqs', 'S-03\nPlans', 'S-04\nFan-out\n(Steps)', 'S-05\nFan-out\n(DryRun)', 'S-06\nX-Check', 'S-07\nApproval', 'S-08\nSummary'];
+  const stageShort = ['Initial Plan', 'Requirements', 'Step Planning', 'Task Breakdown', 'Dry Run', 'Final Check', 'Plan Review', 'Exec Ready'];
+  const colors = { base: '#10b981', v1: '#ef4444', v2: '#3b82f6' };
+
+  // Build a combined table + bar chart
+  let tableRows = '';
+  stageShort.forEach((lbl, i) => {
+    const bv = b.stageCache[i] || 0;
+    const s1v = s1.stageCache[i] || 0;
+    const s2v = s2.stageCache[i] || 0;
+    const ba = b.stageActions[i] || 0;
+    const s1a = s1.stageActions[i] || 0;
+    const s2a = s2.stageActions[i] || 0;
+    const dCache = s2v - bv;
+    const dActions = s2a - ba;
+    const cacheDelta = dCache > 0 ? `<span style="color:#f87171">+${fmtK(dCache)}</span>` : `<span style="color:#6ee7b7">${fmtK(dCache)}</span>`;
+    const actionsDelta = dActions > 0 ? `<span style="color:#f87171">+${dActions}</span>` : `<span style="color:#6ee7b7">${dActions}</span>`;
+    const rowBg = (i % 2 === 0) ? 'background:rgba(255,255,255,0.02)' : '';
+    tableRows += `<tr style="${rowBg}">
+      <td style="padding:5px 10px;font-size:12px;font-weight:500">${lbl}</td>
+      <td style="padding:5px 8px;text-align:right;font-size:12px;color:#10b981">${fmtK(bv)}</td>
+      <td style="padding:5px 8px;text-align:right;font-size:12px;color:#ef4444">${fmtK(s1v)}</td>
+      <td style="padding:5px 8px;text-align:right;font-size:12px;color:#60a5fa">${fmtK(s2v)}</td>
+      <td style="padding:5px 8px;text-align:right;font-size:12px">${cacheDelta}</td>
+      <td style="padding:5px 14px;text-align:right;font-size:12px;color:#10b981;border-left:1px solid var(--border)">${ba}</td>
+      <td style="padding:5px 8px;text-align:right;font-size:12px;color:#ef4444">${s1a}</td>
+      <td style="padding:5px 8px;text-align:right;font-size:12px;color:#60a5fa">${s2a}</td>
+      <td style="padding:5px 8px;text-align:right;font-size:12px">${actionsDelta}</td>
+    </tr>`;
+  });
+
+  // Totals row
+  const totBCache = b.stageCache.reduce((a,v)=>a+v,0);
+  const totS1Cache = s1.stageCache.reduce((a,v)=>a+v,0);
+  const totS2Cache = s2.stageCache.reduce((a,v)=>a+v,0);
+  const totBAction = b.stageActions.reduce((a,v)=>a+v,0);
+  const totS1Action = s1.stageActions.reduce((a,v)=>a+v,0);
+  const totS2Action = s2.stageActions.reduce((a,v)=>a+v,0);
+  const dTotC = totS2Cache - totBCache;
+  const dTotA = totS2Action - totBAction;
+  tableRows += `<tr style="border-top:2px solid var(--border);font-weight:600">
+    <td style="padding:5px 10px;font-size:12px">TOTAL (tracked)</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:#10b981">${fmtM(totBCache)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:#ef4444">${fmtM(totS1Cache)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:#60a5fa">${fmtM(totS2Cache)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:${dTotC>0?'#f87171':'#6ee7b7'}">${dTotC>0?'+':''}${fmtM(dTotC)}</td>
+    <td style="padding:5px 14px;text-align:right;font-size:12px;color:#10b981;border-left:1px solid var(--border)">${totBAction}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:#ef4444">${totS1Action}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:#60a5fa">${totS2Action}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:${dTotA>0?'#f87171':'#6ee7b7'}">${dTotA>0?'+':''}${dTotA}</td>
+  </tr>`;
+  // Sub-agent row (untracked Haiku overhead)
+  const bSubTotal = b.subAgentCache + b.subAgentCreate + b.subAgentInput + b.subAgentOutput;
+  const s1SubTotal = s1.subAgentCache + s1.subAgentCreate + s1.subAgentInput + s1.subAgentOutput;
+  const s2SubTotal = s2.subAgentCache + s2.subAgentCreate + s2.subAgentInput + s2.subAgentOutput;
+  const dSubC = s2SubTotal - bSubTotal;
+  tableRows += `<tr style="border-top:1px dashed var(--border);opacity:0.8">
+    <td style="padding:5px 10px;font-size:11px;color:var(--muted)">+ Sub-agents (Haiku)</td>
+    <td style="padding:5px 8px;text-align:right;font-size:11px;color:#6ee7b7;opacity:0.7">${fmtM(bSubTotal)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:11px;color:#fca5a5;opacity:0.7">${fmtM(s1SubTotal)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:11px;color:#93c5fd;opacity:0.7">${fmtM(s2SubTotal)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:11px;color:${dSubC>0?'#f87171':'#6ee7b7'}">${dSubC>0?'+':''}${fmtM(dSubC)}</td>
+    <td colspan="4" style="padding:5px 8px;font-size:10px;color:var(--muted);border-left:1px solid var(--border)">previously untracked · claude-haiku-4-5 · ${b.subAgentCount} / ${s1.subAgentCount} / ${s2.subAgentCount} agents</td>
+  </tr>`;
+  const bGrandTotal = totBCache + bSubTotal;
+  const s1GrandTotal = totS1Cache + s1SubTotal;
+  const s2GrandTotal = totS2Cache + s2SubTotal;
+  const dGrandTotal = s2GrandTotal - bGrandTotal;
+  tableRows += `<tr style="border-top:1px solid var(--border);font-weight:700;background:rgba(255,255,255,0.04)">
+    <td style="padding:5px 10px;font-size:12px">GRAND TOTAL</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:#10b981">${fmtM(bGrandTotal)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:#ef4444">${fmtM(s1GrandTotal)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:#60a5fa">${fmtM(s2GrandTotal)}</td>
+    <td style="padding:5px 8px;text-align:right;font-size:12px;color:${dGrandTotal>0?'#f87171':'#6ee7b7'}">${dGrandTotal>0?'+':''}${fmtM(dGrandTotal)}</td>
+    <td colspan="4" style="padding:5px 8px;font-size:10px;color:var(--muted);border-left:1px solid var(--border)">tracked + sub-agents</td>
+  </tr>`;
+
+  // Build action bar chart
+  const maxActions = Math.max(...b.stageActions, ...s1.stageActions, ...s2.stageActions);
+  let bars = '';
+  stageShort.forEach((lbl, i) => {
+    const ba = b.stageActions[i] || 0;
+    const s1a = s1.stageActions[i] || 0;
+    const s2a = s2.stageActions[i] || 0;
+    const bPct = (ba / maxActions * 100).toFixed(0);
+    const s1Pct = (s1a / maxActions * 100).toFixed(0);
+    const s2Pct = (s2a / maxActions * 100).toFixed(0);
+    bars += `<div style="margin-bottom:12px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:3px">${lbl}</div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+        <div style="width:52px;font-size:10px;color:#10b981">baseline</div>
+        <div style="height:14px;background:#10b981;width:${bPct}%;min-width:2px;border-radius:2px"></div>
+        <div style="font-size:10px;color:#10b981">${ba}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+        <div style="width:52px;font-size:10px;color:#ef4444">V4</div>
+        <div style="height:14px;background:#ef4444;width:${s1Pct}%;min-width:2px;border-radius:2px"></div>
+        <div style="font-size:10px;color:#ef4444">${s1a}</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div style="width:52px;font-size:10px;color:#60a5fa">V5</div>
+        <div style="height:14px;background:#3b82f6;width:${s2Pct}%;min-width:2px;border-radius:2px"></div>
+        <div style="font-size:10px;color:#60a5fa">${s2a}</div>
+      </div>
+    </div>`;
+  });
+
+  container.innerHTML = `
+    <div style="display:grid;grid-template-columns:1.5fr 1fr;gap:20px">
+      <div>
+        <div class="card">
+          <h3>Cache Tokens + Tool Calls by Stage (all 3 runs)</h3>
+          <p style="font-size:11px;color:var(--muted);margin-bottom:10px">Cache creation tokens dominate cost. Delta = V2 vs Baseline.</p>
+          <table style="width:100%;border-collapse:collapse">
+            <thead>
+              <tr style="color:var(--muted);font-size:10px;border-bottom:1px solid var(--border)">
+                <th style="text-align:left;padding:4px 10px">Stage</th>
+                <th style="text-align:right;padding:4px 8px;color:#10b981">Base cache</th>
+                <th style="text-align:right;padding:4px 8px;color:#ef4444">V1 cache</th>
+                <th style="text-align:right;padding:4px 8px;color:#60a5fa">V2 cache</th>
+                <th style="text-align:right;padding:4px 8px">V2 delta</th>
+                <th style="text-align:right;padding:4px 14px;border-left:1px solid var(--border);color:#10b981">Base act</th>
+                <th style="text-align:right;padding:4px 8px;color:#ef4444">V1 act</th>
+                <th style="text-align:right;padding:4px 8px;color:#60a5fa">V2 act</th>
+                <th style="text-align:right;padding:4px 8px">V2 delta</th>
+              </tr>
+            </thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+        </div>
+      </div>
+      <div>
+        <div class="card" style="height:100%">
+          <h3>Tool Calls Per Stage</h3>
+          <p style="font-size:11px;color:var(--muted);margin-bottom:12px">V2 total: 916 (−15% vs baseline 1,081)</p>
+          ${bars}
+        </div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:16px">
+      <div class="stat-callout" style="border-left-color:#10b981">
+        <div class="stat-value" style="color:#10b981">S-02 −64%</div>
+        <div class="stat-label">Requirements: 906K vs 2.5M — scoping genuinely reduced context here</div>
+      </div>
+      <div class="stat-callout" style="border-left-color:#ef4444">
+        <div class="stat-value" style="color:#fca5a5">S-04 +133%</div>
+        <div class="stat-label">Task Breakdown fan-out: 7.2M vs 3.1M — cache sharing lost, larger ctx packets</div>
+      </div>
+      <div class="stat-callout" style="border-left-color:#ef4444">
+        <div class="stat-value" style="color:#fca5a5">Annotations failed</div>
+        <div class="stat-label">ctx/ packets = 98% of source (11,818 vs 12,046 bytes). All H2s tagged steps: ALL. Extractor had nothing to exclude.</div>
+      </div>
+    </div>
+    <div style="margin-top:16px">
+      <div class="card" style="padding:14px 18px">
+        <h3 style="margin-bottom:8px">True Total: Tracked + Sub-Agent Overhead (Haiku)</h3>
+        <p style="font-size:11px;color:var(--muted);margin-bottom:12px">Sub-agents run as separate <code>claude-haiku-4-5</code> processes (subagent_type: Explore) — their tokens are <em>not</em> reported in the parent session totals and were previously invisible.</p>
+        ${(function(){
+          const runs = [
+            { name: 'Baseline', tracked: totBCache, sub: bSubTotal, color: '#10b981', subColor: '#064e3b', count: b.subAgentCount },
+            { name: 'V4', tracked: totS1Cache, sub: s1SubTotal, color: '#ef4444', subColor: '#7f1d1d', count: s1.subAgentCount },
+            { name: 'V5', tracked: totS2Cache, sub: s2SubTotal, color: '#3b82f6', subColor: '#1e3a5f', count: s2.subAgentCount },
+          ];
+          const maxGrand = Math.max(...runs.map(r => r.tracked + r.sub));
+          return runs.map(r => {
+            const trackedPct = (r.tracked / maxGrand * 100).toFixed(1);
+            const subPct = (r.sub / maxGrand * 100).toFixed(1);
+            const grandTotal = r.tracked + r.sub;
+            const subSharePct = (r.sub / grandTotal * 100).toFixed(0);
+            return `<div style="margin-bottom:10px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px">
+                <span style="font-size:11px;font-weight:600;color:${r.color}">${r.name}</span>
+                <span style="font-size:10px;color:var(--muted)">${fmtM(r.tracked)} tracked + ${fmtM(r.sub)} sub-agents (${r.count} agents) = <strong style="color:var(--text)">${fmtM(grandTotal)} total</strong> — sub-agents: ${subSharePct}% of grand total</span>
+              </div>
+              <div style="display:flex;height:18px;border-radius:3px;overflow:hidden;background:var(--surface2)">
+                <div style="width:${trackedPct}%;background:${r.color};opacity:0.9" title="${fmtM(r.tracked)} tracked"></div>
+                <div style="width:${subPct}%;background:${r.color};opacity:0.35;background-image:repeating-linear-gradient(45deg,transparent,transparent 3px,rgba(0,0,0,0.3) 3px,rgba(0,0,0,0.3) 6px)" title="${fmtM(r.sub)} sub-agents (Haiku)"></div>
+              </div>
+            </div>`;
+          }).join('') + '<div style="display:flex;gap:16px;margin-top:6px;font-size:10px;color:var(--muted)">'
+            + '<span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:14px;height:10px;background:var(--border);border-radius:2px;opacity:0.9"></span>Tracked (parent session)</span>'
+            + '<span style="display:flex;align-items:center;gap:5px"><span style="display:inline-block;width:14px;height:10px;background:var(--border);border-radius:2px;opacity:0.35;background-image:repeating-linear-gradient(45deg,transparent,transparent 3px,rgba(0,0,0,0.3) 3px,rgba(0,0,0,0.3) 6px)"></span>Sub-agents (Haiku, previously untracked)</span>'
+            + '</div>';
+        })()}
+      </div>
+    </div>`;
+}
+
+function initSlide6() {
   const chart = document.getElementById('cascade-chart');
   const maxW = 500;
   const bars = [
-    { id: 'cb-0', tokens: 16.4, label: '16.4M', color: '#475569', delta: '' },
-    { id: 'cb-1', tokens: 10.2, label: '10.2M', color: '#2E86AB', delta: '−6.2M tokens' },
-    { id: 'cb-2', tokens: 7.4,  label: '7.4M',  color: '#06A77D', delta: '−2.8M tokens' },
-    { id: 'cb-3', tokens: 5.2,  label: '5.2M',  color: '#A23B72', delta: '−2.2M tokens' },
+    { id: 'cb-0', tokens: 18.8, label: '18.8M', color: '#475569', delta: '' },
+    { id: 'cb-1', tokens: 16.5, label: '16.5M', color: '#b45309', delta: '−2.3M tokens' },
+    { id: 'cb-2', tokens: 12.4, label: '12.4M', color: '#1d4ed8', delta: '−4.1M tokens' },
+    { id: 'cb-3', tokens: 10.5, label: '10.5M', color: '#6d28d9', delta: '−1.9M tokens' },
   ];
   setTimeout(() => {
     bars.forEach(b => {
       const el = document.getElementById(b.id);
       if (el) {
-        const w = (b.tokens / 16.4) * maxW;
+        const w = (b.tokens / 18.8) * maxW;
         el.style.transition = 'width 1s ease';
         el.style.width = w + 'px';
       }
     });
   }, 200);
 }
+
+
+// ============================================================
+// S4 DATA
+// ============================================================
+const S4_RUNS=['Baseline','V4','V5'];
+const S4_RCOLORS=['#10b981','#ef4444','#3b82f6'];
+// [runIdx,stepIdx(0-based),attemptNum,outcome(0=pass 1=fail),nTools,promptBytes]
+const S4_META=[
+  [0,0,1,0,16,43592],[0,1,1,0,51,43525],[0,2,1,0,39,43913],[0,3,1,0,48,44323],
+  [0,4,1,0,71,44274],[0,5,1,0,41,44463],[0,6,1,0,8,42453],
+  [1,0,1,0,59,33615],
+  [1,1,1,1,35,31009],[1,1,2,1,41,31009],[1,1,3,1,34,31009],[1,1,4,1,35,31009],
+  [1,2,1,0,25,35397],
+  [2,0,1,0,27,22279],[2,1,1,0,33,21329],[2,2,1,0,31,22638],[2,3,1,0,28,21963],
+  [2,4,1,0,14,20727],[2,5,1,1,35,21398],[2,5,2,1,25,21398],[2,5,3,0,56,21398],
+  [2,6,1,0,22,20689],[2,7,1,0,8,21183],[2,8,1,0,10,21262],[2,9,1,0,22,21683],
+  [2,10,1,0,27,23436],[2,11,1,0,19,20391],[2,12,1,0,19,20153]
+];
+// [runIdx,stepIdx,attempt,seq,kindIdx,toolIdx,inp,out,cr,cc]
+// kind: 0=think 1=tool_use 2=text 3=result 4=init
+// tool: 0=none 1=Bash 2=Read 3=Grep 4=Glob 5=Write 6=Agent
+const S4_TURNS=[[0, 0, 1, 2, 0, 0, 2, 8, 12137, 21398],[0, 0, 1, 3, 1, 2, 2, 8, 12137, 21398],[0, 0, 1, 5, 1, 2, 2, 8, 12137, 21398],[0, 0, 1, 7, 0, 0, 1, 8, 33535, 2488],[0, 0, 1, 8, 1, 2, 1, 8, 33535, 2488],[0, 0, 1, 10, 1, 4, 1, 8, 33535, 2488],[0, 0, 1, 12, 1, 2, 1, 18, 36023, 933],[0, 0, 1, 14, 1, 1, 1, 18, 36023, 933],[0, 0, 1, 16, 0, 0, 1, 8, 36956, 873],[0, 0, 1, 17, 2, 0, 1, 8, 36956, 873],[0, 0, 1, 18, 1, 1, 1, 8, 36956, 873],[0, 0, 1, 20, 1, 5, 1, 24, 37829, 149],[0, 0, 1, 22, 2, 0, 1, 1, 37978, 4373],[0, 0, 1, 23, 1, 1, 1, 1, 37978, 4373],[0, 0, 1, 25, 1, 1, 1, 25, 42351, 247],[0, 0, 1, 27, 1, 1, 1, 25, 42598, 197],[0, 0, 1, 29, 1, 1, 1, 25, 42795, 173],[0, 0, 1, 31, 0, 0, 1, 8, 42795, 541],[0, 0, 1, 32, 2, 0, 1, 8, 42795, 541],[0, 0, 1, 33, 1, 1, 1, 8, 42795, 541],[0, 0, 1, 35, 1, 1, 1, 25, 43336, 230],[0, 0, 1, 37, 1, 1, 1, 19, 43566, 268],[0, 0, 1, 39, 2, 0, 1, 2, 43834, 894],[0, 0, 1, 40, 1, 1, 1, 2, 43834, 894],[0, 0, 1, 42, 2, 0, 1, 1, 44728, 215],[0, 0, 1, 43, 3, 0, 15, 6581, 540461, 32979],[0, 0, 1, 45, 2, 0, 3, 1, 44943, 579],[0, 0, 1, 46, 3, 0, 3, 15, 44943, 579],[0, 1, 1, 2, 0, 0, 2, 8, 12137, 21446],[0, 1, 1, 3, 1, 6, 2, 8, 12137, 21446],[0, 1, 1, 4, 1, 1, 3, 8, 0, 19439],[0, 1, 1, 6, 1, 1, 5, 3, 19439, 1389],[0, 1, 1, 8, 1, 1, 6, 1, 19439, 1788],[0, 1, 1, 10, 1, 1, 6, 1, 21227, 276],[0, 1, 1, 12, 1, 1, 6, 24, 21503, 142],[0, 1, 1, 14, 1, 2, 6, 1, 21503, 271],[0, 1, 1, 16, 1, 2, 6, 1, 21503, 271],[0, 1, 1, 17, 1, 2, 6, 1, 21503, 271],[0, 1, 1, 20, 1, 1, 6, 1, 21503, 271],[0, 1, 1, 22, 1, 2, 7, 1, 21774, 18230],[0, 1, 1, 24, 1, 1, 7, 1, 21774, 18230],[0, 1, 1, 26, 1, 1, 7, 1, 21774, 18230],[0, 1, 1, 28, 1, 2, 7, 3, 40004, 2089],[0, 1, 1, 30, 1, 1, 6, 1, 42093, 2278],[0, 1, 1, 32, 1, 2, 5, 1, 44371, 119],[0, 1, 1, 34, 1, 1, 5, 1, 44371, 119],[0, 1, 1, 36, 1, 2, 6, 25, 44490, 1097],[0, 1, 1, 38, 1, 1, 5, 1, 45587, 1333],[0, 1, 1, 40, 1, 2, 4, 1, 46920, 225],[0, 1, 1, 42, 1, 2, 4, 1, 47145, 920],[0, 1, 1, 44, 1, 1, 4, 1, 48065, 791],[0, 1, 1, 46, 1, 2, 4, 24, 48856, 141],[0, 1, 1, 48, 1, 1, 3, 1, 48997, 595],[0, 1, 1, 50, 1, 1, 3, 3, 49592, 718],[0, 1, 1, 52, 1, 2, 3, 6, 49592, 1376],[0, 1, 1, 55, 0, 0, 1, 8, 33583, 3365],[0, 1, 1, 56, 2, 0, 1, 8, 33583, 3365],[0, 1, 1, 57, 1, 2, 1, 8, 33583, 3365],[0, 1, 1, 59, 0, 0, 1, 8, 36948, 1330],[0, 1, 1, 60, 2, 0, 1, 8, 36948, 1330],[0, 1, 1, 61, 1, 2, 1, 8, 36948, 1330],[0, 1, 1, 63, 1, 2, 1, 8, 36948, 1330],[0, 1, 1, 65, 1, 2, 1, 8, 36948, 1330],[0, 1, 1, 67, 1, 2, 1, 25, 38278, 2645],[0, 1, 1, 69, 1, 4, 1, 25, 38278, 2645],[0, 1, 1, 71, 1, 2, 1, 24, 40923, 1542],[0, 1, 1, 73, 1, 2, 1, 24, 40923, 1542],[0, 1, 1, 75, 0, 0, 1, 8, 42465, 1962],[0, 1, 1, 76, 1, 3, 1, 8, 42465, 1962],[0, 1, 1, 78, 1, 3, 1, 8, 42465, 1962],[0, 1, 1, 80, 1, 2, 1, 25, 44427, 516],[0, 1, 1, 82, 2, 0, 1, 1, 44427, 1708],[0, 1, 1, 83, 1, 1, 1, 1, 44427, 1708],[0, 1, 1, 85, 1, 5, 1, 25, 46135, 149],[0, 1, 1, 87, 2, 0, 1, 1, 46284, 6470],[0, 1, 1, 88, 1, 1, 1, 1, 46284, 6470],[0, 1, 1, 90, 0, 0, 1, 8, 52754, 225],[0, 1, 1, 91, 1, 1, 1, 8, 52754, 225],[0, 1, 1, 93, 1, 1, 1, 25, 52979, 251],[0, 1, 1, 95, 1, 1, 1, 21, 53230, 330],[0, 1, 1, 97, 1, 1, 1, 24, 53560, 196],[0, 1, 1, 99, 1, 1, 1, 21, 53756, 244],[0, 1, 1, 101, 0, 0, 1, 10, 54000, 139],[0, 1, 1, 102, 2, 0, 1, 10, 54000, 139],[0, 1, 1, 103, 1, 1, 1, 10, 54000, 139],[0, 1, 1, 105, 1, 1, 1, 21, 54139, 464],[0, 1, 1, 107, 1, 1, 1, 24, 54603, 213],[0, 1, 1, 109, 0, 0, 1, 11, 54816, 914],[0, 1, 1, 110, 2, 0, 1, 11, 54816, 914],[0, 1, 1, 111, 1, 1, 1, 11, 54816, 914],[0, 1, 1, 113, 2, 0, 1, 1, 55730, 277],[0, 1, 1, 114, 3, 0, 21, 10486, 925174, 44386],[0, 1, 1, 116, 0, 0, 3, 8, 56007, 718],[0, 1, 1, 117, 1, 1, 3, 8, 56007, 718],[0, 1, 1, 119, 0, 0, 1, 8, 56725, 384],[0, 1, 1, 120, 1, 1, 1, 8, 56725, 384],[0, 1, 1, 122, 2, 0, 1, 1, 57109, 525],[0, 1, 1, 123, 3, 0, 5, 544, 169841, 1627],[0, 2, 1, 2, 0, 0, 2, 8, 12137, 21555],[0, 2, 1, 3, 1, 1, 2, 8, 12137, 21555],[0, 2, 1, 5, 1, 2, 2, 8, 12137, 21555],[0, 2, 1, 7, 1, 1, 1, 25, 33692, 414],[0, 2, 1, 9, 1, 2, 1, 25, 33692, 414],[0, 2, 1, 11, 1, 2, 1, 25, 34106, 308],[0, 2, 1, 13, 0, 0, 1, 8, 34414, 1385],[0, 2, 1, 14, 2, 0, 1, 8, 34414, 1385],[0, 2, 1, 15, 1, 1, 1, 8, 34414, 1385],[0, 2, 1, 17, 1, 4, 1, 8, 34414, 1385],[0, 2, 1, 19, 1, 2, 1, 25, 35799, 316],[0, 2, 1, 21, 1, 1, 1, 25, 35799, 316],[0, 2, 1, 23, 0, 0, 1, 8, 36115, 8831],[0, 2, 1, 24, 1, 1, 1, 8, 36115, 8831],[0, 2, 1, 26, 1, 1, 1, 8, 36115, 8831],[0, 2, 1, 28, 1, 2, 1, 18, 44946, 1304],[0, 2, 1, 30, 1, 2, 1, 18, 44946, 1304],[0, 2, 1, 32, 0, 0, 1, 11, 46250, 2137],[0, 2, 1, 33, 2, 0, 1, 11, 46250, 2137],[0, 2, 1, 34, 1, 1, 1, 11, 46250, 2137],[0, 2, 1, 36, 1, 1, 1, 25, 48387, 207],[0, 2, 1, 38, 1, 1, 1, 25, 48387, 643],[0, 2, 1, 40, 1, 4, 1, 25, 48387, 643],[0, 2, 1, 42, 1, 1, 1, 19, 49030, 578],[0, 2, 1, 44, 1, 2, 1, 19, 49030, 578],[0, 2, 1, 46, 0, 0, 1, 8, 49608, 2702],[0, 2, 1, 47, 1, 1, 1, 8, 49608, 2702],[0, 2, 1, 49, 1, 1, 1, 25, 52310, 595],[0, 2, 1, 51, 1, 1, 1, 25, 52310, 725],[0, 2, 1, 53, 1, 2, 1, 18, 53035, 199],[0, 2, 1, 55, 0, 0, 1, 8, 53234, 705],[0, 2, 1, 56, 2, 0, 1, 8, 53234, 705],[0, 2, 1, 57, 1, 1, 1, 8, 53234, 705],[0, 2, 1, 59, 1, 5, 1, 25, 53939, 530],[0, 2, 1, 61, 2, 0, 1, 1, 54469, 5260],[0, 2, 1, 62, 1, 1, 1, 1, 54469, 5260],[0, 2, 1, 64, 0, 0, 1, 8, 59729, 200],[0, 2, 1, 65, 1, 1, 1, 8, 59729, 200],[0, 2, 1, 67, 2, 0, 1, 1, 59929, 328],[0, 2, 1, 68, 1, 1, 1, 1, 59929, 328],[0, 2, 1, 70, 1, 1, 1, 19, 60257, 397],[0, 2, 1, 72, 1, 1, 1, 19, 60654, 168],[0, 2, 1, 74, 1, 1, 1, 19, 60822, 271],[0, 2, 1, 76, 1, 1, 1, 19, 61093, 210],[0, 2, 1, 78, 0, 0, 1, 12, 61303, 331],[0, 2, 1, 79, 1, 1, 1, 12, 61303, 331],[0, 2, 1, 81, 3, 0, 26, 9637, 1215955, 50299],[0, 2, 1, 83, 0, 0, 3, 0, 61634, 384],[0, 2, 1, 84, 1, 1, 3, 0, 61634, 384],[0, 2, 1, 86, 0, 0, 1, 8, 62018, 402],[0, 2, 1, 87, 1, 1, 1, 8, 62018, 402],[0, 2, 1, 89, 2, 0, 1, 1, 62420, 385],[0, 2, 1, 90, 1, 1, 1, 1, 62420, 385],[0, 2, 1, 92, 2, 0, 1, 1, 62805, 346],[0, 2, 1, 93, 1, 1, 1, 1, 62805, 346],[0, 2, 1, 95, 1, 1, 1, 19, 63151, 338],[0, 2, 1, 97, 0, 0, 1, 8, 63489, 913],[0, 2, 1, 98, 2, 0, 1, 8, 63489, 913],[0, 2, 1, 99, 1, 1, 1, 8, 63489, 913],[0, 2, 1, 101, 2, 0, 1, 1, 64402, 267],[0, 2, 1, 102, 3, 0, 9, 1454, 439919, 3035],[0, 3, 1, 2, 0, 0, 2, 1, 12137, 21744],[0, 3, 1, 3, 1, 2, 2, 1, 12137, 21744],[0, 3, 1, 5, 1, 4, 2, 1, 12137, 21744],[0, 3, 1, 7, 1, 4, 1, 25, 33881, 1722],[0, 3, 1, 9, 1, 6, 1, 25, 33881, 1722],[0, 3, 1, 10, 1, 2, 3, 3, 18865, 625],[0, 3, 1, 12, 1, 1, 3, 3, 18865, 625],[0, 3, 1, 14, 1, 2, 7, 1, 19490, 5587],[0, 3, 1, 16, 1, 2, 7, 1, 19490, 5587],[0, 3, 1, 18, 1, 3, 7, 1, 25077, 4898],[0, 3, 1, 20, 1, 1, 7, 1, 25077, 4898],[0, 3, 1, 22, 1, 2, 7, 1, 29975, 2400],[0, 3, 1, 23, 1, 2, 7, 1, 29975, 2400],[0, 3, 1, 26, 1, 1, 7, 1, 32375, 5640],[0, 3, 1, 28, 1, 2, 6, 18, 38015, 148],[0, 3, 1, 30, 1, 1, 6, 18, 38015, 148],[0, 3, 1, 32, 1, 1, 7, 1, 38163, 3275],[0, 3, 1, 34, 1, 3, 6, 26, 41438, 189],[0, 3, 1, 36, 1, 3, 6, 1, 41627, 906],[0, 3, 1, 38, 1, 1, 6, 1, 41627, 906],[0, 3, 1, 40, 1, 1, 7, 1, 42533, 430],[0, 3, 1, 42, 1, 3, 6, 26, 42963, 335],[0, 3, 1, 44, 1, 1, 6, 5, 43298, 1266],[0, 3, 1, 46, 1, 2, 6, 25, 44564, 123],[0, 3, 1, 48, 1, 1, 6, 1, 44687, 1093],[0, 3, 1, 50, 1, 1, 6, 25, 45780, 183],[0, 3, 1, 52, 1, 3, 6, 26, 45963, 171],[0, 3, 1, 54, 1, 2, 5, 1, 46134, 1220],[0, 3, 1, 56, 1, 2, 5, 1, 46134, 1220],[0, 3, 1, 58, 1, 2, 6, 1, 47354, 1641],[0, 3, 1, 60, 1, 1, 5, 4, 48995, 719],[0, 3, 1, 62, 1, 1, 5, 25, 49714, 622],[0, 3, 1, 64, 1, 1, 5, 25, 50336, 427],[0, 3, 1, 66, 1, 2, 4, 18, 50763, 116],[0, 3, 1, 68, 1, 1, 4, 24, 50763, 778],[0, 3, 1, 70, 1, 1, 4, 25, 51541, 121],[0, 3, 1, 72, 1, 3, 4, 26, 51662, 279],[0, 3, 1, 74, 1, 2, 3, 1, 51941, 1586],[0, 3, 1, 76, 1, 2, 3, 4, 53527, 1136],[0, 3, 1, 79, 0, 0, 1, 12, 35603, 6205],[0, 3, 1, 80, 2, 0, 1, 12, 35603, 6205],[0, 3, 1, 81, 1, 1, 1, 12, 35603, 6205],[0, 3, 1, 83, 1, 5, 1, 18, 41808, 1180],[0, 3, 1, 85, 2, 0, 1, 1, 42988, 6941],[0, 3, 1, 86, 1, 1, 1, 1, 42988, 6941],[0, 3, 1, 88, 1, 1, 1, 25, 42988, 7138],[0, 3, 1, 90, 1, 1, 1, 25, 50126, 351],[0, 3, 1, 92, 1, 1, 1, 24, 50126, 556],[0, 3, 1, 94, 1, 1, 1, 25, 50682, 215],[0, 3, 1, 96, 2, 0, 1, 2, 50897, 361],[0, 3, 1, 97, 1, 1, 1, 2, 50897, 361],[0, 3, 1, 99, 1, 1, 1, 24, 51258, 210],[0, 3, 1, 101, 0, 0, 1, 10, 51468, 896],[0, 3, 1, 102, 2, 0, 1, 10, 51468, 896],[0, 3, 1, 103, 1, 1, 1, 10, 51468, 896],[0, 3, 1, 105, 2, 0, 1, 1, 52364, 257],[0, 3, 1, 106, 3, 0, 14, 10288, 566326, 47776],[0, 3, 1, 108, 2, 0, 3, 1, 52621, 533],[0, 3, 1, 109, 3, 0, 3, 28, 52621, 533],[0, 4, 1, 2, 0, 0, 2, 8, 12137, 21675],[0, 4, 1, 3, 1, 6, 2, 8, 12137, 21675],[0, 4, 1, 4, 1, 4, 3, 4, 18865, 669],[0, 4, 1, 5, 1, 4, 3, 4, 18865, 669],[0, 4, 1, 7, 1, 4, 3, 4, 18865, 669],[0, 4, 1, 8, 1, 4, 3, 4, 18865, 669],[0, 4, 1, 10, 1, 4, 3, 4, 18865, 669],[0, 4, 1, 13, 1, 4, 3, 4, 18865, 669],[0, 4, 1, 14, 1, 4, 3, 4, 18865, 669],[0, 4, 1, 18, 1, 1, 44, 1, 18865, 1647],[0, 4, 1, 19, 1, 2, 44, 1, 18865, 1647],[0, 4, 1, 21, 1, 2, 44, 1, 18865, 1647],[0, 4, 1, 24, 1, 2, 44, 1, 18865, 1647],[0, 4, 1, 26, 1, 2, 44, 1, 18865, 1647],[0, 4, 1, 28, 1, 2, 44, 1, 18865, 1647],[0, 4, 1, 30, 1, 2, 7, 1, 20512, 7673],[0, 4, 1, 32, 1, 2, 7, 1, 20512, 7673],[0, 4, 1, 34, 1, 3, 7, 1, 28185, 8894],[0, 4, 1, 36, 1, 3, 7, 1, 28185, 8894],[0, 4, 1, 38, 1, 1, 7, 3, 37079, 343],[0, 4, 1, 40, 1, 3, 6, 26, 37079, 564],[0, 4, 1, 42, 1, 3, 6, 26, 37079, 564],[0, 4, 1, 44, 1, 2, 7, 1, 37643, 1175],[0, 4, 1, 46, 1, 3, 6, 1, 38818, 2138],[0, 4, 1, 48, 1, 1, 6, 1, 38818, 2138],[0, 4, 1, 50, 1, 3, 7, 26, 40956, 528],[0, 4, 1, 52, 1, 1, 7, 26, 40956, 528],[0, 4, 1, 54, 1, 1, 7, 25, 41484, 306],[0, 4, 1, 56, 1, 2, 6, 18, 41790, 282],[0, 4, 1, 58, 1, 2, 6, 18, 41790, 282],[0, 4, 1, 60, 1, 3, 7, 1, 42072, 5084],[0, 4, 1, 62, 1, 1, 6, 26, 47156, 3965],[0, 4, 1, 64, 1, 1, 6, 26, 47156, 3965],[0, 4, 1, 66, 1, 2, 7, 1, 47156, 4431],[0, 4, 1, 68, 1, 1, 7, 1, 47156, 4431],[0, 4, 1, 70, 1, 2, 7, 1, 51587, 1742],[0, 4, 1, 72, 1, 2, 6, 18, 51587, 4197],[0, 4, 1, 74, 1, 1, 5, 1, 55784, 2424],[0, 4, 1, 76, 1, 1, 5, 25, 58208, 189],[0, 4, 1, 78, 1, 2, 5, 18, 58397, 195],[0, 4, 1, 79, 1, 2, 5, 18, 58397, 195],[0, 4, 1, 83, 0, 0, 1, 8, 33812, 2331],[0, 4, 1, 84, 1, 2, 1, 8, 33812, 2331],[0, 4, 1, 86, 2, 0, 1, 1, 36143, 1594],[0, 4, 1, 87, 1, 2, 1, 1, 36143, 1594],[0, 4, 1, 89, 1, 2, 1, 1, 36143, 1594],[0, 4, 1, 91, 1, 2, 1, 25, 37737, 2745],[0, 4, 1, 93, 1, 2, 1, 25, 37737, 2745],[0, 4, 1, 95, 1, 2, 1, 24, 40482, 1767],[0, 4, 1, 97, 1, 4, 1, 24, 40482, 1767],[0, 4, 1, 99, 1, 2, 1, 25, 42249, 2207],[0, 4, 1, 101, 1, 2, 1, 25, 42249, 2207],[0, 4, 1, 103, 1, 2, 1, 18, 44456, 1623],[0, 4, 1, 105, 1, 2, 1, 18, 44456, 1623],[0, 4, 1, 107, 1, 2, 1, 25, 46079, 3109],[0, 4, 1, 109, 1, 2, 1, 25, 46079, 3109],[0, 4, 1, 111, 0, 0, 1, 8, 49188, 2103],[0, 4, 1, 112, 1, 3, 1, 8, 49188, 2103],[0, 4, 1, 114, 1, 2, 1, 8, 49188, 2103],[0, 4, 1, 116, 0, 0, 1, 8, 51291, 3699],[0, 4, 1, 117, 1, 2, 1, 8, 51291, 3699],[0, 4, 1, 119, 1, 3, 1, 25, 54990, 1718],[0, 4, 1, 121, 1, 2, 1, 18, 56708, 1056],[0, 4, 1, 123, 0, 0, 1, 9, 57764, 1324],[0, 4, 1, 124, 1, 3, 1, 9, 57764, 1324],[0, 4, 1, 126, 1, 3, 1, 26, 59088, 2636],[0, 4, 1, 128, 1, 2, 1, 25, 61724, 660],[0, 4, 1, 130, 0, 0, 1, 8, 61724, 1907],[0, 4, 1, 131, 1, 3, 1, 8, 61724, 1907],[0, 4, 1, 133, 1, 2, 1, 25, 63631, 500],[0, 4, 1, 135, 0, 0, 1, 8, 64131, 973],[0, 4, 1, 136, 1, 3, 1, 8, 64131, 973],[0, 4, 1, 138, 1, 2, 1, 18, 65104, 1100],[0, 4, 1, 140, 1, 3, 1, 26, 66204, 1294],[0, 4, 1, 142, 0, 0, 1, 8, 67498, 468],[0, 4, 1, 143, 2, 0, 1, 8, 67498, 468],[0, 4, 1, 144, 1, 1, 1, 8, 67498, 468],[0, 4, 1, 146, 1, 2, 1, 25, 67966, 192],[0, 4, 1, 148, 1, 2, 1, 24, 68158, 1239],[0, 4, 1, 150, 0, 0, 1, 10, 69397, 483],[0, 4, 1, 151, 2, 0, 1, 10, 69397, 483],[0, 4, 1, 152, 1, 5, 1, 10, 69397, 483],[0, 4, 1, 154, 2, 0, 1, 4, 69880, 9739],[0, 4, 1, 155, 1, 1, 1, 4, 69880, 9739],[0, 4, 1, 157, 3, 0, 26, 15132, 1347541, 68142],[0, 5, 1, 2, 0, 0, 2, 8, 12137, 21742],[0, 5, 1, 3, 1, 1, 2, 8, 12137, 21742],[0, 5, 1, 5, 1, 2, 2, 8, 12137, 21742],[0, 5, 1, 7, 1, 2, 1, 18, 33879, 1784],[0, 5, 1, 9, 0, 0, 1, 12, 35663, 8176],[0, 5, 1, 10, 2, 0, 1, 12, 35663, 8176],[0, 5, 1, 11, 1, 6, 1, 12, 35663, 8176],[0, 5, 1, 12, 1, 1, 3, 3, 18865, 760],[0, 5, 1, 14, 1, 1, 5, 1, 19625, 1403],[0, 5, 1, 16, 1, 1, 5, 4, 21028, 651],[0, 5, 1, 18, 1, 2, 5, 4, 21028, 1783],[0, 5, 1, 20, 1, 2, 5, 1, 21679, 2276],[0, 5, 1, 21, 1, 2, 5, 1, 21679, 2276],[0, 5, 1, 23, 1, 1, 5, 1, 21679, 2276],[0, 5, 1, 26, 1, 1, 6, 1, 23955, 15632],[0, 5, 1, 28, 1, 1, 6, 25, 39587, 164],[0, 5, 1, 30, 1, 2, 5, 1, 39751, 318],[0, 5, 1, 32, 1, 2, 5, 18, 40069, 1314],[0, 5, 1, 34, 1, 3, 5, 1, 41383, 3560],[0, 5, 1, 36, 1, 1, 5, 3, 44943, 1794],[0, 5, 1, 38, 1, 3, 4, 1, 46737, 259],[0, 5, 1, 40, 1, 2, 4, 1, 46996, 387],[0, 5, 1, 42, 1, 1, 4, 1, 46996, 387],[0, 5, 1, 44, 1, 1, 4, 1, 46996, 387],[0, 5, 1, 46, 1, 1, 4, 1, 46996, 387],[0, 5, 1, 48, 1, 2, 5, 1, 47383, 1438],[0, 5, 1, 50, 1, 2, 4, 1, 48821, 987],[0, 5, 1, 52, 1, 1, 3, 1, 49808, 1643],[0, 5, 1, 54, 1, 1, 3, 1, 49808, 1643],[0, 5, 1, 56, 1, 1, 3, 1, 49808, 1643],[0, 5, 1, 58, 1, 1, 4, 1, 51451, 975],[0, 5, 1, 60, 1, 2, 3, 18, 52426, 163],[0, 5, 1, 62, 1, 1, 3, 5, 52589, 1149],[0, 5, 1, 64, 1, 2, 3, 18, 52589, 1912],[0, 5, 1, 66, 1, 2, 2, 1, 54501, 286],[0, 5, 1, 69, 0, 0, 1, 9, 43839, 3964],[0, 5, 1, 70, 1, 2, 1, 9, 43839, 3964],[0, 5, 1, 72, 0, 0, 1, 8, 47803, 1430],[0, 5, 1, 73, 1, 2, 1, 8, 47803, 1430],[0, 5, 1, 75, 0, 0, 1, 8, 49233, 6069],[0, 5, 1, 76, 2, 0, 1, 8, 49233, 6069],[0, 5, 1, 77, 1, 5, 1, 8, 49233, 6069],[0, 5, 1, 79, 2, 0, 1, 1, 55302, 12300],[0, 5, 1, 80, 1, 1, 1, 1, 55302, 12300],[0, 5, 1, 82, 1, 1, 1, 25, 67602, 295],[0, 5, 1, 84, 1, 1, 1, 25, 67897, 334],[0, 5, 1, 86, 1, 1, 1, 19, 68231, 261],[0, 5, 1, 88, 1, 1, 1, 25, 68492, 274],[0, 5, 1, 90, 0, 0, 1, 8, 68766, 897],[0, 5, 1, 91, 2, 0, 1, 8, 68766, 897],[0, 5, 1, 92, 1, 1, 1, 8, 68766, 897],[0, 5, 1, 94, 2, 0, 1, 1, 69663, 245],[0, 5, 1, 95, 3, 0, 14, 19173, 688507, 57771],[0, 6, 1, 2, 0, 0, 2, 8, 12137, 21166],[0, 6, 1, 3, 1, 2, 2, 8, 12137, 21166],[0, 6, 1, 5, 1, 4, 2, 8, 12137, 21166],[0, 6, 1, 7, 1, 2, 1, 18, 33303, 1219],[0, 6, 1, 9, 1, 2, 1, 18, 33303, 1219],[0, 6, 1, 11, 2, 0, 1, 1, 34522, 3681],[0, 6, 1, 12, 1, 5, 1, 1, 34522, 3681],[0, 6, 1, 14, 2, 0, 1, 1, 38203, 3250],[0, 6, 1, 15, 1, 1, 1, 1, 38203, 3250],[0, 6, 1, 17, 1, 1, 1, 25, 41453, 329],[0, 6, 1, 19, 1, 1, 1, 19, 41782, 191],[0, 6, 1, 21, 2, 0, 1, 1, 41782, 472],[0, 6, 1, 22, 3, 0, 8, 4230, 243182, 30308],[1, 0, 1, 2, 0, 0, 2, 8, 12087, 19061],[1, 0, 1, 3, 1, 6, 2, 8, 12087, 19061],[1, 0, 1, 4, 1, 2, 3, 3, 0, 18407],[1, 0, 1, 5, 1, 2, 3, 3, 0, 18407],[1, 0, 1, 8, 1, 2, 3, 3, 0, 18407],[1, 0, 1, 9, 1, 2, 3, 3, 0, 18407],[1, 0, 1, 10, 1, 2, 3, 3, 0, 18407],[1, 0, 1, 14, 1, 2, 7, 1, 18407, 25226],[1, 0, 1, 16, 1, 2, 7, 1, 18407, 25226],[1, 0, 1, 18, 1, 2, 7, 1, 18407, 25226],[1, 0, 1, 20, 1, 1, 7, 1, 43633, 2521],[1, 0, 1, 22, 1, 1, 7, 1, 43633, 2521],[1, 0, 1, 24, 1, 1, 7, 1, 43633, 2521],[1, 0, 1, 26, 1, 1, 7, 1, 43633, 2521],[1, 0, 1, 28, 1, 1, 7, 1, 43633, 2521],[1, 0, 1, 30, 1, 1, 7, 1, 43633, 2521],[1, 0, 1, 32, 1, 1, 7, 1, 43633, 2521],[1, 0, 1, 34, 1, 1, 7, 1, 43633, 2521],[1, 0, 1, 36, 1, 4, 7, 1, 46154, 1133],[1, 0, 1, 38, 1, 4, 7, 1, 46154, 1133],[1, 0, 1, 40, 1, 4, 7, 1, 46154, 1133],[1, 0, 1, 41, 1, 4, 7, 1, 46154, 1133],[1, 0, 1, 44, 1, 2, 7, 1, 47287, 555],[1, 0, 1, 46, 1, 2, 7, 1, 47287, 555],[1, 0, 1, 49, 0, 0, 1, 8, 31148, 2994],[1, 0, 1, 50, 2, 0, 1, 8, 31148, 2994],[1, 0, 1, 51, 1, 6, 1, 8, 31148, 2994],[1, 0, 1, 52, 1, 1, 3, 8, 17524, 567],[1, 0, 1, 54, 1, 1, 5, 1, 18091, 1543],[1, 0, 1, 56, 1, 1, 6, 1, 18091, 2679],[1, 0, 1, 58, 1, 2, 6, 1, 20770, 188],[1, 0, 1, 60, 1, 2, 6, 1, 20770, 188],[1, 0, 1, 62, 1, 2, 6, 1, 20770, 188],[1, 0, 1, 64, 1, 2, 6, 1, 20770, 188],[1, 0, 1, 66, 1, 2, 7, 2, 20958, 3776],[1, 0, 1, 68, 1, 3, 7, 2, 20958, 3776],[1, 0, 1, 70, 1, 2, 7, 5, 24734, 2394],[1, 0, 1, 72, 1, 2, 7, 5, 24734, 2394],[1, 0, 1, 74, 1, 1, 7, 4, 27128, 3366],[1, 0, 1, 76, 1, 1, 6, 1, 30494, 3589],[1, 0, 1, 78, 1, 3, 5, 1, 34083, 266],[1, 0, 1, 80, 1, 2, 5, 4, 34349, 308],[1, 0, 1, 82, 1, 2, 5, 4, 34657, 1057],[1, 0, 1, 84, 1, 3, 5, 1, 35714, 540],[1, 0, 1, 86, 1, 4, 5, 1, 35714, 540],[1, 0, 1, 88, 1, 2, 6, 73, 36254, 336],[1, 0, 1, 90, 1, 1, 4, 3, 36590, 1234],[1, 0, 1, 92, 1, 1, 4, 64, 37824, 162],[1, 0, 1, 94, 1, 2, 4, 48, 37824, 2139],[1, 0, 1, 96, 1, 2, 4, 32, 37986, 3047],[1, 0, 1, 98, 1, 2, 4, 1, 39963, 2119],[1, 0, 1, 101, 0, 0, 1, 28, 34142, 3463],[1, 0, 1, 102, 2, 0, 1, 28, 34142, 3463],[1, 0, 1, 103, 1, 1, 1, 28, 34142, 3463],[1, 0, 1, 105, 1, 1, 1, 64, 37605, 290],[1, 0, 1, 107, 1, 2, 1, 51, 37605, 406],[1, 0, 1, 109, 0, 0, 1, 8, 37895, 1875],[1, 0, 1, 110, 2, 0, 1, 8, 37895, 1875],[1, 0, 1, 111, 0, 0, 1, 8, 39770, 0],[1, 0, 1, 112, 2, 0, 1, 8, 39770, 0],[1, 0, 1, 113, 1, 5, 1, 8, 39770, 0],[1, 0, 1, 115, 2, 0, 1, 1, 39770, 12949],[1, 0, 1, 116, 1, 1, 1, 1, 39770, 12949],[1, 0, 1, 118, 0, 0, 1, 8, 52719, 2651],[1, 0, 1, 119, 2, 0, 1, 8, 52719, 2651],[1, 0, 1, 120, 1, 1, 1, 8, 52719, 2651],[1, 0, 1, 122, 2, 0, 1, 1, 55370, 585],[1, 0, 1, 123, 1, 1, 1, 1, 55370, 585],[1, 0, 1, 125, 1, 1, 1, 61, 55955, 215],[1, 0, 1, 127, 1, 1, 1, 60, 56170, 205],[1, 0, 1, 129, 2, 0, 1, 4, 56375, 348],[1, 0, 1, 130, 1, 1, 1, 4, 56375, 348],[1, 0, 1, 132, 0, 0, 1, 9, 56723, 400],[1, 0, 1, 133, 1, 1, 1, 9, 56723, 400],[1, 0, 1, 135, 2, 0, 1, 1, 57123, 1034],[1, 0, 1, 136, 3, 0, 16, 24176, 660457, 46476],[1, 1, 1, 2, 0, 0, 2, 8, 12087, 18279],[1, 1, 1, 3, 1, 1, 2, 8, 12087, 18279],[1, 1, 1, 5, 1, 1, 2, 8, 12087, 18279],[1, 1, 1, 7, 1, 1, 1, 70, 30366, 427],[1, 1, 1, 9, 1, 1, 1, 56, 30793, 170],[1, 1, 1, 11, 1, 2, 1, 56, 30793, 170],[1, 1, 1, 13, 2, 0, 1, 1, 30963, 1752],[1, 1, 1, 14, 1, 2, 1, 1, 30963, 1752],[1, 1, 1, 16, 1, 2, 1, 1, 30963, 1752],[1, 1, 1, 18, 1, 2, 1, 38, 32715, 2829],[1, 1, 1, 20, 1, 2, 1, 38, 32715, 2829],[1, 1, 1, 22, 1, 2, 1, 40, 35544, 1708],[1, 1, 1, 24, 1, 1, 1, 40, 35544, 1708],[1, 1, 1, 26, 1, 3, 1, 35, 37252, 591],[1, 1, 1, 28, 1, 2, 1, 35, 37252, 591],[1, 1, 1, 30, 1, 3, 1, 58, 37843, 572],[1, 1, 1, 32, 1, 2, 1, 72, 38415, 1172],[1, 1, 1, 34, 1, 2, 1, 72, 38415, 1172],[1, 1, 1, 36, 1, 2, 1, 56, 39587, 1100],[1, 1, 1, 38, 1, 1, 1, 56, 39587, 1100],[1, 1, 1, 40, 1, 2, 1, 61, 40687, 809],[1, 1, 1, 42, 1, 2, 1, 42, 40687, 1951],[1, 1, 1, 44, 1, 2, 1, 72, 41496, 1948],[1, 1, 1, 46, 1, 2, 1, 61, 42638, 1691],[1, 1, 1, 48, 0, 0, 1, 31, 43444, 1232],[1, 1, 1, 49, 2, 0, 1, 31, 43444, 1232],[1, 1, 1, 50, 1, 1, 1, 31, 43444, 1232],[1, 1, 1, 52, 1, 2, 1, 31, 43444, 1232],[1, 1, 1, 54, 1, 2, 1, 73, 44676, 1099],[1, 1, 1, 56, 1, 2, 1, 61, 44676, 1884],[1, 1, 1, 58, 2, 0, 1, 1, 45775, 1473],[1, 1, 1, 59, 1, 1, 1, 1, 45775, 1473],[1, 1, 1, 61, 1, 2, 1, 1, 45775, 1473],[1, 1, 1, 63, 1, 1, 1, 72, 47248, 697],[1, 1, 1, 65, 2, 0, 1, 4, 47248, 813],[1, 1, 1, 66, 2, 0, 1, 2, 48061, 0],[1, 1, 1, 67, 1, 5, 1, 2, 48061, 0],[1, 1, 1, 69, 2, 0, 1, 1, 48061, 7152],[1, 1, 1, 70, 1, 1, 1, 1, 48061, 7152],[1, 1, 1, 72, 1, 1, 1, 52, 55213, 216],[1, 1, 1, 74, 0, 0, 1, 8, 55429, 1458],[1, 1, 1, 75, 2, 0, 1, 8, 55429, 1458],[1, 1, 1, 76, 1, 1, 1, 8, 55429, 1458],[1, 1, 1, 78, 2, 0, 1, 1, 56887, 1497],[1, 1, 1, 79, 1, 1, 1, 1, 56887, 1497],[1, 1, 1, 81, 0, 0, 1, 29, 58384, 482],[1, 1, 1, 82, 1, 1, 1, 29, 58384, 482],[1, 1, 1, 84, 3, 0, 27, 20360, 1086175, 53002],[1, 1, 2, 2, 0, 0, 2, 8, 12087, 18270],[1, 1, 2, 3, 1, 1, 2, 8, 12087, 18270],[1, 1, 2, 5, 1, 2, 2, 8, 12087, 18270],[1, 1, 2, 7, 1, 1, 1, 62, 30357, 411],[1, 1, 2, 9, 1, 2, 1, 62, 30357, 411],[1, 1, 2, 11, 1, 2, 1, 59, 30357, 718],[1, 1, 2, 13, 0, 0, 1, 8, 31075, 1523],[1, 1, 2, 14, 2, 0, 1, 8, 31075, 1523],[1, 1, 2, 15, 1, 2, 1, 8, 31075, 1523],[1, 1, 2, 17, 1, 2, 1, 8, 31075, 1523],[1, 1, 2, 19, 1, 2, 1, 40, 32598, 3861],[1, 1, 2, 21, 1, 2, 1, 40, 32598, 3861],[1, 1, 2, 23, 1, 2, 1, 66, 36459, 1303],[1, 1, 2, 25, 1, 1, 1, 66, 36459, 1303],[1, 1, 2, 27, 1, 2, 1, 68, 37762, 753],[1, 1, 2, 29, 1, 3, 1, 68, 37762, 753],[1, 1, 2, 31, 1, 2, 1, 72, 38515, 1217],[1, 1, 2, 33, 1, 2, 1, 72, 38515, 1217],[1, 1, 2, 35, 1, 2, 1, 72, 39732, 1590],[1, 1, 2, 37, 1, 2, 1, 72, 39732, 1590],[1, 1, 2, 39, 1, 2, 1, 72, 41322, 915],[1, 1, 2, 41, 1, 3, 1, 72, 41322, 915],[1, 1, 2, 43, 1, 2, 1, 40, 42237, 1409],[1, 1, 2, 45, 1, 3, 1, 40, 42237, 1409],[1, 1, 2, 47, 1, 2, 1, 72, 43646, 1409],[1, 1, 2, 49, 1, 2, 1, 72, 45055, 1039],[1, 1, 2, 51, 1, 2, 1, 72, 46094, 936],[1, 1, 2, 53, 0, 0, 1, 9, 46094, 1809],[1, 1, 2, 54, 2, 0, 1, 9, 46094, 1809],[1, 1, 2, 55, 1, 3, 1, 9, 46094, 1809],[1, 1, 2, 57, 1, 2, 1, 9, 46094, 1809],[1, 1, 2, 59, 1, 2, 1, 58, 47903, 1040],[1, 1, 2, 61, 1, 2, 1, 58, 47903, 1040],[1, 1, 2, 63, 0, 0, 1, 8, 48943, 1698],[1, 1, 2, 64, 1, 3, 1, 8, 48943, 1698],[1, 1, 2, 66, 1, 2, 1, 8, 48943, 1698],[1, 1, 2, 68, 1, 2, 1, 62, 50641, 4382],[1, 1, 2, 70, 1, 2, 1, 62, 50641, 4382],[1, 1, 2, 72, 0, 0, 1, 8, 55023, 1366],[1, 1, 2, 73, 1, 3, 1, 8, 55023, 1366],[1, 1, 2, 75, 1, 2, 1, 46, 56389, 1086],[1, 1, 2, 77, 0, 0, 1, 10, 56389, 2021],[1, 1, 2, 78, 2, 0, 1, 10, 56389, 2021],[1, 1, 2, 79, 1, 1, 1, 10, 56389, 2021],[1, 1, 2, 81, 1, 2, 1, 59, 58410, 3362],[1, 1, 2, 83, 2, 0, 1, 1, 61772, 674],[1, 1, 2, 84, 1, 2, 1, 1, 61772, 674],[1, 1, 2, 86, 0, 0, 1, 8, 62446, 8337],[1, 1, 2, 87, 0, 0, 1, 8, 70783, 0],[1, 1, 2, 88, 2, 0, 1, 8, 70783, 0],[1, 1, 2, 89, 1, 2, 1, 8, 70783, 0],[1, 1, 2, 91, 1, 1, 1, 8, 70783, 0],[1, 1, 2, 93, 1, 1, 1, 40, 70783, 2823],[1, 1, 2, 95, 1, 1, 1, 40, 70783, 2823],[1, 1, 2, 97, 3, 0, 27, 21629, 1192872, 63952],[1, 1, 3, 2, 0, 0, 2, 6, 12087, 18271],[1, 1, 3, 3, 1, 1, 2, 6, 12087, 18271],[1, 1, 3, 5, 1, 1, 1, 61, 30358, 264],[1, 1, 3, 7, 0, 0, 1, 8, 30622, 927],[1, 1, 3, 8, 1, 2, 1, 8, 30622, 927],[1, 1, 3, 10, 1, 2, 1, 8, 30622, 927],[1, 1, 3, 12, 1, 2, 1, 36, 31549, 3242],[1, 1, 3, 14, 1, 2, 1, 36, 31549, 3242],[1, 1, 3, 16, 1, 2, 1, 66, 34791, 1117],[1, 1, 3, 18, 1, 2, 1, 66, 34791, 1117],[1, 1, 3, 20, 1, 2, 1, 72, 35908, 1057],[1, 1, 3, 22, 1, 4, 1, 72, 35908, 1057],[1, 1, 3, 24, 0, 0, 1, 10, 35908, 2756],[1, 1, 3, 25, 1, 2, 1, 10, 35908, 2756],[1, 1, 3, 27, 1, 2, 1, 10, 35908, 2756],[1, 1, 3, 29, 1, 2, 1, 56, 38664, 857],[1, 1, 3, 31, 1, 1, 1, 56, 38664, 857],[1, 1, 3, 33, 0, 0, 1, 11, 39521, 643],[1, 1, 3, 34, 1, 3, 1, 11, 39521, 643],[1, 1, 3, 36, 1, 2, 1, 61, 40164, 653],[1, 1, 3, 38, 1, 2, 1, 69, 40164, 1692],[1, 1, 3, 40, 1, 2, 1, 59, 41856, 944],[1, 1, 3, 42, 0, 0, 1, 8, 41856, 1982],[1, 1, 3, 43, 1, 3, 1, 8, 41856, 1982],[1, 1, 3, 45, 1, 3, 1, 8, 41856, 1982],[1, 1, 3, 47, 1, 2, 1, 72, 43838, 704],[1, 1, 3, 49, 1, 2, 1, 56, 43838, 1640],[1, 1, 3, 51, 1, 3, 1, 46, 45478, 1475],[1, 1, 3, 53, 1, 2, 1, 72, 46953, 183],[1, 1, 3, 55, 1, 2, 1, 72, 46953, 183],[1, 1, 3, 57, 1, 2, 1, 38, 47136, 2526],[1, 1, 3, 59, 0, 0, 1, 9, 47136, 3434],[1, 1, 3, 60, 2, 0, 1, 9, 47136, 3434],[1, 1, 3, 61, 1, 2, 1, 9, 47136, 3434],[1, 1, 3, 63, 1, 2, 1, 67, 50570, 1826],[1, 1, 3, 65, 2, 0, 1, 1, 50570, 2796],[1, 1, 3, 66, 1, 2, 1, 1, 50570, 2796],[1, 1, 3, 68, 1, 3, 1, 1, 50570, 2796],[1, 1, 3, 70, 1, 3, 1, 58, 53366, 715],[1, 1, 3, 72, 1, 2, 1, 67, 54081, 819],[1, 1, 3, 74, 0, 0, 1, 8, 54900, 1786],[1, 1, 3, 75, 2, 0, 1, 8, 54900, 1786],[1, 1, 3, 76, 1, 5, 1, 8, 54900, 1786],[1, 1, 3, 78, 1, 2, 1, 42, 56686, 7538],[1, 1, 3, 80, 3, 0, 26, 11646, 1048000, 59847],[1, 1, 4, 2, 0, 0, 2, 8, 30358, 0],[1, 1, 4, 3, 1, 1, 2, 8, 30358, 0],[1, 1, 4, 5, 1, 1, 2, 8, 30358, 0],[1, 1, 4, 7, 1, 1, 1, 62, 30358, 404],[1, 1, 4, 9, 1, 2, 1, 62, 30358, 404],[1, 1, 4, 11, 1, 2, 1, 59, 30358, 689],[1, 1, 4, 13, 0, 0, 1, 9, 30762, 1808],[1, 1, 4, 14, 2, 0, 1, 9, 30762, 1808],[1, 1, 4, 15, 1, 2, 1, 9, 30762, 1808],[1, 1, 4, 17, 1, 2, 1, 9, 30762, 1808],[1, 1, 4, 19, 1, 2, 1, 38, 32570, 3269],[1, 1, 4, 21, 1, 2, 1, 38, 32570, 3269],[1, 1, 4, 23, 1, 2, 1, 64, 35839, 1303],[1, 1, 4, 25, 1, 2, 1, 64, 35839, 1303],[1, 1, 4, 27, 1, 2, 1, 58, 37142, 1100],[1, 1, 4, 29, 1, 2, 1, 58, 37142, 1100],[1, 1, 4, 31, 1, 2, 1, 59, 38242, 974],[1, 1, 4, 33, 1, 3, 1, 59, 38242, 974],[1, 1, 4, 35, 1, 2, 1, 67, 39216, 1129],[1, 1, 4, 37, 1, 4, 1, 67, 39216, 1129],[1, 1, 4, 39, 1, 2, 1, 54, 40345, 2094],[1, 1, 4, 41, 1, 2, 1, 54, 40345, 2094],[1, 1, 4, 43, 1, 2, 1, 67, 42439, 1515],[1, 1, 4, 45, 1, 3, 1, 67, 42439, 1515],[1, 1, 4, 47, 1, 2, 1, 67, 43954, 1335],[1, 1, 4, 49, 2, 0, 1, 1, 43954, 2413],[1, 1, 4, 50, 1, 1, 1, 1, 43954, 2413],[1, 1, 4, 52, 1, 2, 1, 69, 46367, 133],[1, 1, 4, 54, 0, 0, 1, 11, 46367, 1883],[1, 1, 4, 55, 1, 2, 1, 11, 46367, 1883],[1, 1, 4, 57, 0, 0, 1, 8, 48250, 8261],[1, 1, 4, 58, 2, 0, 1, 8, 48250, 8261],[1, 1, 4, 59, 1, 1, 1, 8, 48250, 8261],[1, 1, 4, 61, 0, 0, 1, 8, 56511, 1078],[1, 1, 4, 62, 1, 1, 1, 8, 56511, 1078],[1, 1, 4, 64, 1, 1, 1, 63, 57589, 795],[1, 1, 4, 66, 1, 1, 1, 58, 58384, 316],[1, 1, 4, 68, 0, 0, 1, 8, 58384, 643],[1, 1, 4, 69, 1, 1, 1, 8, 58384, 643],[1, 1, 4, 71, 0, 0, 1, 8, 59027, 543],[1, 1, 4, 72, 1, 1, 1, 8, 59027, 543],[1, 1, 4, 74, 1, 1, 1, 42, 59570, 751],[1, 1, 4, 76, 0, 0, 1, 8, 60321, 261],[1, 1, 4, 77, 1, 1, 1, 8, 60321, 261],[1, 1, 4, 79, 1, 1, 1, 60, 60582, 372],[1, 1, 4, 81, 1, 1, 1, 56, 60954, 175],[1, 1, 4, 83, 3, 0, 26, 5404, 1147843, 33244],[1, 2, 1, 2, 0, 0, 2, 6, 12087, 19909],[1, 2, 1, 3, 1, 1, 2, 6, 12087, 19909],[1, 2, 1, 5, 1, 1, 2, 6, 12087, 19909],[1, 2, 1, 7, 1, 1, 1, 61, 31996, 421],[1, 2, 1, 9, 1, 1, 1, 61, 31996, 421],[1, 2, 1, 11, 1, 1, 1, 52, 32417, 320],[1, 2, 1, 13, 1, 2, 1, 57, 32417, 520],[1, 2, 1, 15, 1, 1, 1, 57, 32417, 520],[1, 2, 1, 17, 0, 0, 1, 34, 32937, 2495],[1, 2, 1, 18, 2, 0, 1, 34, 32937, 2495],[1, 2, 1, 19, 1, 2, 1, 34, 32937, 2495],[1, 2, 1, 21, 1, 2, 1, 34, 32937, 2495],[1, 2, 1, 23, 1, 1, 1, 36, 35432, 1848],[1, 2, 1, 25, 1, 2, 1, 36, 35432, 1848],[1, 2, 1, 27, 1, 2, 1, 42, 37280, 1174],[1, 2, 1, 29, 1, 2, 1, 38, 38454, 1804],[1, 2, 1, 31, 1, 2, 1, 38, 38454, 1804],[1, 2, 1, 33, 1, 2, 1, 40, 40258, 2367],[1, 2, 1, 35, 1, 2, 1, 40, 40258, 2367],[1, 2, 1, 37, 0, 0, 1, 26, 42625, 1305],[1, 2, 1, 38, 1, 2, 1, 26, 42625, 1305],[1, 2, 1, 40, 1, 2, 1, 26, 42625, 1305],[1, 2, 1, 42, 2, 0, 1, 1, 43930, 951],[1, 2, 1, 43, 1, 1, 1, 1, 43930, 951],[1, 2, 1, 45, 1, 5, 1, 57, 45143, 0],[1, 2, 1, 47, 2, 0, 1, 4, 45143, 9679],[1, 2, 1, 48, 1, 1, 1, 4, 45143, 9679],[1, 2, 1, 50, 1, 1, 1, 55, 54822, 190],[1, 2, 1, 52, 1, 1, 1, 46, 55012, 454],[1, 2, 1, 54, 1, 1, 1, 61, 55466, 276],[1, 2, 1, 56, 2, 0, 1, 1, 55742, 933],[1, 2, 1, 57, 1, 1, 1, 1, 55742, 933],[1, 2, 1, 59, 2, 0, 1, 1, 56675, 222],[1, 2, 1, 60, 3, 0, 20, 21255, 792717, 45130],[2, 0, 1, 2, 0, 0, 2, 8, 12087, 15640],[2, 0, 1, 3, 1, 2, 2, 8, 12087, 15640],[2, 0, 1, 4, 1, 2, 2, 8, 12087, 15640],[2, 0, 1, 7, 0, 0, 872, 8, 27727, 6233],[2, 0, 1, 8, 2, 0, 872, 8, 27727, 6233],[2, 0, 1, 9, 1, 4, 872, 8, 27727, 6233],[2, 0, 1, 11, 1, 4, 872, 8, 27727, 6233],[2, 0, 1, 13, 1, 2, 1, 46, 33960, 1305],[2, 0, 1, 15, 1, 2, 1, 46, 33960, 1305],[2, 0, 1, 17, 0, 0, 1, 12, 33960, 3453],[2, 0, 1, 18, 1, 4, 1, 12, 33960, 3453],[2, 0, 1, 20, 1, 1, 1, 63, 37413, 152],[2, 0, 1, 22, 1, 1, 1, 71, 37565, 223],[2, 0, 1, 24, 0, 0, 1, 8, 37788, 660],[2, 0, 1, 25, 1, 2, 1, 8, 37788, 660],[2, 0, 1, 27, 2, 0, 1, 1, 38448, 1503],[2, 0, 1, 28, 1, 1, 1, 1, 38448, 1503],[2, 0, 1, 30, 1, 5, 1, 61, 39951, 118],[2, 0, 1, 32, 2, 0, 1, 2, 40069, 4020],[2, 0, 1, 33, 1, 1, 1, 2, 40069, 4020],[2, 0, 1, 35, 1, 1, 1, 70, 44089, 281],[2, 0, 1, 37, 1, 1, 1, 67, 44370, 186],[2, 0, 1, 39, 1, 1, 1, 59, 44556, 191],[2, 0, 1, 41, 0, 0, 1, 8, 44747, 3156],[2, 0, 1, 42, 2, 0, 1, 8, 44747, 3156],[2, 0, 1, 43, 1, 1, 1, 8, 44747, 3156],[2, 0, 1, 45, 0, 0, 1, 8, 47903, 1442],[2, 0, 1, 46, 2, 0, 1, 8, 47903, 1442],[2, 0, 1, 47, 1, 1, 1, 8, 47903, 1442],[2, 0, 1, 49, 0, 0, 1, 8, 49345, 2040],[2, 0, 1, 50, 1, 1, 1, 8, 49345, 2040],[2, 0, 1, 52, 0, 0, 1, 8, 51385, 676],[2, 0, 1, 53, 1, 1, 1, 8, 51385, 676],[2, 0, 1, 55, 0, 0, 1, 8, 52061, 711],[2, 0, 1, 56, 2, 0, 1, 8, 52061, 711],[2, 0, 1, 57, 1, 1, 1, 8, 52061, 711],[2, 0, 1, 59, 0, 0, 1, 8, 52772, 1506],[2, 0, 1, 60, 2, 0, 1, 8, 52772, 1506],[2, 0, 1, 61, 1, 1, 1, 8, 52772, 1506],[2, 0, 1, 63, 0, 0, 1, 8, 54278, 264],[2, 0, 1, 64, 1, 1, 1, 8, 54278, 264],[2, 0, 1, 66, 0, 0, 1, 8, 54542, 459],[2, 0, 1, 67, 2, 0, 1, 8, 54542, 459],[2, 0, 1, 68, 1, 1, 1, 8, 54542, 459],[2, 0, 1, 70, 1, 1, 1, 69, 55001, 821],[2, 0, 1, 72, 1, 1, 1, 57, 55822, 173],[2, 0, 1, 74, 0, 0, 1, 8, 55995, 7392],[2, 0, 1, 75, 2, 0, 1, 8, 55995, 7392],[2, 0, 1, 76, 1, 1, 1, 8, 55995, 7392],[2, 0, 1, 78, 2, 0, 1, 1, 63387, 282],[2, 0, 1, 79, 3, 0, 897, 11040, 1109221, 52887],[2, 0, 1, 81, 2, 0, 3, 1, 63669, 570],[2, 0, 1, 82, 3, 0, 3, 68, 63669, 570],[2, 1, 1, 2, 0, 0, 2, 8, 12087, 15245],[2, 1, 1, 3, 1, 2, 2, 8, 12087, 15245],[2, 1, 1, 5, 1, 2, 2, 8, 12087, 15245],[2, 1, 1, 7, 1, 2, 1, 66, 27332, 2060],[2, 1, 1, 9, 1, 4, 1, 66, 27332, 2060],[2, 1, 1, 11, 0, 0, 1, 10, 29392, 783],[2, 1, 1, 12, 1, 4, 1, 10, 29392, 783],[2, 1, 1, 13, 1, 4, 1, 10, 29392, 783],[2, 1, 1, 16, 1, 2, 1, 71, 30175, 339],[2, 1, 1, 18, 1, 2, 1, 71, 30175, 339],[2, 1, 1, 20, 2, 0, 1, 1, 30514, 1365],[2, 1, 1, 21, 1, 2, 1, 1, 30514, 1365],[2, 1, 1, 23, 1, 1, 1, 49, 31879, 581],[2, 1, 1, 25, 1, 1, 1, 67, 31879, 718],[2, 1, 1, 27, 1, 1, 1, 69, 32460, 360],[2, 1, 1, 29, 2, 0, 1, 1, 32820, 557],[2, 1, 1, 30, 1, 2, 1, 1, 32820, 557],[2, 1, 1, 32, 0, 0, 1, 8, 33377, 980],[2, 1, 1, 33, 2, 0, 1, 8, 33377, 980],[2, 1, 1, 34, 1, 1, 1, 8, 33377, 980],[2, 1, 1, 36, 1, 2, 1, 46, 34357, 1362],[2, 1, 1, 38, 1, 5, 1, 65, 35719, 720],[2, 1, 1, 40, 2, 0, 1, 1, 36439, 3932],[2, 1, 1, 41, 1, 1, 1, 1, 36439, 3932],[2, 1, 1, 43, 0, 0, 1, 8, 40371, 310],[2, 1, 1, 44, 1, 1, 1, 8, 40371, 310],[2, 1, 1, 46, 2, 0, 1, 1, 40681, 309],[2, 1, 1, 47, 1, 1, 1, 1, 40681, 309],[2, 1, 1, 49, 1, 1, 1, 47, 40990, 233],[2, 1, 1, 51, 1, 1, 1, 62, 41223, 175],[2, 1, 1, 53, 1, 1, 1, 55, 41398, 141],[2, 1, 1, 55, 2, 0, 1, 1, 41398, 231],[2, 1, 1, 56, 1, 1, 1, 1, 41398, 231],[2, 1, 1, 58, 1, 1, 1, 72, 41629, 149],[2, 1, 1, 60, 1, 1, 1, 57, 41629, 360],[2, 1, 1, 62, 1, 1, 1, 69, 41989, 558],[2, 1, 1, 64, 1, 1, 1, 72, 42547, 142],[2, 1, 1, 66, 0, 0, 1, 9, 42689, 2433],[2, 1, 1, 67, 1, 1, 1, 9, 42689, 2433],[2, 1, 1, 69, 2, 0, 1, 1, 45122, 578],[2, 1, 1, 70, 1, 1, 1, 1, 45122, 578],[2, 1, 1, 72, 3, 0, 26, 8321, 900096, 34621],[2, 1, 1, 74, 0, 0, 3, 8, 45700, 491],[2, 1, 1, 75, 1, 1, 3, 8, 45700, 491],[2, 1, 1, 77, 0, 0, 1, 8, 46191, 897],[2, 1, 1, 78, 1, 1, 1, 8, 46191, 897],[2, 1, 1, 80, 0, 0, 1, 8, 47088, 589],[2, 1, 1, 81, 2, 0, 1, 8, 47088, 589],[2, 1, 1, 82, 1, 1, 1, 8, 47088, 589],[2, 1, 1, 84, 2, 0, 1, 2, 47677, 683],[2, 1, 1, 85, 1, 1, 1, 2, 47677, 683],[2, 1, 1, 87, 2, 0, 1, 2, 48360, 486],[2, 1, 1, 88, 3, 0, 7, 1639, 235016, 3146],[2, 2, 1, 2, 0, 0, 2, 8, 12087, 15842],[2, 2, 1, 3, 1, 2, 2, 8, 12087, 15842],[2, 2, 1, 5, 1, 2, 2, 8, 12087, 15842],[2, 2, 1, 7, 1, 2, 2, 8, 12087, 15842],[2, 2, 1, 9, 1, 2, 2, 8, 12087, 15842],[2, 2, 1, 11, 0, 0, 1, 12, 27929, 2127],[2, 2, 1, 12, 2, 0, 1, 12, 27929, 2127],[2, 2, 1, 13, 1, 3, 1, 12, 27929, 2127],[2, 2, 1, 15, 1, 4, 1, 12, 27929, 2127],[2, 2, 1, 17, 1, 3, 1, 62, 30056, 562],[2, 2, 1, 19, 0, 0, 1, 8, 30618, 156],[2, 2, 1, 20, 1, 3, 1, 8, 30618, 156],[2, 2, 1, 22, 1, 3, 1, 8, 30618, 156],[2, 2, 1, 24, 0, 0, 1, 8, 30774, 2070],[2, 2, 1, 25, 1, 2, 1, 8, 30774, 2070],[2, 2, 1, 27, 1, 2, 1, 8, 30774, 2070],[2, 2, 1, 29, 0, 0, 1, 8, 32844, 1511],[2, 2, 1, 30, 1, 2, 1, 8, 32844, 1511],[2, 2, 1, 32, 0, 0, 1, 8, 34355, 1697],[2, 2, 1, 33, 2, 0, 1, 8, 34355, 1697],[2, 2, 1, 34, 1, 2, 1, 8, 34355, 1697],[2, 2, 1, 36, 1, 4, 1, 61, 36052, 484],[2, 2, 1, 38, 1, 4, 1, 67, 36536, 108],[2, 2, 1, 40, 0, 0, 1, 8, 36644, 1127],[2, 2, 1, 41, 2, 0, 1, 8, 36644, 1127],[2, 2, 1, 42, 1, 2, 1, 8, 36644, 1127],[2, 2, 1, 44, 0, 0, 1, 8, 37771, 1207],[2, 2, 1, 45, 1, 4, 1, 8, 37771, 1207],[2, 2, 1, 47, 1, 2, 1, 38, 38978, 1546],[2, 2, 1, 49, 2, 0, 1, 1, 40524, 542],[2, 2, 1, 50, 1, 1, 1, 1, 40524, 542],[2, 2, 1, 52, 1, 5, 1, 58, 41066, 132],[2, 2, 1, 54, 2, 0, 1, 1, 41198, 3676],[2, 2, 1, 55, 1, 1, 1, 1, 41198, 3676],[2, 2, 1, 57, 1, 1, 1, 52, 44874, 256],[2, 2, 1, 59, 1, 1, 1, 57, 45130, 250],[2, 2, 1, 61, 1, 1, 1, 70, 45380, 192],[2, 2, 1, 63, 1, 1, 1, 57, 45572, 205],[2, 2, 1, 65, 2, 0, 1, 1, 45777, 241],[2, 2, 1, 66, 1, 1, 1, 1, 45777, 241],[2, 2, 1, 68, 0, 0, 1, 8, 46018, 2626],[2, 2, 1, 69, 2, 0, 1, 8, 46018, 2626],[2, 2, 1, 70, 1, 1, 1, 8, 46018, 2626],[2, 2, 1, 72, 0, 0, 1, 8, 48644, 843],[2, 2, 1, 73, 1, 1, 1, 8, 48644, 843],[2, 2, 1, 75, 0, 0, 1, 8, 49487, 268],[2, 2, 1, 76, 1, 1, 1, 8, 49487, 268],[2, 2, 1, 78, 1, 1, 1, 55, 49755, 239],[2, 2, 1, 80, 2, 0, 1, 1, 49994, 372],[2, 2, 1, 81, 1, 1, 1, 1, 49994, 372],[2, 2, 1, 83, 3, 0, 26, 8976, 978063, 38279],[2, 2, 1, 85, 2, 0, 3, 1, 50366, 601],[2, 2, 1, 86, 3, 0, 3, 76, 50366, 601],[2, 3, 1, 2, 0, 0, 2, 8, 12087, 15716],[2, 3, 1, 3, 1, 2, 2, 8, 12087, 15716],[2, 3, 1, 5, 1, 2, 2, 8, 12087, 15716],[2, 3, 1, 7, 0, 0, 1, 8, 27803, 2483],[2, 3, 1, 8, 1, 3, 1, 8, 27803, 2483],[2, 3, 1, 10, 1, 3, 1, 8, 27803, 2483],[2, 3, 1, 12, 1, 2, 1, 51, 30286, 940],[2, 3, 1, 14, 1, 2, 1, 51, 30286, 940],[2, 3, 1, 16, 0, 0, 1, 11, 31226, 1824],[2, 3, 1, 17, 1, 4, 1, 11, 31226, 1824],[2, 3, 1, 19, 1, 3, 1, 11, 31226, 1824],[2, 3, 1, 21, 1, 3, 1, 70, 33050, 418],[2, 3, 1, 23, 1, 2, 1, 51, 33468, 1206],[2, 3, 1, 25, 2, 0, 1, 2, 33468, 3279],[2, 3, 1, 26, 1, 1, 1, 2, 33468, 3279],[2, 3, 1, 28, 1, 1, 1, 67, 36747, 151],[2, 3, 1, 30, 0, 0, 1, 8, 36747, 374],[2, 3, 1, 31, 1, 2, 1, 8, 36747, 374],[2, 3, 1, 33, 1, 2, 1, 69, 37121, 1184],[2, 3, 1, 35, 2, 0, 1, 1, 38305, 1026],[2, 3, 1, 36, 1, 1, 1, 1, 38305, 1026],[2, 3, 1, 38, 1, 5, 1, 58, 39331, 111],[2, 3, 1, 40, 2, 0, 1, 2, 39442, 3581],[2, 3, 1, 41, 1, 1, 1, 2, 39442, 3581],[2, 3, 1, 43, 1, 1, 1, 41, 43023, 299],[2, 3, 1, 45, 1, 1, 1, 70, 43322, 171],[2, 3, 1, 47, 1, 1, 1, 59, 43322, 355],[2, 3, 1, 49, 1, 1, 1, 64, 43677, 189],[2, 3, 1, 51, 0, 0, 1, 8, 43866, 2554],[2, 3, 1, 52, 1, 1, 1, 8, 43866, 2554],[2, 3, 1, 54, 0, 0, 1, 8, 46420, 275],[2, 3, 1, 55, 1, 1, 1, 8, 46420, 275],[2, 3, 1, 57, 0, 0, 1, 27, 46695, 472],[2, 3, 1, 58, 1, 1, 1, 27, 46695, 472],[2, 3, 1, 60, 0, 0, 1, 29, 47167, 192],[2, 3, 1, 61, 1, 1, 1, 29, 47167, 192],[2, 3, 1, 63, 2, 0, 1, 1, 47359, 534],[2, 3, 1, 64, 1, 1, 1, 1, 47359, 534],[2, 3, 1, 66, 1, 1, 1, 65, 47893, 404],[2, 3, 1, 68, 2, 0, 1, 1, 48297, 7444],[2, 3, 1, 69, 1, 1, 1, 1, 48297, 7444],[2, 3, 1, 71, 2, 0, 1, 1, 55741, 201],[2, 3, 1, 72, 3, 0, 26, 7699, 985863, 45383],[2, 3, 1, 74, 2, 0, 3, 1, 55942, 470],[2, 3, 1, 75, 3, 0, 3, 42, 55942, 470],[2, 4, 1, 2, 0, 0, 2, 8, 12087, 15221],[2, 4, 1, 3, 1, 1, 2, 8, 12087, 15221],[2, 4, 1, 5, 1, 2, 2, 8, 12087, 15221],[2, 4, 1, 7, 1, 2, 1, 68, 27308, 1653],[2, 4, 1, 9, 1, 3, 1, 68, 27308, 1653],[2, 4, 1, 11, 1, 2, 1, 72, 28961, 616],[2, 4, 1, 13, 2, 0, 1, 1, 29577, 1223],[2, 4, 1, 14, 1, 2, 1, 1, 29577, 1223],[2, 4, 1, 16, 1, 5, 1, 61, 30800, 565],[2, 4, 1, 18, 1, 1, 1, 60, 31365, 2234],[2, 4, 1, 20, 1, 1, 1, 46, 33599, 216],[2, 4, 1, 22, 1, 1, 1, 70, 33815, 297],[2, 4, 1, 24, 0, 0, 1, 9, 33815, 2765],[2, 4, 1, 25, 2, 0, 1, 9, 33815, 2765],[2, 4, 1, 26, 1, 1, 1, 9, 33815, 2765],[2, 4, 1, 28, 2, 0, 1, 1, 36580, 824],[2, 4, 1, 29, 1, 1, 1, 1, 36580, 824],[2, 4, 1, 31, 1, 1, 1, 65, 37404, 342],[2, 4, 1, 33, 2, 0, 1, 1, 37746, 6911],[2, 4, 1, 34, 1, 1, 1, 1, 37746, 6911],[2, 4, 1, 36, 2, 0, 1, 1, 44657, 245],[2, 4, 1, 37, 3, 0, 14, 4705, 417714, 33112],[2, 4, 1, 39, 2, 0, 3, 1, 44902, 378],[2, 4, 1, 40, 3, 0, 3, 56, 44902, 378],[2, 5, 1, 2, 0, 0, 2, 8, 12087, 15353],[2, 5, 1, 3, 1, 1, 2, 8, 12087, 15353],[2, 5, 1, 5, 1, 2, 2, 8, 12087, 15353],[2, 5, 1, 7, 1, 1, 1, 45, 27440, 1637],[2, 5, 1, 9, 1, 1, 1, 45, 27440, 1637],[2, 5, 1, 11, 1, 2, 1, 59, 29077, 2344],[2, 5, 1, 13, 1, 2, 1, 59, 29077, 2344],[2, 5, 1, 15, 1, 1, 1, 58, 29077, 4190],[2, 5, 1, 17, 1, 1, 1, 58, 29077, 4190],[2, 5, 1, 19, 1, 2, 1, 53, 31421, 2235],[2, 5, 1, 21, 1, 1, 1, 53, 31421, 2235],[2, 5, 1, 23, 0, 0, 1, 8, 33656, 2057],[2, 5, 1, 24, 1, 1, 1, 8, 33656, 2057],[2, 5, 1, 26, 1, 2, 1, 8, 33656, 2057],[2, 5, 1, 28, 1, 1, 1, 71, 35713, 330],[2, 5, 1, 30, 1, 2, 1, 63, 35713, 459],[2, 5, 1, 32, 0, 0, 1, 9, 36043, 2631],[2, 5, 1, 33, 2, 0, 1, 9, 36043, 2631],[2, 5, 1, 34, 1, 2, 1, 9, 36043, 2631],[2, 5, 1, 36, 1, 1, 1, 9, 36043, 2631],[2, 5, 1, 38, 1, 1, 1, 44, 38674, 1184],[2, 5, 1, 40, 1, 1, 1, 44, 38674, 1184],[2, 5, 1, 42, 1, 1, 1, 40, 39858, 512],[2, 5, 1, 44, 1, 2, 1, 64, 40370, 284],[2, 5, 1, 46, 1, 1, 1, 64, 40370, 284],[2, 5, 1, 48, 1, 2, 1, 67, 40654, 818],[2, 5, 1, 50, 1, 1, 1, 53, 40654, 1804],[2, 5, 1, 52, 1, 1, 1, 72, 41472, 1112],[2, 5, 1, 54, 1, 2, 1, 59, 42584, 722],[2, 5, 1, 56, 1, 1, 1, 65, 42584, 1648],[2, 5, 1, 58, 1, 2, 1, 72, 44232, 151],[2, 5, 1, 60, 0, 0, 1, 10, 44383, 403],[2, 5, 1, 61, 1, 2, 1, 10, 44383, 403],[2, 5, 1, 63, 1, 1, 1, 10, 44383, 403],[2, 5, 1, 65, 1, 1, 1, 53, 44786, 3281],[2, 5, 1, 67, 1, 2, 1, 51, 48067, 209],[2, 5, 1, 69, 1, 2, 1, 72, 48067, 1480],[2, 5, 1, 71, 1, 2, 1, 72, 49547, 1569],[2, 5, 1, 73, 1, 2, 1, 72, 49547, 2795],[2, 5, 1, 75, 0, 0, 1, 10, 52342, 1188],[2, 5, 1, 76, 1, 2, 1, 10, 52342, 1188],[2, 5, 1, 78, 3, 0, 26, 6508, 978048, 50396],[2, 5, 2, 2, 0, 0, 2, 8, 12087, 15401],[2, 5, 2, 3, 1, 1, 2, 8, 12087, 15401],[2, 5, 2, 5, 1, 2, 1, 34, 27488, 834],[2, 5, 2, 7, 1, 2, 1, 66, 28322, 1016],[2, 5, 2, 9, 1, 1, 1, 38, 29338, 1481],[2, 5, 2, 11, 1, 1, 1, 49, 29338, 1805],[2, 5, 2, 13, 1, 1, 1, 51, 31143, 1097],[2, 5, 2, 15, 1, 1, 1, 53, 32240, 206],[2, 5, 2, 17, 1, 2, 1, 51, 32446, 298],[2, 5, 2, 19, 1, 2, 1, 66, 32744, 1156],[2, 5, 2, 21, 1, 1, 1, 54, 33900, 336],[2, 5, 2, 23, 1, 1, 1, 69, 34236, 689],[2, 5, 2, 25, 1, 2, 1, 58, 34925, 573],[2, 5, 2, 27, 1, 1, 1, 50, 35498, 1165],[2, 5, 2, 29, 1, 2, 1, 72, 36663, 251],[2, 5, 2, 31, 2, 0, 1, 3, 36914, 436],[2, 5, 2, 32, 1, 1, 1, 3, 36914, 436],[2, 5, 2, 34, 1, 1, 1, 62, 37350, 175],[2, 5, 2, 36, 1, 1, 1, 62, 37350, 370],[2, 5, 2, 38, 1, 1, 1, 40, 37720, 136],[2, 5, 2, 40, 1, 2, 1, 66, 37856, 304],[2, 5, 2, 42, 1, 2, 1, 70, 37856, 1630],[2, 5, 2, 44, 1, 2, 1, 72, 38160, 2150],[2, 5, 2, 46, 1, 1, 1, 38, 40310, 237],[2, 5, 2, 48, 1, 1, 1, 51, 40310, 923],[2, 5, 2, 50, 1, 2, 1, 67, 41233, 197],[2, 5, 2, 52, 2, 0, 1, 2, 41233, 2699],[2, 5, 2, 53, 1, 5, 1, 2, 41233, 2699],[2, 5, 2, 55, 3, 0, 26, 8553, 856660, 35565],[2, 5, 3, 2, 0, 0, 2, 8, 12087, 15403],[2, 5, 3, 3, 1, 1, 2, 8, 12087, 15403],[2, 5, 3, 5, 1, 2, 2, 8, 12087, 15403],[2, 5, 3, 7, 1, 1, 1, 73, 27490, 445],[2, 5, 3, 9, 1, 2, 1, 73, 27490, 445],[2, 5, 3, 11, 1, 2, 1, 65, 27935, 340],[2, 5, 3, 13, 1, 6, 1, 33, 28275, 1016],[2, 5, 3, 14, 1, 1, 3, 8, 0, 19840],[2, 5, 3, 16, 1, 1, 5, 1, 19840, 1388],[2, 5, 3, 18, 1, 2, 5, 1, 21228, 607],[2, 5, 3, 19, 1, 2, 5, 1, 21228, 607],[2, 5, 3, 21, 1, 2, 5, 1, 21228, 607],[2, 5, 3, 23, 1, 2, 5, 1, 21228, 607],[2, 5, 3, 26, 1, 2, 2551, 1, 21835, 6968],[2, 5, 3, 27, 1, 1, 2551, 1, 21835, 6968],[2, 5, 3, 30, 1, 2, 36, 1, 28803, 8198],[2, 5, 3, 31, 1, 1, 36, 1, 28803, 8198],[2, 5, 3, 34, 1, 2, 151, 3, 37001, 285],[2, 5, 3, 36, 1, 2, 151, 3, 37001, 285],[2, 5, 3, 38, 1, 2, 151, 3, 37001, 285],[2, 5, 3, 40, 1, 3, 6, 1, 37286, 8735],[2, 5, 3, 42, 1, 2, 5, 1, 46021, 2237],[2, 5, 3, 44, 1, 1, 4, 4, 48258, 644],[2, 5, 3, 46, 1, 1, 5, 1, 48258, 1523],[2, 5, 3, 48, 1, 1, 5, 5, 49781, 218],[2, 5, 3, 50, 1, 2, 5, 4, 49999, 1618],[2, 5, 3, 52, 1, 1, 5, 3, 51617, 1135],[2, 5, 3, 54, 1, 2, 4, 45, 51617, 1363],[2, 5, 3, 56, 1, 1, 4, 1, 52980, 936],[2, 5, 3, 58, 1, 1, 4, 48, 53916, 227],[2, 5, 3, 60, 1, 1, 4, 5, 53916, 959],[2, 5, 3, 63, 0, 0, 1, 12, 29291, 2185],[2, 5, 3, 64, 1, 2, 1, 12, 29291, 2185],[2, 5, 3, 66, 1, 2, 1, 12, 29291, 2185],[2, 5, 3, 68, 1, 3, 1, 33, 31476, 2130],[2, 5, 3, 70, 1, 2, 1, 33, 31476, 2130],[2, 5, 3, 72, 1, 2, 1, 58, 33606, 1481],[2, 5, 3, 74, 1, 3, 1, 58, 33606, 1481],[2, 5, 3, 76, 0, 0, 1, 8, 35087, 1272],[2, 5, 3, 77, 1, 3, 1, 8, 35087, 1272],[2, 5, 3, 79, 1, 2, 1, 8, 35087, 1272],[2, 5, 3, 81, 1, 2, 1, 64, 36359, 759],[2, 5, 3, 83, 1, 4, 1, 64, 36359, 759],[2, 5, 3, 85, 0, 0, 1, 8, 37118, 671],[2, 5, 3, 86, 2, 0, 1, 8, 37118, 671],[2, 5, 3, 87, 1, 4, 1, 8, 37118, 671],[2, 5, 3, 89, 1, 1, 1, 62, 37789, 392],[2, 5, 3, 91, 0, 0, 1, 10, 37789, 604],[2, 5, 3, 92, 1, 2, 1, 10, 37789, 604],[2, 5, 3, 94, 2, 0, 1, 1, 38393, 6732],[2, 5, 3, 95, 1, 1, 1, 1, 38393, 6732],[2, 5, 3, 97, 0, 0, 1, 8, 45125, 243],[2, 5, 3, 98, 1, 1, 1, 8, 45125, 243],[2, 5, 3, 100, 1, 1, 1, 62, 45368, 370],[2, 5, 3, 102, 0, 0, 1, 9, 45368, 2824],[2, 5, 3, 103, 1, 1, 1, 9, 45368, 2824],[2, 5, 3, 105, 0, 0, 1, 34, 48192, 710],[2, 5, 3, 106, 1, 1, 1, 34, 48192, 710],[2, 5, 3, 108, 0, 0, 1, 8, 48902, 312],[2, 5, 3, 109, 1, 1, 1, 8, 48902, 312],[2, 5, 3, 111, 0, 0, 1, 8, 49214, 297],[2, 5, 3, 112, 1, 1, 1, 8, 49214, 297],[2, 5, 3, 114, 1, 1, 1, 50, 49511, 369],[2, 5, 3, 116, 1, 1, 1, 57, 49880, 218],[2, 5, 3, 118, 0, 0, 1, 8, 50098, 319],[2, 5, 3, 119, 1, 1, 1, 8, 50098, 319],[2, 5, 3, 121, 2, 0, 1, 1, 50417, 229],[2, 5, 3, 122, 1, 1, 1, 1, 50417, 229],[2, 5, 3, 124, 1, 1, 1, 72, 50646, 221],[2, 5, 3, 126, 0, 0, 1, 8, 50646, 1108],[2, 5, 3, 127, 2, 0, 1, 8, 50646, 1108],[2, 5, 3, 128, 1, 1, 1, 8, 50646, 1108],[2, 5, 3, 130, 3, 0, 26, 6305, 996062, 40650],[2, 5, 3, 132, 2, 0, 3, 1, 51754, 444],[2, 5, 3, 133, 3, 0, 3, 71, 51754, 444],[2, 6, 1, 2, 0, 0, 2, 8, 12087, 15223],[2, 6, 1, 3, 1, 2, 2, 8, 12087, 15223],[2, 6, 1, 5, 1, 2, 2, 8, 12087, 15223],[2, 6, 1, 7, 1, 2, 2, 8, 12087, 15223],[2, 6, 1, 9, 1, 2, 1, 38, 27310, 4281],[2, 6, 1, 11, 1, 2, 1, 38, 27310, 4281],[2, 6, 1, 13, 1, 2, 1, 72, 31591, 1844],[2, 6, 1, 15, 2, 0, 1, 1, 33435, 435],[2, 6, 1, 16, 1, 5, 1, 1, 33435, 435],[2, 6, 1, 18, 1, 1, 1, 52, 33870, 3321],[2, 6, 1, 20, 1, 1, 1, 48, 37191, 196],[2, 6, 1, 22, 1, 1, 1, 70, 37387, 273],[2, 6, 1, 24, 0, 0, 1, 9, 37660, 2566],[2, 6, 1, 25, 2, 0, 1, 9, 37660, 2566],[2, 6, 1, 26, 1, 1, 1, 9, 37660, 2566],[2, 6, 1, 28, 0, 0, 1, 8, 40226, 1035],[2, 6, 1, 29, 1, 1, 1, 8, 40226, 1035],[2, 6, 1, 31, 2, 0, 1, 1, 41261, 288],[2, 6, 1, 32, 1, 1, 1, 1, 41261, 288],[2, 6, 1, 34, 1, 4, 1, 56, 41549, 267],[2, 6, 1, 36, 2, 0, 1, 1, 41816, 123],[2, 6, 1, 37, 1, 1, 1, 1, 41816, 123],[2, 6, 1, 39, 0, 0, 1, 9, 41939, 187],[2, 6, 1, 40, 1, 1, 1, 9, 41939, 187],[2, 6, 1, 42, 0, 0, 1, 8, 42126, 525],[2, 6, 1, 43, 1, 1, 1, 8, 42126, 525],[2, 6, 1, 45, 0, 0, 1, 8, 42651, 251],[2, 6, 1, 46, 2, 0, 1, 8, 42651, 251],[2, 6, 1, 47, 1, 1, 1, 8, 42651, 251],[2, 6, 1, 49, 1, 1, 1, 61, 42902, 349],[2, 6, 1, 51, 2, 0, 1, 1, 43251, 122],[2, 6, 1, 52, 1, 1, 1, 1, 43251, 122],[2, 6, 1, 54, 1, 1, 1, 65, 43373, 312],[2, 6, 1, 56, 2, 0, 1, 1, 43373, 7237],[2, 6, 1, 57, 1, 1, 1, 1, 43373, 7237],[2, 6, 1, 59, 2, 0, 1, 1, 50610, 212],[2, 6, 1, 60, 3, 0, 21, 6751, 765608, 39047],[2, 6, 1, 62, 2, 0, 3, 1, 50822, 497],[2, 6, 1, 63, 3, 0, 3, 56, 50822, 497],[2, 7, 1, 2, 0, 0, 2, 8, 12087, 15468],[2, 7, 1, 3, 1, 2, 2, 8, 12087, 15468],[2, 7, 1, 5, 1, 4, 2, 8, 12087, 15468],[2, 7, 1, 7, 0, 0, 1, 8, 27555, 3574],[2, 7, 1, 8, 2, 0, 1, 8, 27555, 3574],[2, 7, 1, 9, 1, 5, 1, 8, 27555, 3574],[2, 7, 1, 11, 2, 0, 1, 1, 31129, 3106],[2, 7, 1, 12, 1, 1, 1, 1, 31129, 3106],[2, 7, 1, 14, 1, 1, 1, 46, 34235, 218],[2, 7, 1, 16, 1, 1, 1, 70, 34453, 194],[2, 7, 1, 18, 0, 0, 1, 9, 34647, 2439],[2, 7, 1, 19, 2, 0, 1, 9, 34647, 2439],[2, 7, 1, 20, 1, 1, 1, 9, 34647, 2439],[2, 7, 1, 22, 0, 0, 1, 8, 37086, 1022],[2, 7, 1, 23, 2, 0, 1, 8, 37086, 1022],[2, 7, 1, 24, 1, 1, 1, 8, 37086, 1022],[2, 7, 1, 26, 0, 0, 1, 8, 38108, 462],[2, 7, 1, 27, 2, 0, 1, 8, 38108, 462],[2, 7, 1, 28, 3, 0, 9, 4621, 249300, 26483],[2, 7, 1, 30, 2, 0, 3, 1, 38570, 395],[2, 7, 1, 31, 3, 0, 3, 151, 38570, 395],[2, 8, 1, 2, 0, 0, 2, 8, 12087, 15443],[2, 8, 1, 3, 1, 2, 2, 8, 12087, 15443],[2, 8, 1, 5, 1, 2, 2, 8, 12087, 15443],[2, 8, 1, 7, 1, 4, 1, 54, 27530, 1430],[2, 8, 1, 9, 1, 2, 1, 54, 27530, 1430],[2, 8, 1, 11, 2, 0, 1, 1, 28960, 592],[2, 8, 1, 12, 1, 5, 1, 1, 28960, 592],[2, 8, 1, 14, 2, 0, 1, 1, 29552, 2479],[2, 8, 1, 15, 1, 1, 1, 1, 29552, 2479],[2, 8, 1, 17, 1, 1, 1, 50, 32031, 192],[2, 8, 1, 19, 1, 1, 1, 70, 32223, 172],[2, 8, 1, 21, 0, 0, 1, 9, 32395, 1561],[2, 8, 1, 22, 2, 0, 1, 9, 32395, 1561],[2, 8, 1, 23, 1, 1, 1, 9, 32395, 1561],[2, 8, 1, 25, 2, 0, 1, 1, 33956, 789],[2, 8, 1, 26, 1, 1, 1, 1, 33956, 789],[2, 8, 1, 28, 2, 0, 1, 1, 34745, 389],[2, 8, 1, 29, 3, 0, 10, 3909, 263479, 23047],[2, 8, 1, 31, 2, 0, 3, 1, 35134, 369],[2, 8, 1, 32, 3, 0, 3, 54, 35134, 369],[2, 9, 1, 2, 0, 0, 2, 8, 12087, 15571],[2, 9, 1, 3, 1, 1, 2, 8, 12087, 15571],[2, 9, 1, 4, 1, 2, 2, 8, 12087, 15571],[2, 9, 1, 7, 2, 0, 2826, 7, 27658, 272],[2, 9, 1, 8, 1, 2, 2826, 7, 27658, 272],[2, 9, 1, 10, 2, 0, 1, 1, 27930, 4137],[2, 9, 1, 11, 1, 5, 1, 1, 27930, 4137],[2, 9, 1, 13, 2, 0, 1, 1, 32067, 2907],[2, 9, 1, 14, 1, 1, 1, 1, 32067, 2907],[2, 9, 1, 16, 1, 1, 1, 41, 34974, 196],[2, 9, 1, 18, 1, 1, 1, 70, 35170, 174],[2, 9, 1, 20, 1, 1, 1, 70, 35170, 464],[2, 9, 1, 22, 2, 0, 1, 1, 35634, 195],[2, 9, 1, 23, 1, 1, 1, 1, 35634, 195],[2, 9, 1, 25, 2, 0, 1, 1, 35634, 364],[2, 9, 1, 26, 1, 1, 1, 1, 35634, 364],[2, 9, 1, 28, 0, 0, 1, 8, 35998, 2631],[2, 9, 1, 29, 2, 0, 1, 8, 35998, 2631],[2, 9, 1, 30, 1, 1, 1, 8, 35998, 2631],[2, 9, 1, 32, 2, 0, 1, 1, 38629, 1173],[2, 9, 1, 33, 1, 1, 1, 1, 38629, 1173],[2, 9, 1, 35, 0, 0, 1, 8, 39802, 286],[2, 9, 1, 36, 1, 1, 1, 8, 39802, 286],[2, 9, 1, 38, 0, 0, 1, 8, 40088, 459],[2, 9, 1, 39, 2, 0, 1, 8, 40088, 459],[2, 9, 1, 40, 1, 1, 1, 8, 40088, 459],[2, 9, 1, 42, 0, 0, 1, 8, 40547, 247],[2, 9, 1, 43, 2, 0, 1, 8, 40547, 247],[2, 9, 1, 44, 1, 1, 1, 8, 40547, 247],[2, 9, 1, 46, 0, 0, 1, 8, 40794, 282],[2, 9, 1, 47, 1, 1, 1, 8, 40794, 282],[2, 9, 1, 49, 1, 1, 1, 57, 41076, 297],[2, 9, 1, 51, 0, 0, 1, 8, 41373, 373],[2, 9, 1, 52, 1, 1, 1, 8, 41373, 373],[2, 9, 1, 54, 2, 0, 1, 1, 41746, 481],[2, 9, 1, 55, 1, 1, 1, 1, 41746, 481],[2, 9, 1, 57, 1, 1, 1, 72, 42227, 248],[2, 9, 1, 59, 1, 1, 1, 64, 42475, 570],[2, 9, 1, 61, 0, 0, 1, 8, 43045, 7159],[2, 9, 1, 62, 2, 0, 1, 8, 43045, 7159],[2, 9, 1, 63, 1, 1, 1, 8, 43045, 7159],[2, 9, 1, 65, 2, 0, 1, 1, 50204, 253],[2, 9, 1, 66, 3, 0, 2848, 6781, 814328, 38739],[2, 9, 1, 68, 2, 0, 3, 1, 50457, 351],[2, 9, 1, 69, 3, 0, 3, 72, 50457, 351],[2, 10, 1, 2, 0, 0, 2, 8, 12087, 16293],[2, 10, 1, 3, 1, 4, 2, 8, 12087, 16293],[2, 10, 1, 5, 1, 2, 2, 8, 12087, 16293],[2, 10, 1, 7, 1, 2, 1, 59, 28380, 1569],[2, 10, 1, 9, 1, 2, 1, 59, 28380, 1569],[2, 10, 1, 11, 2, 0, 1, 1, 29949, 6419],[2, 10, 1, 12, 1, 2, 1, 1, 29949, 6419],[2, 10, 1, 14, 1, 2, 1, 1, 29949, 6419],[2, 10, 1, 16, 1, 2, 1, 34, 36368, 4741],[2, 10, 1, 18, 1, 2, 1, 34, 36368, 4741],[2, 10, 1, 20, 1, 2, 1, 34, 36368, 4741],[2, 10, 1, 22, 0, 0, 1, 9, 41109, 2164],[2, 10, 1, 23, 1, 3, 1, 9, 41109, 2164],[2, 10, 1, 25, 1, 2, 1, 9, 41109, 2164],[2, 10, 1, 27, 1, 3, 1, 43, 43273, 1900],[2, 10, 1, 29, 1, 3, 1, 58, 45173, 157],[2, 10, 1, 31, 0, 0, 1, 8, 45330, 771],[2, 10, 1, 32, 1, 3, 1, 8, 45330, 771],[2, 10, 1, 34, 2, 0, 1, 1, 46101, 481],[2, 10, 1, 35, 1, 2, 1, 1, 46101, 481],[2, 10, 1, 37, 0, 0, 1, 9, 46582, 2919],[2, 10, 1, 38, 2, 0, 1, 9, 46582, 2919],[2, 10, 1, 39, 1, 2, 1, 9, 46582, 2919],[2, 10, 1, 41, 1, 2, 1, 9, 46582, 2919],[2, 10, 1, 43, 0, 0, 1, 8, 49501, 1497],[2, 10, 1, 44, 1, 2, 1, 8, 49501, 1497],[2, 10, 1, 46, 1, 2, 1, 8, 49501, 1497],[2, 10, 1, 48, 0, 0, 1, 8, 50998, 5384],[2, 10, 1, 49, 1, 4, 1, 8, 50998, 5384],[2, 10, 1, 51, 1, 2, 1, 34, 56382, 1142],[2, 10, 1, 53, 0, 0, 1, 8, 57524, 1090],[2, 10, 1, 54, 2, 0, 1, 8, 57524, 1090],[2, 10, 1, 55, 0, 0, 1, 8, 58614, 0],[2, 10, 1, 56, 2, 0, 1, 8, 58614, 0],[2, 10, 1, 57, 1, 5, 1, 8, 58614, 0],[2, 10, 1, 59, 2, 0, 1, 4, 58614, 9901],[2, 10, 1, 60, 1, 1, 1, 4, 58614, 9901],[2, 10, 1, 62, 0, 0, 1, 9, 68515, 2473],[2, 10, 1, 63, 2, 0, 1, 9, 68515, 2473],[2, 10, 1, 64, 1, 1, 1, 9, 68515, 2473],[2, 10, 1, 66, 2, 0, 1, 4, 70988, 1156],[2, 10, 1, 67, 1, 1, 1, 4, 70988, 1156],[2, 10, 1, 69, 1, 1, 1, 65, 72144, 233],[2, 10, 1, 71, 0, 0, 1, 8, 72377, 7735],[2, 10, 1, 72, 2, 0, 1, 8, 72377, 7735],[2, 10, 1, 73, 1, 1, 1, 8, 72377, 7735],[2, 10, 1, 75, 2, 0, 1, 1, 80112, 276],[2, 10, 1, 76, 3, 0, 22, 26807, 1070121, 68301],[2, 11, 1, 2, 0, 0, 2, 8, 12087, 15069],[2, 11, 1, 3, 1, 2, 2, 8, 12087, 15069],[2, 11, 1, 5, 1, 1, 1, 47, 27156, 755],[2, 11, 1, 7, 1, 2, 1, 63, 27156, 916],[2, 11, 1, 9, 2, 0, 1, 2, 27911, 3554],[2, 11, 1, 10, 1, 5, 1, 2, 27911, 3554],[2, 11, 1, 12, 1, 1, 1, 60, 31465, 2083],[2, 11, 1, 14, 0, 0, 1, 8, 33548, 2434],[2, 11, 1, 15, 2, 0, 1, 8, 33548, 2434],[2, 11, 1, 16, 1, 1, 1, 8, 33548, 2434],[2, 11, 1, 18, 0, 0, 1, 29, 35982, 468],[2, 11, 1, 19, 2, 0, 1, 29, 35982, 468],[2, 11, 1, 20, 1, 1, 1, 29, 35982, 468],[2, 11, 1, 22, 0, 0, 1, 8, 36450, 422],[2, 11, 1, 23, 2, 0, 1, 8, 36450, 422],[2, 11, 1, 24, 1, 1, 1, 8, 36450, 422],[2, 11, 1, 26, 0, 0, 1, 8, 36872, 389],[2, 11, 1, 27, 1, 1, 1, 8, 36872, 389],[2, 11, 1, 29, 1, 1, 1, 56, 37261, 450],[2, 11, 1, 31, 0, 0, 1, 34, 37261, 679],[2, 11, 1, 32, 1, 1, 1, 34, 37261, 679],[2, 11, 1, 34, 1, 1, 1, 61, 37940, 456],[2, 11, 1, 36, 0, 0, 1, 8, 38396, 236],[2, 11, 1, 37, 1, 1, 1, 8, 38396, 236],[2, 11, 1, 39, 0, 0, 1, 8, 38632, 622],[2, 11, 1, 40, 1, 1, 1, 8, 38632, 622],[2, 11, 1, 42, 1, 1, 1, 67, 39254, 645],[2, 11, 1, 44, 0, 0, 1, 8, 39899, 176],[2, 11, 1, 45, 2, 0, 1, 8, 39899, 176],[2, 11, 1, 46, 1, 1, 1, 8, 39899, 176],[2, 11, 1, 48, 1, 1, 1, 72, 40075, 1306],[2, 11, 1, 50, 1, 1, 1, 65, 41381, 264],[2, 11, 1, 52, 2, 0, 1, 1, 41645, 6470],[2, 11, 1, 53, 1, 1, 1, 1, 41645, 6470],[2, 11, 1, 55, 2, 0, 1, 1, 48115, 201],[2, 11, 1, 56, 3, 0, 21, 7197, 708486, 37595],[2, 12, 1, 2, 0, 0, 2, 8, 12087, 14954],[2, 12, 1, 3, 1, 1, 2, 8, 12087, 14954],[2, 12, 1, 5, 1, 2, 2, 8, 12087, 14954],[2, 12, 1, 7, 1, 2, 1, 63, 27041, 905],[2, 12, 1, 9, 1, 1, 1, 63, 27041, 905],[2, 12, 1, 11, 0, 0, 1, 8, 27946, 2177],[2, 12, 1, 12, 1, 2, 1, 8, 27946, 2177],[2, 12, 1, 14, 1, 1, 1, 8, 27946, 2177],[2, 12, 1, 16, 1, 1, 1, 41, 30123, 5206],[2, 12, 1, 18, 0, 0, 1, 9, 35329, 291],[2, 12, 1, 19, 1, 1, 1, 9, 35329, 291],[2, 12, 1, 21, 0, 0, 1, 8, 35620, 948],[2, 12, 1, 22, 2, 0, 1, 8, 35620, 948],[2, 12, 1, 23, 1, 5, 1, 8, 35620, 948],[2, 12, 1, 25, 2, 0, 1, 4, 36568, 5283],[2, 12, 1, 26, 1, 1, 1, 4, 36568, 5283],[2, 12, 1, 28, 0, 0, 1, 8, 41851, 2438],[2, 12, 1, 29, 1, 1, 1, 8, 41851, 2438],[2, 12, 1, 31, 0, 0, 1, 8, 44289, 1305],[2, 12, 1, 32, 2, 0, 1, 8, 44289, 1305],[2, 12, 1, 33, 1, 1, 1, 8, 44289, 1305],[2, 12, 1, 35, 0, 0, 1, 8, 45594, 477],[2, 12, 1, 36, 1, 1, 1, 8, 45594, 477],[2, 12, 1, 38, 0, 0, 1, 8, 46071, 257],[2, 12, 1, 39, 1, 1, 1, 8, 46071, 257],[2, 12, 1, 41, 1, 1, 1, 52, 46328, 203],[2, 12, 1, 43, 1, 1, 1, 63, 46531, 134],[2, 12, 1, 45, 2, 0, 1, 1, 46665, 221],[2, 12, 1, 46, 1, 1, 1, 1, 46665, 221],[2, 12, 1, 48, 1, 1, 1, 65, 46886, 342],[2, 12, 1, 50, 0, 0, 1, 8, 47228, 6471],[2, 12, 1, 51, 2, 0, 1, 8, 47228, 6471],[2, 12, 1, 52, 1, 1, 1, 8, 47228, 6471],[2, 12, 1, 54, 2, 0, 1, 1, 53699, 249],[2, 12, 1, 55, 3, 0, 18, 8931, 669856, 41861]];
+
+// ============================================================
+// SLIDE 7
+// ============================================================
+(function(){
+  const RC=S4_RCOLORS;
+  let showFailed=true, runOn=[true,true,true];
+
+  window.s7ToggleFailed=function(){
+    showFailed=!showFailed;
+    document.getElementById('s7-fail-btn').classList.toggle('on',showFailed);
+    s7Render();
+  };
+  window.s7ToggleRun=function(i){
+    runOn[i]=!runOn[i];
+    document.querySelectorAll('[data-run="'+i+'"]').forEach(b=>b.classList.toggle('on',runOn[i]));
+    s7Render();
+  };
+
+  function visAttempts(){
+    return S4_META.filter(a=>runOn[a[0]]&&(showFailed||a[3]===0))
+      .sort((a,b)=>a[0]-b[0]||a[1]-b[1]||a[2]-b[2]);
+  }
+  function turnsFor(r,s,att){return S4_TURNS.filter(t=>t[0]===r&&t[1]===s&&t[2]===att);}
+  function tWeight(t){return Math.sqrt(t[8]+t[9]+t[6]*8+t[7]*30+1);}
+  function stepLabel(si,ai,fail){
+    return 's'+String(si+1).padStart(2,'0')+(ai>1?'/a'+ai:'')+(fail?' ✗':' ✓');
+  }
+
+  /* ── VIS 1: FILMSTRIP ── */
+  function renderFilmstrip(){
+    const el=document.getElementById('s7-filmstrip');
+    if(!el)return;
+    const atts=visAttempts();
+    if(!atts.length){el.innerHTML='<p style="color:var(--muted);font-size:12px;margin:8px 0">No data</p>';return;}
+    let html='',lastRun=-1;
+    atts.forEach(function(m){
+      const[ri,si,ai,fail]=m;
+      const turns=turnsFor(ri,si,ai);
+      if(!turns.length)return;
+      if(ri!==lastRun){
+        lastRun=ri;
+        html+='<div class="s7-group-label" style="color:'+RC[ri]+'">'+S4_RUNS[ri]+'</div>';
+      }
+      const totalW=turns.reduce(function(s,t){return s+tWeight(t);},0);
+      let segs='';
+      turns.forEach(function(t){
+        const cr=t[8],cc=t[9],inp=t[6],out=t[7];
+        const wTotal=cr+cc+inp*8+out*30+1;
+        const wSeg=tWeight(t)/totalW*100;
+        const h1=(cr/wTotal*100).toFixed(1);
+        const h2=(cc/wTotal*100).toFixed(1);
+        const h3=(inp*8/wTotal*100).toFixed(1);
+        const h4=(out*30/wTotal*100).toFixed(1);
+        segs+='<div class="filmstrip-turn" style="width:'+wSeg.toFixed(2)+'%">'
+          +'<div style="height:'+h1+'%;background:#78350f"></div>'
+          +'<div style="height:'+h2+'%;background:#d97706"></div>'
+          +'<div style="height:'+h3+'%;background:#3b82f6"></div>'
+          +'<div style="height:'+h4+'%;background:#10b981"></div>'
+          +'</div><div class="filmstrip-tick"></div>';
+      });
+      const stripCls='filmstrip-strip'+(fail?' fail-row':'');
+      html+='<div class="filmstrip-row">'
+        +'<div class="filmstrip-label" style="color:'+RC[ri]+'">'+stepLabel(si,ai,fail)+'</div>'
+        +'<div class="'+stripCls+'">'+segs+'</div>'
+        +'</div>';
+    });
+    el.innerHTML=html;
+  }
+
+  /* ── VIS 2: TAXONOMY ── */
+  function renderTaxonomy(){
+    const el=document.getElementById('s7-taxonomy');
+    if(!el)return;
+    const atts=visAttempts();
+    if(!atts.length){el.innerHTML='';return;}
+    const CC=['#8b5cf6','#f59e0b','#10b981','#94a3b8','#3b82f6','#ec4899'];
+    const CN=['Explore','Execute','Write','Reason','Complete','Delegate'];
+    let html='',lastRun=-1;
+    atts.forEach(function(m){
+      const[ri,si,ai,fail]=m;
+      const turns=turnsFor(ri,si,ai);
+      if(!turns.length)return;
+      if(ri!==lastRun){lastRun=ri;html+='<div class="s7-group-label" style="color:'+RC[ri]+'">'+S4_RUNS[ri]+'</div>';}
+      const cats=[0,0,0,0,0,0];
+      turns.forEach(function(t){
+        const ki=t[4],ti=t[5];
+        if(ki===1){
+          if(ti===2||ti===3||ti===4)cats[0]++;
+          else if(ti===1)cats[1]++;
+          else if(ti===5)cats[2]++;
+          else if(ti===6)cats[5]++;
+        }else if(ki===0||ki===2)cats[3]++;
+        else if(ki===3)cats[4]++;
+      });
+      const tot=cats.reduce(function(s,v){return s+v;},0);
+      const segs=cats.map(function(c,i){
+        return c>0?'<div class="tax-seg" title="'+CN[i]+': '+c+'" style="width:'+(c/tot*100).toFixed(1)+'%;background:'+CC[i]+'"></div>':'';
+      }).join('');
+      const outcomeColor=fail?'#f87171':'#6ee7b7';
+      html+='<div class="tax-row">'
+        +'<div class="tax-label" style="color:'+RC[ri]+'">'+stepLabel(si,ai,fail)+'</div>'
+        +'<div class="tax-bar">'+segs+'</div>'
+        +'<div class="tax-count">'+tot+'</div>'
+        +'<div class="tax-outcome" style="color:'+outcomeColor+'">'+(fail?'✗':'✓')+'</div>'
+        +'</div>';
+    });
+    el.innerHTML=html;
+  }
+
+  /* ── VIS 3: COST GRID ── */
+  function renderGrid(){
+    const el=document.getElementById('s7-grid');
+    const totEl=document.getElementById('s7-totals');
+    if(!el)return;
+    const MAX=13;
+    // cellData[r][s] = {cost, failCount, total}
+    const cells=[];
+    for(let r=0;r<3;r++){
+      cells[r]=[];
+      for(let s=0;s<MAX;s++){
+        const metas=S4_META.filter(function(a){return a[0]===r&&a[1]===s;});
+        if(!metas.length){cells[r][s]=null;continue;}
+        const cost=S4_TURNS.filter(function(t){return t[0]===r&&t[1]===s;})
+          .reduce(function(sum,t){return sum+t[8]+t[9]+t[6]*8;},0);
+        cells[r][s]={cost:cost,failCount:metas.filter(function(a){return a[3]===1;}).length,total:metas.length};
+      }
+    }
+    const allC=cells.flat().filter(Boolean).map(function(c){return c.cost;});
+    const maxC=Math.max.apply(null,allC);
+
+    function c2hex(cost){
+      const t=Math.pow(cost/maxC,0.55);
+      if(t<0.33){const u=t/0.33;return 'rgb('+(30+93*u|0)+','+(58+62*u|0)+','+(95+155*u|0)+')';}
+      else if(t<0.66){const u=(t-0.33)/0.33;return 'rgb('+(123+120*u|0)+','+(120-30*u|0)+','+(250-160*u|0)+')';}
+      else{const u=(t-0.66)/0.34;return 'rgb('+(243-8*u|0)+','+(90-46*u|0)+','+(90+15*u|0)+')';}
+    }
+
+    const SCOUNTS=[7,3,13];
+    let th='<tr><th></th>';
+    for(let s=0;s<MAX;s++)th+='<th>s'+String(s+1).padStart(2,'0')+'</th>';
+    th+='</tr>';
+
+    let rows='';
+    ['Baseline','V4','V5'].forEach(function(name,r){
+      if(!runOn[r])return;
+      rows+='<tr><td class="g-row-label" style="color:'+RC[r]+'">'+name+' <span style="color:var(--muted)">('+SCOUNTS[r]+')</span></td>';
+      for(let s=0;s<MAX;s++){
+        const d=cells[r][s];
+        if(!d){rows+='<td><div class="g-cell g-empty">—</div></td>';continue;}
+        const bg=c2hex(d.cost);
+        const bright=d.cost/maxC>0.35;
+        const tc=bright?'#fff':'rgba(255,255,255,0.6)';
+        const lbl=d.total>1?'×'+d.total:'';
+        const retry=d.failCount>0?'<div class="g-retry-bar"></div>':'';
+        const tip='s'+(s+1)+' | '+(d.cost/1e6).toFixed(1)+'M | '+d.total+' att';
+        rows+='<td title="'+tip+'"><div class="g-cell" style="background:'+bg+';color:'+tc+'">'+lbl+retry+'</div></td>';
+      }
+      rows+='</tr>';
+    });
+    el.innerHTML='<table class="cost-grid"><thead>'+th+'</thead><tbody>'+rows+'</tbody></table>';
+
+    // Summary bars
+    const runTotals=[0,1,2].map(function(r){
+      return S4_TURNS.filter(function(t){return t[0]===r;}).reduce(function(s,t){return s+t[8]+t[9]+t[6]*8;},0);
+    });
+    const maxT=Math.max.apply(null,runTotals);
+    totEl.innerHTML=['Baseline','V4','V5'].map(function(name,r){
+      if(!runOn[r])return'';
+      const pct=(runTotals[r]/maxT*100).toFixed(0);
+      const m=(runTotals[r]/1e6).toFixed(1);
+      return '<div class="g-total-bar"><div class="g-total-label" style="color:'+RC[r]+'">'+name+' — '+m+'M tokens</div>'
+        +'<div class="g-total-track"><div class="g-total-fill" style="width:'+pct+'%;background:'+RC[r]+'"></div></div></div>';
+    }).join('');
+  }
+
+  function s7Render(){renderFilmstrip();renderTaxonomy();renderGrid();}
+  window.initSlide7=function(){s7Render();};
+})();
 
 // ============================================================
 // INIT

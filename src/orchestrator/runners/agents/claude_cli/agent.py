@@ -560,6 +560,25 @@ class CLIAgent:
                 if readable.strip():
                     final_output_lines = readable.split("\n")
 
+                # Load sub-agent sessions spawned via the Agent tool.
+                # These run as separate Claude Code processes and their token
+                # costs are NOT included in the parent session totals above.
+                if action_log.session_id and context.working_dir:
+                    from orchestrator.runners.agents.claude_cli.subagents import load_sub_agents
+
+                    sub_agents = load_sub_agents(context.working_dir, action_log.session_id)
+                    if sub_agents:
+                        action_log.sub_agents = sub_agents
+                        for sa in sub_agents:
+                            action_log.sub_agent_total_input_tokens += sa.total_input_tokens
+                            action_log.sub_agent_total_output_tokens += sa.total_output_tokens
+                            action_log.sub_agent_total_cache_read_tokens += (
+                                sa.total_cache_read_tokens
+                            )
+                            action_log.sub_agent_total_cache_creation_tokens += (
+                                sa.total_cache_creation_tokens
+                            )
+
             # If process completed successfully, submit for verification
             # This triggers the workflow to move from BUILDING to VERIFYING
             if success:

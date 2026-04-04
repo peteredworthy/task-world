@@ -85,6 +85,32 @@ class ActionLogEntry(BaseModel):
     raw_type: str | None = None  # Original event type from the agent stream
 
 
+class SubAgentLog(BaseModel):
+    """Token usage and action data for a single Claude Code sub-agent session.
+
+    Sub-agents are spawned by the parent agent via the ``Agent`` tool
+    (e.g. ``subagent_type: "Explore"``). They run as separate Claude Code
+    processes and their token costs are NOT included in the parent session's
+    reported usage — so they must be captured separately.
+
+    Data comes from ``~/.claude/projects/{slug}/{session_id}/subagents/``.
+    """
+
+    agent_id: str = ""
+    agent_type: str = ""  # e.g. "Explore"
+    description: str = ""
+    model: str | None = None
+
+    # Per-turn token totals (summed across all turns; no ``result`` event)
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cache_creation_tokens: int = 0
+
+    # Structured tool calls (Read/Bash/Glob/Grep) so we know what was explored
+    entries: list[ActionLogEntry] = []
+
+
 class ActionLog(BaseModel):
     """Complete structured action log for an agent execution.
 
@@ -106,6 +132,15 @@ class ActionLog(BaseModel):
     total_output_tokens: int = 0
     total_cache_read_tokens: int = 0
     total_cache_creation_tokens: int = 0
+
+    # Sub-agent sessions spawned via the Agent tool (separate billing, not in totals above)
+    sub_agents: list[SubAgentLog] = []
+
+    # Sub-agent aggregate totals (separate from parent for cost accounting)
+    sub_agent_total_input_tokens: int = 0
+    sub_agent_total_output_tokens: int = 0
+    sub_agent_total_cache_read_tokens: int = 0
+    sub_agent_total_cache_creation_tokens: int = 0
 
 
 class ChecklistItem(BaseModel):

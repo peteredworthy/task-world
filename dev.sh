@@ -53,6 +53,23 @@ if [ -n "$STALE_PIDS" ]; then
   echo "Port 8000 cleared."
 fi
 
+# --- Kill stale Vite processes on port 5173 ---
+# Same issue: orphaned Vite processes hold the port, then die, leaving the UI unreachable.
+STALE_VITE=$(lsof -ti :5173 2>/dev/null || true)
+if [ -n "$STALE_VITE" ]; then
+  echo "Found existing process(es) on port 5173 (PIDs: $(echo $STALE_VITE | tr '\n' ' '))"
+  echo "Killing stale Vite processes..."
+  echo "$STALE_VITE" | xargs kill 2>/dev/null || true
+  sleep 1
+  REMAINING_VITE=$(lsof -ti :5173 2>/dev/null || true)
+  if [ -n "$REMAINING_VITE" ]; then
+    echo "Force-killing remaining: $REMAINING_VITE"
+    echo "$REMAINING_VITE" | xargs kill -9 2>/dev/null || true
+    sleep 1
+  fi
+  echo "Port 5173 cleared."
+fi
+
 # Backend (FastAPI + uvicorn --reload)
 echo "Starting backend on http://localhost:8000 ..."
 cd "$ROOT"
