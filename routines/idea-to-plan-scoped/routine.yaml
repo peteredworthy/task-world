@@ -329,42 +329,89 @@ routine:
             max_attempts: 2
 
         - id: "T-02"
-          title: "Generate Per-Step Code Context Files"
+          title: "Generate Per-Step Code and Architecture Context"
           profile: "summarizer"
           context_from:
             - artifact: "docs/{{feature}}/code-map.md"
               as: "context.code_map"
               required: false
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: true
           task_context: |
-            For each step plan file in docs/{{feature}}/step-*-plan.md, produce a targeted
-            code context file at docs/{{feature}}/ctx/step-XX-plan-code-context.md.
+            For each step plan file in docs/{{feature}}/step-*-plan.md, produce two targeted
+            context files in docs/{{feature}}/ctx/.
 
             CODE MAP (source file/function/line index from requirements gathering):
             {{context.code_map}}
 
+            FULL ARCHITECTURE:
+            {{context.architecture}}
+
             For each step-XX-plan.md file:
             1. Read the step plan to identify which fixes, components, and symbols it touches.
-            2. Filter the code map to only entries directly relevant to that step.
-            3. Write docs/{{feature}}/ctx/step-XX-plan-code-context.md with just those entries:
+
+            2. Write docs/{{feature}}/ctx/step-XX-plan-code-context.md — filtered code map
+               entries directly relevant to this step only:
 
                  ## Code Locations
                  - `src/path/to/file.py` — `ClassName.method_name()` lines N–M: what to change
                  - `src/path/to/other.py` — `standalone_function()` lines N–M: what to add
 
-            4. Keep each file under 300 words — precise navigation pointers only, no explanation.
+               Keep under 300 words. If code-map.md is absent, write:
+               "No code map available — agent should explore source files as needed."
 
-            If code-map.md does not exist or is empty, write a minimal placeholder for each step:
-            "No code map available — agent should explore source files as needed."
+            3. Write docs/{{feature}}/ctx/step-XX-plan-architecture-context.md — only the
+               architecture sections directly relevant to this step. Copy the relevant heading(s)
+               and their content verbatim; omit sections that don't touch this step's scope.
+               Keep under 500 words.
 
             Use the smallest/fastest available model — this is pure extraction, not reasoning.
           requirements:
             - id: "R1"
-              desc: "docs/{{feature}}/ctx/step-*-plan-code-context.md exists for each step plan file"
+              desc: "docs/{{feature}}/ctx/step-*-plan-code-context.md and step-*-plan-architecture-context.md exist for each step plan file"
               priority: expected
           auto_verify:
             items:
               - id: "code_context_files_exist"
                 cmd: "ls docs/{{feature}}/ctx/*-code-context.md >/dev/null 2>&1"
+                must: false
+              - id: "arch_context_files_exist"
+                cmd: "ls docs/{{feature}}/ctx/*-architecture-context.md >/dev/null 2>&1"
+                must: false
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Generate Per-Step Plan Context"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+          task_context: |
+            For each step plan file in docs/{{feature}}/step-*-plan.md, produce a targeted
+            plan context file at docs/{{feature}}/ctx/step-XX-plan-plan-context.md.
+
+            FULL PLAN:
+            {{context.plan}}
+
+            For each step-XX-plan.md file:
+            1. Read the step plan to identify which milestone(s) and implementation-order
+               sections in plan.md are relevant to this step.
+            2. Write docs/{{feature}}/ctx/step-XX-plan-plan-context.md with only those
+               sections copied verbatim from plan.md. Omit milestones and sections that
+               belong to other steps. Keep under 400 words.
+
+            Use the smallest/fastest available model — this is pure extraction, not reasoning.
+          requirements:
+            - id: "R1"
+              desc: "docs/{{feature}}/ctx/step-*-plan-plan-context.md exists for each step plan file"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "plan_context_files_exist"
+                cmd: "ls docs/{{feature}}/ctx/*-plan-context.md >/dev/null 2>&1"
                 must: false
           retry:
             max_attempts: 2
@@ -392,8 +439,13 @@ routine:
             per_item_prompt: |
               Convert the following step plan into a step file following the step-files format guide.
 
-              CODE CONTEXT (source file/function/line pointers for this step — use these
-              to navigate directly to change sites without re-reading source files):
+              PLAN CONTEXT (plan sections relevant to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-plan-context.md}}
+
+              ARCHITECTURE CONTEXT (architecture sections relevant to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-architecture-context.md}}
+
+              CODE CONTEXT (source file/function/line pointers for this step):
               {{file:docs/{{feature}}/ctx/{{item_stem}}-code-context.md}}
 
               STEP PLAN:
@@ -409,6 +461,7 @@ routine:
 
               Follow the step-files format guide provided in shared context.
             shared_context:
+              - "{{file:docs/{{feature}}/intent.md}}"
               - "{{file:docs/{{feature}}/clarifications.md}}"
               - "{{file:docs/plan-runner/step-files.md}}"
             max_concurrent: 4
@@ -509,6 +562,12 @@ routine:
 
               Do NOT modify the step file or any source code. Write analysis only.
 
+              PLAN CONTEXT (plan sections relevant to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-plan-context.md}}
+
+              ARCHITECTURE CONTEXT (architecture sections relevant to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-architecture-context.md}}
+
               CORRESPONDING STEP PLAN:
               {{file:docs/{{feature}}/{{item_stem}}.md}}
 
@@ -517,6 +576,7 @@ routine:
 
               Save notes to {{output_path}}.
             shared_context:
+              - "{{file:docs/{{feature}}/intent.md}}"
               - "{{file:docs/{{feature}}/clarifications.md}}"
             max_concurrent: 4
             max_turns: 20
