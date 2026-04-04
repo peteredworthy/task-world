@@ -6,12 +6,10 @@ routine:
     workflow with human review gates. Produces step files and a validated routine
     YAML ready for execution.
 
-    Extends idea-to-plan-optimized with scoped context delivery for fan-out steps:
-    at S-03, architecture.md sections are annotated with the step(s) they serve,
-    and intent.md items already carry step annotations. A bundled script validates
-    those annotations and splits both documents into per-step context packets so
-    each fan-out agent receives only the content relevant to its step, not the full
-    docs. The ctx/ directory is removed by the cleanup task at the end of S-08.
+    Extends idea-to-plan-optimized with targeted code context delivery for fan-out
+    steps: at S-03, a summarizer task reads the code map from requirements gathering
+    and produces per-step code context files in ctx/. These give each fan-out agent
+    direct file/function/line pointers without requiring codebase re-discovery.
 
     Primary process references live in docs/plan-runner/.
 
@@ -289,87 +287,6 @@ routine:
             - Verification strategy
 
             Follow docs/planner/templates/step-plan.md.
-
-            === PROVISIONAL INTENT COVERAGE ===
-
-            After creating all step plans, annotate docs/{{feature}}/intent.md to
-            record which step covers each [I-XX] item. Add the step reference inline
-            after the existing [I-XX] identifier:
-
-              Before: "All tests pass after each phase. [I-07]"
-              After:  "All tests pass after each phase. [I-07 → S-05]"
-
-            For items covered by multiple steps, list all:
-              "Zero backward-compatibility stubs remain. [I-12 → S-02, S-04]"
-
-            For items no step addresses, mark explicitly:
-              "Out of scope: frontend changes. [I-15 → NO-REQ: excluded by scope]"
-
-            Every [I-XX] must resolve to either a step reference or NO-REQ. Any
-            unresolved [I-XX] is a coverage gap — either add a step that covers it
-            or mark it NO-REQ with justification.
-
-            === END PROVISIONAL INTENT COVERAGE ===
-
-            === ARCHITECTURE SECTION ANNOTATION ===
-
-            After annotating intent.md, annotate headings in
-            docs/{{feature}}/architecture.md to record which step(s) depend on each
-            section. Use an HTML comment tag appended to the heading line:
-
-              ## Overview  <!-- steps: ALL -->
-              ## FIX-4: Atomic Signal Handlers  <!-- steps: S-01 -->
-              ## Database Migration Strategy  <!-- steps: S-02, S-04, S-05 -->
-              ### Migration rollback  <!-- steps: S-04 -->
-
-            Tags may appear at ANY heading level (H1–H6). Rules:
-
-            - EVERY heading with content must be covered — either by its own tag
-              or by inheriting from a tagged ancestor. The validation script fails
-              on uncovered headings.
-            - Use the step IDs you just created (S-01, S-02, etc.).
-            - Special values:
-                ALL  — include this section for every step
-                NONE — exclude this section from every step (child tags can still
-                       opt back in to override)
-            - A child tag overrides the ancestor for that entire subtree.
-            - Inheritance flows down: tagging a parent covers all untagged
-              descendants automatically.
-            - SHORTCUT: If the entire document is broadly relevant to all steps,
-              tag only the H1 (document title) with <!-- steps: ALL --> and every
-              section inherits that. No need to tag every heading individually.
-            - For finer control, tag at ## or ### level so sections that are truly
-              specific to one step don't get delivered to every agent.
-            - Err on the side of inclusion: if a section is plausibly useful to a
-              step, include it.
-
-            Optionally, you may also annotate docs/{{feature}}/plan.md the same
-            way. If plan.md has any <!-- steps: ... --> tags, the script will
-            produce per-step plan context packets in addition to architecture packets.
-            This is useful when different milestones or implementation-order sections
-            are only relevant to specific steps.
-
-            After tagging, run the validation/extraction script to confirm annotations
-            are correct and to produce the per-step context packets for S-04 and S-05:
-
-              python .orchestrator/routine-files/scripts/extract_ctx.py docs/{{feature}}
-
-            The script will:
-            1. Fail with clear error messages if any heading with content is uncovered,
-               or if any [I-XX] in intent.md lacks a → annotation.
-            2. On success, write for each step plan file:
-                 docs/{{feature}}/ctx/<stem>-architecture-context.md
-                 docs/{{feature}}/ctx/<stem>-intent.md
-                 docs/{{feature}}/ctx/<stem>-plan-context.md  (if plan.md is tagged)
-            3. Print a summary of full vs breadcrumb sections and per-step line counts.
-
-            If the script fails, fix the annotations it identifies and re-run.
-            Do NOT mark S-03 requirements done until the script exits 0.
-
-            The ctx/ files are consumed by S-04 and S-05 fan-out agents and removed
-            by the cleanup task at the end of S-08.
-
-            === END ARCHITECTURE SECTION ANNOTATION ===
           requirements:
             - id: "R1"
               desc: "Create step-XX-plan.md for each plan step"
@@ -383,22 +300,10 @@ routine:
             - id: "R4"
               desc: "Dependencies between steps are explicit"
               priority: expected
-            - id: "R5"
-              desc: "intent.md updated — every [I-XX] item is annotated with the step(s) that address it, or marked [I-XX → NO-REQ: justification]. No [I-XX] left unresolved."
-              priority: critical
-            - id: "R6"
-              desc: "architecture.md updated — every ## section has a <!-- steps: S-XX, ... --> annotation. The extract_ctx.py script exits 0 and ctx/ packets are written."
-              priority: critical
           auto_verify:
             items:
               - id: "step_plans_exist"
                 cmd: "ls docs/{{feature}}/step-*-plan.md >/dev/null 2>&1"
-                must: true
-              - id: "intent_coverage_started"
-                cmd: "grep -q '\\[I-.*→' docs/{{feature}}/intent.md"
-                must: true
-              - id: "arch_annotations_and_split"
-                cmd: "python .orchestrator/routine-files/scripts/extract_ctx.py docs/{{feature}}"
                 must: true
           verifier:
             rubric:
@@ -420,22 +325,6 @@ routine:
                 text: |
                   R4 — A: each plan states which prior steps must complete first and why.
                   B: ordering is implied by numbering but not stated.
-              - id: "R5"
-                text: |
-                  R5 — A: every [I-XX] in intent.md has a [→ S-XX] or [→ NO-REQ] annotation.
-                  Read the DoC section specifically — each criterion must be covered.
-                  B: most items covered but 1-2 [I-XX] remain unresolved.
-                  F: multiple unresolved [I-XX] items, or DoC criteria left without step coverage.
-              - id: "R6"
-                text: |
-                  R6 — A: every heading with content in architecture.md is covered by a
-                  <!-- steps: ... --> tag (own or inherited from an ancestor); the
-                  extract_ctx.py script exits 0 and docs/{{feature}}/ctx/ contains one
-                  -architecture-context.md and one -intent.md per step plan file. Verify
-                  by checking that docs/{{feature}}/ctx/ is non-empty and contains the
-                  expected file count.
-                  B: all headings covered but one or two ctx files are missing or empty.
-                  F: any heading with content is uncovered, or the script exits non-zero.
           retry:
             max_attempts: 2
 
@@ -502,15 +391,6 @@ routine:
             output_pattern: "docs/{{feature}}/steps/{{item_stem}}.md"
             per_item_prompt: |
               Convert the following step plan into a step file following the step-files format guide.
-
-              INTENT ITEMS (traced to this step):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-intent.md}}
-
-              PLAN CONTEXT (plan sections relevant to this step, if available):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-plan-context.md}}
-
-              ARCHITECTURE CONTEXT (sections relevant to this step only):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-architecture-context.md}}
 
               CODE CONTEXT (source file/function/line pointers for this step — use these
               to navigate directly to change sites without re-reading source files):
@@ -628,15 +508,6 @@ routine:
               3. For each failure mode, propose a concrete hardening action.
 
               Do NOT modify the step file or any source code. Write analysis only.
-
-              INTENT ITEMS (traced to this step):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-intent.md}}
-
-              PLAN CONTEXT (plan sections relevant to this step, if available):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-plan-context.md}}
-
-              ARCHITECTURE CONTEXT (sections relevant to this step only):
-              {{file:docs/{{feature}}/ctx/{{item_stem}}-architecture-context.md}}
 
               CORRESPONDING STEP PLAN:
               {{file:docs/{{feature}}/{{item_stem}}.md}}
@@ -790,13 +661,10 @@ routine:
               429" are insufficient.
 
             Also verify intent coverage completeness:
-            - Read intent.md and confirm every [I-XX] has a [→ S-XX] or [→ NO-REQ]
-              annotation from S-03. Any bare [I-XX] with no arrow is a gap.
-            - For each [I-XX → S-XX] annotation, confirm that the referenced step
-              file actually addresses the intent item. A step reference that does
-              not match the step file content is a traceability error.
-            - List any gaps in the verification-report.md under an "Intent Coverage
-              Gaps" section. If no gaps: note "Intent coverage: complete."
+            - Read intent.md and for each [I-XX] goal/constraint/criterion, confirm
+              that at least one step file addresses it. List any intent items with
+              no clear step file coverage under an "Intent Coverage Gaps" section.
+              If all items are covered: note "Intent coverage: complete."
           requirements:
             - id: "R1"
               desc: "Step files align with plan and intent"
@@ -814,8 +682,8 @@ routine:
               desc: "Integration test step files specify assertion logic, not just scenario names"
               priority: expected
             - id: "R6"
-              desc: "Every [I-XX] in intent.md is annotated with a step reference or NO-REQ; referenced steps actually cover the intent item"
-              priority: critical
+              desc: "Every [I-XX] goal/constraint/criterion in intent.md is addressed by at least one step file"
+              priority: expected
           verifier:
             rubric:
               - id: "R1"
@@ -854,12 +722,10 @@ routine:
                   without specifying what the test must assert.
               - id: "R6"
                 text: |
-                  R6 — A: verification-report.md has an "Intent Coverage" section; every [I-XX] in
-                  intent.md resolves to a step reference or NO-REQ; each referenced step file
-                  actually contains content addressing that intent item. B: all [I-XX] annotated
-                  but 1-2 step references are loose (step exists but coverage is indirect).
-                  F: any bare [I-XX] with no arrow, or a step reference that clearly does not
-                  cover the intent item it claims to.
+                  R6 — A: verification-report.md has an "Intent Coverage" section; each [I-XX]
+                  item from intent.md is traceable to at least one step file that addresses it.
+                  B: most items covered but 1-2 have no clear step file match.
+                  F: multiple intent items with no coverage identified.
             submission_template:
               grade_scale: [A, B, C, D, F]
               require_reason_if_below: A
@@ -868,9 +734,6 @@ routine:
             items:
               - id: "report_exists"
                 cmd: "test -f docs/{{feature}}/verification-report.md"
-                must: true
-              - id: "no_bare_intent_items"
-                cmd: "uv run python -c \"import re,sys; txt=open('docs/{{feature}}/intent.md').read(); bare=[m.group() for m in re.finditer(r'\\[I-\\d+\\](?!\\s*[→\\-]|[^\\]]*→)', txt)]; print(f'Bare [I-XX] items with no step annotation: {bare}',file=sys.stderr) if bare else None; sys.exit(1 if bare else 0)\""
                 must: true
           retry:
             max_attempts: 2
@@ -991,37 +854,7 @@ routine:
 
             The routine must encode the generated steps so another run can execute them.
 
-            === INTENT-REQUIREMENT TRACEABILITY ===
-
-            intent.md already has [I-XX] identifiers on every intent element (from S-01)
-            and provisional [I-XX → S-XX] step annotations (from S-03). Your job here
-            is to refine those provisional annotations to full requirement IDs now that
-            the routine YAML exists.
-
-            For each [I-XX → S-XX] annotation, replace the provisional step reference
-            with the specific requirement ID(s) from the routine that cover it:
-
-              Before: "All tests pass after each phase. [I-07 → S-05]"
-              After:  "All tests pass after each phase. [I-07 → S-05/T-01/R4]"
-
-            For items covered by multiple requirements:
-              "Zero backward-compatibility stubs remain. [I-12 → S-02/T-01/R1, S-04/T-01/R3]"
-
-            Items already marked NO-REQ stay as-is.
-
-            Rules:
-            - Every [I-XX] must resolve to at least one [S-XX/T-YY/RN] or remain NO-REQ.
-            - Every requirement ID referenced must exist in the routine YAML.
-            - If an [I-XX] item has no matching requirement after the routine is written,
-              you must EITHER add a requirement to the routine OR mark it [NO-REQ] with
-              justification. A bare [I-XX → S-XX] with no task/requirement is insufficient.
-
-            This is the final verification that every intent element is enforced by a
-            specific, testable requirement — not just claimed by a step reference.
-
-            === END INTENT-REQUIREMENT TRACEABILITY ===
-
-            After writing routine.yaml and annotating intent.md, validate the routine
+            After writing routine.yaml, validate the routine
             and fix errors until it passes:
             uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml
 
@@ -1208,9 +1041,6 @@ routine:
               - id: "routine_yaml_valid"
                 cmd: "uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml"
                 must: true
-              - id: "intent_annotated"
-                cmd: "uv run python -c \"import re,sys; txt=open('docs/{{feature}}/intent.md').read(); unresolved=[m.group() for m in re.finditer(r'\\[I-\\d+\\s*→\\s*S-\\d+\\]', txt)]; print(f'Provisional [I-XX → S-XX] annotations not yet resolved to requirements: {unresolved}',file=sys.stderr) if unresolved else None; sys.exit(1 if unresolved else 0)\""
-                must: true
               - id: "no_existence_only_verify"
                 cmd: "uv run python -c \"import yaml,sys; r=yaml.safe_load(open('routines/{{feature}}/routine.yaml')); root=r.get('routine',r); ep=('test -f','test -d','grep -q','grep -c','ls '); weak=[f\\\"{s['id']}/{t['id']}\\\" for s in root['steps'] for t in s.get('tasks',[]) for items in [(t.get('auto_verify')or{}).get('items',[])] if items and all(any(c['cmd'].strip().startswith(p) for p in ep) for c in items)]; print(f'Tasks with ONLY existence-level auto_verify: {weak}',file=sys.stderr) if weak else None; sys.exit(1 if weak else 0)\""
                 must: true
@@ -1244,23 +1074,6 @@ routine:
                   the new component could be dead code while old path remains active.
                   F: tasks missing auto_verify entirely.
                   You MUST list every task and its classification — do not say "some tasks".
-              - id: "R4"
-                text: |
-                  R4 (intent-requirement traceability) — check three things:
-                  1. RESOLUTION: Every [I-XX] in intent.md must be fully resolved — either
-                     [I-XX → S-XX/T-YY/RN] with a real requirement ID, or [NO-REQ: reason].
-                     Any provisional [I-XX → S-XX] without a task/requirement suffix = F.
-                     Any bare [I-XX] with no arrow at all = F.
-                  2. VALIDITY: Every [S-XX/T-YY/RN] referenced in an annotation must exist
-                     in the routine YAML. Extract all references and confirm each corresponds
-                     to a real requirement. Any dangling reference = F.
-                  3. ALIGNMENT: For each annotation, verify the requirement's desc actually
-                     captures the intent element it is tagged against. A requirement that
-                     is technically present but too narrow to cover the full intent = B.
-                  A: all three checks pass — every [I-XX] fully resolved, all IDs valid,
-                  all alignments accurate. B: resolution and validity pass but one or two
-                  alignments are loose (requirement is narrower than the intent element).
-                  F: any unresolved [I-XX], dangling IDs, or systematic misalignment.
 
         - id: "T-03"
           title: "Clean up per-step context packets"
