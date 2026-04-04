@@ -39,7 +39,6 @@ async def clone_run(ref_run_id: str, start: bool) -> None:
     from orchestrator.workflow.service import WorkflowService
     from orchestrator.workflow import PersistentEventEmitter
     from orchestrator.config.enums import RoutineSource, RunStatus, TaskStatus
-    from orchestrator.config.models import RoutineConfig
     from orchestrator.db import create_engine, create_session_factory, init_db, EventStore
     from orchestrator.db import RunRepository
     from orchestrator.state.factory import create_run_from_routine
@@ -77,14 +76,31 @@ async def clone_run(ref_run_id: str, start: bool) -> None:
         print(f"  Config:       {ref_run.config}")
         print(f"  Steps done:   {completed_steps}/{len(ref_run.steps)}")
 
-        # ── Reconstruct routine config from embedded snapshot ─────────────────
-        if not ref_run.routine_embedded:
+        # ── Load current routine from disk (NOT from reference run's snapshot) ──
+        # We always use the current routine.yaml so that V6/V7/... experiments
+        # pick up the latest changes, not the frozen config from V5.
+        from orchestrator.routines.discovery import discover_routines
+
+        routine_dirs_list = [
+            (Path(__file__).parent.parent / "routines", RoutineSource.LOCAL),
+        ]
+        found = discover_routines(routine_dirs_list)
+        routine_config = None
+        matched_routine = None
+        for r in found:
+            if r.config.id == ref_run.routine_id:
+                routine_config = r.config
+                matched_routine = r
+                break
+
+        if routine_config is None or matched_routine is None:
             print(
-                "ERROR: Reference run has no routine_embedded — cannot reconstruct routine config."
+                f"ERROR: Routine '{ref_run.routine_id}' not found in routines/ directory. "
+                f"Cannot clone with current routine."
             )
             sys.exit(1)
 
-        routine_config = RoutineConfig.model_validate(ref_run.routine_embedded)
+        print(f"  Using routine: {routine_config.id} (from disk, not embedded snapshot)")
 
         # ── Create new run branching from reference run's git branch ──────────
         source_branch = f"orchestrator/run-{ref_run_id}"
@@ -94,10 +110,14 @@ async def clone_run(ref_run_id: str, start: bool) -> None:
             source_branch=source_branch,
             config=ref_run.config,
             routine_source=RoutineSource.LOCAL,
+            routine_path=str(matched_routine.path) if matched_routine.commit else None,
+            routine_commit=matched_routine.commit,
         )
 
-        # Carry over key settings from reference run
-        new_run.routine_embedded = ref_run.routine_embedded
+        # Store current routine config (not V5's frozen snapshot)
+        new_run.routine_embedded = routine_config.model_dump(mode="json", by_alias=True)
+        if isinstance(matched_routine.path, Path):
+            new_run.routine_source_dir = str(matched_routine.path.parent)
         new_run.agent_type = ref_run.agent_type
         new_run.agent_config = dict(ref_run.agent_config)
         new_run.verifier_model = ref_run.verifier_model
