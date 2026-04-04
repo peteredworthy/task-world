@@ -185,7 +185,7 @@ If V6 sub-agent count/child is HIGHER than V5:
 | Baseline | `2e47c1ff` | `orchestrator/run-2e47c1ff-...` | idea-to-plan-optimized, 7 S4 children, 52.9M true tokens |
 | V4 | `23aeef99` | `orchestrator/run-23aeef99-...` | idea-to-plan-scoped, 3 S4 children (flaky test failure), 30.2M true tokens |
 | V5 | `3acffefe` | `orchestrator/run-3acffefe-...` | idea-to-plan-scoped, 13 S4 children, 38.2M true tokens |
-| V6 | TBD | from V5 S2 | +discovery task, step count guidance, S6 gate |
+| V6 | `f83dbb82` | from V5 S2 | +discovery task, step count guidance, S6 gate (RUNNING) |
 
 ---
 
