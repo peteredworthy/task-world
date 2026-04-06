@@ -142,6 +142,10 @@ class ActionLog(BaseModel):
     sub_agent_total_cache_read_tokens: int = 0
     sub_agent_total_cache_creation_tokens: int = 0
 
+    # Rate-limit detection (set by parser when Claude CLI returns limit message)
+    rate_limit_hit: bool = False
+    rate_limit_resets_at: datetime | None = None
+
 
 class ChecklistItem(BaseModel):
     """Runtime state of a single requirement."""

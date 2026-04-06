@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -30,6 +31,15 @@ from orchestrator.state.models import (
 from orchestrator.runners.parsers.base import tool_summary
 
 logger = logging.getLogger(__name__)
+
+# Matches the rate-limit message emitted by Claude CLI when the Anthropic
+# credit/usage limit is reached.  The pattern is generous to accommodate
+# variations like "5-hour limit", "weekly limit", etc.
+RATE_LIMIT_PATTERN = re.compile(r"You've hit your (?:\S+ )?limit")
+
+# Extracts the human-readable reset time and IANA timezone from the message.
+# Example: "resets 6pm (America/New_York)" → ("6pm", "America/New_York")
+RATE_LIMIT_RESET_PATTERN = re.compile(r"resets?\s+(.+?)\s+\(([^)]+)\)")
 
 
 class ClaudeStreamParser:
@@ -49,6 +59,10 @@ class ClaudeStreamParser:
         self._total_duration_ms = 0
         self._num_turns = 0
         self._readable_parts: list[str] = []
+
+        # Rate-limit detection state
+        self._rate_limit_hit = False
+        self._rate_limit_resets_at: datetime | None = None
 
     def parse_line(self, line: str) -> None:
         """Parse a single NDJSON line from Claude stream-json output."""
@@ -96,6 +110,8 @@ class ClaudeStreamParser:
             total_output_tokens=self._total_output_tokens,
             total_cache_read_tokens=self._total_cache_read,
             total_cache_creation_tokens=self._total_cache_creation,
+            rate_limit_hit=self._rate_limit_hit,
+            rate_limit_resets_at=self._rate_limit_resets_at,
         )
 
     def get_readable_text(self) -> str:
@@ -158,6 +174,19 @@ class ClaudeStreamParser:
                 )
                 if text.strip():
                     self._readable_parts.append(text)
+
+                # Detect rate-limit message from Claude CLI
+                if not self._rate_limit_hit and RATE_LIMIT_PATTERN.search(text):
+                    self._rate_limit_hit = True
+                    reset_match = RATE_LIMIT_RESET_PATTERN.search(text)
+                    if reset_match:
+                        self._rate_limit_resets_at = parse_reset_time(
+                            reset_match.group(1), reset_match.group(2)
+                        )
+                    logger.warning(
+                        "Rate-limit message detected in Claude CLI output: %s", text.strip()
+                    )
+
                 # Only attach metrics to the first content block
                 turn_metrics = None
 
@@ -301,3 +330,47 @@ class ClaudeStreamParser:
                 raw_type="error",
             )
         )
+
+
+def parse_reset_time(time_str: str, tz_name: str) -> datetime | None:
+    """Best-effort parse of the reset time from a rate-limit message.
+
+    Claude CLI emits times like "6pm", "9am", "Jan 7, 9am" with an IANA
+    timezone like "America/New_York".  We try ``dateutil.parser.parse`` first,
+    then fall back to a simple am/pm parser.  Returns ``None`` if parsing
+    fails — callers should still pause the run even without a precise time.
+    """
+    import zoneinfo
+
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name)
+    except (KeyError, zoneinfo.ZoneInfoNotFoundError):
+        logger.warning("Unknown timezone in rate-limit message: %s", tz_name)
+        return None
+
+    # Try dateutil first (handles "Jan 7, 9am" etc.)
+    try:
+        from dateutil import parser as dateutil_parser
+
+        naive = dateutil_parser.parse(time_str, fuzzy=True)
+        return naive.replace(tzinfo=tz)
+    except Exception:
+        pass
+
+    # Simple fallback: "6pm", "9am"
+    time_str = time_str.strip().lower()
+    try:
+        naive = datetime.strptime(time_str, "%I%p")
+        now = datetime.now(tz)
+        result = now.replace(hour=naive.hour, minute=0, second=0, microsecond=0)
+        # If the time is in the past today, assume tomorrow
+        if result <= now:
+            from datetime import timedelta
+
+            result += timedelta(days=1)
+        return result
+    except ValueError:
+        pass
+
+    logger.warning("Could not parse reset time from rate-limit message: %r", time_str)
+    return None

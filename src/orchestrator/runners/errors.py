@@ -1,5 +1,9 @@
 """Agent-related error types."""
 
+from __future__ import annotations
+
+from datetime import datetime
+
 
 class AgentError(Exception):
     """Base class for agent errors."""
@@ -55,3 +59,24 @@ class AgentTimeoutError(AgentError):
         self.agent_type = agent_type
         self.message = message
         super().__init__(f"Agent '{agent_type}' timed out: {message}")
+
+
+class AgentRateLimitError(AgentError):
+    """Agent hit an API rate or credit limit.
+
+    Raised when the Claude CLI subprocess returns a rate-limit message instead
+    of doing work.  The executor should pause the run immediately without
+    consuming a retry slot.
+    """
+
+    def __init__(
+        self,
+        agent_type: str,
+        session_id: str | None = None,
+        resets_at: datetime | None = None,
+    ) -> None:
+        self.agent_type = agent_type
+        self.session_id = session_id
+        self.resets_at = resets_at
+        reset_info = f" (resets at {resets_at})" if resets_at else ""
+        super().__init__(f"Agent '{agent_type}' hit rate limit{reset_info}")

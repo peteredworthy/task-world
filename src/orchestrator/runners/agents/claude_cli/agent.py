@@ -23,6 +23,7 @@ from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
+    AgentRateLimitError,
 )
 from orchestrator.workflow import GateBlockedError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
@@ -579,6 +580,15 @@ class CLIAgent:
                                 sa.total_cache_creation_tokens
                             )
 
+            # Detect rate-limit: the CLI returned a limit message instead of
+            # doing work.  Raise before any retry logic can consume a slot.
+            if action_log and action_log.rate_limit_hit:
+                raise AgentRateLimitError(
+                    agent_type="cli_subprocess",
+                    session_id=action_log.session_id,
+                    resets_at=action_log.rate_limit_resets_at,
+                )
+
             # If process completed successfully, submit for verification
             # This triggers the workflow to move from BUILDING to VERIFYING
             if success:
@@ -598,6 +608,8 @@ class CLIAgent:
             )
 
         except AgentCancelledError:
+            raise
+        except AgentRateLimitError:
             raise
         except AgentExecutionError:
             raise

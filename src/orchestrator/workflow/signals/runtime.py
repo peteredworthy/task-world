@@ -27,6 +27,7 @@ from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
     AgentNotAvailableError,
+    AgentRateLimitError,
 )
 from orchestrator.workflow.signals.handlers import build_registry, signal_handler
 from orchestrator.workflow.signals.signals import (
@@ -539,6 +540,18 @@ class RunWorkflow:
                 except AgentCancelledError:
                     logger.info(f"Run {run_id}: agent cancelled — pausing run")
                     await service.apply_pause_run(run_id, reason="agent_cancelled")
+                    await session.commit()
+                    break
+                except AgentRateLimitError as e:
+                    logger.warning(f"Run {run_id}: rate limit hit: {e}")
+                    await self._callbacks.broadcaster.emit_error_event(
+                        run_id, task_state, "AgentRateLimitError", str(e)
+                    )
+                    await service.apply_pause_run(
+                        run_id,
+                        reason="rate_limit",
+                        error_detail=str(e),
+                    )
                     await session.commit()
                     break
                 except AgentNotAvailableError as e:

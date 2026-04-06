@@ -213,6 +213,7 @@ function RunDetailInner({ runId }: { runId: string }) {
                       awaiting_user_input: 'Paused — waiting for user input',
                       fan_out_child_failed: 'Paused — one or more fan-out children failed',
                       fan_out_orphaned: 'Paused — fan-out task needs recovery',
+                      rate_limit: 'Paused — API rate/credit limit hit',
                       all_steps_complete_but_active: 'Paused — all steps complete (investigating)',
                       no_actionable_tasks: 'Paused — no actionable tasks in current step',
                       no_executor_running: 'Paused — no executor running (will auto-resume)',

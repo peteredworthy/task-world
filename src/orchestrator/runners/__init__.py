@@ -20,7 +20,12 @@ from orchestrator.runners.agents.claude_sdk.agent import (
     build_orchestrator_mcp_server,
 )
 from orchestrator.runners.agents.mock.agent import MockAgent, MockBehavior
-from orchestrator.runners.agents.claude_cli.parser import ClaudeStreamParser
+from orchestrator.runners.agents.claude_cli.parser import (
+    RATE_LIMIT_PATTERN,
+    RATE_LIMIT_RESET_PATTERN,
+    ClaudeStreamParser,
+    parse_reset_time,
+)
 from orchestrator.runners.agents.codex.parser import CodexStreamParser
 
 # OpenHands agent and helpers
@@ -193,6 +198,9 @@ __all__ = [
     # Parsers
     "ClaudeStreamParser",
     "CodexStreamParser",
+    "RATE_LIMIT_PATTERN",
+    "RATE_LIMIT_RESET_PATTERN",
+    "parse_reset_time",
     # OpenHands common
     "CallbackRegistry",
     "DEFAULT_OPENHANDS_TOOLS",

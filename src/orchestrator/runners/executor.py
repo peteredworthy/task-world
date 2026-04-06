@@ -19,6 +19,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import (
     AgentExecutionError,
+    AgentRateLimitError,
 )
 from orchestrator.runners.types import BroadcastCallback, ExecutionContext
 from orchestrator.config.enums import (
@@ -1155,6 +1156,24 @@ class AgentRunnerExecutor:
                                 f"attempts for {child.fan_out_input}."
                             ],
                         )
+                except AgentRateLimitError as e:
+                    # Rate limit hit — do NOT consume a retry slot.
+                    # Propagate immediately so the gather aborts and the
+                    # run is paused with reason="rate_limit".
+                    logger.warning(
+                        f"Run {run.id}: child {child_id} hit rate limit "
+                        f"(resets at {e.resets_at}), aborting fan-out"
+                    )
+                    await self._append_task_log(
+                        run.id,
+                        parent_task.id,
+                        [
+                            f"Child {child.fan_out_index}: hit rate limit"
+                            f"{f' (resets at {e.resets_at})' if e.resets_at else ''}"
+                            f" on attempt {attempt_num}. Run will be paused."
+                        ],
+                    )
+                    raise
                 except InvalidTransitionError as e:
                     if e.from_status == RunStatus.PAUSED.value:
                         # Run was paused mid-fan-out (e.g. agent killed, server
@@ -1225,8 +1244,8 @@ class AgentRunnerExecutor:
                 *[run_child(c) for c in children_to_run], return_exceptions=True
             )
 
-        # Check if any child was interrupted by a run pause.  If so, leave
-        # the parent in FAN_OUT_RUNNING so startup recovery can resume it.
+        # Check if any child was interrupted by a run pause or rate limit.
+        # If so, leave the parent in FAN_OUT_RUNNING for resumption.
         for result in gather_results:
             if (
                 isinstance(result, InvalidTransitionError)
@@ -1246,6 +1265,11 @@ class AgentRunnerExecutor:
                     f"by run pause, leaving in FAN_OUT_RUNNING for resumption"
                 )
                 return
+
+            if isinstance(result, AgentRateLimitError):
+                # Re-raise so the caller (_run_loop) can pause the run
+                # with reason="rate_limit".
+                raise result
 
         # 3. Determine parent outcome
         all_passed = all(child_results.get(c.id, False) for c in children)
