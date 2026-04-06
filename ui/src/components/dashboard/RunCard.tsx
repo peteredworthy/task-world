@@ -275,6 +275,18 @@ function formatCost(run: RunResponse): string {
   return '$' + total.toFixed(2);
 }
 
+function formatCostTitle(run: RunResponse): string {
+  if (!run.token_usage_by_model || run.token_usage_by_model.length === 0) {
+    const label = run.cost_disclaimer?.startsWith('Actual cost') ? 'Cost' : 'Est. Cost';
+    return `${label}: ${formatCost(run)}`;
+  }
+  const lines = run.token_usage_by_model.map(
+    (u) => `${u.model}: $${u.total_cost_usd.toFixed(2)}`,
+  );
+  lines.push(`Total: ${formatCost(run)}`);
+  return lines.join('\n');
+}
+
 function MetaPill({
   label,
   value,
@@ -830,7 +842,12 @@ function ExpandedView(props: RunCardProps) {
   const totalTokens = run.total_tokens_read + run.total_tokens_write + run.total_tokens_cache;
   const sourceBranch = run.source_branch ?? run.repo_name;
   const startedLabel = run.started_at ? formatRelativeTime(run.started_at) : 'Not started';
-  const costLabel = run.cost_disclaimer?.startsWith('Actual cost') ? 'Cost' : 'Est. Cost';
+  const costLabel =
+    run.token_usage_by_model?.length > 0
+      ? 'Cost'
+      : run.cost_disclaimer?.startsWith('Actual cost')
+        ? 'Cost'
+        : 'Est. Cost';
 
   const currentStep = run.steps[run.current_step_index];
   const clarificationTaskId = currentStep?.tasks.find(
@@ -915,7 +932,7 @@ function ExpandedView(props: RunCardProps) {
           <MetricPill
             label={costLabel}
             value={formatCost(run)}
-            title={`${costLabel}: ${formatCost(run)}`}
+            title={formatCostTitle(run)}
           />
         </div>
       </div>

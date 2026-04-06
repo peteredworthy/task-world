@@ -14,7 +14,9 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
+from orchestrator.runners.costs import get_model_costs
 from orchestrator.runners.types import ExecutionContext, ExecutionMetrics
+from orchestrator.state.models import ModelTokenUsage
 from orchestrator.workflow import AgentOutputEvent
 
 if TYPE_CHECKING:
@@ -39,6 +41,76 @@ class PhaseHandler:
         self._attempt_store = attempt_store
         self._broadcaster = event_broadcaster
         self._api_base_url = api_base_url
+
+    # ------------------------------------------------------------------
+    # Metrics helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_metrics_and_usage(
+        result: Any,
+    ) -> tuple[ExecutionMetrics, list[ModelTokenUsage]]:
+        """Extract ExecutionMetrics and per-model token usage from an execution result.
+
+        Builds a ModelTokenUsage entry for the parent model and each distinct
+        sub-agent model, with cost rates looked up from model_costs.yaml.
+        """
+        from orchestrator.state.models import ActionLog
+
+        metrics = result.metrics
+        usage_by_model: list[ModelTokenUsage] = []
+
+        if result.action_log is not None:
+            al: ActionLog = result.action_log
+            if al.total_input_tokens or al.total_output_tokens:
+                # Parent model
+                parent_costs = get_model_costs(al.agent_model)
+                usage_by_model.append(
+                    ModelTokenUsage(
+                        model=al.agent_model or "unknown",
+                        cache_read_tokens=al.total_cache_read_tokens,
+                        cache_creation_tokens=al.total_cache_creation_tokens,
+                        input_tokens=al.total_input_tokens,
+                        output_tokens=al.total_output_tokens,
+                        cost_per_m_cache_read=parent_costs["cost_per_m_cache_read"],
+                        cost_per_m_cache_creation=parent_costs["cost_per_m_cache_creation"],
+                        cost_per_m_input=parent_costs["cost_per_m_input"],
+                        cost_per_m_output=parent_costs["cost_per_m_output"],
+                    )
+                )
+
+                # Sub-agent models (group by model name and sum)
+                sa_by_model: dict[str, ModelTokenUsage] = {}
+                for sa in al.sub_agents:
+                    model = sa.model or "unknown"
+                    if model not in sa_by_model:
+                        sa_costs = get_model_costs(model)
+                        sa_by_model[model] = ModelTokenUsage(
+                            model=model,
+                            cost_per_m_cache_read=sa_costs["cost_per_m_cache_read"],
+                            cost_per_m_cache_creation=sa_costs["cost_per_m_cache_creation"],
+                            cost_per_m_input=sa_costs["cost_per_m_input"],
+                            cost_per_m_output=sa_costs["cost_per_m_output"],
+                        )
+                    entry = sa_by_model[model]
+                    entry.cache_read_tokens += sa.total_cache_read_tokens
+                    entry.cache_creation_tokens += sa.total_cache_creation_tokens
+                    entry.input_tokens += sa.total_input_tokens
+                    entry.output_tokens += sa.total_output_tokens
+                usage_by_model.extend(sa_by_model.values())
+
+                # Build legacy flat metrics from the full per-model breakdown
+                metrics = ExecutionMetrics(
+                    tokens_read=sum(u.input_tokens for u in usage_by_model),
+                    tokens_write=sum(u.output_tokens for u in usage_by_model),
+                    tokens_cache=sum(
+                        u.cache_read_tokens + u.cache_creation_tokens for u in usage_by_model
+                    ),
+                    duration_ms=al.total_duration_ms,
+                    num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
+                )
+
+        return metrics, usage_by_model
 
     # ------------------------------------------------------------------
     # Public entry point
@@ -187,24 +259,16 @@ class PhaseHandler:
         if result.agent_metadata:
             run.agent_config = {**run.agent_config, **result.agent_metadata}
 
-        # Extract metrics from action_log if available
-        metrics = result.metrics
-        if result.action_log is not None:
-            al = result.action_log
-            if al.total_input_tokens or al.total_output_tokens:
-                metrics = ExecutionMetrics(
-                    tokens_read=al.total_input_tokens,
-                    tokens_write=al.total_output_tokens,
-                    tokens_cache=al.total_cache_read_tokens + al.total_cache_creation_tokens,
-                    duration_ms=al.total_duration_ms,
-                    num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
-                )
+        # Extract metrics and per-model token usage from action_log
+        metrics, token_usage_by_model = self._extract_metrics_and_usage(result)
 
         # Store agent output, action log, and metrics on attempt
         await self._attempt_store.store_attempt_output(
             run.id, task_state.id, result.output_lines, result.error, result.action_log
         )
-        await self._attempt_store.store_attempt_metrics(run.id, task_state.id, metrics)
+        await self._attempt_store.store_attempt_metrics(
+            run.id, task_state.id, metrics, token_usage_by_model=token_usage_by_model
+        )
 
         if not result.success:
             raise AgentExecutionError(
@@ -322,24 +386,16 @@ class PhaseHandler:
         if result.agent_metadata:
             run.agent_config = {**run.agent_config, **result.agent_metadata}
 
-        # Extract metrics from action_log if available
-        metrics = result.metrics
-        if result.action_log is not None:
-            al = result.action_log
-            if al.total_input_tokens or al.total_output_tokens:
-                metrics = ExecutionMetrics(
-                    tokens_read=al.total_input_tokens,
-                    tokens_write=al.total_output_tokens,
-                    tokens_cache=al.total_cache_read_tokens + al.total_cache_creation_tokens,
-                    duration_ms=al.total_duration_ms,
-                    num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
-                )
+        # Extract metrics and per-model token usage from action_log
+        metrics, token_usage_by_model = self._extract_metrics_and_usage(result)
 
         # Store agent output, action log, and metrics on attempt
         await self._attempt_store.store_attempt_output(
             run.id, task_state.id, result.output_lines, result.error, result.action_log
         )
-        await self._attempt_store.store_attempt_metrics(run.id, task_state.id, metrics)
+        await self._attempt_store.store_attempt_metrics(
+            run.id, task_state.id, metrics, token_usage_by_model=token_usage_by_model
+        )
 
         logger.info(f"Task {task_state.id}: verifier execution complete, success={result.success}")
 
@@ -400,23 +456,15 @@ class PhaseHandler:
         if result.agent_metadata:
             run.agent_config = {**run.agent_config, **result.agent_metadata}
 
-        # Extract metrics from action_log if available
-        metrics = result.metrics
-        if result.action_log is not None:
-            al = result.action_log
-            if al.total_input_tokens or al.total_output_tokens:
-                metrics = ExecutionMetrics(
-                    tokens_read=al.total_input_tokens,
-                    tokens_write=al.total_output_tokens,
-                    tokens_cache=al.total_cache_read_tokens + al.total_cache_creation_tokens,
-                    duration_ms=al.total_duration_ms,
-                    num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
-                )
+        # Extract metrics and per-model token usage from action_log
+        metrics, token_usage_by_model = self._extract_metrics_and_usage(result)
 
         # Store agent output, action log, and metrics on attempt
         await self._attempt_store.store_attempt_output(
             run.id, task_state.id, result.output_lines, result.error, result.action_log
         )
-        await self._attempt_store.store_attempt_metrics(run.id, task_state.id, metrics)
+        await self._attempt_store.store_attempt_metrics(
+            run.id, task_state.id, metrics, token_usage_by_model=token_usage_by_model
+        )
 
         logger.info(f"Task {task_state.id}: recovery execution complete, success={result.success}")

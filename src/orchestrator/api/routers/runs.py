@@ -173,42 +173,68 @@ def _run_to_response(run: Run) -> RunResponse:
             )
         )
 
-    # Compute cost and model hint.
-    actual_cost_usd = 0.0
-    model_hint: str | None = None
+    # Build per-model token usage schema for the response
+    from orchestrator.api.schemas.tasks import ModelTokenUsageSchema
 
-    # Prefer model from agent_config (no iteration needed)
-    raw_model = run.agent_config.get("model")
-    if isinstance(raw_model, str) and raw_model:
-        model_hint = raw_model
+    token_usage_schemas: list[ModelTokenUsageSchema] = []
+    for u in run.token_usage_by_model:
+        token_usage_schemas.append(
+            ModelTokenUsageSchema(
+                model=u.model,
+                cache_read_tokens=u.cache_read_tokens,
+                cache_creation_tokens=u.cache_creation_tokens,
+                input_tokens=u.input_tokens,
+                output_tokens=u.output_tokens,
+                cost_per_m_cache_read=u.cost_per_m_cache_read,
+                cost_per_m_cache_creation=u.cost_per_m_cache_creation,
+                cost_per_m_input=u.cost_per_m_input,
+                cost_per_m_output=u.cost_per_m_output,
+                total_cost_usd=round(u.total_cost_usd, 6),
+            )
+        )
 
-    # Sum actual cost from action logs (only when loaded — skipped for list queries)
-    for step in run.steps:
-        for task in step.tasks:
-            for attempt in task.attempts:
-                if attempt.action_log is not None:
-                    if attempt.action_log.total_cost_usd > 0:
-                        actual_cost_usd += attempt.action_log.total_cost_usd
-                    if model_hint is None and attempt.action_log.agent_model:
-                        model_hint = attempt.action_log.agent_model
-
+    # Compute cost: prefer per-model breakdown, fall back to action log, then estimate
     estimated_cost_usd = None
     cost_disclaimer = None
 
-    if actual_cost_usd > 0:
-        estimated_cost_usd = round(actual_cost_usd, 6)
-        cost_disclaimer = "Actual cost from API response."
-    elif run.total_tokens_read > 0 or run.total_tokens_write > 0 or run.total_tokens_cache > 0:
-        cost_estimate = estimate_cost(
-            tokens_read=run.total_tokens_read,
-            tokens_write=run.total_tokens_write,
-            tokens_cache=run.total_tokens_cache,
-            model=model_hint or "gpt-4o",
-        )
-        if cost_estimate:
-            estimated_cost_usd = cost_estimate.total_usd
-            model_label = model_hint or "gpt-4o"
-            cost_disclaimer = f"Estimate based on {model_label} pricing. {cost_estimate.disclaimer}"
+    if token_usage_schemas:
+        # Accurate per-model cost from embedded rates
+        estimated_cost_usd = round(sum(u.total_cost_usd for u in token_usage_schemas), 6)
+        cost_disclaimer = "Per-model cost from embedded rates."
+    else:
+        # Legacy fallback for old runs without per-model data
+        actual_cost_usd = 0.0
+        model_hint: str | None = None
+
+        raw_model = run.agent_config.get("model")
+        if isinstance(raw_model, str) and raw_model:
+            model_hint = raw_model
+
+        for step in run.steps:
+            for task in step.tasks:
+                for attempt in task.attempts:
+                    if attempt.action_log is not None:
+                        if attempt.action_log.total_cost_usd > 0:
+                            actual_cost_usd += attempt.action_log.total_cost_usd
+                        if model_hint is None and attempt.action_log.agent_model:
+                            model_hint = attempt.action_log.agent_model
+
+        if actual_cost_usd > 0:
+            estimated_cost_usd = round(actual_cost_usd, 6)
+            cost_disclaimer = "Actual cost from API response."
+        elif run.total_tokens_read > 0 or run.total_tokens_write > 0 or run.total_tokens_cache > 0:
+            cost_estimate = estimate_cost(
+                tokens_read=run.total_tokens_read,
+                tokens_write=run.total_tokens_write,
+                tokens_cache=run.total_tokens_cache,
+                model=model_hint or "gpt-4o",
+            )
+            if cost_estimate:
+                estimated_cost_usd = cost_estimate.total_usd
+                model_label = model_hint or "gpt-4o"
+                cost_disclaimer = (
+                    f"Estimate based on {model_label} pricing. {cost_estimate.disclaimer}"
+                )
 
     from orchestrator.api.schemas.runs import EnvFileSpecSchema
 
@@ -261,6 +287,7 @@ def _run_to_response(run: Run) -> RunResponse:
         total_tokens_cache=run.total_tokens_cache,
         total_duration_ms=run.total_duration_ms,
         total_num_actions=run.total_num_actions,
+        token_usage_by_model=token_usage_schemas,
         estimated_cost_usd=estimated_cost_usd,
         cost_disclaimer=cost_disclaimer,
     )

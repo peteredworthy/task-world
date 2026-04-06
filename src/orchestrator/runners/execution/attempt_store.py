@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from orchestrator.state.models import ActionLog
+from orchestrator.state.models import ActionLog, ModelTokenUsage
 from orchestrator.db import RunModel
 from orchestrator.runners.types import ExecutionMetrics
 
@@ -111,6 +111,8 @@ class AttemptStore:
         run_id: str,
         task_id: str,
         metrics: ExecutionMetrics,
+        *,
+        token_usage_by_model: list[ModelTokenUsage] | None = None,
     ) -> None:
         """Store execution metrics on the current attempt and accumulate into run totals."""
         try:
@@ -118,7 +120,11 @@ class AttemptStore:
                 from orchestrator.db import RunRepository
 
                 repo = RunRepository(session)
-                await repo.update_latest_attempt(task_id, metrics=metrics)
+                await repo.update_latest_attempt(
+                    task_id,
+                    metrics=metrics,
+                    token_usage_by_model=token_usage_by_model,
+                )
                 await session.commit()
                 return
         except Exception:

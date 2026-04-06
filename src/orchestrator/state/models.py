@@ -155,6 +155,37 @@ class ChecklistItem(BaseModel):
     grade_reason: str | None = None
 
 
+class ModelTokenUsage(BaseModel):
+    """Token usage and cost rates for a single model within an attempt.
+
+    Cost rates (USD per 1M tokens) are embedded at execution time
+    so historical costs remain accurate even after price changes.
+    """
+
+    model: str  # e.g. "claude-sonnet-4-6", "claude-haiku-4-5-20251001"
+
+    # Token counts
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    # Cost rates (USD per 1M tokens)
+    cost_per_m_cache_read: float = 0.0
+    cost_per_m_cache_creation: float = 0.0
+    cost_per_m_input: float = 0.0
+    cost_per_m_output: float = 0.0
+
+    @property
+    def total_cost_usd(self) -> float:
+        return (
+            self.cache_read_tokens * self.cost_per_m_cache_read
+            + self.cache_creation_tokens * self.cost_per_m_cache_creation
+            + self.input_tokens * self.cost_per_m_input
+            + self.output_tokens * self.cost_per_m_output
+        ) / 1_000_000
+
+
 class AttemptMetrics(BaseModel):
     """Metrics for a single attempt."""
 
@@ -198,6 +229,9 @@ class Attempt(BaseModel):
     # Agent output capture
     agent_output: str | None = None  # Final captured output (joined lines)
     error: str | None = None  # Error message if agent failed
+
+    # Per-model token usage breakdown (replaces flat metrics for accurate cost)
+    token_usage_by_model: list[ModelTokenUsage] = Field(default_factory=lambda: [])
 
     # Structured action log (tool calls, text, metrics)
     action_log: ActionLog | None = None
@@ -335,3 +369,6 @@ class Run(BaseModel):
     total_tokens_cache: int = 0
     total_duration_ms: int = 0
     total_num_actions: int = 0
+
+    # Per-model token usage breakdown (aggregated across all attempts)
+    token_usage_by_model: list[ModelTokenUsage] = Field(default_factory=lambda: [])

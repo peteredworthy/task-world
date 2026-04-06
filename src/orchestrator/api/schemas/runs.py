@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from orchestrator.api.schemas.base import ApiModel
+from orchestrator.api.schemas.tasks import ModelTokenUsageSchema
 
 from orchestrator.config.enums import AgentRunnerType, MergeStrategy
 
@@ -155,6 +156,7 @@ class RunResponse(ApiModel):
     total_tokens_cache: int = 0
     total_duration_ms: int = 0
     total_num_actions: int = 0
+    token_usage_by_model: list[ModelTokenUsageSchema] = []
     estimated_cost_usd: float | None = None
     cost_disclaimer: str | None = None
 

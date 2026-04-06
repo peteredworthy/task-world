@@ -83,6 +83,11 @@ class RunModel(Base):
     total_duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     total_num_actions: Mapped[int] = mapped_column(Integer, default=0)
 
+    # Per-model token usage breakdown (JSON array of ModelTokenUsage dicts)
+    token_usage_by_model: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
+
     # Relationships
     steps: Mapped[list["StepModel"]] = relationship(
         "StepModel",
@@ -209,6 +214,11 @@ class AttemptModel(Base):
     # Git tracking - commit SHAs for builder/verifier handoff
     start_commit: Mapped[str | None] = mapped_column(String, nullable=True)
     end_commit: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Per-model token usage breakdown (JSON array of ModelTokenUsage dicts)
+    token_usage_by_model: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
 
     # Structured action log (tool calls, text, metrics)
     action_log_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

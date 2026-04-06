@@ -28,6 +28,7 @@ from orchestrator.api.schemas.tasks import (
     CallbackInstructions,
     ChecklistItemSchema,
     GradeSnapshotItemSchema,
+    ModelTokenUsageSchema,
     PromptResponse,
     RejectTaskRequest,
     SetGradeRequest,
@@ -214,6 +215,21 @@ async def get_task(
                     for gs in att.grade_snapshot
                 ],
                 auto_verify_results=att.auto_verify_results,
+                token_usage_by_model=[
+                    ModelTokenUsageSchema(
+                        model=u.model,
+                        cache_read_tokens=u.cache_read_tokens,
+                        cache_creation_tokens=u.cache_creation_tokens,
+                        input_tokens=u.input_tokens,
+                        output_tokens=u.output_tokens,
+                        cost_per_m_cache_read=u.cost_per_m_cache_read,
+                        cost_per_m_cache_creation=u.cost_per_m_cache_creation,
+                        cost_per_m_input=u.cost_per_m_input,
+                        cost_per_m_output=u.cost_per_m_output,
+                        total_cost_usd=round(u.total_cost_usd, 6),
+                    )
+                    for u in att.token_usage_by_model
+                ],
                 agent_type=att.agent_type.value if att.agent_type else None,
                 agent_model=att.agent_model,
                 agent_settings=att.agent_settings,

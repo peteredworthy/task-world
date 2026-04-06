@@ -37,6 +37,19 @@ export interface StepSummary {
   condition: { when: string | null; repeat_for: string | null } | null;
 }
 
+export interface ModelTokenUsage {
+  model: string;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  cost_per_m_cache_read: number;
+  cost_per_m_cache_creation: number;
+  cost_per_m_input: number;
+  cost_per_m_output: number;
+  total_cost_usd: number;
+}
+
 export interface EnvFileSpec {
   path: string;
   promote_on_success: boolean;
@@ -74,6 +87,7 @@ export interface RunResponse {
   total_tokens_write: number;
   total_tokens_cache: number;
   total_duration_ms: number;
+  token_usage_by_model: ModelTokenUsage[];
   estimated_cost_usd: number | null;
   cost_disclaimer: string | null;
 }

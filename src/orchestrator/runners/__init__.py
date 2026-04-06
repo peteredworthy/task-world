@@ -84,8 +84,11 @@ from orchestrator.runners.profiles import (
 from orchestrator.runners.profiles.resolution import get_agent_system_prompt, resolve_agent_name
 from orchestrator.runners.profiles.service import seed_default_agents
 
+# Cost rates
+from orchestrator.runners.costs import get_model_costs, load_cost_table
+
 # Execution infrastructure
-from orchestrator.runners.execution import AttemptStore, EventBroadcaster
+from orchestrator.runners.execution import AttemptStore, EventBroadcaster, PhaseHandler
 
 # Detection
 from orchestrator.runners.agent_detector import AGENT_CONFIG_FIELDS, ToolDetector
@@ -236,9 +239,13 @@ __all__ = [
     "get_agent_system_prompt",
     "resolve_agent_name",
     "seed_default_agents",
+    # Costs
+    "get_model_costs",
+    "load_cost_table",
     # Execution
     "AttemptStore",
     "EventBroadcaster",
+    "PhaseHandler",
     # Detection
     "AGENT_CONFIG_FIELDS",
     "ToolDetector",

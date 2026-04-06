@@ -34,6 +34,7 @@ from orchestrator.state.models import (
     ChecklistItem,
     GradeSnapshotItem,
     HumanApproval,
+    ModelTokenUsage,
     Run,
     StepState,
     TaskState,
@@ -122,6 +123,15 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                     except Exception:
                         pass  # Gracefully handle invalid data
 
+                # Deserialize per-model token usage
+                token_usage_list: list[ModelTokenUsage] = []
+                if att_model.token_usage_by_model:
+                    for item in att_model.token_usage_by_model:
+                        try:
+                            token_usage_list.append(ModelTokenUsage.model_validate(item))
+                        except Exception:
+                            pass
+
                 attempts.append(
                     Attempt(
                         id=att_model.id,
@@ -142,6 +152,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                         ),
                         grade_snapshot=grade_snapshot,
                         auto_verify_results=att_model.auto_verify_results or [],
+                        token_usage_by_model=token_usage_list,
                         agent_type=AgentRunnerType(att_model.runner_type)
                         if att_model.runner_type
                         else None,
@@ -265,6 +276,9 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
         total_tokens_cache=model.total_tokens_cache,
         total_duration_ms=model.total_duration_ms,
         total_num_actions=model.total_num_actions,
+        token_usage_by_model=[
+            ModelTokenUsage.model_validate(item) for item in (model.token_usage_by_model or [])
+        ],
     )
 
 
@@ -283,6 +297,11 @@ def _to_model(run: Run) -> RunModel:
                 )
                 auto_verify_json = att.auto_verify_results if att.auto_verify_results else None
                 action_log_json = att.action_log.model_dump(mode="json") if att.action_log else None
+                token_usage_json = (
+                    [u.model_dump(mode="json") for u in att.token_usage_by_model]
+                    if att.token_usage_by_model
+                    else None
+                )
                 attempts.append(
                     AttemptModel(
                         id=att.id,
@@ -302,6 +321,7 @@ def _to_model(run: Run) -> RunModel:
                         num_actions=att.metrics.num_actions,
                         grade_snapshot=snapshot_json,
                         auto_verify_results=auto_verify_json,
+                        token_usage_by_model=token_usage_json,
                         runner_type=att.agent_type.value if att.agent_type else None,
                         agent_model=att.agent_model,
                         agent_settings=att.agent_settings if att.agent_settings else None,
@@ -397,6 +417,11 @@ def _to_model(run: Run) -> RunModel:
         total_tokens_cache=run.total_tokens_cache,
         total_duration_ms=run.total_duration_ms,
         total_num_actions=run.total_num_actions,
+        token_usage_by_model=(
+            [u.model_dump(mode="json") for u in run.token_usage_by_model]
+            if run.token_usage_by_model
+            else None
+        ),
     )
 
 
@@ -750,6 +775,7 @@ class RunRepository:
         error: Any = _UNSET,
         action_log: Any = _UNSET,
         metrics: Any = _UNSET,
+        token_usage_by_model: list[ModelTokenUsage] | None = None,
         outcome: Any = _UNSET,
         completed_at: Any = _UNSET,
         auto_verify_results: Any = _UNSET,
@@ -813,6 +839,24 @@ class RunRepository:
                 task_model.step.run.total_tokens_cache += metrics.tokens_cache
                 task_model.step.run.total_duration_ms += metrics.duration_ms
                 task_model.step.run.total_num_actions += metrics.num_actions
+            if token_usage_by_model:
+                # Serialize and store on attempt
+                usage_json = [u.model_dump(mode="json") for u in token_usage_by_model]
+                attempt.token_usage_by_model = usage_json
+                # Accumulate into run-level per-model breakdown
+                run_model = task_model.step.run
+                existing: list[dict[str, Any]] = run_model.token_usage_by_model or []
+                run_usage: dict[str, dict[str, Any]] = {e["model"]: dict(e) for e in existing}
+                for u in token_usage_by_model:
+                    if u.model not in run_usage:
+                        run_usage[u.model] = u.model_dump(mode="json")
+                    else:
+                        entry = run_usage[u.model]
+                        entry["cache_read_tokens"] += u.cache_read_tokens
+                        entry["cache_creation_tokens"] += u.cache_creation_tokens
+                        entry["input_tokens"] += u.input_tokens
+                        entry["output_tokens"] += u.output_tokens
+                run_model.token_usage_by_model = list(run_usage.values())
             if outcome is not _UNSET:
                 attempt.outcome = outcome
             if completed_at is not _UNSET:

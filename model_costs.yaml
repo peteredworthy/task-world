@@ -1,0 +1,44 @@
+# Per-model token cost rates (USD per 1M tokens).
+# Loaded at startup by orchestrator.runners.costs.
+# Rates are embedded into token usage records at execution time
+# so historical costs remain accurate even after price changes.
+
+models:
+  claude-sonnet-4-6:
+    cache_read: 0.30
+    cache_creation: 3.75
+    input: 3.00
+    output: 15.00
+  claude-sonnet-4-5-20250514:
+    cache_read: 0.30
+    cache_creation: 3.75
+    input: 3.00
+    output: 15.00
+  claude-haiku-4-5-20251001:
+    cache_read: 0.08
+    cache_creation: 1.00
+    input: 0.80
+    output: 4.00
+  claude-opus-4-6:
+    cache_read: 0.75
+    cache_creation: 9.375
+    input: 7.50
+    output: 37.50
+  gpt-4o:
+    cache_read: 1.25
+    cache_creation: 2.50
+    input: 2.50
+    output: 10.00
+  gpt-4o-mini:
+    cache_read: 0.075
+    cache_creation: 0.15
+    input: 0.15
+    output: 0.60
+
+# Default for unknown models — cost fields will be 0,
+# frontend shows "cost unknown" badge
+unknown_model:
+  cache_read: 0
+  cache_creation: 0
+  input: 0
+  output: 0
