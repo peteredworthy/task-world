@@ -280,15 +280,42 @@ routine:
             ARCHITECTURE:
             {{context.architecture}}
 
-            Step count guidance:
-            - Target approximately 4 step plans for this run.
-            - The correct criterion for splitting into separate steps is context isolation:
-              split when two parts of the plan touch largely non-overlapping sets of files
-              and symbols (less than ~30% shared). When two changes both require deep
-              understanding of the same module or subsystem, keep them in one step —
-              splitting increases total cost without improving clarity.
-            - Prefer 3–5 coarser steps over 8–13 fine-grained steps. Coarser steps
-              reduce parallel execution overhead and cache warm-up cost significantly.
+            Step decomposition guidance — use these three questions to decide
+            whether two pieces of work belong in the same step or separate steps.
+            Apply all three; if 2+ answer "split", make them separate steps:
+
+            1. VERIFICATION BOUNDARY — Can each step be independently verified as
+               correct? If a piece of work has no standalone pass/fail criterion
+               (no test, no file-existence check, no observable output), it should
+               not be its own step. Split at points where you can confirm "this
+               part works" before moving on.
+
+            2. FILE/CONTEXT OVERLAP — Do the two pieces of work touch largely the
+               same files and symbols (>30% shared)? If yes, keep them together —
+               splitting forces the next agent to re-read everything the previous
+               agent just changed, which is pure overhead. Split when the file sets
+               are disjoint and each agent can focus on its own area.
+
+            3. EXPLORATION vs PREDICTABLE SCOPE — Is the work's scope already known
+               upfront, or does it require open-ended exploration first? Isolate
+               unpredictable phases (locating code, reproducing bugs, understanding
+               unfamiliar modules) from predictable ones (implementing a known
+               change). The exploratory phase consumes context unpredictably; the
+               implementation phase benefits from starting with a clean, focused
+               prompt informed by the exploration output.
+
+            Additional constraints:
+            - Each step executes with a FRESH agent context. There is no shared
+              memory between steps — the agent must re-discover the codebase from
+              artifacts left by previous steps. This is the primary cost of
+              splitting: every additional step pays a context warm-up tax.
+            - Keep tightly coupled decisions in one step. If what you write in
+              file A depends on what you discover while editing file B, splitting
+              those into separate steps imposes artificial hand-off overhead.
+            - Empirically, coordination overhead saturates around 5–6 steps for a
+              typical feature. Going beyond that rarely improves quality and
+              significantly increases total cost. If your plan yields more than 6
+              steps, look for opportunities to merge steps with high file overlap.
 
             Each step plan must include:
             - Purpose and functionality
@@ -732,6 +759,62 @@ routine:
               - id: "merged_notes_exist"
                 cmd: "test -f docs/{{feature}}/dry-run-notes.md"
                 must: true
+
+        - id: "T-03"
+          title: "Apply Dry-Run Gaps to Step Files"
+          profile: "coder"
+          context_from:
+            - artifact: "docs/{{feature}}/dry-run-notes.md"
+              as: "context.dry_run_notes"
+              required: true
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+          task_context: |
+            Read the merged dry-run notes and apply every identified gap directly
+            to the affected step files in docs/{{feature}}/steps/.
+
+            DRY-RUN NOTES:
+            {{context.dry_run_notes}}
+
+            INTENT:
+            {{context.intent}}
+
+            For each gap or hardening action in the dry-run notes:
+
+            1. Identify which step file(s) in docs/{{feature}}/steps/ it applies to.
+            2. Edit the step file to incorporate the fix — tighten task instructions,
+               add missing persistence mappings, add environment checks, specify
+               assertion logic for tests, etc.
+            3. Mark the gap as "Applied to step files: YES" in dry-run-notes.md.
+
+            Every critical or significant gap MUST be applied. A gap that is only
+            documented but not applied to step files will cause S6 verification to
+            fail (R2 is a blocking gate).
+
+            Do NOT create new step files. Only modify existing ones in
+            docs/{{feature}}/steps/ and update docs/{{feature}}/dry-run-notes.md.
+          requirements:
+            - id: "R1"
+              desc: "All critical/significant dry-run gaps applied to step files"
+              priority: critical
+            - id: "R2"
+              desc: "Each gap in dry-run-notes.md marked 'Applied to step files: YES'"
+              priority: critical
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: every critical or significant gap from the dry-run notes has been
+                  incorporated into the relevant step file instructions. The step files now
+                  contain the hardening actions, not just the original instructions.
+                  B: most gaps applied but one moderate gap deferred with justification.
+                  F: gaps remain unapplied — step files unchanged from before the dry run.
+              - id: "R2"
+                text: |
+                  R2 — A: dry-run-notes.md shows "Applied to step files: YES" for every
+                  gap entry. B: most entries updated but one or two missing the annotation.
+                  F: annotations not updated — no way to tell what was applied.
       transitions:
         on_complete: "S-06"
 

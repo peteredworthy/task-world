@@ -1,18 +1,20 @@
-"""Tests for the idea-to-plan production routine."""
+"""Tests for the idea-to-plan-scoped production routine."""
 
 from pathlib import Path
 
 from orchestrator.config import GateType, Priority, StepType, load_routine_from_path
 
-ROUTINE_PATH = Path(__file__).parent.parent.parent / "routines" / "idea-to-plan" / "routine.yaml"
+ROUTINE_PATH = (
+    Path(__file__).parent.parent.parent / "routines" / "idea-to-plan-scoped" / "routine.yaml"
+)
 
 
 def test_idea_to_plan_routine_loads():
-    """Verify the idea-to-plan routine loads and has expected structure."""
+    """Verify the idea-to-plan-scoped routine loads and has expected structure."""
     routine = load_routine_from_path(ROUTINE_PATH)
 
-    assert routine.id == "idea-to-plan"
-    assert routine.name == "Idea to Implementation Plan"
+    assert routine.id == "idea-to-plan-scoped"
+    assert routine.name == "Idea to Implementation Plan (Scoped Context)"
     assert routine.description is not None
 
     # Inputs
@@ -46,6 +48,11 @@ def test_idea_to_plan_has_human_gates():
     assert s07.gate.require_comment is False
     assert s07.gate.approval_prompt is not None
     assert "plan is complete" in s07.gate.approval_prompt
+
+    # S-06 also has a human approval gate (review before final verification)
+    s06 = next(step for step in routine.steps if step.id == "S-06")
+    assert s06.gate is not None
+    assert s06.gate.type == GateType.HUMAN_APPROVAL
 
 
 def test_idea_to_plan_has_backward_transitions():
@@ -89,17 +96,27 @@ def test_idea_to_plan_has_artifact_tracking():
     assert "docs/{{feature}}/architecture.md" in artifact_paths
 
 
-def test_idea_to_plan_has_dry_run_step():
-    """Verify dry-run step is configured correctly."""
+def test_idea_to_plan_has_fan_out_dry_run_step():
+    """Verify S-05 dry run uses fan-out (not StepType.DRY_RUN)."""
     routine = load_routine_from_path(ROUTINE_PATH)
 
-    # S-05: Dry Run & Failure Mode Analysis
+    # S-05: Dry Run & Failure Mode Analysis — uses fan-out tasks, not StepType.DRY_RUN
     s05 = next(step for step in routine.steps if step.id == "S-05")
-    assert s05.type == StepType.DRY_RUN
-    assert s05.dry_run is not None
-    assert s05.dry_run.target_steps == ["S-08"]
-    assert s05.dry_run.context_limit == 4000
-    assert "dry-run-notes.md" in s05.dry_run.report_path
+    assert s05.type != StepType.DRY_RUN
+    assert s05.title == "Dry Run & Failure Mode Analysis"
+
+    # T-01 is a fan-out task that simulates execution per step
+    t01 = next(t for t in s05.tasks if t.id == "T-01")
+    assert t01.fan_out is not None
+    assert "dry-run" in t01.fan_out.output_pattern
+
+    # T-02 merges dry-run notes
+    t02 = next(t for t in s05.tasks if t.id == "T-02")
+    assert t02 is not None
+
+    # T-03 applies gaps to step files
+    t03 = next(t for t in s05.tasks if t.id == "T-03")
+    assert t03 is not None
 
 
 def test_idea_to_plan_has_context_injection():
@@ -111,19 +128,19 @@ def test_idea_to_plan_has_context_injection():
     task = s02.tasks[0]
     assert len(task.context_from) == 3
     context_names = {ctx.as_name for ctx in task.context_from}
-    assert context_names == {"intent", "plan", "architecture"}
+    assert context_names == {"context.intent", "context.plan", "context.architecture"}
 
     # intent and plan are required, architecture is optional
-    plan_ctx = next(ctx for ctx in task.context_from if ctx.as_name == "plan")
+    plan_ctx = next(ctx for ctx in task.context_from if ctx.as_name == "context.plan")
     assert plan_ctx.required is True
-    arch_ctx = next(ctx for ctx in task.context_from if ctx.as_name == "architecture")
+    arch_ctx = next(ctx for ctx in task.context_from if ctx.as_name == "context.architecture")
     assert arch_ctx.required is False
 
-    # S-06: Final Check - uses context from multiple artifacts including dry run
+    # S-06: Final Check - uses context from 5 artifacts including dry run and clarifications
     s06 = next(step for step in routine.steps if step.id == "S-06")
     task = s06.tasks[0]
-    assert len(task.context_from) == 3
-    dry_run_ctx = next((ctx for ctx in task.context_from if ctx.as_name == "dry_run"), None)
+    assert len(task.context_from) == 5
+    dry_run_ctx = next((ctx for ctx in task.context_from if ctx.as_name == "context.dry_run"), None)
     assert dry_run_ctx is not None
     assert dry_run_ctx.required is False
 
@@ -132,13 +149,14 @@ def test_idea_to_plan_has_auto_verify():
     """Verify auto-verification is configured for file existence checks."""
     routine = load_routine_from_path(ROUTINE_PATH)
 
-    # S-01: Initial Plan - auto-verify files exist
+    # S-01: Initial Plan - auto-verify files exist and intent items numbered
     s01 = next(step for step in routine.steps if step.id == "S-01")
     task = s01.tasks[0]
     av_ids = {item.id for item in task.auto_verify.items}
     assert "files_exist" in av_ids
+    assert "intent_items_numbered" in av_ids
 
-    # S-03: Step Planning - auto-verify step plans exist (plus context_from checks)
+    # S-03: Step Planning T-01 - auto-verify step plans exist
     s03 = next(step for step in routine.steps if step.id == "S-03")
     task = s03.tasks[0]
     av_ids = {item.id for item in task.auto_verify.items}
@@ -164,13 +182,13 @@ def test_idea_to_plan_has_llm_verification():
     """Verify LLM verification is configured where appropriate."""
     routine = load_routine_from_path(ROUTINE_PATH)
 
-    # S-06: Final Check - should have verifier with rubric
+    # S-06: Final Check - should have verifier with 6 rubric items (R1-R6)
     s06 = next(step for step in routine.steps if step.id == "S-06")
     task = s06.tasks[0]
-    assert len(task.verifier.rubric) == 5
+    assert len(task.verifier.rubric) == 6
 
     rubric_ids = {item.id for item in task.verifier.rubric}
-    assert rubric_ids == {"R1", "R2", "R3", "R4", "R5"}
+    assert rubric_ids == {"R1", "R2", "R3", "R4", "R5", "R6"}
 
     # Check submission template
     assert task.verifier.submission_template.grade_scale == ["A", "B", "C", "D", "F"]
@@ -182,13 +200,13 @@ def test_idea_to_plan_requirements_have_priorities():
     """Verify requirements have appropriate priorities."""
     routine = load_routine_from_path(ROUTINE_PATH)
 
-    # S-01: Initial Plan
+    # S-01: Initial Plan — 4 requirements: R1 (critical), R2 (critical), R3 (expected), R4 (critical)
     s01 = next(step for step in routine.steps if step.id == "S-01")
     task = s01.tasks[0]
-    assert len(task.requirements) == 3
+    assert len(task.requirements) == 4
 
     critical_reqs = [req for req in task.requirements if req.priority == Priority.CRITICAL]
-    assert len(critical_reqs) == 2
+    assert len(critical_reqs) == 3
 
     # Architecture is expected priority
     arch_req = next(req for req in task.requirements if "architecture" in req.desc.lower())
