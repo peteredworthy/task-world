@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -110,18 +111,22 @@ class WorktreeManager:
     def _write_sandbox_settings(self, worktree_path: Path) -> None:
         """Write a ``.claude/settings.local.json`` with absolute-path sandbox rules.
 
-        Write access is restricted to the worktree and ``/tmp``.  Read access
-        denies the main project's database and state directory so that agents
-        cannot directly inspect or manipulate orchestrator internals.
+        All reads are denied by default (``denyRead: ["/"]``), then re-allowed
+        only for the worktree, temp directories, and essential system paths.
+        Because ``allowWrite`` is a strict allowlist, anything not in it is
+        already write-denied.  ``denyWrite`` is used for any ``allowRead`` paths
+        that should be readable but not writable.
         """
         wt_abs = str(worktree_path.resolve())
         repo_abs = str(self._repo.resolve())
-        denied_read_paths = [
-            f"{repo_abs}/orchestrator.db",
-            f"{repo_abs}/orchestrator.db-wal",
-            f"{repo_abs}/orchestrator.db-shm",
-            f"{repo_abs}/orchestrator.db-journal",
-            f"{repo_abs}/.orchestrator",
+        tmp_dir = os.environ.get("TMPDIR", "/tmp").rstrip("/")
+
+        # Paths the agent can read for context but must not modify.
+        read_only_paths = [
+            f"{repo_abs}/src",
+            f"{repo_abs}/scripts",
+            f"{repo_abs}/ui",
+            f"{repo_abs}/.git",
         ]
 
         settings = {
@@ -133,16 +138,33 @@ class WorktreeManager:
                     f"Glob({wt_abs}/**)",
                     f"Grep({wt_abs}/**)",
                 ],
-                "deny": [f"Read({path})" for path in denied_read_paths],
+                "deny": [],
             },
             "sandbox": {
                 "enabled": True,
                 "filesystem": {
+                    "denyRead": ["/"],
+                    "allowRead": [
+                        wt_abs,
+                        "/tmp",
+                        tmp_dir,
+                        "/usr",
+                        "/System",
+                        "/Library",
+                        "/bin",
+                        "/sbin",
+                        "/private/var",
+                        "/private/etc",
+                        "/opt/homebrew",
+                        "/dev",
+                        *read_only_paths,
+                    ],
                     "allowWrite": [
                         wt_abs,
                         "/tmp",
+                        tmp_dir,
                     ],
-                    "denyRead": denied_read_paths,
+                    "denyWrite": read_only_paths,
                 },
                 "network": {
                     "allowedDomains": [

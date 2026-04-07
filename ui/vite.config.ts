@@ -20,6 +20,11 @@ export default defineConfig({
       '/ws': {
         target: wsTarget,
         ws: true,
+        on: {
+          error: () => {
+            // Swallow proxy errors when backend restarts to keep Vite alive
+          },
+        },
       },
       '/mcp': {
         target: httpTarget,
