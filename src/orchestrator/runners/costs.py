@@ -87,8 +87,9 @@ def get_model_costs(model_name: str | None) -> dict[str, float]:
         return dict(_cost_table[model_name])
 
     # Prefix match (e.g. "claude-sonnet-4-6-20250514" → "claude-sonnet-4-6")
+    # Also handles the reverse: alias "claude-haiku-4-5" → key "claude-haiku-4-5-20251001"
     for key in _cost_table:
-        if model_name.startswith(key):
+        if model_name.startswith(key) or key.startswith(model_name):
             return dict(_cost_table[key])
 
     return dict(_ZERO_COSTS)

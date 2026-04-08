@@ -840,9 +840,19 @@ class RunRepository:
                 task_model.step.run.total_duration_ms += metrics.duration_ms
                 task_model.step.run.total_num_actions += metrics.num_actions
             if token_usage_by_model:
-                # Serialize and store on attempt
-                usage_json = [u.model_dump(mode="json") for u in token_usage_by_model]
-                attempt.token_usage_by_model = usage_json
+                # Accumulate into attempt-level per-model breakdown (builder + verifier both contribute)
+                existing_att: list[dict[str, Any]] = attempt.token_usage_by_model or []
+                att_usage: dict[str, dict[str, Any]] = {e["model"]: dict(e) for e in existing_att}
+                for u in token_usage_by_model:
+                    if u.model not in att_usage:
+                        att_usage[u.model] = u.model_dump(mode="json")
+                    else:
+                        entry = att_usage[u.model]
+                        entry["cache_read_tokens"] += u.cache_read_tokens
+                        entry["cache_creation_tokens"] += u.cache_creation_tokens
+                        entry["input_tokens"] += u.input_tokens
+                        entry["output_tokens"] += u.output_tokens
+                attempt.token_usage_by_model = list(att_usage.values())
                 # Accumulate into run-level per-model breakdown
                 run_model = task_model.step.run
                 existing: list[dict[str, Any]] = run_model.token_usage_by_model or []

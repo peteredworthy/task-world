@@ -2,28 +2,32 @@
 # Loaded at startup by orchestrator.runners.costs.
 # Rates are embedded into token usage records at execution time
 # so historical costs remain accurate even after price changes.
+#
+# cache_creation: orchestrated agent sessions use the 1-hour ephemeral
+# cache tier, so the 1h rate is used here (not the cheaper 5-min tier).
+# claude-sonnet-4-6 5m=$3.75/M, 1h=$6.00/M (confirmed via session JSONL)
 
 models:
   claude-sonnet-4-6:
     cache_read: 0.30
-    cache_creation: 3.75
+    cache_creation: 6.00   # 1h ephemeral tier (5m tier is $3.75)
     input: 3.00
     output: 15.00
   claude-sonnet-4-5-20250514:
     cache_read: 0.30
-    cache_creation: 3.75
+    cache_creation: 6.00   # 1h ephemeral tier
     input: 3.00
     output: 15.00
   claude-haiku-4-5-20251001:
-    cache_read: 0.08
-    cache_creation: 1.00
-    input: 0.80
-    output: 4.00
+    cache_read: 0.10
+    cache_creation: 2.00   # 1h ephemeral tier (5m tier is $1.25)
+    input: 1.00
+    output: 5.00
   claude-opus-4-6:
-    cache_read: 0.75
-    cache_creation: 9.375
-    input: 7.50
-    output: 37.50
+    cache_read: 0.50
+    cache_creation: 10.00  # 1h ephemeral tier (5m tier is $6.25)
+    input: 5.00
+    output: 25.00
   gpt-4o:
     cache_read: 1.25
     cache_creation: 2.50
