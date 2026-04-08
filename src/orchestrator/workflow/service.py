@@ -588,6 +588,7 @@ class WorkflowService:
         # can continue where they left off.
         # Skip fan-out children — they are managed by the executor directly.
         if resume_strategy != "revert":
+            tasks_modified = False
             for step in run.steps:
                 for task in step.tasks:
                     if task.parent_task_id is not None:
@@ -598,7 +599,12 @@ class WorkflowService:
                             if current.outcome == "paused":
                                 current.paused_at = None
                                 current.outcome = None
-            state.update_run(run)
+                                tasks_modified = True
+            # Only persist if tasks were actually modified — avoids bumping task
+            # versions unnecessarily, which would cause StaleDataError in the
+            # executor when it tries to update the same tasks after resume.
+            if tasks_modified:
+                state.update_run(run)
 
         # If agent is being changed (type or config), emit AgentChangedEvent and update run
         if agent_type is not None or agent_config is not None:
