@@ -1,0 +1,248 @@
+id: "S-04"
+title: "Run-Level Aggregation (M4)"
+step_context: |
+  Accumulate per-model token usage across all attempts into run-level totals.
+  After this step, run.token_usage_by_model contains the merged breakdown across
+  all completed attempts, updated in real-time after each attempt completes.
+
+  Prerequisites: Step 03 complete — attempt.token_usage_by_model is populated
+  after each attempt.
+
+  Key integration points:
+  - src/orchestrator/db/access/repositories.py — RunRepository.update_latest_attempt()
+    merges attempt-level token_usage_by_model into run-level totals
+  - src/orchestrator/runners/execution/attempt_store.py — AttemptStore.store_attempt_metrics()
+    accepts token_usage_by_model kwarg, delegates to RunRepository
+  - src/orchestrator/runners/execution/phase_handler.py — passes token_usage_by_model
+    to store_attempt_metrics() after each phase
+
+tasks:
+  - id: "T-01"
+    title: "Implement run-level aggregation in RunRepository"
+    task_context: |
+      Add the per-model aggregation logic to RunRepository.update_latest_attempt()
+      in src/orchestrator/db/access/repositories.py.
+
+      The aggregation must:
+      1. Accept the new attempt's token_usage_by_model (list[ModelTokenUsage]) as input
+      2. Merge it into run.token_usage_by_model by model name:
+         - Sum token counts (cache_read, cache_creation, input, output) for entries
+           with matching model names
+         - Preserve cost rates from the first occurrence (rates are stable per model)
+         - Append new model entries that don't yet exist in the run total
+      3. Continue populating legacy run-level flat fields (total_tokens_read,
+         total_tokens_write, total_tokens_cache) as the sum across all models
+         in the merged run.token_usage_by_model
+
+      Error handling:
+      - Empty token_usage_by_model on the attempt contributes nothing (skip)
+      - No completed attempts: run.token_usage_by_model remains []
+      - Conflicting rates for same model: preserve rates from first occurrence
+
+      Code location: src/orchestrator/db/access/repositories.py
+      Function: RunRepository.update_latest_attempt() (lines 842–869 in current code)
+
+      The method already accepts token_usage_by_model as a parameter — wire up
+      the aggregation logic within the existing parameter handling.
+    requirements:
+      - id: "R1"
+        desc: "update_latest_attempt() merges token_usage_by_model into run.token_usage_by_model by model name (summing tokens, preserving rates from first entry)"
+        priority: critical
+      - id: "R2"
+        desc: "Legacy run-level flat fields (total_tokens_read, total_tokens_write, total_tokens_cache) are updated from the aggregated per-model data"
+        priority: critical
+      - id: "R3"
+        desc: "Empty or None token_usage_by_model on an attempt is handled gracefully (contributes nothing)"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "repo_file_exists"
+          cmd: "test -f src/orchestrator/db/access/repositories.py"
+          must: true
+        - id: "update_latest_attempt_has_aggregation"
+          cmd: "grep -n 'token_usage_by_model' src/orchestrator/db/access/repositories.py | grep -q 'run\\.' && echo ok"
+          must: true
+        - id: "unit_tests_pass"
+          cmd: "uv run pytest tests/unit/ -x -q 2>&1 | tail -5"
+          must: false
+    verifier:
+      rubric:
+        - id: "R1"
+          text: |
+            R1 — A: update_latest_attempt() correctly merges entries by model name:
+            tokens are summed when the same model appears in multiple attempts, cost
+            rates are preserved from the first occurrence, and new models are appended.
+            B: merging works for simple cases but edge cases (same model multiple times,
+            empty lists) are not handled.
+            F: no aggregation logic present or aggregation overwrites instead of merges.
+        - id: "R2"
+          text: |
+            R2 — A: legacy flat fields (total_tokens_read, total_tokens_write,
+            total_tokens_cache) are computed as sums across all models in the merged
+            run.token_usage_by_model and stored correctly.
+            B: flat fields are populated but not derived from per-model data (still
+            using old calculation path).
+            F: flat fields not updated, or always zero.
+        - id: "R3"
+          text: |
+            R3 — A: empty list, None, or missing token_usage_by_model on attempt
+            causes no error and contributes nothing to run totals.
+            B: None is guarded but empty list raises an error.
+            F: code crashes on empty/None input.
+
+  - id: "T-02"
+    title: "Wire token_usage_by_model through AttemptStore and PhaseHandler"
+    task_context: |
+      Ensure the per-model token data flows from PhaseHandler through AttemptStore
+      into the repository on every attempt completion.
+
+      Check these three files and wire any missing connections:
+
+      1. src/orchestrator/runners/execution/phase_handler.py
+         - _execute_building(), _execute_verifying(), _execute_recovering() must
+           pass token_usage_by_model to store_attempt_metrics()
+         - The data comes from _extract_metrics_and_usage(result) which already
+           returns a tuple of (ExecutionMetrics, list[ModelTokenUsage])
+
+      2. src/orchestrator/runners/execution/attempt_store.py
+         - store_attempt_metrics() must accept and forward token_usage_by_model
+           kwarg to RunRepository.update_latest_attempt()
+
+      3. Aggregation is triggered on every attempt completion (real-time visibility),
+         not just at run/step completion.
+
+      Read the current code before making changes — this wiring may already be
+      partially or fully in place. Only add what is missing.
+    requirements:
+      - id: "R4"
+        desc: "PhaseHandler._execute_building() passes token_usage_by_model to store_attempt_metrics() after each attempt"
+        priority: critical
+      - id: "R5"
+        desc: "AttemptStore.store_attempt_metrics() accepts token_usage_by_model and forwards it to the repository"
+        priority: critical
+      - id: "R6"
+        desc: "Run-level aggregation is triggered after each individual attempt completes (not only at run/step completion)"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "phase_handler_wired"
+          cmd: "grep -n 'token_usage_by_model' src/orchestrator/runners/execution/phase_handler.py | grep -q 'store_attempt_metrics' && echo ok"
+          must: true
+        - id: "attempt_store_wired"
+          cmd: "grep -n 'token_usage_by_model' src/orchestrator/runners/execution/attempt_store.py | grep -c 'token_usage_by_model' | grep -qE '^[1-9]' && echo ok"
+          must: true
+        - id: "backend_tests_pass"
+          cmd: "uv run pytest tests/unit/ tests/integration/ -x -q 2>&1 | tail -5"
+          must: false
+    verifier:
+      rubric:
+        - id: "R4"
+          text: |
+            R4 — A: all phase execution methods (_building, _verifying, _recovering)
+            pass token_usage_by_model to store_attempt_metrics(), so every attempt
+            completion contributes to the run total.
+            B: only _building wires it, _verifying and _recovering do not.
+            F: no phase handler passes the data through.
+        - id: "R5"
+          text: |
+            R5 — A: AttemptStore.store_attempt_metrics() has token_usage_by_model
+            parameter and passes it to RunRepository.update_latest_attempt().
+            B: parameter exists but is not forwarded (silently dropped).
+            F: parameter missing entirely.
+        - id: "R6"
+          text: |
+            R6 — A: run.token_usage_by_model is updated after each individual
+            attempt completion (builder phase ends → run total updated immediately).
+            B: updated at step completion only.
+            F: only updated at run completion.
+
+  - id: "T-03"
+    title: "Unit tests for run-level aggregation"
+    task_context: |
+      Write unit tests for the run-level aggregation logic.
+
+      Test file: tests/unit/test_run_aggregation.py (create new)
+      or append to tests/unit/test_model_token_usage.py if that file
+      already tests related logic.
+
+      Required test cases:
+      1. Multiple attempts with different models:
+         - Attempt 1: [claude-sonnet-4-6 with 100 input tokens]
+         - Attempt 2: [claude-haiku-4-5 with 200 input tokens]
+         - Expected run total: both models present, tokens from respective attempts
+
+      2. Same model across multiple attempts (sums correctly):
+         - Attempt 1: [claude-sonnet-4-6 with 100 input tokens, 50 output]
+         - Attempt 2: [claude-sonnet-4-6 with 200 input tokens, 75 output]
+         - Expected: single claude-sonnet-4-6 entry with 300 input, 125 output
+         - Cost rates preserved from first occurrence
+
+      3. Empty attempts contribute nothing:
+         - Attempt 1: [] (empty token_usage_by_model)
+         - Attempt 2: [claude-sonnet-4-6 with 100 input tokens]
+         - Expected: only claude-sonnet-4-6 in run total
+
+      4. Single attempt passthrough:
+         - Attempt 1: [claude-sonnet-4-6 with 100 input tokens]
+         - Expected: run.token_usage_by_model == attempt 1's list (same values)
+
+      5. Legacy flat fields match aggregated data:
+         - After aggregation, verify total_tokens_read + total_tokens_write +
+           total_tokens_cache match the sum across models
+
+      Use the existing test patterns from tests/unit/test_model_token_usage.py
+      for fixtures (cost_file, _reset_cost_table).
+
+      Tests must be isolated and not require a running server or real DB.
+    requirements:
+      - id: "R7"
+        desc: "Test: multiple attempts with different models produces correct multi-model run total"
+        priority: critical
+      - id: "R8"
+        desc: "Test: same model across multiple attempts sums tokens correctly with rates from first occurrence"
+        priority: critical
+      - id: "R9"
+        desc: "Test: empty token_usage_by_model on attempt contributes nothing to run total"
+        priority: expected
+      - id: "R10"
+        desc: "Test: legacy flat fields match the sum of per-model token counts"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "test_file_exists"
+          cmd: "test -f tests/unit/test_run_aggregation.py || test -f tests/unit/test_model_token_usage.py"
+          must: true
+        - id: "new_tests_pass"
+          cmd: "uv run pytest tests/unit/ -x -q -k 'aggregation or token_usage' 2>&1 | tail -10"
+          must: true
+        - id: "all_unit_tests_pass"
+          cmd: "uv run pytest tests/unit/ -x -q 2>&1 | tail -5"
+          must: true
+    verifier:
+      rubric:
+        - id: "R7"
+          text: |
+            R7 — A: test creates two attempts with different models, calls the
+            aggregation path, and asserts both models appear in the run total with
+            correct token counts.
+            B: test exists but only checks presence, not token values.
+            F: test missing or does not exercise multi-model path.
+        - id: "R8"
+          text: |
+            R8 — A: test creates two attempts with the same model, asserts tokens
+            are summed (not duplicated) and cost rates match the first attempt.
+            B: test checks final values but doesn't verify rates are from first
+            occurrence.
+            F: test missing.
+        - id: "R9"
+          text: |
+            R9 — A: test passes an attempt with empty list and verifies run total
+            is unaffected (no empty entry added, no error raised).
+            B: test exists but only checks for no exception, not the resulting state.
+            F: test missing.
+        - id: "R10"
+          text: |
+            R10 — A: test verifies total_tokens_read/write/cache on the run object
+            equal the sum of the corresponding fields across all ModelTokenUsage entries.
+            B: test checks flat fields exist but not that their values are correct.
+            F: test missing.

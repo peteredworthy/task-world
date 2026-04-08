@@ -1,0 +1,183 @@
+id: "S-03"
+title: "Phase Handler Token Extraction (M3)"
+step_context: |
+  Wire up per-model token extraction from ActionLog data in phase_handler.py.
+  After this step, when an attempt completes, its token_usage_by_model is
+  populated with a per-model breakdown (parent + sub-agents) including cost
+  rates stamped at execution time.
+
+  Prerequisites: S-01 (ModelTokenUsage class + get_model_costs()) and S-02
+  (DB columns + serialization) must be complete.
+
+tasks:
+  - id: "T-01"
+    title: "Implement per-model extraction in PhaseHandler"
+    task_context: |
+      Modify PhaseHandler._extract_metrics_and_usage() in
+      src/orchestrator/runners/execution/phase_handler.py to build
+      list[ModelTokenUsage] from ActionLog data.
+
+      Implementation requirements:
+      1. Read the current ActionLog structure in phase_handler.py (look around
+         line 50–190) to understand available fields.
+      2. Build a ModelTokenUsage entry for the parent agent model:
+         - Use al.agent_model (or "unknown" if None)
+         - Token counts: al.total_cache_read_tokens, total_cache_creation_tokens,
+           total_input_tokens, total_output_tokens
+         - Cost rates: call get_model_costs(al.agent_model) for all four rate fields
+      3. Group sub-agents by normalized model name and sum tokens per group:
+         - For each sa in al.sub_agents: model = sa.model or "unknown"
+         - If model already seen, accumulate; else create new entry with rates from
+           get_model_costs(model)
+         - Accumulate: cache_read_tokens, cache_creation_tokens, input_tokens,
+           output_tokens
+      4. Return (metrics, usage_by_model) where:
+         - metrics (ExecutionMetrics) has legacy flat fields set as SUMS across
+           all per-model entries (tokens_read = sum of input_tokens, etc.)
+         - usage_by_model is list[ModelTokenUsage] with parent + all sub-agent groups
+      5. Edge cases to handle:
+         - result.action_log is None: return result.metrics and []
+         - ActionLog with zero tokens (al.total_input_tokens == 0 and
+           al.total_output_tokens == 0): return result.metrics and []
+         - sub_agents is empty or not present: only parent entry produced
+         - Missing/null model names: use "unknown", gets zero rates from
+           get_model_costs()
+      6. The result is passed to store_attempt_metrics(token_usage_by_model=...)
+         in _execute_building(), _execute_verifying(), and _execute_recovering().
+
+      Key imports already available in phase_handler.py:
+        from orchestrator.runners.costs import get_model_costs
+        from orchestrator.state.models import ModelTokenUsage
+    requirements:
+      - id: "R1"
+        desc: "_extract_metrics_and_usage() builds ModelTokenUsage entries for parent model using get_model_costs() for rates"
+        priority: critical
+      - id: "R2"
+        desc: "Sub-agents are grouped by model name, token counts summed per group, rates stamped via get_model_costs()"
+        priority: critical
+      - id: "R3"
+        desc: "Legacy flat fields (tokens_read, tokens_write, tokens_cache) populated as sum across all per-model entries"
+        priority: critical
+      - id: "R4"
+        desc: "Null/missing action_log returns empty usage list without error"
+        priority: critical
+      - id: "R5"
+        desc: "store_attempt_metrics() called with token_usage_by_model= in all three phase methods (building, verifying, recovering)"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "extract_method_exists"
+          cmd: "grep -q '_extract_metrics_and_usage' src/orchestrator/runners/execution/phase_handler.py"
+          must: true
+        - id: "get_model_costs_used"
+          cmd: "grep -q 'get_model_costs' src/orchestrator/runners/execution/phase_handler.py"
+          must: true
+        - id: "token_usage_by_model_passed"
+          cmd: "grep -q 'token_usage_by_model' src/orchestrator/runners/execution/phase_handler.py"
+          must: true
+        - id: "existing_tests_pass"
+          cmd: "uv run pytest tests/ -x -q 2>&1 | tail -5"
+          must: true
+    verifier:
+      rubric:
+        - id: "R1"
+          text: |
+            R1 — A: _extract_metrics_and_usage() builds a ModelTokenUsage for the parent
+            model with correct token fields and cost rates from get_model_costs(). Model
+            name defaults to "unknown" when al.agent_model is None.
+            B: parent entry built but one or two fields missing or rate lookup not called.
+            F: method doesn't build parent ModelTokenUsage entry or doesn't call get_model_costs.
+        - id: "R2"
+          text: |
+            R2 — A: sub-agents are iterated, grouped by model name, token counts accumulated
+            correctly per group (cache_read, cache_creation, input, output all summed), and
+            each group has rates from get_model_costs(). Empty/None model names use "unknown".
+            B: sub-agents iterated but not grouped (separate entry per sub-agent instead of merged).
+            F: sub-agents ignored entirely.
+        - id: "R3"
+          text: |
+            R3 — A: ExecutionMetrics returned has tokens_read = sum(input_tokens), tokens_write =
+            sum(output_tokens), tokens_cache = sum(cache_read_tokens + cache_creation_tokens)
+            across all ModelTokenUsage entries (parent + sub-agents).
+            B: legacy fields computed but from only parent (sub-agent tokens excluded).
+            F: legacy flat fields not populated from per-model data.
+        - id: "R45"
+          text: |
+            R4 — A: when result.action_log is None or has zero tokens, method returns
+            (result.metrics, []) without error.
+            R5 — A: all three phase execution methods (_execute_building, _execute_verifying,
+            _execute_recovering) call store_attempt_metrics with token_usage_by_model= keyword.
+            F: any phase method omits token_usage_by_model from the store_attempt_metrics call.
+    retry:
+      max_attempts: 3
+
+  - id: "T-02"
+    title: "Unit tests for extraction scenarios"
+    task_context: |
+      Write unit tests for PhaseHandler._extract_metrics_and_usage() covering all
+      required scenarios. Test file: tests/unit/test_model_token_usage.py
+      (create if it doesn't exist).
+
+      Test scenarios required:
+      1. Parent-only (no sub-agents): ActionLog with agent_model set, sub_agents=[].
+         Assert: usage_by_model has exactly 1 entry; model name, token counts, and
+         cost rates match; legacy metrics match token sums.
+
+      2. Parent + sub-agents with different models: ActionLog with 2 sub-agents of
+         different model types. Assert: usage_by_model has 3 entries (parent + 2 subs);
+         each has correct model name and tokens.
+
+      3. Multiple sub-agents of same model (merge): ActionLog with 3 sub-agents all
+         using the same model. Assert: usage_by_model has 2 entries (parent + 1 merged
+         sub-agent); merged entry has summed token counts.
+
+      4. Unknown model (zero rates): ActionLog with agent_model not in model_costs.yaml.
+         Assert: usage_by_model has entry with model="<unknown-name>"; all cost_per_m_*
+         fields are 0.0; total_cost_usd = 0.0.
+
+      5. Null action_log: ExecutionResult with action_log=None. Assert: returns
+         (result.metrics, []); no exception raised.
+
+      Test setup: Use the _reset_cost_table fixture and load a test cost YAML
+      (write minimal YAML to tmp_path) or use the existing cost_file fixture if present.
+      Construct ActionLog, SubAgentLog, ExecutionResult directly without mocking.
+
+      Key imports:
+        from orchestrator.runners.execution.phase_handler import PhaseHandler
+        from orchestrator.runners.costs import load_cost_table
+        from orchestrator.state.models import ActionLog, SubAgentLog
+        from orchestrator.runners.types import ExecutionResult, ExecutionMetrics
+    requirements:
+      - id: "R6"
+        desc: "Unit tests exist for all 5 scenarios: parent-only, parent+subs (different models), merged subs (same model), unknown model, null action_log"
+        priority: critical
+      - id: "R7"
+        desc: "All unit tests pass"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "test_file_exists"
+          cmd: "test -f tests/unit/test_model_token_usage.py"
+          must: true
+        - id: "unit_tests_pass"
+          cmd: "uv run pytest tests/unit/test_model_token_usage.py -v 2>&1 | tail -15"
+          must: true
+        - id: "all_tests_still_pass"
+          cmd: "uv run pytest tests/ -x -q 2>&1 | tail -5"
+          must: true
+    verifier:
+      rubric:
+        - id: "R6"
+          text: |
+            R6 — A: all 5 required scenarios have dedicated test cases; each test
+            constructs realistic ActionLog/SubAgentLog objects and makes specific
+            assertions about model names, token counts, cost rates, and legacy metrics.
+            B: 3-4 scenarios covered but one or two missing (e.g. merge or unknown model).
+            F: fewer than 3 scenarios covered or tests are trivially shallow.
+        - id: "R7"
+          text: |
+            R7 — A: all tests in test_model_token_usage.py pass with green output.
+            B: most tests pass but 1 fails due to a minor assertion issue.
+            F: multiple tests fail or the test file has import/syntax errors.
+    retry:
+      max_attempts: 2
