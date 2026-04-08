@@ -65,3 +65,4 @@ worktrees/
 
 # Playwright MCP artifacts
 .playwright-mcp/
+.orchestrator/
