@@ -10,8 +10,8 @@ Add the `ModelTokenUsage` class and cost rate configuration. No behavior changes
 
 **Steps:**
 1. Add `ModelTokenUsage` Pydantic class to `state/models.py` with token count fields, cost rate fields, and `total_cost_usd` computed property. [I-03, I-16]
-2. Create `model_costs.yaml` at project root with Sonnet, Haiku, and Opus rates plus `unknown_model` zero-rate default. [I-04, I-17]
-3. Create `runners/costs.py` with `get_model_costs(model_name)` that loads rates from YAML and returns zero-rate dict for unknown models. [I-04, I-17]
+2. Create `config/model_costs.yaml` with Sonnet, Haiku, and Opus rates plus `unknown_model` zero-rate default. [I-04, I-17]
+3. Create `runners/costs.py` with `get_model_costs(model_name)` that loads rates from YAML, normalizes model names by base name (stripping version suffixes), and returns zero-rate dict for unknown models. [I-04, I-17]
 4. Add `token_usage_by_model: list[ModelTokenUsage] = []` field to `Attempt` and `Run` in `state/models.py`. [I-03, I-19]
 5. Unit tests for `ModelTokenUsage.total_cost_usd` computation and `get_model_costs()` lookup (including unknown model fallback). [I-25]
 
@@ -48,7 +48,7 @@ Accumulate per-model usage across all attempts into run-level totals.
 
 **Steps:**
 1. Add aggregation logic: iterate all attempts across all tasks/steps, merge `token_usage_by_model` entries by model name (sum tokens, preserve rates). [I-06]
-2. Populate `run.token_usage_by_model` when run completes or on step completion. [I-06, I-19]
+2. Populate `run.token_usage_by_model` after each attempt completes (real-time cost visibility), not just at run/step completion. [I-06, I-19]
 3. Continue populating legacy run-level flat fields from the aggregated data. [I-07, I-20]
 4. Unit tests for aggregation: multiple attempts with different models, same model across attempts, empty attempts. [I-25]
 
@@ -61,7 +61,7 @@ Expose per-model data through the REST API.
 **Steps:**
 1. Add `ModelTokenUsageSchema` to API schemas (`api/schemas/`). [I-09, I-22]
 2. Add `token_usage_by_model` field to `AttemptSchema` and `RunResponse`. [I-09, I-22]
-3. Update response builders in `api/routers/runs.py` to include the new field. [I-09]
+3. Update response builders in `api/routers/runs.py` to include the new field. Replace `estimated_cost_usd` with accurate per-model sum (no more flat gpt-4o estimate). [I-09]
 4. Integration test: create a run, verify API response includes `token_usage_by_model` with expected structure. [I-25]
 
 **Verification:** `GET /api/runs/{id}` returns per-model token data. Existing API fields unchanged. [I-22, I-24]
@@ -74,7 +74,7 @@ Render the per-model breakdown in the UI.
 1. Add TypeScript types for `ModelTokenUsage` in `ui/src/types/runs.ts`. [I-10]
 2. Create per-model cost breakdown table component for the run detail page. Display model name, token counts, cost rates, and per-model total cost. [I-10, I-23]
 3. Compute and display grand total cost by summing `total_cost_usd` across models. [I-10]
-4. Add fallback: when `token_usage_by_model` is empty (old run), show legacy flat fields with "cost estimate, sub-agents not included" disclaimer badge. [I-11, I-23]
+4. Add fallback: when `token_usage_by_model` is empty (old run), show legacy flat fields with "cost estimate, sub-agents not included" disclaimer badge. Show "cost unknown" badge next to $0.00 rows for unknown/unrecognized models. [I-11, I-23]
 5. Frontend tests for the breakdown component: with data, empty data, fallback rendering. [I-25]
 
 **Verification:** Run detail page shows per-model cost table for new runs and disclaimer for old runs. All frontend tests pass. [I-23, I-24]

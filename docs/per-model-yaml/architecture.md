@@ -20,8 +20,8 @@ phase_handler.py (M3)
     │
     ▼
 Run aggregation (M4)
-  ├── Iterate all attempts across tasks/steps
-  ├── Merge ModelTokenUsage entries by model name (sum tokens, keep rates)
+  ├── Updated after each attempt completes (real-time cost visibility)
+  ├── Merge ModelTokenUsage entries by base model name (sum tokens, keep rates)
   └── Store on run.token_usage_by_model
     │
     ▼
@@ -33,6 +33,7 @@ API response (M5)
 Frontend (M6)
   ├── Per-model breakdown table on RunDetail page
   ├── Grand total = sum(entry.total_cost_usd)
+  ├── "cost unknown" badge on rows with zero rates (unknown models)
   └── Fallback for old runs: legacy fields + disclaimer
 ```
 
@@ -80,7 +81,7 @@ Legacy fields (`AttemptMetrics.tokens_cache`, `Run.total_tokens_cache`, etc.) re
 
 ## Cost Rate Configuration
 
-### model_costs.yaml (project root)
+### config/model_costs.yaml
 
 ```yaml
 models:
@@ -109,8 +110,9 @@ unknown_model:
 
 ### runners/costs.py
 
-- Loads `model_costs.yaml` at import time
+- Loads `config/model_costs.yaml` at import time
 - `get_model_costs(model_name: str) -> dict[str, float]` returns rate dict
+- Model names are normalized by base name: version suffixes stripped (e.g. `claude-sonnet-4-6-20250514` → `claude-sonnet-4-6`) via prefix matching fallback
 - Unknown models return `unknown_model` rates (all zeros)
 - Rates are stamped onto `ModelTokenUsage` at execution time, not looked up later
 
@@ -167,7 +169,7 @@ class ModelTokenUsageSchema(BaseModel):
 | `AttemptSchema` | `token_usage_by_model: list[ModelTokenUsageSchema] = []` |
 | `RunResponse` | `token_usage_by_model: list[ModelTokenUsageSchema] = []` |
 
-Existing fields (`total_tokens_cache`, `estimated_cost_usd`, etc.) remain unchanged.
+`estimated_cost_usd` is replaced with the accurate per-model sum (no longer uses flat gpt-4o estimate). Other existing fields (`total_tokens_cache`, etc.) remain unchanged.
 
 ### Example API Response Fragment
 
@@ -207,7 +209,7 @@ Existing fields (`total_tokens_cache`, `estimated_cost_usd`, etc.) remain unchan
 | File | Change | Milestone |
 |------|--------|-----------|
 | `src/orchestrator/state/models.py` | Add `ModelTokenUsage` class; add field to `Attempt` and `Run` | M1 |
-| `model_costs.yaml` (new) | Cost rates per model | M1 |
+| `config/model_costs.yaml` (new) | Cost rates per model | M1 |
 | `src/orchestrator/runners/costs.py` (new) | YAML loader + `get_model_costs()` | M1 |
 | `src/orchestrator/db/orm/models.py` | Add JSON columns to ORM | M2 |
 | `src/orchestrator/db/migrations/versions/` | New Alembic migration | M2 |
@@ -232,7 +234,7 @@ New code builds per-model breakdown from both parent and `al.sub_agents`, then d
 
 ### Run Completion
 
-When a run completes (or a step completes), the aggregation logic iterates all attempts and merges their `token_usage_by_model` lists by model name. This is additive -- no existing completion logic changes.
+After each attempt completes, the aggregation logic iterates all attempts and merges their `token_usage_by_model` lists by base model name. This provides real-time cost visibility for in-progress runs. This is additive -- no existing completion logic changes.
 
 ### Frontend RunDetail
 

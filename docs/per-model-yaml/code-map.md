@@ -11,8 +11,8 @@
 
 ## Cost Rate Configuration (M1)
 
-- `model_costs.yaml` — Project root: Sonnet, Haiku, Opus rates in USD per 1M tokens; `unknown_model` zero-rate default
-- `src/orchestrator/runners/costs.py` — `_find_cost_file()` lines 30–40: Locates `model_costs.yaml` (project root or CWD)
+- `config/model_costs.yaml` — Config directory: Sonnet, Haiku, Opus rates in USD per 1M tokens; `unknown_model` zero-rate default
+- `src/orchestrator/runners/costs.py` — `_find_cost_file()` lines 30–40: Locates `config/model_costs.yaml` (config dir or CWD)
 - `src/orchestrator/runners/costs.py` — `load_cost_table()` lines 43–70: Parses YAML into `_cost_table` dict
 - `src/orchestrator/runners/costs.py` — `get_model_costs()` lines 73–95: Returns cost-rate dict for a model name; supports exact match and prefix matching; zero-rate fallback for unknown models
 
