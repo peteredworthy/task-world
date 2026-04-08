@@ -105,12 +105,14 @@ function QuickActions({
   onPause,
   onResume,
   onDelete,
+  onApprove,
   loading,
 }: {
   run: RunResponse;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onDelete: (id: string) => void;
+  onApprove?: () => void;
   loading?: RunCardProps['loading'];
 }) {
   const btnBase =
@@ -126,6 +128,15 @@ function QuickActions({
           aria-label="Pause run"
         >
           {loading?.pause ? 'Pausing...' : 'Pause'}
+        </button>
+      )}
+      {run.status === 'paused' && onApprove && (
+        <button
+          onClick={e => { e.stopPropagation(); onApprove(); }}
+          className={btnBase + ' border-status-completed/40 text-status-completed hover:bg-status-completed/15'}
+          aria-label="Approve step"
+        >
+          Approve
         </button>
       )}
       {run.status === 'paused' && (
@@ -736,7 +747,12 @@ function CollapsedRow(props: RunCardProps) {
   const pendingActionsCount = run.steps
     .flatMap(step => step.tasks)
     .filter(task => task.pending_action_type !== null).length;
-  const currentStep = run.steps[run.current_step_index];
+  // Skip completed steps to find the effective current step (mirrors backend get_pending_actions logic)
+  let effectiveStepIdx = run.current_step_index;
+  while (effectiveStepIdx < run.steps.length && run.steps[effectiveStepIdx].completed) {
+    effectiveStepIdx++;
+  }
+  const currentStep = run.steps[effectiveStepIdx] ?? null;
   const hasCurrentStepApprovalPending =
     !!currentStep &&
     currentStep.has_approval_gate &&
@@ -822,6 +838,7 @@ function CollapsedRow(props: RunCardProps) {
             onPause={props.onPause}
             onResume={props.onResume}
             onDelete={props.onDelete}
+            onApprove={approvalTaskId ? () => navigate(`/runs/${run.id}?action=approval&task_id=${approvalTaskId}`) : undefined}
             loading={loading}
           />
         </div>
@@ -839,6 +856,7 @@ function CollapsedRow(props: RunCardProps) {
 
 function ExpandedView(props: RunCardProps) {
   const { run, routineName, onToggle, onTaskClick, loading } = props;
+  const navigate = useNavigate();
   const totalTokens = run.total_tokens_read + run.total_tokens_write + run.total_tokens_cache;
   const sourceBranch = run.source_branch ?? run.repo_name;
   const startedLabel = run.started_at ? formatRelativeTime(run.started_at) : 'Not started';
@@ -849,7 +867,12 @@ function ExpandedView(props: RunCardProps) {
         ? 'Cost'
         : 'Est. Cost';
 
-  const currentStep = run.steps[run.current_step_index];
+  // Skip completed steps to find the effective current step (mirrors backend get_pending_actions logic)
+  let effectiveExpandedStepIdx = run.current_step_index;
+  while (effectiveExpandedStepIdx < run.steps.length && run.steps[effectiveExpandedStepIdx].completed) {
+    effectiveExpandedStepIdx++;
+  }
+  const currentStep = run.steps[effectiveExpandedStepIdx] ?? null;
   const clarificationTaskId = currentStep?.tasks.find(
     (task) => task.pending_action_type === 'clarification',
   )?.id;
@@ -894,6 +917,7 @@ function ExpandedView(props: RunCardProps) {
           onPause={props.onPause}
           onResume={props.onResume}
           onDelete={props.onDelete}
+          onApprove={approvalTaskId ? () => navigate(`/runs/${run.id}?action=approval&task_id=${approvalTaskId}`) : undefined}
           loading={loading}
         />
 

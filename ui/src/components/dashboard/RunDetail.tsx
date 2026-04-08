@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useMemo } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack, useResumeRun, useSkipStep } from '../../hooks/useApi';
 import { useBranchStatus } from '../../hooks/useReview';
@@ -85,6 +85,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
   const [approvalReviewAction, setApprovalReviewAction] = useState<PendingAction | null>(null);
+  const autoOpenedRef = useRef(false);
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
     const detail = err instanceof ApiError
@@ -124,6 +125,15 @@ function RunDetailInner({ runId }: { runId: string }) {
       setSearchParams(next, { replace: true });
     }
   }, [searchParams, setSearchParams, selectedPendingAction, taskPendingActions]);
+
+  // Auto-open pending action modal on first load (when no URL action param)
+  useEffect(() => {
+    if (autoOpenedRef.current) return;
+    if (!primaryPendingAction || selectedPendingAction) return;
+    if (searchParams.get('action')) return; // URL param effect handles this case
+    autoOpenedRef.current = true;
+    setSelectedPendingAction(primaryPendingAction);
+  }, [primaryPendingAction, selectedPendingAction, searchParams]);
 
 
   if (isLoading) {
@@ -557,15 +567,6 @@ function RunDetailInner({ runId }: { runId: string }) {
               <AgentGuidancePanel run={run} />
             </div>
           )}
-
-          {/* Per-step approval gates */}
-          <div className="mb-2">
-            {run.steps.map((step, index) => (
-              <div key={step.id} id={`step-${step.id}`}>
-                <StepApprovalBanner runId={run.id} step={step} isCurrentStep={index === run.current_step_index} />
-              </div>
-            ))}
-          </div>
 
           {/* View Changes */}
           <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path ?? null} />
