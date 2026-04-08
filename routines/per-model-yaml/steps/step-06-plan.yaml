@@ -1,0 +1,313 @@
+id: "S-06"
+title: "Frontend Display (M6)"
+step_context: |
+  Render the per-model cost breakdown table in the UI on the run detail page.
+  Includes TypeScript types, a breakdown table component, grand total computation,
+  fallback for old runs, and "cost unknown" badges for unknown models.
+
+  Prerequisites: Step 05 complete — API returns token_usage_by_model on RunResponse
+  and AttemptSchema.
+
+  Key integration points:
+  - ui/src/types/runs.ts — ModelTokenUsage interface and RunResponse.token_usage_by_model
+  - ui/src/components/detail/MetricsBar.tsx — existing cost display; extend or replace
+    with per-model breakdown table
+  - New component or utility file for the breakdown table (React Fast Refresh requires
+    utility exports in separate files from components)
+
+  Memory notes:
+  - Utility exports must live in separate files from components (React Fast Refresh)
+  - onClick handlers with optional params must use arrow function wrappers
+  - Frontend tests pass data as props directly (no API mocking)
+
+tasks:
+  - id: "T-01"
+    title: "Add ModelTokenUsage TypeScript type and update RunResponse"
+    task_context: |
+      Add the ModelTokenUsage TypeScript interface to ui/src/types/runs.ts and
+      ensure token_usage_by_model is present on RunResponse.
+
+      The API already returns these fields (Step 05 complete). This task makes
+      the frontend type system aware of them.
+
+      Fields to add (matching the API schema exactly):
+
+        interface ModelTokenUsage {
+          model: string;
+          cache_read_tokens: number;
+          cache_creation_tokens: number;
+          input_tokens: number;
+          output_tokens: number;
+          cost_per_m_cache_read: number;
+          cost_per_m_cache_creation: number;
+          cost_per_m_input: number;
+          cost_per_m_output: number;
+          total_cost_usd: number;
+        }
+
+      Also verify/add to RunResponse:
+        token_usage_by_model: ModelTokenUsage[];
+
+      And to AttemptSchema in ui/src/types/tasks.ts (if it exists):
+        token_usage_by_model?: ModelTokenUsage[];
+
+      Check existing type definitions before adding — types may already be present
+      (the codebase discovery doc shows they were already defined). Only add what
+      is missing.
+
+      Files: ui/src/types/runs.ts, ui/src/types/tasks.ts (if AttemptSchema is there)
+    requirements:
+      - id: "R1"
+        desc: "ModelTokenUsage TypeScript interface exists in ui/src/types/runs.ts with all 10 fields matching the API schema"
+        priority: critical
+      - id: "R2"
+        desc: "RunResponse in ui/src/types/runs.ts has token_usage_by_model: ModelTokenUsage[] field"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "model_token_usage_interface_exists"
+          cmd: "grep -n 'ModelTokenUsage' ui/src/types/runs.ts | grep -q 'interface\\|export' && echo ok"
+          must: true
+        - id: "run_response_has_field"
+          cmd: "grep -n 'token_usage_by_model' ui/src/types/runs.ts | grep -q 'ModelTokenUsage' && echo ok"
+          must: true
+        - id: "typecheck_passes"
+          cmd: "cd ui && npm run typecheck 2>&1 | tail -5"
+          must: true
+    verifier:
+      rubric:
+        - id: "R1"
+          text: |
+            R1 — A: ModelTokenUsage interface has all 10 fields (model, 4 token count
+            fields, 4 cost rate fields, total_cost_usd) with correct TypeScript types
+            (string | number). Export is accessible from consuming components.
+            B: interface exists but is missing some fields or has wrong types.
+            F: interface missing entirely.
+        - id: "R2"
+          text: |
+            R2 — A: RunResponse has token_usage_by_model typed as ModelTokenUsage[]
+            (not any[] or undefined union). Field is present and correctly typed.
+            B: field exists but typed as any[] or optional when it shouldn't be.
+            F: field missing from RunResponse.
+
+  - id: "T-02"
+    title: "Create per-model cost breakdown table component"
+    task_context: |
+      Create a ModelCostBreakdown component (or section within MetricsBar.tsx) that
+      displays the per-model cost table.
+
+      React Fast Refresh requires: if exporting utility functions alongside components,
+      they must be in a SEPARATE file. Place pure logic (formatters, total computation)
+      in a utility file like ui/src/components/detail/modelCostUtils.ts, and the
+      component itself in a .tsx file.
+
+      Component display requirements:
+      - Table with columns: Model, Cache Read Tokens, Cache Creation Tokens,
+        Input Tokens, Output Tokens, Cost/1M In, Cost/1M Out, Total Cost
+      - One row per entry in token_usage_by_model
+      - Grand total row at bottom: sum of total_cost_usd across all entries
+      - "cost unknown" badge next to model name when all 4 cost rates are zero
+        (i.e., cost_per_m_cache_read == 0 && cost_per_m_cache_creation == 0 &&
+         cost_per_m_input == 0 && cost_per_m_output == 0)
+      - Format dollar amounts to 4–6 decimal places (costs can be very small)
+      - Format token counts with commas (locale formatting)
+
+      Fallback behavior (when token_usage_by_model is empty or missing):
+      - Show legacy flat fields (total_tokens_read, total_tokens_write,
+        total_tokens_cache, estimated_cost_usd)
+      - Show a badge/note: "cost estimate, sub-agents not included"
+      - Use run.cost_disclaimer if present for additional context
+
+      The component receives: run: RunResponse as its prop.
+
+      Suggested file structure:
+      - ui/src/components/detail/ModelCostBreakdown.tsx — the component
+      - ui/src/components/detail/modelCostUtils.ts — utility functions
+        (isUnknownModel, formatCost, computeGrandTotal, etc.)
+
+      Integrate the new component into the run detail page so it's visible.
+      Check where MetricsBar is used and add ModelCostBreakdown nearby, OR
+      extend MetricsBar itself to include the breakdown table.
+    requirements:
+      - id: "R3"
+        desc: "Per-model cost breakdown table renders one row per token_usage_by_model entry with model name, token counts, cost rates, and per-model total_cost_usd"
+        priority: critical
+      - id: "R4"
+        desc: "Grand total row shows sum of total_cost_usd across all model entries"
+        priority: critical
+      - id: "R5"
+        desc: "\"cost unknown\" badge appears on rows where all 4 cost rate fields are zero"
+        priority: critical
+      - id: "R6"
+        desc: "Fallback renders legacy flat fields with disclaimer badge when token_usage_by_model is empty or missing"
+        priority: critical
+      - id: "R7"
+        desc: "Component is integrated into the run detail page and visible for a run with token_usage_by_model data"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "component_file_exists"
+          cmd: "test -f ui/src/components/detail/ModelCostBreakdown.tsx || grep -rn 'token_usage_by_model' ui/src/components/detail/MetricsBar.tsx | grep -q 'map\\|length' && echo ok"
+          must: true
+        - id: "cost_unknown_badge_logic"
+          cmd: "grep -rn 'cost unknown\\|cost_unknown\\|costUnknown\\|unknown.*badge\\|badge.*unknown' ui/src/components/ | grep -qi 'cost' && echo ok"
+          must: true
+        - id: "fallback_disclaimer"
+          cmd: "grep -rn 'sub-agents not included\\|sub_agents_not_included\\|disclaimer' ui/src/components/ | grep -q . && echo ok"
+          must: true
+        - id: "typecheck_passes"
+          cmd: "cd ui && npm run typecheck 2>&1 | tail -5"
+          must: true
+        - id: "lint_passes"
+          cmd: "cd ui && npm run lint 2>&1 | tail -10"
+          must: true
+    verifier:
+      rubric:
+        - id: "R3"
+          text: |
+            R3 — A: table renders a row per entry with all required columns (model,
+            token counts, cost rates, total). Token counts and costs display formatted
+            values. Component handles single-model and multi-model arrays correctly.
+            B: table renders but some columns are missing or formatting is wrong.
+            F: no table rendered or component crashes on data.
+        - id: "R4"
+          text: |
+            R4 — A: grand total row correctly sums total_cost_usd across all entries
+            and displays it prominently at the bottom of the table.
+            B: total row exists but computation is incorrect (e.g. adds rates instead
+            of totals, or only shows first entry's cost).
+            F: no grand total row.
+        - id: "R5"
+          text: |
+            R5 — A: rows with all four cost rate fields equal to zero display a
+            visible "cost unknown" badge. Known-model rows do not show the badge.
+            B: badge shows for some unknown-model cases but not all zero-rate cases.
+            F: badge never shown or shown for all rows regardless of rates.
+        - id: "R6"
+          text: |
+            R6 — A: when token_usage_by_model is empty array, null, or undefined,
+            the component renders legacy flat fields (tokens_read, tokens_write,
+            tokens_cache, estimated_cost_usd) with a "cost estimate, sub-agents
+            not included" disclaimer badge.
+            B: fallback renders but disclaimer text is missing.
+            F: component crashes or shows nothing for empty/missing data.
+        - id: "R7"
+          text: |
+            R7 — A: ModelCostBreakdown (or equivalent) is imported and rendered
+            in the run detail page. A developer can verify by opening a run with
+            token_usage_by_model data and seeing the table.
+            B: component is defined but not wired into any page.
+            F: component file does not exist.
+
+  - id: "T-03"
+    title: "Frontend tests for ModelCostBreakdown component"
+    task_context: |
+      Write vitest + @testing-library/react tests for the per-model cost breakdown
+      component.
+
+      Test file: ui/src/components/detail/__tests__/ModelCostBreakdown.test.tsx
+
+      Use the existing test patterns from:
+        ui/src/components/detail/__tests__/RecoveryPanel.test.tsx
+
+      Pattern:
+      - import { render, screen, cleanup } from '@testing-library/react'
+      - import { QueryClientProvider } from '@tanstack/react-query'
+      - afterEach(cleanup)
+      - Pass RunResponse data as props directly (no API mocking)
+      - Use screen.getBy* assertions
+
+      Build a makeRun() factory that constructs a minimal RunResponse fixture.
+      Include token_usage_by_model in the factory.
+
+      Required test cases:
+
+      1. Multi-model table renders correct rows:
+         - Input: token_usage_by_model with 2 entries (claude-sonnet-4-6, claude-haiku)
+         - Assert: both model names appear in the document
+         - Assert: grand total = sum of the two total_cost_usd values
+
+      2. Grand total computed correctly:
+         - Input: 3 models with total_cost_usd = [0.01, 0.02, 0.03]
+         - Assert: grand total displayed is 0.06
+
+      3. "cost unknown" badge for zero-rate models:
+         - Input: one entry with all cost rate fields = 0
+         - Assert: "cost unknown" text (or badge) appears in the document
+
+      4. Fallback renders for empty token_usage_by_model:
+         - Input: RunResponse with token_usage_by_model = []
+         - Assert: disclaimer text "sub-agents not included" appears
+         - Assert: no per-model table rows rendered
+
+      5. Single-model case:
+         - Input: token_usage_by_model with 1 entry
+         - Assert: exactly one model row + grand total row rendered
+
+      6. Null/undefined token_usage_by_model treated as empty:
+         - Input: RunResponse with token_usage_by_model = undefined
+         - Assert: fallback shown (same as empty array case)
+    requirements:
+      - id: "R8"
+        desc: "Test: multi-model table renders correct rows with model names and correct grand total"
+        priority: critical
+      - id: "R9"
+        desc: "Test: \"cost unknown\" badge appears when all cost rates are zero"
+        priority: critical
+      - id: "R10"
+        desc: "Test: fallback renders with disclaimer when token_usage_by_model is empty or undefined"
+        priority: critical
+      - id: "R11"
+        desc: "Test: grand total row sums total_cost_usd across all entries correctly"
+        priority: expected
+      - id: "R12"
+        desc: "Test: single-model case renders without errors"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "test_file_exists"
+          cmd: "test -f ui/src/components/detail/__tests__/ModelCostBreakdown.test.tsx && echo ok"
+          must: true
+        - id: "frontend_tests_pass"
+          cmd: "cd ui && npm test -- --run src/components/detail/__tests__/ModelCostBreakdown.test.tsx 2>&1 | tail -20"
+          must: true
+        - id: "all_frontend_tests_pass"
+          cmd: "cd ui && npm test -- --run 2>&1 | tail -10"
+          must: true
+        - id: "build_passes"
+          cmd: "cd ui && npm run build 2>&1 | tail -10"
+          must: true
+    verifier:
+      rubric:
+        - id: "R8"
+          text: |
+            R8 — A: test constructs a RunResponse with 2+ model entries, renders the
+            component, and asserts each model name is visible and the grand total equals
+            the sum of their total_cost_usd values.
+            B: test only checks model names appear, not that the total is correct.
+            F: test missing or failing.
+        - id: "R9"
+          text: |
+            R9 — A: test creates a model entry with all four cost rate fields = 0,
+            renders the component, and asserts "cost unknown" text is present in the DOM.
+            B: test exists but only checks for absence of cost values, not the badge text.
+            F: test missing.
+        - id: "R10"
+          text: |
+            R10 — A: test renders with empty array and with undefined token_usage_by_model,
+            asserts disclaimer text "sub-agents not included" is present, and asserts no
+            model-specific rows are rendered.
+            B: test only covers empty array, not undefined case.
+            F: test missing.
+        - id: "R11"
+          text: |
+            R11 — A: test with 3 entries whose total_cost_usd values sum to a known
+            amount asserts the grand total displays that exact (or formatted) amount.
+            B: test checks grand total row exists but not its value.
+            F: test missing.
+        - id: "R12"
+          text: |
+            R12 — A: test with a single-model RunResponse renders without errors and
+            shows one model row plus the grand total row.
+            B: test exists but only checks no error thrown (no assertions on rendered output).
+            F: test missing.

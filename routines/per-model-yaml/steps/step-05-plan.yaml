@@ -1,0 +1,219 @@
+id: "S-05"
+title: "API Exposure (M5)"
+step_context: |
+  Expose per-model token usage data through the REST API by adding schema types
+  and including the new fields in attempt and run responses. Replace the inaccurate
+  estimated_cost_usd (flat gpt-4o estimate) with the accurate per-model sum.
+
+  Prerequisites: Step 04 complete — run.token_usage_by_model and
+  attempt.token_usage_by_model are populated and persisted.
+
+  Key integration points:
+  - src/orchestrator/api/schemas/tasks.py — ModelTokenUsageSchema + AttemptSchema
+  - src/orchestrator/api/schemas/runs.py — RunResponse
+  - src/orchestrator/api/routers/runs.py — _run_to_response() response builder
+
+tasks:
+  - id: "T-01"
+    title: "Add ModelTokenUsageSchema and update AttemptSchema"
+    task_context: |
+      Add ModelTokenUsageSchema to src/orchestrator/api/schemas/tasks.py and ensure
+      AttemptSchema includes token_usage_by_model: list[ModelTokenUsageSchema] = [].
+
+      ModelTokenUsageSchema fields:
+        model: str
+        cache_read_tokens: int = 0
+        cache_creation_tokens: int = 0
+        input_tokens: int = 0
+        output_tokens: int = 0
+        cost_per_m_cache_read: float = 0.0
+        cost_per_m_cache_creation: float = 0.0
+        cost_per_m_input: float = 0.0
+        cost_per_m_output: float = 0.0
+        total_cost_usd: float = 0.0  # stored field, NOT a computed property
+
+      Note: total_cost_usd is a plain field (not a @property) in the schema,
+      unlike the domain ModelTokenUsage class. The router must compute and pass
+      this value explicitly.
+
+      AttemptSchema must include:
+        token_usage_by_model: list[ModelTokenUsageSchema] = []
+
+      Read the current file first — these may already be present. Only add what
+      is missing.
+
+      Code location: src/orchestrator/api/schemas/tasks.py
+    requirements:
+      - id: "R1"
+        desc: "ModelTokenUsageSchema exists in api/schemas/tasks.py with all required fields (model, token counts, cost rates, total_cost_usd as a stored float field)"
+        priority: critical
+      - id: "R2"
+        desc: "AttemptSchema includes token_usage_by_model: list[ModelTokenUsageSchema] = []"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "schema_has_model_token_usage"
+          cmd: "grep -n 'ModelTokenUsageSchema' src/orchestrator/api/schemas/tasks.py | grep -q 'class\\|ModelTokenUsageSchema' && echo ok"
+          must: true
+        - id: "attempt_schema_has_field"
+          cmd: "grep -n 'token_usage_by_model' src/orchestrator/api/schemas/tasks.py | grep -q 'AttemptSchema\\|ModelTokenUsageSchema' && echo ok"
+          must: true
+        - id: "unit_tests_pass"
+          cmd: "uv run pytest tests/unit/ -x -q 2>&1 | tail -5"
+          must: false
+    verifier:
+      rubric:
+        - id: "R1"
+          text: |
+            R1 — A: ModelTokenUsageSchema is present in tasks.py with all 10 fields
+            (model, 4 token count fields, 4 rate fields, total_cost_usd) all typed
+            correctly; total_cost_usd is a plain field not a @property.
+            B: schema exists but missing some fields or total_cost_usd is a computed
+            property instead of a stored field.
+            F: schema missing entirely.
+        - id: "R2"
+          text: |
+            R2 — A: AttemptSchema has token_usage_by_model: list[ModelTokenUsageSchema] = []
+            with correct type and default.
+            B: field exists but with wrong type or no default.
+            F: field missing from AttemptSchema.
+
+  - id: "T-02"
+    title: "Update RunResponse and _run_to_response() builder"
+    task_context: |
+      Ensure RunResponse in src/orchestrator/api/schemas/runs.py includes
+      token_usage_by_model: list[ModelTokenUsageSchema] = [].
+
+      Update _run_to_response() in src/orchestrator/api/routers/runs.py to:
+      1. Build ModelTokenUsageSchema list from run.token_usage_by_model, explicitly
+         computing total_cost_usd=round(u.total_cost_usd, 6) for each entry (calling
+         the domain model's computed property and storing the result).
+      2. Replace the estimated_cost_usd fallback logic with the accurate per-model sum:
+         - If token_usage_by_model present: sum(u.total_cost_usd for u in schemas)
+         - If empty (old runs): 0.0
+      3. Remove or skip the flat gpt-4o estimate (estimate_cost()) when per-model
+         data is available. For old runs with empty token_usage_by_model, return
+         estimated_cost_usd=0.0 (not the flat gpt-4o fallback).
+
+      Read the current code before making changes — this logic may already be
+      partially or fully in place.
+
+      Code locations:
+        src/orchestrator/api/schemas/runs.py — RunResponse
+        src/orchestrator/api/routers/runs.py — _run_to_response()
+    requirements:
+      - id: "R3"
+        desc: "RunResponse includes token_usage_by_model: list[ModelTokenUsageSchema] = []"
+        priority: critical
+      - id: "R4"
+        desc: "_run_to_response() populates token_usage_by_model from run.token_usage_by_model with total_cost_usd computed explicitly"
+        priority: critical
+      - id: "R5"
+        desc: "estimated_cost_usd is computed as the per-model sum (not the flat gpt-4o estimate); old runs with empty per-model data return 0.0"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "run_response_has_field"
+          cmd: "grep -n 'token_usage_by_model' src/orchestrator/api/schemas/runs.py | grep -q 'ModelTokenUsageSchema' && echo ok"
+          must: true
+        - id: "router_builds_schemas"
+          cmd: "grep -n 'token_usage_by_model' src/orchestrator/api/routers/runs.py | grep -qE 'ModelTokenUsageSchema|token_usage_schemas' && echo ok"
+          must: true
+        - id: "backend_tests_pass"
+          cmd: "uv run pytest tests/unit/ tests/integration/ -x -q 2>&1 | tail -5"
+          must: false
+    verifier:
+      rubric:
+        - id: "R3"
+          text: |
+            R3 — A: RunResponse has token_usage_by_model: list[ModelTokenUsageSchema] = []
+            with correct import and default.
+            B: field exists but type annotation is wrong (e.g. list[dict]).
+            F: field missing from RunResponse.
+        - id: "R4"
+          text: |
+            R4 — A: _run_to_response() iterates run.token_usage_by_model, creates a
+            ModelTokenUsageSchema per entry, explicitly sets total_cost_usd by calling
+            u.total_cost_usd (the domain property), and includes the list in the response.
+            B: field is passed through but total_cost_usd is not computed (left at 0.0).
+            F: token_usage_by_model not populated in response or always empty.
+        - id: "R5"
+          text: |
+            R5 — A: estimated_cost_usd equals the sum of per-model total_cost_usd values;
+            for old runs (empty list) returns 0.0; no flat gpt-4o fallback when per-model
+            data exists.
+            B: estimated_cost_usd still uses flat estimate even when per-model data present.
+            F: estimated_cost_usd always 0.0 or always None regardless of data.
+
+  - id: "T-03"
+    title: "Integration tests for API exposure"
+    task_context: |
+      Write integration tests verifying that the API returns token_usage_by_model
+      in run and task responses.
+
+      Test file: tests/integration/test_api_token_usage.py (create new) or append
+      to tests/integration/test_api_full_lifecycle.py if that is more appropriate.
+
+      Required test cases:
+      1. Run with token_usage_by_model populated:
+         - Create a run, inject/simulate token_usage_by_model data on the run
+         - GET /api/runs/{id} returns token_usage_by_model with expected structure
+         - Each entry has: model, cache_read_tokens, cache_creation_tokens,
+           input_tokens, output_tokens, cost_per_m_* rates, total_cost_usd
+         - estimated_cost_usd equals sum of per-model total_cost_usd
+
+      2. Old run backward compatibility:
+         - Run with empty token_usage_by_model (simulating pre-migration run)
+         - GET /api/runs/{id} returns token_usage_by_model: []
+         - estimated_cost_usd: 0.0 (not a crash or flat estimate)
+
+      3. AttemptSchema includes token_usage_by_model:
+         - GET /api/runs/{run_id}/tasks/{task_id} response includes
+           token_usage_by_model on the attempt object
+
+      Use the same HTTP client fixture pattern as tests/integration/test_api_full_lifecycle.py
+      (AsyncClient against in-memory FastAPI app with StaticPool SQLite).
+
+      Tests must not require a running server — use the in-memory test app.
+    requirements:
+      - id: "R6"
+        desc: "Integration test: GET /api/runs/{id} returns token_usage_by_model array with all expected fields when data is present"
+        priority: critical
+      - id: "R7"
+        desc: "Integration test: old runs (empty token_usage_by_model) return [] without error and estimated_cost_usd=0.0"
+        priority: critical
+      - id: "R8"
+        desc: "Integration test: estimated_cost_usd equals the sum of per-model total_cost_usd values"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "integration_test_file_exists"
+          cmd: "test -f tests/integration/test_api_token_usage.py || grep -l 'token_usage_by_model' tests/integration/test_api_full_lifecycle.py 2>/dev/null | grep -q . && echo ok"
+          must: true
+        - id: "integration_tests_pass"
+          cmd: "uv run pytest tests/integration/ -x -q -k 'token_usage' 2>&1 | tail -10"
+          must: true
+        - id: "all_integration_tests_pass"
+          cmd: "uv run pytest tests/integration/ -x -q 2>&1 | tail -5"
+          must: false
+    verifier:
+      rubric:
+        - id: "R6"
+          text: |
+            R6 — A: test creates a run, injects token_usage_by_model data, calls GET
+            /api/runs/{id}, and asserts the response contains a non-empty
+            token_usage_by_model array with correct field values.
+            B: test checks array is present but not that field values are correct.
+            F: test missing or does not assert on token_usage_by_model content.
+        - id: "R7"
+          text: |
+            R7 — A: test creates a run with no token_usage_by_model data, calls GET
+            /api/runs/{id}, asserts token_usage_by_model == [] and estimated_cost_usd == 0.0.
+            B: test checks for no crash but doesn't verify the empty list or cost value.
+            F: test missing.
+        - id: "R8"
+          text: |
+            R8 — A: test verifies that estimated_cost_usd in the response equals the
+            computed sum of total_cost_usd across all ModelTokenUsageSchema entries.
+            B: test checks estimated_cost_usd is non-null but not its exact value.
+            F: test missing.
