@@ -112,10 +112,10 @@ tasks:
           cmd: "ls src/orchestrator/db/migrations/versions/*token_usage_by_model*.py 2>/dev/null && echo 'Migration file found'"
           must: true
         - id: "migration_has_attempts"
-          cmd: "grep -l 'token_usage_by_model' src/orchestrator/db/migrations/versions/*.py | xargs grep -l 'attempts' | head -1 | xargs test -f && echo 'Migration covers attempts table'"
+          cmd: "grep -r \"add_column.'attempts'.*token_usage_by_model\" src/orchestrator/db/migrations/versions/ && echo 'Migration covers attempts table'"
           must: true
         - id: "migration_has_runs"
-          cmd: "grep -l 'token_usage_by_model' src/orchestrator/db/migrations/versions/*.py | xargs grep -l \"'runs'\" | head -1 | xargs test -f && echo 'Migration covers runs table'"
+          cmd: "grep -r \"add_column.'runs'.*token_usage_by_model\" src/orchestrator/db/migrations/versions/ && echo 'Migration covers runs table'"
           must: true
         - id: "alembic_upgrade"
           cmd: "uv run alembic -c src/orchestrator/db/migrations/alembic.ini upgrade head"
