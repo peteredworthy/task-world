@@ -30,6 +30,11 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
     return request.app.state.session_factory  # type: ignore[no-any-return]
 
 
+def get_connection_manager(request: Request) -> ConnectionManager:
+    """Get the WebSocket connection manager from app state."""
+    return request.app.state.connection_manager  # type: ignore[no-any-return]
+
+
 async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
     """Yield a database session from the app's session factory."""
     session_factory = request.app.state.session_factory
@@ -76,19 +81,31 @@ def get_global_config(request: Request) -> GlobalConfig:
     return request.app.state.global_config  # type: ignore[no-any-return]
 
 
+def get_submit_event_registry(request: Request) -> SubmitEventRegistry:
+    """Get the shared SubmitEventRegistry from app state."""
+    return request.app.state.submit_event_registry  # type: ignore[no-any-return]
+
+
+def get_lock_manager(request: Request) -> Any:
+    """Get the shared lock manager from app state."""
+    return request.app.state.lock_manager
+
+
 async def get_workflow_service(
-    request: Request,
     session: Annotated[AsyncSession, Depends(get_session)],
     repo: Annotated[RunRepository, Depends(get_run_repository)],
     event_store: Annotated[EventStore, Depends(get_event_store)],
     env_lifecycle: Annotated[EnvFileLifecycle | None, Depends(get_env_lifecycle)],
     global_config: Annotated[GlobalConfig, Depends(get_global_config)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
+    connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
+    submit_event_registry: Annotated[SubmitEventRegistry, Depends(get_submit_event_registry)],
+    lock_manager: Annotated[Any, Depends(get_lock_manager)],
 ) -> WorkflowService:
     emitter = PersistentEventEmitter(event_store)
 
     # Wire events to WebSocket broadcast
-    manager: ConnectionManager = request.app.state.connection_manager
+    manager = connection_manager
 
     def _on_event(event: WorkflowEvent) -> None:
         """Schedule async WebSocket broadcast from sync listener callback."""
@@ -105,9 +122,9 @@ async def get_workflow_service(
         repo=repo,
         event_store=event_store,
         event_emitter=emitter,
-        submit_event_registry=request.app.state.submit_event_registry,
+        submit_event_registry=submit_event_registry,
         auto_verify_runner=LocalAutoVerifyRunner(),
-        lock_manager=request.app.state.lock_manager,
+        lock_manager=lock_manager,
         global_config=global_config,
         env_lifecycle=env_lifecycle,
         signal_transport=signal_transport,
@@ -115,12 +132,12 @@ async def get_workflow_service(
 
 
 async def get_event_emitter(
-    request: Request,
     event_store: Annotated[EventStore, Depends(get_event_store)],
+    connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
 ) -> PersistentEventEmitter:
     """Create a PersistentEventEmitter wired to WebSocket broadcast."""
     emitter = PersistentEventEmitter(event_store)
-    manager: ConnectionManager = request.app.state.connection_manager
+    manager = connection_manager
 
     def _on_event(event: WorkflowEvent) -> None:
         try:

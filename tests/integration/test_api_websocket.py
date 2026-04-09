@@ -2,57 +2,14 @@
 
 import asyncio
 import json
-import time
 from datetime import datetime, timezone
-from pathlib import Path
 
 from starlette.testclient import TestClient
 
-
 from orchestrator.api.app import create_app
-from orchestrator.config import RoutineSource, RunStatus
+from orchestrator.config import RunStatus
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
 from orchestrator.workflow import ClarificationRequested, ClarificationResponded, RunStatusChanged
-
-FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
-
-def _setup_building_task(client: TestClient) -> tuple[str, str]:
-    """Create a run and move first task to BUILDING. Returns (run_id, task_id)."""
-    create_resp = client.post(
-        "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
-    )
-    assert create_resp.status_code == 201
-
-    run_data = create_resp.json()
-    run_id = run_data["id"]
-    task_id = run_data["steps"][0]["tasks"][0]["id"]
-
-    start_run_resp = client.post(f"/api/runs/{run_id}/start")
-    assert start_run_resp.status_code == 202
-    # Poll until the run becomes ACTIVE (signal consumer may take time under load)
-    for _ in range(100):
-        run_resp = client.get(f"/api/runs/{run_id}")
-        if run_resp.json().get("status") == "active":
-            break
-        time.sleep(0.2)
-    else:
-        raise AssertionError(f"Run {run_id} never became active")
-
-    start_task_resp = client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
-    assert start_task_resp.status_code == 200
-    return run_id, task_id
-
-
-def _extract_events(message: dict[str, object]) -> list[dict[str, object]]:
-    """Normalize websocket payloads to a list of event objects."""
-    if message.get("type") == "batch":
-        events = message.get("events")
-        if isinstance(events, list):
-            return [e for e in events if isinstance(e, dict)]
-        return []
-    return [message]
 
 
 class MockWebSocket:
@@ -156,115 +113,6 @@ def test_websocket_connect_disconnect() -> None:
         with client.websocket_connect("/ws/runs/run-1"):
             # Connection established - just close cleanly
             pass
-
-
-def test_ws_clarification_requested() -> None:
-    """WebSocket receives clarification_requested when a clarification is created."""
-    app = create_app(
-        db_path=":memory:",
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-    )
-
-    with TestClient(app) as client:
-        run_id, task_id = _setup_building_task(client)
-
-        with client.websocket_connect(f"/ws/runs/{run_id}") as ws:
-            create_resp = client.post(
-                f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
-                json={
-                    "questions": [
-                        {
-                            "id": "q1",
-                            "question": "Need confirmation?",
-                            "context": "Quick check",
-                            "options": ["Yes", "No"],
-                        }
-                    ]
-                },
-            )
-            assert create_resp.status_code == 200
-
-            # The clarification_requested event may arrive in a later batch
-            # if other events (e.g. task_status_changed) arrive first, so we
-            # consume messages until we find it.
-            clarification_event = None
-            for _ in range(15):
-                msg = ws.receive_json()
-                events = _extract_events(msg)
-                clarification_event = next(
-                    (e for e in events if e.get("event_type") == "clarification_requested"),
-                    None,
-                )
-                if clarification_event is not None:
-                    break
-            assert clarification_event is not None, "clarification_requested event not received"
-            assert clarification_event["task_id"] == task_id
-            assert int(clarification_event["question_count"]) >= 1
-
-
-def test_ws_clarification_responded(tmp_path: Path) -> None:
-    """WebSocket receives clarification_responded when a response is submitted."""
-    db_path = tmp_path / "orchestrator.db"
-    app = create_app(
-        db_path=str(db_path),
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-    )
-
-    with TestClient(app) as client:
-        run_id, task_id = _setup_building_task(client)
-
-        with client.websocket_connect(f"/ws/runs/{run_id}") as ws:
-            create_resp = client.post(
-                f"/api/runs/{run_id}/tasks/{task_id}/clarifications",
-                json={
-                    "questions": [
-                        {
-                            "id": "q1",
-                            "question": "Choose one",
-                            "context": "Selection",
-                            "options": ["A", "B"],
-                        }
-                    ]
-                },
-            )
-            assert create_resp.status_code == 200
-            request_id = create_resp.json()["id"]
-
-            # Drain messages until we find the clarification_requested event
-            # (earlier messages may be status-change broadcasts from setup)
-            for _ in range(15):
-                requested_msg = ws.receive_json()
-                requested_events = _extract_events(requested_msg)
-                if any(e.get("event_type") == "clarification_requested" for e in requested_events):
-                    break
-            else:
-                raise AssertionError(
-                    "clarification_requested event not received within 15 messages"
-                )
-
-            # Clarification response follows immediately; avoid throttle drops.
-            time.sleep(0.11)
-
-            respond_resp = client.post(
-                f"/api/runs/{run_id}/tasks/{task_id}/clarifications/{request_id}/respond",
-                json={
-                    "answers": [
-                        {
-                            "question_id": "q1",
-                            "selected_option": "A",
-                        }
-                    ]
-                },
-            )
-            assert respond_resp.status_code == 200
-
-            responded_msg = ws.receive_json()
-            responded_events = _extract_events(responded_msg)
-            clarification_event = next(
-                e for e in responded_events if e.get("event_type") == "clarification_responded"
-            )
-            assert clarification_event["task_id"] == task_id
-            assert clarification_event.get("request_id")
 
 
 async def test_websocket_receives_broadcast() -> None:

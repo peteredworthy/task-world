@@ -1,6 +1,7 @@
 """FastAPI application for the orchestrator."""
 
 from orchestrator.api.app import create_app
+from orchestrator.api.deps import get_connection_manager
 from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.api.schemas.runs import (
@@ -22,6 +23,7 @@ __all__ = [
     "estimate_cost",
     "get_agent_display_name",
     "get_agent_icon",
+    "get_connection_manager",
 ]
 
 # Symbols in this dict are lazy-loaded from routers.tasks to avoid circular

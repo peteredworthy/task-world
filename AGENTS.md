@@ -263,6 +263,21 @@ Integration tests requiring credentials use `@pytest.mark.skipif(not os.getenv("
 
 Key test fixtures: `tmp_dir` (temp directory), `fixed_time` (deterministic datetime), `in_memory_db` (SQLite `:memory:`), `routine_repo` (git repo with test routines).
 
+### Unit / Integration boundary rules
+
+**Unit tests** (`tests/unit/`) must NOT:
+- Import `create_app` from `orchestrator.api.app` — this boots a full ASGI application stack
+- Import `TestClient` from `starlette.testclient` or `fastapi.testclient` — this is an HTTP + WebSocket test harness reserved for integration tests
+- Import `StaticPool` from `sqlalchemy.pool` — shared-pool in-memory pattern used only in integration fixtures
+
+Unit tests may use real in-memory SQLAlchemy sessions (`create_engine(":memory:")`) and may call `WorkflowService` and other domain objects directly. They must not spin up the full HTTP layer.
+
+**Integration tests** (`tests/integration/`) may use all of the above freely.
+
+**Enforcement**: `tests/unit/conftest.py` registers a `pytest_collect_file` hook that inspects every `test_*.py` file under `tests/unit/` and raises a `pytest.UsageError` at collection time if any forbidden import is detected. This makes violations impossible to miss. A handful of pre-existing files are grandfathered (see `_GRANDFATHERED_FILES` in that conftest); do not extend the grandfather list — move the test to `tests/integration/` instead.
+
+**Injecting the WebSocket ConnectionManager in tests**: The `get_connection_manager` dependency (in `orchestrator.api.deps`, exported from `orchestrator.api`) can be overridden with `app.dependency_overrides[get_connection_manager] = lambda: my_manager` in integration tests. Unit tests should wire a real `ConnectionManager` subclass directly into the `PersistentEventEmitter` listener without starting the HTTP layer — see `tests/unit/test_clarification_ws_events.py` for the pattern.
+
 ## Environment Variables
 
 Store secrets in `.env` at project root (never committed -- protected by `.gitignore`). See `.env.example` for the template.
