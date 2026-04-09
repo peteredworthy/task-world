@@ -53,10 +53,10 @@ tasks:
     auto_verify:
       items:
         - id: "schema_has_model_token_usage"
-          cmd: "grep -n 'ModelTokenUsageSchema' src/orchestrator/api/schemas/tasks.py | grep -q 'class\\|ModelTokenUsageSchema' && echo ok"
+          cmd: "grep -q 'class ModelTokenUsageSchema' src/orchestrator/api/schemas/tasks.py && echo ok"
           must: true
         - id: "attempt_schema_has_field"
-          cmd: "grep -n 'token_usage_by_model' src/orchestrator/api/schemas/tasks.py | grep -q 'AttemptSchema\\|ModelTokenUsageSchema' && echo ok"
+          cmd: "grep -q 'token_usage_by_model' src/orchestrator/api/schemas/tasks.py && echo ok"
           must: true
         - id: "schema_importable_and_correct"
           cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import ModelTokenUsageSchema, AttemptSchema; s = ModelTokenUsageSchema(model='test'); assert isinstance(s.total_cost_usd, float); a = AttemptSchema.__fields__; assert 'token_usage_by_model' in AttemptSchema.model_fields; print('Schema OK')\""
@@ -117,10 +117,10 @@ tasks:
     auto_verify:
       items:
         - id: "run_response_has_field"
-          cmd: "grep -n 'token_usage_by_model' src/orchestrator/api/schemas/runs.py | grep -q 'ModelTokenUsageSchema' && echo ok"
+          cmd: "grep -q 'token_usage_by_model' src/orchestrator/api/schemas/runs.py && grep -q 'ModelTokenUsageSchema' src/orchestrator/api/schemas/runs.py && echo ok"
           must: true
         - id: "router_builds_schemas"
-          cmd: "grep -n 'token_usage_by_model' src/orchestrator/api/routers/runs.py | grep -qE 'ModelTokenUsageSchema|token_usage_schemas' && echo ok"
+          cmd: "grep -qE 'ModelTokenUsageSchema|token_usage_schemas' src/orchestrator/api/routers/runs.py && echo ok"
           must: true
         - id: "backend_tests_pass"
           cmd: "uv run pytest tests/unit/ tests/integration/ -x -q"
@@ -199,7 +199,7 @@ tasks:
     auto_verify:
       items:
         - id: "integration_test_file_exists"
-          cmd: "test -f tests/integration/test_api_token_usage.py || grep -l 'token_usage_by_model' tests/integration/test_api_full_lifecycle.py 2>/dev/null | grep -q . && echo ok"
+          cmd: "test -f tests/integration/test_api_token_usage.py || grep -q 'token_usage_by_model' tests/integration/test_api_full_lifecycle.py 2>/dev/null && echo ok"
           must: true
         - id: "integration_tests_pass"
           cmd: "uv run pytest tests/integration/ -x -q -k 'token_usage'"

@@ -147,9 +147,9 @@ tasks:
       2. Define _ZERO_COSTS with keys: cost_per_m_cache_read, cost_per_m_cache_creation,
          cost_per_m_input, cost_per_m_output (all 0.0)
       3. Implement _find_cost_file() -> Path | None:
-         - Walk up from __file__ looking for config/model_costs.yaml
+         - Walk up from __file__ looking for model_costs.yaml (at project root, NOT config/)
          - Check up to 4 parent directories
-         - Falls back to CWD/config/model_costs.yaml
+         - Falls back to CWD/model_costs.yaml
       4. Implement load_cost_table(path: Path | None = None) -> None:
          - Loads YAML from path (or auto-finds via _find_cost_file)
          - Populates _cost_table from YAML models section

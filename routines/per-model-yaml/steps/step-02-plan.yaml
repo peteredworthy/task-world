@@ -53,7 +53,7 @@ tasks:
     auto_verify:
       items:
         - id: "attempt_model_column"
-          cmd: "grep -c 'token_usage_by_model' src/orchestrator/db/orm/models.py | grep -qE '^[2-9]' && echo 'ORM columns found (at least 2 occurrences)'"
+          cmd: "test $(grep -c 'token_usage_by_model' src/orchestrator/db/orm/models.py 2>/dev/null || echo 0) -ge 2"
           must: true
         - id: "orm_imports_correctly"
           cmd: "uv run python -c \"from orchestrator.db.orm.models import AttemptModel, RunModel; assert hasattr(AttemptModel, 'token_usage_by_model'); assert hasattr(RunModel, 'token_usage_by_model'); print('ORM columns verified')\""
@@ -177,7 +177,7 @@ tasks:
           cmd: "grep -q 'token_usage_by_model' src/orchestrator/db/access/repositories.py && echo 'Repository updated'"
           must: true
         - id: "repo_uses_model_dump"
-          cmd: "grep -A2 'token_usage_by_model' src/orchestrator/db/access/repositories.py | grep -q 'model_dump\\|ModelTokenUsage' && echo 'Serialization uses model_dump or ModelTokenUsage'"
+          cmd: "grep -q 'model_dump\\|ModelTokenUsage' src/orchestrator/db/access/repositories.py && echo 'Serialization uses model_dump or ModelTokenUsage'"
           must: true
         - id: "unit_tests_pass"
           cmd: "uv run pytest tests/unit/ -x -q --tb=short"

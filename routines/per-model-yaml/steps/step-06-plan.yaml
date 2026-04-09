@@ -66,10 +66,10 @@ tasks:
     auto_verify:
       items:
         - id: "model_token_usage_interface_exists"
-          cmd: "grep -n 'ModelTokenUsage' ui/src/types/runs.ts | grep -q 'interface\\|export' && echo ok"
+          cmd: "grep -qE 'interface ModelTokenUsage|export.*ModelTokenUsage' ui/src/types/runs.ts && echo ok"
           must: true
         - id: "run_response_has_field"
-          cmd: "grep -n 'token_usage_by_model' ui/src/types/runs.ts | grep -q 'ModelTokenUsage' && echo ok"
+          cmd: "grep -q 'token_usage_by_model' ui/src/types/runs.ts && grep -q 'ModelTokenUsage' ui/src/types/runs.ts && echo ok"
           must: true
         - id: "typecheck_passes"
           cmd: "cd ui && npm run typecheck"
@@ -152,16 +152,16 @@ tasks:
     auto_verify:
       items:
         - id: "component_file_exists"
-          cmd: "test -f ui/src/components/detail/ModelCostBreakdown.tsx || grep -rn 'token_usage_by_model' ui/src/components/detail/MetricsBar.tsx | grep -q 'map\\|length' && echo ok"
+          cmd: "test -f ui/src/components/detail/ModelCostBreakdown.tsx || grep -qE 'token_usage_by_model.*(map|length)' ui/src/components/detail/MetricsBar.tsx 2>/dev/null && echo ok"
           must: true
         - id: "cost_unknown_badge_logic"
-          cmd: "grep -rn 'cost unknown\\|cost_unknown\\|costUnknown\\|unknown.*badge\\|badge.*unknown' ui/src/components/ | grep -qi 'cost' && echo ok"
+          cmd: "grep -rqi 'cost unknown\\|costUnknown\\|cost_unknown' ui/src/components/ && echo ok"
           must: true
         - id: "fallback_disclaimer"
-          cmd: "grep -rn 'sub-agents not included\\|sub_agents_not_included\\|disclaimer' ui/src/components/ | grep -q . && echo ok"
+          cmd: "grep -rqi 'sub-agents not included\\|sub_agents_not_included\\|disclaimer' ui/src/components/ && echo ok"
           must: true
         - id: "rundetail_imports_cost_component"
-          cmd: "grep -n 'ModelCostBreakdown\\|MetricsBar' ui/src/components/dashboard/RunDetail.tsx | grep -q 'import' && echo 'Cost component imported in RunDetail'"
+          cmd: "grep -qE 'import.*ModelCostBreakdown|import.*MetricsBar' ui/src/components/dashboard/RunDetail.tsx && echo 'Cost component imported in RunDetail'"
           must: true
         - id: "typecheck_passes"
           cmd: "cd ui && npm run typecheck"

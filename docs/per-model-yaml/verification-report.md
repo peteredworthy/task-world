@@ -1,15 +1,15 @@
 # Verification Report: Per-Model Token Accounting YAML Step Files
 
-*Generated: 2026-04-08*
+*Generated: 2026-04-08 (updated after pipe fixes)*
 
-**Overall Status: ✓ Ready (after fixes applied)**
+**Overall Status: ✓ Ready**
 
 ---
 
 ## Executive Summary
 
 All six YAML step files were audited against intent, plan, and dry-run notes. Multiple
-issues were found and **fixed in this pass** — the YAML files now reflect the actual
+issues were found and **fixed across two passes** — the YAML files now reflect the actual
 codebase state, have contract-level auto_verify checks, no pipe violations, and consistent
 rubric IDs. The routine is ready to execute.
 
@@ -21,60 +21,61 @@ All critical and significant dry-run gaps have been applied to the YAML step fil
 
 ### S-01: Core Data Model and Cost Config
 
-| Gap | Severity | Applied |
-|-----|----------|---------|
-| FM-01: `config/model_costs.yaml` path mismatch — costs.py looks at project root | Critical | ✓ Fixed: T-01 updated to `model_costs.yaml` at project root; task_context and auto_verify corrected |
-| FM-02: T-02/T-03 will re-implement already-existing code | High | ✓ Fixed: "NOTE: This code may already exist" added to T-02 and T-03 task_context |
-| FM-03: Rate discrepancies (stale plan spec vs actual model_costs.yaml) | Medium | ✓ Mitigated: T-01 auto_verify checks structure only (model keys present), not specific rate values |
-| FM-04: costs.py doesn't look in config/ | High | ✓ Fixed: T-03 task_context clarifies that `_find_cost_file()` must look at project root, not config/ |
-| FM-05: T-04 `tail -5` hides pytest exit code | Low | ✓ Fixed: pipes removed from T-04 auto_verify commands |
+| Gap | Severity | Applied to step files |
+|-----|----------|-----------------------|
+| FM-01: `config/model_costs.yaml` path mismatch — costs.py looks at project root | Critical | ✓ T-01 updated to `model_costs.yaml` at project root; auto_verify corrected |
+| FM-02: T-02/T-03 will re-implement already-existing code | High | ✓ "NOTE: This code may already exist" added to T-02 and T-03 task_context |
+| FM-03: Rate discrepancies (stale plan spec vs actual model_costs.yaml) | Medium | ✓ T-01 auto_verify checks model key structure only, not specific rate values |
+| FM-04: costs.py doesn't look in config/ | High | ✓ T-03 task_context IMPORTANT note + implementation spec both corrected to project root |
+| FM-05: T-04 `tail -5` hides pytest exit code | Low | ✓ Pipe removed from T-04 auto_verify commands |
 
 ### S-02: DB Migration and Persistence
 
-| Gap | Severity | Applied |
-|-----|----------|---------|
-| T-01 greps check `Column(JSON` but ORM uses `mapped_column(JSON` | High | ✓ Fixed: replaced with count-based grep + Python import assertion |
-| `alembic_upgrade` marked `must: false` | Medium | ✓ Fixed: changed to `must: true` |
-| T-03 `unit_tests_pass` marked `must: false` | Medium | ✓ Fixed: changed to `must: true` |
-| T-04 `integration_tests_pass` marked `must: false` | Medium | ✓ Fixed: changed to `must: true` |
-| T-04 rubric IDs `round_trip_correctness` etc. don't match requirement IDs | Medium | ✓ Fixed: renamed to R11, R12, R13 |
+| Gap | Severity | Applied to step files |
+|-----|----------|-----------------------|
+| T-01 greps check `Column(JSON` but ORM uses `mapped_column(JSON` | High | ✓ Replaced with count-based check + Python import assertion (orm_imports_correctly) |
+| `alembic_upgrade` marked `must: false` | Medium | ✓ Changed to `must: true` |
+| T-03 `unit_tests_pass` marked `must: false` | Medium | ✓ Changed to `must: true` |
+| T-04 `integration_tests_pass` marked `must: false` | Medium | ✓ Changed to `must: true` |
+| T-04 rubric IDs `round_trip_correctness` etc. don't match requirement IDs | Medium | ✓ Renamed to R11, R12, R13 |
 
 ### S-03: Phase Handler Token Extraction
 
-| Gap | Severity | Applied |
-|-----|----------|---------|
-| Auto_verify T-01 checks are all existence-only greps | Medium | ✓ Fixed: added `extraction_contract` Python import assertion; removed pipe from `existing_tests_pass` |
-| Rubric ID `R45` doesn't match requirement IDs R4 and R5 | Medium | ✓ Fixed: split into separate R4 and R5 rubric items |
-| T-02 pipes hide pytest exit code | Medium | ✓ Fixed: pipes removed |
+| Gap | Severity | Applied to step files |
+|-----|----------|-----------------------|
+| Auto_verify T-01 checks are all existence-only greps | Medium | ✓ Added `extraction_contract` Python import assertion |
+| Pipe in `existing_tests_pass` | Medium | ✓ Removed pipe: `uv run pytest tests/ -x -q` (no pipe) |
+| Rubric ID `R45` doesn't match requirement IDs R4 and R5 | Medium | ✓ Split into separate R4 and R5 rubric items |
+| T-02 pipes hide pytest exit code | Medium | ✓ Pipes removed from T-02 auto_verify commands |
 
 ### S-04: Run-Level Aggregation
 
-| Gap | Severity | Applied |
-|-----|----------|---------|
-| `unit_tests_pass` / `backend_tests_pass` marked `must: false` | Medium | ✓ Fixed: both changed to `must: true` |
-| T-03 testability gap — merge logic embedded in ORM method | Medium | ✓ Fixed: added guidance to extract `_merge_token_usage()` helper for unit testing |
-| Pipe violations | Medium | ✓ Fixed: all pipes removed |
+| Gap | Severity | Applied to step files |
+|-----|----------|-----------------------|
+| `unit_tests_pass` / `backend_tests_pass` marked `must: false` | Medium | ✓ Both changed to `must: true` |
+| T-03 testability gap — merge logic embedded in ORM method | Medium | ✓ NOTE ON TESTABILITY guidance added to extract `_merge_token_usage()` helper |
+| Pipe violations in auto_verify commands | Medium | ✓ All pipes removed; replaced with `&&`-chained grep calls |
 
 ### S-05: API Exposure
 
-| Gap | Severity | Applied |
-|-----|----------|---------|
-| T-02 R5 contradiction: YAML says old runs return 0.0, but code uses legacy fallback chain | Critical | ✓ Fixed: R5 updated to "legacy fallback acceptable for old runs"; T-03 R7 test updated to `>= 0.0` |
-| T-01 auto_verify is existence-only grep | Medium | ✓ Fixed: added `schema_importable_and_correct` Python import assertion |
-| T-03 injection mechanism unspecified | High | ✓ Fixed: added explicit guidance to use repository layer or raw SQL |
-| `backend_tests_pass`, `all_integration_tests_pass` marked `must: false` | Medium | ✓ Fixed: changed to `must: true` |
-| Pipe violations | Medium | ✓ Fixed: all pipes removed |
+| Gap | Severity | Applied to step files |
+|-----|----------|-----------------------|
+| T-02 R5 contradiction: YAML said old runs return 0.0, but code uses legacy fallback | Critical | ✓ R5 updated to "legacy fallback acceptable for old runs"; T-03 R7 test updated to `>= 0.0` |
+| T-01 auto_verify is existence-only grep | Medium | ✓ Added `schema_importable_and_correct` Python import assertion |
+| T-03 injection mechanism unspecified | High | ✓ Explicit guidance added: use repository layer or raw SQL |
+| `backend_tests_pass`, `all_integration_tests_pass` marked `must: false` | Medium | ✓ Changed to `must: true` |
+| Pipe violations in auto_verify commands | Medium | ✓ All pipes removed; replaced with direct `grep -q` or `&&`-chained calls |
 
 ### S-06: Frontend Display
 
-| Gap | Severity | Applied |
-|-----|----------|---------|
-| H1 (Critical): No auto_verify that ModelCostBreakdown is imported in RunDetail.tsx | Critical | ✓ Fixed: added `rundetail_imports_cost_component` grep check |
-| H2 (Critical): MetricsBar is orphaned but YAML doesn't warn builder | Critical | ✓ Fixed: explicit IMPORTANT note in T-02 task_context that MetricsBar is not wired |
-| H3: MetricsBar vs ModelCostBreakdown overlap not resolved in YAML | High | ✓ Fixed: task_context clarifies builder must choose one approach and avoid duplicate cost display |
-| H6: Floating-point grand total test precision not noted | Medium | ✓ Fixed: added note about using regex match instead of exact string equality |
-| TypeScript non-optional array requires `as any` for undefined test | Medium | ✓ Fixed: added explicit `as any` pattern note |
-| Pipe violations | Medium | ✓ Fixed: all pipes removed from T-02 and T-03 |
+| Gap | Severity | Applied to step files |
+|-----|----------|-----------------------|
+| H1 (Critical): No auto_verify that ModelCostBreakdown is imported in RunDetail.tsx | Critical | ✓ Added `rundetail_imports_cost_component`: `grep -qE 'import.*ModelCostBreakdown\|import.*MetricsBar'` |
+| H2 (Critical): MetricsBar is orphaned but YAML doesn't warn builder | Critical | ✓ Explicit IMPORTANT note in T-02 task_context that MetricsBar is not wired |
+| H3: MetricsBar vs ModelCostBreakdown overlap not resolved in YAML | High | ✓ task_context clarifies builder must choose one approach and avoid duplicate cost display |
+| H6: Floating-point grand total test precision not noted | Medium | ✓ NOTE on floating-point section added to T-03 |
+| TypeScript non-optional array requires `as any` for undefined test | Medium | ✓ NOTE on types section added to T-03 |
+| Pipe violations in T-02 and T-03 auto_verify commands | Medium | ✓ All pipes removed; replaced with `grep -qE` or `grep -rqi` calls |
 
 ---
 
@@ -85,6 +86,7 @@ All critical conflicts have been resolved.
 | Conflict | Resolution |
 |----------|-----------|
 | S-01 T-01: `test -f config/model_costs.yaml` fails on existing implementation | Fixed: path updated to `model_costs.yaml` (project root) |
+| S-01 T-03: IMPORTANT note said project root but implementation spec said `config/model_costs.yaml` | Fixed: implementation spec updated to `model_costs.yaml` (project root, not config/) |
 | S-02 T-01: grep for `Column(JSON` fails on `mapped_column(JSON` | Fixed: replaced with Python import assertion |
 | S-05 T-02/T-03: R5/R7 required `estimated_cost_usd=0.0` but code returns legacy fallback | Fixed: requirement and test updated to accept legacy fallback |
 
@@ -115,7 +117,7 @@ Persistence mapping across the full stack:
 
 ## 4. Auto-Verify Quality (R5)
 
-Each task now has at least one contract-level auto_verify check. Summary after fixes:
+Each task has at least one contract-level auto_verify check. Summary:
 
 ### S-01
 | Task | Strongest Check | Level |
@@ -129,7 +131,7 @@ Each task now has at least one contract-level auto_verify check. Summary after f
 | Task | Strongest Check | Level |
 |------|----------------|-------|
 | T-01 | `orm_imports_correctly`: Python import + `hasattr` assert | contract-level |
-| T-02 | `alembic_upgrade`: actual migration run | contract-level |
+| T-02 | `alembic_upgrade`: actual migration run (must: true) | contract-level |
 | T-03 | `unit_tests_pass`: pytest run (must: true) | contract-level |
 | T-04 | `integration_tests_pass`: pytest run (must: true) | contract-level |
 
@@ -160,7 +162,7 @@ Each task now has at least one contract-level auto_verify check. Summary after f
 | T-02 | `typecheck_passes` + `lint_passes` + `rundetail_imports_cost_component` | contract-level |
 | T-03 | `frontend_tests_pass`: vitest run on test file | contract-level |
 
-**Result: All tasks have contract-level auto_verify. No existence-only-only tasks remain.**
+**Result: All tasks have contract-level auto_verify. No existence-only tasks remain.**
 
 ---
 
@@ -217,7 +219,7 @@ All `[I-XX]` items from intent.md are addressed by at least one YAML step file:
 
 ## 7. Rubric ID Consistency
 
-All rubric item IDs now match requirement IDs exactly:
+All rubric item IDs match requirement IDs exactly:
 
 | File | Task | Before | After |
 |------|------|--------|-------|
@@ -227,7 +229,7 @@ All rubric item IDs now match requirement IDs exactly:
 
 ---
 
-## 8. Remaining Advisory Items (Not Blocking)
+## 8. Advisory Items (Not Blocking)
 
 These are low-severity observations that do not block execution:
 
@@ -247,8 +249,7 @@ These are low-severity observations that do not block execution:
    as acceptable.
 
 4. **S-06 T-01 tasks.ts**: `AttemptSchema` in `tasks.ts` may be missing `token_usage_by_model`.
-   The YAML notes this as optional for M6 (run-level table is the primary goal). If per-attempt
-   breakdowns are needed later, this field should be added.
+   The YAML notes this as optional for M6 (run-level table is the primary goal).
 
 ---
 
@@ -257,9 +258,9 @@ These are low-severity observations that do not block execution:
 | Check | Status |
 |-------|--------|
 | R1: YAML step files align with plan and intent | ✓ Pass |
-| R2: All critical/significant dry-run gaps applied | ✓ Pass (after fixes) |
-| R3: No unresolved critical conflicts | ✓ Pass (after fixes) |
+| R2: All critical/significant dry-run gaps applied | ✓ Pass |
+| R3: No unresolved critical conflicts | ✓ Pass |
 | R4: Persistence mapping has no MISSING cells | ✓ Pass |
-| R5: All tasks have contract-level auto_verify | ✓ Pass (after fixes) |
+| R5: All tasks have contract-level auto_verify | ✓ Pass |
 | R6: Integration test files specify assertion logic | ✓ Pass |
 | R7: All [I-XX] items addressed by at least one step | ✓ Pass |
