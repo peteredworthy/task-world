@@ -60,6 +60,11 @@ class ClaudeStreamParser:
         self._num_turns = 0
         self._readable_parts: list[str] = []
 
+        # Deduplication: each API call emits one assistant event per content block,
+        # all carrying the same usage data. Track seen message IDs so we only
+        # accumulate usage once per API call.
+        self._seen_message_ids: set[str] = set()
+
         # Rate-limit detection state
         self._rate_limit_hit = False
         self._rate_limit_resets_at: datetime | None = None
@@ -152,10 +157,20 @@ class ClaudeStreamParser:
                 cache_read_tokens=usage.get("cache_read_input_tokens", 0),
                 cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
             )
-            self._total_input_tokens += turn_metrics.input_tokens
-            self._total_output_tokens += turn_metrics.output_tokens
-            self._total_cache_read += turn_metrics.cache_read_tokens
-            self._total_cache_creation += turn_metrics.cache_creation_tokens
+            # Each API call emits one assistant event per content block, all
+            # carrying the same usage figures. Only accumulate once per unique
+            # message ID to avoid N-fold overcounting. The result event will
+            # overwrite these totals with the authoritative session total anyway;
+            # this deduplication matters only for sessions that end without a
+            # result event (e.g. interrupted runs).
+            message_id: str | None = message.get("id")
+            if message_id is None or message_id not in self._seen_message_ids:
+                self._total_input_tokens += turn_metrics.input_tokens
+                self._total_output_tokens += turn_metrics.output_tokens
+                self._total_cache_read += turn_metrics.cache_read_tokens
+                self._total_cache_creation += turn_metrics.cache_creation_tokens
+            if message_id:
+                self._seen_message_ids.add(message_id)
 
         for block in content_blocks:
             block_type = block.get("type", "")
@@ -281,13 +296,10 @@ class ClaudeStreamParser:
 
         # Extract cost / timing totals from the result event.
         #
-        # The result event's "usage" field sometimes reflects only the *last* API
-        # call rather than full session cumulative totals (observed when a session
-        # ends with a tiny follow-up turn after the main work is done).  We keep
-        # per-turn accumulation from _handle_assistant as the primary source and
-        # take the MAX of accumulated vs result-event totals so that:
-        #   - Single-turn or short sessions: result event wins (accumulated may be 0)
-        #   - Multi-turn sessions where result event < accumulated: accumulated wins
+        # The result event's "usage" field is the authoritative session-level
+        # cumulative total — use it directly. The per-turn accumulation in
+        # _handle_assistant is only a fallback for interrupted sessions that
+        # never emit a result event.
         cost: float = float(event.get("total_cost_usd", event.get("cost_usd", 0.0)))
         usage = event.get("usage")
         turn_metrics = None
@@ -303,10 +315,10 @@ class ClaudeStreamParser:
                 cache_creation_tokens=ev_cc,
                 cost_usd=cost,
             )
-            self._total_input_tokens = max(self._total_input_tokens, ev_inp)
-            self._total_output_tokens = max(self._total_output_tokens, ev_out)
-            self._total_cache_read = max(self._total_cache_read, ev_cr)
-            self._total_cache_creation = max(self._total_cache_creation, ev_cc)
+            self._total_input_tokens = ev_inp
+            self._total_output_tokens = ev_out
+            self._total_cache_read = ev_cr
+            self._total_cache_creation = ev_cc
         # total_cost_usd and duration_ms from the result event are session totals.
         if cost > 0:
             self._total_cost = cost

@@ -74,6 +74,10 @@ def _parse_subagent_jsonl(
     }
     model: str | None = None
     seq = 0
+    # Each API call emits one assistant event per content block, all carrying the
+    # same usage data. Track seen message IDs so we accumulate usage only once
+    # per API call (sub-agents have no result event to correct overcounting).
+    seen_message_ids: set[str] = set()
 
     try:
         with open(jsonl_path) as f:
@@ -111,10 +115,14 @@ def _parse_subagent_jsonl(
                     cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
                     cache_creation_tokens=int(usage.get("cache_creation_input_tokens") or 0),
                 )
-                totals["input_tokens"] += turn_metrics.input_tokens
-                totals["output_tokens"] += turn_metrics.output_tokens
-                totals["cache_read_tokens"] += turn_metrics.cache_read_tokens
-                totals["cache_creation_tokens"] += turn_metrics.cache_creation_tokens
+                message_id: str | None = message.get("id")
+                if message_id is None or message_id not in seen_message_ids:
+                    totals["input_tokens"] += turn_metrics.input_tokens
+                    totals["output_tokens"] += turn_metrics.output_tokens
+                    totals["cache_read_tokens"] += turn_metrics.cache_read_tokens
+                    totals["cache_creation_tokens"] += turn_metrics.cache_creation_tokens
+                if message_id:
+                    seen_message_ids.add(message_id)
 
             for block in cast(list[Any], message.get("content") or []):
                 if not isinstance(block, dict):
