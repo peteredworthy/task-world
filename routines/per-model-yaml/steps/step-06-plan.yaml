@@ -72,7 +72,7 @@ tasks:
           cmd: "grep -n 'token_usage_by_model' ui/src/types/runs.ts | grep -q 'ModelTokenUsage' && echo ok"
           must: true
         - id: "typecheck_passes"
-          cmd: "cd ui && npm run typecheck 2>&1 | tail -5"
+          cmd: "cd ui && npm run typecheck"
           must: true
     verifier:
       rubric:
@@ -125,9 +125,14 @@ tasks:
       - ui/src/components/detail/modelCostUtils.ts — utility functions
         (isUnknownModel, formatCost, computeGrandTotal, etc.)
 
-      Integrate the new component into the run detail page so it's visible.
-      Check where MetricsBar is used and add ModelCostBreakdown nearby, OR
-      extend MetricsBar itself to include the breakdown table.
+      IMPORTANT — MetricsBar wiring: The existing MetricsBar.tsx component is NOT
+      currently imported or rendered anywhere in the codebase (it is orphaned). The
+      run detail page currently shows NO cost/token data. You must wire at least one
+      cost component into ui/src/components/dashboard/RunDetail.tsx. Options:
+        a) Create ModelCostBreakdown.tsx and import it in RunDetail.tsx
+        b) Extend MetricsBar.tsx with the per-model table, then import MetricsBar in RunDetail.tsx
+      Either way, an import statement for the cost component MUST appear in RunDetail.tsx.
+      Avoid showing cost information twice if both MetricsBar and ModelCostBreakdown are used.
     requirements:
       - id: "R3"
         desc: "Per-model cost breakdown table renders one row per token_usage_by_model entry with model name, token counts, cost rates, and per-model total_cost_usd"
@@ -155,11 +160,14 @@ tasks:
         - id: "fallback_disclaimer"
           cmd: "grep -rn 'sub-agents not included\\|sub_agents_not_included\\|disclaimer' ui/src/components/ | grep -q . && echo ok"
           must: true
+        - id: "rundetail_imports_cost_component"
+          cmd: "grep -n 'ModelCostBreakdown\\|MetricsBar' ui/src/components/dashboard/RunDetail.tsx | grep -q 'import' && echo 'Cost component imported in RunDetail'"
+          must: true
         - id: "typecheck_passes"
-          cmd: "cd ui && npm run typecheck 2>&1 | tail -5"
+          cmd: "cd ui && npm run typecheck"
           must: true
         - id: "lint_passes"
-          cmd: "cd ui && npm run lint 2>&1 | tail -10"
+          cmd: "cd ui && npm run lint"
           must: true
     verifier:
       rubric:
@@ -247,6 +255,16 @@ tasks:
       6. Null/undefined token_usage_by_model treated as empty:
          - Input: RunResponse with token_usage_by_model = undefined
          - Assert: fallback shown (same as empty array case)
+
+      NOTE on floating-point: JavaScript floating-point means 0.01 + 0.02 + 0.03 may
+      render as "0.0600000000001" without formatting. Use a regex or toFixed match in
+      the grand total test:
+        expect(screen.getByText(/0\.06/)).toBeInTheDocument()
+      or assert the formatted string matches the component's actual output.
+
+      NOTE on types: RunResponse.token_usage_by_model is typed as ModelTokenUsage[]
+      (non-optional). To pass undefined in tests, use:
+        { ...makeRun(), token_usage_by_model: undefined as any }
     requirements:
       - id: "R8"
         desc: "Test: multi-model table renders correct rows with model names and correct grand total"
@@ -269,13 +287,13 @@ tasks:
           cmd: "test -f ui/src/components/detail/__tests__/ModelCostBreakdown.test.tsx && echo ok"
           must: true
         - id: "frontend_tests_pass"
-          cmd: "cd ui && npm test -- --run src/components/detail/__tests__/ModelCostBreakdown.test.tsx 2>&1 | tail -20"
+          cmd: "cd ui && npm test -- --run src/components/detail/__tests__/ModelCostBreakdown.test.tsx"
           must: true
         - id: "all_frontend_tests_pass"
-          cmd: "cd ui && npm test -- --run 2>&1 | tail -10"
+          cmd: "cd ui && npm test -- --run"
           must: true
         - id: "build_passes"
-          cmd: "cd ui && npm run build 2>&1 | tail -10"
+          cmd: "cd ui && npm run build"
           must: true
     verifier:
       rubric:

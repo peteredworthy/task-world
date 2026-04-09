@@ -63,8 +63,8 @@ tasks:
           cmd: "grep -n 'token_usage_by_model' src/orchestrator/db/access/repositories.py | grep -q 'run\\.' && echo ok"
           must: true
         - id: "unit_tests_pass"
-          cmd: "uv run pytest tests/unit/ -x -q 2>&1 | tail -5"
-          must: false
+          cmd: "uv run pytest tests/unit/ -x -q"
+          must: true
     verifier:
       rubric:
         - id: "R1"
@@ -132,8 +132,8 @@ tasks:
           cmd: "grep -n 'token_usage_by_model' src/orchestrator/runners/execution/attempt_store.py | grep -c 'token_usage_by_model' | grep -qE '^[1-9]' && echo ok"
           must: true
         - id: "backend_tests_pass"
-          cmd: "uv run pytest tests/unit/ tests/integration/ -x -q 2>&1 | tail -5"
-          must: false
+          cmd: "uv run pytest tests/unit/ tests/integration/ -x -q"
+          must: true
     verifier:
       rubric:
         - id: "R4"
@@ -194,6 +194,13 @@ tasks:
       for fixtures (cost_file, _reset_cost_table).
 
       Tests must be isolated and not require a running server or real DB.
+
+      NOTE ON TESTABILITY: The merge logic in repositories.py operates on SQLAlchemy
+      ORM objects with DB relationships. If you cannot test it without a DB session,
+      extract the merge logic into a pure helper function (e.g.,
+      _merge_token_usage(existing: list[dict], incoming: list[ModelTokenUsage]) -> list[dict])
+      and unit-test the helper directly without a DB. Name test functions with
+      "aggregation" or "token_usage" in the name so auto_verify -k filter finds them.
     requirements:
       - id: "R7"
         desc: "Test: multiple attempts with different models produces correct multi-model run total"
@@ -213,10 +220,10 @@ tasks:
           cmd: "test -f tests/unit/test_run_aggregation.py || test -f tests/unit/test_model_token_usage.py"
           must: true
         - id: "new_tests_pass"
-          cmd: "uv run pytest tests/unit/ -x -q -k 'aggregation or token_usage' 2>&1 | tail -10"
+          cmd: "uv run pytest tests/unit/ -x -q -k 'aggregation or token_usage'"
           must: true
         - id: "all_unit_tests_pass"
-          cmd: "uv run pytest tests/unit/ -x -q 2>&1 | tail -5"
+          cmd: "uv run pytest tests/unit/ -x -q"
           must: true
     verifier:
       rubric:

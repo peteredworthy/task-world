@@ -58,9 +58,12 @@ tasks:
         - id: "attempt_schema_has_field"
           cmd: "grep -n 'token_usage_by_model' src/orchestrator/api/schemas/tasks.py | grep -q 'AttemptSchema\\|ModelTokenUsageSchema' && echo ok"
           must: true
+        - id: "schema_importable_and_correct"
+          cmd: "uv run python -c \"from orchestrator.api.schemas.tasks import ModelTokenUsageSchema, AttemptSchema; s = ModelTokenUsageSchema(model='test'); assert isinstance(s.total_cost_usd, float); a = AttemptSchema.__fields__; assert 'token_usage_by_model' in AttemptSchema.model_fields; print('Schema OK')\""
+          must: true
         - id: "unit_tests_pass"
-          cmd: "uv run pytest tests/unit/ -x -q 2>&1 | tail -5"
-          must: false
+          cmd: "uv run pytest tests/unit/ -x -q"
+          must: true
     verifier:
       rubric:
         - id: "R1"
@@ -88,12 +91,12 @@ tasks:
       1. Build ModelTokenUsageSchema list from run.token_usage_by_model, explicitly
          computing total_cost_usd=round(u.total_cost_usd, 6) for each entry (calling
          the domain model's computed property and storing the result).
-      2. Replace the estimated_cost_usd fallback logic with the accurate per-model sum:
+      2. Replace the estimated_cost_usd primary logic with the accurate per-model sum:
          - If token_usage_by_model present: sum(u.total_cost_usd for u in schemas)
-         - If empty (old runs): 0.0
-      3. Remove or skip the flat gpt-4o estimate (estimate_cost()) when per-model
-         data is available. For old runs with empty token_usage_by_model, return
-         estimated_cost_usd=0.0 (not the flat gpt-4o fallback).
+         - If empty (old runs): fall back to legacy cost calculation (action log cost
+           or flat estimate). Do NOT hardcode 0.0 — old runs should show best available cost.
+      3. Ensure that when per-model data is present, the flat gpt-4o estimate is NOT
+         used. The per-model sum takes precedence over any flat estimate.
 
       Read the current code before making changes — this logic may already be
       partially or fully in place.
@@ -109,7 +112,7 @@ tasks:
         desc: "_run_to_response() populates token_usage_by_model from run.token_usage_by_model with total_cost_usd computed explicitly"
         priority: critical
       - id: "R5"
-        desc: "estimated_cost_usd is computed as the per-model sum (not the flat gpt-4o estimate); old runs with empty per-model data return 0.0"
+        desc: "estimated_cost_usd is computed as the per-model sum when data present; old runs fall back to legacy cost calculation (action log or flat estimate), not hardcoded 0.0"
         priority: critical
     auto_verify:
       items:
@@ -120,8 +123,8 @@ tasks:
           cmd: "grep -n 'token_usage_by_model' src/orchestrator/api/routers/runs.py | grep -qE 'ModelTokenUsageSchema|token_usage_schemas' && echo ok"
           must: true
         - id: "backend_tests_pass"
-          cmd: "uv run pytest tests/unit/ tests/integration/ -x -q 2>&1 | tail -5"
-          must: false
+          cmd: "uv run pytest tests/unit/ tests/integration/ -x -q"
+          must: true
     verifier:
       rubric:
         - id: "R3"
@@ -139,10 +142,12 @@ tasks:
             F: token_usage_by_model not populated in response or always empty.
         - id: "R5"
           text: |
-            R5 — A: estimated_cost_usd equals the sum of per-model total_cost_usd values;
-            for old runs (empty list) returns 0.0; no flat gpt-4o fallback when per-model
-            data exists.
-            B: estimated_cost_usd still uses flat estimate even when per-model data present.
+            R5 — A: when token_usage_by_model is non-empty, estimated_cost_usd equals the
+            sum of per-model total_cost_usd values (not the flat gpt-4o estimate). For old
+            runs with empty token_usage_by_model, estimated_cost_usd shows best available
+            cost via legacy fallback (action log cost or flat estimate) — a non-zero value
+            is acceptable and preferred over hardcoded 0.0.
+            B: estimated_cost_usd uses flat estimate even when per-model data is present.
             F: estimated_cost_usd always 0.0 or always None regardless of data.
 
   - id: "T-03"
@@ -156,7 +161,10 @@ tasks:
 
       Required test cases:
       1. Run with token_usage_by_model populated:
-         - Create a run, inject/simulate token_usage_by_model data on the run
+         - Create a run, inject token_usage_by_model data via the repository layer:
+           call repo.update_latest_attempt(..., token_usage_by_model=[...]) or set
+           the field directly on the RunModel via an AsyncSession.execute(text(...))
+           before reading back via the API.
          - GET /api/runs/{id} returns token_usage_by_model with expected structure
          - Each entry has: model, cache_read_tokens, cache_creation_tokens,
            input_tokens, output_tokens, cost_per_m_* rates, total_cost_usd
@@ -165,11 +173,14 @@ tasks:
       2. Old run backward compatibility:
          - Run with empty token_usage_by_model (simulating pre-migration run)
          - GET /api/runs/{id} returns token_usage_by_model: []
-         - estimated_cost_usd: 0.0 (not a crash or flat estimate)
+         - estimated_cost_usd shows legacy fallback value (not a crash); asserting
+           it is >= 0.0 is sufficient — do NOT assert 0.0 exactly, since the legacy
+           fallback may return a non-zero estimate from action log data.
 
       3. AttemptSchema includes token_usage_by_model:
          - GET /api/runs/{run_id}/tasks/{task_id} response includes
-           token_usage_by_model on the attempt object
+           token_usage_by_model on the attempt object; verify the field is present
+           in the attempt schema (even if empty for this test).
 
       Use the same HTTP client fixture pattern as tests/integration/test_api_full_lifecycle.py
       (AsyncClient against in-memory FastAPI app with StaticPool SQLite).
@@ -180,7 +191,7 @@ tasks:
         desc: "Integration test: GET /api/runs/{id} returns token_usage_by_model array with all expected fields when data is present"
         priority: critical
       - id: "R7"
-        desc: "Integration test: old runs (empty token_usage_by_model) return [] without error and estimated_cost_usd=0.0"
+        desc: "Integration test: old runs (empty token_usage_by_model) return [] without error; estimated_cost_usd is >= 0.0 (legacy fallback, not a crash)"
         priority: critical
       - id: "R8"
         desc: "Integration test: estimated_cost_usd equals the sum of per-model total_cost_usd values"
@@ -191,11 +202,11 @@ tasks:
           cmd: "test -f tests/integration/test_api_token_usage.py || grep -l 'token_usage_by_model' tests/integration/test_api_full_lifecycle.py 2>/dev/null | grep -q . && echo ok"
           must: true
         - id: "integration_tests_pass"
-          cmd: "uv run pytest tests/integration/ -x -q -k 'token_usage' 2>&1 | tail -10"
+          cmd: "uv run pytest tests/integration/ -x -q -k 'token_usage'"
           must: true
         - id: "all_integration_tests_pass"
-          cmd: "uv run pytest tests/integration/ -x -q 2>&1 | tail -5"
-          must: false
+          cmd: "uv run pytest tests/integration/ -x -q"
+          must: true
     verifier:
       rubric:
         - id: "R6"
@@ -208,9 +219,10 @@ tasks:
         - id: "R7"
           text: |
             R7 — A: test creates a run with no token_usage_by_model data, calls GET
-            /api/runs/{id}, asserts token_usage_by_model == [] and estimated_cost_usd == 0.0.
-            B: test checks for no crash but doesn't verify the empty list or cost value.
-            F: test missing.
+            /api/runs/{id}, asserts token_usage_by_model == [] and estimated_cost_usd >= 0.0
+            (legacy fallback is acceptable; exact value may be non-zero from action log data).
+            B: test checks for no crash but doesn't verify the empty list or cost field presence.
+            F: test missing or asserts estimated_cost_usd == 0.0 without checking actual behavior.
         - id: "R8"
           text: |
             R8 — A: test verifies that estimated_cost_usd in the response equals the

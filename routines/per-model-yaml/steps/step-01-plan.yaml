@@ -16,10 +16,15 @@ tasks:
   - id: "T-01"
     title: "Create config/model_costs.yaml"
     task_context: |
-      Create config/model_costs.yaml at the project root with per-model cost rates
+      Create model_costs.yaml at the project root with per-model cost rates
       (USD per 1M tokens) for Sonnet, Haiku, Opus, and an unknown_model zero-rate entry.
 
-      File location: config/model_costs.yaml (relative to project root)
+      File location: model_costs.yaml (at project root, NOT in a config/ subdirectory)
+
+      IMPORTANT: costs.py searches for model_costs.yaml at the project root (not in
+      config/). The file must live at the project root for it to be loaded at runtime.
+      If the file already exists at the project root, verify its contents match the
+      required structure and update rates if needed.
 
       Required YAML structure:
         models:
@@ -48,15 +53,15 @@ tasks:
       directly as a fallback rather than reading this entry.
     requirements:
       - id: "R1"
-        desc: "config/model_costs.yaml exists and contains rates for claude-sonnet-4-6, claude-haiku-4-5-20251001, claude-opus-4-6, and unknown_model"
+        desc: "model_costs.yaml exists at project root and contains rates for claude-sonnet-4-6, claude-haiku-4-5-20251001, claude-opus-4-6, and unknown_model"
         priority: critical
     auto_verify:
       items:
         - id: "yaml_exists"
-          cmd: "test -f config/model_costs.yaml"
+          cmd: "test -f model_costs.yaml"
           must: true
         - id: "yaml_valid"
-          cmd: "python3 -c \"import yaml; d=yaml.safe_load(open('config/model_costs.yaml')); assert 'models' in d; assert 'claude-sonnet-4-6' in d['models']; assert 'claude-haiku-4-5-20251001' in d['models']; assert 'claude-opus-4-6' in d['models']\""
+          cmd: "uv run python -c \"import yaml; d=yaml.safe_load(open('model_costs.yaml')); assert 'models' in d; assert 'claude-sonnet-4-6' in d['models']; assert 'claude-haiku-4-5-20251001' in d['models']; assert 'claude-opus-4-6' in d['models']\""
           must: true
 
   - id: "T-02"
@@ -65,7 +70,13 @@ tasks:
       Add the ModelTokenUsage Pydantic class to src/orchestrator/state/models.py and
       add token_usage_by_model fields to both Attempt and Run.
 
-      1. Add ModelTokenUsage class (around line 162, before AttemptMetrics):
+      NOTE: This code may already exist in the codebase. Read
+      src/orchestrator/state/models.py before making any changes. If ModelTokenUsage,
+      Attempt.token_usage_by_model, and Run.token_usage_by_model already exist and
+      match the spec below, verify correctness and mark requirements done without
+      re-implementing. Adding duplicate class definitions will break imports.
+
+      1. Add ModelTokenUsage class (around line 162, before AttemptMetrics) if missing:
 
         class ModelTokenUsage(BaseModel):
             model: str
@@ -121,6 +132,15 @@ tasks:
     task_context: |
       Create src/orchestrator/runners/costs.py with the cost table loader and
       get_model_costs() lookup function.
+
+      NOTE: This file may already exist. Read src/orchestrator/runners/costs.py before
+      making any changes. If get_model_costs() already exists and passes the auto_verify
+      checks below, mark requirements done without re-implementing.
+
+      IMPORTANT: _find_cost_file() must locate model_costs.yaml at the PROJECT ROOT
+      (not in a config/ subdirectory). The file is at model_costs.yaml relative to the
+      project root. Ensure the lookup walks up from __file__ looking for model_costs.yaml
+      (not config/model_costs.yaml).
 
       The module must:
       1. Define _cost_table: dict[str, dict[str, float]] = {} at module level
@@ -213,30 +233,23 @@ tasks:
           cmd: "test -f tests/unit/test_model_costs.py"
           must: true
         - id: "tests_pass"
-          cmd: "python3 -m pytest tests/unit/test_model_costs.py -v --tb=short -q 2>&1 | tail -5"
+          cmd: "uv run pytest tests/unit/test_model_costs.py -v --tb=short -q"
           must: true
         - id: "all_existing_tests_pass"
-          cmd: "python3 -m pytest tests/unit/ -q --tb=short 2>&1 | tail -5"
+          cmd: "uv run pytest tests/unit/ -q --tb=short"
           must: true
     verifier:
       rubric:
-        - id: "test_coverage"
+        - id: "R9"
           text: |
-            R9 — Review tests/unit/test_model_costs.py for adequate coverage.
+            R9 — Review tests/unit/test_model_costs.py for coverage and implementation correctness.
             A: Tests cover ModelTokenUsage.total_cost_usd (zero case, single type, all types),
                get_model_costs with exact match, prefix/version normalization, unknown model,
-               and None input. All pass.
-            B: Coverage is mostly complete but missing one or two edge cases (e.g. None input
-               or prefix matching in reverse direction).
-            F: Tests exist but major cases are missing (no normalization test, no unknown model
-               test), or tests fail.
-        - id: "correctness"
-          text: |
-            R2/R3/R4/R5/R6/R7/R8 — Verify the implementation is correct by reading the source:
-            A: ModelTokenUsage has all required fields, total_cost_usd uses / 1_000_000,
-               get_model_costs normalizes via prefix matching in both directions, returns
-               zero dict copy (not the same object) for unknown models.
-            B: Implementation is mostly correct but has a minor issue (e.g. mutates _ZERO_COSTS
-               instead of copying it, or only checks one direction of prefix matching).
-            F: total_cost_usd formula is wrong, prefix matching missing, or zero-rate fallback
-               raises an exception.
+               and None input. All pass. ModelTokenUsage has all required fields, total_cost_usd
+               uses / 1_000_000, get_model_costs normalizes via prefix matching in both
+               directions, returns zero dict copy (not the same object) for unknown models.
+            B: Coverage is mostly complete but missing one edge case (e.g. None input or
+               reverse prefix matching), or implementation has a minor issue (e.g. mutates
+               _ZERO_COSTS instead of copying).
+            F: Tests missing major cases (no normalization test, no unknown model test),
+               tests fail, or total_cost_usd formula is wrong.

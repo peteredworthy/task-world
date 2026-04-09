@@ -66,8 +66,8 @@ tasks:
         priority: critical
     auto_verify:
       items:
-        - id: "extract_method_exists"
-          cmd: "grep -q '_extract_metrics_and_usage' src/orchestrator/runners/execution/phase_handler.py"
+        - id: "extraction_contract"
+          cmd: "uv run python -c \"from orchestrator.runners.execution.phase_handler import PhaseHandler; from orchestrator.state.models import ActionLog; assert hasattr(PhaseHandler, '_extract_metrics_and_usage'); print('PhaseHandler._extract_metrics_and_usage exists')\""
           must: true
         - id: "get_model_costs_used"
           cmd: "grep -q 'get_model_costs' src/orchestrator/runners/execution/phase_handler.py"
@@ -76,7 +76,7 @@ tasks:
           cmd: "grep -q 'token_usage_by_model' src/orchestrator/runners/execution/phase_handler.py"
           must: true
         - id: "existing_tests_pass"
-          cmd: "uv run pytest tests/ -x -q 2>&1 | tail -5"
+          cmd: "uv run pytest tests/ -x -q"
           must: true
     verifier:
       rubric:
@@ -101,13 +101,18 @@ tasks:
             across all ModelTokenUsage entries (parent + sub-agents).
             B: legacy fields computed but from only parent (sub-agent tokens excluded).
             F: legacy flat fields not populated from per-model data.
-        - id: "R45"
+        - id: "R4"
           text: |
             R4 — A: when result.action_log is None or has zero tokens, method returns
-            (result.metrics, []) without error.
+            (result.metrics, []) without error. No exception raised for edge cases.
+            B: None is handled but zero-token ActionLog causes unexpected behavior.
+            F: method crashes on None action_log.
+        - id: "R5"
+          text: |
             R5 — A: all three phase execution methods (_execute_building, _execute_verifying,
             _execute_recovering) call store_attempt_metrics with token_usage_by_model= keyword.
-            F: any phase method omits token_usage_by_model from the store_attempt_metrics call.
+            B: only 1-2 phase methods pass the kwarg; one is missing.
+            F: no phase method passes token_usage_by_model to store_attempt_metrics.
     retry:
       max_attempts: 3
 
@@ -160,10 +165,10 @@ tasks:
           cmd: "test -f tests/unit/test_model_token_usage.py"
           must: true
         - id: "unit_tests_pass"
-          cmd: "uv run pytest tests/unit/test_model_token_usage.py -v 2>&1 | tail -15"
+          cmd: "uv run pytest tests/unit/test_model_token_usage.py -v"
           must: true
         - id: "all_tests_still_pass"
-          cmd: "uv run pytest tests/ -x -q 2>&1 | tail -5"
+          cmd: "uv run pytest tests/ -x -q"
           must: true
     verifier:
       rubric:
