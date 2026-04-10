@@ -1,5 +1,6 @@
 """Shared fixtures for integration tests."""
 
+import shutil
 import subprocess
 import uuid
 from collections.abc import AsyncGenerator
@@ -112,20 +113,15 @@ def git_repo(
     _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
     _base_repo: Path,
 ) -> Path:
-    """Clone the base repo to get a uniquely-named git repo in the shared repos_dir."""
+    """Copy the base repo to get a uniquely-named git repo in the shared repos_dir.
+
+    Uses shutil.copytree instead of git clone + config calls (~80 ms/test saved).
+    The base repo's .git/config already includes user.email/user.name so no
+    extra git config subprocess calls are needed.
+    """
     _, _, repos_dir, _, _ = _shared_app_fixture
     repo = repos_dir / f"project_{uuid.uuid4().hex[:8]}"
-    subprocess.run(
-        ["git", "clone", "--local", str(_base_repo), str(repo)],
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"], cwd=repo, check=True, capture_output=True
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"], cwd=repo, check=True, capture_output=True
-    )
+    shutil.copytree(str(_base_repo), str(repo))
     return repo
 
 
