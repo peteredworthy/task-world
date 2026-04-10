@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Edit(./**)",
+      "Write(./**)",
+      "Glob(./**)",
+      "Grep(./**)"
+    ],
+    "deny": []
+  },
+  "sandbox": {
+    "enabled": true,
+    "network": {
+      "allowedDomains": [
+        "localhost",
+        "127.0.0.1"
+      ]
+    },
+    "filesystem": {
+      "allowWrite": [
+        "./",
+        "//tmp",
+        "~/.cache/pre-commit"
+      ]
+    }
+  },
+  "enabledPlugins": {
+    "andrej-karpathy-skills@karpathy-skills": true
+  }
+}

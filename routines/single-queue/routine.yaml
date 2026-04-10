@@ -1,0 +1,761 @@
+id: "single-queue"
+name: "Single-Queue Signal Model"
+description: |
+  Replace the dual-path signal routing with a single, uniform queue through which all
+  lifecycle signals pass unconditionally. Eliminates has_active_workflow branching,
+  introduces a consumer loop, adds STOPPING state, and enforces registry isolation.
+  Phases: schema → consumer → sender rewiring → registry isolation → guards → validation.
+
+inputs:
+  - name: feature
+    required: false
+    default: "single-queue"
+    description: "Feature directory name under docs/ (default: single-queue)"
+
+steps:
+  - id: "S-01"
+    title: "Schema and State Machine"
+    step_context: |
+      Lay the data foundation without changing runtime behavior. Restructure pending_signals,
+      add STOPPING to RunStatus, and define RUN_START signal type.
+    tasks:
+      - id: "T-01"
+        title: "Alembic migration for pending_signals and STOPPING status"
+        context_from:
+          - artifact: "docs/single-queue/plan.md"
+            as: "context.plan"
+            required: true
+          - artifact: "docs/single-queue/plan-summary.md"
+            as: "context.summary"
+            required: true
+        task_context: |
+          Implement Phase 1 of the single-queue signal model: schema changes and state machine additions.
+
+          PLAN SUMMARY:
+          {{context.summary}}
+
+          DETAILED PLAN:
+          {{context.plan}}
+
+          Tasks to complete:
+          1. Create Alembic migration at src/orchestrator/db/migrations/versions/ (NOT alembic/versions/)
+             that: (a) replaces UUID string PK with INTEGER PRIMARY KEY AUTOINCREMENT,
+             (b) adds delivered_at TIMESTAMP NULL and handled_at TIMESTAMP NULL columns,
+             (c) retains created_at for audit only (must not be used in ORDER BY),
+             (d) backfills existing rows using SQLite ROWID as tie-breaker for ordering.
+          2. Update PendingSignal ORM model in src/orchestrator/db/models.py:
+             - id: Integer primary key
+             - delivered_at: Optional[datetime] = None
+             - handled_at: Optional[datetime] = None
+             - Drain queries order by integer PK, not created_at
+          3. Add STOPPING = "stopping" to RunStatus enum in src/orchestrator/db/models.py.
+          4. Add state machine guards in src/orchestrator/workflow/engine.py:
+             - ACTIVE → STOPPING is a valid transition
+             - STOPPING → PAUSED and STOPPING → FAILED are valid
+             - start_task() and submit_for_verification() reject STOPPING runs
+          5. Add API guards in src/orchestrator/api/routers/runs.py:
+             - Return 409 for resume/restart/duplicate pause/cancel on STOPPING runs
+          6. Add RUN_START to WorkflowSignal enum in src/orchestrator/workflow/signals/signals.py.
+          7. Write tests/unit/test_stopping_state.py covering all valid/invalid transitions.
+          8. Run all existing tests and confirm they pass.
+
+          CAVEATS:
+          - Migration directory is src/orchestrator/db/migrations/versions/ NOT alembic/versions/
+          - Use ROWID as tie-breaker for signals with identical created_at timestamps
+          - STOPPING is a transient internal state; no user action should target it
+        requirements:
+          - id: "R1"
+            desc: "Alembic migration exists in src/orchestrator/db/migrations/versions/ and applies cleanly"
+            priority: critical
+          - id: "R2"
+            desc: "PendingSignal ORM model has integer id PK, delivered_at, handled_at fields; drain queries order by integer PK"
+            priority: critical
+          - id: "R3"
+            desc: "RunStatus.STOPPING enum value exists with enforced transitions (ACTIVE→STOPPING→PAUSED/FAILED)"
+            priority: critical
+          - id: "R4"
+            desc: "API returns 409 for resume/restart/pause/cancel on STOPPING runs"
+            priority: critical
+          - id: "R5"
+            desc: "WorkflowSignal.RUN_START enum value exists and serializes correctly"
+            priority: critical
+          - id: "R6"
+            desc: "All existing tests pass with no regressions after schema changes"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "migration_exists"
+              cmd: "uv run python -c \"import os; assert any('single_queue' in f for f in os.listdir('src/orchestrator/db/migrations/versions/')), 'No single_queue migration found'\""
+              must: true
+            - id: "stopping_enum"
+              cmd: "uv run python -c \"from src.orchestrator.db.models import RunStatus; assert RunStatus.STOPPING.value == 'stopping'\""
+              must: true
+            - id: "run_start_signal"
+              cmd: "uv run python -c \"from src.orchestrator.workflow.signals.signals import WorkflowSignal; assert WorkflowSignal.RUN_START\""
+              must: true
+            - id: "pending_signal_model"
+              cmd: "uv run python -c \"from src.orchestrator.db.models import PendingSignal; m = PendingSignal.__table__; assert 'delivered_at' in m.c and 'handled_at' in m.c\""
+              must: true
+            - id: "unit_tests_pass"
+              cmd: "uv run pytest tests/unit/test_stopping_state.py -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — Read the migration file in src/orchestrator/db/migrations/versions/.
+                A: migration exists, alters pending_signals table to add integer PK + delivery tracking columns, includes backfill logic for existing rows using ROWID tie-breaker.
+                B: migration exists but missing backfill or uses created_at ordering.
+                F: no migration file found, or migration is in wrong directory (alembic/versions/).
+            - id: "R2"
+              text: |
+                R2 — Read src/orchestrator/db/models.py PendingSignal model definition.
+                A: id is Integer primary key, delivered_at and handled_at are nullable datetime fields, drain queries use ORDER BY id (integer PK).
+                B: fields exist but drain queries still use created_at ordering.
+                F: model unchanged or fields missing.
+            - id: "R3"
+              text: |
+                R3 — Read RunStatus enum and engine.py transition guards.
+                A: STOPPING value exists; engine.py has guards blocking start_task() and submit_for_verification() on STOPPING runs; valid transitions ACTIVE→STOPPING, STOPPING→PAUSED, STOPPING→FAILED are defined.
+                B: enum exists but transition guards are incomplete.
+                F: STOPPING not in enum.
+            - id: "R4"
+              text: |
+                R4 — Read routers/runs.py for STOPPING state rejection logic.
+                A: resume, restart, pause, cancel endpoints all check for STOPPING and return 409 with appropriate message.
+                B: some endpoints missing the guard.
+                F: no API guards added.
+            - id: "R5"
+              text: |
+                R5 — Read signals.py WorkflowSignal enum.
+                A: RUN_START is defined; signal can be created and serialized without error.
+                F: RUN_START not present.
+            - id: "R6"
+              text: |
+                R6 — Review test results.
+                A: all pre-existing tests pass (unit + integration); test_stopping_state.py covers valid/invalid STOPPING transitions.
+                B: new tests pass but one or two pre-existing tests fail.
+                F: significant test regressions.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-02"
+    title: "Consumer Loop"
+    step_context: |
+      Build the consumer as new code. It reads from the queue but senders don't use it yet.
+      Consumer is the sole owner of RunWorkflow lifecycle and active-run registry.
+    tasks:
+      - id: "T-01"
+        title: "Implement signal consumer module with handlers and startup redelivery"
+        context_from:
+          - artifact: "docs/single-queue/plan.md"
+            as: "context.plan"
+            required: true
+          - artifact: "docs/single-queue/plan-summary.md"
+            as: "context.summary"
+            required: true
+          - artifact: "docs/single-queue/architecture.md"
+            as: "context.arch"
+            required: false
+        task_context: |
+          Implement Phase 2 of the single-queue signal model: the consumer loop.
+
+          PLAN SUMMARY:
+          {{context.summary}}
+
+          DETAILED PLAN:
+          {{context.plan}}
+
+          Tasks to complete:
+          1. Create src/orchestrator/workflow/signals/consumer.py with:
+             - Core loop: poll pending_signals ordered by integer PK
+             - Serial FIFO processing per run_id, concurrent across different run_ids
+             - Set delivered_at before handler invocation, handled_at after success
+             - Leave handled_at null on error (signal eligible for redelivery)
+
+          2. Implement all signal handlers:
+             - RUN_START: DRAFT→ACTIVE, create RunWorkflow, register_active_run()
+             - RESUME: PAUSED→ACTIVE, create RunWorkflow, register_active_run()
+             - PAUSE (active): ACTIVE→STOPPING→PAUSED, unregister_active_run() after ack
+             - PAUSE (no active RunWorkflow): PAUSED directly, no registry call
+             - CANCEL (active): ACTIVE→STOPPING→FAILED, unregister_active_run() after ack
+             - CANCEL (no active RunWorkflow): FAILED directly
+             - ACTIVITY_COMPLETED / ACTIVITY_VERIFIED: deliver to RunWorkflow (passthrough)
+
+          3. Startup redelivery:
+             - On startup query: delivered_at IS NOT NULL AND handled_at IS NULL for inactive runs
+             - Re-dispatch these signals through normal handler path
+
+          4. Write tests/unit/test_signal_consumer.py:
+             - FIFO ordering test
+             - delivered_at set before handler, handled_at set after success
+             - Error leaves handled_at null
+             - Each signal type with active and inactive RunWorkflow paths
+
+          5. Write tests/unit/test_signal_redelivery.py:
+             - Simulates crash (signal delivered but not handled)
+             - Consumer restart triggers redelivery
+             - Signal is processed successfully on second delivery
+
+          6. Run all tests and confirm pass.
+
+          IMPORTANT: Consumer module is new code only. Do NOT wire it into executor or app.py yet
+          (that happens in Phase 3). Registry functions (register_active_run, unregister_active_run,
+          has_active_workflow) are used inside the consumer but must NOT be called from service.py or routes.
+        requirements:
+          - id: "R1"
+            desc: "consumer.py exists with poll loop, FIFO per-run ordering, concurrent across runs"
+            priority: critical
+          - id: "R2"
+            desc: "All signal handlers implemented: RUN_START, RESUME, PAUSE, CANCEL (both active/inactive paths), ACTIVITY_COMPLETED, ACTIVITY_VERIFIED"
+            priority: critical
+          - id: "R3"
+            desc: "delivered_at set before handler; handled_at set on success; null on error (redelivery eligible)"
+            priority: critical
+          - id: "R4"
+            desc: "Startup redelivery: signals with delivered_at set but handled_at null re-dispatched for inactive runs"
+            priority: critical
+          - id: "R5"
+            desc: "Unit tests cover FIFO ordering, delivery tracking, all signal handlers, and redelivery"
+            priority: critical
+          - id: "R6"
+            desc: "All existing tests continue to pass (consumer is new code; no behavioral changes)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "consumer_module"
+              cmd: "uv run python -c \"from src.orchestrator.workflow.signals.consumer import SignalConsumer\""
+              must: true
+            - id: "consumer_tests"
+              cmd: "uv run pytest tests/unit/test_signal_consumer.py -v"
+              must: true
+            - id: "redelivery_tests"
+              cmd: "uv run pytest tests/unit/test_signal_redelivery.py -v"
+              must: true
+            - id: "no_registry_in_service"
+              cmd: "uv run python -c \"import subprocess; r = subprocess.run(['grep', '-n', 'has_active_workflow', 'src/orchestrator/workflow/service.py'], capture_output=True, text=True); lines = [l for l in r.stdout.splitlines() if not l.strip().startswith('#')]; assert not lines, 'has_active_workflow found in service.py: ' + str(lines)\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — Read consumer.py.
+                A: poll loop exists, signals fetched ordered by integer PK, concurrent across runs, serial per run_id (e.g., asyncio.Lock or task-per-run).
+                B: loop exists but ordering or concurrency model is wrong.
+                F: consumer.py missing or has no poll loop.
+            - id: "R2"
+              text: |
+                R2 — Read consumer.py handler functions.
+                A: all 6+ signal types handled; RUN_START/RESUME create RunWorkflow and register; PAUSE/CANCEL cover both active and inactive paths; ACTIVITY_* deliver to RunWorkflow.
+                B: handlers exist but one path (active or inactive) is missing for PAUSE or CANCEL.
+                F: handlers missing or signal dispatch not implemented.
+            - id: "R3"
+              text: |
+                R3 — Read delivery tracking logic in consumer.py.
+                A: delivered_at is set in DB before calling handler; handled_at set after handler returns successfully; error path leaves handled_at null.
+                B: tracking exists but order is wrong (e.g., handled_at set before handler completes).
+                F: delivery tracking not implemented.
+            - id: "R4"
+              text: |
+                R4 — Read startup redelivery logic in consumer.py.
+                A: on startup, queries signals where delivered_at IS NOT NULL AND handled_at IS NULL for inactive runs and re-dispatches them through normal handlers.
+                B: redelivery exists but does not check if run is active (risks double-delivery).
+                F: no startup redelivery logic.
+            - id: "R5"
+              text: |
+                R5 — Review test files.
+                A: test_signal_consumer.py tests FIFO, delivery tracking, each signal type; test_signal_redelivery.py simulates crash and verifies redelivery.
+                B: tests exist but coverage is shallow (e.g., only happy path).
+                F: test files missing or empty.
+            - id: "R6"
+              text: |
+                R6 — Review test results.
+                A: all pre-existing tests pass; no regressions introduced by new consumer module.
+                F: pre-existing test failures.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-03"
+    title: "Sender Rewiring"
+    step_context: |
+      Switch all WorkflowService lifecycle methods to unconditional signal enqueueing.
+      Remove has_active_workflow branching. Wire consumer into executor startup.
+    tasks:
+      - id: "T-01"
+        title: "Rewire WorkflowService and wire consumer into executor"
+        context_from:
+          - artifact: "docs/single-queue/plan.md"
+            as: "context.plan"
+            required: true
+          - artifact: "docs/single-queue/plan-summary.md"
+            as: "context.summary"
+            required: true
+        task_context: |
+          Implement Phase 3 of the single-queue signal model: sender rewiring.
+
+          PLAN SUMMARY:
+          {{context.summary}}
+
+          DETAILED PLAN:
+          {{context.plan}}
+
+          Tasks to complete:
+          1. Rewire start_run() in service.py:
+             - Remove engine.start_run(run_id) direct call
+             - Enqueue RUN_START signal unconditionally via SignalQueue(DbSignalTransport(session))
+             - Preserve env_lifecycle.on_run_start() hook; move it to consumer's _handle_run_start()
+             - Do NOT directly transition DRAFT→ACTIVE in service.py
+
+          2. Rewire pause_run(), resume_run(), cancel_run() in service.py:
+             - Remove has_active_workflow() check and direct-DB branch from each
+             - Enqueue PAUSE / RESUME / CANCEL signals unconditionally
+             - Remove unregister_active_run() call from RunWorkflow.handle_pause()
+             - Preserve env_lifecycle hooks in cancel_run; move to consumer _handle_cancel()
+
+          3. Rewire retry_fan_out_child() in service.py:
+             - Remove has_active_workflow() check
+             - If run is ACTIVE, enqueue PAUSE signal; consumer handles the transition
+
+          4. Wire consumer into startup (executor.py or app.py):
+             - Start consumer loop before any signals can be enqueued
+             - Consumer replaces current direct-spawn paths
+
+          5. Update integration tests that assumed synchronous start to wait for state transition.
+
+          6. Run full test suite and confirm all tests pass.
+
+          CAVEATS:
+          - The enqueue API is: SignalQueue(DbSignalTransport(session)).enqueue(run_id, signal_type, payload)
+          - Preserve all env_lifecycle hooks — move them into the consumer handler, not delete them
+          - Consumer must start before any service methods are called (startup order matters)
+          - Test: no direct executor.spawn_run() call should remain in service.py
+        requirements:
+          - id: "R1"
+            desc: "start_run(), pause_run(), resume_run(), cancel_run() all enqueue signals unconditionally with no has_active_workflow branch"
+            priority: critical
+          - id: "R2"
+            desc: "retry_fan_out_child() enqueues PAUSE signal for active runs; no has_active_workflow check"
+            priority: critical
+          - id: "R3"
+            desc: "Consumer wired into executor or app.py startup; starts before any signals can be enqueued"
+            priority: critical
+          - id: "R4"
+            desc: "unregister_active_run() removed from RunWorkflow.handle_pause(); env_lifecycle hooks preserved in consumer"
+            priority: critical
+          - id: "R5"
+            desc: "No has_active_workflow() calls remain in service.py or routers/ (wiring check)"
+            priority: critical
+          - id: "R6"
+            desc: "All existing tests pass after sender rewiring; integration tests updated for async start"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "no_has_active_in_service"
+              cmd: "grep -rn 'has_active_workflow' src/orchestrator/workflow/service.py && exit 1 || exit 0"
+              must: true
+            - id: "no_has_active_in_routers"
+              cmd: "grep -rn 'has_active_workflow' src/orchestrator/api/routers/ && exit 1 || exit 0"
+              must: true
+            - id: "no_spawn_run_in_service"
+              cmd: "grep -n 'spawn_run\\|engine\\.start_run' src/orchestrator/workflow/service.py && exit 1 || exit 0"
+              must: true
+            - id: "no_unregister_in_run_workflow"
+              cmd: "grep -n 'unregister_active_run' src/orchestrator/workflow/run_workflow.py && exit 1 || exit 0"
+              must: true
+            - id: "run_start_signal_enqueued"
+              cmd: "grep -n 'RUN_START' src/orchestrator/workflow/service.py"
+              must: true
+            - id: "integration_tests"
+              cmd: "uv run pytest tests/integration/test_api_full_lifecycle.py -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — Read service.py start_run(), pause_run(), resume_run(), cancel_run().
+                A: ALL four methods enqueue signals via SignalQueue; NO has_active_workflow check in any of them; NO direct DB state mutation for lifecycle transitions.
+                B: most methods rewired but one still has direct-DB path or has_active_workflow check.
+                F: methods unchanged; old branching logic still present.
+            - id: "R2"
+              text: |
+                R2 — Read retry_fan_out_child() in service.py.
+                A: no has_active_workflow() call; active runs get a PAUSE signal enqueued.
+                B: fan-out rewired but uses a different method to check active status.
+                F: has_active_workflow() still present.
+            - id: "R3"
+              text: |
+                R3 — Read executor.py or app.py startup code.
+                A: consumer loop is started explicitly at startup, before any service calls; consumer replaced direct spawn_run paths.
+                B: consumer started but timing issue (after first request can arrive) or spawn_run also still present.
+                F: consumer not wired into startup.
+            - id: "R4"
+              text: |
+                R4 — Read run_workflow.py handle_pause().
+                A: unregister_active_run() NOT present in handle_pause(); env_lifecycle hooks present in consumer handlers.
+                B: unregister removed but env_lifecycle hooks missing from consumer.
+                F: unregister_active_run() still called from run_workflow.py.
+            - id: "R5"
+              text: |
+                R5 — Run: grep -rn 'has_active_workflow' src/orchestrator/workflow/service.py src/orchestrator/api/
+                A: zero results (grep returns non-zero = no matches).
+                F: one or more matches found — wiring incomplete.
+            - id: "R6"
+              text: |
+                R6 — Review test results.
+                A: all tests pass; integration tests confirm lifecycle signals go through queue.
+                B: most tests pass but 1-2 integration tests fail due to timing assumptions.
+                F: significant test failures.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3
+
+  - id: "S-04"
+    title: "Registry Isolation"
+    step_context: |
+      Restrict register_active_run / unregister_active_run / has_active_workflow
+      to the consumer module only. Remove from public API surface.
+    tasks:
+      - id: "T-01"
+        title: "Move registry functions to consumer-only scope"
+        context_from:
+          - artifact: "docs/single-queue/plan.md"
+            as: "context.plan"
+            required: true
+        task_context: |
+          Implement Phase 4 of the single-queue signal model: registry isolation.
+
+          DETAILED PLAN:
+          {{context.plan}}
+
+          Tasks to complete:
+          1. Audit current usage:
+             - grep -rn 'has_active_workflow\|register_active_run\|unregister_active_run' src/
+             - Document all current import paths
+
+          2. Remove registry function exports from signals.py public surface:
+             - Remove from src/orchestrator/workflow/signals/__init__.py __all__
+             - Remove from src/orchestrator/workflow/__init__.py __all__ (if present)
+
+          3. Remove or restrict function definitions:
+             - Move or keep functions only accessible to consumer.py (private via naming, or move into consumer.py)
+             - Functions must NOT be importable from signals.py by external code
+
+          4. Update all non-consumer imports:
+             - Remove imports from any files outside consumer.py and its test file
+
+          5. Verify isolation:
+             - Confirm: python -c "from src.orchestrator.workflow.signals.signals import register_active_run" fails
+             - Confirm: consumer.py still works (imports from its own module or signals via internal path)
+
+          6. Run all tests and confirm pass.
+
+          IMPORTANT: has_active_workflow() must still work inside consumer.py for startup redelivery.
+          The isolation is about external callers only.
+        requirements:
+          - id: "R1"
+            desc: "registry functions (register_active_run, unregister_active_run, has_active_workflow) not importable from signals.py public API"
+            priority: critical
+          - id: "R2"
+            desc: "No imports of registry functions outside consumer.py and consumer test file"
+            priority: critical
+          - id: "R3"
+            desc: "__init__.py files in signals/ and workflow/ do not re-export registry functions"
+            priority: expected
+          - id: "R4"
+            desc: "All tests pass after registry isolation"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "registry_not_in_init"
+              cmd: "grep -n 'register_active_run\\|unregister_active_run\\|has_active_workflow' src/orchestrator/workflow/signals/__init__.py && exit 1 || exit 0"
+              must: true
+            - id: "no_registry_outside_consumer"
+              cmd: "uv run python -c \"import subprocess; r = subprocess.run(['grep', '-rn', '--include=*.py', 'register_active_run', 'src/orchestrator/'], capture_output=True, text=True); bad = [l for l in r.stdout.splitlines() if 'consumer.py' not in l and 'test_signal' not in l]; assert not bad, 'registry used outside consumer: ' + str(bad)\""
+              must: true
+            - id: "consumer_still_works"
+              cmd: "uv run python -c \"from src.orchestrator.workflow.signals.consumer import SignalConsumer\""
+              must: true
+            - id: "unit_tests"
+              cmd: "uv run pytest tests/unit/ -v -x"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — Attempt: python -c "from src.orchestrator.workflow.signals.signals import register_active_run"
+                A: import fails with ImportError (function not exported from public surface).
+                F: import succeeds — function still publicly exported.
+            - id: "R2"
+              text: |
+                R2 — Run: grep -rn 'register_active_run|unregister_active_run|has_active_workflow' src/orchestrator/ --include='*.py' | grep -v 'consumer.py' | grep -v 'test_signal'
+                A: zero results — no usage outside consumer and its tests.
+                B: only 1-2 residual references in comments or dead code.
+                F: active usage outside consumer module.
+            - id: "R3"
+              text: |
+                R3 — Read src/orchestrator/workflow/signals/__init__.py and src/orchestrator/workflow/__init__.py.
+                A: neither file exports register_active_run, unregister_active_run, or has_active_workflow.
+                B: one file still re-exports them.
+                F: both files still export registry functions.
+            - id: "R4"
+              text: |
+                R4 — Review test results.
+                A: all tests pass; consumer.py still imports and uses registry functions internally.
+                F: test failures from broken imports.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 2
+
+  - id: "S-05"
+    title: "Guards and Documentation"
+    step_context: |
+      Lock in new invariants with a pre-commit AST guard script and AGENTS.md rules.
+    tasks:
+      - id: "T-01"
+        title: "Pre-commit guard script and AGENTS.md signal-queue rules"
+        context_from:
+          - artifact: "docs/single-queue/plan.md"
+            as: "context.plan"
+            required: true
+        task_context: |
+          Implement Phase 5 of the single-queue signal model: guards and documentation.
+
+          DETAILED PLAN:
+          {{context.plan}}
+
+          Tasks to complete:
+          1. Create scripts/check_signal_routing.py:
+             - Use Python ast module to parse all .py files
+             - Fail if has_active_workflow, register_active_run, or unregister_active_run
+               are imported or called outside consumer.py (and test_signal_consumer.py / test_signal_redelivery.py)
+             - Follow the same structure as existing scripts/check_module_imports.py
+             - Script exits 0 on clean codebase, non-zero on violation
+
+          2. Add script to pre-commit hooks:
+             - Find existing hook config (.pre-commit-config.yaml or hooks in pyproject.toml)
+             - Add entry for scripts/check_signal_routing.py
+
+          3. Add to AGENTS.md a section "Signal Queue and Runner Isolation" with these four rules:
+             Rule 1: No registry function calls (register_active_run, unregister_active_run,
+                     has_active_workflow) outside consumer.py
+             Rule 2: No process-local shared state that crosses the API/executor boundary
+             Rule 3: No app.state access from RunWorkflow or AgentRunnerExecutor; use constructor injection
+             Rule 4: All lifecycle transitions (start, pause, resume, cancel) go through signal queue;
+                     no direct DB mutations in WorkflowService for lifecycle state changes
+
+          4. Validate script works:
+             - Run on clean codebase (should pass)
+             - Introduce a test violation, confirm it fails
+
+          5. Run all tests.
+        requirements:
+          - id: "R1"
+            desc: "scripts/check_signal_routing.py exists, uses ast module, and exits non-zero on violations"
+            priority: critical
+          - id: "R2"
+            desc: "Script integrated into pre-commit hook configuration"
+            priority: critical
+          - id: "R3"
+            desc: "AGENTS.md contains 'Signal Queue and Runner Isolation' section with all four rules"
+            priority: critical
+          - id: "R4"
+            desc: "Script passes on current clean codebase"
+            priority: critical
+          - id: "R5"
+            desc: "No app.state access in RunWorkflow or AgentRunnerExecutor (constraint enforced)"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "guard_script_exists"
+              cmd: "test -f scripts/check_signal_routing.py"
+              must: true
+            - id: "guard_uses_ast"
+              cmd: "grep -q 'import ast' scripts/check_signal_routing.py"
+              must: true
+            - id: "guard_passes_clean"
+              cmd: "uv run python scripts/check_signal_routing.py"
+              must: true
+            - id: "agents_md_section"
+              cmd: "grep -q 'Signal Queue and Runner Isolation' AGENTS.md"
+              must: true
+            - id: "agents_md_four_rules"
+              cmd: "grep -q 'No registry function calls outside consumer' AGENTS.md"
+              must: false
+            - id: "precommit_hook"
+              cmd: "grep -q 'check_signal_routing' .pre-commit-config.yaml"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — Read scripts/check_signal_routing.py.
+                A: uses ast module to walk Python files; fails on imports/calls of the three registry functions outside the allowed files; passes on clean codebase; exit codes correct.
+                B: script exists but uses grep instead of AST, or misses one of the three function names.
+                F: script missing or always exits 0.
+            - id: "R2"
+              text: |
+                R2 — Read .pre-commit-config.yaml (or equivalent hook config).
+                A: check_signal_routing.py is registered as a hook that runs on Python file changes.
+                B: script registered but not triggered on Python file changes.
+                F: not in pre-commit config.
+            - id: "R3"
+              text: |
+                R3 — Read AGENTS.md.
+                A: section "Signal Queue and Runner Isolation" exists with all four rules explicitly stated: (1) no registry outside consumer, (2) no process-local state crossing API/executor, (3) no app.state access from RunWorkflow/executor, (4) all lifecycle via signal queue.
+                B: section exists but one or two rules missing or vaguely stated.
+                F: section absent.
+            - id: "R4"
+              text: |
+                R4 — Run: uv run python scripts/check_signal_routing.py
+                A: exits 0 on current codebase.
+                F: exits non-zero (false positives on clean code).
+            - id: "R5"
+              text: |
+                R5 — Read run_workflow.py and executor.py for app.state access.
+                A: no app.state access found; dependencies injected via constructor.
+                B: one minor reference but not load-bearing.
+                F: app.state used for core functionality.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 2
+
+  - id: "S-06"
+    title: "Validation and Cleanup"
+    step_context: |
+      Final verification: full test suite pass, dead code removal, traceability audit.
+      All intent items must be satisfied.
+    tasks:
+      - id: "T-01"
+        title: "Full test suite, dead code removal, and traceability audit"
+        context_from:
+          - artifact: "docs/single-queue/intent.md"
+            as: "context.intent"
+            required: true
+          - artifact: "docs/single-queue/plan-summary.md"
+            as: "context.summary"
+            required: true
+        task_context: |
+          Implement Phase 6 of the single-queue signal model: validation and cleanup.
+
+          INTENT:
+          {{context.intent}}
+
+          PLAN SUMMARY:
+          {{context.summary}}
+
+          Tasks to complete:
+          1. Run full backend test suite and confirm 330+ unit + 235+ integration pass.
+          2. Run full frontend test suite: cd ui && npx tsc --noEmit && npx eslint src/ --ext .ts,.tsx
+          3. Remove dead code:
+             - Old dual-path branching logic now unused in service.py
+             - No-op handle_resume log message from RunWorkflow (if still present)
+             - Unused imports caused by the rewiring
+          4. Traceability audit: verify every [I-XX] from intent.md maps to implemented code.
+          5. Write or update tests/integration/test_signal_queue.py with:
+             - Concurrent runs: two runs process signals independently
+             - Full lifecycle: create run → RUN_START → build → verify → complete
+             - Pause/resume cycle via queue
+             - Cancel via queue (STOPPING path)
+             - Redelivery after consumer restart
+          6. Confirm RUN_START and RESUME are fully functional (not no-ops).
+          7. Confirm all Definition of Complete criteria from intent.md are met.
+        requirements:
+          - id: "R1"
+            desc: "All backend tests pass (330+ unit, 235+ integration); no regressions"
+            priority: critical
+          - id: "R2"
+            desc: "Frontend TypeScript type check clean; ESLint clean (STOPPING added to frontend RunStatus type)"
+            priority: critical
+          - id: "R3"
+            desc: "No dead code: old has_active_workflow branching removed, unused imports cleaned"
+            priority: expected
+          - id: "R4"
+            desc: "Integration test confirms full lifecycle via queue: RUN_START consumed, run transitions DRAFT→ACTIVE→complete"
+            priority: critical
+          - id: "R5"
+            desc: "Integration test confirms STOPPING state path: pause active run, run transitions ACTIVE→STOPPING→PAUSED"
+            priority: critical
+          - id: "R6"
+            desc: "All 36 intent items [I-01]–[I-36] satisfied; no-req items confirmed out of scope"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "unit_tests"
+              cmd: "uv run pytest tests/unit/ -v"
+              must: true
+            - id: "integration_tests"
+              cmd: "uv run pytest tests/integration/ -v"
+              must: true
+            - id: "no_has_active_anywhere"
+              cmd: "grep -rn 'has_active_workflow' src/orchestrator/workflow/service.py src/orchestrator/api/ && exit 1 || exit 0"
+              must: true
+            - id: "stopping_in_frontend"
+              cmd: "grep -rq 'STOPPING\\|stopping' ui/src/types/"
+              must: true
+            - id: "signal_queue_integration_test"
+              cmd: "uv run pytest tests/integration/test_signal_queue.py -v"
+              must: true
+            - id: "frontend_typecheck"
+              cmd: "cd ui && npx tsc --noEmit"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: |
+                R1 — Review test results.
+                A: 330+ unit tests pass, 235+ integration tests pass, zero regressions.
+                B: most tests pass but a handful fail (not related to new code).
+                F: systemic failures or new code breaks existing tests.
+            - id: "R2"
+              text: |
+                R2 — Run: cd ui && npx tsc --noEmit
+                A: zero TypeScript errors; STOPPING added to frontend RunStatus type and displays in UI.
+                B: type check passes but STOPPING has no UI representation.
+                F: TypeScript errors.
+            - id: "R3"
+              text: |
+                R3 — Read service.py for dead code.
+                A: no has_active_workflow branch remaining; no-op handle_resume removed; unused imports cleaned.
+                B: minor dead code remains (unreachable else branch, commented-out code).
+                F: significant dead code blocks still present.
+            - id: "R4"
+              text: |
+                R4 — Read test_signal_queue.py full lifecycle test.
+                A: test creates a run, calls start API, waits for consumer to process RUN_START signal, confirms run transitions DRAFT→ACTIVE, and completes full workflow cycle.
+                B: test exists but doesn't verify the queue path (could pass via old code).
+                F: test missing or too shallow to confirm wiring.
+            - id: "R5"
+              text: |
+                R5 — Read test for STOPPING state via queue.
+                A: test pauses an active run, confirms run enters STOPPING state, then transitions to PAUSED after consumer processes the signal.
+                B: STOPPING state tested but not via the queue path.
+                F: no test for STOPPING path.
+            - id: "R6"
+              text: |
+                R6 — Cross-reference intent.md [I-XX] items with implemented code.
+                A: all [I-01]–[I-36] items satisfied; [I-06], [I-18], [I-19], [I-20] correctly marked NO-REQ.
+                B: 1-2 intent items not clearly addressed.
+                F: multiple intent items unimplemented.
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: A
+            require_remediation_if_below: B
+        retry:
+          max_attempts: 3

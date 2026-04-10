@@ -1,0 +1,75 @@
+routine:
+  id: complete-routine
+  name: Complete Routine
+  description: A fully specified routine
+  inputs:
+    - name: feature_name
+      required: true
+    - name: branch
+      required: false
+      default: main
+  steps:
+    - id: S-01
+      title: Planning
+      step_context: Plan the feature
+      tasks:
+        - id: T-01
+          title: Create Plan
+          task_context: Create a plan for {{feature_name}}
+          model_overrides:
+            claude-sonnet:
+              task_context: Use structured thinking for {{feature_name}}
+          requirements:
+            - id: R1
+              desc: Create plan.md
+              must: true
+              priority: critical
+            - id: R2
+              desc: Include timeline
+              priority: expected
+          auto_verify:
+            items:
+              - id: check_file
+                cmd: test -f plan.md
+            tail_lines: 20
+          verifier:
+            rubric:
+              - id: quality
+                text: Is the plan clear?
+            submission_template:
+              grade_scale: [A, B, C, D, F]
+              require_reason_if_below: A
+              require_remediation_if_below: B
+          retry:
+            max_attempts: 3
+    - id: S-02
+      title: Implementation
+      step_context: Implement the feature
+      tasks:
+        - id: T-02
+          title: Write Code
+          task_context: Implement {{feature_name}}
+          requirements:
+            - id: R3
+              desc: Write implementation code
+              priority: critical
+            - id: R4
+              desc: Follow coding standards
+              priority: expected
+            - id: R5
+              desc: Add inline comments
+              priority: nice
+          retry:
+            max_attempts: 2
+        - id: T-03
+          title: Write Tests
+          task_context: Write tests for {{feature_name}}
+          requirements:
+            - id: R6
+              desc: Unit tests pass
+              priority: critical
+          auto_verify:
+            items:
+              - id: run_tests
+                cmd: pytest tests/
+            tail_lines: 30

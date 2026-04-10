@@ -1,0 +1,68 @@
+# Environment
+.env
+.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv
+.venv/
+venv/
+
+# Database
+*.db
+*.db-wal
+*.db-shm
+*.bak
+
+# Test scratch directory (SQLite files for fan-out tests, etc.)
+tmp/*
+!tmp/.gitkeep
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+server_output.log
+
+# Coverage
+htmlcov/
+.coverage
+.coverage.*
+
+# Pyright
+.pyright/
+
+# Ruff
+.ruff_cache/
+
+# Frontend
+ui/node_modules/
+ui/dist/
+
+# Local nested repos/worktrees (keep on disk, exclude from parent repo)
+repos/
+worktrees/
+
+# Worktree manifest (written by orchestrator into each worktree)
+.worktree-manifest.json
+
+# Orchestrator runtime state (append-only, not source — must not be git-managed)
+.orchestrator/state/history.jsonl
+
+# Playwright MCP artifacts
+.playwright-mcp/
+.orchestrator/

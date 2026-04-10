@@ -1,0 +1,239 @@
+import { afterEach, describe, it, expect } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
+import { Sidebar } from './Sidebar';
+import type { AgentRunnerOption, AgentRunnerQuota, QuotaBucket } from '../types/agentRunners';
+
+afterEach(() => {
+  cleanup();
+});
+
+function makeQuota(overrides: Partial<AgentRunnerQuota> = {}): AgentRunnerQuota {
+  return {
+    balance_usd: 10.00,
+    balance_pct: null,
+    max_balance_usd: 100.00,
+    label: 'Test quota',
+    supports_quota: true,
+    breakdown: null,
+    fetched_at: null,
+    ...overrides,
+  };
+}
+
+function makeAgent(overrides: Partial<AgentRunnerOption> = {}): AgentRunnerOption {
+  return {
+    agent_type: 'test_agent',
+    name: 'Test Agent',
+    title: 'Test Agent Title',
+    description: 'A test agent description',
+    available: true,
+    detail: 'Test agent detail',
+    install_hint: 'No install needed',
+    config_schema: [],
+    quota: null,
+    ...overrides,
+  };
+}
+
+function renderSidebar(queryClient: QueryClient) {
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <Sidebar />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+}
+
+describe('Sidebar quota section', () => {
+  it('shows skeleton while loading', () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    // Initiate a never-resolving fetch so the agents query stays in loading state
+    void queryClient.fetchQuery({
+      queryKey: ['agent-runners'],
+      queryFn: (): Promise<AgentRunnerOption[]> => new Promise(() => {}),
+    });
+
+    const { container } = renderSidebar(queryClient);
+
+    expect(container.querySelector('.animate-pulse')).toBeInTheDocument();
+  });
+
+  it('hides section when all agents have null quota', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
+      makeAgent({ agent_type: 'agent1', name: 'Agent One', quota: null }),
+      makeAgent({ agent_type: 'agent2', name: 'Agent Two', quota: null }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    expect(screen.queryByText('Agent Quotas')).not.toBeInTheDocument();
+    expect(screen.queryByText('Agent One')).not.toBeInTheDocument();
+    expect(screen.queryByText('Agent Two')).not.toBeInTheDocument();
+  });
+
+  it('hides section on error', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false, refetchOnMount: false },
+      },
+    });
+    // prefetchQuery silently swallows errors, leaving the query in error state
+    await queryClient.prefetchQuery({
+      queryKey: ['agent-runners'],
+      queryFn: () => Promise.reject(new Error('Network error')),
+    });
+
+    renderSidebar(queryClient);
+
+    // The quota section heading must not appear regardless of whether
+    // the component is in error or loading-during-refetch state
+    expect(screen.queryByText('Agent Quotas')).not.toBeInTheDocument();
+  });
+
+  it('renders one row per agent with non-null quota', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
+      makeAgent({ agent_type: 'agent1', name: 'Agent Alpha', quota: makeQuota({ balance_usd: 5.00 }) }),
+      makeAgent({ agent_type: 'agent2', name: 'Agent Beta', quota: makeQuota({ balance_usd: 10.00 }) }),
+      makeAgent({ agent_type: 'agent3', name: 'Agent Gamma', quota: null }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    expect(screen.getByText('Agent Alpha')).toBeInTheDocument();
+    expect(screen.getByText('Agent Beta')).toBeInTheDocument();
+    expect(screen.queryByText('Agent Gamma')).not.toBeInTheDocument();
+  });
+
+  it('excludes unavailable agents even with non-null quota', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Available Agent',
+        available: true,
+        quota: makeQuota({ balance_usd: 5.00 }),
+      }),
+      makeAgent({
+        agent_type: 'agent2',
+        name: 'Unavailable Agent',
+        available: false,
+        quota: makeQuota({ balance_usd: 5.00 }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    expect(screen.getByText('Available Agent')).toBeInTheDocument();
+    expect(screen.queryByText('Unavailable Agent')).not.toBeInTheDocument();
+  });
+
+  it('clicking an agent with breakdown expands and shows bucket details', async () => {
+    const user = userEvent.setup();
+    const queryClient = new QueryClient();
+    const breakdown: QuotaBucket[] = [
+      { label: '7-day weekly', remaining_pct: 39, remaining_usd: null, resets_at: '2026-02-22T19:00:00+00:00' },
+      { label: '5-hour session', remaining_pct: 68, remaining_usd: null, resets_at: null },
+    ];
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Claude',
+        quota: makeQuota({ balance_pct: 39, balance_usd: null, breakdown }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    // Bucket labels hidden before click
+    expect(screen.queryByText('7-day weekly')).not.toBeInTheDocument();
+    expect(screen.queryByText('5-hour session')).not.toBeInTheDocument();
+
+    // Click the agent row to expand
+    await user.click(screen.getByText('Claude'));
+
+    // Bucket labels are now visible
+    expect(screen.getByText('7-day weekly')).toBeInTheDocument();
+    expect(screen.getByText('5-hour session')).toBeInTheDocument();
+
+    // Click again to collapse
+    await user.click(screen.getByText('Claude'));
+    expect(screen.queryByText('7-day weekly')).not.toBeInTheDocument();
+  });
+
+  it('agent without breakdown has no chevron and is not expandable', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Static Agent',
+        quota: makeQuota({ balance_usd: 5, breakdown: null }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    const row = screen.getByText('Static Agent').closest('button');
+    // No aria-expanded on non-expandable rows
+    expect(row).not.toHaveAttribute('aria-expanded');
+  });
+
+  it('shows staleness text when fetched_at is older than 90 seconds', () => {
+    const queryClient = new QueryClient();
+    // 5 minutes ago
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    queryClient.setQueryData<AgentOption[]>(['agent-runners'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Stale Agent',
+        quota: makeQuota({ balance_usd: 5.00, fetched_at: fiveMinAgo }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    expect(screen.getByText('Stale Agent')).toBeInTheDocument();
+    expect(screen.getByText('updated 5m ago')).toBeInTheDocument();
+  });
+
+  it('does not show staleness text when fetched_at is less than 90 seconds old', () => {
+    const queryClient = new QueryClient();
+    // 30 seconds ago
+    const thirtySecAgo = new Date(Date.now() - 30 * 1000).toISOString();
+    queryClient.setQueryData<AgentOption[]>(['agent-runners'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Fresh Agent',
+        quota: makeQuota({ balance_usd: 5.00, fetched_at: thirtySecAgo }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    expect(screen.getByText('Fresh Agent')).toBeInTheDocument();
+    expect(screen.queryByText(/updated/)).not.toBeInTheDocument();
+  });
+
+  it('has no manual refresh button in any state', () => {
+    const queryClient = new QueryClient();
+    queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
+      makeAgent({
+        agent_type: 'agent1',
+        name: 'Agent One',
+        quota: makeQuota({ balance_usd: 5.00 }),
+      }),
+    ]);
+
+    renderSidebar(queryClient);
+
+    expect(screen.queryByRole('button', { name: /refresh/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/refresh/i)).not.toBeInTheDocument();
+  });
+});

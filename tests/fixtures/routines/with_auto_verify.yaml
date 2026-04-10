@@ -1,0 +1,17 @@
+routine:
+  id: auto-verify-routine
+  name: Auto Verify Routine
+  steps:
+    - id: S-01
+      title: Only Step
+      tasks:
+        - id: T-01
+          title: Only Task
+          task_context: Do something with tests
+          requirements:
+            - id: R1
+              desc: Complete the task
+          auto_verify:
+            items:
+              - id: check_echo
+                cmd: echo "tests passed"

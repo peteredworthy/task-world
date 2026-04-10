@@ -1,0 +1,1 @@
+Instead of a summary, or nothing, I would like the execution to complete by generating a demo and architecture overview that is presented to me in the UI. That makes it much easier to confirm if everything has been correctly completed.

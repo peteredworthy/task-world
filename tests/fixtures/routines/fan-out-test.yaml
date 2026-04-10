@@ -1,0 +1,36 @@
+routine:
+  id: fan-out-test
+  name: Fan-Out Test Routine
+  steps:
+    - id: S-01
+      title: Setup
+      tasks:
+        - id: T-01
+          title: Create Files
+          task_context: "Create test files"
+          requirements:
+            - id: R1
+              desc: "Files created"
+              must: true
+    - id: S-02
+      title: Process
+      tasks:
+        - id: T-02
+          title: Process Each File
+          fan_out:
+            input_glob: "output/step-*.md"
+            output_pattern: "output/processed/{{item_stem}}-result.md"
+            per_item_prompt: "Process this file: {{item_content}}"
+            max_attempts: 2
+            max_concurrent: 2
+            auto_verify:
+              items:
+                - id: output_exists
+                  cmd: "test -f {{output_path}}"
+                  must: true
+    - id: S-03
+      title: Combine
+      tasks:
+        - id: T-03
+          title: Combine Results
+          script: "cat output/processed/*-result.md > output/combined.md"

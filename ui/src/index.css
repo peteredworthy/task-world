@@ -1,0 +1,219 @@
+@import "tailwindcss";
+
+@theme {
+  /* Background colors */
+  --color-bg-primary: #0d0f14;
+  --color-bg-card: #151921;
+  --color-bg-elevated: #1c212b;
+  --color-bg-hover: #252b38;
+
+  /* Accent colors */
+  --color-accent-purple: #8b5cf6;
+  --color-accent-cyan: #06b6d4;
+
+  /* Text colors */
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+
+  /* Status colors */
+  --color-status-active: #22c55e;
+  --color-status-paused: #eab308;
+  --color-status-failed: #ef4444;
+  --color-status-pending: #6b7280;
+  --color-status-completed: #22c55e;
+
+  /* Grade colors */
+  --color-grade-a: #22c55e;
+  --color-grade-b: #3b82f6;
+  --color-grade-c: #eab308;
+  --color-grade-d: #f97316;
+  --color-grade-f: #ef4444;
+
+  /* Border */
+  --color-border: #1e2432;
+  --color-border-hover: #374151;
+
+  /* Typography */
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+@layer base {
+  html,
+  body {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-hover) var(--color-bg-card);
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  html::-webkit-scrollbar-track,
+  body::-webkit-scrollbar-track {
+    background: var(--color-bg-card);
+  }
+
+  html::-webkit-scrollbar-thumb,
+  body::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--color-border-hover) 80%, black);
+    border-radius: 9999px;
+    border: 2px solid var(--color-bg-card);
+  }
+
+  html::-webkit-scrollbar-thumb:hover,
+  body::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--color-text-muted) 70%, black);
+  }
+
+  body {
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px var(--color-status-active); }
+  50% { box-shadow: 0 0 16px var(--color-status-active); }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.3s ease-out;
+}
+
+@keyframes slide-down {
+  from { max-height: 0; opacity: 0; }
+  to { max-height: 1000px; opacity: 1; }
+}
+
+.animate-slide-down {
+  animation: slide-down 0.3s ease-out;
+}
+
+@keyframes slide-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-slide-fade-in {
+  animation: slide-fade-in 0.18s ease-out;
+}
+
+/* Dark themed scrollbar for horizontal/overflow containers */
+.scrollbar-dark {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-hover) var(--color-bg-card);
+}
+
+.scrollbar-dark::-webkit-scrollbar {
+  height: 10px;
+  width: 10px;
+}
+
+.scrollbar-dark::-webkit-scrollbar-track {
+  background: var(--color-bg-card);
+  border-radius: 9999px;
+}
+
+.scrollbar-dark::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-border-hover) 80%, black);
+  border-radius: 9999px;
+  border: 2px solid var(--color-bg-card);
+}
+
+.scrollbar-dark::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--color-text-muted) 70%, black);
+}
+
+/* Skeleton shimmer loader */
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-muted)     25%,
+    var(--color-bg-hover)     50%,
+    var(--color-bg-muted)     75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+/* react-diff-view dark theme overrides for review panels */
+.diff-theme-review {
+  --diff-background-color: transparent;
+  --diff-text-color: #e5edf7;
+  --diff-font-family: "JetBrains Mono", monospace;
+  --diff-selection-background-color: rgba(59, 130, 246, 0.25);
+  --diff-selection-text-color: #f8fafc;
+
+  --diff-gutter-insert-background-color: rgba(34, 197, 94, 0.16);
+  --diff-gutter-insert-text-color: #bbf7d0;
+  --diff-gutter-delete-background-color: rgba(239, 68, 68, 0.16);
+  --diff-gutter-delete-text-color: #fecaca;
+  --diff-gutter-selected-background-color: rgba(59, 130, 246, 0.18);
+  --diff-gutter-selected-text-color: #dbeafe;
+
+  --diff-code-insert-background-color: rgba(34, 197, 94, 0.12);
+  --diff-code-insert-text-color: #eafff1;
+  --diff-code-delete-background-color: rgba(239, 68, 68, 0.12);
+  --diff-code-delete-text-color: #ffe8ea;
+  --diff-code-insert-edit-background-color: rgba(34, 197, 94, 0.28);
+  --diff-code-insert-edit-text-color: #f0fff6;
+  --diff-code-delete-edit-background-color: rgba(239, 68, 68, 0.28);
+  --diff-code-delete-edit-text-color: #fff3f4;
+  --diff-code-selected-background-color: rgba(59, 130, 246, 0.14);
+  --diff-code-selected-text-color: #eff6ff;
+  --diff-omit-gutter-line-color: #f87171;
+}
+
+.diff-theme-review .diff {
+  color: var(--diff-text-color);
+  /* Allow table to expand beyond container width for long lines */
+  width: auto;
+  min-width: 100%;
+}
+
+.diff-theme-review .diff td {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.06);
+}
+
+.diff-theme-review .diff-code {
+  color: #dbe6f5;
+  /* Prevent line wrapping so split view scrolls horizontally */
+  white-space: pre;
+}

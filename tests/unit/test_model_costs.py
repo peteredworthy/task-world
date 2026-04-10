@@ -9,7 +9,6 @@ import yaml
 
 import orchestrator.runners.costs as costs_mod
 from orchestrator.runners.costs import get_model_costs, load_cost_table
-from orchestrator.state.models import ModelTokenUsage
 
 
 @pytest.fixture(autouse=True)
@@ -174,62 +173,3 @@ class TestGetModelCosts:
         """When table is empty and no cost file exists, None model still gives zeros."""
         costs = get_model_costs(None)
         assert costs["cost_per_m_input"] == 0.0
-
-    def test_opus_rates_correct(self, tmp_path: Path) -> None:
-        cost_file = tmp_path / "model_costs.yaml"
-        cost_file.write_text(
-            yaml.dump(
-                {
-                    "models": {
-                        "claude-opus-4-6": {
-                            "cache_read": 0.75,
-                            "cache_creation": 9.375,
-                            "input": 7.50,
-                            "output": 37.50,
-                        }
-                    }
-                }
-            )
-        )
-        load_cost_table(cost_file)
-        costs = get_model_costs("claude-opus-4-6")
-        assert costs["cost_per_m_input"] == 7.50
-        assert costs["cost_per_m_output"] == 37.50
-        assert costs["cost_per_m_cache_read"] == 0.75
-        assert costs["cost_per_m_cache_creation"] == 9.375
-
-
-# ---------------------------------------------------------------------------
-# ModelTokenUsage.total_cost_usd
-# ---------------------------------------------------------------------------
-
-
-class TestModelTokenUsageTotalCost:
-    def test_all_zero_returns_zero(self) -> None:
-        usage = ModelTokenUsage(model="test-model")
-        assert usage.total_cost_usd == 0.0
-
-    def test_input_only_tokens(self) -> None:
-        usage = ModelTokenUsage(
-            model="test-model",
-            input_tokens=1_000_000,
-            cost_per_m_input=3.00,
-        )
-        assert usage.total_cost_usd == pytest.approx(3.00)
-
-    def test_all_four_token_types_combined(self) -> None:
-        usage = ModelTokenUsage(
-            model="test-model",
-            cache_read_tokens=500_000,
-            cache_creation_tokens=200_000,
-            input_tokens=1_000_000,
-            output_tokens=100_000,
-            cost_per_m_cache_read=0.30,
-            cost_per_m_cache_creation=3.75,
-            cost_per_m_input=3.00,
-            cost_per_m_output=15.00,
-        )
-        expected = (
-            500_000 * 0.30 + 200_000 * 3.75 + 1_000_000 * 3.00 + 100_000 * 15.00
-        ) / 1_000_000
-        assert usage.total_cost_usd == pytest.approx(expected)

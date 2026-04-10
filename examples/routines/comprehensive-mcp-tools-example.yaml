@@ -1,0 +1,199 @@
+routine:
+  id: comprehensive-mcp-tools-example
+  name: Comprehensive MCP and Tools Example
+  description: |
+    Demonstrates comprehensive step-level tool and MCP server configuration
+    with multiple transport types, varying tool sets, and backward compatibility
+    with legacy steps that have no tool/MCP configuration.
+
+  steps:
+    - id: setup-with-network-mcp
+      title: Setup Phase with Network MCP
+      step_context: |
+        Initial setup step with network-based MCP servers.
+        Demonstrates URL-transport MCP configuration.
+      available_tools:
+        - terminal
+        - file_editor
+      mcp_servers:
+        - name: weather-service
+          url: https://weather-api.example.com
+          timeout_seconds: 45
+        - name: analytics-service
+          url: https://analytics.example.com
+          auth_token_env: ANALYTICS_TOKEN
+          timeout_seconds: 60
+      tasks:
+        - id: init-env
+          title: Initialize Environment
+          task_context: Set up the project environment and dependencies.
+          requirements:
+            - id: r1
+              desc: Virtual environment created
+              must: true
+              priority: critical
+            - id: r2
+              desc: All dependencies installed
+              must: true
+              priority: critical
+        - id: fetch-config
+          title: Fetch Configuration
+          task_context: Retrieve initial configuration from external services.
+          requirements:
+            - id: r1
+              desc: Configuration successfully fetched from network services
+              must: true
+              priority: critical
+
+    - id: build-with-local-mcp
+      title: Build Phase with Local MCP
+      step_context: |
+        Build step with local command-based MCP servers.
+        Demonstrates STDIO-transport MCP configuration with arguments.
+      available_tools:
+        - terminal
+        - file_editor
+        - browser
+      mcp_servers:
+        - name: local-builder
+          command: builder-mcp
+          args:
+            - --project-root
+            - "."
+            - --verbose
+        - name: test-runner
+          command: test-runner-mcp
+          args:
+            - --coverage
+            - --junit-output=coverage.xml
+      tasks:
+        - id: compile-code
+          title: Compile Code
+          task_context: Compile source code and run initial checks.
+          requirements:
+            - id: r1
+              desc: Code compiles without errors
+              must: true
+              priority: critical
+            - id: r2
+              desc: All linting checks pass
+              must: true
+              priority: expected
+        - id: run-tests
+          title: Run Unit Tests
+          task_context: Execute unit tests using the local test runner MCP.
+          requirements:
+            - id: r1
+              desc: All unit tests pass
+              must: true
+              priority: critical
+            - id: r2
+              desc: Code coverage above 80%
+              must: false
+              priority: expected
+
+    - id: integration-mixed-transport
+      title: Integration with Mixed Transport Types
+      step_context: |
+        Integration testing with both network and local MCP servers.
+        Shows how different transport types can work together in one step.
+      available_tools:
+        - terminal
+      mcp_servers:
+        - name: docker-registry
+          url: https://registry.example.com
+          timeout_seconds: 120
+          env:
+            REGISTRY_USERNAME: ci-user
+            REGISTRY_URL: https://registry.example.com
+        - name: local-integration-test
+          command: integration-test-runner
+          args:
+            - --environment=staging
+            - --parallel=4
+      tasks:
+        - id: deploy-staging
+          title: Deploy to Staging
+          task_context: Deploy built artifacts to staging using network registry.
+          requirements:
+            - id: r1
+              desc: Artifacts pushed to container registry
+              must: true
+              priority: critical
+        - id: integration-tests
+          title: Run Integration Tests
+          task_context: Execute integration tests using local test runner.
+          requirements:
+            - id: r1
+              desc: All integration tests pass
+              must: true
+              priority: critical
+
+    - id: verify-legacy-no-tools
+      title: Verification Phase (Legacy - No Tool Restrictions)
+      step_context: |
+        Verification step WITHOUT tool or MCP configuration.
+        This demonstrates backward compatibility with existing routines
+        that have no step-level tool/MCP specifications.
+      tasks:
+        - id: code-review
+          title: Code Review
+          task_context: Perform comprehensive code review.
+          requirements:
+            - id: r1
+              desc: Code review completed
+              must: true
+              priority: critical
+            - id: r2
+              desc: No critical issues found
+              must: true
+              priority: critical
+        - id: doc-review
+          title: Documentation Review
+          task_context: Review and update documentation.
+          requirements:
+            - id: r1
+              desc: Documentation is complete and accurate
+              must: true
+              priority: expected
+
+    - id: monitoring-setup-mixed
+      title: Monitoring Setup with Partial Configuration
+      step_context: |
+        Demonstrates a step with only available_tools defined (no MCP servers).
+        Shows that the new fields can be used independently.
+      available_tools:
+        - terminal
+        - file_editor
+      tasks:
+        - id: configure-monitoring
+          title: Configure Monitoring
+          task_context: Set up monitoring dashboards and alerts.
+          requirements:
+            - id: r1
+              desc: Monitoring dashboards created
+              must: true
+              priority: expected
+            - id: r2
+              desc: Alert rules configured
+              must: false
+              priority: expected
+
+    - id: cleanup-with-mcp-only
+      title: Cleanup with MCP Servers Only
+      step_context: |
+        Demonstrates a step with only mcp_servers defined (no available_tools restriction).
+        Shows that MCP servers can be configured independently of tool restrictions.
+      mcp_servers:
+        - name: cleanup-service
+          url: https://cleanup.example.com
+          timeout_seconds: 30
+      tasks:
+        - id: cleanup-artifacts
+          title: Cleanup Artifacts
+          task_context: Clean up temporary artifacts and cache.
+          requirements:
+            - id: r1
+              desc: All temporary artifacts cleaned up
+              must: true
+              priority: expected

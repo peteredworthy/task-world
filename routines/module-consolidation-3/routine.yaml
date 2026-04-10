@@ -1,0 +1,434 @@
+id: "module-consolidation-3"
+name: "Module Consolidation 3"
+description: |
+  Execute the next module-consolidation tranche against the documented nine-module
+  architecture. The routine starts with evidence-backed discovery, then defines
+  canonical top-level imports, executes bounded domain batches, validates
+  high-risk callers, and finishes with repository-wide boundary proof.
+
+inputs:
+  - name: feature
+    required: false
+    default: "module-consolidation-3"
+    description: "Feature name used for documentation artifacts under docs/{{feature}}/"
+
+steps:
+  - id: "S-01"
+    title: "Reality Audit and Gap List"
+    step_context: |
+      Establish the live-code baseline before any structural refactor begins.
+      Treat the current docs as the contract, but stop and update them if the
+      repository materially contradicts the planned nine-module model.
+    tasks:
+      - id: "T-01"
+        title: "Build the evidence-backed audit baseline"
+        task_context: |
+          Create `docs/module-consolidation-3/step-01-audit.md` as the hard gate
+          for the tranche. The artifact must verify the documented nine-module
+          structure against the live repo, classify root-level peer files, define
+          material contradiction conditions, separate verified issues from stale
+          assumptions, inventory caller categories for every verified finding, and
+          map explicit `F-XX` dependencies and stop/go rules for Steps 2-5.
+
+          Required commands to record and interpret:
+          - `rg "from orchestrator\\.[^.]+\\.|import orchestrator\\.[^.]+\\." src tests scripts src/orchestrator/db/migrations -g '*.py'`
+          - `uv run python scripts/check_module_imports.py`
+          - `uv run pytest tests/unit -v`
+
+          If the unit-test gate cannot run, record exactly `blocked_environment`
+          with the command and captured failure detail. Do not begin source
+          refactors in this step.
+        requirements:
+          - id: "R1"
+            desc: "step-01-audit.md records the nine-module baseline, root-level peer classification, broad import scan, policy-aligned import-discipline check, and material-contradiction rule"
+            priority: critical
+          - id: "R2"
+            desc: "step-01-audit.md contains a Verified Gap List with stable F-XX finding IDs, allowed statuses, exact evidence, and explicit execution-time unknowns"
+            priority: critical
+          - id: "R3"
+            desc: "Every verified finding has a consumer inventory covering runtime code, tests, scripts, migrations, startup wiring, and policy tooling where relevant, or an explicit blocker when scope is unbounded"
+            priority: critical
+          - id: "R4"
+            desc: "Dependencies and Gates maps Steps 2-5 to exact F-XX findings, names stop conditions with required document updates and blocked steps, and records the baseline test-gate outcome"
+            priority: critical
+        artifacts:
+          - path: "docs/module-consolidation-3/step-01-audit.md"
+            required: true
+        auto_verify:
+          items:
+            - id: "step1_sections_and_baseline"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-01-audit.md').read_text(); required = ['Repository Baseline', 'Verified Gap List', 'Consumer Inventory', 'Dependencies and Gates', 'api', 'cli', 'config', 'db', 'envfiles', 'git', 'runners', 'state', 'workflow', 'material contradiction']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+            - id: "step1_findings_and_statuses"
+              cmd: "uv run python -c \"from pathlib import Path; import re; text = Path('docs/module-consolidation-3/step-01-audit.md').read_text(); findings = re.findall(r'F-\\d{2}', text); assert findings, 'no finding ids'; statuses = {'verified', 'not_found', 'docs_stale_code_ok', 'docs_code_conflict_stop'}; assert any(status in text for status in statuses), 'no allowed status'; assert 'execution-time' in text.lower() or 'unknown' in text.lower()\""
+              must: true
+            - id: "step1_consumer_inventory_and_gates"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-01-audit.md').read_text(); required = ['runtime code', 'tests', 'scripts', 'migrations', 'startup wiring', 'policy tooling', 'Step 2', 'Step 3', 'Step 4', 'Step 5', 'trigger', 'required_doc_update', 'next_allowed_action', 'blocked_steps']; missing = [item for item in required if item not in text]; assert not missing, missing; assert any(x in text for x in ['passed', 'failed_repository', 'blocked_environment']), 'missing baseline gate outcome'\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: the audit artifact names all nine public modules, classifies root-level peers, distinguishes the noisy import scan from the policy-aligned check, and defines material contradiction explicitly. B: the baseline exists but one of those contract items is incomplete."
+            - id: "R2"
+              text: "R2 — A: every gap-list entry uses a stable F-XX ID, an allowed status, and exact evidence or a targeted-search note; execution-time unknowns are surfaced rather than hidden. B: findings exist but one field or status rule is inconsistent."
+            - id: "R3"
+              text: "R3 — A: each verified finding has bounded caller categories, including non-source callers, or an explicit blocker with next action. B: inventory exists but omits one required caller category for a verified finding."
+            - id: "R4"
+              text: "R4 — A: Steps 2-5 depend on explicit F-XX findings, stop conditions include the required fields, and the baseline unit-test outcome is recorded as passed, failed_repository, or blocked_environment. B: gates exist but are not yet specific enough to drive later steps safely."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "A"
+            require_remediation_if_below: "B"
+        retry:
+          max_attempts: 2
+        context_from:
+          - artifact: "docs/module-consolidation-3/plan.md"
+            as: "milestone_plan"
+            required: true
+          - artifact: "docs/module-consolidation-3/architecture.md"
+            as: "architecture_context"
+            required: true
+          - artifact: "docs/module-consolidation-3/steps/step-01-plan.md"
+            as: "step_plan"
+            required: true
+
+  - id: "S-02"
+    title: "Public Interface Audit"
+    step_context: |
+      Turn the top-level import rule into an executable contract before any
+      domain refactor begins. This step documents canonical import ownership,
+      missing exports, private leaks, and bounded cleanup batches.
+    tasks:
+      - id: "T-01"
+        title: "Define canonical public imports and cleanup batches"
+        task_context: |
+          Create `docs/module-consolidation-3/step-02-interface-audit.md` from
+          the verified Step 1 findings. Cover the nine public modules, their
+          caller categories, the symbols that remain public, missing top-level
+          exports, private internal leaks, and ordered cleanup batches that later
+          implementation steps must follow. Every retained external symbol must
+          end with exactly one canonical top-level import path.
+
+          Required verification guidance to capture:
+          - candidate review scan for cross-module sub-package imports
+          - `uv run python scripts/check_module_imports.py`
+          - `uv run pyright`
+          - manual review criteria for runtime, tests, scripts, migrations,
+            startup callers, and transport-facing callers
+        requirements:
+          - id: "R1"
+            desc: "step-02-interface-audit.md contains a nine-module scope table with scope status, Step 1 finding IDs, caller categories, and stop conditions"
+            priority: critical
+          - id: "R2"
+            desc: "The audit assigns exactly one canonical top-level import path to every retained external symbol, records current consumers, and marks ownership blockers explicitly"
+            priority: critical
+          - id: "R3"
+            desc: "The audit separates Missing Public Exports from Private Internal Leaks, with evidence, current import sites, consumer categories, cleanup type, and downstream dependency for each row"
+            priority: critical
+          - id: "R4"
+            desc: "The audit defines ordered cleanup batches with exact consumer files, old paths to remove, target future step, active runtime call site, and batch status, without allowing deferred compatibility shims"
+            priority: critical
+          - id: "R5"
+            desc: "The audit records a policy-aligned verification contract that distinguishes candidate matches from confirmed policy violations and requires pyright plus caller-category review coverage"
+            priority: expected
+        artifacts:
+          - path: "docs/module-consolidation-3/step-02-interface-audit.md"
+            required: true
+        auto_verify:
+          items:
+            - id: "step2_scope_table"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-02-interface-audit.md').read_text(); required = ['module', 'scope_status', 'step_01_finding_ids', 'caller_categories', 'stop_condition', 'api', 'cli', 'config', 'db', 'envfiles', 'git', 'runners', 'state', 'workflow']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+            - id: "step2_canonical_paths_and_separation"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-02-interface-audit.md').read_text(); required = ['canonical_import_path', 'owner_module', 'ownership_status', 'Missing Public Exports', 'Private Internal Leaks', 'planned_cleanup_type', 'downstream_dependency']; missing = [item for item in required if item not in text]; assert not missing, missing; assert 'orchestrator.api' in text or 'orchestrator.cli' in text or 'orchestrator.config' in text\""
+              must: true
+            - id: "step2_batches_and_verification_contract"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-02-interface-audit.md').read_text(); required = ['batch_id', 'exact_consumer_files', 'old_paths_to_remove', 'target_future_step', 'active_runtime_call_site', 'batch_status', 'uv run python scripts/check_module_imports.py', 'uv run pyright', 'runtime code', 'tests', 'scripts', 'migrations', 'startup callers', 'transport-facing']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: the interface audit covers all nine modules with explicit scope status, Step 1 citations, caller categories, and stop conditions. B: the scope table exists but lacks one required control field."
+            - id: "R2"
+              text: "R2 — A: every retained external symbol has one canonical top-level import path and ownership ambiguity is handled as a blocker. B: symbol decisions exist but at least one symbol still has ambiguous canonical ownership."
+            - id: "R3"
+              text: "R3 — A: missing exports and private leaks are separate, evidence-backed tables with downstream dependencies. B: both topics are present but at least one required evidence field is missing."
+            - id: "R4"
+              text: "R4 — A: cleanup batches are bounded, name exact consumer files and old paths to remove, identify the active runtime call site, and forbid deferred shims. B: batches exist but one still lacks concrete removal or caller detail."
+            - id: "R5"
+              text: "R5 — A: the verification contract uses the policy-aligned check, pyright, and caller-category review rules rather than broad grep alone. B: verification exists but still blurs candidate matches with confirmed violations."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "A"
+            require_remediation_if_below: "B"
+        retry:
+          max_attempts: 2
+        context_from:
+          - artifact: "docs/module-consolidation-3/step-01-audit.md"
+            as: "step_01_audit"
+            required: true
+          - artifact: "docs/module-consolidation-3/architecture.md"
+            as: "architecture_context"
+            required: true
+          - artifact: "docs/module-consolidation-3/steps/step-02-plan.md"
+            as: "step_plan"
+            required: true
+
+  - id: "S-03"
+    title: "Internal Consolidation by Domain"
+    step_context: |
+      Execute bounded refactor batches in documented domain order: workflow/state,
+      runners, db/git, then api/config. Each batch must update exports and direct
+      consumers together, remove obsolete paths in the same pass, and leave the
+      repository runnable.
+    tasks:
+      - id: "T-01"
+        title: "Execute domain batches without shims or deferred cleanup"
+        task_context: |
+          Create and maintain `docs/module-consolidation-3/step-03-batch-ledger.md`
+          plus one `docs/module-consolidation-3/batches/step-03-<batch-id>.md`
+          note per executed batch. Use Step 1 findings and Step 2 canonical import
+          decisions to drive bounded implementation batches for:
+          1. `workflow` / `state`
+          2. `runners`
+          3. `db` / `git`
+          4. `api` / `config`
+
+          Every completed batch must name the exact symbol or responsibility moved,
+          the old internal path removed, the canonical top-level import path, the
+          direct consumers updated, the active runtime call site proving the change
+          matters, the verification commands run, and whether any blocker stopped
+          further work. Do not leave compatibility shims, duplicate trees, or
+          deferred old-path cleanup behind.
+        requirements:
+          - id: "R1"
+            desc: "step-03-batch-ledger.md exists with planned or completed batches that cite Step 1 findings, canonical import paths, obsolete prefixes, exact consumer files, active runtime call sites, statuses, and explicit stop conditions"
+            priority: critical
+          - id: "R2"
+            desc: "Completed workflow/state and runners batches each have a batch note showing the selected symbol, old and new import paths, consumer updates, runtime call site, verification commands, and deferred cleanup state"
+            priority: critical
+          - id: "R3"
+            desc: "Completed db/git and api/config batches each have a batch note showing the selected symbol, old and new import paths, consumer updates, runtime call site, verification commands, and deferred cleanup state"
+            priority: critical
+          - id: "R4"
+            desc: "Each completed batch updates top-level exports only when the symbol is canonical public API, removes obsolete internal paths in the same batch, and leaves no shim, duplicate tree, or dual public path for the migrated symbol"
+            priority: critical
+          - id: "R5"
+            desc: "Step 3 records and reuses behavior-oriented verification including unit tests, targeted runtime-path checks, obsolete-prefix searches, `uv run pyright`, `uv run ruff check .`, and `uv run python scripts/check_module_imports.py`"
+            priority: critical
+        artifacts:
+          - path: "docs/module-consolidation-3/step-03-batch-ledger.md"
+            required: true
+          - path: "docs/module-consolidation-3/batches"
+            required: true
+        auto_verify:
+          items:
+            - id: "step3_ledger_contract"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-03-batch-ledger.md').read_text(); required = ['batch_id', 'domain', 'symbol', 'step_01_finding_ids', 'canonical_import_path', 'obsolete_import_prefixes', 'exact_consumer_files', 'active_runtime_call_site', 'status', 'planned', 'blocked']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+            - id: "step3_batch_notes_exist_for_domains"
+              cmd: "uv run python -c \"from pathlib import Path; batch_dir = Path('docs/module-consolidation-3/batches'); notes = sorted(batch_dir.glob('step-03-*.md')); assert notes, 'no batch notes'; text = '\\n'.join(note.read_text() for note in notes); required = ['workflow_state', 'runners', 'db_git', 'api_config', 'old_import_path', 'new_canonical_import_path', 'exact_consumer_files', 'active_runtime_call_site', 'verification_commands', 'deferred_cleanup_items']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+            - id: "step3_no_shims_and_verification_contract"
+              cmd: "uv run python -c \"from pathlib import Path; ledger = Path('docs/module-consolidation-3/step-03-batch-ledger.md').read_text(); notes = '\\n'.join(p.read_text() for p in Path('docs/module-consolidation-3/batches').glob('step-03-*.md')); text = ledger + '\\n' + notes; required = ['uv run pytest tests/unit -v', 'uv run pyright', 'uv run ruff check .', 'uv run python scripts/check_module_imports.py']; missing = [item for item in required if item not in text]; assert not missing, missing; forbidden = ['compatibility shim', 'duplicate module tree']; assert all(term not in text.lower() for term in forbidden), 'forbidden temporary structure recorded as accepted'\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: the Step 3 ledger is the controlling execution artifact, with exact findings, consumers, obsolete prefixes, canonical paths, and stop conditions. B: the ledger exists but cannot yet govern a batch safely."
+            - id: "R2"
+              text: "R2 — A: workflow/state and runners batches are documented as bounded refactors with exact runtime call sites and verification commands. B: one of those domains is present but still underspecified."
+            - id: "R3"
+              text: "R3 — A: db/git and api/config batches are documented as bounded refactors with exact runtime call sites and verification commands. B: one of those domains is present but still underspecified."
+            - id: "R4"
+              text: "R4 — A: migrated symbols use the approved top-level export path, obsolete paths are removed in the same batch, and no shims or duplicate public paths remain. B: migration notes exist but still tolerate a temporary bridge or deferred cleanup."
+            - id: "R5"
+              text: "R5 — A: Step 3 mandates behavioral verification and repository-wide regression gates after completed batches. B: verification exists but relies too heavily on structural checks alone."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "A"
+            require_remediation_if_below: "B"
+        retry:
+          max_attempts: 2
+        context_from:
+          - artifact: "docs/module-consolidation-3/step-01-audit.md"
+            as: "step_01_audit"
+            required: true
+          - artifact: "docs/module-consolidation-3/step-02-interface-audit.md"
+            as: "step_02_interface_audit"
+            required: true
+          - artifact: "docs/module-consolidation-3/steps/step-03-plan.md"
+            as: "step_plan"
+            required: true
+
+  - id: "S-04"
+    title: "High-Risk Consumer Sweep"
+    step_context: |
+      After each completed Step 3 batch, validate the non-source callers most
+      likely to preserve obsolete internal imports: tests, scripts, migrations,
+      startup wiring, and policy tooling where relevant.
+    tasks:
+      - id: "T-01"
+        title: "Validate and migrate high-risk non-source callers"
+        task_context: |
+          For each completed Step 3 domain batch, create
+          `docs/module-consolidation-3/step-04-consumer-sweep-<batch-id>.md`,
+          maintain `docs/module-consolidation-3/step-04-blockers.md`, and update
+          `docs/module-consolidation-3/step-04-recurring-gates.md`.
+
+          Rebuild the consumer checklist from Step 1 inventory plus the completed
+          Step 3 batch note, inspect tests, scripts, migrations, startup entry
+          points, and operational tooling category by category, migrate any
+          remaining obsolete imports to the approved canonical top-level import,
+          and treat every unresolved caller as a blocker that stops the batch.
+
+          Required caller-specific verification patterns include:
+          - `uv run pytest path/to/updated_test.py -v`
+          - `uv run python -m orchestrator.cli.main --help`
+          - `uv run python -c "from orchestrator.api import create_app; app = create_app(db_path=':memory:', routine_dirs=[]); assert app is not None"`
+          - `uv run python -c "import scripts.serve; assert scripts.serve.app is not None"`
+          - `ORCHESTRATOR_DB=/tmp/step4.db uv run python -c "import scripts.worker; print('ok')"`
+          - `uv run alembic -c alembic.ini upgrade head`
+        requirements:
+          - id: "R1"
+            desc: "Each completed Step 3 batch has a consumer sweep checklist with exact file paths, caller categories, current and canonical imports, status, and note fields, built from current code rather than stale assumptions"
+            priority: critical
+          - id: "R2"
+            desc: "Tests, scripts, migrations, startup wiring, and operational tooling are inspected category by category with explicit outcomes, exact file paths for remaining migrations, and assertion logic for test-based verification"
+            priority: critical
+          - id: "R3"
+            desc: "Remaining high-risk callers for the completed batch are migrated to the canonical top-level imports in bounded edit batches, and targeted obsolete-prefix searches plus caller-specific checks prove the active caller path now uses the canonical import"
+            priority: critical
+          - id: "R4"
+            desc: "Any unresolved caller is recorded in step-04-blockers.md with restart conditions, and the batch is marked complete or stopped_blocked with no deferred TODO cleanup"
+            priority: critical
+          - id: "R5"
+            desc: "step-04-recurring-gates.md captures short, reusable merge-gate checks that proved behavior for the completed batch and can be reused on the next domain batch"
+            priority: expected
+        artifacts:
+          - path: "docs/module-consolidation-3/step-04-blockers.md"
+            required: true
+          - path: "docs/module-consolidation-3/step-04-recurring-gates.md"
+            required: true
+        auto_verify:
+          items:
+            - id: "step4_sweep_and_categories"
+              cmd: "uv run python -c \"from pathlib import Path; sweeps = sorted(Path('docs/module-consolidation-3').glob('step-04-consumer-sweep-*.md')); assert sweeps, 'no consumer sweep notes'; text = '\\n'.join(p.read_text() for p in sweeps); required = ['file_path', 'caller_category', 'current_import', 'canonical_import', 'status', 'already_canonical', 'migrate_in_step_4', 'false_positive', 'blocker', 'tests', 'scripts', 'migrations', 'startup']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+            - id: "step4_blockers_and_status"
+              cmd: "uv run python -c \"from pathlib import Path; blockers = Path('docs/module-consolidation-3/step-04-blockers.md').read_text(); sweeps = '\\n'.join(p.read_text() for p in Path('docs/module-consolidation-3').glob('step-04-consumer-sweep-*.md')); required_blocker = ['batch_id', 'file_path', 'current_obsolete_import', 'expected_canonical_import', 'reason_it_cannot_be_fixed_now', 'owner_step', 'restart_condition']; missing = [item for item in required_blocker if item not in blockers]; assert not missing, missing; assert 'complete' in sweeps or 'stopped_blocked' in sweeps\""
+              must: true
+            - id: "step4_behavior_checks_and_recurring_gates"
+              cmd: "uv run python -c \"from pathlib import Path; text = '\\n'.join(p.read_text() for p in Path('docs/module-consolidation-3').glob('step-04-consumer-sweep-*.md')); gates = Path('docs/module-consolidation-3/step-04-recurring-gates.md').read_text(); required = ['uv run pytest', 'uv run python -m orchestrator.cli.main --help', 'from orchestrator.api import create_app', 'import scripts.serve', 'import scripts.worker', 'uv run alembic -c alembic.ini upgrade head', 'command', 'caller_category', 'why_it_exists', 'failure_it_caught_in_this_batch']; missing = [item for item in required if item not in (text + '\\n' + gates)]; assert not missing, missing\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: every completed Step 3 batch has a current consumer checklist with exact files, caller categories, imports, and status. B: a checklist exists but is still partly generic or stale."
+            - id: "R2"
+              text: "R2 — A: non-source callers are inspected category by category and test validations include explicit assertion logic. B: categories are covered but assertion logic or exact paths are incomplete."
+            - id: "R3"
+              text: "R3 — A: remaining callers are migrated in bounded batches and verified with caller-specific commands plus obsolete-prefix searches, proving the active path now uses canonical imports. B: migrations exist but proof still relies mainly on import smoke checks."
+            - id: "R4"
+              text: "R4 — A: unresolved callers are blocker records with restart conditions, and no deferred TODO cleanup remains. B: blockers exist but the batch status or restart path is still ambiguous."
+            - id: "R5"
+              text: "R5 — A: recurring merge-gate checks are concise, operational, and grounded in failures or risks observed during the sweep. B: recurring gates exist but are too generic to drive the next batch."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "A"
+            require_remediation_if_below: "B"
+        retry:
+          max_attempts: 2
+        context_from:
+          - artifact: "docs/module-consolidation-3/step-03-batch-ledger.md"
+            as: "step_03_batch_ledger"
+            required: true
+          - artifact: "docs/module-consolidation-3/steps/step-04-plan.md"
+            as: "step_plan"
+            required: true
+
+  - id: "S-05"
+    title: "Final Boundary Proof"
+    step_context: |
+      Prove the tranche is complete across the repository. Rebuild the final
+      proof scope from completed earlier steps, rerun import-discipline checks
+      and repository-wide verification, confirm there is no temporary structure,
+      and map the result back to the tranche intent.
+    tasks:
+      - id: "T-01"
+        title: "Record final proof and release readiness"
+        task_context: |
+          Create `docs/module-consolidation-3/step-05-final-proof.md` as the
+          final tranche gate. Rebuild the proof checklist from Steps 2-4, run the
+          final forbidden-import audit on touched operational callers and entry
+          points, execute the repository-wide verification matrix, confirm that no
+          compatibility bridge, duplicate public path, or deferred cleanup item
+          remains, and map the resulting evidence back to `intent.md`.
+
+          Required repository-wide checks:
+          - `uv run python scripts/check_module_imports.py`
+          - `uv run pytest`
+          - `uv run pyright`
+          - `uv run ruff check .`
+
+          Also record any domain-specific startup or shared-contract checks needed
+          by earlier steps, and use a final status of only `release_ready` or
+          `reopen_required`.
+        requirements:
+          - id: "R1"
+            desc: "step-05-final-proof.md contains a Final Proof Checklist that derives its scope from Steps 2-4, names exact commands and caller categories, and stops if earlier-step evidence is missing"
+            priority: critical
+          - id: "R2"
+            desc: "The final proof runs a category-specific forbidden-import audit plus the policy-aligned import check, classifies every match, and reopens earlier work if any real forbidden import remains"
+            priority: critical
+          - id: "R3"
+            desc: "The final verification matrix records repository-wide pytest, pyright, and ruff results, plus any required startup or shared-contract checks, with pass/fail status and result summaries"
+            priority: critical
+          - id: "R4"
+            desc: "The final proof confirms there are no tranche-owned compatibility shims, duplicate trees, dual public paths, or deferred cleanup items, and records temporary_structure_status as clean or reopen_required"
+            priority: critical
+          - id: "R5"
+            desc: "The final proof includes an intent-coverage table, copies out-of-scope items from intent.md, and ends with release_ready or reopen_required without overstating completion"
+            priority: critical
+        artifacts:
+          - path: "docs/module-consolidation-3/step-05-final-proof.md"
+            required: true
+        auto_verify:
+          items:
+            - id: "step5_final_proof_checklist"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-05-final-proof.md').read_text(); required = ['Final Proof Checklist', 'area', 'caller_category', 'expected_rule', 'command', 'source_artifact', 'docs/module-consolidation-3/step-03-batch-ledger.md', 'docs/module-consolidation-3/step-04-blockers.md']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+            - id: "step5_import_audit_and_verification_matrix"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-05-final-proof.md').read_text(); required = ['uv run python scripts/check_module_imports.py', 'uv run pytest', 'uv run pyright', 'uv run ruff check .', 'file', 'match', 'classification', 'reason', 'command', 'pass_fail', 'rerun_count', 'result_summary']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+            - id: "step5_structure_and_intent_status"
+              cmd: "uv run python -c \"from pathlib import Path; text = Path('docs/module-consolidation-3/step-05-final-proof.md').read_text(); required = ['temporary_structure_status', 'intent_id', 'owning_step', 'evidence', 'status', 'Out of Scope', 'release_ready', 'reopen_required']; missing = [item for item in required if item not in text]; assert not missing, missing\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: the final proof checklist is built from completed earlier-step artifacts and names exact commands, caller categories, and source artifacts. B: the checklist exists but is not yet anchored tightly enough to prior execution evidence."
+            - id: "R2"
+              text: "R2 — A: final import-discipline proof covers operational callers and entry points, classifies each match, and blocks sign-off on real forbidden imports. B: import audit exists but still relies too much on broad search output without classification."
+            - id: "R3"
+              text: "R3 — A: repository-wide pytest, pyright, and ruff results are recorded with outcomes and any required domain-specific smoke checks. B: main commands are present but result recording is too thin for final sign-off."
+            - id: "R4"
+              text: "R4 — A: the proof explicitly confirms no tranche-owned temporary structure remains and reopens earlier work if one does. B: temporary-structure review exists but still tolerates a compatibility bridge or deferred cleanup."
+            - id: "R5"
+              text: "R5 — A: intent coverage is mapped back to evidence, out-of-scope items match intent.md, and the final status does not overclaim completion. B: final status exists but intent mapping or out-of-scope handling is incomplete."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "A"
+            require_remediation_if_below: "B"
+        retry:
+          max_attempts: 2
+        context_from:
+          - artifact: "docs/module-consolidation-3/intent.md"
+            as: "intent_context"
+            required: true
+          - artifact: "docs/module-consolidation-3/plan.md"
+            as: "milestone_plan"
+            required: true
+          - artifact: "docs/module-consolidation-3/steps/step-05-plan.md"
+            as: "step_plan"
+            required: true

@@ -1,0 +1,5 @@
+routine:
+  id: invalid-routine
+  name: Invalid Routine
+  steps:
+    - ref: shared/common-step

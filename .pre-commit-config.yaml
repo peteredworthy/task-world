@@ -1,0 +1,49 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.12
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -x -n auto --dist worksteal --timeout=30
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
+      - id: module-imports
+        name: module-imports
+        entry: uv run python scripts/check_module_imports.py
+        language: system
+        types: [python]
+        pass_filenames: true
+      - id: signal-routing
+        name: signal-routing
+        entry: uv run python scripts/check_signal_routing.py
+        language: system
+        types: [python]
+        pass_filenames: true
+      - id: ui-lint
+        name: ui-lint
+        entry: bash -c 'test -d ui/node_modules && npm --prefix ui run lint || echo "Skipping ui-lint (node_modules not installed)"'
+        language: system
+        pass_filenames: false
+      - id: ui-typecheck
+        name: ui-typecheck
+        entry: bash -c 'test -d ui/node_modules && npm --prefix ui run typecheck || echo "Skipping ui-typecheck (node_modules not installed)"'
+        language: system
+        pass_filenames: false

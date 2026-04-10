@@ -1,0 +1,474 @@
+"""Integration tests for auto-verify wired into the workflow service.
+
+Tests use a real SQLite in-memory database, real subprocess execution via
+LocalAutoVerifyRunner, and real temporary directories. No mocking.
+"""
+
+from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
+from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import EventStore
+from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
+from orchestrator.workflow import LocalAutoVerifyRunner
+
+from orchestrator.workflow.service import WorkflowService
+
+
+@pytest.fixture
+async def session() -> AsyncGenerator[AsyncSession, None]:
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    async with factory() as s:
+        yield s
+    await engine.dispose()
+
+
+def _embedded_routine_with_auto_verify(
+    auto_verify_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a routine_embedded dict with auto_verify config on the task."""
+    return {
+        "id": "av-routine",
+        "name": "Auto-Verify Test Routine",
+        "steps": [
+            {
+                "id": "S-01",
+                "title": "Step 1",
+                "tasks": [
+                    {
+                        "id": "T-01",
+                        "title": "Task with auto-verify",
+                        "task_context": "Do the thing",
+                        "requirements": [{"id": "R1", "desc": "It works"}],
+                        "auto_verify": {
+                            "items": auto_verify_items,
+                            "tail_lines": 10,
+                        },
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _make_run_with_auto_verify(
+    project_path: str,
+    auto_verify_items: list[dict[str, Any]],
+) -> Run:
+    """Create a run with an embedded routine containing auto_verify config."""
+    now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    return Run(
+        id="run-av",
+        repo_name="test-repo",
+        worktree_path=project_path,  # Set worktree_path for auto-verify to work
+        status=RunStatus.DRAFT,
+        routine_id="av-routine",
+        routine_source=RoutineSource.EMBEDDED,
+        routine_embedded=_embedded_routine_with_auto_verify(auto_verify_items),
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S-01",
+                tasks=[
+                    TaskState(
+                        id="task-1",
+                        config_id="T-01",
+                        status=TaskStatus.PENDING,
+                        checklist=[
+                            ChecklistItem(
+                                req_id="R1",
+                                desc="It works",
+                                priority=Priority.CRITICAL,
+                            )
+                        ],
+                        max_attempts=3,
+                    )
+                ],
+            )
+        ],
+        created_at=now,
+        updated_at=now,
+    )
+
+
+def _make_run_without_auto_verify(project_path: str) -> Run:
+    """Create a run with no auto_verify config (routine_embedded with empty items)."""
+    now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    return Run(
+        id="run-no-av",
+        repo_name="test-repo",
+        worktree_path=project_path,
+        status=RunStatus.DRAFT,
+        routine_id="no-av-routine",
+        routine_source=RoutineSource.EMBEDDED,
+        routine_embedded={
+            "id": "no-av-routine",
+            "name": "No Auto-Verify Routine",
+            "steps": [
+                {
+                    "id": "S-01",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "T-01",
+                            "title": "Task without auto-verify",
+                            "task_context": "Do the thing",
+                            "requirements": [{"id": "R1", "desc": "It works"}],
+                        }
+                    ],
+                }
+            ],
+        },
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="S-01",
+                tasks=[
+                    TaskState(
+                        id="task-1",
+                        config_id="T-01",
+                        status=TaskStatus.PENDING,
+                        checklist=[
+                            ChecklistItem(
+                                req_id="R1",
+                                desc="It works",
+                                priority=Priority.CRITICAL,
+                            )
+                        ],
+                        max_attempts=3,
+                    )
+                ],
+            )
+        ],
+        created_at=now,
+        updated_at=now,
+    )
+
+
+# --- Integration tests with real DB and subprocess ---
+
+
+async def test_submit_without_auto_verify_unchanged(session: AsyncSession, tmp_path: Path) -> None:
+    """When no auto_verify config, submit_for_verification works as before."""
+    runner = LocalAutoVerifyRunner()
+    service = WorkflowService(session, auto_verify_runner=runner)
+
+    run = _make_run_without_auto_verify(str(tmp_path))
+    await service.create_run(run)
+    await service.apply_start_run("run-no-av")
+    await service.start_task("run-no-av", "task-1")
+    await service.update_checklist_item("run-no-av", "task-1", "R1", ChecklistStatus.DONE)
+
+    result = await service.submit_for_verification("run-no-av", "task-1")
+    assert result.success is True
+    assert result.new_status == TaskStatus.VERIFYING
+
+    # Verify task is in VERIFYING state
+    task = await service.get_task("run-no-av", "task-1")
+    assert task.status == TaskStatus.VERIFYING
+
+
+async def test_submit_with_passing_auto_verify(session: AsyncSession, tmp_path: Path) -> None:
+    """When auto_verify items all pass, task stays in VERIFYING."""
+    runner = LocalAutoVerifyRunner()
+    service = WorkflowService(session, auto_verify_runner=runner)
+
+    run = _make_run_with_auto_verify(
+        str(tmp_path),
+        [
+            {"id": "check1", "cmd": "echo ok", "must": True},
+            {"id": "check2", "cmd": "echo also_ok", "must": False},
+        ],
+    )
+    await service.create_run(run)
+    await service.apply_start_run("run-av")
+    await service.start_task("run-av", "task-1")
+    await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+
+    result = await service.submit_for_verification("run-av", "task-1")
+    assert result.success is True
+    assert result.new_status == TaskStatus.VERIFYING
+
+    # Verify task is in VERIFYING and results are stored
+    task = await service.get_task("run-av", "task-1")
+    assert task.status == TaskStatus.VERIFYING
+    assert len(task.attempts) == 1
+    assert len(task.attempts[0].auto_verify_results) == 2
+    assert task.attempts[0].auto_verify_results[0]["passed"] is True
+    assert task.attempts[0].auto_verify_results[1]["passed"] is True
+
+
+async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_path: Path) -> None:
+    """When auto_verify must-items fail before the gate, the task stays BUILDING
+    with feedback — no GateBlockedError, no transition to VERIFYING."""
+    runner = LocalAutoVerifyRunner()
+    service = WorkflowService(session, auto_verify_runner=runner)
+
+    run = _make_run_with_auto_verify(
+        str(tmp_path),
+        [
+            {"id": "check1", "cmd": "false", "must": True},
+            {"id": "check2", "cmd": "echo ok", "must": False},
+        ],
+    )
+    await service.create_run(run)
+    await service.apply_start_run("run-av")
+    await service.start_task("run-av", "task-1")
+    await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+
+    # Pre-gate auto_verify runs first; failing must-item blocks the transition
+    # and returns a result with BUILDING status (no exception).
+    result = await service.submit_for_verification("run-av", "task-1")
+    assert result.success is True
+    assert result.new_status == TaskStatus.BUILDING
+    assert result.error is not None
+    assert "pre-gate" in result.error
+
+    # Task must still be in BUILDING — no transition happened
+    task = await service.get_task("run-av", "task-1")
+    assert task.status == TaskStatus.BUILDING
+    assert task.current_attempt == 1
+    assert len(task.attempts) == 1
+
+    # Current attempt should have auto_verify_results stored
+    assert len(task.attempts[0].auto_verify_results) == 2
+    assert task.attempts[0].auto_verify_results[0]["passed"] is False
+    assert task.attempts[0].auto_verify_results[0]["item_id"] == "check1"
+    assert task.attempts[0].verifier_comment is not None
+    assert "Auto-verify failed" in task.attempts[0].verifier_comment
+    assert "command `false` failed" in task.attempts[0].verifier_comment
+
+
+async def test_submit_with_failing_non_must_still_verifying(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    """When only non-must auto_verify items fail, task stays in VERIFYING."""
+    runner = LocalAutoVerifyRunner()
+    service = WorkflowService(session, auto_verify_runner=runner)
+
+    run = _make_run_with_auto_verify(
+        str(tmp_path),
+        [
+            {"id": "check1", "cmd": "echo ok", "must": True},
+            {"id": "check2", "cmd": "false", "must": False},
+        ],
+    )
+    await service.create_run(run)
+    await service.apply_start_run("run-av")
+    await service.start_task("run-av", "task-1")
+    await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+
+    result = await service.submit_for_verification("run-av", "task-1")
+    assert result.success is True
+    assert result.new_status == TaskStatus.VERIFYING
+
+    # Results should still be stored even though must items passed
+    task = await service.get_task("run-av", "task-1")
+    assert task.status == TaskStatus.VERIFYING
+    assert len(task.attempts[0].auto_verify_results) == 2
+    assert task.attempts[0].auto_verify_results[1]["passed"] is False
+
+
+async def test_auto_verify_events_emitted(session: AsyncSession, tmp_path: Path) -> None:
+    """Auto-verify emits an AutoVerifyCompleted event."""
+    runner = LocalAutoVerifyRunner()
+    service = WorkflowService(session, auto_verify_runner=runner)
+
+    run = _make_run_with_auto_verify(
+        str(tmp_path),
+        [{"id": "check1", "cmd": "echo ok", "must": True}],
+    )
+    await service.create_run(run)
+    await service.apply_start_run("run-av")
+    await service.start_task("run-av", "task-1")
+    await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+    await service.submit_for_verification("run-av", "task-1")
+
+    # Query persisted events
+    store = EventStore(session)
+    events = await store.get_events_for_run("run-av")
+    event_types = [e["type"] for e in events]
+    assert "auto_verify_completed" in event_types
+
+    # Find the auto_verify event and check its payload
+    av_event = next(e for e in events if e["type"] == "auto_verify_completed")
+    assert av_event["payload"]["passed"] is True
+    assert av_event["payload"]["task_id"] == "task-1"
+
+
+async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path) -> None:
+    """When pre-gate auto-verify fails, AutoVerifyCompleted event is emitted
+    and the task stays in BUILDING (no GateBlockedError)."""
+    runner = LocalAutoVerifyRunner()
+    service = WorkflowService(session, auto_verify_runner=runner)
+
+    run = _make_run_with_auto_verify(
+        str(tmp_path),
+        [{"id": "check1", "cmd": "false", "must": True}],
+    )
+    await service.create_run(run)
+    await service.apply_start_run("run-av")
+    await service.start_task("run-av", "task-1")
+    await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+
+    result = await service.submit_for_verification("run-av", "task-1")
+    assert result.success is True
+    assert result.new_status == TaskStatus.BUILDING
+
+    store = EventStore(session)
+    events = await store.get_events_for_run("run-av")
+    event_types = [e["type"] for e in events]
+
+    # auto_verify_completed event must be emitted even though transition was blocked
+    assert "auto_verify_completed" in event_types
+
+    # Task stays in BUILDING — no BUILDING->VERIFYING transition
+    task_status_events = [e for e in events if e["type"] == "task_status_changed"]
+    # Only: PENDING -> BUILDING (start_task); no further transitions
+    assert len(task_status_events) == 1
+    assert task_status_events[0]["payload"]["new_status"] == "building"
+
+    av_event = next(e for e in events if e["type"] == "auto_verify_completed")
+    assert av_event["payload"]["passed"] is False
+    assert av_event["payload"]["failing_must_items"] == ["check1"]
+
+
+async def test_no_runner_skips_auto_verify(session: AsyncSession, tmp_path: Path) -> None:
+    """When no auto_verify_runner is set, auto-verify is skipped even with config."""
+    # Create service WITHOUT a runner
+    service = WorkflowService(session)
+
+    run = _make_run_with_auto_verify(
+        str(tmp_path),
+        [{"id": "check1", "cmd": "false", "must": True}],
+    )
+    await service.create_run(run)
+    await service.apply_start_run("run-av")
+    await service.start_task("run-av", "task-1")
+    await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+
+    # Even though the command would fail, it should not run since no runner
+    result = await service.submit_for_verification("run-av", "task-1")
+    assert result.success is True
+    assert result.new_status == TaskStatus.VERIFYING
+
+
+async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: Path) -> None:
+    """Full cycle: pre-gate auto-verify blocks, fix, auto-verify passes, complete."""
+    from orchestrator.config import AgentRunnerType
+
+    # Create a script that fails the first time and passes the second
+    script = tmp_path / "check.sh"
+    script.write_text(
+        "#!/bin/bash\n"
+        "COUNT=$(cat attempt_count 2>/dev/null || echo 0)\n"
+        "echo $((COUNT + 1)) > attempt_count\n"
+        'if [ "$COUNT" -ge "1" ]; then exit 0; else exit 1; fi\n'
+    )
+    script.chmod(0o755)
+
+    runner = LocalAutoVerifyRunner()
+    service = WorkflowService(session, auto_verify_runner=runner)
+
+    run = _make_run_with_auto_verify(
+        str(tmp_path),
+        [{"id": "check1", "cmd": f"bash {script}", "must": True}],
+    )
+    # Set agent config
+    run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_config = {
+        "model": "claude-sonnet-4-5-20250514",
+        "temperature": 0.7,
+        "api_key": "secret-key",
+    }
+
+    await service.create_run(run)
+    await service.apply_start_run("run-av")
+    await service.start_task("run-av", "task-1")
+    await service.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+
+    # First submit: pre-gate auto-verify fails -> task stays BUILDING with feedback
+    result1 = await service.submit_for_verification("run-av", "task-1")
+    assert result1.success is True
+    assert result1.new_status == TaskStatus.BUILDING
+    assert "pre-gate" in result1.error
+
+    # Task is still BUILDING, same attempt
+    task_mid = await service.get_task("run-av", "task-1")
+    assert task_mid.status == TaskStatus.BUILDING
+    assert task_mid.current_attempt == 1
+
+    # Second submit: script passes now (COUNT=1 -> exit 0)
+    result2 = await service.submit_for_verification("run-av", "task-1")
+    assert result2.new_status == TaskStatus.VERIFYING
+    assert result2.success is True
+
+    # Complete verification
+    await service.set_grade("run-av", "task-1", "R1", "A")
+    result3 = await service.complete_verification("run-av", "task-1")
+    assert result3.new_status == TaskStatus.COMPLETED
+
+    # Verify final state — single attempt (no revision was created)
+    task = await service.get_task("run-av", "task-1")
+    assert task.status == TaskStatus.COMPLETED
+    assert task.current_attempt == 1
+    assert len(task.attempts) == 1
+    # The attempt's auto_verify_results hold the post-gate (passing) run
+    assert task.attempts[0].auto_verify_results[0]["passed"] is True
+
+    # Verify agent snapshot was populated on the single attempt
+    assert task.attempts[0].agent_type == AgentRunnerType.CLI_SUBPROCESS
+    assert task.attempts[0].agent_model == "claude-sonnet-4-5-20250514"
+    assert task.attempts[0].agent_settings["model"] == "claude-sonnet-4-5-20250514"
+    assert task.attempts[0].agent_settings["temperature"] == 0.7
+    assert "api_key" not in task.attempts[0].agent_settings
+
+
+async def test_auto_verify_results_persist_across_sessions(
+    tmp_path: Path,
+) -> None:
+    """Auto-verify results survive across separate database sessions."""
+    db_path = tmp_path / "test_av.db"
+
+    # Session 1: Create and run auto-verify
+    engine1 = create_engine(str(db_path))
+    await init_db(engine1)
+    factory1 = create_session_factory(engine1)
+
+    async with factory1() as session1:
+        runner = LocalAutoVerifyRunner()
+        service1 = WorkflowService(session1, auto_verify_runner=runner)
+
+        run = _make_run_with_auto_verify(
+            str(tmp_path),
+            [{"id": "check1", "cmd": "echo hello", "must": True}],
+        )
+        await service1.create_run(run)
+        await service1.apply_start_run("run-av")
+        await service1.start_task("run-av", "task-1")
+        await service1.update_checklist_item("run-av", "task-1", "R1", ChecklistStatus.DONE)
+        await service1.submit_for_verification("run-av", "task-1")
+
+    await engine1.dispose()
+
+    # Session 2: Verify results survived
+    engine2 = create_engine(str(db_path))
+    factory2 = create_session_factory(engine2)
+
+    async with factory2() as session2:
+        service2 = WorkflowService(session2)
+        task = await service2.get_task("run-av", "task-1")
+        assert task.status == TaskStatus.VERIFYING
+        assert len(task.attempts[0].auto_verify_results) == 1
+        assert task.attempts[0].auto_verify_results[0]["passed"] is True
+        assert "hello" in task.attempts[0].auto_verify_results[0]["output"]
+
+    await engine2.dispose()

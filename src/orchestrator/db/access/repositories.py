@@ -93,19 +93,6 @@ def _eager_run_query(*, include_action_logs: bool = True) -> Any:  # noqa: ANN40
     return query
 
 
-def _deserialize_token_usage(raw: list[dict[str, Any]] | None) -> list[ModelTokenUsage]:
-    """Deserialize JSON list to ModelTokenUsage objects, skipping corrupt items."""
-    if not raw:
-        return []
-    result: list[ModelTokenUsage] = []
-    for item in raw:
-        try:
-            result.append(ModelTokenUsage.model_validate(item))
-        except Exception:
-            pass
-    return result
-
-
 def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
     """Convert ORM model to domain Pydantic model.
 
@@ -137,7 +124,13 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                         pass  # Gracefully handle invalid data
 
                 # Deserialize per-model token usage
-                token_usage_list = _deserialize_token_usage(att_model.token_usage_by_model)
+                token_usage_list: list[ModelTokenUsage] = []
+                if att_model.token_usage_by_model:
+                    for item in att_model.token_usage_by_model:
+                        try:
+                            token_usage_list.append(ModelTokenUsage.model_validate(item))
+                        except Exception:
+                            pass
 
                 attempts.append(
                     Attempt(
@@ -283,7 +276,9 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
         total_tokens_cache=model.total_tokens_cache,
         total_duration_ms=model.total_duration_ms,
         total_num_actions=model.total_num_actions,
-        token_usage_by_model=_deserialize_token_usage(model.token_usage_by_model),
+        token_usage_by_model=[
+            ModelTokenUsage.model_validate(item) for item in (model.token_usage_by_model or [])
+        ],
     )
 
 

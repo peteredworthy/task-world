@@ -1,0 +1,1251 @@
+routine:
+  id: "idea-to-plan-yaml-steps"
+  name: "Idea to Implementation Plan (YAML Step Files)"
+  description: |
+    Transform an initial idea into a structured, executable plan through an 8-stage
+    workflow with human review gates. Produces per-step YAML files consumed directly
+    by the orchestrator via `file:` references in a thin routine header.
+
+    Variant of idea-to-plan-scoped where S-04 fan-out writes one YAML step file per
+    step (routines/{feature}/steps/) instead of MD step files. S-08 assembles only
+    the routine header + file stubs — no re-encoding of step content. S-05 and S-06
+    interact with the YAML step files directly.
+
+    Primary process references live in docs/plan-runner/.
+
+  inputs:
+    - name: "feature"
+      required: true
+      description: "Feature name used for directory structure (docs/{feature}/ and routines/{feature}/)"
+    - name: "idea"
+      required: true
+      description: "Initial idea, request, or prompt to plan"
+    - name: "codebase_context"
+      required: false
+      description: "Brief description of existing codebase architecture"
+
+  clarifications:
+    artifact_path: "docs/{{feature}}/clarifications.md"
+
+  steps:
+    - id: "S-01"
+      title: "Initial Plan"
+      step_context: |
+        Create the three foundational planning documents from the idea.
+        Front-load uncertainty — surface unknowns now, not during execution.
+      tasks:
+        - id: "T-01"
+          title: "Generate Initial Artifacts"
+          profile: "architect"
+          context_from:
+            - artifact: "docs/plan-runner/idea_to_plan_stripped.md"
+              as: "context.process_checklist"
+              required: false
+            - artifact: "docs/plan-runner/idea_to_plan_detailed.md"
+              as: "context.process_detailed"
+              required: false
+          task_context: |
+            Create initial planning artifacts based on the idea and codebase context.
+
+            IMPORTANT: Do NOT read source code files. Focus only on the idea, codebase
+            context description, and the process reference documents provided below.
+
+            IDEA:
+            {{idea}}
+
+            CODEBASE CONTEXT:
+            {{codebase_context}}
+
+            PROCESS CHECKLIST (Stage 1):
+            {{context.process_checklist}}
+
+            PROCESS PRINCIPLES:
+            {{context.process_detailed}}
+
+            Create these files in docs/{{feature}}/:
+            1. intent.md
+            2. plan.md
+            3. architecture.md
+
+            Follow docs/planner/templates/*.md for artifact structure.
+
+            Ensure content is specific to the project and actionable.
+
+            === INTENT ITEM NUMBERING ===
+
+            After writing intent.md, assign a sequential [I-XX] identifier to every
+            discrete element: each goal, each scope item, each constraint, and every
+            line in the Definition of Complete. Append the ID inline at the end of
+            the sentence or bullet it applies to.
+
+              Before: "All tests pass after each phase."
+              After:  "All tests pass after each phase. [I-07]"
+
+            These IDs are stable handles used by later steps to trace each intent
+            element to a requirement. Assign them now so the traceability chain
+            flows forward, not backward.
+
+            === END INTENT ITEM NUMBERING ===
+          requirements:
+            - id: "R1"
+              desc: "Create intent.md with goal, scope, and completion criteria"
+              priority: critical
+            - id: "R2"
+              desc: "Create plan.md with iterative milestones and implementation order"
+              priority: critical
+            - id: "R3"
+              desc: "Create architecture.md with integration and testing strategy"
+              priority: expected
+            - id: "R4"
+              desc: "Every goal, constraint, and Definition of Complete criterion in intent.md is assigned a sequential [I-XX] identifier"
+              priority: critical
+          artifacts:
+            - path: "docs/{{feature}}/intent.md"
+              required: true
+            - path: "docs/{{feature}}/plan.md"
+              required: true
+            - path: "docs/{{feature}}/architecture.md"
+              required: false
+          auto_verify:
+            items:
+              - id: "files_exist"
+                cmd: "test -f docs/{{feature}}/intent.md && test -f docs/{{feature}}/plan.md"
+                must: true
+              - id: "intent_items_numbered"
+                cmd: "grep -q '\\[I-' docs/{{feature}}/intent.md"
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 (intent.md) — A: has a concrete goal statement, bounded scope with explicit exclusions,
+                  and measurable completion criteria (e.g. "game renders at 60fps"). B: has goal/scope/criteria
+                  but they are vague or unmeasurable (e.g. "game works well"). F: file missing or only headings.
+              - id: "R2"
+                text: |
+                  R2 (plan.md) — A: milestones are ordered with explicit dependencies, each milestone has
+                  a concrete deliverable. B: milestones listed but ordering rationale or deliverables are unclear.
+                  F: file missing or only headings.
+              - id: "R3"
+                text: |
+                  R3 (architecture.md) — A: names specific files/modules to create, testing approach references
+                  concrete tools or patterns. B: describes architecture in general terms without file-level specifics.
+                  F: file missing or only headings.
+              - id: "R4"
+                text: |
+                  R4 — A: every goal, scope item, constraint, and Definition of Complete line in intent.md
+                  has an [I-XX] identifier appended inline. IDs are sequential with no gaps or duplicates.
+                  B: most items numbered but 1-2 are missing. F: no numbering applied.
+          retry:
+            max_attempts: 2
+
+    - id: "S-02"
+      title: "Requirements Gathering"
+      step_context: |
+        Resolve all open design questions with the human via clarifications.
+        Update intent, plan, and architecture to reflect answers consistently.
+      tasks:
+        - id: "T-01"
+          title: "Gather Requirements and Update Docs"
+          profile: "architect"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: false
+          task_context: |
+            Review the planning artifacts and gather all open design questions from the human.
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            ARCHITECTURE:
+            {{context.architecture}}
+
+            === CODE MAP ===
+
+            As you read source files to validate the plan, build a code map at
+            docs/{{feature}}/code-map.md. For every function, class, or file you read
+            that is directly relevant to the implementation, record:
+
+              ## [Fix ID or Component Name]
+              - `path/to/file.py` — `ClassName.method_name()` lines N–M: one-line description
+              - `path/to/other.py` — `standalone_function()` lines N–M: one-line description
+
+            Write (or update) this file after your exploration pass. Include only
+            implementation-relevant symbols — skip test boilerplate, imports, and utility
+            helpers unless the plan specifically calls them out.
+
+            Precise line numbers are worth the effort: this file will be given to all
+            later agents so they do not need to re-discover the same locations.
+
+            === END CODE MAP ===
+
+            ## If no clarifications file exists yet (first run):
+            1. Read the planning documents above carefully.
+            2. Identify every open design question or decision that cannot be answered
+               without human input (technology choices, business priorities, constraints, etc.).
+            3. If there are open questions: call orchestrator_request_clarification with all
+               questions. Use appropriate question types (single_select, multi_select, free_text,
+               or number). Then stop — do NOT mark requirements done yet.
+            4. If there are genuinely no open questions: note this explicitly, update all
+               documents for consistency, mark R1 and R2 done, and submit.
+
+            ## If clarifications file exists (subsequent run):
+            1. Read docs/{{feature}}/clarifications.md to review answers received.
+            2. Decide if the answers are complete enough to proceed:
+               - If more questions are needed: call orchestrator_request_clarification with
+                 the new questions, then stop.
+               - If satisfied with all answers: continue to step 3.
+            3. Update docs/{{feature}}/intent.md, plan.md, and architecture.md to reflect
+               all decisions made in the Q&A. Ensure they are mutually consistent —
+               no contradictions between intent, plan, and architecture.
+            4. Mark R1 and R2 as done and submit.
+          requirements:
+            - id: "R1"
+              desc: "All open design questions have been resolved with human input"
+              priority: critical
+            - id: "R2"
+              desc: "intent.md, plan.md, and architecture.md are updated and mutually consistent"
+              priority: critical
+            - id: "R3"
+              desc: "Produce docs/{{feature}}/code-map.md mapping each planned fix/component to source file paths, function names, and line ranges"
+              priority: expected
+          artifacts:
+            - path: "docs/{{feature}}/clarifications.md"
+              required: false
+            - path: "docs/{{feature}}/code-map.md"
+              required: false
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: clarifications.md exists and shows at least one answered question round;
+                  OR the agent has documented that no open questions exist. All questions in the
+                  clarifications log have answers. B: clarifications file exists but some questions
+                  are unanswered or the agent skipped asking questions that are clearly open.
+              - id: "R2"
+                text: |
+                  R2 — Grade on BOTH dimensions:
+                  (a) Cross-consistency: intent.md, plan.md, and architecture.md are cross-consistent —
+                  the intent is reflected in the plan milestones, the architecture supports
+                  the plan, and no document contradicts another.
+                  (b) Feedback incorporation: every answer from the clarifications Q&A is visibly
+                  reflected in the planning documents (decisions are incorporated, not just noted).
+                  A: both (a) and (b) fully satisfied. B: documents are individually reasonable but
+                  contain minor inconsistencies, or one or two Q&A answers are noted without being
+                  fully integrated into the plan or architecture. F: major contradictions between
+                  documents.
+              - id: "R3"
+                text: |
+                  R3 — A: code-map.md exists and lists specific file paths, function names, and
+                  approximate line ranges for every symbol mentioned in the plan. An implementation
+                  agent could navigate directly to each change site without re-reading the file first.
+                  B: code-map.md exists but uses vague references ("the service layer") or omits
+                  line numbers for most entries. F: file missing or contains only filenames without
+                  symbol-level detail.
+          retry:
+            max_attempts: 3
+
+    - id: "S-03"
+      title: "Step Planning"
+      step_context: |
+        Break the plan into step-level plans with contracts (inputs/outputs/errors)
+        and verification strategies. Each step delivers a coherent capability.
+      tasks:
+        - id: "T-01"
+          title: "Create Step Plans"
+          profile: "architect"
+          context_from:
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: true
+          task_context: |
+            Create docs/{{feature}}/step-XX-plan.md files from the implementation plan.
+
+            PLAN:
+            {{context.plan}}
+
+            ARCHITECTURE:
+            {{context.architecture}}
+
+            Step decomposition guidance — use these three questions to decide
+            whether two pieces of work belong in the same step or separate steps.
+            Apply all three; if 2+ answer "split", make them separate steps:
+
+            1. VERIFICATION BOUNDARY — Can each step be independently verified as
+               correct? If a piece of work has no standalone pass/fail criterion
+               (no test, no file-existence check, no observable output), it should
+               not be its own step. Split at points where you can confirm "this
+               part works" before moving on.
+
+            2. FILE/CONTEXT OVERLAP — Do the two pieces of work touch largely the
+               same files and symbols (>30% shared)? If yes, keep them together —
+               splitting forces the next agent to re-read everything the previous
+               agent just changed, which is pure overhead. Split when the file sets
+               are disjoint and each agent can focus on its own area.
+
+            3. EXPLORATION vs PREDICTABLE SCOPE — Is the work's scope already known
+               upfront, or does it require open-ended exploration first? Isolate
+               unpredictable phases (locating code, reproducing bugs, understanding
+               unfamiliar modules) from predictable ones (implementing a known
+               change). The exploratory phase consumes context unpredictably; the
+               implementation phase benefits from starting with a clean, focused
+               prompt informed by the exploration output.
+
+            Additional constraints:
+            - Each step executes with a FRESH agent context. There is no shared
+              memory between steps — the agent must re-discover the codebase from
+              artifacts left by previous steps. This is the primary cost of
+              splitting: every additional step pays a context warm-up tax.
+            - Keep tightly coupled decisions in one step. If what you write in
+              file A depends on what you discover while editing file B, splitting
+              those into separate steps imposes artificial hand-off overhead.
+            - Empirically, coordination overhead saturates around 5–6 steps for a
+              typical feature. Going beyond that rarely improves quality and
+              significantly increases total cost. If your plan yields more than 6
+              steps, look for opportunities to merge steps with high file overlap.
+
+            Each step plan must include:
+            - Purpose and functionality
+            - Prerequisites/dependencies
+            - Functional contract (inputs/outputs/errors)
+            - Verification strategy
+
+            Follow docs/planner/templates/step-plan.md.
+          requirements:
+            - id: "R1"
+              desc: "Create step-XX-plan.md for each plan step"
+              priority: critical
+            - id: "R2"
+              desc: "Each step plan defines input/output/error contracts"
+              priority: critical
+            - id: "R3"
+              desc: "Each step plan contains verification approach"
+              priority: expected
+            - id: "R4"
+              desc: "Dependencies between steps are explicit"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "step_plans_exist"
+                cmd: "ls docs/{{feature}}/step-*-plan.md >/dev/null 2>&1"
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: each step-XX-plan.md has a clear purpose, concrete prerequisites,
+                  and names specific files/modules. B: files exist but purpose is generic or
+                  prerequisites are vague. F: step plan files missing.
+              - id: "R2"
+                text: |
+                  R2 — A: each plan has explicit "Inputs", "Outputs", and "Error handling" sections
+                  with concrete types or file paths. B: contracts are mentioned but described in
+                  prose rather than structured sections. F: no contract information.
+              - id: "R3"
+                text: |
+                  R3 — A: verification approach names specific commands, test patterns, or manual
+                  checks. B: verification says "test it" without specifics.
+              - id: "R4"
+                text: |
+                  R4 — A: each plan states which prior steps must complete first and why.
+                  B: ordering is implied by numbering but not stated.
+          retry:
+            max_attempts: 2
+
+        - id: "T-02"
+          title: "Codebase Discovery"
+          profile: "coder"
+          task_context: |
+            Read the step plans that were just created and build a comprehensive codebase
+            discovery document that pre-answers every question an implementation agent is
+            likely to ask before writing code.
+
+            1. Read all docs/{{feature}}/step-*-plan.md files to understand what the
+               implementation will touch.
+
+            2. For every source file, class, function, or symbol mentioned in the plans:
+               a. Read the actual file and capture the COMPLETE signature for each relevant
+                  function/method: name, parameters with types, return type, decorators.
+               b. For classes: capture the class definition line, base classes/protocols,
+                  and the full signature of every method (one line each — not the body).
+               c. Capture the exact import statement needed to use each symbol.
+               d. Note whether the symbol already exists or is new (to be created).
+
+            3. For each source file touched: find its test file(s) using Grep/Glob.
+               Record the test file path, the names of fixtures defined in it, and any
+               relevant mock/patch patterns used (e.g. mock_db, fake_client, AsyncMock).
+
+            4. For any database model or SQLAlchemy table touched: capture current column
+               names, types, and constraints.
+
+            5. Capture any relevant constants, enums, or config values referenced in
+               the plans.
+
+            DEPTH GUARD RAILS — strictly follow these limits:
+            - Direct symbol references from the step plans: read and capture in full
+            - One level of imports used by those symbols: capture signatures only, not bodies
+            - Recursive dependencies (what those call, and so on): skip entirely
+            - Third-party library or stdlib internals: skip entirely
+            - __init__.py re-exports and generated/migration files: skip
+            - When in doubt about depth: err on the side of less. The goal is to answer
+              "what does this function look like?" not to document the whole codebase.
+
+            Write docs/{{feature}}/codebase-discovery.md with these sections:
+
+            ## Source File Signatures
+            For each relevant source file: its path as a header, then each function/class
+            signature that will be touched or referenced, with one-line description.
+
+            ## Test Coverage Map
+            For each source file: its test file path(s), key fixture names, and any mock
+            patterns that tests of that file use.
+
+            ## Import Reference Table
+            Symbol → exact import statement to use (e.g. `from orchestrator.x import Y`).
+
+            ## Database Schema Snapshot
+            Only include if DB models are touched. For each relevant table: column names,
+            types, and any constraints (nullable, default, FK).
+
+            ## Constants & Enums
+            Any constants, enum values, or config keys referenced in the step plans:
+            name → value or definition location.
+
+            Keep the document dense and precise — it is a lookup reference, not prose.
+            Aim for 1,500–4,000 words. Do not summarise or add editorial commentary.
+          requirements:
+            - id: "R1"
+              desc: "docs/{{feature}}/codebase-discovery.md created with function signatures and test coverage map"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "discovery_exists"
+                cmd: "test -f docs/{{feature}}/codebase-discovery.md"
+                must: true
+          retry:
+            max_attempts: 2
+
+        - id: "T-03"
+          title: "Generate Per-Step Code and Architecture Context"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/code-map.md"
+              as: "context.code_map"
+              required: false
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: true
+          task_context: |
+            For each step plan file in docs/{{feature}}/step-*-plan.md, produce two targeted
+            context files in docs/{{feature}}/ctx/.
+
+            CODE MAP (source file/function/line index from requirements gathering):
+            {{context.code_map}}
+
+            FULL ARCHITECTURE:
+            {{context.architecture}}
+
+            For each step-XX-plan.md file:
+            1. Read the step plan to identify which fixes, components, and symbols it touches.
+
+            2. Write docs/{{feature}}/ctx/step-XX-plan-code-context.md — filtered code map
+               entries directly relevant to this step only:
+
+                 ## Code Locations
+                 - `src/path/to/file.py` — `ClassName.method_name()` lines N–M: what to change
+                 - `src/path/to/other.py` — `standalone_function()` lines N–M: what to add
+
+               Keep under 300 words. If code-map.md is absent, write:
+               "No code map available — agent should explore source files as needed."
+
+            3. Write docs/{{feature}}/ctx/step-XX-plan-architecture-context.md — only the
+               architecture sections directly relevant to this step. Copy the relevant heading(s)
+               and their content verbatim; omit sections that don't touch this step's scope.
+               Keep under 500 words.
+
+            Use the smallest/fastest available model — this is pure extraction, not reasoning.
+          requirements:
+            - id: "R1"
+              desc: "docs/{{feature}}/ctx/step-*-plan-code-context.md and step-*-plan-architecture-context.md exist for each step plan file"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "code_context_files_exist"
+                cmd: "ls docs/{{feature}}/ctx/*-code-context.md >/dev/null 2>&1"
+                must: false
+              - id: "arch_context_files_exist"
+                cmd: "ls docs/{{feature}}/ctx/*-architecture-context.md >/dev/null 2>&1"
+                must: false
+          retry:
+            max_attempts: 2
+
+        - id: "T-04"
+          title: "Generate Per-Step Plan Context"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+          task_context: |
+            For each step plan file in docs/{{feature}}/step-*-plan.md, produce a targeted
+            plan context file at docs/{{feature}}/ctx/step-XX-plan-plan-context.md.
+
+            FULL PLAN:
+            {{context.plan}}
+
+            For each step-XX-plan.md file:
+            1. Read the step plan to identify which milestone(s) and implementation-order
+               sections in plan.md are relevant to this step.
+            2. Write docs/{{feature}}/ctx/step-XX-plan-plan-context.md with only those
+               sections copied verbatim from plan.md. Omit milestones and sections that
+               belong to other steps. Keep under 400 words.
+
+            Use the smallest/fastest available model — this is pure extraction, not reasoning.
+          requirements:
+            - id: "R1"
+              desc: "docs/{{feature}}/ctx/step-*-plan-plan-context.md exists for each step plan file"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "plan_context_files_exist"
+                cmd: "ls docs/{{feature}}/ctx/*-plan-context.md >/dev/null 2>&1"
+                must: false
+          retry:
+            max_attempts: 2
+
+      transitions:
+        on_complete: "S-04"
+        on_condition:
+          - condition: "has_unresolved_conflicts"
+            target: "S-02"
+            max_iterations: 2
+            message: "Conflicts discovered during step planning"
+
+    - id: "S-04"
+      title: "Task Breakdown"
+      step_context: |
+        Convert step plans into per-step YAML files ready for direct orchestrator
+        execution. Each YAML file defines one step with atomic tasks, contract-level
+        auto_verify, and verifier rubrics.
+      tasks:
+        - id: "T-01"
+          title: "Create Step YAML Files (Fan-Out)"
+          profile: "coder"
+          fan_out:
+            input_glob: "docs/{{feature}}/step-*-plan.md"
+            output_pattern: "routines/{{feature}}/steps/{{item_stem}}.yaml"
+            per_item_prompt: |
+              Convert the following step plan into a YAML step file that the orchestrator
+              can execute directly.
+
+              PLAN CONTEXT (plan sections relevant to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-plan-context.md}}
+
+              ARCHITECTURE CONTEXT (architecture sections relevant to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-architecture-context.md}}
+
+              CODE CONTEXT (source file/function/line pointers for this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-code-context.md}}
+
+              STEP PLAN:
+              {{item_content}}
+
+              Write the output YAML step file to {{output_path}}.
+
+              The file must be a valid YAML step definition — a single step object
+              (not a full routine). The orchestrator will reference it via a `file:`
+              entry in the routine header. Use either a bare mapping or wrap with
+              a top-level `step:` key:
+
+              ```yaml
+              id: "S-01"          # must match the step ID assigned by the planner
+              title: "..."
+              step_context: "..."
+              tasks:
+                - id: "T-01"
+                  title: "..."
+                  task_context: |
+                    ...
+                  requirements:
+                    - id: "R1"
+                      desc: "..."
+                      priority: critical
+                  auto_verify:
+                    items:
+                      - id: "check_id"
+                        cmd: "..."
+                        must: true
+                  verifier:
+                    rubric:
+                      - id: "R1"
+                        text: "R1 — A: ... B: ... F: ..."
+              ```
+
+              YAML FORMAT GUIDE (read before writing):
+              {{context.yaml_format}}
+
+              Each task must be:
+              - Atomic (<5 files, <500 LOC)
+              - Independently verifiable with contract-level auto_verify
+              - Runnable in sequence without leaving the system broken
+
+              Do NOT write a full routine. Write only the step definition.
+            shared_context:
+              - "{{file:docs/{{feature}}/codebase-discovery.md}}"
+              - "{{file:docs/{{feature}}/intent.md}}"
+              - "{{file:docs/{{feature}}/clarifications.md}}"
+              - "{{file:docs/planner/routine-yaml-format.md}}"
+            max_concurrent: 4
+            max_turns: 25
+            auto_verify:
+              items:
+                - id: "step_yaml_exists"
+                  cmd: "test -f {{output_path}}"
+                  must: true
+                - id: "step_yaml_valid"
+                  cmd: "uv run python -c \"import yaml,sys; d=yaml.safe_load(open('{{output_path}}')); s=d.get('step',d); assert isinstance(s.get('tasks',[]),list) and len(s.get('tasks',[]))>0, 'tasks missing or empty'; print('ok')\""
+                  must: true
+          requirements:
+            - id: "R1"
+              desc: "Create routines/{{feature}}/steps/step-XX-plan.yaml for each step plan"
+              priority: critical
+            - id: "R2"
+              desc: "Each YAML step file has at least one task with task_context and contract-level auto_verify"
+              priority: critical
+            - id: "R3"
+              desc: "Tasks are atomic and independently verifiable"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "step_yaml_files_exist"
+                cmd: "ls routines/{{feature}}/steps/step-*-plan.yaml >/dev/null 2>&1"
+                must: true
+              - id: "no_existence_only_verify"
+                cmd: "uv run python -c \"import yaml,sys,glob; ep=('test -f','test -d','grep -q','grep -c','ls '); weak=[]; [weak.extend([f\\\"{f}/{t['id']}\\\" for t in (yaml.safe_load(open(f)).get('step',yaml.safe_load(open(f)))).get('tasks',[]) for items in [(t.get('auto_verify')or{}).get('items',[])] if items and all(any(c['cmd'].strip().startswith(p) for p in ep) for c in items)]) for f in glob.glob('routines/{{feature}}/steps/step-*-plan.yaml')]; sys.exit(1) if weak else print('ok')\""
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: YAML step files exist for every step plan and each parses without
+                  errors. B: files exist but one has a schema issue fixable at the header level.
+                  F: files missing or unparseable.
+              - id: "R2"
+                text: |
+                  R2 — A: every task has task_context and at least one contract-level auto_verify
+                  (import/assertion/test run, not just file existence). B: most tasks have
+                  contract-level checks but one uses existence-only. F: tasks missing auto_verify.
+              - id: "R3"
+                text: |
+                  R3 — A: every task changes ≤5 files and has specific verification. B: tasks are
+                  reasonably scoped but some bundle multiple concerns.
+          retry:
+            max_attempts: 2
+      transitions:
+        on_complete: "S-05"
+        on_condition:
+          - condition: "has_unresolved_conflicts"
+            target: "S-02"
+            max_iterations: 2
+
+    - id: "S-05"
+      title: "Dry Run & Failure Mode Analysis"
+      step_context: |
+        Simulate execution, identify gaps, and analyze failure modes.
+        Then harden the plan by editing the YAML step files directly.
+      tasks:
+        - id: "T-01"
+          title: "Simulate Execution Per Step"
+          profile: "architect"
+          fan_out:
+            input_glob: "routines/{{feature}}/steps/step-*-plan.yaml"
+            output_pattern: "docs/{{feature}}/dry-run/{{item_stem}}-notes.md"
+            per_item_prompt: |
+              Simulate execution of the following YAML step file. For each task in the step:
+
+              1. Walk through the tasks and capture:
+                 - Assumptions being made
+                 - Expected outputs
+                 - Blockers and mitigation
+
+              2. Identify failure modes:
+                 - Are file references correct?
+                 - Are model/class names correct against actual source?
+                 - Does "create" vs "update" match file existence?
+                 - Are format-dependent interfaces specified explicitly?
+                 - Will existing tests break?
+                 - Are async/infrastructure dependencies resolved?
+                 - Persistence layer complete? (DB column, repo write, repo read for new fields)
+                 - Integration test assertions specified?
+                 - COMPONENT WIRING: for every new class, protocol, adapter, or handler
+                   introduced by this step, is there a call site in the ACTIVE code path
+                   that will actually use it? A common LLM failure mode is to build all
+                   specified components correctly (imports work, hasattr passes, tests pass
+                   via the old path), while the system continues using the old implementation.
+                   Ask: what replaces what? If this step introduces a new handler/adapter/
+                   protocol to replace old code, does the step explicitly require removing
+                   or replacing the old call site? If existing tests can still pass without
+                   the new component being used, the wiring is not verified.
+                 - AUTO_VERIFY QUALITY: are the auto_verify commands in this step contract-level
+                   (import/assertion/test run) or existence-only (test -f, grep -q)? Flag any
+                   that would pass even if the implementation were a stub.
+
+              3. For each failure mode, propose a concrete hardening action.
+
+              Do NOT modify the step YAML file. Write analysis only.
+
+              YAML FORMAT GUIDE (for reference when evaluating auto_verify quality):
+              {{context.yaml_format}}
+
+              PLAN CONTEXT (plan sections relevant to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-plan-context.md}}
+
+              ARCHITECTURE CONTEXT (architecture sections relevant to this step):
+              {{file:docs/{{feature}}/ctx/{{item_stem}}-architecture-context.md}}
+
+              STEP YAML (content being simulated):
+              {{item_content}}
+
+              Save notes to {{output_path}}.
+            shared_context:
+              - "{{file:docs/{{feature}}/codebase-discovery.md}}"
+              - "{{file:docs/{{feature}}/intent.md}}"
+              - "{{file:docs/{{feature}}/clarifications.md}}"
+              - "{{file:docs/planner/routine-yaml-format.md}}"
+            max_concurrent: 4
+            max_turns: 20
+            auto_verify:
+              items:
+                - id: "dry_run_notes_exist"
+                  cmd: "test -f {{output_path}}"
+                  must: true
+          requirements:
+            - id: "R1"
+              desc: "Per-step dry-run notes created for each step YAML file"
+              priority: critical
+            - id: "R2"
+              desc: "Gaps identified with hardening actions proposed"
+              priority: critical
+            - id: "R3"
+              desc: "Failure modes identified per step with concrete hardening actions"
+              priority: critical
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: dry-run notes exist for each step YAML and each identifies at least one
+                  concrete assumption or risk. B: notes exist but analysis is high-level without
+                  step-specific detail.
+              - id: "R2"
+                text: |
+                  R2 — A: each identified gap has a specific, actionable remediation described
+                  in the notes. B: gaps have remediations but some are vague or generic.
+                  F: gaps documented but no remediations proposed.
+              - id: "R3"
+                text: |
+                  R3 — A: failure mode analysis covers each task in the step, each failure mode has
+                  a concrete hardening action. B: failure modes listed but hardening actions are vague.
+
+        - id: "T-02"
+          title: "Merge Dry Run Notes"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+          task_context: |
+            Merge all per-step dry-run notes from docs/{{feature}}/dry-run/ into a single
+            consolidated file at docs/{{feature}}/dry-run-notes.md.
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            The merged file must include:
+            - Per-step simulation results
+            - Persistence mapping audit (table, or N/A if no new state fields)
+            - Failure mode analysis (table: step, failure mode, likelihood, hardening action)
+            - Cross-step risk synthesis (dependencies and risks that span multiple steps)
+            - Plan changes recommended (with confirmation each is applied)
+          requirements:
+            - id: "R1"
+              desc: "Merged dry-run-notes.md contains all per-step simulation results"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "merged_notes_exist"
+                cmd: "test -f docs/{{feature}}/dry-run-notes.md"
+                must: true
+
+        - id: "T-03"
+          title: "Apply Dry-Run Gaps to Step YAML Files"
+          profile: "coder"
+          context_from:
+            - artifact: "docs/{{feature}}/dry-run-notes.md"
+              as: "context.dry_run_notes"
+              required: true
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/planner/routine-yaml-format.md"
+              as: "context.yaml_format"
+              required: true
+          task_context: |
+            Read the merged dry-run notes and apply every identified gap directly
+            to the affected YAML step files in routines/{{feature}}/steps/.
+
+            DRY-RUN NOTES:
+            {{context.dry_run_notes}}
+
+            INTENT:
+            {{context.intent}}
+
+            YAML FORMAT GUIDE (follow when editing step files):
+            {{context.yaml_format}}
+
+            For each gap or hardening action in the dry-run notes:
+
+            1. Identify which YAML step file(s) in routines/{{feature}}/steps/ it applies to.
+            2. Edit the step YAML file to incorporate the fix:
+               - Tighten task_context instructions (add to the existing string)
+               - Upgrade weak auto_verify commands to contract-level checks
+               - Add missing auto_verify items
+               - Add or strengthen requirements
+               - Add wiring checks where a new component replaces existing code
+            3. Mark the gap as "Applied to step files: YES" in dry-run-notes.md.
+
+            YAML editing rules:
+            - Preserve all existing YAML structure and indentation.
+            - When adding to a task_context string, append content after the existing
+              text (do not overwrite).
+            - When adding auto_verify items, append to the existing items list.
+            - Run `uv run orchestrator --json routines validate` after edits to confirm
+              the YAML is still valid — but only on the full assembled routine, not
+              individual step files (individual files are step fragments, not full routines).
+              Instead, validate structure with:
+              `uv run python -c "import yaml; yaml.safe_load(open('routines/{{feature}}/steps/FILENAME.yaml'))"`
+
+            Every critical or significant gap MUST be applied. A gap that is only
+            documented but not applied to step YAML files will cause S-06 verification
+            to fail (R2 is a blocking gate).
+
+            Do NOT create new step files. Only modify existing ones in
+            routines/{{feature}}/steps/ and update docs/{{feature}}/dry-run-notes.md.
+          requirements:
+            - id: "R1"
+              desc: "All critical/significant dry-run gaps applied to YAML step files"
+              priority: critical
+            - id: "R2"
+              desc: "Each gap in dry-run-notes.md marked 'Applied to step files: YES'"
+              priority: critical
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: every critical or significant gap from the dry-run notes has been
+                  incorporated into the relevant YAML step file (task_context tightened,
+                  auto_verify upgraded, requirements added). B: most gaps applied but one
+                  moderate gap deferred with justification. F: gaps remain unapplied.
+              - id: "R2"
+                text: |
+                  R2 — A: dry-run-notes.md shows "Applied to step files: YES" for every
+                  gap entry. B: most entries updated but one or two missing the annotation.
+                  F: annotations not updated.
+      transitions:
+        on_complete: "S-06"
+
+    - id: "S-06"
+      title: "Final Check"
+      step_context: |
+        Cross-check all artifacts for mutual consistency and execution readiness.
+        Verify intent→plan→YAML step alignment and that dry-run gaps are resolved.
+      gate:
+        type: human_approval
+        approval_prompt: |
+          S3/S4/S5 complete. Review the planning output before proceeding to final
+          verification (S6+):
+
+            - docs/{{feature}}/step-*-plan.md         (step plans from S3)
+            - docs/{{feature}}/codebase-discovery.md  (discovery document from S3)
+            - routines/{{feature}}/steps/             (YAML step files from S4)
+            - docs/{{feature}}/dry-run-notes.md       (failure mode analysis from S5)
+
+          Approve to continue to S6 cross-check and final packaging.
+          Reject (with comment) to iterate on S3–S5.
+        require_comment: false
+      tasks:
+        - id: "T-01"
+          title: "Cross-Check All Artifacts"
+          profile: "coder"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/architecture.md"
+              as: "context.architecture"
+              required: false
+            - artifact: "docs/{{feature}}/dry-run-notes.md"
+              as: "context.dry_run"
+              required: false
+            - artifact: "docs/{{feature}}/clarifications.md"
+              as: "context.clarifications"
+              required: false
+            - artifact: "docs/planner/routine-yaml-format.md"
+              as: "context.yaml_format"
+              required: true
+          task_context: |
+            Verify alignment across intent, plan, YAML step files, and dry run output.
+
+            IMPORTANT — scope of files to read:
+            - Read YAML step files from routines/{{feature}}/steps/ only.
+            - Do NOT read docs/{{feature}}/ctx/ files (scoped context packets for
+              fan-out agents — redundant here).
+            - Do NOT read docs/{{feature}}/code-map.md (source navigation aid —
+              not relevant to verification).
+            - Do NOT read docs/{{feature}}/step-*-plan.md (step plan inputs — the
+              YAML step files in routines/{{feature}}/steps/ are the authoritative
+              output and are what you should check).
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            ARCHITECTURE:
+            {{context.architecture}}
+
+            DRY RUN NOTES:
+            {{context.dry_run}}
+
+            YAML FORMAT GUIDE (use to evaluate auto_verify quality in step files):
+            {{context.yaml_format}}
+
+            Create docs/{{feature}}/verification-report.md.
+
+            CRITICAL: The verification report must confirm that every dry-run gap
+            has been APPLIED to YAML step files — not just documented. Check each
+            gap's "Applied to step files" field. If any critical or significant gap
+            shows "NO" or is missing this field, the report MUST fail with status
+            "✗ Needs Work". Do not mark as ready.
+
+            Also verify the persistence mapping audit from dry-run-notes.md:
+            - If the feature adds new state model fields, every cell in the
+              persistence mapping table must be filled (no MISSING).
+            - If any cell is MISSING, the corresponding YAML step file must be updated
+              to include instructions for the missing mapping.
+
+            Also verify auto_verify quality across all YAML step files:
+            - For each task in each step YAML, classify its strongest auto_verify check
+              as contract-level or existence-only (per the YAML FORMAT GUIDE).
+            - List any tasks where the strongest check is existence-only — these must
+              be upgraded before the routine is ready.
+
+            Also verify integration test quality:
+            - For each step that includes integration tests, check that the YAML step
+              file specifies assertion logic (what the test must assert), not just
+              scenario names (what to test). Step files that say "test budget
+              exhaustion" without specifying "make N+1 calls, assert Nth+1 returns
+              429" are insufficient.
+
+            Also verify intent coverage completeness:
+            - Read intent.md and for each [I-XX] goal/constraint/criterion, confirm
+              that at least one YAML step file addresses it. List any intent items with
+              no clear step file coverage under an "Intent Coverage Gaps" section.
+              If all items are covered: note "Intent coverage: complete."
+          requirements:
+            - id: "R1"
+              desc: "YAML step files align with plan and intent"
+              priority: critical
+            - id: "R2"
+              desc: "All critical/significant dry-run gaps are applied to YAML step files (not just documented)"
+              priority: critical
+            - id: "R3"
+              desc: "No unresolved critical conflicts remain"
+              priority: critical
+            - id: "R4"
+              desc: "Persistence mapping audit has no MISSING cells (or N/A if no new fields)"
+              priority: critical
+            - id: "R5"
+              desc: "All tasks in YAML step files have contract-level auto_verify (not existence-only)"
+              priority: critical
+            - id: "R6"
+              desc: "Integration test step files specify assertion logic, not just scenario names"
+              priority: expected
+            - id: "R7"
+              desc: "Every [I-XX] goal/constraint/criterion in intent.md is addressed by at least one YAML step file"
+              priority: expected
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: verification report explicitly maps each YAML step file back to the plan
+                  and confirms alignment. An implementation agent could pick up the step files
+                  and execute them without needing to ask clarifying questions. B: report says
+                  things align but doesn't show the mapping, or some steps would need
+                  interpretation. F: no mapping attempted.
+              - id: "R2"
+                text: |
+                  R2 (BLOCKING GATE) — A: every dry-run gap has "Applied to step files: YES" and
+                  the verification report confirms the fixes are present in the YAML step file text.
+                  B: most gaps applied but one moderate gap is deferred with justification.
+                  F: any critical or significant gap is NOT applied. Grade F if the report says
+                  "READY WITH REQUIRED FIXES" — that phrase means fixes were NOT applied.
+              - id: "R3"
+                text: |
+                  R3 — A: report confirms no critical conflicts remain, or lists remaining ones
+                  with justification for why they are acceptable. B: conflicts mentioned but not
+                  explicitly resolved or justified. F: unresolved critical conflicts.
+              - id: "R4"
+                text: |
+                  R4 — A: persistence mapping audit table copied from dry-run-notes.md, all cells
+                  filled, no MISSING entries. Or explicitly N/A with justification (no new state
+                  fields). B: table present with minor uncertainties noted. F: table missing,
+                  has MISSING cells, or new state fields exist but no audit was performed.
+              - id: "R5"
+                text: |
+                  R5 — A: every task in every YAML step file has at least one contract-level
+                  auto_verify check. Report lists each task and its classification. B: most tasks
+                  have contract-level checks but one or two use existence-only. F: multiple tasks
+                  with existence-only or missing auto_verify.
+              - id: "R6"
+                text: |
+                  R6 — A: integration test step files specify assertion logic (e.g. "make N calls,
+                  assert call N+1 returns 429 with limit_type in body"). B: most test steps specify
+                  assertions but one or two use scenario names only. F: test steps say "test X"
+                  without specifying what the test must assert.
+              - id: "R7"
+                text: |
+                  R7 — A: verification-report.md has an "Intent Coverage" section; each [I-XX]
+                  item from intent.md is traceable to at least one YAML step file that addresses it.
+                  B: most items covered but 1-2 have no clear step file match.
+                  F: multiple intent items with no coverage identified.
+            submission_template:
+              grade_scale: [A, B, C, D, F]
+              require_reason_if_below: A
+              require_remediation_if_below: B
+          auto_verify:
+            items:
+              - id: "report_exists"
+                cmd: "test -f docs/{{feature}}/verification-report.md"
+                must: true
+          retry:
+            max_attempts: 2
+      transitions:
+        on_condition:
+          - condition: "has_unresolved_conflicts"
+            target: "S-02"
+            max_iterations: 2
+            message: "Unresolved conflicts detected; return to requirements gathering"
+
+    - id: "S-07"
+      title: "Final Plan Review"
+      step_context: |
+        Human approval gate before final routine packaging.
+      gate:
+        type: human_approval
+        approval_prompt: |
+          The plan is complete. Review before routine packaging:
+          - docs/{{feature}}/intent.md
+          - docs/{{feature}}/plan.md
+          - docs/{{feature}}/verification-report.md
+          - routines/{{feature}}/steps/*.yaml
+
+          Approve to proceed, or reject with comments.
+        require_comment: false
+      tasks:
+        - id: "T-01"
+          title: "Human Final Approval"
+          profile: "summarizer"
+          task_context: |
+            You are running because the human has already approved the step gate above.
+            Your only job is to acknowledge the approval and hand off to the next stage.
+            Mark R1 as done, then submit immediately — do not make any other changes.
+          requirements:
+            - id: "R1"
+              desc: "Human approval received — mark done and submit"
+              priority: critical
+
+    - id: "S-08"
+      title: "Execution Ready"
+      step_context: |
+        Produce the execution summary and assemble the thin routine header that
+        references the per-step YAML files via `file:` entries.
+      tasks:
+        - id: "T-01"
+          title: "Generate Summary"
+          profile: "summarizer"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+            - artifact: "docs/{{feature}}/dry-run-notes.md"
+              as: "context.dry_run"
+              required: false
+            - artifact: "docs/{{feature}}/verification-report.md"
+              as: "context.verification_report"
+              required: false
+          task_context: |
+            Create docs/{{feature}}/plan-summary.md including:
+            - Intent satisfaction summary
+            - Ordered step list with task counts
+            - Key decisions
+            - Risks and mitigations
+            - Caveats for execution
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            DRY RUN NOTES:
+            {{context.dry_run}}
+
+            VERIFICATION REPORT:
+            {{context.verification_report}}
+          requirements:
+            - id: "R1"
+              desc: "Create plan-summary.md with complete execution summary"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "summary_exists"
+                cmd: "test -f docs/{{feature}}/plan-summary.md"
+                must: true
+              - id: "has_sections"
+                cmd: "grep -q 'Intent' docs/{{feature}}/plan-summary.md && grep -q 'Risks' docs/{{feature}}/plan-summary.md"
+                must: true
+
+        - id: "T-02"
+          title: "Assemble Routine Header"
+          profile: "coder"
+          context_from:
+            - artifact: "docs/{{feature}}/intent.md"
+              as: "context.intent"
+              required: true
+            - artifact: "docs/{{feature}}/plan.md"
+              as: "context.plan"
+              required: true
+          task_context: |
+            The per-step YAML files already exist in routines/{{feature}}/steps/.
+            Your job is to write a thin routine entry point at routines/{{feature}}/routine.yaml
+            that references them via `file:` entries — do NOT re-encode the step content.
+
+            INTENT:
+            {{context.intent}}
+
+            PLAN:
+            {{context.plan}}
+
+            Steps:
+            1. List all YAML files in routines/{{feature}}/steps/ to discover step IDs and order.
+               Read each file's top-level `id` field to get the canonical step ID.
+            2. Write routines/{{feature}}/routine.yaml with this structure:
+
+               ```yaml
+               id: "{{feature}}"
+               name: "<derive from intent.md title>"
+               description: |
+                 <one paragraph from intent.md goal>
+               inputs:
+                 - name: "feature"
+                   required: true
+                   description: "Feature name for directory paths"
+                   default: "{{feature}}"
+               steps:
+                 - id: "S-01"
+                   file: "steps/step-01-plan.yaml"
+                 - id: "S-02"
+                   file: "steps/step-02-plan.yaml"
+                 # ... one entry per YAML file in the steps/ directory
+               ```
+
+            3. Validate:
+               uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml
+
+               Fix any errors until it passes. Common issues: step id mismatch between
+               the `file:` entry's `id` field and the id declared inside the referenced YAML.
+
+            Keep the routine.yaml minimal — name, description, inputs, and file stubs only.
+            Do NOT copy task content into this file.
+          requirements:
+            - id: "R1"
+              desc: "routines/{{feature}}/routine.yaml created with file: references to all step YAML files"
+              priority: critical
+            - id: "R2"
+              desc: "Routine passes CLI validation"
+              priority: critical
+          artifacts:
+            - path: "routines/{{feature}}/routine.yaml"
+              required: true
+          auto_verify:
+            items:
+              - id: "routine_exists"
+                cmd: "test -f routines/{{feature}}/routine.yaml"
+                must: true
+              - id: "routine_valid"
+                cmd: "uv run orchestrator --json routines validate routines/{{feature}}/routine.yaml"
+                must: true
+              - id: "has_file_refs"
+                cmd: "grep -q 'file:' routines/{{feature}}/routine.yaml"
+                must: true
+              - id: "no_task_content"
+                cmd: "uv run python -c \"import yaml,sys; r=yaml.safe_load(open('routines/{{feature}}/routine.yaml')); root=r.get('routine',r); steps=root.get('steps',[]); inline=[s['id'] for s in steps if 'tasks' in s]; sys.exit(1) if inline else print('ok')\""
+                must: true
+          verifier:
+            rubric:
+              - id: "R1"
+                text: |
+                  R1 — A: routine.yaml exists with `file:` entries for every step YAML in steps/,
+                  no inline task content. B: file refs present but one step missing or has inline tasks.
+                  F: file refs missing or routine.yaml absent.
+              - id: "R2"
+                text: |
+                  R2 — A: CLI validation passes with zero errors and zero warnings. F: validation fails.
+
+        - id: "T-03"
+          title: "Clean up per-step context packets"
+          profile: "summarizer"
+          task_context: |
+            Remove the temporary per-step context packet directory created during S-03.
+            This directory was used by S-04 and S-05 fan-out agents and is no longer needed.
+
+            Run exactly:
+              rm -rf docs/{{feature}}/ctx
+
+            Then confirm the directory is gone, mark R1 done, and submit.
+            Do not modify any other files.
+          requirements:
+            - id: "R1"
+              desc: "docs/{{feature}}/ctx/ directory removed"
+              priority: critical
+          auto_verify:
+            items:
+              - id: "ctx_dir_removed"
+                cmd: "test ! -d docs/{{feature}}/ctx"
+                must: true
