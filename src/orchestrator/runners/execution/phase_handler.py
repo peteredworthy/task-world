@@ -201,6 +201,14 @@ class PhaseHandler:
         async def on_submit() -> None:
             if service is None:
                 return
+            # Expire the outer session's identity map so we read fresh task state
+            # from the DB.  The session uses expire_on_commit=False, so stale
+            # objects can linger after the previous commit.  Concurrent HTTP
+            # requests (e.g. check_submission) may have incremented the task's
+            # version_id between the last commit and now; if we flush with the
+            # old version, SQLAlchemy raises StaleDataError ("0 rows matched").
+            if session is not None:
+                session.expire_all()
             # The builder agent may have already called submit via REST/MCP
             # during execution.  Re-read the task to avoid a redundant call.
             current_task = await service.get_task(run.id, task_state.id)
