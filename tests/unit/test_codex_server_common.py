@@ -322,6 +322,14 @@ def test_normalize_metrics_values_round_trip() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _clear_codex_model_cache() -> None:
+    """Clear the lru_cache on fetch_codex_models (if present) before each test
+    so monkeypatch changes to shutil.which / _sp.Popen take effect."""
+    if hasattr(fetch_codex_models, "cache_clear"):
+        fetch_codex_models.cache_clear()  # type: ignore[attr-defined]
+
+
 def _make_jsonl(*objs: dict) -> str:
     """Build a JSONL string from one or more dicts."""
     return "".join(json.dumps(o) + "\n" for o in objs)

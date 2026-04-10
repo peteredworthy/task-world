@@ -17,9 +17,42 @@ Integration tests (tests/integration/) may use all of the above freely.
 from __future__ import annotations
 
 import ast
+import subprocess
 from pathlib import Path
 
 import pytest
+
+
+# ---------------------------------------------------------------------------
+# Shared git-repo template fixture
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def _unit_base_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Create a minimal git repo ONCE per worker session.
+
+    Unit tests that need a fresh git repo should use ``shutil.copytree``
+    to copy this template instead of running ``git init`` + config + commit
+    for every test.  Copytree copies the entire ``.git/config`` (including
+    user.email / user.name), so no extra config calls are needed.
+    Savings: ~100 ms per test on macOS (5-6 subprocess calls → 0).
+    """
+    base = tmp_path_factory.mktemp("unit_base_repo")
+    repo = base / "repo"
+    repo.mkdir()
+
+    def _git(*args: str) -> None:
+        subprocess.run(list(args), cwd=repo, check=True, capture_output=True)
+
+    _git("git", "init")
+    _git("git", "config", "user.email", "test@test.com")
+    _git("git", "config", "user.name", "Test")
+    (repo / "README.md").write_text("# Test\n")
+    _git("git", "add", ".")
+    _git("git", "commit", "-m", "Initial commit")
+    _git("git", "branch", "-M", "main")
+    return repo
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 """Unit tests for prune_ops.py using real git repos."""
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -66,15 +67,14 @@ def _commit_file(path: Path, filename: str, content: str, message: str) -> str:
 
 
 @pytest.fixture
-def git_repo(tmp_path: Path) -> tuple[Path, str]:
-    """Create a git repo and return (repo_path, base_sha).
+def git_repo(tmp_path: Path, _unit_base_repo: Path) -> tuple[Path, str]:
+    """Copy the session-scoped base repo for this test and return (repo_path, base_sha).
 
-    base_sha is the initial commit on main, which acts as the "base" for
-    prune operations (simulating the run branch diverge point).
+    Using shutil.copytree instead of git init + config + commit saves ~100 ms
+    per test (5-6 subprocess calls → 0) because copytree transfers .git/config
+    verbatim, including user.email / user.name.
     """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _init_repo(repo)
+    repo = Path(shutil.copytree(str(_unit_base_repo), str(tmp_path / "repo")))
     base_sha = _git(["rev-parse", "HEAD"], cwd=repo)
     return repo, base_sha
 
