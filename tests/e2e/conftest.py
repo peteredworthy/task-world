@@ -45,9 +45,13 @@ def tmp_project(tmp_path: Path) -> Path:
     return project_dir
 
 
-@pytest.fixture
+@pytest.fixture(scope="module")
 async def api_client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
-    """In-process ASGI client with in-memory DB and signal drain function."""
+    """In-process ASGI client with in-memory DB and signal drain function.
+
+    Module-scoped: all tests in a file share one app instance.  Tests create
+    their own runs and operate on them by ID, so shared state is safe.
+    """
     signal_transport = InMemorySignalTransport()
     app = create_app(
         db_path=":memory:",

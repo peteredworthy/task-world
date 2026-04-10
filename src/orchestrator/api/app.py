@@ -336,6 +336,29 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.signal_consumer = signal_consumer
     await signal_consumer.start()
 
+    # Register quota-capable agent instances for the tool detector.  Deferred
+    # to lifespan so optional heavy SDKs (openhands.sdk ~1.5s) are not imported
+    # at create_app() time.  Test fixtures skip lifespan, so quota stays None.
+    try:
+        from orchestrator.runners import (  # noqa: PLC0415
+            ClaudeCliQuotaAgent,
+            ClaudeSDKAgent,
+            CodexServerAgent,
+            OpenHandsAgent,
+        )
+
+        tool_detector = getattr(app.state, "tool_detector", None)
+        if tool_detector is not None:
+            for _agent in [
+                OpenHandsAgent(),
+                CodexServerAgent(),
+                ClaudeCliQuotaAgent(),
+                ClaudeSDKAgent(),
+            ]:
+                tool_detector.register_quota_agent(_agent)
+    except Exception:
+        pass  # Quota fetching is non-critical
+
     yield
 
     # Stop signal consumer
@@ -466,13 +489,13 @@ def create_app(
 
     discover_agents()
 
-    # Agent tool detector
-    from orchestrator.runners import ClaudeSDKAgent, ClaudeCliQuotaAgent
-    from orchestrator.runners import CodexServerAgent, ToolDetector, OpenHandsAgent
+    # Agent tool detector — no quota agents at create_app() time to avoid
+    # importing optional heavy SDKs (openhands.sdk ~1.5s) on every worker startup.
+    # Quota agents are registered in _lifespan (below), which only fires for
+    # the live server — test fixtures using ASGITransport skip lifespan entirely.
+    from orchestrator.runners import ToolDetector
 
-    app.state.tool_detector = ToolDetector(
-        agents=[OpenHandsAgent(), CodexServerAgent(), ClaudeCliQuotaAgent(), ClaudeSDKAgent()]
-    )
+    app.state.tool_detector = ToolDetector()
 
     # Shared submit event registry (singleton for cross-service notification)
     from orchestrator.workflow.service import SubmitEventRegistry

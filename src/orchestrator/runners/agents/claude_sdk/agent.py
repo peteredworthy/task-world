@@ -19,6 +19,7 @@ Test injection:
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -99,6 +100,7 @@ def _read_claude_cli_oauth_token() -> str | None:
 # ---------------------------------------------------------------------------
 
 
+@functools.lru_cache(maxsize=1)
 def fetch_claude_models(
     api_key: str | None = None,
     auth_token: str | None = None,

@@ -42,6 +42,8 @@ class TestRunner:
         self._active_runs: dict[str, str] = {}
         # Maps run_id -> last test_run_id (persists after completion)
         self._last_test_run_ids: dict[str, str] = {}
+        # Maps test_run_id -> background asyncio.Task (for test awaiting)
+        self._tasks: dict[str, asyncio.Task[None]] = {}
 
     def is_running(self, run_id: str) -> bool:
         """Return True if a test is currently running for the given run_id."""
@@ -75,12 +77,27 @@ class TestRunner:
         )
         self._active_runs[run_id] = test_run_id
         self._last_test_run_ids[run_id] = test_run_id
-        asyncio.create_task(
+        task = asyncio.create_task(
             self._execute_commands(
                 test_run_id, run_id, worktree_path, commands, started_at, on_complete
             )
         )
+        self._tasks[test_run_id] = task
         return test_run_id
+
+    async def wait_for_test_run(self, test_run_id: str) -> TestRunResult:
+        """Wait for a background test run to complete and return its result.
+
+        If the test run has already finished the stored task is a no-op await.
+        Raises KeyError if the test_run_id is unknown.
+        """
+        task = self._tasks.get(test_run_id)
+        if task is not None and not task.done():
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass  # Errors are recorded in _results; don't re-raise here
+        return await self.get_test_result(test_run_id)
 
     async def get_test_result(self, test_run_id: str) -> TestRunResult:
         """Get status/results for a test run.

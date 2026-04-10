@@ -29,7 +29,7 @@ from orchestrator.runners.agents.claude_cli.parser import (
 from orchestrator.runners.agents.codex.parser import CodexStreamParser
 
 # OpenHands agent and helpers
-from orchestrator.runners.agents.openhands.agent import OpenHandsAgent
+# NOTE: OpenHandsAgent is loaded lazily via __getattr__ to avoid eager openhands.sdk import
 from orchestrator.runners.agents.openhands.common import (
     CallbackRegistry,
     DEFAULT_OPENHANDS_TOOLS,
@@ -43,7 +43,7 @@ from orchestrator.runners.agents.openhands.common import (
     extract_metrics,
     register_builtin_tools,
 )
-from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent
+# NOTE: DockerOpenHandsAgent is loaded lazily via __getattr__ to avoid eager openhands.sdk import
 
 # Codex agent and helpers
 from orchestrator.runners.agents.codex.agent import CodexServerAgent, RealStdioTransport
@@ -121,6 +121,8 @@ from orchestrator.runners.runtime import (
 
 if TYPE_CHECKING:
     from orchestrator.runners.agents.user_managed.agent import UserManagedAgent
+    from orchestrator.runners.agents.openhands.agent import OpenHandsAgent
+    from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent
     from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
 
 
@@ -129,6 +131,14 @@ def __getattr__(name: str):  # type: ignore[misc]
         from orchestrator.runners.agents.user_managed.agent import UserManagedAgent
 
         return UserManagedAgent
+    if name == "OpenHandsAgent":
+        from orchestrator.runners.agents.openhands.agent import OpenHandsAgent  # noqa: PLC0415
+
+        return OpenHandsAgent
+    if name == "DockerOpenHandsAgent":
+        from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent  # noqa: PLC0415
+
+        return DockerOpenHandsAgent
     if name == "OpenHandsEventParser":
         from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
 

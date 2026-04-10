@@ -12,6 +12,7 @@ time.
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 import logging
 import shutil
 import time
@@ -406,6 +407,15 @@ class ToolDetector:
                 if hasattr(agent, "name") and hasattr(agent, "get_quota"):
                     self._agents[str(agent.name)] = agent
 
+    def register_quota_agent(self, agent: Any) -> None:
+        """Register an agent for quota fetching.
+
+        Can be called after construction to add quota-capable agents without
+        requiring them at create_app() time (avoids slow optional imports).
+        """
+        if hasattr(agent, "name") and hasattr(agent, "get_quota"):
+            self._agents[str(agent.name)] = agent
+
     def _quota_cache_valid(self, entry: _QuotaCacheEntry) -> bool:
         """Return True if the cache entry is still fresh.
 
@@ -515,10 +525,13 @@ class ToolDetector:
         return [opt.model_copy(update={"quota": quota}) for opt, quota in zip(options, quotas)]
 
     def _detect_openhands_local(self) -> AgentRunnerOption:
-        """Check if the openhands-ai SDK is importable (no server needed)."""
-        try:
-            import openhands.sdk  # noqa: F401  # pyright: ignore[reportUnusedImport,reportMissingImports]
+        """Check if the openhands-ai SDK is available (no server needed).
 
+        Uses importlib.util.find_spec() instead of a bare import to avoid
+        executing the openhands package code (~1.4s) just for availability detection.
+        """
+        sdk_available = importlib.util.find_spec("openhands.sdk") is not None
+        if sdk_available:
             return AgentRunnerOption(
                 agent_type=AgentRunnerType.OPENHANDS_LOCAL,
                 name="OpenHands (local)",
@@ -528,17 +541,16 @@ class ToolDetector:
                 detail="openhands-ai SDK installed",
                 config_schema=_OPENHANDS_LOCAL_CONFIG,
             )
-        except ImportError:
-            return AgentRunnerOption(
-                agent_type=AgentRunnerType.OPENHANDS_LOCAL,
-                name="OpenHands (local)",
-                title="OpenHands Local Agent",
-                description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
-                available=True,
-                detail="openhands-ai SDK not installed (will fail at runtime)",
-                install_hint="Install with: uv sync --extra openhands",
-                config_schema=_OPENHANDS_LOCAL_CONFIG,
-            )
+        return AgentRunnerOption(
+            agent_type=AgentRunnerType.OPENHANDS_LOCAL,
+            name="OpenHands (local)",
+            title="OpenHands Local Agent",
+            description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
+            available=True,
+            detail="openhands-ai SDK not installed (will fail at runtime)",
+            install_hint="Install with: uv sync --extra openhands",
+            config_schema=_OPENHANDS_LOCAL_CONFIG,
+        )
 
     async def _detect_openhands_docker(self) -> AgentRunnerOption:
         """Check if Docker-based OpenHands is available.
@@ -548,10 +560,8 @@ class ToolDetector:
         2. docker CLI is in PATH
         3. docker daemon is running (docker info returns 0)
         """
-        # 1. Check DockerWorkspace importable
-        try:
-            from openhands.workspace import DockerWorkspace  # noqa: F401  # pyright: ignore[reportUnusedImport,reportMissingImports]
-        except ImportError:
+        # 1. Check DockerWorkspace importable (use find_spec to avoid heavy import)
+        if importlib.util.find_spec("openhands.workspace") is None:
             return AgentRunnerOption(
                 agent_type=AgentRunnerType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",

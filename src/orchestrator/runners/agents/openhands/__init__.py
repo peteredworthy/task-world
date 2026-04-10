@@ -1,6 +1,8 @@
 """OpenHands agent sub-package — registers OPENHANDS_LOCAL and OPENHANDS_DOCKER.
 
 Uses try/except ImportError since openhands is an optional dependency.
+OpenHandsAgent and DockerOpenHandsAgent are loaded lazily via __getattr__ to
+avoid eagerly importing openhands.sdk (~1.5s) when the package is first imported.
 """
 
 from orchestrator.runners.agents.openhands.factory import create_local, create_docker  # noqa: F401
@@ -8,17 +10,6 @@ from orchestrator.runners.agents.openhands.config import (  # noqa: F401
     OPENHANDS_LOCAL_CONFIG,
     OPENHANDS_DOCKER_CONFIG,
 )
-
-# Re-export agent classes with graceful fallback for missing openhands SDK
-try:
-    from orchestrator.runners.agents.openhands.agent import OpenHandsAgent  # noqa: F401
-except ImportError:
-    pass
-
-try:
-    from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent  # noqa: F401
-except ImportError:
-    pass
 
 # Register factory functions — wrapped in try/except since openhands is optional
 try:
@@ -30,11 +21,23 @@ try:
 except ImportError:
     pass
 
+
+def __getattr__(name: str):  # type: ignore[misc]
+    if name == "OpenHandsAgent":
+        from orchestrator.runners.agents.openhands.agent import OpenHandsAgent  # noqa: PLC0415
+
+        return OpenHandsAgent
+    if name == "DockerOpenHandsAgent":
+        from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent  # noqa: PLC0415
+
+        return DockerOpenHandsAgent
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
     "create_local",
     "create_docker",
     "OPENHANDS_LOCAL_CONFIG",
     "OPENHANDS_DOCKER_CONFIG",
-    "OpenHandsAgent",
-    "DockerOpenHandsAgent",
+    # OpenHandsAgent and DockerOpenHandsAgent are accessible via __getattr__ (lazy import)
 ]

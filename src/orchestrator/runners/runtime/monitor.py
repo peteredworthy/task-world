@@ -64,7 +64,7 @@ class AgentRunnerMonitor:
 
     def __init__(
         self,
-        session_factory: async_sessionmaker[AsyncSession],
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
         global_config: GlobalConfig | None = None,
         lock_manager: LockManager | None = None,
     ) -> None:
@@ -72,6 +72,8 @@ class AgentRunnerMonitor:
 
         Args:
             session_factory: Async session factory for creating fresh DB sessions.
+                Required for on_agent_died and recover_active_runs_on_startup.
+                Optional when only check_agent_alive is needed.
             global_config: Global configuration (used for timeouts, etc).
             lock_manager: Optional lock manager. When provided, on_agent_died
                 releases any task locks held by the dead agent to prevent
@@ -111,6 +113,9 @@ class AgentRunnerMonitor:
                 Set to False when called from within the executor loop where
                 the error will propagate to _run_loop's exception handler.
         """
+        if self._session_factory is None:
+            raise RuntimeError("AgentRunnerMonitor requires a session_factory to use on_agent_died")
+
         from orchestrator.db import EventStore
         from orchestrator.db import RunRepository
 
@@ -291,6 +296,11 @@ class AgentRunnerMonitor:
         Returns:
             List of run IDs that were transitioned to PAUSED.
         """
+        if self._session_factory is None:
+            raise RuntimeError(
+                "AgentRunnerMonitor requires a session_factory to use recover_active_runs_on_startup"
+            )
+
         from orchestrator.db import RunRepository
 
         paused_runs: list[str] = []
