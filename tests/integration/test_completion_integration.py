@@ -3,9 +3,8 @@
 Tests completion handler is called when runs reach terminal states.
 """
 
-import subprocess
-import tempfile
-from collections.abc import AsyncGenerator, Generator
+import shutil
+from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
@@ -28,56 +27,13 @@ from orchestrator.workflow.service import WorkflowService
 
 
 @pytest.fixture
-def git_repo() -> Generator[tuple[Path, Path], None, None]:
-    """Create a temporary git repository and worktrees directory.
-
-    Yields:
-        Tuple of (repo_path, worktrees_dir)
-    """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        base = Path(tmpdir)
-        repo_path = base / "repo"
-        worktrees_dir = base / "worktrees"
-        repo_path.mkdir()
-        worktrees_dir.mkdir()
-
-        # Initialize git repo
-        subprocess.run(
-            ["git", "init"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-
-        # Create and commit an initial file
-        initial_file = repo_path / "README.md"
-        initial_file.write_text("# Test Project\n")
-        subprocess.run(
-            ["git", "add", "."],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "Initial commit"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-
-        yield repo_path, worktrees_dir
+def git_repo(tmp_path: Path, _base_repo: Path) -> tuple[Path, Path]:
+    """Create a temporary git repository and worktrees directory."""
+    repo_path = tmp_path / "repo"
+    worktrees_dir = tmp_path / "worktrees"
+    worktrees_dir.mkdir()
+    shutil.copytree(str(_base_repo), str(repo_path))
+    return repo_path, worktrees_dir
 
 
 @pytest.fixture
