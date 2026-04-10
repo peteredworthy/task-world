@@ -10,6 +10,7 @@ Tests cover:
 - POST /merge-back accepts squash and merge strategies
 """
 
+import os
 import subprocess
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -34,12 +35,15 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 def _git(args: list[str], cwd: Path) -> str:
     """Run a git command and return stdout."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env["PRE_COMMIT_ALLOW_NO_CONFIG"] = "1"
     result = subprocess.run(
         ["git"] + args,
         cwd=cwd,
         check=True,
         capture_output=True,
         text=True,
+        env=env,
     )
     return result.stdout.strip()
 
