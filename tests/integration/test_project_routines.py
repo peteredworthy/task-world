@@ -1,5 +1,6 @@
 """Integration tests for project routine discovery from git repositories."""
 
+import shutil
 import subprocess
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -22,17 +23,6 @@ def _git(args: list[str], cwd: Path) -> str:
         text=True,
     )
     return result.stdout.strip()
-
-
-def _init_repo(path: Path) -> None:
-    """Initialize a git repo with an initial commit."""
-    _git(["init"], cwd=path)
-    _git(["config", "user.email", "test@test.com"], cwd=path)
-    _git(["config", "user.name", "Test"], cwd=path)
-    (path / "README.md").write_text("# Test\n")
-    _git(["add", "."], cwd=path)
-    _git(["commit", "-m", "Initial commit"], cwd=path)
-    _git(["branch", "-M", "main"], cwd=path)
 
 
 def _add_flat_routine(repo: Path, routine_id: str, name: str = "Test Routine") -> None:
@@ -96,12 +86,13 @@ steps:
 
 
 @pytest.fixture
-def repo_with_routines(tmp_path: Path) -> Path:
-    """Create a git repo with sample routines."""
-    repo = tmp_path / "project"
-    repo.mkdir()
-    _init_repo(repo)
-    return repo
+def repo_with_routines(tmp_path: Path, _base_repo: Path) -> Path:
+    """Create a git repo with sample routines.
+
+    Uses shutil.copytree from the session-scoped base repo instead of
+    git init + config + commit (saves ~150 ms per test).
+    """
+    return Path(shutil.copytree(str(_base_repo), str(tmp_path / "project")))
 
 
 class TestDiscoverRoutinesInRepo:

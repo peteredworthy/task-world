@@ -7,6 +7,7 @@ Tests POST /api/runs/{run_id}/review/prune/preview,
 Uses real git repos via tmp_path fixtures; no mocking.
 """
 
+import shutil
 import subprocess
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -41,17 +42,6 @@ def _git(args: list[str], cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def _init_repo(path: Path) -> None:
-    """Initialize a git repo with an initial commit on main."""
-    _git(["init"], cwd=path)
-    _git(["config", "user.email", "test@test.com"], cwd=path)
-    _git(["config", "user.name", "Test"], cwd=path)
-    (path / "README.md").write_text("# Test\n")
-    _git(["add", "."], cwd=path)
-    _git(["commit", "-m", "Initial commit"], cwd=path)
-    _git(["branch", "-M", "main"], cwd=path)
-
-
 def _commit_file(path: Path, filename: str, content: str, message: str) -> str:
     """Create/modify a file and commit it. Returns HEAD SHA."""
     (path / filename).write_text(content)
@@ -65,25 +55,22 @@ def _commit_file(path: Path, filename: str, content: str, message: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def git_repo(tmp_path: Path) -> Path:
-    """Create a git repo for testing."""
-    repo = tmp_path / "project"
-    repo.mkdir()
-    _init_repo(repo)
-    return repo
+@pytest.fixture(scope="module")
+async def _shared_app_fixture(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> AsyncGenerator[tuple[AsyncClient, DrainFn, Path, Path], None]:
+    """Shared FastAPI app + in-memory DB for all tests in this module.
 
-
-@pytest.fixture
-async def client_with_repo(
-    git_repo: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, DrainFn], None]:
-    """Test client with a real git repo as project."""
+    Each test creates its own git repo inside ``repos_dir`` (unique name),
+    so the shared database accumulates multiple runs safely without conflicts.
+    """
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
-    repos_dir = git_repo.parent
-    worktrees_dir = repos_dir / "worktrees"
-    worktrees_dir.mkdir(exist_ok=True)
+    base = tmp_path_factory.mktemp("prune_api_shared")
+    repos_dir = base / "repos"
+    worktrees_dir = base / "worktrees"
+    repos_dir.mkdir()
+    worktrees_dir.mkdir()
 
     global_config = GlobalConfig(
         paths=PathsConfig(
@@ -103,8 +90,39 @@ async def client_with_repo(
     drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo, drain
+        yield c, drain, repos_dir, worktrees_dir
     await app.state.engine.dispose()
+
+
+_repo_counter = 0
+
+
+@pytest.fixture
+def git_repo(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path],
+    _base_repo: Path,
+) -> Path:
+    """Create a uniquely-named git repo inside the shared repos_dir.
+
+    Uses shutil.copytree from the session-scoped base repo instead of
+    git init + config + commit (saves ~150 ms per test).
+    """
+    global _repo_counter
+    _repo_counter += 1
+    _, _, repos_dir, _ = _shared_app_fixture
+    repo = repos_dir / f"project_{_repo_counter}"
+    shutil.copytree(str(_base_repo), str(repo))
+    return repo
+
+
+@pytest.fixture
+async def client_with_repo(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path],
+    git_repo: Path,
+) -> AsyncGenerator[tuple[AsyncClient, Path, DrainFn], None]:
+    """Test client backed by the shared app, with a per-test git repo."""
+    client, drain, _, _ = _shared_app_fixture
+    yield client, git_repo, drain
 
 
 async def _create_and_start_run(

@@ -1,5 +1,6 @@
 """Integration tests for scaffolding module."""
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -20,26 +21,13 @@ def _git(args: list[str], cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def _init_repo(path: Path) -> None:
-    """Initialize a git repo with an initial commit."""
-    _git(["init"], cwd=path)
-    _git(["config", "user.email", "test@test.com"], cwd=path)
-    _git(["config", "user.name", "Test"], cwd=path)
-    (path / "README.md").write_text("# Test\n")
-    _git(["add", "."], cwd=path)
-    _git(["commit", "-m", "Initial commit"], cwd=path)
-    _git(["branch", "-M", "main"], cwd=path)
-
-
 @pytest.fixture
-def repo_with_scaffolding(tmp_path: Path) -> tuple[Path, str, str]:
+def repo_with_scaffolding(tmp_path: Path, _base_repo: Path) -> tuple[Path, str, str]:
     """Create a git repo with a routine that has scaffolding.
 
     Returns: (repo_path, routine_path, commit_sha)
     """
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    _init_repo(repo)
+    repo = Path(shutil.copytree(str(_base_repo), str(tmp_path / "repo")))
 
     # Create routine with scaffolding
     routine_dir = repo / "routines" / "my-routine"
@@ -175,11 +163,9 @@ class TestCopyScaffolding:
         assert result.target_path == str(worktree / "custom" / "scaffolding")
         assert (worktree / "custom" / "scaffolding" / "template.md").exists()
 
-    def test_empty_scaffolding(self, tmp_path: Path, worktree: Path) -> None:
+    def test_empty_scaffolding(self, tmp_path: Path, worktree: Path, _base_repo: Path) -> None:
         """Handles routine with empty scaffolding directory."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        _init_repo(repo)
+        repo = Path(shutil.copytree(str(_base_repo), str(tmp_path / "repo")))
 
         # Routine with empty scaffolding
         routine_dir = repo / "routines" / "empty-scaffold"
@@ -197,11 +183,11 @@ class TestCopyScaffolding:
         # Directory still gets created
         assert (worktree / ".orchestrator" / "scaffolding").exists()
 
-    def test_no_scaffolding_directory(self, tmp_path: Path, worktree: Path) -> None:
+    def test_no_scaffolding_directory(
+        self, tmp_path: Path, worktree: Path, _base_repo: Path
+    ) -> None:
         """Handles routine without scaffolding directory gracefully."""
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        _init_repo(repo)
+        repo = Path(shutil.copytree(str(_base_repo), str(tmp_path / "repo")))
 
         # Routine without scaffolding
         routine_dir = repo / "routines" / "no-scaffold"
@@ -261,7 +247,9 @@ class TestScaffoldingIntegration:
     """Integration tests for scaffolding in the workflow."""
 
     @pytest.mark.asyncio
-    async def test_scaffolding_copied_on_worktree_creation(self, tmp_path: Path) -> None:
+    async def test_scaffolding_copied_on_worktree_creation(
+        self, tmp_path: Path, _base_repo: Path
+    ) -> None:
         """Scaffolding is copied when worktree is created during run start."""
 
         from orchestrator.runners.executor import AgentRunnerExecutor
@@ -276,9 +264,8 @@ class TestScaffoldingIntegration:
         from orchestrator.workflow.service import WorkflowService
 
         # Create a test repo with routine and scaffolding
-        repo = tmp_path / "repos" / "test-repo"
-        repo.mkdir(parents=True)
-        _init_repo(repo)
+        (tmp_path / "repos").mkdir()
+        repo = Path(shutil.copytree(str(_base_repo), str(tmp_path / "repos" / "test-repo")))
 
         # Create routine with scaffolding
         routine_dir = repo / "routines" / "test-routine"
@@ -410,7 +397,7 @@ steps:
         await engine.dispose()
 
     @pytest.mark.asyncio
-    async def test_scaffolding_optional_if_missing(self, tmp_path: Path) -> None:
+    async def test_scaffolding_optional_if_missing(self, tmp_path: Path, _base_repo: Path) -> None:
         """Run should succeed even if routine has no scaffolding."""
         from orchestrator.runners.executor import AgentRunnerExecutor
         from orchestrator.config import AgentRunnerType, RoutineSource
@@ -424,9 +411,8 @@ steps:
         from orchestrator.workflow.service import WorkflowService
 
         # Create a test repo with routine but NO scaffolding
-        repo = tmp_path / "repos" / "test-repo"
-        repo.mkdir(parents=True)
-        _init_repo(repo)
+        (tmp_path / "repos").mkdir()
+        repo = Path(shutil.copytree(str(_base_repo), str(tmp_path / "repos" / "test-repo")))
 
         # Create routine WITHOUT scaffolding
         routine_dir = repo / "routines" / "no-scaffold"
