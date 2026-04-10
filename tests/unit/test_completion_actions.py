@@ -4,9 +4,7 @@ Tests use real git repositories in temporary directories.
 NO mocks.
 """
 
-import subprocess
-import tempfile
-from collections.abc import Generator
+import shutil
 from pathlib import Path
 
 import pytest
@@ -18,56 +16,16 @@ from orchestrator.workflow.completion import handle_run_completion
 
 
 @pytest.fixture
-def git_repo() -> Generator[tuple[Path, Path], None, None]:
-    """Create a temporary git repository and worktrees directory.
+def git_repo(tmp_path: Path, _unit_base_repo: Path) -> tuple[Path, Path]:
+    """Create a git repository and worktrees directory for testing.
 
-    Yields:
-        Tuple of (repo_path, worktrees_dir)
+    Uses shutil.copytree from the session-scoped base repo instead of
+    git init + config + commit (saves ~100 ms per test).
     """
-    with tempfile.TemporaryDirectory() as tmpdir:
-        base = Path(tmpdir)
-        repo_path = base / "repo"
-        worktrees_dir = base / "worktrees"
-        repo_path.mkdir()
-        worktrees_dir.mkdir()
-
-        # Initialize git repo
-        subprocess.run(
-            ["git", "init"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-
-        # Create and commit an initial file (git worktree requires commits)
-        initial_file = repo_path / "README.md"
-        initial_file.write_text("# Test Project\n")
-        subprocess.run(
-            ["git", "add", "."],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "Initial commit"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-
-        yield repo_path, worktrees_dir
+    repo_path = Path(shutil.copytree(str(_unit_base_repo), str(tmp_path / "repo")))
+    worktrees_dir = tmp_path / "worktrees"
+    worktrees_dir.mkdir()
+    return repo_path, worktrees_dir
 
 
 def test_worktree_deleted_when_configured(git_repo: tuple[Path, Path]) -> None:

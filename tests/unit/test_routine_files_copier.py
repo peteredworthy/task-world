@@ -1,5 +1,6 @@
 """Unit tests for the routine-files copier."""
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -19,16 +20,6 @@ from orchestrator.runners import (
 def _git(args: list[str], cwd: Path) -> str:
     result = subprocess.run(["git"] + args, cwd=cwd, check=True, capture_output=True, text=True)
     return result.stdout.strip()
-
-
-def _init_repo(path: Path) -> None:
-    _git(["init"], cwd=path)
-    _git(["config", "user.email", "test@test.com"], cwd=path)
-    _git(["config", "user.name", "Test"], cwd=path)
-    (path / "README.md").write_text("# Test\n")
-    _git(["add", "."], cwd=path)
-    _git(["commit", "-m", "Initial commit"], cwd=path)
-    _git(["branch", "-M", "main"], cwd=path)
 
 
 # ---------------------------------------------------------------------------
@@ -195,10 +186,8 @@ class TestCopyRoutineFilesLocal:
 
 class TestCopyRoutineFilesGit:
     @pytest.fixture
-    def repo_with_routine(self, tmp_path: Path) -> tuple[Path, str, str]:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        _init_repo(repo)
+    def repo_with_routine(self, tmp_path: Path, _unit_base_repo: Path) -> tuple[Path, str, str]:
+        repo = Path(shutil.copytree(str(_unit_base_repo), str(tmp_path / "repo")))
 
         routine_dir = repo / "routines" / "my-routine"
         routine_dir.mkdir(parents=True)
@@ -262,10 +251,8 @@ class TestCopyRoutineFilesGit:
         assert result.gitignore_updated is True
         assert ".orchestrator/" in (wt / ".gitignore").read_text()
 
-    def test_empty_routine_dir(self, tmp_path: Path) -> None:
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        _init_repo(repo)
+    def test_empty_routine_dir(self, tmp_path: Path, _unit_base_repo: Path) -> None:
+        repo = Path(shutil.copytree(str(_unit_base_repo), str(tmp_path / "repo")))
 
         routine_dir = repo / "routines" / "empty"
         routine_dir.mkdir(parents=True)

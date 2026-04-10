@@ -4,9 +4,9 @@ Tests use real git repositories in temporary directories.
 NO mocks.
 """
 
+import shutil
 import subprocess
 import tempfile
-from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -19,52 +19,29 @@ from orchestrator.config import (
 
 
 @pytest.fixture
-def git_repo() -> Generator[Path, None, None]:
-    """Create a temporary git repository with a committed routine file."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        repo_path = Path(tmpdir) / "repo"
-        repo_path.mkdir()
+def git_repo(tmp_path: Path, _unit_base_repo: Path) -> Path:
+    """Create a temporary git repository with a committed routine file.
 
-        # Initialize git repo
-        subprocess.run(
-            ["git", "init"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
+    Uses shutil.copytree from the session-scoped base repo instead of
+    git init + config + commit (saves ~100 ms per test).
+    """
+    repo_path = Path(shutil.copytree(str(_unit_base_repo), str(tmp_path / "repo")))
 
-        # Create and commit a routine file
-        routines_dir = repo_path / "routines"
-        routines_dir.mkdir()
-        routine_file = routines_dir / "test-routine.yaml"
-        routine_file.write_text("name: test\nsteps: []\n")
+    # Create and commit a routine file (still need add+commit for this file)
+    routines_dir = repo_path / "routines"
+    routines_dir.mkdir()
+    routine_file = routines_dir / "test-routine.yaml"
+    routine_file.write_text("name: test\nsteps: []\n")
 
-        subprocess.run(
-            ["git", "add", "."],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "Add test routine"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Add test routine"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
 
-        yield repo_path
+    return repo_path
 
 
 def test_find_git_root_from_file(git_repo: Path) -> None:
@@ -244,56 +221,29 @@ def test_get_routine_version_nested_directory(git_repo: Path) -> None:
     assert version.path == routine_file
 
 
-def test_get_routine_version_deleted_file() -> None:
+def test_get_routine_version_deleted_file(tmp_path: Path, _unit_base_repo: Path) -> None:
     """Test getting version for a file that was deleted but has git history."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        repo_path = Path(tmpdir) / "repo"
-        repo_path.mkdir()
+    repo_path = Path(shutil.copytree(str(_unit_base_repo), str(tmp_path / "repo")))
 
-        # Initialize git repo
-        subprocess.run(
-            ["git", "init"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.email", "test@example.com"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "config", "user.name", "Test User"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
+    # Create and commit a file
+    routine_file = repo_path / "routine.yaml"
+    routine_file.write_text("name: test\nsteps: []\n")
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Add routine"],
+        cwd=repo_path,
+        check=True,
+        capture_output=True,
+    )
 
-        # Create and commit a file
-        routine_file = repo_path / "routine.yaml"
-        routine_file.write_text("name: test\nsteps: []\n")
-        subprocess.run(
-            ["git", "add", "."],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
-        subprocess.run(
-            ["git", "commit", "-m", "Add routine"],
-            cwd=repo_path,
-            check=True,
-            capture_output=True,
-        )
+    # Delete the file (but it still has git history)
+    routine_file.unlink()
 
-        # Delete the file (but it still has git history)
-        routine_file.unlink()
-
-        # Git can still retrieve history for deleted files
-        # The file will show as dirty (deleted) but has valid history
-        version = get_routine_version(routine_file)
-        assert len(version.sha) == 40
-        assert version.dirty is True  # File is deleted, so it's dirty
+    # Git can still retrieve history for deleted files
+    # The file will show as dirty (deleted) but has valid history
+    version = get_routine_version(routine_file)
+    assert len(version.sha) == 40
+    assert version.dirty is True  # File is deleted, so it's dirty
 
 
 def test_routine_version_dataclass() -> None:
