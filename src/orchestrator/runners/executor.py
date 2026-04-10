@@ -382,7 +382,9 @@ class AgentRunnerExecutor:
                         raise
 
                     try:
-                        run = await service.set_worktree_path(run_id, str(wt_info.path))
+                        run = await service.set_worktree_path(
+                            run_id, str(wt_info.path), source_branch_sha=wt_info.commit
+                        )
                     except Exception as e:
                         logger.error(
                             f"Run {run_id}: worktree created at {wt_info.path} but failed "
@@ -479,7 +481,11 @@ class AgentRunnerExecutor:
                             raise
 
                         try:
-                            run = await service.set_worktree_path(run_id, str(wt_info.path))
+                            run = await service.set_worktree_path(
+                                run_id,
+                                str(wt_info.path),
+                                source_branch_sha=wt_info.commit,
+                            )
                         except Exception as e:
                             logger.error(
                                 f"Run {run_id}: worktree created at {wt_info.path} but "

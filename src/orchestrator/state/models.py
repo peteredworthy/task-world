@@ -346,6 +346,7 @@ class Run(BaseModel):
     worktree_path: str | None = None
     delete_worktree_on_completion: bool = False
     source_branch: str | None = None
+    source_branch_sha: str | None = None
     merge_strategy: str = "squash"
 
     # Config passed to routine

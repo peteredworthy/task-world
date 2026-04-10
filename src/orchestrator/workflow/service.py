@@ -2207,10 +2207,14 @@ class WorkflowService:
         await self._session.commit()
         return run
 
-    async def set_worktree_path(self, run_id: str, worktree_path: str) -> Run:
+    async def set_worktree_path(
+        self, run_id: str, worktree_path: str, source_branch_sha: str | None = None
+    ) -> Run:
         """Set the worktree path on a run after worktree creation."""
         run = await self._repo.get(run_id)
         run.worktree_path = worktree_path
+        if source_branch_sha is not None:
+            run.source_branch_sha = source_branch_sha
         await self._repo.save(run)
         await self._session.commit()
         return run

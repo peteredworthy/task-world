@@ -114,6 +114,25 @@ def _get_head_sha_sync(worktree_path: Path) -> str:
     return result.stdout.strip()
 
 
+async def _get_base_sha(run: Any, worktree_path: Path) -> str:
+    """Return the fixed base SHA for diff operations on this run.
+
+    Prefers the stored source_branch_sha (SHA of source branch at worktree
+    creation time) so that diffs always show work done on the branch,
+    regardless of how far main has advanced since. Falls back to computing
+    the merge-base for older runs that predate this field.
+    """
+    if run.source_branch_sha:
+        return run.source_branch_sha
+    # Fallback for runs created before source_branch_sha was recorded
+    if not run.source_branch:
+        raise HTTPException(
+            status_code=409,
+            detail="Run does not have a source branch configured",
+        )
+    return await asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch)
+
+
 def _require_worktree(worktree_path_str: str | None) -> Path:
     """Validate worktree exists and return its Path. Raises HTTPException on failure."""
     if not worktree_path_str:
@@ -169,17 +188,12 @@ async def get_diff(
                 )
             diff_text = await _diff_ops.get_commit_diff(worktree_path, ref)
         else:
-            if not run.source_branch:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Run does not have a source branch configured",
-                )
             base_sha, head_sha = await asyncio.gather(
-                asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch),
+                _get_base_sha(run, worktree_path),
                 asyncio.to_thread(_get_head_sha_sync, worktree_path),
             )
             if scope == "task" and ref:
-                # Support explicit "{start}..{end}" range or legacy single-SHA (uses merge-base)
+                # Support explicit "{start}..{end}" range or legacy single-SHA (uses base)
                 if ".." in ref:
                     start_sha, end_sha = ref.split("..", 1)
                     diff_text = await _diff_ops.get_task_diff(worktree_path, start_sha, end_sha)
@@ -229,13 +243,8 @@ async def get_diff_files(
             start_sha, end_sha = ref.split("..", 1)
             modified_files = await _diff_ops.get_modified_files(worktree_path, start_sha, end_sha)
         else:
-            if not run.source_branch:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Run does not have a source branch configured",
-                )
             base_sha, head_sha = await asyncio.gather(
-                asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch),
+                _get_base_sha(run, worktree_path),
                 asyncio.to_thread(_get_head_sha_sync, worktree_path),
             )
             modified_files = await _diff_ops.get_modified_files(worktree_path, base_sha, head_sha)
@@ -258,19 +267,13 @@ async def get_commits(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
 ) -> list[CommitEntry]:
-    """Return commit history for a run branch from source branch merge-base to HEAD."""
+    """Return commit history for a run branch from source branch SHA to HEAD."""
     run = await service.get_run(run_id)
     worktree_path = _require_worktree(run.worktree_path)
 
-    if not run.source_branch:
-        raise HTTPException(
-            status_code=409,
-            detail="Run does not have a source branch configured",
-        )
-
     try:
         base_sha, head_sha = await asyncio.gather(
-            asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch),
+            _get_base_sha(run, worktree_path),
             asyncio.to_thread(_get_head_sha_sync, worktree_path),
         )
         commits = await _diff_ops.get_commit_log(worktree_path, base_sha, head_sha)
@@ -304,14 +307,8 @@ async def prune_preview(
     run = await service.get_run(run_id)
     worktree_path = _require_worktree(run.worktree_path)
 
-    if not run.source_branch:
-        raise HTTPException(
-            status_code=409,
-            detail="Run does not have a source branch configured",
-        )
-
     try:
-        base_sha = await asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch)
+        base_sha = await _get_base_sha(run, worktree_path)
         entries = [
             FileSelectionEntry(
                 path=fp.path,
@@ -349,14 +346,8 @@ async def prune_apply(
     run = await service.get_run(run_id)
     worktree_path = _require_worktree(run.worktree_path)
 
-    if not run.source_branch:
-        raise HTTPException(
-            status_code=409,
-            detail="Run does not have a source branch configured",
-        )
-
     try:
-        base_sha = await asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch)
+        base_sha = await _get_base_sha(run, worktree_path)
     except GitCommandError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -459,14 +450,8 @@ async def revert_file_endpoint(
     run = await service.get_run(run_id)
     worktree_path = _require_worktree(run.worktree_path)
 
-    if not run.source_branch:
-        raise HTTPException(
-            status_code=409,
-            detail="Run does not have a source branch configured",
-        )
-
     try:
-        base_sha = await asyncio.to_thread(_get_merge_base_sync, worktree_path, run.source_branch)
+        base_sha = await _get_base_sha(run, worktree_path)
         commit_sha = await revert_file(worktree_path, file_path, base_sha)
     except GitCommandError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc

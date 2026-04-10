@@ -268,6 +268,7 @@ def _run_to_response(run: Run) -> RunResponse:
         worktree_path=run.worktree_path,
         worktree_relative_path=worktree_relative_path,
         source_branch=run.source_branch,
+        source_branch_sha=run.source_branch_sha,
         merge_strategy=run.merge_strategy,
         config=run.config,
         env_file_specs=[
