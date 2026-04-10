@@ -17,6 +17,7 @@ Integration tests (tests/integration/) may use all of the above freely.
 from __future__ import annotations
 
 import ast
+import os
 import subprocess
 from pathlib import Path
 
@@ -43,7 +44,9 @@ def _unit_base_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     repo.mkdir()
 
     def _git(*args: str) -> None:
-        subprocess.run(list(args), cwd=repo, check=True, capture_output=True)
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+        env["PRE_COMMIT_ALLOW_NO_CONFIG"] = "1"
+        subprocess.run(list(args), cwd=repo, check=True, capture_output=True, env=env)
 
     _git("git", "init")
     _git("git", "config", "user.email", "test@test.com")

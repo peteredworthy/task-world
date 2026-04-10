@@ -23,6 +23,7 @@ import { EnvFilesPanel } from '../detail/EnvFilesPanel';
 import { getLastAgentError } from '../../lib/activity';
 import { ApiError } from '../../api/client';
 import { ReviewMergeTab } from '../review/ReviewMergeTab';
+import { ModelCostBreakdown } from '../detail/ModelCostBreakdown';
 import type { RunResponse } from '../../types';
 import type { PendingAction } from '../../types/clarifications';
 
@@ -565,6 +566,16 @@ function RunDetailInner({ runId }: { runId: string }) {
           {activeTask && (
             <div className="mb-6">
               <AgentGuidancePanel run={run} />
+            </div>
+          )}
+
+          {/* Per-model cost breakdown */}
+          {(run.token_usage_by_model.length > 0 ||
+            run.total_tokens_read > 0 ||
+            run.total_tokens_write > 0 ||
+            run.estimated_cost_usd !== null) && (
+            <div className="mb-6">
+              <ModelCostBreakdown run={run} />
             </div>
           )}
 

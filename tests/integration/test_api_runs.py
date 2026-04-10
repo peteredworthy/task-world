@@ -894,6 +894,157 @@ async def test_run_response_includes_cost_estimation(client: AsyncClient) -> Non
     assert "Estimate only" in data["cost_disclaimer"]
 
 
+# --- token_usage_by_model API exposure tests (R6, R7, R8) ---
+
+
+async def _inject_run_token_usage(
+    client: AsyncClient,
+    run_id: str,
+    token_usage: list[dict[str, Any]],
+) -> None:
+    """Helper: write token_usage_by_model directly to the RunModel row."""
+    from sqlalchemy import select
+
+    from orchestrator.db import RunModel
+
+    app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
+    session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
+
+    async with session_factory() as session:
+        result = await session.execute(select(RunModel).where(RunModel.id == run_id))
+        run_model = result.scalar_one()
+        run_model.token_usage_by_model = token_usage or None
+        await session.commit()
+
+
+async def test_get_run_returns_token_usage_by_model_with_all_fields(
+    client: AsyncClient,
+) -> None:
+    """R6: GET /api/runs/{id} returns token_usage_by_model with all expected fields."""
+    data = await _create_run(client)
+    run_id = data["id"]
+
+    # Inject per-model token data
+    usage_record = {
+        "model": "claude-sonnet-4-6",
+        "cache_read_tokens": 500_000,
+        "cache_creation_tokens": 200_000,
+        "input_tokens": 1_000_000,
+        "output_tokens": 100_000,
+        "cost_per_m_cache_read": 0.30,
+        "cost_per_m_cache_creation": 3.75,
+        "cost_per_m_input": 3.00,
+        "cost_per_m_output": 15.00,
+    }
+    await _inject_run_token_usage(client, run_id, [usage_record])
+
+    response = await client.get(f"/api/runs/{run_id}")
+    assert response.status_code == 200
+    body = response.json()
+
+    usage_list = body["token_usage_by_model"]
+    assert isinstance(usage_list, list)
+    assert len(usage_list) == 1
+
+    entry = usage_list[0]
+    assert entry["model"] == "claude-sonnet-4-6"
+    assert entry["cache_read_tokens"] == 500_000
+    assert entry["cache_creation_tokens"] == 200_000
+    assert entry["input_tokens"] == 1_000_000
+    assert entry["output_tokens"] == 100_000
+    assert entry["cost_per_m_cache_read"] == pytest.approx(0.30)
+    assert entry["cost_per_m_cache_creation"] == pytest.approx(3.75)
+    assert entry["cost_per_m_input"] == pytest.approx(3.00)
+    assert entry["cost_per_m_output"] == pytest.approx(15.00)
+    assert "total_cost_usd" in entry
+    assert entry["total_cost_usd"] > 0
+
+
+async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
+    client: AsyncClient,
+) -> None:
+    """R7: Old runs with no token_usage_by_model return [] without error.
+
+    estimated_cost_usd falls back to legacy token-based estimation (>= 0.0)
+    or None — the important thing is no crash and token_usage_by_model == [].
+    """
+    app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
+    session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
+
+    data = await _create_run(client)
+    run_id = data["id"]
+
+    # Simulate old run: no per-model data, but has legacy token counts
+    from sqlalchemy import select
+
+    from orchestrator.db import RunModel
+
+    async with session_factory() as session:
+        result = await session.execute(select(RunModel).where(RunModel.id == run_id))
+        run_model = result.scalar_one()
+        run_model.token_usage_by_model = None  # no per-model data
+        run_model.total_tokens_read = 200_000
+        run_model.total_tokens_write = 80_000
+        run_model.total_tokens_cache = 10_000
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}")
+    assert response.status_code == 200  # no crash
+    body = response.json()
+
+    assert body["token_usage_by_model"] == []
+
+    # Legacy fallback: estimated_cost_usd should be a non-negative number (not None)
+    cost = body["estimated_cost_usd"]
+    assert cost is not None
+    assert cost >= 0.0
+
+
+async def test_get_run_estimated_cost_equals_sum_of_per_model_costs(
+    client: AsyncClient,
+) -> None:
+    """R8: estimated_cost_usd equals the sum of per-model total_cost_usd values."""
+    data = await _create_run(client)
+    run_id = data["id"]
+
+    usage_records = [
+        {
+            "model": "claude-sonnet-4-6",
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "input_tokens": 1_000_000,
+            "output_tokens": 100_000,
+            "cost_per_m_cache_read": 0.30,
+            "cost_per_m_cache_creation": 3.75,
+            "cost_per_m_input": 3.00,
+            "cost_per_m_output": 15.00,
+        },
+        {
+            "model": "claude-haiku-4-5",
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
+            "input_tokens": 500_000,
+            "output_tokens": 50_000,
+            "cost_per_m_cache_read": 0.08,
+            "cost_per_m_cache_creation": 1.00,
+            "cost_per_m_input": 0.80,
+            "cost_per_m_output": 4.00,
+        },
+    ]
+    await _inject_run_token_usage(client, run_id, usage_records)
+
+    response = await client.get(f"/api/runs/{run_id}")
+    assert response.status_code == 200
+    body = response.json()
+
+    usage_list = body["token_usage_by_model"]
+    assert len(usage_list) == 2
+
+    expected_total = sum(entry["total_cost_usd"] for entry in usage_list)
+    assert body["estimated_cost_usd"] == pytest.approx(expected_total, rel=1e-5)
+    assert body["cost_disclaimer"] == "Per-model cost from embedded rates."
+
+
 # --- Agent error handler tests ---
 
 
