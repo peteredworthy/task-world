@@ -1,5 +1,6 @@
 """Integration tests for WorktreeManager."""
 
+import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -11,42 +12,16 @@ from orchestrator.git.worktree import WorktreeManager
 
 
 @pytest.fixture
-def git_repo(tmp_path: Path) -> tuple[Path, Path]:
-    """Create a temporary git repository and worktrees directory for testing.
+def git_repo(tmp_path: Path, _base_repo: Path) -> tuple[Path, Path]:
+    """Copy the session-scoped base repo for a test-isolated repository.
 
     Returns:
         Tuple of (repo_path, worktrees_dir)
     """
     repo = tmp_path / "repo"
     worktrees = tmp_path / "worktrees"
-    repo.mkdir()
     worktrees.mkdir()
-
-    # Initialize git repo
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@example.com"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-
-    # Create initial commit
-    (repo / "README.md").write_text("# Test Repo\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-
+    shutil.copytree(str(_base_repo), str(repo))
     return repo, worktrees
 
 
