@@ -1,6 +1,7 @@
 """Integration tests for CLI repo commands."""
 
 import json
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -25,36 +26,10 @@ def repos_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def sample_repo(repos_dir: Path) -> Path:
-    """Create a sample git repository."""
+def sample_repo(repos_dir: Path, _base_repo: Path) -> Path:
+    """Create a sample git repository with feature branches."""
     repo = repos_dir / "sample-project"
-    repo.mkdir()
-
-    # Initialize git repo
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@example.com"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-
-    # Create initial commit on main branch
-    readme = repo / "README.md"
-    readme.write_text("# Sample Project")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
+    shutil.copytree(str(_base_repo), str(repo))
 
     # Create additional branches
     subprocess.run(
