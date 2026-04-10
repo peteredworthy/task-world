@@ -1,5 +1,6 @@
 """Shared test fixtures and configuration."""
 
+import multiprocessing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -11,6 +12,18 @@ from orchestrator.workflow import WorkflowEvent
 # Load .env before test collection so that skipif conditions
 # (e.g. os.getenv("OPENAI_API_KEY")) see the values.
 load_dotenv()
+
+
+def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
+    """Return optimal worker count for this machine.
+
+    pytest-xdist's -n auto uses cpu_count() workers, which on a 10-CPU
+    machine spawns 10 workers + 1 controller = 11 processes — causing CPU
+    over-subscription and ~1.5s overhead from context switching.
+    Using cpu_count - 2 keeps one CPU free for the controller and OS,
+    improving throughput by ~1.5s on a 10-CPU M1 Mac.
+    """
+    return max(1, multiprocessing.cpu_count() - 2)
 
 
 @pytest.fixture(autouse=True)
