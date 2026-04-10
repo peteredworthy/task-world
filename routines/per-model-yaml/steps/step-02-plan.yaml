@@ -1,0 +1,270 @@
+id: "S-02"
+title: "DB Migration and Persistence"
+step_context: |
+  Persist the new token_usage_by_model fields to the database via Alembic migration
+  and ORM changes. After this step, per-model token data can be stored and retrieved
+  from the database.
+
+  Prerequisites: Step 01 complete — ModelTokenUsage class exists in state/models.py,
+  token_usage_by_model fields on Attempt and Run domain models.
+
+  Key constraints:
+  - Use Alembic migrations only — never rm orchestrator.db or use create_all
+  - server_default='[]' on both new columns so existing rows get empty arrays
+  - Corrupt JSON in columns must be handled gracefully (return empty list)
+  - All existing tests must continue to pass after each task
+
+tasks:
+  - id: "T-01"
+    title: "Add token_usage_by_model JSON columns to ORM models"
+    context_from:
+      - artifact: "docs/per-model-yaml/ctx/step-02-plan-architecture-context.md"
+        as: "arch"
+        required: false
+      - artifact: "docs/per-model-yaml/ctx/step-02-plan-code-context.md"
+        as: "code_context"
+        required: false
+    task_context: |
+      Add token_usage_by_model = Column(JSON, default=list) to both AttemptModel
+      and RunModel in src/orchestrator/db/orm/models.py.
+
+      File to modify: src/orchestrator/db/orm/models.py
+        - AttemptModel: add column near other JSON/metadata columns
+        - RunModel: add column near other aggregate columns
+
+      The ORM column definition:
+          token_usage_by_model = Column(JSON, default=list)
+
+      Note: the server_default will be set in the Alembic migration (T-02); the
+      ORM default=list handles in-memory object creation.
+
+      Do NOT modify any other files in this task. Run existing tests to confirm
+      no regressions before marking done.
+    requirements:
+      - id: "R1"
+        desc: "AttemptModel has token_usage_by_model = Column(JSON, default=list) in src/orchestrator/db/orm/models.py"
+        priority: critical
+      - id: "R2"
+        desc: "RunModel has token_usage_by_model = Column(JSON, default=list) in src/orchestrator/db/orm/models.py"
+        priority: critical
+      - id: "R3"
+        desc: "All existing tests pass with no regressions"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "attempt_model_column"
+          cmd: "test $(grep -c 'token_usage_by_model' src/orchestrator/db/orm/models.py 2>/dev/null || echo 0) -ge 2"
+          must: true
+        - id: "orm_imports_correctly"
+          cmd: "uv run python -c \"from orchestrator.db.orm.models import AttemptModel, RunModel; assert hasattr(AttemptModel, 'token_usage_by_model'); assert hasattr(RunModel, 'token_usage_by_model'); print('ORM columns verified')\""
+          must: true
+        - id: "tests_pass"
+          cmd: "uv run pytest tests/unit/ -x -q --tb=short"
+          must: true
+      tail_lines: 10
+    retry:
+      max_attempts: 2
+
+  - id: "T-02"
+    title: "Create Alembic migration for token_usage_by_model columns"
+    context_from:
+      - artifact: "docs/per-model-yaml/ctx/step-02-plan-architecture-context.md"
+        as: "arch"
+        required: false
+    task_context: |
+      Create an Alembic migration file in src/orchestrator/db/migrations/versions/
+      that adds token_usage_by_model JSON columns to both attempts and runs tables.
+
+      Migration directory: src/orchestrator/db/migrations/versions/
+      (NOT alembic/versions/ — use the orchestrator's own migrations path)
+
+      Migration operations:
+          op.add_column('attempts', sa.Column('token_usage_by_model', sa.JSON(),
+                        server_default='[]', nullable=True))
+          op.add_column('runs', sa.Column('token_usage_by_model', sa.JSON(),
+                        server_default='[]', nullable=True))
+
+      Downgrade must drop both columns:
+          op.drop_column('attempts', 'token_usage_by_model')
+          op.drop_column('runs', 'token_usage_by_model')
+
+      The migration revises the most recent migration in the chain. Check existing
+      migration files to find the current head revision ID.
+
+      Generate a short hex revision ID (e.g. p1a2b3c4d5e6). The migration filename
+      should follow the existing pattern (e.g. p1a2b3c4d5e6_add_token_usage_by_model.py).
+
+      After creating the file, verify it applies cleanly with:
+          uv run alembic -c src/orchestrator/db/migrations/alembic.ini upgrade head
+    requirements:
+      - id: "R4"
+        desc: "Alembic migration file exists in src/orchestrator/db/migrations/versions/ adding token_usage_by_model to attempts and runs tables"
+        priority: critical
+      - id: "R5"
+        desc: "Migration applies cleanly: uv run alembic upgrade head succeeds"
+        priority: critical
+      - id: "R6"
+        desc: "Migration rolls back cleanly: uv run alembic downgrade -1 then upgrade head round-trips"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "migration_file_exists"
+          cmd: "ls src/orchestrator/db/migrations/versions/*token_usage_by_model*.py 2>/dev/null && echo 'Migration file found'"
+          must: true
+        - id: "migration_has_attempts"
+          cmd: "grep -r \"add_column.'attempts'.*token_usage_by_model\" src/orchestrator/db/migrations/versions/ && echo 'Migration covers attempts table'"
+          must: true
+        - id: "migration_has_runs"
+          cmd: "grep -r \"add_column.'runs'.*token_usage_by_model\" src/orchestrator/db/migrations/versions/ && echo 'Migration covers runs table'"
+          must: true
+        - id: "alembic_upgrade"
+          cmd: "uv run alembic -c src/orchestrator/db/migrations/alembic.ini upgrade head"
+          must: true
+      tail_lines: 15
+    retry:
+      max_attempts: 2
+
+  - id: "T-03"
+    title: "Update repository serialization and deserialization"
+    context_from:
+      - artifact: "docs/per-model-yaml/ctx/step-02-plan-code-context.md"
+        as: "code_context"
+        required: false
+      - artifact: "docs/per-model-yaml/ctx/step-02-plan-architecture-context.md"
+        as: "arch"
+        required: false
+    task_context: |
+      Update src/orchestrator/db/access/repositories.py so that token_usage_by_model
+      is serialized when writing and deserialized when reading.
+
+      File to modify: src/orchestrator/db/access/repositories.py
+
+      Key methods to update:
+
+      1. _to_model() (Run → RunModel): serialize run.token_usage_by_model
+         - Convert list[ModelTokenUsage] → list of dicts via .model_dump(mode="json")
+         - Store None (not []) when list is empty (consistent with nullable column)
+
+      2. _to_domain() (RunModel → Run): deserialize run.token_usage_by_model
+         - Convert JSON list of dicts → list[ModelTokenUsage]
+         - Handle corrupt/invalid items gracefully with try/except per item
+         - Return empty list if column is None
+
+      3. For Attempt serialization/deserialization (within update_latest_attempt
+         and attempt reading): apply the same pattern for attempt.token_usage_by_model.
+
+      Import: from orchestrator.state.models import ModelTokenUsage
+
+      Do NOT modify migration files or ORM models in this task.
+
+      Run the full test suite after changes to confirm no regressions.
+    requirements:
+      - id: "R7"
+        desc: "Run._to_model() serializes token_usage_by_model as JSON list of dicts (None when empty)"
+        priority: critical
+      - id: "R8"
+        desc: "_to_domain() deserializes JSON back to list[ModelTokenUsage], handles corrupt JSON gracefully"
+        priority: critical
+      - id: "R9"
+        desc: "Attempt serialization and deserialization updated consistently with Run"
+        priority: critical
+      - id: "R10"
+        desc: "All existing tests pass with no regressions"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "repo_has_serialization"
+          cmd: "grep -q 'token_usage_by_model' src/orchestrator/db/access/repositories.py && echo 'Repository updated'"
+          must: true
+        - id: "repo_uses_model_dump"
+          cmd: "grep -q 'model_dump\\|ModelTokenUsage' src/orchestrator/db/access/repositories.py && echo 'Serialization uses model_dump or ModelTokenUsage'"
+          must: true
+        - id: "unit_tests_pass"
+          cmd: "uv run pytest tests/unit/ -x -q --tb=short"
+          must: true
+      tail_lines: 10
+    retry:
+      max_attempts: 2
+
+  - id: "T-04"
+    title: "Write integration test for round-trip serialization"
+    context_from:
+      - artifact: "docs/per-model-yaml/ctx/step-02-plan-code-context.md"
+        as: "code_context"
+        required: false
+    task_context: |
+      Write an integration test that verifies token_usage_by_model round-trips
+      correctly through the database.
+
+      Test file to create (or extend): tests/integration/test_token_usage_persistence.py
+
+      Test pattern (follow tests/integration/test_api_full_lifecycle.py):
+      - Uses in-memory SQLite with create_app(settings=...) fixture
+      - AsyncClient against the in-memory FastAPI app
+      - No mocking of DB; uses StaticPool
+
+      Test scenarios to cover:
+      1. Round-trip: create a run, set token_usage_by_model with populated
+         ModelTokenUsage entries (multiple models), persist, read back via API,
+         verify all fields preserved (model name, token counts, cost rates).
+
+      2. Empty list default: create a run without token_usage_by_model, read back,
+         verify field is present and is an empty list (not None, not missing).
+
+      3. Corrupt JSON handling: if the column contains invalid data, reading back
+         should return empty list without raising an exception.
+
+      Use the existing fixture pattern from test_api_full_lifecycle.py for
+      client_and_drain / client setup. Check that the API response includes
+      token_usage_by_model in the run and attempt schemas.
+
+      Run the new test file and confirm all tests pass.
+    requirements:
+      - id: "R11"
+        desc: "Integration test exists covering round-trip serialization of populated token_usage_by_model"
+        priority: critical
+      - id: "R12"
+        desc: "Integration test covers empty list default (no token data)"
+        priority: expected
+      - id: "R13"
+        desc: "New integration tests pass alongside all existing tests"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "test_file_exists"
+          cmd: "test -f tests/integration/test_token_usage_persistence.py && echo 'Test file exists'"
+          must: true
+        - id: "test_has_round_trip"
+          cmd: "grep -q 'token_usage_by_model' tests/integration/test_token_usage_persistence.py && echo 'Test references token_usage_by_model'"
+          must: true
+        - id: "integration_tests_pass"
+          cmd: "uv run pytest tests/integration/test_token_usage_persistence.py -v --tb=short"
+          must: true
+      tail_lines: 20
+    verifier:
+      rubric:
+        - id: "R11"
+          text: |
+            R11 — A: test creates a run with multiple ModelTokenUsage entries (covering at least
+            two models), persists it, reads it back via the API, and asserts each field value
+            (model name, all token counts, all cost rate fields) matches the original.
+            B: test exists but only checks field presence, not individual field values.
+            F: test file missing or test does not use the DB at all (pure unit test).
+        - id: "R12"
+          text: |
+            R12 — A: test verifies that a run created without token data returns
+            token_usage_by_model as an empty list [] in the API response.
+            B: test exists but only checks for absence of errors, not the actual list value.
+            F: test missing or not run.
+        - id: "R13"
+          text: |
+            R13 — A: all existing backend tests pass with no regressions; new test file
+            passes fully.
+            B: one pre-existing test flaky (not caused by this change) but all new tests pass.
+            F: any test failure attributable to the changes in T-01, T-02, or T-03.
+      submission_template:
+        grade_scale: [A, B, C, D, F]
+        require_reason_if_below: A
+        require_remediation_if_below: B
+    retry:
+      max_attempts: 2
