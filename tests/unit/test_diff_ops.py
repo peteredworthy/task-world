@@ -1,5 +1,6 @@
 """Unit tests for diff_ops functions using real git repos (no mocking)."""
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -33,12 +34,9 @@ def _git(args: list[str], cwd: Path) -> str:
     return result.stdout.strip()
 
 
-def _setup_repo(path: Path) -> None:
-    """Initialize a bare git repo with deterministic author config."""
-    path.mkdir(parents=True, exist_ok=True)
-    _git(["init"], path)
-    _git(["config", "user.email", "test@example.com"], path)
-    _git(["config", "user.name", "Test User"], path)
+def _setup_repo(path: Path, base_repo: Path) -> None:
+    """Copy the session-scoped base repo to *path* as a fast git repo starting point."""
+    shutil.copytree(str(base_repo), str(path))
 
 
 def _commit(path: Path, message: str) -> str:
@@ -54,7 +52,7 @@ def _commit(path: Path, message: str) -> str:
 
 
 @pytest.fixture
-def simple_repo(tmp_path: Path) -> dict[str, str | Path]:
+def simple_repo(tmp_path: Path, _unit_base_repo: Path) -> dict[str, str | Path]:
     """A git repo with three commits:
 
     initial → add_commit → modify_commit
@@ -66,11 +64,10 @@ def simple_repo(tmp_path: Path) -> dict[str, str | Path]:
         modify_sha    – SHA after modifying file.py
     """
     repo = tmp_path / "repo"
-    _setup_repo(repo)
+    _setup_repo(repo, _unit_base_repo)
 
-    # Commit 1 – initial
-    (repo / "README.md").write_text("# Test Repo\n")
-    initial_sha = _commit(repo, "Initial commit")
+    # Commit 1 – the base repo already has the initial commit (README.md)
+    initial_sha = _git(["rev-parse", "HEAD"], repo)
 
     # Commit 2 – add a Python source file
     (repo / "file.py").write_text("def hello():\n    return 'hello'\n")
@@ -89,7 +86,7 @@ def simple_repo(tmp_path: Path) -> dict[str, str | Path]:
 
 
 @pytest.fixture
-def extended_repo(tmp_path: Path) -> dict[str, str | Path]:
+def extended_repo(tmp_path: Path, _unit_base_repo: Path) -> dict[str, str | Path]:
     """A git repo exercising added, modified, deleted, renamed, and binary files.
 
     Commits:
@@ -104,7 +101,7 @@ def extended_repo(tmp_path: Path) -> dict[str, str | Path]:
     deleted_sha, renamed_sha, binary_sha.
     """
     repo = tmp_path / "repo"
-    _setup_repo(repo)
+    _setup_repo(repo, _unit_base_repo)
 
     (repo / "base.txt").write_text("base content\n")
     base_sha = _commit(repo, "Initial: add base.txt")
@@ -365,7 +362,7 @@ class TestGetCommitLog:
         assert c.sha == simple_repo["add_sha"]
         assert len(c.short_sha) == 7
         assert c.message == "Add file.py"
-        assert c.author == "Test User"
+        assert c.author == "Test"
         assert c.timestamp.tzinfo is not None  # timezone-aware
 
     async def test_empty_range_returns_empty_list(self, simple_repo: dict) -> None:

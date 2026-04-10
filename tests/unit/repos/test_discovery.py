@@ -1,5 +1,6 @@
 """Tests for repos discovery module."""
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -24,35 +25,13 @@ def repos_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def sample_repo(repos_dir: Path) -> Path:
-    """Create a sample git repository."""
+def sample_repo(repos_dir: Path, _unit_base_repo: Path) -> Path:
+    """Create a sample git repository using the session-scoped base repo.
+
+    Uses shutil.copytree instead of git init + config + commit (saves ~150ms).
+    """
     repo_path = repos_dir / "sample-repo"
-    repo_path.mkdir()
-
-    # Initialize git repo
-    subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=repo_path,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=repo_path,
-        check=True,
-        capture_output=True,
-    )
-
-    # Create initial commit
-    (repo_path / "README.md").write_text("# Sample Repo")
-    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=repo_path,
-        check=True,
-        capture_output=True,
-    )
+    shutil.copytree(str(_unit_base_repo), str(repo_path))
 
     # Create feature branch
     subprocess.run(
