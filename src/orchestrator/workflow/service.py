@@ -1108,7 +1108,13 @@ class WorkflowService:
 
         # Apply targeted updates: task status, step completed, run status/pause.
         task_model.status = new_status.value
-        task_model.step.completed = True
+        # Only mark step complete when we reach a terminal status.
+        # VERIFYING is not terminal — the executor must still pick up this task
+        # and run the verifier agent. Prematurely setting completed=True here
+        # caused the executor's task-discovery loop to skip VERIFYING fan-out
+        # parents entirely, silently bypassing verification.
+        if new_status != TaskStatus.VERIFYING:
+            task_model.step.completed = True
         if pause_run:
             task_model.step.run.status = RunStatus.PAUSED.value
             task_model.step.run.pause_reason = pause_reason

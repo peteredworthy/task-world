@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import distinct, select
+from sqlalchemy import distinct, select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
@@ -790,6 +790,8 @@ class RunRepository:
         are tracked via append-only events rather than in-place updates.
         """
         task_model = await self.get_task_model(task_id)
+        # FK column — always loaded with the step row, no lazy traversal needed.
+        run_id: str = task_model.step.run_id
         attempt = task_model.attempts[-1] if task_model.attempts else None
         if attempt is not None and attempt.outcome is not None:
             # Attempt is already completed (outcome set). Guard against in-place mutation.
@@ -836,11 +838,22 @@ class RunRepository:
                 attempt.tokens_cache += metrics.tokens_cache
                 attempt.duration_ms += metrics.duration_ms
                 attempt.num_actions += metrics.num_actions
-                task_model.step.run.total_tokens_read += metrics.tokens_read
-                task_model.step.run.total_tokens_write += metrics.tokens_write
-                task_model.step.run.total_tokens_cache += metrics.tokens_cache
-                task_model.step.run.total_duration_ms += metrics.duration_ms
-                task_model.step.run.total_num_actions += metrics.num_actions
+                # Run-level scalar totals: direct SQL UPDATE by run_id — no ORM
+                # graph traversal. Walking task_model.step.run in an async session
+                # raises DetachedInstanceError which was silently swallowed, leaving
+                # all run-level token totals at zero.
+                if run_id:
+                    await self._session.execute(
+                        sql_update(RunModel)
+                        .where(RunModel.id == run_id)
+                        .values(
+                            total_tokens_read=RunModel.total_tokens_read + metrics.tokens_read,
+                            total_tokens_write=RunModel.total_tokens_write + metrics.tokens_write,
+                            total_tokens_cache=RunModel.total_tokens_cache + metrics.tokens_cache,
+                            total_duration_ms=RunModel.total_duration_ms + metrics.duration_ms,
+                            total_num_actions=RunModel.total_num_actions + metrics.num_actions,
+                        )
+                    )
             if token_usage_by_model:
                 # Accumulate into attempt-level per-model breakdown (builder + verifier both contribute)
                 existing_att: list[dict[str, Any]] = attempt.token_usage_by_model or []
@@ -855,20 +868,31 @@ class RunRepository:
                         entry["input_tokens"] += u.input_tokens
                         entry["output_tokens"] += u.output_tokens
                 attempt.token_usage_by_model = list(att_usage.values())
-                # Accumulate into run-level per-model breakdown
-                run_model = task_model.step.run
-                existing: list[dict[str, Any]] = run_model.token_usage_by_model or []
-                run_usage: dict[str, dict[str, Any]] = {e["model"]: dict(e) for e in existing}
-                for u in token_usage_by_model:
-                    if u.model not in run_usage:
-                        run_usage[u.model] = u.model_dump(mode="json")
-                    else:
-                        entry = run_usage[u.model]
-                        entry["cache_read_tokens"] += u.cache_read_tokens
-                        entry["cache_creation_tokens"] += u.cache_creation_tokens
-                        entry["input_tokens"] += u.input_tokens
-                        entry["output_tokens"] += u.output_tokens
-                run_model.token_usage_by_model = list(run_usage.values())
+                # Run-level per-model JSON: SELECT with lock → merge → UPDATE.
+                # Avoids ORM graph traversal; lock prevents lost-update races
+                # between concurrent fan-out children.
+                if run_id:
+                    row = await self._session.execute(
+                        select(RunModel.token_usage_by_model)
+                        .where(RunModel.id == run_id)
+                        .with_for_update()
+                    )
+                    existing: list[dict[str, Any]] = row.scalar_one_or_none() or []
+                    run_usage: dict[str, dict[str, Any]] = {e["model"]: dict(e) for e in existing}
+                    for u in token_usage_by_model:
+                        if u.model not in run_usage:
+                            run_usage[u.model] = u.model_dump(mode="json")
+                        else:
+                            entry = run_usage[u.model]
+                            entry["cache_read_tokens"] += u.cache_read_tokens
+                            entry["cache_creation_tokens"] += u.cache_creation_tokens
+                            entry["input_tokens"] += u.input_tokens
+                            entry["output_tokens"] += u.output_tokens
+                    await self._session.execute(
+                        sql_update(RunModel)
+                        .where(RunModel.id == run_id)
+                        .values(token_usage_by_model=list(run_usage.values()))
+                    )
             if outcome is not _UNSET:
                 attempt.outcome = outcome
             if completed_at is not _UNSET:
