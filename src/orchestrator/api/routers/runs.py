@@ -198,10 +198,12 @@ def _run_to_response(run: Run) -> RunResponse:
     cost_disclaimer = None
 
     if token_usage_schemas:
-        # Accurate per-model cost from embedded rates
-        estimated_cost_usd = round(sum(u.total_cost_usd for u in token_usage_schemas), 6)
-        cost_disclaimer = "Per-model cost from embedded rates."
-    else:
+        # Accurate per-model cost from embedded rates (only if rates are populated)
+        computed_cost = round(sum(u.total_cost_usd for u in token_usage_schemas), 6)
+        if computed_cost > 0:
+            estimated_cost_usd = computed_cost
+            cost_disclaimer = "Per-model cost from embedded rates."
+    if estimated_cost_usd is None:
         # Legacy fallback for old runs without per-model data
         actual_cost_usd = 0.0
         model_hint: str | None = None
