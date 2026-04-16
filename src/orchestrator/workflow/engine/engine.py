@@ -553,6 +553,17 @@ class WorkflowEngine:
             except Exception:
                 pass
 
+        # If the run is already FAILED (because this task's failure triggered fail-fast),
+        # temporarily restore ACTIVE so check_step_progression and check_run_completion
+        # can re-evaluate correctly. check_run_completion will set it back to FAILED if
+        # other failures remain, or leave it ACTIVE so the run can continue.
+        old_run_status = run.status
+        reactivated = False
+        if run.status == RunStatus.FAILED:
+            run.status = RunStatus.ACTIVE
+            run.completed_at = None
+            reactivated = True
+
         step_changed = check_step_progression(
             run,
             routine_config=routine_config,
@@ -576,18 +587,28 @@ class WorkflowEngine:
                         )
                     )
 
-            old_run_status = run.status
-            new_run_status = check_run_completion(run, self._clock.now())
-            if new_run_status is not None:
-                self._emitter.emit(
-                    RunStatusChanged(
-                        timestamp=self._clock.now(),
-                        run_id=run_id,
-                        event_type="run_status_changed",
-                        old_status=old_run_status,
-                        new_status=new_run_status,
-                    )
+        new_run_status = check_run_completion(run, self._clock.now())
+        if new_run_status is not None:
+            self._emitter.emit(
+                RunStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="run_status_changed",
+                    old_status=old_run_status,
+                    new_status=new_run_status,
                 )
+            )
+        elif reactivated and run.status == RunStatus.ACTIVE:
+            # Run was re-activated and has more steps to go — emit the status change
+            self._emitter.emit(
+                RunStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="run_status_changed",
+                    old_status=old_run_status,
+                    new_status=RunStatus.ACTIVE,
+                )
+            )
 
         self._state.update_run(run)
         return result

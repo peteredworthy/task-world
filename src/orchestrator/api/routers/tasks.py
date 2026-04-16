@@ -14,6 +14,7 @@ from orchestrator.api.deps import (
     get_current_user,
     get_routine_dirs,
     get_run_repository,
+    get_runner_executor,
     get_session,
     get_signal_transport,
     get_summary_caches,
@@ -63,6 +64,7 @@ from orchestrator.workflow import (
     SignalTransport,
     WorkflowSignal,
 )
+from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow.service import find_task_config
 
@@ -932,11 +934,13 @@ async def force_accept_task(
     task_id: str,
     request: ForceAcceptTaskRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
     user: Annotated[str, Depends(get_current_user)],
 ) -> TransitionResponse:
     """Override verification failure and force-complete a task.
 
     Works from FAILED, BUILDING, or VERIFYING states. Bypasses grade evaluation.
+    Re-spawns the executor if the run was reactivated from FAILED state.
     """
     try:
         result = await service.force_accept_task(run_id, task_id, user, request.comment)
@@ -944,6 +948,17 @@ async def force_accept_task(
         raise HTTPException(status_code=409, detail=str(e))
     except TaskNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+    # If the run was reactivated (FAILED -> ACTIVE), re-spawn the executor
+    if result.success:
+        run = await service.get_run(run_id)
+        if (
+            run.status == RunStatus.ACTIVE
+            and run.agent_type is not None
+            and not executor.is_running(run_id)
+        ):
+            executor.spawn_for_run(run_id, run.agent_type, run.agent_config)
+
     return TransitionResponse(
         success=result.success,
         new_status=result.new_status.value,
