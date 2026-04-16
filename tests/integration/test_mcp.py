@@ -1,6 +1,7 @@
 """Integration tests for the MCP layer: server, SSE transport, and tool handlers."""
 
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import AsyncGenerator
@@ -653,14 +654,19 @@ async def test_list_branches(
     repo = repos_dir / "myrepo"
     shutil.copytree(str(_base_repo), str(repo))
 
+    _git_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
     # Create additional branches
     subprocess.run(
         ["git", "checkout", "-b", "feature/auth"],
         cwd=repo,
         check=True,
         capture_output=True,
+        env=_git_env,
     )
-    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "checkout", "main"], cwd=repo, check=True, capture_output=True, env=_git_env
+    )
 
     result = await handler_with_repos.handle(
         "orchestrator_list_branches",
@@ -680,6 +686,8 @@ async def test_list_branches_with_pattern(
     repo = repos_dir / "myrepo"
     shutil.copytree(str(_base_repo), str(repo))
 
+    _git_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
     # Create multiple branches
     for name in ["feature/auth", "feature/api", "bugfix/login"]:
         subprocess.run(
@@ -687,8 +695,11 @@ async def test_list_branches_with_pattern(
             cwd=repo,
             check=True,
             capture_output=True,
+            env=_git_env,
         )
-    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "checkout", "main"], cwd=repo, check=True, capture_output=True, env=_git_env
+    )
 
     result = await handler_with_repos.handle(
         "orchestrator_list_branches",

@@ -1,5 +1,6 @@
 """Integration tests for WorktreeManager."""
 
+import os
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,16 @@ import pytest
 
 from orchestrator.git.errors import GitCommandError, WorktreeExistsError, WorktreeNotFoundError
 from orchestrator.git.worktree import WorktreeManager
+
+_GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _git(
+    args: list[str], cwd: Path, check: bool = True, text: bool = False
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git"] + args, cwd=cwd, check=check, capture_output=True, text=text, env=_GIT_ENV
+    )
 
 
 @pytest.fixture
@@ -44,12 +55,7 @@ def test_create_worktree(git_repo: tuple[Path, Path]) -> None:
     assert (wt.path / "README.md").exists()
 
     # Verify branch was created
-    result = subprocess.run(
-        ["git", "branch", "--list", wt.branch],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-    )
+    result = _git(["branch", "--list", wt.branch], cwd=repo, text=True)
     assert wt.branch in result.stdout
 
 
@@ -58,38 +64,16 @@ def test_create_worktree_custom_base_branch(git_repo: tuple[Path, Path]) -> None
     repo, worktrees = git_repo
 
     # Create a feature branch
-    subprocess.run(
-        ["git", "checkout", "-b", "feature"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
+    _git(["checkout", "-b", "feature"], cwd=repo)
     (repo / "feature.txt").write_text("feature file\n")
-    subprocess.run(["git", "add", "."], cwd=repo, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Add feature"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
+    _git(["add", "."], cwd=repo)
+    _git(["commit", "-m", "Add feature"], cwd=repo)
 
     # Get feature commit SHA
-    result = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    feature_commit = result.stdout.strip()
+    feature_commit = _git(["rev-parse", "HEAD"], cwd=repo, text=True).stdout.strip()
 
     # Switch back to main
-    subprocess.run(
-        ["git", "checkout", "main"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
+    _git(["checkout", "main"], cwd=repo)
 
     # Create worktree from feature branch
     manager = WorktreeManager(repo, worktrees)
@@ -153,13 +137,8 @@ def test_worktree_isolation(git_repo: tuple[Path, Path]) -> None:
 
     # Make changes in worktree
     (wt.path / "worktree-file.txt").write_text("worktree content\n")
-    subprocess.run(["git", "add", "."], cwd=wt.path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Worktree changes"],
-        cwd=wt.path,
-        check=True,
-        capture_output=True,
-    )
+    _git(["add", "."], cwd=wt.path)
+    _git(["commit", "-m", "Worktree changes"], cwd=wt.path)
 
     # Verify main repo is unchanged
     assert not (repo / "worktree-file.txt").exists()
@@ -273,19 +252,9 @@ def test_list_worktrees_filters_non_orchestrator(git_repo: tuple[Path, Path]) ->
 
     # Create non-orchestrator worktree manually
     manual_path = worktrees_dir / "manual"
-    subprocess.run(
-        [
-            "git",
-            "worktree",
-            "add",
-            "-b",
-            "manual-branch",
-            str(manual_path),
-            "main",
-        ],
+    _git(
+        ["worktree", "add", "-b", "manual-branch", str(manual_path), "main"],
         cwd=repo,
-        check=True,
-        capture_output=True,
     )
 
     # List worktrees
@@ -431,12 +400,7 @@ def test_concurrent_worktrees_different_branches(git_repo: tuple[Path, Path]) ->
     assert wt1.branch != wt3.branch
 
     # Verify all branches exist
-    result = subprocess.run(
-        ["git", "branch", "--list", "orchestrator/*"],
-        cwd=repo,
-        capture_output=True,
-        text=True,
-    )
+    result = _git(["branch", "--list", "orchestrator/*"], cwd=repo, text=True)
     assert "orchestrator/run-concurrent-1" in result.stdout
     assert "orchestrator/run-concurrent-2" in result.stdout
     assert "orchestrator/run-concurrent-3" in result.stdout

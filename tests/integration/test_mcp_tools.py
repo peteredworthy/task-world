@@ -1,5 +1,6 @@
 """Integration tests for MCP ToolHandler with real WorkflowService."""
 
+import os
 import subprocess
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -219,31 +220,26 @@ async def test_full_workflow_via_tools(handler: ToolHandler, service: WorkflowSe
 
 # --- Repo tool tests ---
 
+_GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def _git(args: list[str], cwd: Path) -> str:
+    """Run a git command, stripping GIT_* env vars to prevent test contamination."""
+    result = subprocess.run(
+        ["git"] + args, cwd=cwd, check=True, capture_output=True, text=True, env=_GIT_ENV
+    )
+    return result.stdout.strip()
+
 
 def _init_repo(path: Path) -> None:
     """Initialize a git repo with an initial commit."""
-    subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=path,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test"],
-        cwd=path,
-        check=True,
-        capture_output=True,
-    )
+    _git(["init"], cwd=path)
+    _git(["config", "user.email", "test@test.com"], cwd=path)
+    _git(["config", "user.name", "Test"], cwd=path)
     (path / "README.md").write_text("# Test\n")
-    subprocess.run(["git", "add", "."], cwd=path, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "Initial commit"],
-        cwd=path,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(["git", "branch", "-M", "main"], cwd=path, check=True, capture_output=True)
+    _git(["add", "."], cwd=path)
+    _git(["commit", "-m", "Initial commit"], cwd=path)
+    _git(["branch", "-M", "main"], cwd=path)
 
 
 @pytest.fixture
@@ -301,13 +297,8 @@ async def test_list_branches(handler_with_repos: ToolHandler, repos_dir: Path) -
     _init_repo(repo)
 
     # Create additional branches
-    subprocess.run(
-        ["git", "checkout", "-b", "feature/auth"],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+    _git(["checkout", "-b", "feature/auth"], cwd=repo)
+    _git(["checkout", "main"], cwd=repo)
 
     result = await handler_with_repos.handle(
         "orchestrator_list_branches",
@@ -328,13 +319,8 @@ async def test_list_branches_with_pattern(handler_with_repos: ToolHandler, repos
 
     # Create multiple branches
     for name in ["feature/auth", "feature/api", "bugfix/login"]:
-        subprocess.run(
-            ["git", "checkout", "-b", name],
-            cwd=repo,
-            check=True,
-            capture_output=True,
-        )
-    subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+        _git(["checkout", "-b", name], cwd=repo)
+    _git(["checkout", "main"], cwd=repo)
 
     result = await handler_with_repos.handle(
         "orchestrator_list_branches",

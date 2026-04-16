@@ -4,6 +4,7 @@ Tests use real git repositories in temporary directories.
 NO mocks.
 """
 
+import os
 import shutil
 import subprocess
 import tempfile
@@ -16,6 +17,8 @@ from orchestrator.config import (
     find_git_root,
     get_routine_version,
 )
+
+_GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 
 
 @pytest.fixture
@@ -33,12 +36,15 @@ def git_repo(tmp_path: Path, _unit_base_repo: Path) -> Path:
     routine_file = routines_dir / "test-routine.yaml"
     routine_file.write_text("name: test\nsteps: []\n")
 
-    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "."], cwd=repo_path, check=True, capture_output=True, env=_GIT_ENV
+    )
     subprocess.run(
         ["git", "commit", "-m", "Add test routine"],
         cwd=repo_path,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
 
     return repo_path
@@ -140,6 +146,7 @@ def test_get_routine_version_staged_but_uncommitted(git_repo: Path) -> None:
         cwd=git_repo,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
 
     with pytest.raises(ValueError, match="has no git history"):
@@ -162,12 +169,14 @@ def test_get_routine_version_multiple_commits(git_repo: Path) -> None:
         cwd=git_repo,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
     subprocess.run(
         ["git", "commit", "-m", "Add other file"],
         cwd=git_repo,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
 
     version2 = get_routine_version(routine_file)
@@ -180,12 +189,14 @@ def test_get_routine_version_multiple_commits(git_repo: Path) -> None:
         cwd=git_repo,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
     subprocess.run(
         ["git", "commit", "-m", "Update routine"],
         cwd=git_repo,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
 
     version3 = get_routine_version(routine_file)
@@ -205,12 +216,14 @@ def test_get_routine_version_nested_directory(git_repo: Path) -> None:
         cwd=git_repo,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
     subprocess.run(
         ["git", "commit", "-m", "Add nested routine"],
         cwd=git_repo,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
 
     version = get_routine_version(routine_file)
@@ -228,12 +241,15 @@ def test_get_routine_version_deleted_file(tmp_path: Path, _unit_base_repo: Path)
     # Create and commit a file
     routine_file = repo_path / "routine.yaml"
     routine_file.write_text("name: test\nsteps: []\n")
-    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "add", "."], cwd=repo_path, check=True, capture_output=True, env=_GIT_ENV
+    )
     subprocess.run(
         ["git", "commit", "-m", "Add routine"],
         cwd=repo_path,
         check=True,
         capture_output=True,
+        env=_GIT_ENV,
     )
 
     # Delete the file (but it still has git history)
