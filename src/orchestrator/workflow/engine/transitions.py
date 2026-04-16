@@ -386,6 +386,28 @@ def transition_after_verification(task: TaskState, now: datetime) -> TransitionR
     return TransitionResult(success=True, new_status=TaskStatus.BUILDING, grade_result=grade_result)
 
 
+def transition_force_accept(task: TaskState, now: datetime) -> TransitionResult:
+    """Force-accept a task, overriding failed verification.
+
+    Valid from: FAILED, BUILDING, VERIFYING.
+    Transitions directly to COMPLETED regardless of grades.
+    """
+    if task.status not in (TaskStatus.FAILED, TaskStatus.BUILDING, TaskStatus.VERIFYING):
+        return TransitionResult(
+            success=False,
+            new_status=task.status,
+            error=f"Cannot force-accept from {task.status.value}",
+        )
+
+    task.status = TaskStatus.COMPLETED
+    if task.attempts:
+        last = task.attempts[-1]
+        if last.completed_at is None:
+            last.completed_at = now
+        last.outcome = "passed"
+    return TransitionResult(success=True, new_status=TaskStatus.COMPLETED)
+
+
 # --- Step and Run completion (pure functions) ---
 
 _TERMINAL_TASK_STATUSES = {TaskStatus.COMPLETED, TaskStatus.FAILED}

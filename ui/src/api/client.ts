@@ -3,6 +3,7 @@ import type {
   AgentLogsResponse,
   AgentRunnerOption,
   ApproveTaskRequest,
+  ForceAcceptTaskRequest,
   ArchiveRoutineResponse,
   BranchStatusResponse,
   BranchCountResponse,
@@ -542,6 +543,13 @@ export const api = {
 
   rejectTask(runId: string, taskId: string, data: RejectTaskRequest): Promise<TransitionResponse> {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/reject', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  },
+
+  forceAcceptTask(runId: string, taskId: string, data: ForceAcceptTaskRequest): Promise<TransitionResponse> {
+    return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/force-accept', {
       method: 'POST',
       body: JSON.stringify(data),
     });

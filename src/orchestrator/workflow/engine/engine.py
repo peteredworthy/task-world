@@ -24,6 +24,7 @@ from orchestrator.workflow.engine.transitions import (
     check_run_completion,
     check_step_progression,
     transition_after_verification,
+    transition_force_accept,
     transition_to_building,
     transition_to_verifying,
 )
@@ -518,6 +519,77 @@ class WorkflowEngine:
             ):
                 self._lock_manager.release(task_id, agent_id)
 
+        return result
+
+    def force_accept(self, run_id: str, task_id: str) -> TransitionResult:
+        """Override failed verification and mark task as COMPLETED.
+
+        Bypasses grade evaluation. Handles step/run completion cascade.
+        """
+        run = self._state.get_run(run_id)
+        task = self._state.get_task(run_id, task_id)
+        old_status = task.status
+
+        result = transition_force_accept(task, self._clock.now())
+        if not result.success:
+            return result
+
+        self._emitter.emit(
+            TaskStatusChanged(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="task_status_changed",
+                task_id=task_id,
+                old_status=old_status,
+                new_status=result.new_status,
+            )
+        )
+
+        prev_step_index = run.current_step_index
+        routine_config = None
+        if run.routine_embedded is not None:
+            try:
+                routine_config = RoutineConfig.model_validate(run.routine_embedded)
+            except Exception:
+                pass
+
+        step_changed = check_step_progression(
+            run,
+            routine_config=routine_config,
+            clock=self._clock,
+            emitter=self._emitter,
+            worktree_path=None,
+            run_config=run.config,
+        )
+
+        if step_changed:
+            for i in range(prev_step_index, run.current_step_index + 1):
+                step = run.steps[i]
+                if step.completed:
+                    self._emitter.emit(
+                        StepCompleted(
+                            timestamp=self._clock.now(),
+                            run_id=run_id,
+                            event_type="step_completed",
+                            step_index=i,
+                            step_id=step.id,
+                        )
+                    )
+
+            old_run_status = run.status
+            new_run_status = check_run_completion(run, self._clock.now())
+            if new_run_status is not None:
+                self._emitter.emit(
+                    RunStatusChanged(
+                        timestamp=self._clock.now(),
+                        run_id=run_id,
+                        event_type="run_status_changed",
+                        old_status=old_run_status,
+                        new_status=new_run_status,
+                    )
+                )
+
+        self._state.update_run(run)
         return result
 
     def transition_backward(

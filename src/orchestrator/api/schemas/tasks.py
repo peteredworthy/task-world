@@ -224,3 +224,7 @@ class ApproveTaskRequest(ApiModel):
 
 class RejectTaskRequest(ApiModel):
     reason: str | None = None
+
+
+class ForceAcceptTaskRequest(ApiModel):
+    comment: str | None = None

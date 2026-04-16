@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useTask, useTaskPrompt } from '../../hooks/useApi';
 import { useClarificationHistory } from '../../hooks/useClarifications';
+import { useForceAcceptTask } from '../../hooks/useApproval';
 import { TaskStatusBadge } from '../StatusBadge';
 import { GradeBadge } from '../GradeBadge';
 import { Spinner } from '../Spinner';
@@ -728,6 +729,7 @@ export function TaskDetailCard({
   stepTasks,
 }: TaskDetailCardProps) {
   const [expanded, setExpanded] = useState(false);
+  const [showForceAcceptDialog, setShowForceAcceptDialog] = useState(false);
   const { data: detail, isLoading } = useTask(runId, expanded ? taskId : undefined);
   const { data: clarificationHistory, error: historyError } = useClarificationHistory(
     runId,
@@ -749,6 +751,7 @@ export function TaskDetailCard({
   const detailChildTasks = detail?.fan_out_children ?? [];
   const childTasks = detailChildTasks.length > 0 ? detailChildTasks : persistedChildTasks;
   const childTaskCount = childTasks.length;
+  const forceAccept = useForceAcceptTask(runId, taskId);
 
   return (
     <div className={`rounded-lg border ${COLLAPSIBLE_BORDER_CLASS} bg-bg-card overflow-hidden transition-colors`}>
@@ -806,6 +809,64 @@ export function TaskDetailCard({
           </svg>
         </div>
       </button>
+
+      {/* Force-accept override strip — shown for failed tasks */}
+      {status === 'failed' && (
+        <div className={`border-t ${COLLAPSIBLE_DIVIDER_CLASS} px-3 py-2 flex items-center justify-between bg-status-failed/5`}>
+          <span className="text-[11px] text-status-failed">Verification failed</span>
+          <button
+            type="button"
+            onClick={() => setShowForceAcceptDialog(true)}
+            className="text-[11px] px-2 py-1 rounded border border-status-failed/40 text-status-failed hover:bg-status-failed/10 transition-colors"
+          >
+            Accept &amp; continue
+          </button>
+        </div>
+      )}
+
+      {/* Force-accept warning dialog */}
+      {showForceAcceptDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowForceAcceptDialog(false)}>
+          <div
+            className="bg-bg-card border border-border rounded-lg shadow-xl p-5 max-w-sm w-full mx-4"
+            onClick={e => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-semibold text-text-primary mb-1">Accept task despite failed verification?</h3>
+            <p className="text-xs text-text-secondary mb-4">
+              This overrides the verification result and marks the task as completed. The run will continue to the next step.
+              Use this when the failure is expected or acceptable (e.g. tests not yet written).
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setShowForceAcceptDialog(false)}
+                className="text-xs px-3 py-1.5 rounded border border-border text-text-secondary hover:bg-bg-hover transition-colors"
+                disabled={forceAccept.isPending}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  forceAccept.mutate(
+                    { comment: 'Accepted despite failed verification' },
+                    { onSuccess: () => setShowForceAcceptDialog(false) },
+                  );
+                }}
+                disabled={forceAccept.isPending}
+                className="text-xs px-3 py-1.5 rounded bg-status-failed/20 border border-status-failed/40 text-status-failed hover:bg-status-failed/30 transition-colors disabled:opacity-50"
+              >
+                {forceAccept.isPending ? 'Accepting…' : 'Accept anyway'}
+              </button>
+            </div>
+            {forceAccept.isError && (
+              <p className="text-xs text-status-failed mt-2">
+                Failed: {forceAccept.error instanceof Error ? forceAccept.error.message : 'Unknown error'}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Expanded detail */}
       {expanded && (

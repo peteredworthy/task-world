@@ -2746,6 +2746,79 @@ class WorkflowService:
 
         return result
 
+    async def force_accept_task(
+        self,
+        run_id: str,
+        task_id: str,
+        accepted_by: str,
+        comment: str | None = None,
+    ) -> TransitionResult:
+        """Override verification failure and force-complete a task.
+
+        Works from FAILED, BUILDING, or VERIFYING states.
+        Bypasses grade evaluation and marks the task COMPLETED.
+        Handles step/run completion cascade via the engine.
+        Emits ApprovalDecision event with override flag in comment.
+        """
+        run = await self._repo.get(run_id)
+        task = self._find_task(run, task_id)
+        step = self._find_step_for_task(run, task_id)
+        old_status = task.status
+
+        engine, state, buffer = self._build_engine(run)
+        result = engine.force_accept(run_id, task_id)
+        if not result.success:
+            raise InvalidTransitionError(old_status.value, result.new_status.value)
+
+        updated_run = state.get_run(run_id)
+        await self._persist(state, run_id, buffer)
+
+        override_comment = f"[force-accepted by {accepted_by}]"
+        if comment:
+            override_comment += f" {comment}"
+        await self._event_emitter.emit(
+            ApprovalDecision(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="approval_decision",
+                task_id=task_id,
+                step_id=step.id,
+                approved=True,
+                comment=override_comment,
+                decided_by=accepted_by,
+            )
+        )
+
+        await self._session.commit()
+
+        # env_lifecycle hooks (same as complete_verification)
+        if (
+            self._env_lifecycle is not None
+            and updated_run.worktree_path
+            and updated_run.env_file_specs
+        ):
+            worktree_path = Path(updated_run.worktree_path)
+            await self._env_lifecycle.on_task_end(
+                run_id=run_id,
+                task_id=task_id,
+                worktree_path=worktree_path,
+            )
+            if updated_run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+                success = updated_run.status == RunStatus.COMPLETED
+                await self._env_lifecycle.on_run_end(
+                    run_id=run_id,
+                    repo_name=updated_run.repo_name,
+                    worktree_path=worktree_path,
+                    success=success,
+                )
+
+        if updated_run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+            worktree_manager = self._create_worktree_manager(updated_run)
+            if worktree_manager is not None:
+                handle_run_completion(updated_run, worktree_manager)
+
+        return result
+
     async def get_pending_actions(
         self,
         run_id: str,

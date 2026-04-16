@@ -24,6 +24,7 @@ from orchestrator.api.schemas.tasks import (
     ActionLogSchema,
     AgentLogsResponse,
     ApproveTaskRequest,
+    ForceAcceptTaskRequest,
     AttemptSchema,
     CallbackInstructions,
     ChecklistItemSchema,
@@ -918,6 +919,31 @@ async def reject_task(
 ) -> TransitionResponse:
     """Human rejects task verification."""
     result = await service.reject_task(run_id, task_id, user, request.reason)
+    return TransitionResponse(
+        success=result.success,
+        new_status=result.new_status.value,
+        error=result.error,
+    )
+
+
+@router.post("/{run_id}/tasks/{task_id}/force-accept", response_model=TransitionResponse)
+async def force_accept_task(
+    run_id: str,
+    task_id: str,
+    request: ForceAcceptTaskRequest,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    user: Annotated[str, Depends(get_current_user)],
+) -> TransitionResponse:
+    """Override verification failure and force-complete a task.
+
+    Works from FAILED, BUILDING, or VERIFYING states. Bypasses grade evaluation.
+    """
+    try:
+        result = await service.force_accept_task(run_id, task_id, user, request.comment)
+    except InvalidTransitionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except TaskNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     return TransitionResponse(
         success=result.success,
         new_status=result.new_status.value,

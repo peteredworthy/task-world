@@ -70,3 +70,7 @@ export interface ApproveTaskRequest {
 export interface RejectTaskRequest {
   reason?: string;
 }
+
+export interface ForceAcceptTaskRequest {
+  comment?: string;
+}

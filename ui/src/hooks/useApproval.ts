@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { ApproveTaskRequest, RejectTaskRequest } from '../types';
+import type { ApproveTaskRequest, ForceAcceptTaskRequest, RejectTaskRequest } from '../types';
 
 export function useApproveTask(runId: string, taskId: string) {
   const qc = useQueryClient();
@@ -18,6 +18,18 @@ export function useRejectTask(runId: string, taskId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: RejectTaskRequest) => api.rejectTask(runId, taskId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task', runId, taskId] });
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+      qc.invalidateQueries({ queryKey: ['pending-actions', runId] });
+    },
+  });
+}
+
+export function useForceAcceptTask(runId: string, taskId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: ForceAcceptTaskRequest) => api.forceAcceptTask(runId, taskId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['task', runId, taskId] });
       qc.invalidateQueries({ queryKey: ['run', runId] });
