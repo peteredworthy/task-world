@@ -1,8 +1,6 @@
 """Integration tests for project routine discovery from git repositories."""
 
-import os
 import shutil
-import subprocess
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
@@ -13,20 +11,7 @@ from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource, discover_routines_in_repo, get_routine_from_repo
 from orchestrator.db import init_db
 
-
-def _git(args: list[str], cwd: Path) -> str:
-    """Run a git command and return stdout."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["PRE_COMMIT_ALLOW_NO_CONFIG"] = "1"
-    result = subprocess.run(
-        ["git"] + args,
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    return result.stdout.strip()
+from tests.integration.git_helpers import _git
 
 
 def _add_flat_routine(repo: Path, routine_id: str, name: str = "Test Routine") -> None:

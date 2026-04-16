@@ -1,7 +1,6 @@
 """Shared fixtures for integration tests."""
 
 import shutil
-import subprocess
 import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -15,51 +14,12 @@ from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
 from orchestrator.workflow import InMemorySignalTransport
 
+from tests.integration.git_helpers import _commit_file, _git, _init_repo
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
+__all__ = ["_git", "_init_repo", "_commit_file", "_setup_conflict", "DrainFn"]
+
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
-# ---------------------------------------------------------------------------
-# Git helpers
-# ---------------------------------------------------------------------------
-
-
-_GIT_ENV_KEYS = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"}
-
-
-def _git(args: list[str], cwd: Path) -> str:
-    """Run a git command and return stdout."""
-    import os
-
-    env = {k: v for k, v in os.environ.items() if k not in _GIT_ENV_KEYS}
-    result = subprocess.run(
-        ["git"] + args,
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    return result.stdout.strip()
-
-
-def _init_repo(path: Path) -> None:
-    """Initialize a git repo with an initial commit on main."""
-    _git(["init"], cwd=path)
-    _git(["config", "user.email", "test@test.com"], cwd=path)
-    _git(["config", "user.name", "Test"], cwd=path)
-    (path / "README.md").write_text("# Test\n")
-    _git(["add", "."], cwd=path)
-    _git(["commit", "-m", "Initial commit"], cwd=path)
-    _git(["branch", "-M", "main"], cwd=path)
-
-
-def _commit_file(path: Path, filename: str, content: str, message: str) -> str:
-    """Create/modify a file and commit it. Returns HEAD SHA."""
-    (path / filename).write_text(content)
-    _git(["add", filename], cwd=path)
-    _git(["commit", "-m", message], cwd=path)
-    return _git(["rev-parse", "HEAD"], cwd=path)
 
 
 # ---------------------------------------------------------------------------

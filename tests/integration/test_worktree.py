@@ -1,8 +1,6 @@
 """Integration tests for WorktreeManager."""
 
-import os
 import shutil
-import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -11,15 +9,7 @@ import pytest
 from orchestrator.git.errors import GitCommandError, WorktreeExistsError, WorktreeNotFoundError
 from orchestrator.git.worktree import WorktreeManager
 
-_GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-
-
-def _git(
-    args: list[str], cwd: Path, check: bool = True, text: bool = False
-) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git"] + args, cwd=cwd, check=check, capture_output=True, text=text, env=_GIT_ENV
-    )
+from tests.integration.git_helpers import _git
 
 
 @pytest.fixture
@@ -55,8 +45,8 @@ def test_create_worktree(git_repo: tuple[Path, Path]) -> None:
     assert (wt.path / "README.md").exists()
 
     # Verify branch was created
-    result = _git(["branch", "--list", wt.branch], cwd=repo, text=True)
-    assert wt.branch in result.stdout
+    branch_list = _git(["branch", "--list", wt.branch], cwd=repo)
+    assert wt.branch in branch_list
 
 
 def test_create_worktree_custom_base_branch(git_repo: tuple[Path, Path]) -> None:
@@ -70,7 +60,7 @@ def test_create_worktree_custom_base_branch(git_repo: tuple[Path, Path]) -> None
     _git(["commit", "-m", "Add feature"], cwd=repo)
 
     # Get feature commit SHA
-    feature_commit = _git(["rev-parse", "HEAD"], cwd=repo, text=True).stdout.strip()
+    feature_commit = _git(["rev-parse", "HEAD"], cwd=repo)
 
     # Switch back to main
     _git(["checkout", "main"], cwd=repo)
@@ -400,10 +390,10 @@ def test_concurrent_worktrees_different_branches(git_repo: tuple[Path, Path]) ->
     assert wt1.branch != wt3.branch
 
     # Verify all branches exist
-    result = _git(["branch", "--list", "orchestrator/*"], cwd=repo, text=True)
-    assert "orchestrator/run-concurrent-1" in result.stdout
-    assert "orchestrator/run-concurrent-2" in result.stdout
-    assert "orchestrator/run-concurrent-3" in result.stdout
+    branch_list = _git(["branch", "--list", "orchestrator/*"], cwd=repo)
+    assert "orchestrator/run-concurrent-1" in branch_list
+    assert "orchestrator/run-concurrent-2" in branch_list
+    assert "orchestrator/run-concurrent-3" in branch_list
 
 
 # --- cleanup_expired tests ---

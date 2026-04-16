@@ -1,28 +1,13 @@
 """Integration tests for scaffolding module."""
 
-import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from orchestrator.runners import copy_scaffolding, ensure_gitignore
 
-
-def _git(args: list[str], cwd: Path) -> str:
-    """Run a git command and return stdout."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["PRE_COMMIT_ALLOW_NO_CONFIG"] = "1"
-    result = subprocess.run(
-        ["git"] + args,
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    return result.stdout.strip()
+from tests.integration.git_helpers import _git
 
 
 @pytest.fixture

@@ -1,8 +1,6 @@
 """Integration tests for branch status and merge API endpoints."""
 
-import os
 import shutil
-import subprocess
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
@@ -15,32 +13,10 @@ from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
 from orchestrator.workflow import InMemorySignalTransport
 
+from tests.integration.git_helpers import _commit_file, _git
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
-
-def _git(args: list[str], cwd: Path) -> str:
-    """Run a git command and return stdout."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["PRE_COMMIT_ALLOW_NO_CONFIG"] = "1"
-    result = subprocess.run(
-        ["git"] + args,
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    return result.stdout.strip()
-
-
-def _commit_file(path: Path, filename: str, content: str, message: str) -> str:
-    """Create/modify a file and commit it."""
-    (path / filename).write_text(content)
-    _git(["add", filename], cwd=path)
-    _git(["commit", "-m", message], cwd=path)
-    return _git(["rev-parse", "HEAD"], cwd=path)
 
 
 # Module-level counter for unique repo names

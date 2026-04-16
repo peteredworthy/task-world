@@ -1,8 +1,6 @@
 """Integration tests for branch operations using real git repos."""
 
-import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -10,38 +8,7 @@ import pytest
 from orchestrator.git import back_merge, get_branch_status, merge_back
 from orchestrator.git.errors import BranchNotFoundError, MergeConflictError
 
-
-def _git(args: list[str], cwd: Path) -> str:
-    """Run a git command and return stdout."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    env["PRE_COMMIT_ALLOW_NO_CONFIG"] = "1"
-    result = subprocess.run(
-        ["git"] + args,
-        cwd=cwd,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    return result.stdout.strip()
-
-
-def _init_repo(path: Path) -> None:
-    """Initialize a git repo with an initial commit."""
-    _git(["init"], cwd=path)
-    _git(["config", "user.email", "test@test.com"], cwd=path)
-    _git(["config", "user.name", "Test"], cwd=path)
-    (path / "README.md").write_text("# Test\n")
-    _git(["add", "."], cwd=path)
-    _git(["commit", "-m", "Initial commit"], cwd=path)
-
-
-def _commit_file(path: Path, filename: str, content: str, message: str) -> str:
-    """Create/modify a file and commit it. Returns the commit SHA."""
-    (path / filename).write_text(content)
-    _git(["add", filename], cwd=path)
-    _git(["commit", "-m", message], cwd=path)
-    return _git(["rev-parse", "HEAD"], cwd=path)
+from tests.unit.git_helpers import _commit_file, _git
 
 
 @pytest.fixture
