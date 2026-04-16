@@ -157,7 +157,9 @@ class PhaseHandler:
             )
         elif phase == "verifying":
             assert service is not None, "service is required for verifying phase"
-            await self._execute_verifying(run, task_state, service, agent, context, req_desc_to_id)
+            await self._execute_verifying(
+                run, task_state, service, agent, context, req_desc_to_id, session=session
+            )
         elif phase == "recovering":
             assert service is not None, "service is required for recovering phase"
             await self._execute_recovering(run, task_state, service, agent, context)
@@ -202,7 +204,14 @@ class PhaseHandler:
             if service is None:
                 return
             # The builder agent may have already called submit via REST/MCP
-            # during execution.  Re-read the task to avoid a redundant call.
+            # during execution (a separate session).  Expire the shared session's
+            # identity map so the status check below hits the DB, not a stale
+            # cache.  Without this, expire_on_commit=False leaves the task looking
+            # BUILDING even though the REST submit already moved it to VERIFYING
+            # (and bumped its version), causing a StaleDataError when we try to
+            # flush the same task a second time.
+            if session is not None:
+                session.expire_all()
             current_task = await service.get_task(run.id, task_state.id)
             if current_task.status != TaskStatus.BUILDING:
                 logger.info(
@@ -290,6 +299,7 @@ class PhaseHandler:
         agent: "AgentRunner",
         context: ExecutionContext,
         req_desc_to_id: dict[str, str],
+        session: Any = None,
     ) -> None:
         # Store the verifier prompt BEFORE agent execution
         await self._attempt_store.store_attempt_prompt(
@@ -306,6 +316,14 @@ class PhaseHandler:
             await service.update_checklist_item(run.id, task_state.id, actual_id, status, note)
 
         async def on_complete() -> None:
+            # Expire shared session's identity map so status checks below
+            # hit the DB rather than a stale cache.  The verifier agent may
+            # have already called complete_verification via REST (a separate
+            # session that bumped the task version); without this, the identity
+            # map would return stale VERIFYING status and trigger a duplicate
+            # complete_verification → StaleDataError on flush.
+            if session is not None:
+                session.expire_all()
             current_run = await service.get_run(run.id)
             if current_run.status != RunStatus.ACTIVE:
                 logger.info(

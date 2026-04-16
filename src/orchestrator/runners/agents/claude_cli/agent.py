@@ -510,6 +510,7 @@ class CLIAgent:
                                     exit_code=None,
                                     reason=f"agent_stuck_killed_after_{nudger.nudge_count}_nudges",
                                     pause_run=False,
+                                    task_id=context.task_id,
                                 )
                             except Exception as e:
                                 logger.warning(f"Failed to notify monitor of stuck agent: {e}")
@@ -546,6 +547,7 @@ class CLIAgent:
                         exit_code=self._process.returncode,
                         reason="agent_exit_failure",
                         pause_run=False,
+                        task_id=context.task_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to notify monitor of agent exit failure: {e}")
@@ -594,13 +596,26 @@ class CLIAgent:
             if success:
                 await on_submit()
 
+            # Build a meaningful error message when the process failed.
+            # Prefer the structured exit_subtype from the result event over the
+            # raw exit code, which is always "1" and tells the user nothing.
+            error: str | None = None
+            if self._process.returncode != 0:
+                exit_subtype = action_log.exit_subtype if action_log else ""
+                if exit_subtype and exit_subtype not in ("success", ""):
+                    # Map well-known subtypes to human-readable messages
+                    _SUBTYPE_MESSAGES = {
+                        "error_max_turns": "Agent hit the max-turns limit without completing",
+                        "error_during_tool_use": "Agent failed during tool use",
+                    }
+                    readable = _SUBTYPE_MESSAGES.get(exit_subtype, f"Agent exited: {exit_subtype}")
+                    error = f"{readable} (exit code {self._process.returncode})"
+                else:
+                    error = f"Process exited with code {self._process.returncode}"
+
             return ExecutionResult(
                 success=success,
-                error=(
-                    f"Process exited with code {self._process.returncode}"
-                    if self._process.returncode != 0
-                    else None
-                ),
+                error=error,
                 metrics=ExecutionMetrics(),
                 agent_metadata={"pid": agent_pid} if agent_pid else {},
                 output_lines=final_output_lines,
@@ -628,6 +643,7 @@ class CLIAgent:
                         exit_code=exit_code,
                         reason="agent_execution_error",
                         pause_run=False,
+                        task_id=context.task_id,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to notify monitor of agent execution error: {e}")

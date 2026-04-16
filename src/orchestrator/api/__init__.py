@@ -4,21 +4,44 @@ from orchestrator.api.app import create_app
 from orchestrator.api.deps import get_connection_manager
 from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
 from orchestrator.api.schemas.base import ApiModel
+from orchestrator.api.schemas.envfiles import CopyBackRequest, RevertEnvFileRequest
+from orchestrator.api.schemas.repos import AddRepoRequest
+from orchestrator.api.schemas.review import FilePrune, PruneSelection, RevertFileRequest
 from orchestrator.api.schemas.runs import (
+    BackwardTransitionRequest,
     CreateRunRequest,
+    MergeBackRequest,
+    RecoverRequest,
     RecoverResponse,
+    ResumeRunRequest,
     get_agent_display_name,
     get_agent_icon,
 )
-from orchestrator.api.schemas.tasks import CallbackInstructions
+from orchestrator.api.schemas.tasks import (
+    CallbackInstructions,
+    SetGradeRequest,
+    UpdateChecklistRequest,
+)
 
 __all__ = [
+    "AddRepoRequest",
     "ApiModel",
+    "BackwardTransitionRequest",
     "CallbackInstructions",
+    "CopyBackRequest",
     "CostEstimate",
     "CreateRunRequest",
+    "FilePrune",
+    "MergeBackRequest",
     "PRICING",
+    "PruneSelection",
+    "RecoverRequest",
     "RecoverResponse",
+    "ResumeRunRequest",
+    "RevertEnvFileRequest",
+    "RevertFileRequest",
+    "SetGradeRequest",
+    "UpdateChecklistRequest",
     "create_app",
     "estimate_cost",
     "get_agent_display_name",

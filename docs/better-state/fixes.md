@@ -8,52 +8,41 @@ Fixes marked ~~struck through~~ were found to be unnecessary after code review.
 
 ## Confirmed fixes required
 
-### FIX-4 — Wrap signal handlers in atomic transactions
+> **All four confirmed fixes below are implemented as of April 2026.** They are retained here for reference.
+
+### FIX-4 — Wrap signal handlers in atomic transactions ✅ DONE
 
 **Resolves:** ISSUE-8.2
+**Implemented in:** `src/orchestrator/workflow/signals/consumer.py`
 
-Signal handler contract: `BEGIN → mutate state → set handled_at → COMMIT`; rollback on any exception. `handled_at` is set if and only if all mutations committed. Redelivery after a crash re-applies the handler against unmodified state. SQLite serialises writes so the lock hold time is negligible — all operations are pure DB work with no external I/O.
-
-This is the highest-priority confirmed fix: the mutation+redelivery combination can cause real duplicate state transitions.
+Two-transaction pattern: Transaction 1 stamps `delivered_at` and commits (prevents same-process re-polling). Transaction 2 re-fetches the signal, runs the handler, and stamps `handled_at` on success; rollback on exception leaves `handled_at` NULL so the signal is eligible for redelivery against unmodified state.
 
 ---
 
-### FIX-6 — Pre-persist safety pause before executor loop starts
+### FIX-6 — Pre-persist safety pause before executor loop starts ✅ DONE
 
 **Resolves:** ISSUE-2.1
+**Implemented in:** `src/orchestrator/workflow/signals/runtime.py`
 
-Before entering the executor loop, write `PAUSED/reason=executor_not_started` to the DB and commit. The loop's first action is to clear the safety pause atomically with its first heartbeat write. If the process is killed before the loop starts, the run is already `PAUSED` on next startup.
-
-```python
-await service.write_safety_pause(run_id, reason="executor_not_started")
-await session.commit()
-# loop starts — first thing inside clears the safety pause
-await service.clear_safety_pause(run_id)
-```
-
-The existing `finally` block remains as a belt-and-suspenders fallback.
+`apply_pause_run(run_id, reason="executor_not_started")` is written and committed before entering the run loop. The first loop iteration clears the safety pause atomically. If the process is killed before the loop starts, the run stays `PAUSED` on next startup.
 
 ---
 
-### FIX-7 — Optimistic version lock via SQLAlchemy version_id_col
+### FIX-7 — Optimistic version lock via SQLAlchemy version_id_col ✅ DONE
 
 **Resolves:** ISSUE-1.3, ISSUE-9.1
+**Implemented in:** `src/orchestrator/db/orm/models.py`
 
-Use SQLAlchemy's built-in `version_id_col` — no hand-rolled version check needed. Add a `version` column to `TaskModel` and declare `__mapper_args__ = {"version_id_col": version}`. SQLAlchemy automatically increments on every UPDATE and raises `StaleDataError` on concurrent modification. Works identically on SQLite and PostgreSQL regardless of isolation level — detection is at the ORM layer.
-
-Catch `StaleDataError`: for fan-out expansion (ISSUE-1.3), discard the duplicate expansion; for clarification/completion (ISSUE-9.1), surface a `409 Conflict`.
+`TaskModel` has a `version` column with `__mapper_args__ = {"version_id_col": version}`. SQLAlchemy raises `StaleDataError` on concurrent modification; this is imported and handled in the executor.
 
 ---
 
-### FIX-12 — Record paused_at on in-progress Attempts
+### FIX-12 — Record paused_at on in-progress Attempts ✅ DONE
 
 **Resolves:** ISSUE-4.1
+**Implemented in:** `src/orchestrator/db/orm/models.py`, `src/orchestrator/workflow/service.py`
 
-Add `paused_at` (nullable timestamp) and allow `outcome = "paused"` on the `Attempt` model. When pause fires mid-BUILDING or mid-VERIFYING, set these fields before transitioning the run to `PAUSED`. On resume:
-- `continue`: re-attach the agent to the paused attempt (file state is preserved in the worktree on a single machine)
-- `revert`: explicitly mark the attempt `outcome = "abandoned"` before creating a fresh one
-
-This makes the distinction between "paused", "abandoned", and "failed" explicit in the data model and prevents silent discards.
+`AttemptModel` has `paused_at` (nullable timestamp). `apply_pause_run()` stamps `paused_at = now` and `outcome = "paused"` on open attempts for mid-BUILDING/mid-VERIFYING tasks. Alembic migration exists: `o1a2b3c4d5e6_add_paused_at_to_attempts.py`.
 
 ---
 

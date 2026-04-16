@@ -32,6 +32,11 @@ CLI_SUBPROCESS_CONFIG: list[AgentConfigField] = [
         description="Whether to close stdin after sending the prompt",
         options=["close", "open"],
     ),
+    AgentConfigField(
+        name="args",
+        field_type="string",
+        description="Override CLI args list (JSON array). Replaces all defaults including -p and --output-format.",
+    ),
 ]
 
 

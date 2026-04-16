@@ -69,6 +69,9 @@ class ClaudeStreamParser:
         self._rate_limit_hit = False
         self._rate_limit_resets_at: datetime | None = None
 
+        # Exit classification from result event (e.g. "error_max_turns")
+        self._exit_subtype: str = ""
+
     def parse_line(self, line: str) -> None:
         """Parse a single NDJSON line from Claude stream-json output."""
         line = line.strip()
@@ -117,6 +120,7 @@ class ClaudeStreamParser:
             total_cache_creation_tokens=self._total_cache_creation,
             rate_limit_hit=self._rate_limit_hit,
             rate_limit_resets_at=self._rate_limit_resets_at,
+            exit_subtype=self._exit_subtype,
         )
 
     def get_readable_text(self) -> str:
@@ -293,6 +297,13 @@ class ClaudeStreamParser:
         # The result event carries the final summary text in the "result" field
         # and session-level totals in "usage" / "total_cost_usd".
         text: str = str(event.get("result", ""))
+
+        # Capture exit classification so callers can produce meaningful error messages.
+        # subtype is e.g. "error_max_turns", "error_during_tool_use", "success".
+        if event.get("is_error"):
+            self._exit_subtype = str(event.get("subtype", "error_unknown"))
+        else:
+            self._exit_subtype = str(event.get("subtype", "success"))
 
         # Extract cost / timing totals from the result event.
         #

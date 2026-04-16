@@ -17,7 +17,6 @@ import { ApprovalModal } from '../detail/ApprovalModal';
 import { ApprovalReviewDialog } from '../detail/ApprovalReviewDialog';
 import { Spinner } from '../Spinner';
 import { RecoveryPanel } from '../detail/RecoveryPanel';
-import { StepApprovalBanner } from '../detail/StepApprovalBanner';
 import { BranchStatusPanel } from '../detail/BranchStatusPanel';
 import { EnvFilesPanel } from '../detail/EnvFilesPanel';
 import { getLastAgentError } from '../../lib/activity';
@@ -215,7 +214,7 @@ function RunDetailInner({ runId }: { runId: string }) {
                       unexpected_error: 'Paused — unexpected error',
                       agent_health_check_failed: 'Paused — agent health check failed',
                       agent_not_running_on_startup: 'Paused — agent was not running on startup',
-                      no_executor_running: 'Paused — agent process not running',
+                      no_executor_running: 'Paused — no executor running (will auto-resume)',
                       recovered: 'Paused — recovered from failure',
                       recovery_triggered: 'Paused — recovery triggered',
                       requirement_escalated: 'Paused — agent flagged an unfulfillable requirement',
@@ -227,7 +226,6 @@ function RunDetailInner({ runId }: { runId: string }) {
                       rate_limit: 'Paused — API rate/credit limit hit',
                       all_steps_complete_but_active: 'Paused — all steps complete (investigating)',
                       no_actionable_tasks: 'Paused — no actionable tasks in current step',
-                      no_executor_running: 'Paused — no executor running (will auto-resume)',
                     } as Record<string, string>)[run.pause_reason] ?? `Paused (${run.pause_reason})`}
                   </div>
                   {run.last_error && (

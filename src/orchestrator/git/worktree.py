@@ -127,6 +127,9 @@ class WorktreeManager:
             f"{repo_abs}/scripts",
             f"{repo_abs}/ui",
             f"{repo_abs}/.git",
+            # Knowledge graph — agents can query it even if the worktree copy
+            # is missing or stale (e.g. when .worktree-setup was skipped).
+            f"{repo_abs}/graphify-out",
         ]
 
         settings = {

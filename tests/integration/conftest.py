@@ -24,14 +24,21 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 # ---------------------------------------------------------------------------
 
 
+_GIT_ENV_KEYS = {"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY"}
+
+
 def _git(args: list[str], cwd: Path) -> str:
     """Run a git command and return stdout."""
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k not in _GIT_ENV_KEYS}
     result = subprocess.run(
         ["git"] + args,
         cwd=cwd,
         check=True,
         capture_output=True,
         text=True,
+        env=env,
     )
     return result.stdout.strip()
 

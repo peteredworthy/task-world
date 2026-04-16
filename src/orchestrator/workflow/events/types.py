@@ -121,6 +121,7 @@ class AgentDiedEvent(WorkflowEvent):
     agent_type: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS
     exit_code: int | None = None
     reason: str = "agent_process_died"
+    task_id: str | None = None
 
 
 @dataclass

@@ -42,11 +42,7 @@ After processing a RESUME signal, the run transitions to `ACTIVE` and the signal
 ### ISSUE-1.3 — TOCTOU race in fan-out expansion
 **Severity:** HIGH
 **Files:** `src/orchestrator/workflow/service.py`
-**Status:** Confirmed
-
-Two concurrent callers can both read a `PENDING` parent task before either writes `FAN_OUT_RUNNING`. Each expands independently, producing duplicate child tasks. No row-level lock guards the read-expand-write sequence.
-
-**Worst case:** Duplicate child tasks; same work executed twice; wasted tokens and potentially conflicting worktree commits.
+**Status:** Resolved — FIX-7 implemented (optimistic locking via `version_id_col` on `TaskModel`; `StaleDataError` on concurrent write discards the duplicate expansion)
 
 ---
 
@@ -55,11 +51,7 @@ Two concurrent callers can both read a `PENDING` parent task before either write
 ### ISSUE-2.1 — Executor can exit without persisting a pause
 **Severity:** MEDIUM (downgraded from CRITICAL after code review)
 **Files:** `src/orchestrator/workflow/signals/runtime.py`
-**Status:** Confirmed — sweeper provides eventual mitigation but with delay
-
-The executor's `finally` block calls `apply_pause_run()`. If the DB is unavailable at shutdown this call is caught and only logged, leaving the run `ACTIVE`. The stale-run sweeper will eventually detect the orphaned ACTIVE run and pause it, but this is async and may take up to the sweep interval.
-
-**Worst case:** Run stays `ACTIVE` until sweeper fires; on the next startup a new executor may be spawned against partially-executed state.
+**Status:** Resolved — FIX-6 implemented; safety pause written with `reason="executor_not_started"` before loop entry and cleared on first iteration; `finally` block remains as belt-and-suspenders
 
 ---
 
@@ -108,11 +100,7 @@ All agent types in this deployment (`CLI_SUBPROCESS`, `OPENHANDS_LOCAL`, `CLAUDE
 ### ISSUE-4.1 — No checkpoint on pause; task progress is lost
 **Severity:** MEDIUM
 **Files:** `src/orchestrator/state/models.py`, `src/orchestrator/workflow/service.py`
-**Status:** Confirmed
-
-The `Attempt` model has no `paused_at` field and no `outcome="paused"` value. When a run is paused mid-BUILDING, the open attempt has no timestamp and no outcome. There is no way to distinguish an attempt that was paused-and-should-continue from one that was abandoned. The run itself records `pause_reason`, but this is at the run level, not the attempt level.
-
-**Worst case:** Revert-resume silently discards an attempt that still has live worktree state; work is repeated.
+**Status:** Resolved — FIX-12 implemented; `AttemptModel.paused_at` field added with Alembic migration; `apply_pause_run()` stamps `paused_at` and `outcome="paused"` on open attempts for in-progress tasks
 
 ---
 
@@ -201,11 +189,7 @@ The PAUSE+RESUME rapid-fire oscillation scenario is real but requires deliberate
 ### ISSUE-8.2 — Signal handler crash leaves partial mutations committed and signal unhandled
 **Severity:** HIGH
 **Files:** `src/orchestrator/workflow/signals/consumer.py`
-**Status:** Confirmed
-
-Verified in code: if a signal handler raises an exception mid-execution, `delivered_at` was already flushed and any mutations already applied are committed at line 244 (`await session.commit()`). The `handled_at` stays `NULL`, making the signal eligible for redelivery. On redelivery the handler runs again against already-mutated state. For idempotent handlers this is harmless; for non-idempotent ones (e.g., a handler that creates rows) it can produce duplicates.
-
-**Worst case:** Redelivery of a partially-applied signal causes duplicate state mutations or an invalid transition that loops.
+**Status:** Resolved — FIX-4 implemented; two-transaction pattern ensures `handled_at` is only stamped after all mutations commit; handler exception rolls back mutations while `delivered_at` persists, enabling clean redelivery against unmodified state
 
 ---
 

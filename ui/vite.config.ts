@@ -20,6 +20,7 @@ export default defineConfig({
       '/ws': {
         target: wsTarget,
         ws: true,
+        // @ts-ignore — 'on' is valid at runtime but missing from Vite's ProxyOptions types
         on: {
           error: () => {
             // Swallow proxy errors when backend restarts to keep Vite alive

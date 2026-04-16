@@ -146,6 +146,10 @@ class ActionLog(BaseModel):
     rate_limit_hit: bool = False
     rate_limit_resets_at: datetime | None = None
 
+    # Exit classification (set by parser from the result event's subtype field)
+    # e.g. "error_max_turns", "error_during_tool_use", "success"
+    exit_subtype: str = ""
+
 
 class ChecklistItem(BaseModel):
     """Runtime state of a single requirement."""

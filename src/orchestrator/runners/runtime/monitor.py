@@ -90,6 +90,7 @@ class AgentRunnerMonitor:
         exit_code: int | None = None,
         reason: str = "agent_process_died",
         pause_run: bool = True,
+        task_id: str | None = None,
     ) -> None:
         """Handle unexpected agent death.
 
@@ -156,6 +157,7 @@ class AgentRunnerMonitor:
                 agent_type=agent_type,
                 exit_code=exit_code,
                 reason=reason,
+                task_id=task_id,
             )
             await event_store.append(event)
 
