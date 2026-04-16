@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useActivity, useRun, useTask, useTaskPrompt, useRecoverRun, useResumeRun } from '../../hooks/useApi';
+import { useForceAcceptTask } from '../../hooks/useApproval';
 import { useClarificationHistory } from '../../hooks/useClarifications';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { TaskStatusBadge } from '../StatusBadge';
@@ -593,6 +594,8 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
   const recoverRun = useRecoverRun(runId);
   const resumeRun = useResumeRun();
   const canRetry = task.status === 'failed' && (runData?.status === 'failed' || runData?.status === 'paused');
+  const [showForceAcceptDialog, setShowForceAcceptDialog] = useState(false);
+  const forceAccept = useForceAcceptTask(runId, task.id);
 
   const handleRetry = useCallback(() => {
     setRetrying(true);
@@ -731,7 +734,62 @@ export function InspectorPanel({ task, runId, onClose }: InspectorPanelProps) {
               )}
             </div>
           )}
+          {task.status === 'failed' && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setShowForceAcceptDialog(true)}
+                className="w-full text-xs px-3 py-1.5 rounded border border-status-failed/40 text-status-failed hover:bg-status-failed/10 transition-colors"
+              >
+                Accept &amp; continue
+              </button>
+            </div>
+          )}
         </div>
+
+        {/* Force-accept warning dialog */}
+        {showForceAcceptDialog && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={() => setShowForceAcceptDialog(false)}>
+            <div
+              className="bg-bg-card border border-border rounded-lg shadow-xl p-5 max-w-sm w-full mx-4"
+              onClick={e => e.stopPropagation()}
+            >
+              <h3 className="text-sm font-semibold text-text-primary mb-1">Accept despite failed verification?</h3>
+              <p className="text-xs text-text-secondary mb-4">
+                This overrides the verification result and marks the task completed. The run will continue to the next step.
+                Use when the failure is expected or acceptable (e.g. tests not yet written).
+              </p>
+              <div className="flex gap-2 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowForceAcceptDialog(false)}
+                  className="text-xs px-3 py-1.5 rounded border border-border text-text-secondary hover:bg-bg-hover transition-colors"
+                  disabled={forceAccept.isPending}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    forceAccept.mutate(
+                      { comment: 'Accepted despite failed verification' },
+                      { onSuccess: () => { setShowForceAcceptDialog(false); onClose(); } },
+                    );
+                  }}
+                  disabled={forceAccept.isPending}
+                  className="text-xs px-3 py-1.5 rounded bg-status-failed/20 border border-status-failed/40 text-status-failed hover:bg-status-failed/30 transition-colors disabled:opacity-50"
+                >
+                  {forceAccept.isPending ? 'Accepting…' : 'Accept anyway'}
+                </button>
+              </div>
+              {forceAccept.isError && (
+                <p className="text-xs text-status-failed mt-2">
+                  {forceAccept.error instanceof Error ? forceAccept.error.message : 'Unknown error'}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {isLoading ? (
           <div className="flex justify-center py-6">
