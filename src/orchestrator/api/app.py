@@ -32,6 +32,21 @@ from orchestrator.envfiles.cleanup import EnvFileCleanup
 logger = logging.getLogger(__name__)
 
 
+def _is_startup_recoverable_pause_reason(reason: str | None) -> bool:
+    """Return True when a paused run should be auto-resumed on startup.
+
+    `executor_not_started` is a transient safety marker written just before the
+    executor loop begins. If the process dies after writing that marker but
+    before the first loop iteration clears it, the run is left paused even
+    though the correct recovery action is to continue from the current state.
+    """
+    return reason in (
+        "server_shutdown",
+        "agent_not_running_on_startup",
+        "executor_not_started",
+    )
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
@@ -118,11 +133,13 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                                 f"active run {run.id} ({run.agent_type.value})"
                             )
 
-            # Auto-resume runs that were paused due to server shutdown.
-            # When the server reloads, it cancels all running executor tasks and
-            # marks those runs as paused with reason "server_shutdown". On the next
-            # startup we restore them to ACTIVE and re-spawn the executor loop so
-            # they continue from where they left off without user intervention.
+            # Auto-resume runs that were paused by restart-recoverable causes.
+            # When the server reloads, it cancels running executor tasks and
+            # marks those runs as paused with reason "server_shutdown". The
+            # executor also writes a transient "executor_not_started" marker
+            # before the first loop iteration; if a shutdown lands in that
+            # window, startup recovery must treat it as a continue-from-current-
+            # state resume rather than leaving the run stranded in PAUSED.
             async with session_factory() as session:
                 from orchestrator.db import RunRepository as _RR2
 
@@ -131,7 +148,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 shutdown_runs = [
                     r
                     for r in paused_runs_all
-                    if r.pause_reason in ("server_shutdown", "agent_not_running_on_startup")
+                    if _is_startup_recoverable_pause_reason(r.pause_reason)
                     and r.agent_type is not None
                     and r.agent_type
                     in (
@@ -192,7 +209,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
                     async with session_factory() as session:
                         svc = await service_factory(session)
-                        await svc.apply_resume_run(run.id)
+                        await svc.apply_resume_run(run.id, resume_strategy="continue")
                         await session.commit()
 
                     _agent_type = run.agent_type

@@ -1,0 +1,227 @@
+id: "S-04"
+title: "Run & Task Lifecycle (M2c + M2d)"
+step_context: |
+  Implement Gherkin specs covering full run and task lifecycle workflows.
+  Lifecycles are driven by mocked API responses and WebSocket events. These
+  scenarios verify the app correctly reflects backend state changes in the UI.
+
+  Prerequisites: Steps 01-03 complete. All smoke, dashboard, and run detail
+  features must be green.
+
+  Key hardening from dry-run analysis:
+  - WebSocket event timing is critical: ALWAYS use page.waitForResponse() to
+    wait for route handler response BEFORE calling FakeWebSocket.pushEvent().
+    Never call pushEvent() before the API mutation has completed. Sequence must be:
+      1. User action (click pause button)
+      2. await page.waitForResponse('**/api/runs/**')  ← wait for POST
+      3. fakeWs.pushEvent('run_status_changed', {...}) ← then push WS event
+    Violating this order causes the UI to receive a WS event before its own
+    optimistic update, showing stale state.
+  - Grade submission payload format must match exactly what the UI sends.
+    Read the TaskDetailCard component's grade submission code to confirm the
+    payload shape, then document it in api-handlers.ts BEFORE writing tests.
+    Mismatched payload = route handler rejects = lifecycle tests fail.
+  - Scenario Background must set run state correctly before task transitions.
+    Each task lifecycle scenario must start with a run in 'active' state;
+    task lifecycle scenarios must not rely on run lifecycle scenarios completing.
+  - FakeWebSocket.pushEvent() is synchronous — do not add arbitrary waits after
+    pushEvent(). Use Playwright locator assertions (which have built-in retry).
+  - Revision cycle (fail → retry) must test the full loop:
+    verify → fail → attempt count increments → re-verify → pass.
+
+tasks:
+  - id: "T-01"
+    title: "Verify grade submission payload and extend route handlers"
+    task_context: |
+      BEFORE writing any lifecycle feature files, read the actual grade submission
+      code in the frontend to confirm the expected API payload format.
+
+      Steps:
+      1. Read ui/src/components/TaskDetailCard.tsx (or the relevant component that
+         submits grades) to find the grade submission fetch/mutation call.
+      2. Identify the exact payload shape: URL path, HTTP method, and request body.
+      3. Document this in ui/tests/fixtures/api-handlers.ts as a comment above the
+         grades endpoint handler:
+           // Grade submission payload (from TaskDetailCard.tsx):
+           // POST /api/tasks/:id/complete-verification
+           // Body: { grades: Array<{ requirement_id: string, grade: 'A'|'B'|'C'|'F', notes?: string }> }
+           // (verify exact field names against component code)
+      4. Add the grades endpoint to api-handlers.ts if not already present.
+
+      Also extend api-handlers.ts for lifecycle-specific endpoints:
+        POST /api/tasks/:id/submit — transition task from building to verifying
+        POST /api/tasks/:id/complete-verification — submit grades, transition to completed/failed
+        POST /api/runs/:id/start — transition run from draft to active
+        GET /api/tasks/:id/prompt — return task prompt (for building phase)
+
+      Each mutation endpoint must:
+        - Update in-memory state (task/run status)
+        - Return the updated object
+        - Be compatible with FakeWebSocket event that follows
+
+      Timing contract for tests using these endpoints:
+        await page.waitForResponse(resp => resp.url().includes('/api/tasks/') && resp.status() === 200);
+        fakeWs.pushEvent('task_status_changed', { task_id: ..., status: 'verifying' });
+    requirements:
+      - id: "R1"
+        desc: "Grade submission payload is documented in api-handlers.ts with correct field names from actual TaskDetailCard code"
+        priority: critical
+      - id: "R2"
+        desc: "Route handlers for task submit, complete-verification, run start, and task prompt endpoints exist in api-handlers.ts"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "grade_payload_in_handlers"
+          cmd: "grep -q 'complete-verification\\|grades' ui/tests/fixtures/api-handlers.ts"
+          must: true
+        - id: "task_submit_endpoint"
+          cmd: "grep -q 'submit' ui/tests/fixtures/api-handlers.ts"
+          must: true
+        - id: "task_prompt_endpoint"
+          cmd: "grep -q 'prompt' ui/tests/fixtures/api-handlers.ts"
+          must: true
+
+  - id: "T-02"
+    title: "Write run-lifecycle feature file"
+    task_context: |
+      Write ui/tests/bdd/features/run-lifecycle.feature with scenarios covering
+      all primary run lifecycle transitions driven by API + WebSocket events.
+
+      Required scenarios:
+        1. Run draft to active — start button triggers run, status badge updates
+        2. Run active to completed — all tasks complete, run transitions via WS event
+        3. Run pause and resume — pause → status paused; resume → status active
+        4. Run cancellation — cancel action → status cancelled, no further transitions
+        5. WebSocket event updates run status in real time — push WS event, badge updates
+           without page reload
+
+      Scenario structure for WebSocket-driven state changes:
+        When I start the run
+        And I wait for the run to become active
+        And the backend completes the run via WebSocket event
+        Then the run status badge should show "completed"
+
+      WebSocket event coordination rule:
+        EVERY scenario that uses FakeWebSocket.pushEvent() must have a preceding
+        step that waits for the API response:
+          "And I wait for the API response before the WebSocket event"
+        This step must call page.waitForResponse() internally before pushEvent().
+
+      Do NOT use arbitrary sleep() calls. Use only:
+        - page.waitForResponse() for API calls
+        - page.waitForSelector() for DOM changes
+        - Playwright locator assertions (auto-retry built in)
+    requirements:
+      - id: "R3"
+        desc: "ui/tests/bdd/features/run-lifecycle.feature exists with at least 4 run lifecycle scenarios"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "run_lifecycle_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/run-lifecycle.feature"
+          must: true
+        - id: "run_lifecycle_has_scenarios"
+          cmd: "python3 -c \"c=open('ui/tests/bdd/features/run-lifecycle.feature').read().count('Scenario'); exit(0 if c>=4 else 1)\""
+          must: true
+        - id: "no_sleep_in_run_lifecycle"
+          cmd: "! grep -q 'sleep\\|setTimeout\\|wait([0-9]' ui/tests/bdd/features/run-lifecycle.feature"
+          must: false
+
+  - id: "T-03"
+    title: "Write task-lifecycle feature file"
+    task_context: |
+      Write ui/tests/bdd/features/task-lifecycle.feature with scenarios covering
+      full task lifecycle: queued → building → verifying → completed (or failed →
+      revision → re-verify → pass).
+
+      Required scenarios:
+        1. Task building phase — task in building state shows prompt copy box
+        2. Task submit for verification — submit action transitions to verifying
+        3. Task verification completes — grades submitted, task transitions to completed
+        4. Task fails verification — grades submitted with fail, task moves to failed
+        5. Revision cycle — failed task → revision → re-verify → pass
+           (attempt count increments; test before/after revision attempt count)
+        6. Grade badges reflect outcome — A/B/C/F badges visible on completed task
+
+      Revision cycle test must verify:
+        - Before revision: attempts.length == 1
+        - After revision trigger: attempts.length == 2
+        - After re-verification pass: task.status == 'completed'
+
+      Task lifecycle scenarios must use Background to set run in 'active' state
+      before task transitions begin. Task transitions are not valid if the run
+      is not active.
+
+      Timing rule (same as run-lifecycle.feature):
+        Wait for API response before FakeWebSocket.pushEvent().
+        No arbitrary sleep() calls anywhere.
+    requirements:
+      - id: "R4"
+        desc: "ui/tests/bdd/features/task-lifecycle.feature exists with at least 5 scenarios including revision cycle"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "task_lifecycle_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/task-lifecycle.feature"
+          must: true
+        - id: "task_lifecycle_has_scenarios"
+          cmd: "python3 -c \"c=open('ui/tests/bdd/features/task-lifecycle.feature').read().count('Scenario'); exit(0 if c>=4 else 1)\""
+          must: true
+        - id: "revision_cycle_tested"
+          cmd: "grep -qi 'revision\\|retry\\|re-verify' ui/tests/bdd/features/task-lifecycle.feature"
+          must: true
+
+  - id: "T-04"
+    title: "Create lifecycle step definitions and run all BDD tests"
+    task_context: |
+      Create ui/tests/bdd/steps/lifecycle.steps.ts with step definitions for
+      all lifecycle-specific When/Then patterns.
+
+      Required step definitions:
+        When I start the run
+        When I pause the run
+        When I resume the run
+        When I submit task {string} for verification
+        When I submit grades for task {string}
+        When I trigger a revision for task {string}
+        When the backend sends a run_status_changed event with status {string}
+        When the backend sends a task_status_changed event with status {string}
+        When I wait for the API response before the WebSocket event
+        Then the run status badge should show {string}
+        Then the task status should show {string}
+        Then the prompt copy box should be visible for task {string}
+        Then the grade badge for requirement {string} should show {string}
+        Then the attempt count for task {string} should be {int}
+
+      WebSocket event step implementation:
+        The "When the backend sends a ... event" steps must:
+          1. Call page.waitForResponse() internally (wait for in-flight API call)
+          2. Then call fakeWs.pushEvent() synchronously
+          3. NOT add any sleep() calls
+
+      After creating step definitions, run the full BDD suite and verify:
+        1. All run-lifecycle.feature scenarios pass
+        2. All task-lifecycle.feature scenarios pass
+        3. No regressions in Steps 01-03 features
+        4. TypeScript compiles without errors
+    requirements:
+      - id: "R5"
+        desc: "ui/tests/bdd/steps/lifecycle.steps.ts exists with step definitions for run and task lifecycle events"
+        priority: critical
+      - id: "R6"
+        desc: "All scenarios in run-lifecycle.feature and task-lifecycle.feature pass"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "lifecycle_steps_exists"
+          cmd: "test -f ui/tests/bdd/steps/lifecycle.steps.ts"
+          must: true
+        - id: "websocket_step_no_sleep"
+          cmd: "! grep -q 'sleep\\|setTimeout' ui/tests/bdd/steps/lifecycle.steps.ts"
+          must: false
+        - id: "typescript_compiles"
+          cmd: "cd ui && npx tsc --noEmit"
+          must: false
+        - id: "all_bdd_tests_pass"
+          cmd: "cd ui && npm run test:bdd"
+          must: false

@@ -1,0 +1,171 @@
+id: "S-02"
+title: "Dashboard & CreateRunModal Workflows (M2a)"
+step_context: |
+  Implement Gherkin feature files and step definitions for the highest-priority
+  user workflows: Dashboard browsing (run list, filtering, search) and run
+  creation (CreateRunModal open, fill, submit). This is the most valuable
+  workflow coverage per clarification Q6.
+
+  Prerequisites: Step 01 must be complete. Smoke feature must be green.
+
+  Key hardening from dry-run analysis:
+  - RoutineSelector and BranchSelector may have async logic (API calls to load
+    options). Mock those endpoints to return instant responses — do NOT let async
+    selectors cause flaky timeouts in BDD tests. Defer async selector testing to
+    Vitest unit tests.
+  - Navigation to run detail fails if run ID in URL is not in route handler state.
+    Route handlers must use dynamic route matching (/api/runs/*) and return data
+    for any ID that was created during the test.
+  - Run card selectors are medium-risk for breakage if RunCard component changes.
+    Page objects must isolate all selectors so only one file needs updating.
+  - For CreateRunModal, test both valid submission (happy path) and at least one
+    validation error scenario (required field missing).
+  - Route handler state is per-page (Playwright creates fresh page per scenario),
+    but explicitly reset in test setup to be safe.
+
+tasks:
+  - id: "T-01"
+    title: "Create Dashboard and Modal page objects"
+    task_context: |
+      Create ui/tests/bdd/pages/dashboard.page.ts — page object encapsulating
+      all Dashboard selectors:
+        - Run cards list (data-testid or role-based selector)
+        - Individual run card (by run name or ID)
+        - Status filter controls
+        - Search input
+        - "New Run" / create button
+        - Empty state element
+        - Pagination controls (if applicable)
+
+      Create ui/tests/bdd/pages/modals.page.ts — page object for CreateRunModal:
+        - Modal container
+        - Routine selector input
+        - Branch selector input
+        - Run name input
+        - Submit button
+        - Cancel button
+        - Validation error messages
+
+      Page object design rules:
+        - NO direct selectors in step definitions — always go through page objects
+        - Selectors should use data-testid attributes where possible; fall back to
+          ARIA roles (role="button", role="dialog") if data-testid not present
+        - Each page object method returns a Locator (not a resolved element)
+          so Playwright's built-in retry handles timing
+
+      IMPORTANT: If RoutineSelector or BranchSelector make API calls to load their
+      options, mock these endpoints in the route handlers:
+        GET /api/routines → return 3 routines instantly (no delay)
+        GET /api/agents → return 2 agents instantly (no delay)
+      This prevents timeouts when dropdowns wait for API responses.
+    requirements:
+      - id: "R1"
+        desc: "ui/tests/bdd/pages/dashboard.page.ts exists with selectors for run cards, filters, search, create button, and empty state"
+        priority: critical
+      - id: "R2"
+        desc: "ui/tests/bdd/pages/modals.page.ts exists with selectors for CreateRunModal fields and buttons"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "dashboard_page_exists"
+          cmd: "test -f ui/tests/bdd/pages/dashboard.page.ts"
+          must: true
+        - id: "modals_page_exists"
+          cmd: "test -f ui/tests/bdd/pages/modals.page.ts"
+          must: true
+        - id: "dashboard_page_no_raw_selectors"
+          cmd: "! grep -q \"page.locator('[\" ui/tests/bdd/steps/dashboard.steps.ts 2>/dev/null || echo 'ok (steps file may not exist yet)'"
+          must: false
+
+  - id: "T-02"
+    title: "Write dashboard and create-run feature files"
+    task_context: |
+      Write ui/tests/bdd/features/dashboard.feature with scenarios:
+        1. View runs list — dashboard shows run cards matching mocked API data
+        2. Filter runs by status — filter control hides non-matching cards
+        3. Search runs by name — search input filters visible cards
+        4. Click run card navigates to run detail — URL changes to /runs/:id
+        5. Empty state when no runs — empty state element is visible
+
+      Write ui/tests/bdd/features/create-run.feature with scenarios:
+        1. Open CreateRunModal via "New Run" button — modal becomes visible
+        2. Select routine from RoutineSelector — routine name appears in field
+        3. Fill run name and submit — POST /api/runs called, run appears in list
+        4. Cancel modal without creating — modal closes, no run created
+        5. Validation error for missing required field — error message visible
+        6. Created run appears in dashboard list after submission
+
+      Scenario design rules:
+        - Each scenario must be independent (no shared state between scenarios)
+        - Background section in each feature sets up API state via Given steps
+        - Use step definitions from common.steps.ts where possible
+        - For async selector loading (routines, agents), add:
+            Given the API returns routines instantly
+          as a step in Background to ensure mocked data is loaded before form opens
+    requirements:
+      - id: "R3"
+        desc: "ui/tests/bdd/features/dashboard.feature exists with at least 5 scenarios covering list view, filtering, search, navigation, and empty state"
+        priority: critical
+      - id: "R4"
+        desc: "ui/tests/bdd/features/create-run.feature exists with at least 5 scenarios covering open, fill, submit, cancel, and validation"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "dashboard_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/dashboard.feature"
+          must: true
+        - id: "create_run_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/create-run.feature"
+          must: true
+        - id: "dashboard_feature_has_scenarios"
+          cmd: "python3 -c \"c=open('ui/tests/bdd/features/dashboard.feature').read().count('Scenario'); exit(0 if c>=4 else 1)\""
+          must: true
+        - id: "create_run_feature_has_scenarios"
+          cmd: "python3 -c \"c=open('ui/tests/bdd/features/create-run.feature').read().count('Scenario'); exit(0 if c>=4 else 1)\""
+          must: true
+
+  - id: "T-03"
+    title: "Create dashboard step definitions and run BDD tests"
+    task_context: |
+      Create ui/tests/bdd/steps/dashboard.steps.ts with step definitions for
+      all dashboard-specific actions and assertions. Reuse common.steps.ts for
+      shared steps.
+
+      Required step definitions (in addition to common.steps.ts steps):
+        When I filter runs by status {string}
+        When I search for run {string}
+        When I click on the run card for {string}
+        When I click the "New Run" button
+        When I select routine {string} in the modal
+        When I enter run name {string}
+        When I submit the create run form
+        When I cancel the create run modal
+        Then I should see {int} run cards
+        Then I should see a run card for {string}
+        Then I should not see a run card for {string}
+        Then I should be on the run detail page for {string}
+        Then I should see a validation error for {string}
+
+      After creating step definitions, run the full BDD test suite and verify:
+        1. All dashboard.feature scenarios pass
+        2. All create-run.feature scenarios pass
+        3. No regressions in smoke.feature
+        4. TypeScript compiles without errors
+    requirements:
+      - id: "R5"
+        desc: "ui/tests/bdd/steps/dashboard.steps.ts exists with step definitions for all dashboard and modal scenarios"
+        priority: critical
+      - id: "R6"
+        desc: "All scenarios in dashboard.feature and create-run.feature pass"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "dashboard_steps_exists"
+          cmd: "test -f ui/tests/bdd/steps/dashboard.steps.ts"
+          must: true
+        - id: "typescript_compiles"
+          cmd: "cd ui && npx tsc --noEmit"
+          must: false
+        - id: "all_bdd_tests_pass"
+          cmd: "cd ui && npm run test:bdd"
+          must: false

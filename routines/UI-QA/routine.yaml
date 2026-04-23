@@ -1,0 +1,25 @@
+id: "UI-QA"
+name: "UI QA Test Suite"
+description: |
+  Build a comprehensive frontend test suite that exercises every user-facing workflow
+  end-to-end using fake (mocked) backend responses. Covers all pages, dialogs, stateful
+  flows, WebSocket/SSE event handling, race conditions, and edge cases. Implemented with
+  playwright-bdd (Gherkin feature files) and Vitest + Testing Library for component tests.
+inputs:
+  - name: "feature"
+    required: true
+    description: "Feature name for directory paths"
+    default: "UI-QA"
+steps:
+  - id: "S-01"
+    file: "steps/step-01-infrastructure.yaml"
+  - id: "S-02"
+    file: "steps/step-02-dashboard.yaml"
+  - id: "S-03"
+    file: "steps/step-03-run-detail.yaml"
+  - id: "S-04"
+    file: "steps/step-04-lifecycle.yaml"
+  - id: "S-05"
+    file: "steps/step-05-edge-cases.yaml"
+  - id: "S-06"
+    file: "steps/step-06-ci.yaml"

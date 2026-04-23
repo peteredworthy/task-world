@@ -1,0 +1,245 @@
+id: "S-06"
+title: "CI Integration & Documentation (M4)"
+step_context: |
+  Wire the BDD test suite into CI so tests run automatically on every push.
+  Update documentation with comprehensive instructions. Verify the < 3-minute
+  CI time budget is met.
+
+  Prerequisites: Steps 01-05 complete. All BDD feature files passing locally.
+
+  Key hardening from dry-run analysis:
+  - CI runner MUST install Playwright browsers with --with-deps flag:
+      npx playwright install --with-deps chromium
+    Without --with-deps, missing system library dependencies cause browser launch
+    failures on fresh CI runners.
+  - Configure a cache key for Playwright browser binaries to avoid installing on
+    every run. Cache key must include Playwright version:
+      key: playwright-${{ hashFiles('ui/package-lock.json') }}
+  - BDD suite must complete in < 3 minutes in CI (stricter target per Q5).
+    Before assuming this is met, measure locally with --workers=4 and compare.
+    If CI is slower than local, apply one of these optimization strategies:
+      a) Increase --workers (if CI runner supports more CPUs)
+      b) Split slow features into separate files for parallel execution
+      c) Audit and eliminate any Playwright waits that are longer than needed
+      d) Get product sign-off to extend the budget if optimization is insufficient
+    Document the chosen strategy and measured time in ui/tests/README.md.
+  - Trace artifact upload must use correct CI syntax. Test artifact upload locally
+    with npx playwright test --trace on before wiring into CI.
+  - README must be reviewed by a non-engineer to verify it's followable.
+
+tasks:
+  - id: "T-01"
+    title: "Update CI workflow configuration"
+    task_context: |
+      Update the CI workflow file (check .github/workflows/ for existing workflow
+      files — look for test.yml, ci.yml, or frontend.yml) to add a BDD test step.
+
+      Read the existing CI workflow file before modifying it. The BDD step must:
+        1. Run AFTER the existing Vitest tests (not instead of them)
+        2. Be in a separate job or step named "bdd-tests" or similar
+        3. Include:
+           - Install Playwright browsers:
+               cd ui && npx playwright install --with-deps chromium
+           - Run BDD suite:
+               cd ui && npm run test:bdd
+           - Upload trace artifacts on failure:
+               uses: actions/upload-artifact@v4
+               if: failure()
+               with:
+                 name: playwright-traces-${{ github.run_id }}
+                 path: ui/test-results/
+
+      Add Playwright browser caching:
+        - id: cache-playwright-browsers
+          uses: actions/cache@v4
+          with:
+            path: ~/.cache/ms-playwright
+            key: playwright-${{ runner.os }}-${{ hashFiles('ui/package-lock.json') }}
+            restore-keys: playwright-${{ runner.os }}-
+
+      If no existing CI workflow exists for frontend tests, check with the user
+      before creating a new workflow file — don't create CI infrastructure that
+      doesn't exist yet without explicit approval.
+    requirements:
+      - id: "R1"
+        desc: "CI workflow file includes BDD test step with npx playwright install --with-deps and npm run test:bdd"
+        priority: critical
+      - id: "R2"
+        desc: "CI workflow configures Playwright browser caching with version-aware cache key"
+        priority: critical
+      - id: "R3"
+        desc: "CI workflow uploads Playwright trace artifacts on test failure"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "ci_workflow_exists"
+          cmd: "ls .github/workflows/ 2>/dev/null"
+          must: false
+        - id: "ci_has_playwright_install"
+          cmd: "grep -r 'playwright install' .github/workflows/ 2>/dev/null"
+          must: false
+        - id: "ci_has_test_bdd"
+          cmd: "grep -r 'test:bdd' .github/workflows/ 2>/dev/null"
+          must: false
+        - id: "ci_has_cache"
+          cmd: "grep -r 'ms-playwright\\|playwright.*cache' .github/workflows/ 2>/dev/null"
+          must: false
+
+  - id: "T-02"
+    title: "Measure and optimize BDD suite execution time"
+    task_context: |
+      Measure the BDD suite execution time locally to determine if the < 3-minute
+      CI budget will be met. Run:
+        time cd ui && npm run test:bdd -- --reporter=list
+
+      Record the output: total time and per-feature times.
+
+      If total time > 2 minutes locally (CI typically runs ~1.5x slower):
+        Apply ONE of these optimization strategies:
+          a) Increase --workers beyond 4 in playwright.bdd.config.ts
+             (check if local machine/CI has enough CPUs — use os.cpus().length - 1)
+          b) Split the largest feature file into two files for better parallelism
+             (run-transitions.feature is a candidate if it has many Examples rows)
+          c) Audit Playwright waits: remove any page.waitForTimeout() calls;
+             replace with locator.waitFor() which stops as soon as the condition is met
+          d) If none of the above brings it under budget, document the actual time
+             and get product sign-off on an extended budget; update README accordingly
+
+        Document the chosen strategy and measured time in ui/tests/README.md.
+
+      If total time < 2 minutes locally:
+        Document the measured time in README.md and note the CI budget is met.
+        No optimization needed.
+    requirements:
+      - id: "R4"
+        desc: "BDD suite execution time documented in ui/tests/README.md with measured time and whether it meets the < 3-minute budget"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "readme_has_timing"
+          cmd: "grep -qi 'minute\\|seconds\\|timing\\|budget\\|performance' ui/tests/README.md"
+          must: false
+
+  - id: "T-03"
+    title: "Update ui/tests/README.md with comprehensive documentation"
+    task_context: |
+      Update ui/tests/README.md (created in Step 01) with comprehensive
+      documentation. The README must be complete enough for a new contributor
+      to run, debug, and extend the BDD test suite without asking for help.
+
+      Required sections:
+        ## Running Tests
+          - npm run test:bdd (headless)
+          - npm run test:bdd:ui (interactive Playwright UI mode)
+          - PLAYWRIGHT_BDD_PORT=5399 npm run test:bdd (custom port)
+          - npx playwright test --config playwright.bdd.config.ts --trace on (with traces)
+
+        ## Adding a New Workflow Feature
+          - Step 1: Create .feature file in ui/tests/bdd/features/
+          - Step 2: Add step definitions in ui/tests/bdd/steps/
+          - Step 3: Use page objects from ui/tests/bdd/pages/
+          - Step 4: Wire factory data in Background section
+          - Example snippet showing minimal feature + step file structure
+
+        ## Adding a New Edge Case Scenario
+          - Which feature file to add it to (state change, dialogs, connection, stale data)
+          - How to inject error responses via api-handlers.ts errorRoutes config
+          - How to trigger WebSocket events with FakeWebSocket.pushEvent()
+
+        ## Fixture Patterns
+          - factories.ts: how to use buildRun/buildTask/etc with overrides
+          - api-handlers.ts: how createHandlers works, how to add new endpoints
+          - fake-ws.ts: FakeWebSocket usage, synchronous pushEvent() contract
+          - fake-sse.ts: FakeSSE usage for SSE stream scenarios
+
+        ## Debugging Tips
+          - Playwright trace viewer: npx playwright show-trace trace.zip
+          - Headed mode: HEADED=true npm run test:bdd
+          - Slow motion: SLOWMO=500 npm run test:bdd
+          - Debug single feature: npx playwright test --config playwright.bdd.config.ts --grep "Feature name"
+
+        ## Page Object Conventions
+          - Always use page objects, never raw selectors in step definitions
+          - Locators return Locator objects (not resolved handles)
+          - data-testid attribute naming convention
+
+        ## CI Time Budget
+          - Current measured time: [fill in after T-02]
+          - Budget: < 3 minutes
+          - Workers: 4 (configurable via --workers flag)
+          - Cache key: playwright-${{ hashFiles('package-lock.json') }}
+
+        ## Coverage Summary
+          | Page / Component | Feature File | Scenarios |
+          |---|---|---|
+          | Dashboard | dashboard.feature | 5 |
+          | CreateRunModal | create-run.feature | 5 |
+          | RunDetail | run-detail.feature | 7 |
+          | RoutineLibrary | routines.feature | 3 |
+          | (etc.) | | |
+
+      The README should be reviewed by at least one non-engineer (QA or product)
+      before this step is marked complete.
+    requirements:
+      - id: "R5"
+        desc: "ui/tests/README.md contains all required sections: Running Tests, Adding Features, Fixture Patterns, Debugging Tips, Page Object Conventions, Coverage Summary"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "readme_has_running_section"
+          cmd: "grep -q 'Running\\|run.*test' ui/tests/README.md"
+          must: true
+        - id: "readme_has_fixture_section"
+          cmd: "grep -q 'Fixture\\|factory\\|factories' ui/tests/README.md"
+          must: true
+        - id: "readme_has_debugging"
+          cmd: "grep -q 'Debug\\|trace\\|headed' ui/tests/README.md"
+          must: true
+        - id: "readme_has_coverage_table"
+          cmd: "grep -q 'Coverage\\|feature file' ui/tests/README.md"
+          must: false
+        - id: "readme_has_page_objects"
+          cmd: "grep -q 'page object\\|Page Object' ui/tests/README.md"
+          must: false
+
+  - id: "T-04"
+    title: "Final verification: CI green, full suite passing, documentation reviewed"
+    task_context: |
+      Perform final verification that the full BDD test suite and CI integration
+      are ready.
+
+      Checklist:
+      1. All BDD feature files pass locally (npm run test:bdd green)
+      2. TypeScript compilation clean (no type errors)
+      3. CI workflow file contains all required steps (Playwright install, test:bdd,
+         trace upload, browser caching)
+      4. Measured BDD suite time is documented in README.md
+      5. Coverage summary table in README.md is accurate and current
+      6. docs/UI-QA/dry-run-notes.md: mark all Applied gaps as "Applied to step files: YES"
+         (this was done in the planning step; verify it's still accurate)
+
+      If CI pipeline is available, trigger a CI run and verify it passes green.
+      Record the CI execution time in README.md.
+
+      If any BDD scenario is currently failing:
+        - If it's a known gap (documented in edge case features with @known-issue),
+          configure the test runner to allow these failures without blocking CI.
+        - If it's an unexpected failure, fix it before marking this step complete.
+    requirements:
+      - id: "R6"
+        desc: "Full BDD suite passes locally with no unexpected failures"
+        priority: critical
+      - id: "R7"
+        desc: "CI pipeline runs and passes with BDD tests included"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "full_bdd_suite_passes"
+          cmd: "cd ui && npm run test:bdd"
+          must: false
+        - id: "typescript_clean"
+          cmd: "cd ui && npx tsc --noEmit"
+          must: false
+        - id: "ci_file_has_required_steps"
+          cmd: "grep -rl 'test:bdd' .github/workflows/ 2>/dev/null"
+          must: false

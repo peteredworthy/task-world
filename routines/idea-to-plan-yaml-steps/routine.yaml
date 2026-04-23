@@ -11,6 +11,10 @@ routine:
     the routine header + file stubs — no re-encoding of step content. S-05 and S-06
     interact with the YAML step files directly.
 
+    Large or uncertain requests use incremental oversight mode: produce one bounded
+    executable slice, define the assumption and real verification evidence for that
+    slice, and stop for evaluation before planning wider rollout.
+
     Primary process references live in docs/plan-runner/.
 
   inputs:
@@ -70,6 +74,39 @@ routine:
             Follow docs/planner/templates/*.md for artifact structure.
 
             Ensure content is specific to the project and actionable.
+
+            === LARGE / UNCERTAIN TASK MODE ===
+
+            Decide whether the idea is large or uncertain. Treat it as large/uncertain
+            when any of these are true:
+            - success depends on facts that must be discovered in code, runtime behavior,
+              test execution, external services, or UI interaction
+            - the request would naturally span multiple subsystems, pages, workflows,
+              or infrastructure layers
+            - the reported bug or missing behavior has not yet been reproduced
+            - a full implementation plan would require more than one coherent vertical
+              slice before any real evidence is collected
+
+            If the task is large/uncertain, write "Planning mode: incremental oversight"
+            near the top of plan.md and architecture.md. The plan.md must describe only:
+            - the first executable slice
+            - the exact assumption being tested
+            - the target failing behavior or missing proof
+            - the real verification surface
+            - replan/stop conditions
+            - evidence artifacts to capture
+            - deferred slice candidates, clearly marked as not yet planned
+
+            Do not decompose the full project into implementation phases in incremental
+            oversight mode. Later slices are planned after the first slice produces evidence.
+
+            The first slice must prove that the selected verification path itself works.
+            For frontend or integration work, a generated harness, fallback runner, mocked
+            shim, file existence check, or `must: false` command cannot be the final proof.
+            If the real browser/UI/API/CLI surface fails, the plan must stop and replan
+            around that failure before adding more workflows or components.
+
+            === END LARGE / UNCERTAIN TASK MODE ===
 
             === INTENT ITEM NUMBERING ===
 
@@ -258,8 +295,9 @@ routine:
     - id: "S-03"
       title: "Step Planning"
       step_context: |
-        Break the plan into step-level plans with contracts (inputs/outputs/errors)
-        and verification strategies. Each step delivers a coherent capability.
+        Break known work into step-level plans with contracts and verification.
+        For large or uncertain work, produce only the next executable slice and
+        the evidence needed to decide the following slice.
       tasks:
         - id: "T-01"
           title: "Create Step Plans"
@@ -279,6 +317,40 @@ routine:
 
             ARCHITECTURE:
             {{context.architecture}}
+
+            === INCREMENTAL OVERSIGHT CONTRACT ===
+
+            First determine whether plan.md or architecture.md says
+            "Planning mode: incremental oversight".
+
+            If incremental oversight mode is active:
+            - Create exactly one executable step plan: docs/{{feature}}/step-01-plan.md.
+            - The step must be a narrow vertical slice with a small blast radius.
+            - The step must test one explicit assumption before wider work continues.
+            - Do not create step-02-plan.md or later step plans.
+            - Do not split broad areas such as "frontend", "backend", "tests", or
+              "documentation" unless the single slice already proves that split is valid.
+            - Put later possibilities in a "Deferred Slice Candidates" section inside
+              docs/{{feature}}/plan.md, not as executable step files.
+
+            The single step plan must include these sections exactly:
+            - "Assumption Under Test" - one sentence naming what the slice must prove.
+            - "Target Behavior Or Missing Proof" - the concrete bug, workflow, or proof gap.
+            - "Real Verification Surface" - the actual UI, API, CLI, integration path,
+              or runtime surface to exercise. Shim-only or helper-only proof is not enough
+              for frontend or integration behavior.
+            - "Stop Or Replan Conditions" - concrete conditions that mean execution should
+              stop and return to planning, including bug not reproduced, behavior already
+              correct, environment cannot verify the surface, chosen slice too broad, or
+              evidence contradicts the plan. Include "real verification fails while a
+              fallback/shim passes" as a stop condition when a fallback runner exists.
+            - "Evidence Artifacts" - exact files, logs, screenshots, traces, commands,
+              test results, or notes the builder/verifier must leave for the next cycle.
+
+            If incremental oversight mode is not active, use the normal decomposition
+            guidance below.
+
+            === END INCREMENTAL OVERSIGHT CONTRACT ===
 
             Step decomposition guidance — use these three questions to decide
             whether two pieces of work belong in the same step or separate steps.
@@ -304,7 +376,7 @@ routine:
                implementation phase benefits from starting with a clean, focused
                prompt informed by the exploration output.
 
-            Additional constraints:
+            Additional constraints for normal decomposition mode:
             - Each step executes with a FRESH agent context. There is no shared
               memory between steps — the agent must re-discover the codebase from
               artifacts left by previous steps. This is the primary cost of
@@ -326,7 +398,7 @@ routine:
             Follow docs/planner/templates/step-plan.md.
           requirements:
             - id: "R1"
-              desc: "Create step-XX-plan.md for each plan step"
+              desc: "Create step plan files according to the selected planning mode; incremental oversight mode creates exactly one executable step"
               priority: critical
             - id: "R2"
               desc: "Each step plan defines input/output/error contracts"
@@ -337,18 +409,26 @@ routine:
             - id: "R4"
               desc: "Dependencies between steps are explicit"
               priority: expected
+            - id: "R5"
+              desc: "Incremental oversight step plan includes assumption, target behavior, real verification surface, stop/replan conditions, and evidence artifacts"
+              priority: critical
           auto_verify:
             items:
               - id: "step_plans_exist"
                 cmd: "ls docs/{{feature}}/step-*-plan.md >/dev/null 2>&1"
                 must: true
+              - id: "incremental_contract_if_enabled"
+                cmd: "uv run python -c \"from pathlib import Path; import sys; plan=Path('docs/{{feature}}/plan.md'); txt=plan.read_text() if plan.exists() else ''; files=sorted(Path('docs/{{feature}}').glob('step-*-plan.md')); inc='Planning mode: incremental oversight' in txt; required=['Assumption Under Test','Target Behavior Or Missing Proof','Real Verification Surface','Stop Or Replan Conditions','Evidence Artifacts']; first=files[0].read_text() if files else ''; ok=(not inc) or (len(files)==1 and all(r in first for r in required)); sys.exit(0 if ok else 1)\""
+                must: true
           verifier:
             rubric:
               - id: "R1"
                 text: |
-                  R1 — A: each step-XX-plan.md has a clear purpose, concrete prerequisites,
-                  and names specific files/modules. B: files exist but purpose is generic or
-                  prerequisites are vague. F: step plan files missing.
+                  R1 — A: in incremental oversight mode, exactly one step plan exists and it is a
+                  small vertical slice; in normal mode, each step-XX-plan.md has a clear purpose,
+                  concrete prerequisites, and names specific files/modules. B: files exist but
+                  purpose is generic or prerequisites are vague. F: step plan files missing or an
+                  incremental oversight plan emits multiple executable steps.
               - id: "R2"
                 text: |
                   R2 — A: each plan has explicit "Inputs", "Outputs", and "Error handling" sections
@@ -362,6 +442,13 @@ routine:
                 text: |
                   R4 — A: each plan states which prior steps must complete first and why.
                   B: ordering is implied by numbering but not stated.
+              - id: "R5"
+                text: |
+                  R5 — A: when incremental oversight mode is active, the single step plan names
+                  the assumption under test, target behavior or missing proof, real verification
+                  surface, stop/replan conditions, and evidence artifacts. B: one field is present
+                  but vague. F: any required field is missing, or verification can be satisfied by
+                  shim-only/helper-only proof for frontend or integration behavior.
           retry:
             max_attempts: 2
 
@@ -602,6 +689,21 @@ routine:
               - Independently verifiable with contract-level auto_verify
               - Runnable in sequence without leaving the system broken
 
+              If the source step plan contains incremental oversight sections, preserve
+              them inside task_context and requirements. The YAML step must instruct the
+              builder and verifier to leave the named evidence artifacts, and must include
+              stop/replan conditions as explicit task requirements or verifier rubric text.
+
+              For any frontend or integration slice:
+              - The primary real-surface verification command must be blocking (`must: true`)
+                once the slice claims the surface is runnable.
+              - A fallback harness may be useful for local diagnosis, but it must not mask
+                failure of the real browser/UI/API/CLI path. If a wrapper falls back after a
+                real-surface failure, the YAML must require capturing both exit statuses and
+                treating the real-surface failure as a replan condition.
+              - Static checks (`test -f`, `grep`, generated spec count, type-only compile)
+                may supplement proof but cannot be the strongest readiness evidence.
+
               Do NOT write a full routine. Write only the step definition.
             shared_context:
               - "{{file:docs/{{feature}}/codebase-discovery.md}}"
@@ -628,6 +730,9 @@ routine:
             - id: "R3"
               desc: "Tasks are atomic and independently verifiable"
               priority: critical
+            - id: "R4"
+              desc: "Incremental oversight YAML preserves assumption, target behavior, real verification surface, stop/replan conditions, and evidence artifacts"
+              priority: critical
           auto_verify:
             items:
               - id: "step_yaml_files_exist"
@@ -635,6 +740,9 @@ routine:
                 must: true
               - id: "no_existence_only_verify"
                 cmd: "uv run python -c \"import yaml,sys,glob; ep=('test -f','test -d','grep -q','grep -c','ls '); weak=[]; [weak.extend([f\\\"{f}/{t['id']}\\\" for t in (yaml.safe_load(open(f)).get('step',yaml.safe_load(open(f)))).get('tasks',[]) for items in [(t.get('auto_verify')or{}).get('items',[])] if items and all(any(c['cmd'].strip().startswith(p) for p in ep) for c in items)]) for f in glob.glob('routines/{{feature}}/steps/step-*-plan.yaml')]; sys.exit(1) if weak else print('ok')\""
+                must: true
+              - id: "incremental_yaml_contract_if_enabled"
+                cmd: "uv run python -c \"from pathlib import Path; import sys; plan=Path('docs/{{feature}}/plan.md'); inc=plan.exists() and 'Planning mode: incremental oversight' in plan.read_text(); files=list(Path('routines/{{feature}}/steps').glob('step-*-plan.yaml')); txt='\\n'.join(f.read_text() for f in files); required=['Assumption Under Test','Target Behavior Or Missing Proof','Real Verification Surface','Stop Or Replan Conditions','Evidence Artifacts']; sys.exit(0 if (not inc or (len(files)==1 and all(r in txt for r in required))) else 1)\""
                 must: true
           verifier:
             rubric:
@@ -652,6 +760,12 @@ routine:
                 text: |
                   R3 — A: every task changes ≤5 files and has specific verification. B: tasks are
                   reasonably scoped but some bundle multiple concerns.
+              - id: "R4"
+                text: |
+                  R4 — A: in incremental oversight mode, the YAML step carries forward the
+                  assumption, target behavior, real verification surface, stop/replan conditions,
+                  and evidence artifacts in builder/verifier-visible text. B: fields exist but one
+                  is vague. F: the YAML loses the evidence contract or emits multiple steps.
           retry:
             max_attempts: 2
       transitions:
@@ -690,6 +804,18 @@ routine:
                  - Are async/infrastructure dependencies resolved?
                  - Persistence layer complete? (DB column, repo write, repo read for new fields)
                  - Integration test assertions specified?
+                 - INCREMENTAL OVERSIGHT: if this step is an incremental oversight
+                   slice, does the YAML still name the assumption under test, target
+                   behavior or missing proof, real verification surface, stop/replan
+                   conditions, and evidence artifacts? Would the slice stop if the bug
+                   is absent, already fixed, or not verifiable in the current environment?
+                   Would the evidence produced be enough for a later planner to decide
+                   the next slice without reconstructing the whole run?
+                 - MASKED VERIFICATION: does any test wrapper fall back to a shim or
+                   alternate harness after the real surface fails while still returning
+                   success? Does any task rely on a `must: false` command as its strongest
+                   behavior proof? Flag this as a critical planning gap, because it lets
+                   incompatible pieces appear complete.
                  - COMPONENT WIRING: for every new class, protocol, adapter, or handler
                    introduced by this step, is there a call site in the ACTIVE code path
                    that will actually use it? A common LLM failure mode is to build all
@@ -782,6 +908,9 @@ routine:
             The merged file must include:
             - Per-step simulation results
             - Persistence mapping audit (table, or N/A if no new state fields)
+            - Incremental oversight audit: assumption tested, real verification surface,
+              stop/replan conditions, evidence artifacts, and whether the slice should
+              continue or stop after execution
             - Failure mode analysis (table: step, failure mode, likelihood, hardening action)
             - Cross-step risk synthesis (dependencies and risks that span multiple steps)
             - Plan changes recommended (with confirmation each is applied)
@@ -830,6 +959,9 @@ routine:
                - Add missing auto_verify items
                - Add or strengthen requirements
                - Add wiring checks where a new component replaces existing code
+               - Add missing incremental oversight fields: assumption under test,
+                 target behavior or missing proof, real verification surface,
+                 stop/replan conditions, and evidence artifacts
             3. Mark the gap as "Applied to step files: YES" in dry-run-notes.md.
 
             YAML editing rules:
@@ -974,6 +1106,19 @@ routine:
               that at least one YAML step file addresses it. List any intent items with
               no clear step file coverage under an "Intent Coverage Gaps" section.
               If all items are covered: note "Intent coverage: complete."
+
+            Also verify incremental oversight readiness:
+            - If plan.md says "Planning mode: incremental oversight", exactly one YAML
+              step file may exist.
+            - The verification report must include an "Incremental Oversight Readiness"
+              section with: assumption under test, target behavior or missing proof,
+              real verification surface, stop/replan conditions, and evidence artifacts.
+            - The report must state whether the output is ready to execute as slice 1,
+              or whether it must return to planning before execution.
+            - For frontend or integration work, any wrapper that reports success after
+              the real surface fails must be classified as "masked verification" and
+              the plan must be marked "Needs Work" until the real-surface command is
+              blocking or explicitly captured as a replan condition.
           requirements:
             - id: "R1"
               desc: "YAML step files align with plan and intent"
@@ -996,6 +1141,12 @@ routine:
             - id: "R7"
               desc: "Every [I-XX] goal/constraint/criterion in intent.md is addressed by at least one YAML step file"
               priority: expected
+            - id: "R8"
+              desc: "Incremental oversight mode emits exactly one executable YAML slice with complete evidence and replan contract"
+              priority: critical
+            - id: "R9"
+              desc: "Frontend or integration readiness is not based on fallback harnesses, shim-only checks, or must:false real execution commands"
+              priority: critical
           verifier:
             rubric:
               - id: "R1"
@@ -1041,6 +1192,21 @@ routine:
                   item from intent.md is traceable to at least one YAML step file that addresses it.
                   B: most items covered but 1-2 have no clear step file match.
                   F: multiple intent items with no coverage identified.
+              - id: "R8"
+                text: |
+                  R8 — A: if incremental oversight mode is active, exactly one executable YAML
+                  step exists and the verification report includes a complete Incremental Oversight
+                  Readiness section naming the assumption, target behavior, real verification
+                  surface, stop/replan conditions, and evidence artifacts. B: one field is vague.
+                  F: multiple executable steps exist or any required field is missing.
+              - id: "R9"
+                text: |
+                  R9 — A: for frontend or integration work, the readiness proof includes a
+                  blocking command against the real surface and no fallback/shim can turn a failed
+                  real-surface run into success. B: fallback behavior is documented but the primary
+                  real-surface command is still manually checked. F: the report marks ready when a
+                  wrapper fallback passes after real-surface failure, or when the strongest behavior
+                  proof is `must: false`.
             submission_template:
               grade_scale: [A, B, C, D, F]
               require_reason_if_below: A

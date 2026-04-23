@@ -1,0 +1,291 @@
+id: "S-01"
+title: "Infrastructure and Fixtures (M1)"
+step_context: |
+  Set up shared test infrastructure that all later milestones depend on: typed
+  factory functions, Playwright route handlers, WebSocket/SSE mocks, and
+  playwright-bdd configuration. One smoke .feature file proves the
+  Gherkin-to-Playwright pipeline works end-to-end.
+
+  Key hardening from dry-run analysis:
+  - Port 5398 must be configurable via env var PLAYWRIGHT_BDD_PORT to avoid
+    conflicts during local development (medium-risk failure mode).
+  - Pin playwright-bdd to a known-compatible version in package.json to prevent
+    version incompatibility breaking the pipeline.
+  - FakeWebSocket.pushEvent() MUST be synchronous (not async). If synchronous
+    dispatch isn't possible, document precise timing expectations in a comment.
+    This is a critical dependency for Steps 4 and 5.
+  - addInitScript injects FakeWebSocket before app initialization; confirm in
+    smoke test that the mock is active before React mounts.
+  - Route handler state must be explicitly reset between scenarios. Document
+    reset pattern; Playwright creates fresh page per scenario but route handlers
+    registered on a shared context may need explicit cleanup.
+  - Duplicate route handlers for the same endpoint: document that later-registered
+    handlers override earlier ones; test setup must be deterministic.
+  - Factories must import from ui/src/types/ directly to catch type drift at
+    compile time.
+
+tasks:
+  - id: "T-01"
+    title: "Install playwright-bdd and create BDD Playwright config"
+    task_context: |
+      Install playwright-bdd as a devDependency in ui/package.json. Pin to the
+      version compatible with the current @playwright/test version in package.json.
+      Do NOT use @latest — check the playwright-bdd release notes for the compatible
+      version and pin it explicitly (e.g. "playwright-bdd": "^7.x.x").
+
+      Create ui/playwright.bdd.config.ts with:
+      - BDD features glob: ui/tests/bdd/features/**/*.feature
+      - Steps glob: ui/tests/bdd/steps/**/*.ts
+      - webServer.port: process.env.PLAYWRIGHT_BDD_PORT ?? 5398
+        (configurable via env var to avoid port conflicts)
+      - workers: 4
+      - Separate from the existing ui/playwright.config.ts (do not modify it)
+
+      Add two npm scripts to ui/package.json:
+        "test:bdd": "bddgen && playwright test --config playwright.bdd.config.ts"
+        "test:bdd:ui": "bddgen && playwright test --config playwright.bdd.config.ts --ui"
+    requirements:
+      - id: "R1"
+        desc: "playwright-bdd is installed in ui/package.json at a pinned version"
+        priority: critical
+      - id: "R2"
+        desc: "ui/playwright.bdd.config.ts exists with PLAYWRIGHT_BDD_PORT env var support and workers=4"
+        priority: critical
+      - id: "R3"
+        desc: "npm scripts test:bdd and test:bdd:ui exist in ui/package.json"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "package_has_bdd"
+          cmd: "cd ui && node -e \"const p=require('./package.json'); if(!p.devDependencies['playwright-bdd']) throw new Error('missing playwright-bdd');\""
+          must: true
+        - id: "bdd_config_exists"
+          cmd: "test -f ui/playwright.bdd.config.ts"
+          must: true
+        - id: "bdd_config_has_port_env"
+          cmd: "grep -q 'PLAYWRIGHT_BDD_PORT' ui/playwright.bdd.config.ts"
+          must: true
+        - id: "bdd_config_has_workers"
+          cmd: "grep -q 'workers' ui/playwright.bdd.config.ts"
+          must: true
+        - id: "npm_scripts_exist"
+          cmd: "cd ui && node -e \"const p=require('./package.json'); if(!p.scripts['test:bdd']) throw new Error('missing test:bdd script');\""
+          must: true
+
+  - id: "T-02"
+    title: "Create factory functions"
+    task_context: |
+      Create ui/tests/fixtures/factories.ts with typed factory functions for all
+      API response types. Factories must import directly from ui/src/types/ so type
+      drift is caught at compile time.
+
+      Required factories:
+        buildRun(overrides?: Partial<Run>): Run
+        buildTask(overrides?: Partial<Task>): Task
+        buildAttempt(overrides?: Partial<Attempt>): Attempt
+        buildStep(overrides?: Partial<Step>): Step
+        buildRoutine(overrides?: Partial<Routine>): Routine
+        buildAgent(overrides?: Partial<Agent>): Agent
+
+      Each factory must produce a fully-valid object (all required fields set to
+      sensible defaults). The overrides parameter uses Partial<T> to allow partial
+      overrides at call sites.
+
+      Important: factories must NOT reference any test state or global variables.
+      Each call to buildRun() must produce an independent object.
+    requirements:
+      - id: "R4"
+        desc: "ui/tests/fixtures/factories.ts exports buildRun, buildTask, buildAttempt, buildStep, buildRoutine, buildAgent"
+        priority: critical
+      - id: "R5"
+        desc: "Factory functions import from ui/src/types/ and TypeScript compilation succeeds"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "factories_file_exists"
+          cmd: "test -f ui/tests/fixtures/factories.ts"
+          must: true
+        - id: "factories_exports"
+          cmd: "grep -q 'buildRun' ui/tests/fixtures/factories.ts && grep -q 'buildTask' ui/tests/fixtures/factories.ts && grep -q 'buildAttempt' ui/tests/fixtures/factories.ts"
+          must: true
+        - id: "factories_import_from_types"
+          cmd: "grep -q 'ui/src/types' ui/tests/fixtures/factories.ts || grep -q '../../../src/types' ui/tests/fixtures/factories.ts || grep -q '../../src/types' ui/tests/fixtures/factories.ts"
+          must: true
+        - id: "typescript_compiles"
+          cmd: "cd ui && npx tsc --noEmit"
+          must: false
+
+  - id: "T-03"
+    title: "Create API route handlers"
+    task_context: |
+      Create ui/tests/fixtures/api-handlers.ts with stateful Playwright route()
+      interceptors for all primary API endpoints.
+
+      Required handlers:
+        /api/runs (GET) — returns in-memory runs array
+        /api/runs (POST) — adds new run to in-memory state, returns created run
+        /api/runs/:id (GET) — returns run matching ID or 404
+        /api/routines (GET) — returns in-memory routines array
+        /api/agents (GET) — returns in-memory agents array
+        /api/activity/stream (SSE) — returns FakeSSE stream
+
+      Stateful design:
+        - Each handler set is initialized with factory-generated state
+        - POST mutations update in-memory state; subsequent GETs reflect changes
+        - Provide a createHandlers(page, initialState) function that registers all
+          route handlers and returns a state reference for test assertions
+        - State is local to the invocation — no shared global state between tests
+
+      Dynamic route matching:
+        - /api/runs/:id must use regex or wildcard matching (e.g. /api/runs/**) to
+          match run IDs from URL. Hardcoded IDs will break navigation tests.
+        - IMPORTANT: use page.route('**/api/runs/*', ...) pattern (not string match)
+
+      Error response support:
+        - Handlers accept an optional errorConfig parameter to return 500 or 404
+          responses for specific paths. Required by Step 5 edge case tests.
+
+      Document the grade submission payload in a comment above the grades handler:
+        POST /api/tasks/:id/grades — expected payload:
+          { grades: Array<{ requirement_id: string, grade: 'A'|'B'|'C'|'F', notes?: string }> }
+        This format must match the actual UI TaskDetailCard grade submission code.
+    requirements:
+      - id: "R6"
+        desc: "ui/tests/fixtures/api-handlers.ts exports createHandlers function with stateful route interceptors"
+        priority: critical
+      - id: "R7"
+        desc: "Route handlers use dynamic matching (not hardcoded IDs) for /api/runs/:id"
+        priority: critical
+      - id: "R8"
+        desc: "Grade submission payload format is documented in a comment in api-handlers.ts"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "handlers_file_exists"
+          cmd: "test -f ui/tests/fixtures/api-handlers.ts"
+          must: true
+        - id: "dynamic_route_matching"
+          cmd: "grep -E 'runs/\\*|runs/\\*\\*|runs/.*:id' ui/tests/fixtures/api-handlers.ts"
+          must: true
+        - id: "grade_payload_documented"
+          cmd: "grep -q 'grades' ui/tests/fixtures/api-handlers.ts && grep -q 'requirement_id' ui/tests/fixtures/api-handlers.ts"
+          must: false
+
+  - id: "T-04"
+    title: "Create FakeWebSocket and FakeSSE mocks"
+    task_context: |
+      Create ui/tests/fixtures/fake-ws.ts with a FakeWebSocket class that is
+      injected into the page via page.addInitScript() before any app JS runs.
+
+      CRITICAL: FakeWebSocket.pushEvent() MUST be synchronous. The method must
+      dispatch events synchronously to the app's WebSocket.onmessage handler.
+      Async event dispatch causes timing races in lifecycle tests (Step 4) and
+      edge case tests (Step 5). If the injection mechanism requires async bridging,
+      document the exact timing contract in a comment above pushEvent().
+
+      FakeWebSocket interface:
+        class FakeWebSocket {
+          pushEvent(eventType: string, payload: unknown): void  // SYNCHRONOUS
+          pushBatch(events: Array<{type: string, payload: unknown}>): void
+          simulateDisconnect(): void
+          simulateReconnect(): void
+        }
+
+      Injection mechanism:
+        - page.addInitScript() replaces window.WebSocket before React mounts
+        - App must use standard WebSocket API (new WebSocket(url)) for injection to work
+        - Test helper function: async function injectFakeWebSocket(page: Page): Promise<void>
+
+      Create ui/tests/fixtures/fake-sse.ts with SSE mock:
+        - Controllable ReadableStream for /api/activity/stream
+        - pushEvent(type: string, data: unknown): void
+        - simulateStreamDrop(): void — simulates EventSource connection drop
+
+      Both mocks must be exported from ui/tests/fixtures/index.ts for convenient import.
+    requirements:
+      - id: "R9"
+        desc: "ui/tests/fixtures/fake-ws.ts exports FakeWebSocket with synchronous pushEvent(), pushBatch(), simulateDisconnect(), simulateReconnect()"
+        priority: critical
+      - id: "R10"
+        desc: "ui/tests/fixtures/fake-sse.ts exports SSE mock with pushEvent() and simulateStreamDrop()"
+        priority: critical
+      - id: "R11"
+        desc: "FakeWebSocket.pushEvent() is documented as synchronous in a code comment"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "fake_ws_exists"
+          cmd: "test -f ui/tests/fixtures/fake-ws.ts"
+          must: true
+        - id: "fake_ws_methods"
+          cmd: "grep -q 'pushEvent' ui/tests/fixtures/fake-ws.ts && grep -q 'simulateDisconnect' ui/tests/fixtures/fake-ws.ts && grep -q 'simulateReconnect' ui/tests/fixtures/fake-ws.ts"
+          must: true
+        - id: "fake_ws_synchronous_comment"
+          cmd: "grep -qi 'synchronous\\|sync' ui/tests/fixtures/fake-ws.ts"
+          must: true
+        - id: "fake_sse_exists"
+          cmd: "test -f ui/tests/fixtures/fake-sse.ts"
+          must: true
+
+  - id: "T-05"
+    title: "Create common step definitions and smoke feature"
+    task_context: |
+      Create ui/tests/bdd/steps/common.steps.ts with shared Given/When/Then
+      step definitions reusable across all feature files.
+
+      Required shared steps:
+        Given the API returns {int} runs
+        Given the API returns no runs
+        Given the WebSocket is connected
+        Given I am on the dashboard
+        Given I am viewing run {string} in detail
+        When I navigate to {string}
+        Then I should see {string}
+        Then I should not see {string}
+
+      Each step must use page objects (not direct selectors) where applicable.
+
+      Create ui/tests/bdd/features/smoke.feature — minimal scenario:
+        Feature: Smoke test
+          Scenario: Dashboard loads with mocked run data
+            Given the API returns 3 runs
+            And the WebSocket is connected
+            When I am on the dashboard
+            Then I should see a run card
+
+      This smoke test proves the full Gherkin → playwright-bdd → Playwright pipeline
+      works end-to-end before any other features are written.
+
+      Create ui/tests/README.md (initial version) documenting:
+        - How to run: npm run test:bdd
+        - How to run with UI mode: npm run test:bdd:ui
+        - Fixture patterns: factories, route handlers, FakeWS, FakeSSE
+        - How to add a new scenario (step-by-step)
+        - Port configuration: PLAYWRIGHT_BDD_PORT env var
+    requirements:
+      - id: "R12"
+        desc: "ui/tests/bdd/steps/common.steps.ts exists with shared step definitions"
+        priority: critical
+      - id: "R13"
+        desc: "ui/tests/bdd/features/smoke.feature exists and passes (npm run test:bdd green)"
+        priority: critical
+      - id: "R14"
+        desc: "ui/tests/README.md exists with fixture patterns and port configuration documented"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "common_steps_exists"
+          cmd: "test -f ui/tests/bdd/steps/common.steps.ts"
+          must: true
+        - id: "smoke_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/smoke.feature"
+          must: true
+        - id: "readme_exists"
+          cmd: "test -f ui/tests/README.md"
+          must: true
+        - id: "readme_has_port_config"
+          cmd: "grep -q 'PLAYWRIGHT_BDD_PORT' ui/tests/README.md"
+          must: false
+        - id: "smoke_test_passes"
+          cmd: "cd ui && npm run test:bdd"
+          must: false

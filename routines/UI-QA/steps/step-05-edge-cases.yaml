@@ -1,0 +1,310 @@
+id: "S-05"
+title: "Edge Cases & State Transition Matrix (M3)"
+step_context: |
+  Test failure modes, race conditions, and exhaustively cover the state machine
+  with full transition matrices (valid + invalid), state changes during user
+  interaction, dialog edge cases, connection failures, and stale data handling.
+
+  Prerequisites: Steps 01-04 complete and all scenarios passing.
+
+  Key hardening from dry-run analysis:
+  - CRITICAL: Before writing any feature files for this step, create
+    docs/UI-QA/state-transition-matrix.md enumerating ALL valid and invalid
+    run state transitions and task state transitions. Use this document as the
+    source of truth for the Examples tables in Scenario Outlines. Missing
+    transitions = untested edge cases in production.
+  - Race condition tests are HIGH RISK for flakiness. NEVER use sleep().
+    Synchronize exclusively with:
+      page.waitForResponse() — for API calls
+      page.waitForSelector() — for DOM changes
+      Playwright locator assertions — auto-retry built in
+  - Invalid transition behavior may be inconsistent (some show errors, some are
+    silent no-ops). Document ACTUAL app behavior in each Scenario after running
+    manually; do not assume expected behavior without verifying.
+  - Connection edge cases (WebSocket disconnect/reconnect) depend on app-level
+    reconnection logic. If the app doesn't have reconnection logic, write
+    minimal reconnection handling before writing those tests; tests validate
+    the logic.
+  - Dialog double-click protection: if the app doesn't prevent double-submission,
+    write the test as "expected to fail" with a comment referencing the issue.
+    Do not skip the test — it documents a known gap.
+
+tasks:
+  - id: "T-01"
+    title: "Create state-transition-matrix.md before writing any transition tests"
+    task_context: |
+      Create docs/UI-QA/state-transition-matrix.md BEFORE implementing any
+      feature files in this step. This document is the source of truth for
+      the Scenario Outline Examples tables in run-transitions.feature and
+      task-transitions.feature.
+
+      The document must enumerate:
+
+      ## Run State Transitions
+
+      ### Valid Transitions
+      | From State | To State | Trigger | Expected UI Behavior |
+      |---|---|---|---|
+      | draft | active | POST /api/runs/:id/start | status badge → "active" |
+      | active | paused | POST /api/runs/:id/pause | status badge → "paused" |
+      | paused | active | POST /api/runs/:id/resume | status badge → "active" |
+      | active | completed | WS run_status_changed | status badge → "completed" |
+      | active | failed | WS run_status_changed | status badge → "failed" |
+      | active | cancelled | POST /api/runs/:id/cancel | status badge → "cancelled" |
+      | paused | cancelled | POST /api/runs/:id/cancel | status badge → "cancelled" |
+
+      ### Invalid Transitions (must enumerate ALL)
+      | From State | To State | Expected Behavior |
+      |---|---|---|
+      | completed | active | error or no-op (document actual behavior) |
+      | cancelled | active | error or no-op |
+      | cancelled | paused | error or no-op |
+      | failed | active | error or no-op |
+      (add all others)
+
+      ## Task State Transitions
+      (same structure for queued/building/verifying/completed/failed)
+
+      Instructions for filling in "Expected Behavior" for invalid transitions:
+        Run each invalid transition manually in the dev UI and document the actual
+        result (API error message, silent no-op, UI error banner, etc.).
+        Do NOT guess — observed behavior is what tests will verify.
+
+      After creating the document, cross-reference each transition with the
+      corresponding scenario in run-transitions.feature and task-transitions.feature
+      to confirm every row has a test scenario.
+    requirements:
+      - id: "R1"
+        desc: "docs/UI-QA/state-transition-matrix.md exists and enumerates all valid and invalid run and task state transitions"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "matrix_file_exists"
+          cmd: "test -f docs/UI-QA/state-transition-matrix.md"
+          must: true
+        - id: "matrix_has_run_transitions"
+          cmd: "grep -q 'draft\\|active\\|paused\\|completed\\|cancelled' docs/UI-QA/state-transition-matrix.md"
+          must: true
+        - id: "matrix_has_task_transitions"
+          cmd: "grep -q 'queued\\|building\\|verifying' docs/UI-QA/state-transition-matrix.md"
+          must: true
+        - id: "matrix_has_invalid_transitions"
+          cmd: "grep -qi 'invalid\\|no-op\\|error' docs/UI-QA/state-transition-matrix.md"
+          must: true
+
+  - id: "T-02"
+    title: "Write state transition matrix feature files"
+    task_context: |
+      Using docs/UI-QA/state-transition-matrix.md as the source of truth, write
+      parameterized Scenario Outline feature files for run and task transitions.
+
+      Write ui/tests/bdd/features/run-transitions.feature:
+        Use Scenario Outline with Examples table (from the matrix document).
+        Valid transitions section: trigger → assert UI shows new state.
+        Invalid transitions section: attempt trigger → assert UI shows error
+        or no state change (based on documented actual behavior).
+
+        Example structure:
+          Scenario Outline: Run state transitions
+            Given a run in state <from_state>
+            When I attempt transition to <to_state> via <action>
+            Then the run status should be <expected_state>
+            And the UI should show <expected_ui_behavior>
+
+            Examples: Valid transitions
+              | from_state | to_state  | action | expected_state | expected_ui_behavior  |
+              | draft      | active    | start  | active         | "active" badge shown  |
+              | active     | paused    | pause  | paused         | "paused" badge shown  |
+              ...
+
+            Examples: Invalid transitions
+              | from_state | to_state | action | expected_state | expected_ui_behavior         |
+              | completed  | active   | start  | completed      | error message or no-op shown |
+              ...
+
+      Write ui/tests/bdd/features/task-transitions.feature:
+        Same structure as run-transitions.feature but for task states.
+        Must include the revision cycle: verifying→failed→building (as revision).
+
+      Rule: the Examples table must be derived from state-transition-matrix.md.
+      Every row in the matrix must have a corresponding example row in the feature
+      file. Add a comment in the feature file noting which matrix rows it covers.
+    requirements:
+      - id: "R2"
+        desc: "ui/tests/bdd/features/run-transitions.feature exists with Scenario Outline covering all valid and invalid run transitions from the matrix"
+        priority: critical
+      - id: "R3"
+        desc: "ui/tests/bdd/features/task-transitions.feature exists with Scenario Outline covering all valid and invalid task transitions"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "run_transitions_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/run-transitions.feature"
+          must: true
+        - id: "task_transitions_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/task-transitions.feature"
+          must: true
+        - id: "run_transitions_has_outline"
+          cmd: "grep -q 'Scenario Outline\\|Examples' ui/tests/bdd/features/run-transitions.feature"
+          must: true
+        - id: "task_transitions_has_outline"
+          cmd: "grep -q 'Scenario Outline\\|Examples' ui/tests/bdd/features/task-transitions.feature"
+          must: true
+
+  - id: "T-03"
+    title: "Write race condition and dialog edge case features"
+    task_context: |
+      Write ui/tests/bdd/features/edge-state-change.feature with race condition
+      scenarios. Each scenario must document in a comment the specific race
+      condition it tests.
+
+      Required scenarios:
+        1. Run completes via WebSocket while CreateRunModal is open
+           # Race: run transitions externally while user is filling form
+           # Expected: modal reflects updated state or shows run-already-complete warning
+        2. Task moves to VERIFYING while user views BUILDING prompt
+           # Race: task transitions mid-view; prompt box should update or show stale warning
+        3. Run cancelled while user is submitting grades
+           # Race: grade submission fails because run is cancelled; error shown gracefully
+
+      Write ui/tests/bdd/features/edge-dialogs.feature:
+        1. Double-click on ConfirmDialog destructive action
+           # If double-click protection NOT implemented, mark as @known-issue
+        2. ApprovalModal opens at gate, closes if gate is resolved externally
+        3. Modal open → navigate away → modal closes (no orphan modals)
+
+      Timing discipline for race condition scenarios:
+        - Push WebSocket event at the EXACT moment the step comment describes
+        - Use page.waitForSelector() to confirm UI reflects race outcome
+        - NEVER use sleep() to create the race — use FakeWebSocket.pushEvent()
+          called at the appropriate step between user actions
+
+      For @known-issue scenarios:
+        Tag with @known-issue and add a comment:
+          # TODO: implement double-click protection; tracking issue: UIQA-XXX
+        These scenarios will be marked as "expected to fail" in the test runner.
+    requirements:
+      - id: "R4"
+        desc: "ui/tests/bdd/features/edge-state-change.feature exists with at least 3 race condition scenarios, each documenting the specific race"
+        priority: critical
+      - id: "R5"
+        desc: "ui/tests/bdd/features/edge-dialogs.feature exists with at least 2 dialog edge case scenarios"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "edge_state_change_exists"
+          cmd: "test -f ui/tests/bdd/features/edge-state-change.feature"
+          must: true
+        - id: "edge_state_change_has_scenarios"
+          cmd: "python3 -c \"c=open('ui/tests/bdd/features/edge-state-change.feature').read().count('Scenario'); exit(0 if c>=2 else 1)\""
+          must: true
+        - id: "edge_dialogs_exists"
+          cmd: "test -f ui/tests/bdd/features/edge-dialogs.feature"
+          must: false
+        - id: "no_sleep_in_edge_tests"
+          cmd: "! grep -rq 'sleep([0-9]\\|setTimeout([0-9]' ui/tests/bdd/features/edge-state-change.feature 2>/dev/null"
+          must: false
+
+  - id: "T-04"
+    title: "Write connection and stale data edge case features"
+    task_context: |
+      Write ui/tests/bdd/features/edge-connection.feature:
+        1. WebSocket disconnect → ConnectionBanner shown → reconnect → data refreshes
+        2. SSE stream drops → fallback to polling behavior → banner shown
+        3. API request fails with 500 → error boundary catches → user can retry
+        4. API request fails with 404 → NotFound page or error state shown
+
+      Write ui/tests/bdd/features/edge-stale-data.feature:
+        1. WebSocket updates run status → card updates without page reload
+        2. Stale cached run detail → WebSocket event triggers React Query invalidation
+
+      Connection edge case prerequisite check:
+        Before writing WebSocket disconnect/reconnect scenarios, verify that the
+        app has WebSocket reconnection logic (check the WebSocket hook or service).
+        If reconnection logic does NOT exist:
+          - Write the scenario anyway but mark as @not-implemented
+          - Add a note: "Reconnection logic needed in app before this test can pass"
+          - This documents the gap for the engineering team
+
+      Route handler error injection:
+        api-handlers.ts must support per-test error configuration:
+          const handlers = createHandlers(page, initialState, {
+            errorRoutes: {
+              '/api/runs': { status: 500, body: { error: 'Internal server error' } }
+            }
+          });
+        Add this error injection API if not already present in api-handlers.ts.
+    requirements:
+      - id: "R6"
+        desc: "ui/tests/bdd/features/edge-connection.feature exists with connection failure scenarios"
+        priority: expected
+      - id: "R7"
+        desc: "ui/tests/bdd/features/edge-stale-data.feature exists with cache invalidation scenarios"
+        priority: expected
+      - id: "R8"
+        desc: "api-handlers.ts supports per-test error response injection (errorRoutes config)"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "edge_connection_exists"
+          cmd: "test -f ui/tests/bdd/features/edge-connection.feature"
+          must: false
+        - id: "edge_stale_data_exists"
+          cmd: "test -f ui/tests/bdd/features/edge-stale-data.feature"
+          must: false
+        - id: "error_injection_in_handlers"
+          cmd: "grep -q 'errorRoute\\|error.*500\\|errorConfig' ui/tests/fixtures/api-handlers.ts"
+          must: true
+
+  - id: "T-05"
+    title: "Create edge case step definitions and run full BDD suite"
+    task_context: |
+      Create ui/tests/bdd/steps/edge-cases.steps.ts with step definitions for
+      all edge-case-specific actions.
+
+      Required step definitions:
+        When the backend sends a run completion event while the modal is open
+        When the WebSocket disconnects
+        When the WebSocket reconnects
+        When the SSE stream drops
+        When the API returns error {int} for {string}
+        When I double-click the confirm button
+        When I navigate away while the modal is open
+        Then the connection banner should be visible
+        Then the connection banner should disappear
+        Then I should see an error boundary with retry option
+        Then the run card status should update to {string} without page reload
+        Then I should see a toast or error message containing {string}
+
+      All step implementations:
+        - Use page.waitForSelector() and Playwright locator assertions for timing
+        - NO sleep() calls anywhere in edge-cases.steps.ts
+        - FakeWebSocket.simulateDisconnect() / simulateReconnect() for connection steps
+        - Route handler errorConfig for API error injection steps
+
+      After creating step definitions, run the full BDD suite and verify:
+        1. All transition feature files pass (run-transitions, task-transitions)
+        2. All edge-case feature files pass
+        3. No regressions in Steps 01-04 features
+        4. Total BDD suite runtime documented (will be used in Step 6 CI check)
+    requirements:
+      - id: "R9"
+        desc: "ui/tests/bdd/steps/edge-cases.steps.ts exists with step definitions for connection, race condition, and dialog edge cases"
+        priority: critical
+      - id: "R10"
+        desc: "All transition scenarios pass (run-transitions.feature, task-transitions.feature)"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "edge_cases_steps_exists"
+          cmd: "test -f ui/tests/bdd/steps/edge-cases.steps.ts"
+          must: true
+        - id: "no_sleep_in_edge_steps"
+          cmd: "! grep -q 'sleep\\|setTimeout([0-9]' ui/tests/bdd/steps/edge-cases.steps.ts"
+          must: false
+        - id: "typescript_compiles"
+          cmd: "cd ui && npx tsc --noEmit"
+          must: false
+        - id: "all_bdd_tests_pass"
+          cmd: "cd ui && npm run test:bdd"
+          must: false

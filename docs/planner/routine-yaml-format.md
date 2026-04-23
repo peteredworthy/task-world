@@ -63,6 +63,33 @@ Optional:
 - `retry: {max_attempts: N}`
 - `context_from` (array of `{artifact, as, required}`)
 
+### Incremental oversight slices
+
+For large or uncertain work, the planning routine may emit one YAML step as the
+first executable slice instead of a full multi-step routine. In that case, preserve
+these headings in builder/verifier-visible text, normally inside `task_context` and
+rubric text:
+
+- `Assumption Under Test`: the one fact this slice is meant to prove or disprove.
+- `Target Behavior Or Missing Proof`: the bug, workflow, or evidence gap being targeted.
+- `Real Verification Surface`: the actual UI, API, CLI, integration path, or runtime
+  surface to exercise. Shim-only or helper-only checks are not enough for frontend
+  or integration behavior.
+- `Stop Or Replan Conditions`: concrete conditions that mean execution should stop
+  and planning should adapt, including bug not reproduced, behavior already correct,
+  environment unable to verify the target surface, or evidence contradicting the plan.
+- `Evidence Artifacts`: exact files, logs, screenshots, traces, command outputs, or
+  notes the builder/verifier must leave for the next planning cycle.
+
+For frontend or integration work, a fallback harness or mocked shim can help diagnose
+failures, but it cannot be the readiness proof. If a wrapper falls back after the real
+browser, UI, API, CLI, or integration path fails, capture both outcomes and treat the
+real-surface failure as a stop/replan condition. Do not make a `must: false` command
+the strongest evidence for a behavior claim.
+
+Do not encode later speculative slices as executable steps. Put them in planning
+documentation as deferred candidates until the first slice produces evidence.
+
 ### Rubric item ID rule
 
 Rubric item IDs **must exactly match** requirement IDs:

@@ -1,0 +1,222 @@
+id: "S-03"
+title: "Run Detail & Secondary Pages (M2b + M2e)"
+step_context: |
+  Implement Gherkin features for the Run Detail page (step timeline, task list,
+  attempt history, pause/resume/cancel) and secondary pages (Routines, Agents,
+  History, Settings modal). Merged because secondary pages are thin and share
+  page-object patterns with Run Detail.
+
+  Prerequisites: Steps 01-02 complete. All smoke/dashboard features green.
+
+  Key hardening from dry-run analysis:
+  - Run detail page requires a valid run ID in the URL AND matching data in the
+    route handler. Route handler must serve run data for the exact ID used in the
+    navigation URL. Always construct the URL from the run object created by the
+    factory (do NOT hardcode IDs like "run-123").
+  - Pause/resume/cancel are POST mutations — route handlers must handle these
+    endpoints and update in-memory state. Document the expected payload for each
+    endpoint in api-handlers.ts.
+  - Secondary pages (Routines, Agents, History) each need their own mocked API
+    endpoints. If any secondary page endpoint is not mocked, the page will show
+    an error or blank state instead of the expected scenario.
+  - If 3 or more secondary pages share common patterns (list view, empty state,
+    loading state), define a reusable page object base class or mixin to avoid
+    selector duplication. Apply this if duplication appears during implementation.
+  - Settings modal: test that the toggle changes route handler behavior for
+    subsequent API calls — NOT that the setting persists across reloads
+    (persistence is backend scope, not tested here).
+
+tasks:
+  - id: "T-01"
+    title: "Create Run Detail and secondary page objects"
+    task_context: |
+      Create ui/tests/bdd/pages/run-detail.page.ts — page object for RunDetail:
+        - Step timeline container and individual step items
+        - Task list within a step
+        - Task detail card (expanded view)
+        - Attempt history list
+        - Attempt timeline
+        - Metrics bar
+        - Activity feed
+        - Pause button (data-testid="pause-run" or equivalent)
+        - Resume button
+        - Cancel button
+        - Status badge
+
+      Create ui/tests/bdd/pages/routines.page.ts — page object for RoutineLibrary:
+        - Routines list container
+        - Individual routine card
+        - Routine detail panel or page
+        - Validate routine button
+
+      Create ui/tests/bdd/pages/agents.page.ts — page object for AgentList:
+        - Agents list
+        - Agent configuration panel
+        - Quota display
+
+      Page object deduplication rule:
+        If routines.page.ts, agents.page.ts, and the history page share common
+        patterns (e.g., list container, empty state, loading spinner), extract
+        these into ui/tests/bdd/pages/base-list.page.ts. Apply if 3+ pages need
+        the same selectors; otherwise inline selectors in each page object.
+
+      IMPORTANT: Extend api-handlers.ts to mock these secondary endpoints:
+        GET /api/routines — return array of Routine objects
+        GET /api/routines/:id — return single Routine
+        GET /api/agents — return array of Agent objects
+        GET /api/runs/history — return completed runs (or filter /api/runs by status)
+        POST /api/runs/:id/pause — update run status to "paused"
+        POST /api/runs/:id/resume — update run status to "active"
+        POST /api/runs/:id/cancel — update run status to "cancelled"
+      These endpoints MUST be mocked before writing scenarios that use them.
+    requirements:
+      - id: "R1"
+        desc: "ui/tests/bdd/pages/run-detail.page.ts exists with selectors for step timeline, task cards, attempt history, and action buttons"
+        priority: critical
+      - id: "R2"
+        desc: "ui/tests/bdd/pages/routines.page.ts and agents.page.ts exist"
+        priority: expected
+      - id: "R3"
+        desc: "api-handlers.ts mocks pause, resume, cancel endpoints and all secondary page endpoints"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "run_detail_page_exists"
+          cmd: "test -f ui/tests/bdd/pages/run-detail.page.ts"
+          must: true
+        - id: "routines_page_exists"
+          cmd: "test -f ui/tests/bdd/pages/routines.page.ts"
+          must: false
+        - id: "agents_page_exists"
+          cmd: "test -f ui/tests/bdd/pages/agents.page.ts"
+          must: false
+        - id: "pause_endpoint_mocked"
+          cmd: "grep -q 'pause\\|resume\\|cancel' ui/tests/fixtures/api-handlers.ts"
+          must: true
+
+  - id: "T-02"
+    title: "Write run-detail feature file"
+    task_context: |
+      Write ui/tests/bdd/features/run-detail.feature with scenarios:
+        1. View run detail with step timeline — steps visible in correct order
+        2. View task list within a step — task cards appear for the active step
+        3. Expand task detail card — task detail expands, shows full content
+        4. View attempt history — attempt history list shows previous attempts
+        5. Pause active run — pause button click → run status changes to paused
+        6. Resume paused run — resume button click → run status changes to active
+        7. Cancel active run — cancel button click → confirmation → status cancelled
+        8. Error boundary: invalid run ID shows error page (navigate to /runs/invalid-id)
+
+      Each scenario must:
+        - Use Background to set up run state via common step definitions
+        - Navigate to the run detail URL using the run's actual ID (not hardcoded)
+        - Wait for route handler response before asserting on state change
+          (use "Then I should see run status {string}" which internally waits for
+          the status badge to update)
+
+      Important: For pause/resume/cancel scenarios, the route handler must update
+      in-memory state AND the UI assertion must wait for the status badge to
+      reflect the new state (not just that the button was clicked).
+    requirements:
+      - id: "R4"
+        desc: "ui/tests/bdd/features/run-detail.feature exists with at least 7 scenarios covering timeline, tasks, history, pause/resume/cancel"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "run_detail_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/run-detail.feature"
+          must: true
+        - id: "run_detail_has_scenarios"
+          cmd: "python3 -c \"c=open('ui/tests/bdd/features/run-detail.feature').read().count('Scenario'); exit(0 if c>=6 else 1)\""
+          must: true
+
+  - id: "T-03"
+    title: "Write secondary page features"
+    task_context: |
+      Write feature files for secondary pages. Each page must have at least one
+      scenario covering its primary happy path.
+
+      ui/tests/bdd/features/routines.feature:
+        1. Browse routine library — routines list shows mocked routines
+        2. View routine detail — click routine shows detail panel
+        3. Empty state — no routines shows empty state message
+
+      ui/tests/bdd/features/agents.feature:
+        1. View agents list — agents visible with name and status
+        2. View agent quota — quota display visible
+
+      ui/tests/bdd/features/history.feature:
+        1. View completed runs — history shows completed/failed runs
+        2. Empty history — no completed runs shows empty state
+
+      ui/tests/bdd/features/settings.feature:
+        1. Open settings modal — settings modal opens
+        2. Close settings modal — modal closes on cancel/escape
+        3. Toggle SSE/polling — toggle changes connection mode setting
+
+      Secondary page priority (per clarification Q6): secondary pages are lowest
+      priority. If time-constrained, implement Routines and Settings first;
+      Agents and History can be minimal (1 scenario each).
+    requirements:
+      - id: "R5"
+        desc: "Feature files exist for routines, agents, history, and settings — each with at least one scenario"
+        priority: expected
+    auto_verify:
+      items:
+        - id: "routines_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/routines.feature"
+          must: false
+        - id: "agents_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/agents.feature"
+          must: false
+        - id: "history_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/history.feature"
+          must: false
+        - id: "settings_feature_exists"
+          cmd: "test -f ui/tests/bdd/features/settings.feature"
+          must: false
+        - id: "at_least_two_secondary_features"
+          cmd: "python3 -c \"import os; files=[f for f in os.listdir('ui/tests/bdd/features/') if any(x in f for x in ['routines','agents','history','settings'])]; exit(0 if len(files)>=2 else 1)\""
+          must: true
+
+  - id: "T-04"
+    title: "Create run-detail step definitions and run all BDD tests"
+    task_context: |
+      Create ui/tests/bdd/steps/run-detail.steps.ts with step definitions for
+      all run detail and secondary page scenarios.
+
+      Required step definitions:
+        Given I am viewing run {string} in detail
+        When I expand task {string}
+        When I click pause
+        When I click resume
+        When I click cancel and confirm
+        Then I should see the step timeline
+        Then I should see {int} tasks in step {string}
+        Then run status should be {string}
+        Then I should see attempt history with {int} attempts
+        Then I should see an error page
+
+      After creating step definitions, run the full BDD suite and verify:
+        1. All run-detail.feature scenarios pass
+        2. All secondary page feature scenarios pass
+        3. No regressions in Steps 01-02 features
+        4. TypeScript compiles without errors
+    requirements:
+      - id: "R6"
+        desc: "ui/tests/bdd/steps/run-detail.steps.ts exists with step definitions for all run detail scenarios"
+        priority: critical
+      - id: "R7"
+        desc: "All scenarios in run-detail.feature pass"
+        priority: critical
+    auto_verify:
+      items:
+        - id: "run_detail_steps_exists"
+          cmd: "test -f ui/tests/bdd/steps/run-detail.steps.ts"
+          must: true
+        - id: "typescript_compiles"
+          cmd: "cd ui && npx tsc --noEmit"
+          must: false
+        - id: "all_bdd_tests_pass"
+          cmd: "cd ui && npm run test:bdd"
+          must: false
