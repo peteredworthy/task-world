@@ -1,0 +1,2 @@
+slice-01: A real orchestrator script-task run writes slice-01 evidence in its worktree.
+assumption: The external coordinator can create and execute a first bounded slice.

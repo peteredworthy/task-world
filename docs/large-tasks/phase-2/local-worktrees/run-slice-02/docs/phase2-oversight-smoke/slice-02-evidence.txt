@@ -1,0 +1,2 @@
+slice-02: Slice 02 changes focus from first-run execution to evidence-driven replanning.
+assumption: The coordinator can replan after inspecting concrete slice evidence.
