@@ -27,7 +27,7 @@ def create_codex_agent(
     model = agent_config.get("model")
     callback_channel = agent_config.get("callback_channel", "rest")
     api_key = agent_config.get("api_key")
-    restrictions = agent_config.get("restrictions", "no-network")
+    restrictions = agent_config.get("restrictions", "managed")
 
     return CodexServerAgent(
         model=model,

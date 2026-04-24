@@ -46,7 +46,10 @@ from orchestrator.runners.agents.openhands.common import (
 # NOTE: DockerOpenHandsAgent is loaded lazily via __getattr__ to avoid eager openhands.sdk import
 
 # Codex agent and helpers
-from orchestrator.runners.agents.codex.agent import CodexServerAgent, RealStdioTransport
+from orchestrator.runners.agents.codex.agent import (
+    CodexServerAgent,
+    RealStdioTransport,
+)
 from orchestrator.runners.agents.codex.common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     JsonRpcTransport,
@@ -180,6 +183,10 @@ def __getattr__(name: str):  # type: ignore[misc]
         import orchestrator.runners.agents.codex.common as _codex_common  # noqa: PLC0415
 
         return getattr(_codex_common, "_sp")  # pyright: ignore[reportPrivateUsage]
+    if name == "_build_workspace_write_config_toml":
+        import orchestrator.runners.agents.codex.agent as _codex_agent  # noqa: PLC0415
+
+        return getattr(_codex_agent, "_build_workspace_write_config_toml")  # pyright: ignore[reportPrivateUsage]
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

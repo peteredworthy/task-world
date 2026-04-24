@@ -302,3 +302,109 @@ def test_skips_bad_json():
     parser.parse_line("")
     log = parser.finalize()
     assert len(log.entries) == 0
+
+
+def test_parse_jsonrpc_message_accumulates_delta_and_command_execution() -> None:
+    parser = CodexStreamParser()
+
+    parser.parse_jsonrpc_message(
+        {
+            "jsonrpc": "2.0",
+            "method": "item/agentMessage/delta",
+            "params": {"delta": "Checking files"},
+        }
+    )
+    parser.parse_jsonrpc_message(
+        {
+            "jsonrpc": "2.0",
+            "method": "item/agentMessage/delta",
+            "params": {"delta": " now"},
+        }
+    )
+    parser.parse_jsonrpc_message(
+        {
+            "jsonrpc": "2.0",
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "cmd_1",
+                    "type": "commandExecution",
+                    "command": "git status --short",
+                    "status": "completed",
+                    "exitCode": 0,
+                    "aggregatedOutput": " M src/example.py",
+                }
+            },
+        }
+    )
+
+    log = parser.finalize()
+
+    assert [entry.kind for entry in log.entries] == [
+        ActionEntryKind.ASSISTANT_TEXT,
+        ActionEntryKind.TOOL_USE,
+        ActionEntryKind.TOOL_RESULT,
+    ]
+    assert log.entries[0].text == "Checking files now"
+    assert log.entries[1].tool_use is not None
+    assert log.entries[1].tool_use.summary == "bash: git status --short"
+    assert log.entries[2].tool_result is not None
+    assert log.entries[2].tool_result.output == " M src/example.py"
+
+
+def test_parse_jsonrpc_message_handles_file_change_item() -> None:
+    parser = CodexStreamParser()
+
+    parser.parse_jsonrpc_message(
+        {
+            "jsonrpc": "2.0",
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "fc_1",
+                    "type": "fileChange",
+                    "status": "completed",
+                    "changes": [
+                        {"path": "/tmp/a.py", "kind": "update"},
+                        {"path": "/tmp/b.py", "kind": "create"},
+                    ],
+                }
+            },
+        }
+    )
+
+    log = parser.finalize()
+
+    assert [entry.kind for entry in log.entries] == [ActionEntryKind.TOOL_USE]
+    assert log.entries[0].tool_use is not None
+    assert log.entries[0].tool_use.tool_name == "file_change"
+    assert log.entries[0].tool_use.summary == "file change: 2 update(s)"
+
+
+def test_parse_jsonrpc_message_records_dynamic_tool_call_and_result() -> None:
+    parser = CodexStreamParser()
+
+    parser.parse_jsonrpc_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 17,
+            "method": "item/tool/call",
+            "params": {
+                "tool": "update_checklist",
+                "arguments": {"req_id": "R-01", "status": "done"},
+            },
+        }
+    )
+    parser.record_dynamic_tool_result("17", success=True)
+
+    log = parser.finalize()
+
+    assert [entry.kind for entry in log.entries] == [
+        ActionEntryKind.TOOL_USE,
+        ActionEntryKind.TOOL_RESULT,
+    ]
+    assert log.entries[0].tool_use is not None
+    assert log.entries[0].tool_use.tool_name == "update_checklist"
+    assert log.entries[1].tool_result is not None
+    assert log.entries[1].tool_result.tool_use_id == "17"
+    assert log.entries[1].tool_result.success is True

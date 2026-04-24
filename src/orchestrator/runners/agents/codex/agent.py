@@ -28,6 +28,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from orchestrator.git import get_agent_cache_write_paths, get_worktree_git_write_paths
 from orchestrator.runners.agents.codex.common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     JsonRpcTransport,
@@ -45,6 +46,7 @@ from orchestrator.runners.agents.codex.common import (
     normalize_codex_output_lines,
     route_tool_call,
 )
+from orchestrator.runners.agents.codex.parser import CodexStreamParser
 from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
@@ -69,6 +71,21 @@ from orchestrator.runners.types import (
 from orchestrator.config.enums import AgentRunnerType
 
 logger = logging.getLogger(__name__)
+
+
+def _build_workspace_write_config_toml(
+    writable_roots: list[Path],
+    *,
+    network_access: bool,
+) -> str:
+    """Build a minimal Codex ``config.toml`` for workspace-write sessions."""
+    lines = ["[sandbox_workspace_write]"]
+    if writable_roots:
+        roots = ", ".join(json.dumps(str(path)) for path in writable_roots)
+        lines.append(f"writable_roots = [{roots}]")
+    lines.append(f"network_access = {'true' if network_access else 'false'}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +184,19 @@ class CodexServerAgent:
     #: v1 tool allow-list surfaced as a class attribute for inspection/testing.
     TOOL_ALLOWLIST: frozenset[str] = CODEX_SERVER_TOOL_ALLOWLIST
 
+    @staticmethod
+    def _normalize_restrictions(restrictions: str) -> str:
+        """Map legacy restriction names to the current canonical values."""
+        if restrictions == "no-network":
+            return "managed"
+        return restrictions
+
     def __init__(
         self,
         model: str | None = None,
         callback_channel: str = "rest",
         api_key: str | None = None,
-        restrictions: str = "no-network",
+        restrictions: str = "managed",
         *,
         _transport: JsonRpcTransport | None = None,
         _environ: dict[str, str] | None = None,
@@ -182,9 +206,9 @@ class CodexServerAgent:
         # restrictions controls how aggressively we override Codex sandbox/config behaviour.
         # Supported values:
         # - "none":     Do not override sandbox/network; honour Codex defaults and local config.
-        # - "no-network": Force workspace-write sandbox with network disabled (orchestrator default).
+        # - "managed":  Use orchestrator-managed workspace-write roots and network policy.
         # - "use-local": Delegate entirely to the user's local Codex config.toml, including sandbox.
-        self._restrictions = restrictions
+        self._restrictions = self._normalize_restrictions(restrictions)
         # Resolve API key: explicit arg only (or test-injected _environ).
         # Do NOT fall back to OPENAI_API_KEY from os.environ — doing so causes
         # execute() to call account/login/start with apiKey, which unconditionally
@@ -385,6 +409,7 @@ class CodexServerAgent:
 
             output_lines: list[str] = []
             notification_buffer: list[dict[str, Any]] = []
+            parser = CodexStreamParser()
             next_id = 1
 
             async def _send_and_wait(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -400,6 +425,7 @@ class CodexServerAgent:
                     # Buffer any notifications that arrive while we wait.
                     if "method" in msg and "id" not in msg:
                         notification_buffer.append(msg)
+                        parser.parse_jsonrpc_message(msg)
 
             # --- Step 0: Initialize (required JSON-RPC handshake) ---
             # experimentalApi enables dynamicTools in thread/start.
@@ -432,7 +458,7 @@ class CodexServerAgent:
             sandbox_mode: str | None
             if self._restrictions == "none":
                 sandbox_mode = "danger-full-access"
-            elif self._restrictions == "no-network":
+            elif self._restrictions == "managed":
                 sandbox_mode = "workspace-write"
             else:
                 # "use-local": let the config.toml (already copied) decide.
@@ -515,6 +541,7 @@ class CodexServerAgent:
                     return
                 req_id, tool_name, tool_args = tool_result
                 num_actions += 1
+                parser.parse_jsonrpc_message(tool_msg)
                 try:
                     await route_tool_call(
                         tool_name,
@@ -525,9 +552,11 @@ class CodexServerAgent:
                         on_complete_recovery=on_complete_recovery,
                         agent_label="CodexServerAgent",
                     )
+                    parser.record_dynamic_tool_result(str(req_id), success=True)
                     await transport.send(build_dynamic_tool_call_response(req_id, success=True))
                 except ValueError:
                     # Disallowed tool — respond with failure to unblock the server.
+                    parser.record_dynamic_tool_result(str(req_id), success=False)
                     await transport.send(build_dynamic_tool_call_response(req_id, success=False))
                 except InvalidTransitionError as cb_exc:
                     # Agent called a tool that is invalid in the current task state
@@ -539,6 +568,9 @@ class CodexServerAgent:
                         tool_name,
                         cb_exc,
                     )
+                    parser.record_dynamic_tool_result(
+                        str(req_id), success=False, output=str(cb_exc)
+                    )
                     await transport.send(build_dynamic_tool_call_response(req_id, success=False))
                 except Exception as cb_exc:
                     # Callback raised an unexpected error (GateBlockedError, DB error, etc.).
@@ -549,6 +581,9 @@ class CodexServerAgent:
                         tool_name,
                         type(cb_exc).__name__,
                         cb_exc,
+                    )
+                    parser.record_dynamic_tool_result(
+                        str(req_id), success=False, output=str(cb_exc)
                     )
                     await transport.send(build_dynamic_tool_call_response(req_id, success=False))
                     raise
@@ -569,6 +604,7 @@ class CodexServerAgent:
                     item = msg.get("params", {}).get("item", {})
                     if item.get("type") not in ("agentMessage", None):
                         num_actions += 1
+                parser.parse_jsonrpc_message(msg)
                 terminal, usage = await self._handle_notification(
                     msg,
                     output_lines,
@@ -653,14 +689,23 @@ class CodexServerAgent:
                 shutil.rmtree(tmp_codex_home, ignore_errors=True)
 
         duration_ms = int(time.monotonic() * 1000) - start_ms
-        return build_execution_result(
+        result = build_execution_result(
             output_lines,
             duration_ms,
             tokens_read=turn_usage.get("tokens_read", 0),
             tokens_write=turn_usage.get("tokens_write", 0),
             tokens_cache=turn_usage.get("tokens_cache", 0),
             num_actions=num_actions,
+            agent_model=model,
         )
+        action_log = parser.finalize()
+        action_log.agent_model = model
+        action_log.total_duration_ms = duration_ms
+        action_log.total_input_tokens = turn_usage.get("tokens_read", 0)
+        action_log.total_output_tokens = turn_usage.get("tokens_write", 0)
+        action_log.total_cache_read_tokens = turn_usage.get("tokens_cache", 0)
+        result.action_log = action_log
+        return result
 
     async def cancel(self) -> None:
         """Request cancellation of the active Codex server session.
@@ -744,10 +789,10 @@ class CodexServerAgent:
 
         Behaviour is controlled by ``self._restrictions``:
 
-        - ``"no-network"`` (default): Force workspace-write sandbox with network
-          disabled. Uses CLI ``--sandbox workspace-write`` and a config override
-          ``sandbox_workspace_write.network_access=false``. Does not load the
-          user's config.toml (only auth.json is copied).
+        - ``"managed"`` (default): Force workspace-write sandbox using
+          orchestrator-managed writable roots. Network access is currently left
+          enabled so package-manager caches and hook environments can refresh.
+          Does not load the user's config.toml (only auth.json is copied).
         - ``"none"``: Do not override sandbox/network; rely on Codex defaults
           and any user config present in ``~/.codex``. We still isolate
           ``CODEX_HOME`` and copy only auth.json to avoid touching the real
@@ -774,6 +819,16 @@ class CodexServerAgent:
         # Optionally propagate the user's config.toml when restrictions is "use-local".
         if self._restrictions == "use-local" and (user_codex_home / "config.toml").exists():
             shutil.copy2(user_codex_home / "config.toml", tmp_codex_home / "config.toml")
+        elif self._restrictions == "managed":
+            writable_roots = [
+                *get_worktree_git_write_paths(Path(context.working_dir)),
+                *get_agent_cache_write_paths(),
+            ]
+            config_text = _build_workspace_write_config_toml(
+                writable_roots,
+                network_access=True,
+            )
+            (tmp_codex_home / "config.toml").write_text(config_text)
 
         # Strip OPENAI_API_KEY and set isolated CODEX_HOME.  Also run from the
         # worktree (not the orchestrator cwd) to avoid loading a .env file.

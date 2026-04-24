@@ -171,4 +171,4 @@ async def test_detect_codex_server_restrictions_field_has_default(
     cs = [o for o in detected_options if o.agent_type == AgentRunnerType.CODEX_SERVER][0]
     restrictions_field = next(f for f in cs.config_schema if f.name == "restrictions")
     assert restrictions_field.default is not None
-    assert restrictions_field.default == "no-network"
+    assert restrictions_field.default == "managed"

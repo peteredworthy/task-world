@@ -72,7 +72,12 @@ from orchestrator.git.repos import (
     list_repos,
 )
 from orchestrator.git.testing import TestRunResult, TestRunner, TestSummary
-from orchestrator.git.worktree import WorktreeInfo, WorktreeManager
+from orchestrator.git.worktree import (
+    WorktreeInfo,
+    WorktreeManager,
+    get_agent_cache_write_paths,
+    get_worktree_git_write_paths,
+)
 
 __all__ = [
     "_apply_resolutions",
@@ -129,6 +134,8 @@ __all__ = [
     "get_modified_files",
     "get_repo",
     "get_task_diff",
+    "get_agent_cache_write_paths",
+    "get_worktree_git_write_paths",
     "init_project",
     "list_branches",
     "list_repos",

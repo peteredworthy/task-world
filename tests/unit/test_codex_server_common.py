@@ -756,6 +756,7 @@ def test_build_execution_result_with_tokens() -> None:
         tokens_write=200,
         tokens_cache=50,
         num_actions=3,
+        agent_model="gpt-5.4",
     )
     assert result.success is True
     assert result.metrics.tokens_read == 1000
@@ -763,6 +764,12 @@ def test_build_execution_result_with_tokens() -> None:
     assert result.metrics.tokens_cache == 50
     assert result.metrics.num_actions == 3
     assert result.metrics.duration_ms == 5000
+    assert result.action_log is not None
+    assert result.action_log.agent_model == "gpt-5.4"
+    assert result.action_log.total_input_tokens == 1000
+    assert result.action_log.total_output_tokens == 200
+    assert result.action_log.total_cache_read_tokens == 50
+    assert result.action_log.total_duration_ms == 5000
 
 
 def test_build_execution_result_defaults_to_zero_tokens() -> None:
@@ -772,3 +779,6 @@ def test_build_execution_result_defaults_to_zero_tokens() -> None:
     assert result.metrics.tokens_write == 0
     assert result.metrics.tokens_cache == 0
     assert result.metrics.num_actions == 0
+    assert result.action_log is not None
+    assert result.action_log.total_input_tokens == 0
+    assert result.action_log.total_output_tokens == 0

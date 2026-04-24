@@ -31,14 +31,15 @@ CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="restrictions",
         field_type="select",
-        default="no-network",
+        default="managed",
         description=(
             "How strictly to sandbox Codex. "
             "'none' runs with workspace-write and network enabled. "
-            "'no-network' forces workspace-write with network disabled. "
+            "'managed' uses orchestrator-managed writable roots; network is currently enabled "
+            "so package-manager caches and hook environments can refresh. "
             "'use-local' hands control to your local Codex config.toml (may be read-only)."
         ),
-        options=["none", "no-network", "use-local"],
+        options=["none", "managed", "use-local"],
     ),
 ]
 

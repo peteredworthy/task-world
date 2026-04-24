@@ -427,6 +427,29 @@ class TestGetDiffFiles:
         assert f["additions"] == 3
         assert f["deletions"] == 0
 
+    async def test_back_merge_excludes_upstream_files_from_aggregate_view(
+        self,
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
+    ) -> None:
+        """Aggregate file list should not balloon after a clean back-merge."""
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
+        run_id = run_data["id"]
+        worktree_path = Path(run_data["worktree_path"])
+
+        _commit_file(worktree_path, "feature_only.py", "feature = True\n", "Add feature_only.py")
+        _commit_file(repo, "main_only.py", "main = True\n", "Add main_only.py")
+
+        back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
+        assert back_merge_resp.status_code == 200
+        assert back_merge_resp.json()["status"] == "clean"
+
+        resp = await client.get(f"/api/runs/{run_id}/review/diff/files")
+        assert resp.status_code == 200
+        paths = [entry["path"] for entry in resp.json()]
+        assert "feature_only.py" in paths
+        assert "main_only.py" not in paths
+
 
 # ---------------------------------------------------------------------------
 # GET /api/runs/{run_id}/review/commits
@@ -562,3 +585,36 @@ class TestGetCommits:
         shas = [c["sha"] for c in commits]
         main_head = _git(["rev-parse", "HEAD"], cwd=repo)
         assert main_head not in shas
+
+    async def test_back_merge_excludes_upstream_commits_from_history(
+        self,
+        client_with_repo: tuple[AsyncClient, Path, DrainFn],
+    ) -> None:
+        """Branch history should not list source-branch commits pulled in by back-merge."""
+        client, repo, drain = client_with_repo
+        run_data = await _create_and_start_run(client, repo, drain)
+        run_id = run_data["id"]
+        worktree_path = Path(run_data["worktree_path"])
+
+        feature_sha = _commit_file(
+            worktree_path,
+            "feature_history.py",
+            "feature_history = True\n",
+            "Add feature history",
+        )
+        main_sha = _commit_file(
+            repo, "main_history.py", "main_history = True\n", "Add main history"
+        )
+
+        back_merge_resp = await client.post(f"/api/runs/{run_id}/back-merge")
+        assert back_merge_resp.status_code == 200
+        merge_sha = back_merge_resp.json()["merge_commit_sha"]
+        assert back_merge_resp.json()["status"] == "clean"
+        assert merge_sha is not None
+
+        resp = await client.get(f"/api/runs/{run_id}/review/commits")
+        assert resp.status_code == 200
+        shas = [commit["sha"] for commit in resp.json()]
+        assert feature_sha in shas
+        assert merge_sha in shas
+        assert main_sha not in shas

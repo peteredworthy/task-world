@@ -1,5 +1,6 @@
 """Integration tests for WorktreeManager."""
 
+import json
 import shutil
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -7,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.git.errors import GitCommandError, WorktreeExistsError, WorktreeNotFoundError
-from orchestrator.git.worktree import WorktreeManager
+from orchestrator.git.worktree import WorktreeManager, get_agent_cache_write_paths
 
 from tests.integration.git_helpers import _git
 
@@ -47,6 +48,39 @@ def test_create_worktree(git_repo: tuple[Path, Path]) -> None:
     # Verify branch was created
     branch_list = _git(["branch", "--list", wt.branch], cwd=repo)
     assert wt.branch in branch_list
+
+
+def test_create_worktree_writes_git_metadata_writable_roots(git_repo: tuple[Path, Path]) -> None:
+    """Sandbox settings include git metadata and cache roots needed for commits."""
+    repo, worktrees = git_repo
+    manager = WorktreeManager(repo, worktrees)
+
+    wt = manager.create("git-metadata-roots")
+
+    settings_path = wt.path / ".claude" / "settings.local.json"
+    settings = json.loads(settings_path.read_text())
+    fs_settings = settings["sandbox"]["filesystem"]
+    allow_write = set(fs_settings["allowWrite"])
+    allow_read = set(fs_settings["allowRead"])
+    allowed_domains = settings["sandbox"]["network"]["allowedDomains"]
+
+    gitdir_file = wt.path / ".git"
+    gitdir_raw = gitdir_file.read_text().strip().removeprefix("gitdir: ")
+    gitdir = Path(gitdir_raw)
+    if not gitdir.is_absolute():
+        gitdir = (wt.path / gitdir).resolve()
+    else:
+        gitdir = gitdir.resolve()
+    commondir = (gitdir / (gitdir / "commondir").read_text().strip()).resolve()
+
+    assert str(gitdir) in allow_write
+    assert str(commondir) in allow_write
+    assert str(gitdir) in allow_read
+    assert str(commondir) in allow_read
+    for cache_path in get_agent_cache_write_paths():
+        assert str(cache_path) in allow_write
+        assert str(cache_path) in allow_read
+    assert allowed_domains == ["*"]
 
 
 def test_create_worktree_custom_base_branch(git_repo: tuple[Path, Path]) -> None:

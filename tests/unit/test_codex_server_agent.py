@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from orchestrator.runners import CodexServerAgent
+from orchestrator.runners import CodexServerAgent, _build_workspace_write_config_toml
 from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
@@ -72,6 +73,22 @@ def test_agent_info_type() -> None:
 def test_agent_info_name() -> None:
     agent = CodexServerAgent()
     assert agent.info.name == "Codex Server"
+
+
+def test_legacy_no_network_restriction_normalizes_to_managed() -> None:
+    agent = CodexServerAgent(restrictions="no-network")
+    assert agent._restrictions == "managed"
+
+
+def test_workspace_write_config_toml_enables_network_and_serializes_roots() -> None:
+    config = _build_workspace_write_config_toml(
+        [Path("/tmp/cache"), Path("/tmp/gitmeta")],
+        network_access=True,
+    )
+    assert "[sandbox_workspace_write]" in config
+    assert '"/tmp/cache"' in config
+    assert '"/tmp/gitmeta"' in config
+    assert "network_access = true" in config
 
 
 # ---------------------------------------------------------------------------

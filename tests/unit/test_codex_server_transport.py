@@ -736,3 +736,61 @@ async def test_execute_combined_metrics() -> None:
     assert result.metrics.tokens_write == 2500
     assert result.metrics.tokens_cache == 1000
     assert result.metrics.duration_ms >= 0
+
+
+async def test_execute_builds_structured_action_log_from_notifications() -> None:
+    """execute() persists assistant text and tool activity into action_log entries."""
+    notifications = [
+        _agent_message_delta("Inspecting repo"),
+        {
+            "jsonrpc": "2.0",
+            "method": "item/completed",
+            "params": {
+                "item": {
+                    "id": "cmd_1",
+                    "type": "commandExecution",
+                    "command": "rg -n Codex src",
+                    "status": "completed",
+                    "exitCode": 0,
+                    "aggregatedOutput": "src/example.py:1:Codex",
+                }
+            },
+        },
+        _tool_call_request("update_checklist", {"req_id": "R-01", "status": "done"}, 10),
+        _turn_completed(
+            usage={
+                "input_tokens": 120,
+                "output_tokens": 40,
+                "cache_read_tokens": 10,
+            }
+        ),
+    ]
+    agent, _ = _make_agent(notifications)
+
+    result = await agent.execute(
+        context=_ctx(),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    assert result.action_log is not None
+    entries = result.action_log.entries
+    assert [entry.kind.value for entry in entries] == [
+        "assistant_text",
+        "tool_use",
+        "tool_result",
+        "tool_use",
+        "tool_result",
+        "result",
+    ]
+    assert entries[0].text == "Inspecting repo"
+    assert entries[1].tool_use is not None
+    assert entries[1].tool_use.tool_name == "bash"
+    assert entries[2].tool_result is not None
+    assert entries[2].tool_result.output == "src/example.py:1:Codex"
+    assert entries[3].tool_use is not None
+    assert entries[3].tool_use.tool_name == "update_checklist"
+    assert entries[4].tool_result is not None
+    assert entries[4].tool_result.success is True
+    assert result.action_log.total_input_tokens == 120
+    assert result.action_log.total_output_tokens == 40

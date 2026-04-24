@@ -102,6 +102,25 @@ def _get_merge_base_sync(worktree_path: Path, source_branch: str) -> str:
     return result.stdout.strip()
 
 
+def _try_get_merge_base_sync(worktree_path: Path, source_branch: str) -> str | None:
+    """Best-effort merge-base lookup for a live source branch.
+
+    Returns ``None`` when the branch cannot be resolved from this worktree.
+    This lets review endpoints fall back to the stored branch snapshot for
+    older runs or deleted source branches while still excluding back-merged
+    upstream changes when the source branch is available.
+    """
+    result = subprocess.run(
+        ["git", "merge-base", source_branch, "HEAD"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return result.stdout.strip()
+    return None
+
+
 def _get_head_sha_sync(worktree_path: Path) -> str:
     """Return the HEAD commit SHA."""
     result = subprocess.run(
@@ -115,16 +134,24 @@ def _get_head_sha_sync(worktree_path: Path) -> str:
 
 
 async def _get_base_sha(run: Any, worktree_path: Path) -> str:
-    """Return the fixed base SHA for diff operations on this run.
+    """Return the base SHA for aggregate review diffs on this run.
 
-    Prefers the stored source_branch_sha (SHA of source branch at worktree
-    creation time) so that diffs always show work done on the branch,
-    regardless of how far main has advanced since. Falls back to computing
-    the merge-base for older runs that predate this field.
+    Prefer the *current* merge-base against the source branch when that branch
+    still exists. This excludes upstream commits pulled in via back-merge from
+    the review tab while still keeping the diff anchored to the branch point.
+
+    If the source branch is unavailable (for example older runs after branch
+    deletion), fall back to the stored source-branch snapshot captured at
+    worktree creation time.
     """
+    if run.source_branch:
+        merge_base = await asyncio.to_thread(
+            _try_get_merge_base_sync, worktree_path, run.source_branch
+        )
+        if merge_base:
+            return merge_base
     if run.source_branch_sha:
         return run.source_branch_sha
-    # Fallback for runs created before source_branch_sha was recorded
     if not run.source_branch:
         raise HTTPException(
             status_code=409,

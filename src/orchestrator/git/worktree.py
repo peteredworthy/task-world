@@ -23,6 +23,68 @@ class WorktreeInfo:
     commit: str
 
 
+def get_worktree_git_write_paths(worktree_path: Path) -> list[Path]:
+    """Return git metadata paths that a linked worktree may need to modify.
+
+    For a normal repository checkout this returns the local ``.git`` directory.
+    For a linked git worktree this returns both the worktree-specific git dir
+    (for example ``.git/worktrees/r82``) and the shared common git dir used for
+    refs and objects.
+    """
+    git_path = worktree_path / ".git"
+    if git_path.is_dir():
+        return [git_path.resolve()]
+    if not git_path.is_file():
+        return []
+
+    try:
+        raw = git_path.read_text().strip()
+    except OSError:
+        return []
+
+    prefix = "gitdir: "
+    if not raw.startswith(prefix):
+        return []
+
+    gitdir = Path(raw[len(prefix) :].strip())
+    if not gitdir.is_absolute():
+        gitdir = (worktree_path / gitdir).resolve()
+    else:
+        gitdir = gitdir.resolve()
+
+    paths: list[Path] = [gitdir]
+    commondir_file = gitdir / "commondir"
+    if commondir_file.exists():
+        try:
+            common_raw = commondir_file.read_text().strip()
+        except OSError:
+            common_raw = ""
+        if common_raw:
+            commondir = Path(common_raw)
+            if not commondir.is_absolute():
+                commondir = (gitdir / commondir).resolve()
+            else:
+                commondir = commondir.resolve()
+            if commondir not in paths:
+                paths.append(commondir)
+    return paths
+
+
+def get_agent_cache_write_paths() -> list[Path]:
+    """Return user cache directories that package managers may need to mutate.
+
+    Agent commits run pre-commit hooks that shell out to ``uv``, ``npm``, and
+    hook-managed environments under the user's cache directory. Those caches
+    must be writable inside the sandbox or the commit step can fail after the
+    actual code edits are already complete.
+    """
+    home = Path.home()
+    return [
+        home / ".cache",
+        home / ".npm",
+    ]
+
+
 class WorktreeManager:
     """Manages git worktrees for run isolation."""
 
@@ -120,13 +182,14 @@ class WorktreeManager:
         wt_abs = str(worktree_path.resolve())
         repo_abs = str(self._repo.resolve())
         tmp_dir = os.environ.get("TMPDIR", "/tmp").rstrip("/")
+        git_write_paths = [str(path) for path in get_worktree_git_write_paths(worktree_path)]
+        cache_write_paths = [str(path) for path in get_agent_cache_write_paths()]
 
         # Paths the agent can read for context but must not modify.
         read_only_paths = [
             f"{repo_abs}/src",
             f"{repo_abs}/scripts",
             f"{repo_abs}/ui",
-            f"{repo_abs}/.git",
             # Knowledge graph — agents can query it even if the worktree copy
             # is missing or stale (e.g. when .worktree-setup was skipped).
             f"{repo_abs}/graphify-out",
@@ -160,20 +223,22 @@ class WorktreeManager:
                         "/private/etc",
                         "/opt/homebrew",
                         "/dev",
+                        f"{repo_abs}/.git",
+                        *git_write_paths,
+                        *cache_write_paths,
                         *read_only_paths,
                     ],
                     "allowWrite": [
                         wt_abs,
                         "/tmp",
                         tmp_dir,
+                        *git_write_paths,
+                        *cache_write_paths,
                     ],
                     "denyWrite": read_only_paths,
                 },
                 "network": {
-                    "allowedDomains": [
-                        "localhost",
-                        "127.0.0.1",
-                    ],
+                    "allowedDomains": ["*"],
                 },
             },
         }

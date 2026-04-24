@@ -22,6 +22,7 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
+from orchestrator.state.models import ActionLog
 from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     CompleteRecoveryCallback,
@@ -569,6 +570,7 @@ def build_execution_result(
     tokens_write: int = 0,
     tokens_cache: int = 0,
     num_actions: int = 0,
+    agent_model: str | None = None,
 ) -> ExecutionResult:
     """Build an ``ExecutionResult`` from collected output lines and elapsed time.
 
@@ -583,6 +585,7 @@ def build_execution_result(
         tokens_write: Completion/output tokens produced.
         tokens_cache: Cache-read tokens (if reported by the server).
         num_actions: Number of tool invocations made during the session.
+        agent_model: Model name used for the session when known.
 
     Returns:
         Populated ``ExecutionResult`` with ``success=True``.
@@ -600,6 +603,13 @@ def build_execution_result(
             num_actions=num_actions,
         ),
         output_lines=final_lines,
+        action_log=ActionLog(
+            agent_model=agent_model,
+            total_duration_ms=duration_ms,
+            total_input_tokens=tokens_read,
+            total_output_tokens=tokens_write,
+            total_cache_read_tokens=tokens_cache,
+        ),
     )
 
 
