@@ -1,0 +1,4 @@
+approved: meta-review required a single bounded slice
+real_surface: local execution path writes observable evidence
+bug_absent: bug-not-found is an accepted stop outcome
+dead_code_guard: helper-only proof is insufficient

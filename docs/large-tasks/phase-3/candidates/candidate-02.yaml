@@ -1,0 +1,24 @@
+routine:
+  id: phase3-approved-meta-reviewed-slice
+  name: Phase 3 Approved Meta-Reviewed Slice
+  description: Single revised slice produced after reviewer feedback.
+  steps:
+  - id: S-01
+    title: Execute reviewed slice
+    step_context: Run only the approved evidence slice after meta-review.
+    tasks:
+    - id: T-01
+      title: Write reviewed evidence
+      script: 'mkdir -p docs/phase3-meta-review-smoke && printf ''%s\n'' ''approved:
+        meta-review required a single bounded slice'' ''real_surface: local execution
+        path writes observable evidence'' ''bug_absent: bug-not-found is an accepted
+        stop outcome'' ''dead_code_guard: helper-only proof is insufficient'' > docs/phase3-meta-review-smoke/approved-slice-evidence.txt'
+      requirements:
+      - id: R1
+        desc: Prove a single bounded slice before wider rollout.
+      - id: R2
+        desc: Name the real execution surface and produce observable evidence.
+      - id: R3
+        desc: Treat bug not found as a valid stop or replan outcome.
+      - id: R4
+        desc: Reject helper-only or dead-code verification as sufficient proof.
