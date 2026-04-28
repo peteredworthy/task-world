@@ -1,8 +1,8 @@
 {
   "objective": "Prove phase 4 standardized evidence before native orchestration.",
   "feature": "phase4-evidence-standardization-smoke",
-  "completed": false,
-  "stop_reason": "Evidence schema is standardized, but orchestrator execution is not yet proven.",
+  "completed": true,
+  "stop_reason": "Evidence bundles are standardized, validated, and distinguish the required outcomes.",
   "schema_doc": "docs/large-tasks/phase-4/evidence-bundle-schema.md",
   "slices": [
     {
@@ -165,16 +165,15 @@
     }
   ],
   "orchestrator_execution": {
-    "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
-    "status": "paused",
-    "pause_reason": "no_executor_running",
-    "worktree_path": "/Users/peter/code/task-world/worktrees/r87",
-    "evidence_files": [],
-    "activity_events": 4,
-    "notes": [
-      "Orchestrator run did not complete.",
-      "No evidence bundle was produced in the orchestrator worktree."
-    ]
+    "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
+    "status": "completed",
+    "pause_reason": null,
+    "worktree_path": "/Users/peter/code/task-world/worktrees/r88",
+    "evidence_files": [
+      "docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json"
+    ],
+    "activity_events": 7,
+    "notes": []
   },
   "success_criteria": {
     "standard_schema_documented": true,
@@ -184,7 +183,7 @@
     "bug_not_reproduced_distinguishable": true,
     "environment_blocked_distinguishable": true,
     "orchestrator_validation_passed": true,
-    "orchestrator_execution_completed": false,
-    "ready_for_phase5": false
+    "orchestrator_execution_completed": true,
+    "ready_for_phase5": true
   }
 }

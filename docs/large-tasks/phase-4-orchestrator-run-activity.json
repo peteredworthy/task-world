@@ -1,13 +1,13 @@
 {
-  "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+  "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
   "events": [
     {
-      "id": 109221,
+      "id": 109225,
       "event_type": "run_status_changed",
-      "timestamp": "2026-04-28T14:27:00.567228Z",
+      "timestamp": "2026-04-28T15:05:19.329779Z",
       "payload": {
-        "timestamp": "2026-04-28T14:27:00.567228Z",
-        "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+        "timestamp": "2026-04-28T15:05:19.329779Z",
+        "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
         "event_type": "run_status_changed",
         "old_status": "draft",
         "new_status": "active",
@@ -18,28 +18,28 @@
       "step_title": null
     },
     {
-      "id": 109222,
+      "id": 109226,
       "event_type": "run_status_changed",
-      "timestamp": "2026-04-28T14:27:52.796816Z",
+      "timestamp": "2026-04-28T15:05:28.591795Z",
       "payload": {
-        "timestamp": "2026-04-28T14:27:52.796816Z",
-        "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+        "timestamp": "2026-04-28T15:05:28.591795Z",
+        "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
         "event_type": "run_status_changed",
         "old_status": "active",
         "new_status": "paused",
-        "pause_reason": "no_executor_running",
+        "pause_reason": "executor_not_started",
         "last_error": null
       },
       "task_title": null,
       "step_title": null
     },
     {
-      "id": 109223,
+      "id": 109227,
       "event_type": "run_status_changed",
-      "timestamp": "2026-04-28T14:28:17.835267Z",
+      "timestamp": "2026-04-28T15:05:29.902714Z",
       "payload": {
-        "timestamp": "2026-04-28T14:28:17.835267Z",
-        "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+        "timestamp": "2026-04-28T15:05:29.902714Z",
+        "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
         "event_type": "run_status_changed",
         "old_status": "paused",
         "new_status": "active",
@@ -50,16 +50,64 @@
       "step_title": null
     },
     {
-      "id": 109224,
-      "event_type": "run_status_changed",
-      "timestamp": "2026-04-28T14:28:54.119389Z",
+      "id": 109228,
+      "event_type": "task_status_changed",
+      "timestamp": "2026-04-28T15:05:31.211934Z",
       "payload": {
-        "timestamp": "2026-04-28T14:28:54.119389Z",
-        "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+        "timestamp": "2026-04-28T15:05:31.211934Z",
+        "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
+        "event_type": "task_status_changed",
+        "task_id": "a653d96c-739e-434e-8e8b-6f2cd9209bf4",
+        "old_status": "pending",
+        "new_status": "building",
+        "start_commit": null,
+        "end_commit": null
+      },
+      "task_title": "Persist evidence JSON",
+      "step_title": "Write standard evidence bundle"
+    },
+    {
+      "id": 109229,
+      "event_type": "task_status_changed",
+      "timestamp": "2026-04-28T15:05:31.268215Z",
+      "payload": {
+        "timestamp": "2026-04-28T15:05:31.268215Z",
+        "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
+        "event_type": "task_status_changed",
+        "task_id": "a653d96c-739e-434e-8e8b-6f2cd9209bf4",
+        "old_status": "building",
+        "new_status": "completed",
+        "start_commit": null,
+        "end_commit": null
+      },
+      "task_title": "Persist evidence JSON",
+      "step_title": "Write standard evidence bundle"
+    },
+    {
+      "id": 109230,
+      "event_type": "step_completed",
+      "timestamp": "2026-04-28T15:05:31.268299Z",
+      "payload": {
+        "timestamp": "2026-04-28T15:05:31.268299Z",
+        "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
+        "event_type": "step_completed",
+        "step_index": 0,
+        "step_id": "724303fc-57ec-4389-9b68-d62b570f9226"
+      },
+      "task_title": null,
+      "step_title": "Write standard evidence bundle"
+    },
+    {
+      "id": 109231,
+      "event_type": "run_status_changed",
+      "timestamp": "2026-04-28T15:05:31.268311Z",
+      "payload": {
+        "timestamp": "2026-04-28T15:05:31.268311Z",
+        "run_id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
         "event_type": "run_status_changed",
         "old_status": "active",
-        "new_status": "paused",
-        "pause_reason": "no_executor_running",
+        "new_status": "completed",
+        "pause_reason": null,
         "last_error": null
       },
       "task_title": null,

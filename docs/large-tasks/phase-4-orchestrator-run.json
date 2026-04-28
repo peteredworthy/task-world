@@ -1,8 +1,8 @@
 {
-  "id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+  "id": "5c92c786-44bd-400f-bad3-08e57a84b02c",
   "repo_name": "task-world",
-  "status": "paused",
-  "pause_reason": "no_executor_running",
+  "status": "completed",
+  "pause_reason": null,
   "last_error": null,
   "routine_id": "phase4-verified-fix",
   "routine_sha": null,
@@ -38,36 +38,37 @@
   },
   "routine_path": null,
   "routine_commit": null,
-  "agent_type": "user_managed",
-  "agent_type_display": "External Agent",
-  "agent_icon": "external",
+  "agent_type": "cli_subprocess",
+  "agent_type_display": "codex CLI",
+  "agent_icon": "cli",
   "agent_config": {
+    "command": "codex",
     "callback_channel": "rest",
-    "timeout_minutes": 5
+    "stdin_mode": "close"
   },
   "verifier_model": null,
   "worktree_enabled": true,
-  "worktree_path": "/Users/peter/code/task-world/worktrees/r87",
-  "worktree_relative_path": "worktrees/r87",
+  "worktree_path": "/Users/peter/code/task-world/worktrees/r88",
+  "worktree_relative_path": "worktrees/r88",
   "source_branch": "main",
-  "source_branch_sha": "4d945f2e78754c7a1aca8db562bebf679c44d503",
+  "source_branch_sha": "8f2ec95c20c7a35e57bb8f8e499fddc238fd75e7",
   "merge_strategy": "squash",
   "config": {},
   "env_file_specs": [],
   "env_source_dir": null,
   "steps": [
     {
-      "id": "ae666eee-eb78-4d18-904e-1056062c7765",
+      "id": "724303fc-57ec-4389-9b68-d62b570f9226",
       "config_id": "S-01",
       "title": "Write standard evidence bundle",
-      "completed": false,
+      "completed": true,
       "tasks": [
         {
-          "id": "b8dc06db-5f59-4ad2-a5b3-9529a1d65308",
+          "id": "a653d96c-739e-434e-8e8b-6f2cd9209bf4",
           "config_id": "T-01",
           "title": "Persist evidence JSON",
-          "status": "pending",
-          "current_attempt": 0,
+          "status": "completed",
+          "current_attempt": 1,
           "max_attempts": 3,
           "grade_summary": [
             {
@@ -79,7 +80,12 @@
               "priority": "critical"
             }
           ],
-          "attempts_summary": [],
+          "attempts_summary": [
+            {
+              "attempt_num": 1,
+              "outcome": "passed"
+            }
+          ],
           "pending_action_type": null,
           "pending_clarification_count": null,
           "parent_task_id": null
@@ -93,10 +99,10 @@
     }
   ],
   "current_step_index": 0,
-  "created_at": "2026-04-28T14:27:00.403936Z",
-  "updated_at": "2026-04-28T14:28:54.119403Z",
-  "started_at": "2026-04-28T14:27:00.560089Z",
-  "completed_at": null,
+  "created_at": "2026-04-28T15:05:19.220212Z",
+  "updated_at": "2026-04-28T15:05:31.268313Z",
+  "started_at": "2026-04-28T15:05:19.323418Z",
+  "completed_at": "2026-04-28T15:05:31.268302Z",
   "agent_started_at": null,
   "total_tokens_read": 0,
   "total_tokens_write": 0,
