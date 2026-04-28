@@ -1,0 +1,43 @@
+routine:
+  id: phase4-environment-blocked
+  name: Phase 4 Evidence slice-03-environment-blocked
+  description: Deterministic slice proving the phase 4 evidence bundle contract.
+  steps:
+  - id: S-01
+    title: Write standard evidence bundle
+    step_context: Produce one standard evidence bundle for the current slice.
+    tasks:
+    - id: T-01
+      title: Persist evidence JSON
+      script: "mkdir -p routines docs/phase4-evidence-standardization-smoke && cat\
+        \ > routines/phase4-environment-blocked.sh <<'SH'\n#!/bin/sh\nset -u\nmkdir\
+        \ -p docs/phase4-evidence-standardization-smoke\nprobe_command=\"test -x .phase4/browser-runtime\
+        \ || { printf '%s\\\\n' 'browser runtime marker missing' >&2; false; }\"\n\
+        probe_stdout=\"\"\nprobe_stderr=\"browser runtime marker missing\"\neval \"\
+        $probe_command\"\nprobe_exit=$?\nif [ \"$probe_exit\" -ne 1 ]; then\n  printf\
+        \ '%s\\n' \"unexpected probe exit $probe_exit for $probe_command\" >&2\n \
+        \ exit 1\nfi\ncat > docs/phase4-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json\
+        \ <<'JSON'\n{\n  \"schema_version\": \"phase4.evidence.v1\",\n  \"slice_id\"\
+        : \"slice-03-environment-blocked\",\n  \"routine_id\": \"phase4-environment-blocked\"\
+        ,\n  \"assumption_tested\": \"A slice can preserve environment failures without\
+        \ mislabeling them as fixes.\",\n  \"summary\": \"The browser surface could\
+        \ not run, so the result is blocked.\",\n  \"commands_run\": [\n    {\n  \
+        \    \"command\": \"test -x .phase4/browser-runtime || { printf '%s\\\\n'\
+        \ 'browser runtime marker missing' >&2; false; }\",\n      \"exit_code\":\
+        \ 1,\n      \"stdout_excerpt\": \"\",\n      \"stderr_excerpt\": \"browser\
+        \ runtime marker missing\"\n    }\n  ],\n  \"test_results\": [\n    {\n  \
+        \    \"name\": \"phase4 evidence contract\",\n      \"status\": \"skipped\"\
+        ,\n      \"details\": \"Validated by phase 4 schema.\"\n    }\n  ],\n  \"\
+        target_bug_reproduced\": \"unknown\",\n  \"real_frontend_path_exercised\"\
+        : false,\n  \"real_execution_surface\": \"Local browser-runtime availability\
+        \ probe\",\n  \"files_changed\": [\n    \"routines/phase4-environment-blocked.sh\"\
+        ,\n    \"docs/phase4-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json\"\
+        \n  ],\n  \"evidence_files\": [\n    \"docs/phase4-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json\"\
+        \n  ],\n  \"open_uncertainties\": [\n    \"Install or expose the browser runtime\
+        \ before replanning.\"\n  ],\n  \"next_recommendation\": \"environment_blocked\"\
+        ,\n  \"outcome\": \"environment_blocked\"\n}\nJSON\nSH\nsh routines/phase4-environment-blocked.sh"
+      requirements:
+      - id: R1
+        desc: Write a phase4.evidence.v1 JSON evidence bundle.
+      - id: R2
+        desc: Classify the slice outcome for the next planner.

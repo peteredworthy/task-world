@@ -1,0 +1,42 @@
+routine:
+  id: phase4-verified-fix
+  name: Phase 4 Evidence slice-01-verified-fix
+  description: Deterministic slice proving the phase 4 evidence bundle contract.
+  steps:
+  - id: S-01
+    title: Write standard evidence bundle
+    step_context: Produce one standard evidence bundle for the current slice.
+    tasks:
+    - id: T-01
+      title: Persist evidence JSON
+      script: "mkdir -p routines docs/phase4-evidence-standardization-smoke && cat\
+        \ > routines/phase4-verified-fix.sh <<'SH'\n#!/bin/sh\nset -u\nmkdir -p docs/phase4-evidence-standardization-smoke\
+        \ && printf '%s\\n' 'target artifact exists' > docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt\n\
+        probe_command=\"test -f docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt\
+        \ && printf '%s\\\\n' 'target artifact exists'\"\nprobe_stdout=\"target artifact\
+        \ exists\"\nprobe_stderr=\"\"\neval \"$probe_command\"\nprobe_exit=$?\nif\
+        \ [ \"$probe_exit\" -ne 0 ]; then\n  printf '%s\\n' \"unexpected probe exit\
+        \ $probe_exit for $probe_command\" >&2\n  exit 1\nfi\ncat > docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json\
+        \ <<'JSON'\n{\n  \"schema_version\": \"phase4.evidence.v1\",\n  \"slice_id\"\
+        : \"slice-01-verified-fix\",\n  \"routine_id\": \"phase4-verified-fix\",\n\
+        \  \"assumption_tested\": \"A completed slice can prove a fix with a standard\
+        \ evidence bundle.\",\n  \"summary\": \"The target behavior passed on the\
+        \ real execution surface.\",\n  \"commands_run\": [\n    {\n      \"command\"\
+        : \"test -f docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt\
+        \ && printf '%s\\\\n' 'target artifact exists'\",\n      \"exit_code\": 0,\n\
+        \      \"stdout_excerpt\": \"target artifact exists\",\n      \"stderr_excerpt\"\
+        : \"\"\n    }\n  ],\n  \"test_results\": [\n    {\n      \"name\": \"phase4\
+        \ evidence contract\",\n      \"status\": \"passed\",\n      \"details\":\
+        \ \"Validated by phase 4 schema.\"\n    }\n  ],\n  \"target_bug_reproduced\"\
+        : \"reproduced\",\n  \"real_frontend_path_exercised\": false,\n  \"real_execution_surface\"\
+        : \"Local slice worktree filesystem probe\",\n  \"files_changed\": [\n   \
+        \ \"routines/phase4-verified-fix.sh\",\n    \"docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt\"\
+        ,\n    \"docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json\"\
+        \n  ],\n  \"evidence_files\": [\n    \"docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json\"\
+        \n  ],\n  \"open_uncertainties\": [],\n  \"next_recommendation\": \"proceed\"\
+        ,\n  \"outcome\": \"verified_fix\"\n}\nJSON\nSH\nsh routines/phase4-verified-fix.sh"
+      requirements:
+      - id: R1
+        desc: Write a phase4.evidence.v1 JSON evidence bundle.
+      - id: R2
+        desc: Classify the slice outcome for the next planner.

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Phase 4 Evidence Standardization Report</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, system-ui, sans-serif; }
+    body { margin: 0; background: #f7f8fa; color: #1f2933; }
+    main { scroll-snap-type: y mandatory; height: 100vh; overflow-y: auto; }
+    section { min-height: 100vh; scroll-snap-align: start; padding: 8vh 10vw; box-sizing: border-box; }
+    h1 { font-size: 56px; margin: 0 0 24px; letter-spacing: 0; }
+    h2 { font-size: 40px; margin: 0 0 24px; letter-spacing: 0; }
+    p, li, td, th { font-size: 20px; line-height: 1.45; }
+    table { width: 100%; border-collapse: collapse; background: white; border: 1px solid #d9dee7; }
+    th, td { text-align: left; padding: 12px; border-bottom: 1px solid #e6e9ef; vertical-align: top; }
+    code { font-size: 16px; }
+    .kicker { color: #4b5563; font-size: 18px; text-transform: uppercase; letter-spacing: 0.08em; }
+    .pass { color: #0f766e; font-weight: 700; }
+    .fail { color: #b91c1c; font-weight: 700; }
+  </style>
+</head>
+<body>
+<main>
+  <section>
+    <p class="kicker">Large Task Delivery</p>
+    <h1>Phase 4 Evidence Standardization</h1>
+    <p>Prove phase 4 standardized evidence before native orchestration.</p>
+    <p><strong>Result:</strong> Evidence bundles are standardized, validated, and distinguish the required outcomes.</p>
+  </section>
+  <section>
+    <h2>Standard Contract</h2>
+    <p>Each slice now emits one JSON bundle with the tested assumption, commands, test results, real execution surface, file changes, uncertainties, next recommendation, and outcome classification.</p>
+    <p><strong>Schema:</strong> docs/large-tasks/phase-4/evidence-bundle-schema.md</p>
+  </section>
+  <section>
+    <h2>Demo Slices</h2>
+    <table>
+      <thead><tr><th>Slice</th><th>Routine</th><th>Routine validation</th><th>Outcome</th><th>Valid bundle</th></tr></thead>
+      <tbody><tr><td>slice-01-verified-fix</td><td><code>phase4-verified-fix</code></td><td>valid</td><td>verified_fix</td><td>yes</td></tr>
+<tr><td>slice-02-bug-not-reproduced</td><td><code>phase4-bug-not-reproduced</code></td><td>valid</td><td>bug_not_reproduced</td><td>yes</td></tr>
+<tr><td>slice-03-environment-blocked</td><td><code>phase4-environment-blocked</code></td><td>valid</td><td>environment_blocked</td><td>yes</td></tr></tbody>
+    </table>
+  </section>
+  <section>
+    <h2>Outcome Separation</h2>
+    <p>The same schema distinguishes verified fix, bug not reproduced, and environment blocked. The next planner can branch from these fields without rereading the full run log.</p>
+    <ul><li>docs/large-tasks/phase-4/local-worktree/run-slice-01/docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json</li>
+<li>docs/large-tasks/phase-4/local-worktree/run-slice-02/docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json</li>
+<li>docs/large-tasks/phase-4/local-worktree/run-slice-03/docs/phase4-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json</li></ul>
+  </section>
+  <section>
+    <h2>Success Criteria</h2>
+    <ul><li><span class="pass">PASS</span> standard schema documented</li>
+<li><span class="pass">PASS</span> every bundle valid</li>
+<li><span class="pass">PASS</span> planner context present</li>
+<li><span class="pass">PASS</span> verified fix distinguishable</li>
+<li><span class="pass">PASS</span> bug not reproduced distinguishable</li>
+<li><span class="pass">PASS</span> environment blocked distinguishable</li>
+<li><span class="pass">PASS</span> orchestrator validation passed</li>
+<li><span class="pass">PASS</span> ready for phase5</li></ul>
+  </section>
+  <section>
+    <h2>Phase 5 Readiness</h2>
+    <p>The external loop now has a stable evidence artifact to pass between planning cycles. Native parent/child orchestration can use this contract as the candidate run-output shape.</p>
+  </section>
+</main>
+</body>
+</html>

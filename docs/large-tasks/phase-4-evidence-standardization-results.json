@@ -1,0 +1,177 @@
+{
+  "objective": "Prove phase 4 standardized evidence before native orchestration.",
+  "feature": "phase4-evidence-standardization-smoke",
+  "completed": true,
+  "stop_reason": "Evidence bundles are standardized, validated, and distinguish the required outcomes.",
+  "schema_doc": "docs/large-tasks/phase-4/evidence-bundle-schema.md",
+  "slices": [
+    {
+      "slice_id": "slice-01-verified-fix",
+      "routine_id": "phase4-verified-fix",
+      "routine_path": "docs/large-tasks/phase-4/slices/slice-01-routine.yaml",
+      "validation": {
+        "status": "valid",
+        "errors": []
+      },
+      "evidence_path": "docs/large-tasks/phase-4/local-worktree/run-slice-01/docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json",
+      "bundle": {
+        "schema_version": "phase4.evidence.v1",
+        "slice_id": "slice-01-verified-fix",
+        "routine_id": "phase4-verified-fix",
+        "assumption_tested": "A completed slice can prove a fix with a standard evidence bundle.",
+        "summary": "The target behavior passed on the real execution surface.",
+        "commands_run": [
+          {
+            "command": "test -f docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt && printf '%s\\n' 'target artifact exists'",
+            "exit_code": 0,
+            "stdout_excerpt": "target artifact exists",
+            "stderr_excerpt": ""
+          }
+        ],
+        "test_results": [
+          {
+            "name": "phase4 evidence contract",
+            "status": "passed",
+            "details": "Validated by phase 4 schema."
+          }
+        ],
+        "target_bug_reproduced": "reproduced",
+        "real_frontend_path_exercised": false,
+        "real_execution_surface": "Local slice worktree filesystem probe",
+        "files_changed": [
+          "routines/phase4-verified-fix.sh",
+          "docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt",
+          "docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json"
+        ],
+        "evidence_files": [
+          "docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json"
+        ],
+        "open_uncertainties": [],
+        "next_recommendation": "proceed",
+        "outcome": "verified_fix"
+      },
+      "outcome": "verified_fix",
+      "valid_bundle": true,
+      "evaluation_notes": [
+        "target artifact exists",
+        "Local execution elapsed 0 seconds."
+      ]
+    },
+    {
+      "slice_id": "slice-02-bug-not-reproduced",
+      "routine_id": "phase4-bug-not-reproduced",
+      "routine_path": "docs/large-tasks/phase-4/slices/slice-02-routine.yaml",
+      "validation": {
+        "status": "valid",
+        "errors": []
+      },
+      "evidence_path": "docs/large-tasks/phase-4/local-worktree/run-slice-02/docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json",
+      "bundle": {
+        "schema_version": "phase4.evidence.v1",
+        "slice_id": "slice-02-bug-not-reproduced",
+        "routine_id": "phase4-bug-not-reproduced",
+        "assumption_tested": "A slice can stop cleanly when the target bug is not reproduced.",
+        "summary": "The reported bug was not reproduced on the named real surface.",
+        "commands_run": [
+          {
+            "command": "test ! -f docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-present.txt && printf '%s\\n' 'reported bug marker absent'",
+            "exit_code": 0,
+            "stdout_excerpt": "reported bug marker absent",
+            "stderr_excerpt": ""
+          }
+        ],
+        "test_results": [
+          {
+            "name": "phase4 evidence contract",
+            "status": "passed",
+            "details": "Validated by phase 4 schema."
+          }
+        ],
+        "target_bug_reproduced": "not_reproduced",
+        "real_frontend_path_exercised": false,
+        "real_execution_surface": "Local slice worktree filesystem probe",
+        "files_changed": [
+          "routines/phase4-bug-not-reproduced.sh",
+          "docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json"
+        ],
+        "evidence_files": [
+          "docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json"
+        ],
+        "open_uncertainties": [
+          "Need reporter environment details before implementation."
+        ],
+        "next_recommendation": "stop",
+        "outcome": "bug_not_reproduced"
+      },
+      "outcome": "bug_not_reproduced",
+      "valid_bundle": true,
+      "evaluation_notes": [
+        "reported bug marker absent",
+        "Local execution elapsed 0 seconds."
+      ]
+    },
+    {
+      "slice_id": "slice-03-environment-blocked",
+      "routine_id": "phase4-environment-blocked",
+      "routine_path": "docs/large-tasks/phase-4/slices/slice-03-routine.yaml",
+      "validation": {
+        "status": "valid",
+        "errors": []
+      },
+      "evidence_path": "docs/large-tasks/phase-4/local-worktree/run-slice-03/docs/phase4-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json",
+      "bundle": {
+        "schema_version": "phase4.evidence.v1",
+        "slice_id": "slice-03-environment-blocked",
+        "routine_id": "phase4-environment-blocked",
+        "assumption_tested": "A slice can preserve environment failures without mislabeling them as fixes.",
+        "summary": "The browser surface could not run, so the result is blocked.",
+        "commands_run": [
+          {
+            "command": "test -x .phase4/browser-runtime || { printf '%s\\n' 'browser runtime marker missing' >&2; false; }",
+            "exit_code": 1,
+            "stdout_excerpt": "",
+            "stderr_excerpt": "browser runtime marker missing"
+          }
+        ],
+        "test_results": [
+          {
+            "name": "phase4 evidence contract",
+            "status": "skipped",
+            "details": "Validated by phase 4 schema."
+          }
+        ],
+        "target_bug_reproduced": "unknown",
+        "real_frontend_path_exercised": false,
+        "real_execution_surface": "Local browser-runtime availability probe",
+        "files_changed": [
+          "routines/phase4-environment-blocked.sh",
+          "docs/phase4-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json"
+        ],
+        "evidence_files": [
+          "docs/phase4-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json"
+        ],
+        "open_uncertainties": [
+          "Install or expose the browser runtime before replanning."
+        ],
+        "next_recommendation": "environment_blocked",
+        "outcome": "environment_blocked"
+      },
+      "outcome": "environment_blocked",
+      "valid_bundle": true,
+      "evaluation_notes": [
+        "browser runtime marker missing",
+        "Local execution elapsed 0 seconds."
+      ]
+    }
+  ],
+  "success_criteria": {
+    "standard_schema_documented": true,
+    "every_bundle_valid": true,
+    "planner_context_present": true,
+    "verified_fix_distinguishable": true,
+    "bug_not_reproduced_distinguishable": true,
+    "environment_blocked_distinguishable": true,
+    "orchestrator_validation_passed": true,
+    "ready_for_phase5": true
+  }
+}

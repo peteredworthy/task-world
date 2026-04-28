@@ -1,0 +1,42 @@
+routine:
+  id: phase4-bug-not-reproduced
+  name: Phase 4 Evidence slice-02-bug-not-reproduced
+  description: Deterministic slice proving the phase 4 evidence bundle contract.
+  steps:
+  - id: S-01
+    title: Write standard evidence bundle
+    step_context: Produce one standard evidence bundle for the current slice.
+    tasks:
+    - id: T-01
+      title: Persist evidence JSON
+      script: "mkdir -p routines docs/phase4-evidence-standardization-smoke && cat\
+        \ > routines/phase4-bug-not-reproduced.sh <<'SH'\n#!/bin/sh\nset -u\nmkdir\
+        \ -p docs/phase4-evidence-standardization-smoke\nprobe_command=\"test ! -f\
+        \ docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-present.txt\
+        \ && printf '%s\\\\n' 'reported bug marker absent'\"\nprobe_stdout=\"reported\
+        \ bug marker absent\"\nprobe_stderr=\"\"\neval \"$probe_command\"\nprobe_exit=$?\n\
+        if [ \"$probe_exit\" -ne 0 ]; then\n  printf '%s\\n' \"unexpected probe exit\
+        \ $probe_exit for $probe_command\" >&2\n  exit 1\nfi\ncat > docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json\
+        \ <<'JSON'\n{\n  \"schema_version\": \"phase4.evidence.v1\",\n  \"slice_id\"\
+        : \"slice-02-bug-not-reproduced\",\n  \"routine_id\": \"phase4-bug-not-reproduced\"\
+        ,\n  \"assumption_tested\": \"A slice can stop cleanly when the target bug\
+        \ is not reproduced.\",\n  \"summary\": \"The reported bug was not reproduced\
+        \ on the named real surface.\",\n  \"commands_run\": [\n    {\n      \"command\"\
+        : \"test ! -f docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-present.txt\
+        \ && printf '%s\\\\n' 'reported bug marker absent'\",\n      \"exit_code\"\
+        : 0,\n      \"stdout_excerpt\": \"reported bug marker absent\",\n      \"\
+        stderr_excerpt\": \"\"\n    }\n  ],\n  \"test_results\": [\n    {\n      \"\
+        name\": \"phase4 evidence contract\",\n      \"status\": \"passed\",\n   \
+        \   \"details\": \"Validated by phase 4 schema.\"\n    }\n  ],\n  \"target_bug_reproduced\"\
+        : \"not_reproduced\",\n  \"real_frontend_path_exercised\": false,\n  \"real_execution_surface\"\
+        : \"Local slice worktree filesystem probe\",\n  \"files_changed\": [\n   \
+        \ \"routines/phase4-bug-not-reproduced.sh\",\n    \"docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json\"\
+        \n  ],\n  \"evidence_files\": [\n    \"docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json\"\
+        \n  ],\n  \"open_uncertainties\": [\n    \"Need reporter environment details\
+        \ before implementation.\"\n  ],\n  \"next_recommendation\": \"stop\",\n \
+        \ \"outcome\": \"bug_not_reproduced\"\n}\nJSON\nSH\nsh routines/phase4-bug-not-reproduced.sh"
+      requirements:
+      - id: R1
+        desc: Write a phase4.evidence.v1 JSON evidence bundle.
+      - id: R2
+        desc: Classify the slice outcome for the next planner.
