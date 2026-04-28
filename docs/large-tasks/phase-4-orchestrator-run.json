@@ -1,0 +1,109 @@
+{
+  "id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+  "repo_name": "task-world",
+  "status": "paused",
+  "pause_reason": "no_executor_running",
+  "last_error": null,
+  "routine_id": "phase4-verified-fix",
+  "routine_sha": null,
+  "routine_source": "embedded",
+  "routine_embedded": {
+    "id": "phase4-verified-fix",
+    "name": "Phase 4 Evidence slice-01-verified-fix",
+    "description": "Deterministic slice proving the phase 4 evidence bundle contract.",
+    "steps": [
+      {
+        "id": "S-01",
+        "title": "Write standard evidence bundle",
+        "step_context": "Produce one standard evidence bundle for the current slice.",
+        "tasks": [
+          {
+            "id": "T-01",
+            "title": "Persist evidence JSON",
+            "script": "mkdir -p routines docs/phase4-evidence-standardization-smoke && cat > routines/phase4-verified-fix.sh <<'SH'\n#!/bin/sh\nset -u\nmkdir -p docs/phase4-evidence-standardization-smoke && printf '%s\\n' 'target artifact exists' > docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt\nprobe_command=\"test -f docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt && printf '%s\\\\n' 'target artifact exists'\"\nprobe_stdout=\"target artifact exists\"\nprobe_stderr=\"\"\neval \"$probe_command\"\nprobe_exit=$?\nif [ \"$probe_exit\" -ne 0 ]; then\n  printf '%s\\n' \"unexpected probe exit $probe_exit for $probe_command\" >&2\n  exit 1\nfi\ncat > docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json <<'JSON'\n{\n  \"schema_version\": \"phase4.evidence.v1\",\n  \"slice_id\": \"slice-01-verified-fix\",\n  \"routine_id\": \"phase4-verified-fix\",\n  \"assumption_tested\": \"A completed slice can prove a fix with a standard evidence bundle.\",\n  \"summary\": \"The target behavior passed on the real execution surface.\",\n  \"commands_run\": [\n    {\n      \"command\": \"test -f docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt && printf '%s\\\\n' 'target artifact exists'\",\n      \"exit_code\": 0,\n      \"stdout_excerpt\": \"target artifact exists\",\n      \"stderr_excerpt\": \"\"\n    }\n  ],\n  \"test_results\": [\n    {\n      \"name\": \"phase4 evidence contract\",\n      \"status\": \"passed\",\n      \"details\": \"Validated by phase 4 schema.\"\n    }\n  ],\n  \"target_bug_reproduced\": \"reproduced\",\n  \"real_frontend_path_exercised\": false,\n  \"real_execution_surface\": \"Local slice worktree filesystem probe\",\n  \"files_changed\": [\n    \"routines/phase4-verified-fix.sh\",\n    \"docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt\",\n    \"docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json\"\n  ],\n  \"evidence_files\": [\n    \"docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json\"\n  ],\n  \"open_uncertainties\": [],\n  \"next_recommendation\": \"proceed\",\n  \"outcome\": \"verified_fix\"\n}\nJSON\nSH\nsh routines/phase4-verified-fix.sh",
+            "requirements": [
+              {
+                "id": "R1",
+                "desc": "Write a phase4.evidence.v1 JSON evidence bundle."
+              },
+              {
+                "id": "R2",
+                "desc": "Classify the slice outcome for the next planner."
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "routine_path": null,
+  "routine_commit": null,
+  "agent_type": "user_managed",
+  "agent_type_display": "External Agent",
+  "agent_icon": "external",
+  "agent_config": {
+    "callback_channel": "rest",
+    "timeout_minutes": 5
+  },
+  "verifier_model": null,
+  "worktree_enabled": true,
+  "worktree_path": "/Users/peter/code/task-world/worktrees/r87",
+  "worktree_relative_path": "worktrees/r87",
+  "source_branch": "main",
+  "source_branch_sha": "4d945f2e78754c7a1aca8db562bebf679c44d503",
+  "merge_strategy": "squash",
+  "config": {},
+  "env_file_specs": [],
+  "env_source_dir": null,
+  "steps": [
+    {
+      "id": "ae666eee-eb78-4d18-904e-1056062c7765",
+      "config_id": "S-01",
+      "title": "Write standard evidence bundle",
+      "completed": false,
+      "tasks": [
+        {
+          "id": "b8dc06db-5f59-4ad2-a5b3-9529a1d65308",
+          "config_id": "T-01",
+          "title": "Persist evidence JSON",
+          "status": "pending",
+          "current_attempt": 0,
+          "max_attempts": 3,
+          "grade_summary": [
+            {
+              "grade": null,
+              "priority": "critical"
+            },
+            {
+              "grade": null,
+              "priority": "critical"
+            }
+          ],
+          "attempts_summary": [],
+          "pending_action_type": null,
+          "pending_clarification_count": null,
+          "parent_task_id": null
+        }
+      ],
+      "has_approval_gate": false,
+      "approval_status": null,
+      "skipped": false,
+      "skip_reason": null,
+      "condition": null
+    }
+  ],
+  "current_step_index": 0,
+  "created_at": "2026-04-28T14:27:00.403936Z",
+  "updated_at": "2026-04-28T14:28:54.119403Z",
+  "started_at": "2026-04-28T14:27:00.560089Z",
+  "completed_at": null,
+  "agent_started_at": null,
+  "total_tokens_read": 0,
+  "total_tokens_write": 0,
+  "total_tokens_cache": 0,
+  "total_duration_ms": 0,
+  "total_num_actions": 0,
+  "token_usage_by_model": [],
+  "estimated_cost_usd": null,
+  "cost_disclaimer": null
+}

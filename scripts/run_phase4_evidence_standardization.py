@@ -100,6 +100,17 @@ class SliceResult:
 
 
 @dataclass(frozen=True)
+class OrchestratorExecutionEvidence:
+    run_id: str | None
+    status: str
+    pause_reason: str | None
+    worktree_path: str | None
+    evidence_files: list[str]
+    activity_events: int
+    notes: list[str]
+
+
+@dataclass(frozen=True)
 class Phase4Result:
     objective: str
     feature: str
@@ -107,6 +118,7 @@ class Phase4Result:
     stop_reason: str
     schema_doc: str
     slices: list[SliceResult]
+    orchestrator_execution: OrchestratorExecutionEvidence | None
     success_criteria: dict[str, bool]
 
 
@@ -453,8 +465,55 @@ def load_and_evaluate_bundle(
     return bundle, outcome, notes
 
 
-def compute_success_criteria(slices: list[SliceResult]) -> dict[str, bool]:
+def load_orchestrator_execution(
+    run_path: Path | None,
+    activity_path: Path | None,
+    feature: str,
+) -> OrchestratorExecutionEvidence | None:
+    if run_path is None:
+        return None
+    run = json.loads(run_path.read_text())
+    activity_events = 0
+    if activity_path is not None and activity_path.exists():
+        activity = json.loads(activity_path.read_text())
+        events = activity.get("events")
+        activity_events = len(events) if isinstance(events, list) else 0
+    worktree = run.get("worktree_path") if isinstance(run.get("worktree_path"), str) else None
+    evidence_files: list[str] = []
+    if worktree is not None:
+        feature_dir = Path(worktree) / "docs" / feature
+        if feature_dir.exists():
+            evidence_files = [
+                str(path.relative_to(worktree))
+                for path in sorted(feature_dir.glob("*-evidence.json"))
+                if path.is_file()
+            ]
+    notes: list[str] = []
+    if run.get("status") != "completed":
+        notes.append("Orchestrator run did not complete.")
+    if not evidence_files:
+        notes.append("No evidence bundle was produced in the orchestrator worktree.")
+    return OrchestratorExecutionEvidence(
+        run_id=str(run.get("id")) if run.get("id") is not None else None,
+        status=str(run.get("status")),
+        pause_reason=str(run["pause_reason"]) if run.get("pause_reason") is not None else None,
+        worktree_path=worktree,
+        evidence_files=evidence_files,
+        activity_events=activity_events,
+        notes=notes,
+    )
+
+
+def compute_success_criteria(
+    slices: list[SliceResult],
+    orchestrator_execution: OrchestratorExecutionEvidence | None,
+) -> dict[str, bool]:
     outcomes = {slice_result.outcome for slice_result in slices}
+    orchestrator_execution_completed = (
+        orchestrator_execution is not None
+        and orchestrator_execution.status == "completed"
+        and bool(orchestrator_execution.evidence_files)
+    )
     return {
         "standard_schema_documented": True,
         "every_bundle_valid": all(slice_result.valid_bundle for slice_result in slices),
@@ -471,9 +530,11 @@ def compute_success_criteria(slices: list[SliceResult]) -> dict[str, bool]:
         "orchestrator_validation_passed": all(
             slice_result.validation.status == "valid" for slice_result in slices
         ),
+        "orchestrator_execution_completed": orchestrator_execution_completed,
         "ready_for_phase5": bool(slices)
         and all(slice_result.valid_bundle for slice_result in slices)
         and all(slice_result.validation.status == "valid" for slice_result in slices)
+        and orchestrator_execution_completed
         and {"verified_fix", "bug_not_reproduced", "environment_blocked"}.issubset(outcomes),
     }
 
@@ -524,6 +585,21 @@ def render_report(result: Phase4Result) -> str:
     files = "\n".join(
         f"<li>{html.escape(slice_result.evidence_path)}</li>" for slice_result in result.slices
     )
+    if result.orchestrator_execution is None:
+        orchestrator = "<p>No orchestrator execution evidence was attached.</p>"
+    else:
+        notes = "\n".join(
+            f"<li>{html.escape(note)}</li>" for note in result.orchestrator_execution.notes
+        )
+        evidence = ", ".join(result.orchestrator_execution.evidence_files) or "none"
+        orchestrator = (
+            f"<p><strong>Run:</strong> <code>{html.escape(result.orchestrator_execution.run_id or '')}</code></p>"
+            f"<p><strong>Status:</strong> {html.escape(result.orchestrator_execution.status)}"
+            f" / {html.escape(result.orchestrator_execution.pause_reason or '')}</p>"
+            f"<p><strong>Worktree:</strong> {html.escape(result.orchestrator_execution.worktree_path or '')}</p>"
+            f"<p><strong>Evidence files in worktree:</strong> {html.escape(evidence)}</p>"
+            f"<ul>{notes}</ul>"
+        )
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -575,8 +651,12 @@ def render_report(result: Phase4Result) -> str:
     <ul>{criteria}</ul>
   </section>
   <section>
+    <h2>Orchestrator Execution</h2>
+    {orchestrator}
+  </section>
+  <section>
     <h2>Phase 5 Readiness</h2>
-    <p>The external loop now has a stable evidence artifact to pass between planning cycles. Native parent/child orchestration can use this contract as the candidate run-output shape.</p>
+    <p>The evidence schema is stable, but Phase 5 is only ready once an orchestrator run completes and produces this bundle in its run worktree.</p>
   </section>
 </main>
 </body>
@@ -636,16 +716,22 @@ def run_phase4(args: argparse.Namespace) -> Phase4Result:
             stop_reason=f"Recorded {index} standardized evidence bundle(s).",
             schema_doc=str(schema_path),
             slices=slice_results,
+            orchestrator_execution=None,
             success_criteria={},
         )
         write_state(Path(args.state), partial)
 
-    criteria = compute_success_criteria(slice_results)
+    orchestrator_execution = load_orchestrator_execution(
+        Path(args.orchestrator_run_json) if args.orchestrator_run_json else None,
+        Path(args.orchestrator_activity_json) if args.orchestrator_activity_json else None,
+        args.feature,
+    )
+    criteria = compute_success_criteria(slice_results, orchestrator_execution)
     completed = all(criteria.values())
     stop_reason = (
         "Evidence bundles are standardized, validated, and distinguish the required outcomes."
         if completed
-        else "Phase 4 evidence standardization did not satisfy all success criteria."
+        else "Evidence schema is standardized, but orchestrator execution is not yet proven."
     )
     result = Phase4Result(
         objective=args.objective,
@@ -654,6 +740,7 @@ def run_phase4(args: argparse.Namespace) -> Phase4Result:
         stop_reason=stop_reason,
         schema_doc=str(schema_path),
         slices=slice_results,
+        orchestrator_execution=orchestrator_execution,
         success_criteria=criteria,
     )
     write_state(Path(args.state), result)
@@ -674,6 +761,8 @@ def main() -> int:
     parser.add_argument("--slices-dir", default=DEFAULT_SLICES_DIR)
     parser.add_argument("--local-worktree", default=DEFAULT_LOCAL_WORKTREE)
     parser.add_argument("--schema-doc", default=DEFAULT_SCHEMA_DOC)
+    parser.add_argument("--orchestrator-run-json", default="")
+    parser.add_argument("--orchestrator-activity-json", default="")
     args = parser.parse_args()
 
     result = run_phase4(args)

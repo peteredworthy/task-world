@@ -1,8 +1,8 @@
 {
   "objective": "Prove phase 4 standardized evidence before native orchestration.",
   "feature": "phase4-evidence-standardization-smoke",
-  "completed": true,
-  "stop_reason": "Evidence bundles are standardized, validated, and distinguish the required outcomes.",
+  "completed": false,
+  "stop_reason": "Evidence schema is standardized, but orchestrator execution is not yet proven.",
   "schema_doc": "docs/large-tasks/phase-4/evidence-bundle-schema.md",
   "slices": [
     {
@@ -164,6 +164,18 @@
       ]
     }
   ],
+  "orchestrator_execution": {
+    "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+    "status": "paused",
+    "pause_reason": "no_executor_running",
+    "worktree_path": "/Users/peter/code/task-world/worktrees/r87",
+    "evidence_files": [],
+    "activity_events": 4,
+    "notes": [
+      "Orchestrator run did not complete.",
+      "No evidence bundle was produced in the orchestrator worktree."
+    ]
+  },
   "success_criteria": {
     "standard_schema_documented": true,
     "every_bundle_valid": true,
@@ -172,6 +184,7 @@
     "bug_not_reproduced_distinguishable": true,
     "environment_blocked_distinguishable": true,
     "orchestrator_validation_passed": true,
-    "ready_for_phase5": true
+    "orchestrator_execution_completed": false,
+    "ready_for_phase5": false
   }
 }

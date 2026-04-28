@@ -104,13 +104,23 @@ def test_success_criteria_require_all_standard_outcomes() -> None:
             )
         )
 
-    criteria = module.compute_success_criteria(records)
+    orchestrator_execution = module.OrchestratorExecutionEvidence(
+        run_id="run-1",
+        status="completed",
+        pause_reason=None,
+        worktree_path="/tmp/worktree",
+        evidence_files=["docs/phase4-test/slice-01-verified-fix-evidence.json"],
+        activity_events=4,
+        notes=[],
+    )
+    criteria = module.compute_success_criteria(records, orchestrator_execution)
 
     assert criteria["every_bundle_valid"] is True
     assert criteria["verified_fix_distinguishable"] is True
     assert criteria["bug_not_reproduced_distinguishable"] is True
     assert criteria["environment_blocked_distinguishable"] is True
     assert criteria["orchestrator_validation_passed"] is True
+    assert criteria["orchestrator_execution_completed"] is True
     assert criteria["ready_for_phase5"] is True
 
 
@@ -132,10 +142,53 @@ def test_success_criteria_do_not_pass_when_api_validation_is_unavailable() -> No
                 valid_bundle=not notes,
                 evaluation_notes=notes,
             )
-        ]
+        ],
+        module.OrchestratorExecutionEvidence(
+            run_id="run-1",
+            status="completed",
+            pause_reason=None,
+            worktree_path="/tmp/worktree",
+            evidence_files=["docs/phase4-test/slice-01-verified-fix-evidence.json"],
+            activity_events=4,
+            notes=[],
+        ),
     )
 
     assert criteria["orchestrator_validation_passed"] is False
+    assert criteria["ready_for_phase5"] is False
+
+
+def test_success_criteria_do_not_pass_without_completed_orchestrator_execution() -> None:
+    module = _load_module()
+    spec = module.demo_specs("phase4-test")[0]
+    bundle = module.EvidenceBundle.model_validate(spec)
+    outcome, notes = module.classify_bundle(bundle)
+    criteria = module.compute_success_criteria(
+        [
+            module.SliceResult(
+                slice_id=bundle.slice_id,
+                routine_id=bundle.routine_id,
+                routine_path="slice-01.yaml",
+                validation=module.RoutineValidation(status="valid", errors=[]),
+                evidence_path="slice-01.json",
+                bundle=bundle.model_dump(),
+                outcome=outcome,
+                valid_bundle=not notes,
+                evaluation_notes=notes,
+            )
+        ],
+        module.OrchestratorExecutionEvidence(
+            run_id="run-1",
+            status="paused",
+            pause_reason="no_executor_running",
+            worktree_path="/tmp/worktree",
+            evidence_files=[],
+            activity_events=2,
+            notes=["No evidence bundle was produced in the orchestrator worktree."],
+        ),
+    )
+
+    assert criteria["orchestrator_execution_completed"] is False
     assert criteria["ready_for_phase5"] is False
 
 
@@ -151,3 +204,4 @@ def test_script_help_is_available() -> None:
     assert completed.returncode == 0
     assert "--schema-doc" in completed.stdout
     assert "--local-worktree" in completed.stdout
+    assert "--orchestrator-run-json" in completed.stdout

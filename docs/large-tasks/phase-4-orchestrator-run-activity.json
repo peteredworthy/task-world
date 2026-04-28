@@ -1,0 +1,70 @@
+{
+  "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+  "events": [
+    {
+      "id": 109221,
+      "event_type": "run_status_changed",
+      "timestamp": "2026-04-28T14:27:00.567228Z",
+      "payload": {
+        "timestamp": "2026-04-28T14:27:00.567228Z",
+        "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+        "event_type": "run_status_changed",
+        "old_status": "draft",
+        "new_status": "active",
+        "pause_reason": null,
+        "last_error": null
+      },
+      "task_title": null,
+      "step_title": null
+    },
+    {
+      "id": 109222,
+      "event_type": "run_status_changed",
+      "timestamp": "2026-04-28T14:27:52.796816Z",
+      "payload": {
+        "timestamp": "2026-04-28T14:27:52.796816Z",
+        "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+        "event_type": "run_status_changed",
+        "old_status": "active",
+        "new_status": "paused",
+        "pause_reason": "no_executor_running",
+        "last_error": null
+      },
+      "task_title": null,
+      "step_title": null
+    },
+    {
+      "id": 109223,
+      "event_type": "run_status_changed",
+      "timestamp": "2026-04-28T14:28:17.835267Z",
+      "payload": {
+        "timestamp": "2026-04-28T14:28:17.835267Z",
+        "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+        "event_type": "run_status_changed",
+        "old_status": "paused",
+        "new_status": "active",
+        "pause_reason": null,
+        "last_error": null
+      },
+      "task_title": null,
+      "step_title": null
+    },
+    {
+      "id": 109224,
+      "event_type": "run_status_changed",
+      "timestamp": "2026-04-28T14:28:54.119389Z",
+      "payload": {
+        "timestamp": "2026-04-28T14:28:54.119389Z",
+        "run_id": "93ecc90a-8c49-4e83-a546-3e741f8b00e1",
+        "event_type": "run_status_changed",
+        "old_status": "active",
+        "new_status": "paused",
+        "pause_reason": "no_executor_running",
+        "last_error": null
+      },
+      "task_title": null,
+      "step_title": null
+    }
+  ],
+  "has_more": false
+}

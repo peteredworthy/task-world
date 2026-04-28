@@ -25,7 +25,7 @@
     <p class="kicker">Large Task Delivery</p>
     <h1>Phase 4 Evidence Standardization</h1>
     <p>Prove phase 4 standardized evidence before native orchestration.</p>
-    <p><strong>Result:</strong> Evidence bundles are standardized, validated, and distinguish the required outcomes.</p>
+    <p><strong>Result:</strong> Evidence schema is standardized, but orchestrator execution is not yet proven.</p>
   </section>
   <section>
     <h2>Standard Contract</h2>
@@ -57,11 +57,17 @@
 <li><span class="pass">PASS</span> bug not reproduced distinguishable</li>
 <li><span class="pass">PASS</span> environment blocked distinguishable</li>
 <li><span class="pass">PASS</span> orchestrator validation passed</li>
-<li><span class="pass">PASS</span> ready for phase5</li></ul>
+<li><span class="fail">FAIL</span> orchestrator execution completed</li>
+<li><span class="fail">FAIL</span> ready for phase5</li></ul>
+  </section>
+  <section>
+    <h2>Orchestrator Execution</h2>
+    <p><strong>Run:</strong> <code>93ecc90a-8c49-4e83-a546-3e741f8b00e1</code></p><p><strong>Status:</strong> paused / no_executor_running</p><p><strong>Worktree:</strong> /Users/peter/code/task-world/worktrees/r87</p><p><strong>Evidence files in worktree:</strong> none</p><ul><li>Orchestrator run did not complete.</li>
+<li>No evidence bundle was produced in the orchestrator worktree.</li></ul>
   </section>
   <section>
     <h2>Phase 5 Readiness</h2>
-    <p>The external loop now has a stable evidence artifact to pass between planning cycles. Native parent/child orchestration can use this contract as the candidate run-output shape.</p>
+    <p>The evidence schema is stable, but Phase 5 is only ready once an orchestrator run completes and produces this bundle in its run worktree.</p>
   </section>
 </main>
 </body>
