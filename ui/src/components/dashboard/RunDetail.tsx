@@ -581,7 +581,7 @@ function RunDetailInner({ runId }: { runId: string }) {
           )}
 
           {/* Per-model cost breakdown */}
-          {(run.token_usage_by_model.length > 0 ||
+          {((run.token_usage_by_model?.length ?? 0) > 0 ||
             run.total_tokens_read > 0 ||
             run.total_tokens_write > 0 ||
             run.estimated_cost_usd !== null) && (

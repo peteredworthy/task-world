@@ -867,7 +867,7 @@ routine:
                 cmd: "uv run python -c \"from orchestrator.api.app import app; routes = [str(r.path) for r in app.routes]; print([r for r in routes if 'mcp' in r][:5]); print('OK')\""
                 must: true
               - id: "expand_task_in_mcp"
-                cmd: "uv run python -c \"from orchestrator.mcp.tools import ORCHESTRATOR_TOOLS; names = [t['name'] for t in ORCHESTRATOR_TOOLS]; assert any('expand_task' in n for n in names), f'orchestrator_expand_task not in ORCHESTRATOR_TOOLS: {names}'; print('OK')\""
+                cmd: "uv run python -c \"from orchestrator.api.mcp.tools import ORCHESTRATOR_TOOLS; names = [t['name'] for t in ORCHESTRATOR_TOOLS]; assert any('expand_task' in n for n in names), f'orchestrator_expand_task not in ORCHESTRATOR_TOOLS: {names}'; print('OK')\""
                 must: true
           retry:
             max_attempts: 3
