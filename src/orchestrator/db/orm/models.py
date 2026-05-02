@@ -46,6 +46,13 @@ class RunModel(Base):
     routine_path: Mapped[str | None] = mapped_column(String, nullable=True)
     routine_commit: Mapped[str | None] = mapped_column(String, nullable=True)
 
+    # Oversight parent/child orchestration
+    parent_run_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("runs.id"), nullable=True, index=True
+    )
+    parent_slice_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    oversight_state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
     # Runner configuration
     runner_type: Mapped[str | None] = mapped_column(String, nullable=True)
     runner_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

@@ -183,7 +183,7 @@ def test_server_creation(server: OrchestratorMCPServer) -> None:
 def test_tool_names(server: OrchestratorMCPServer) -> None:
     """Server registers all tools regardless of phase."""
     names = server.tool_names()
-    assert len(names) == 9
+    assert len(names) == 13
     assert "orchestrator_get_requirements" in names
     assert "orchestrator_update_checklist" in names
     assert "orchestrator_submit" in names
@@ -193,6 +193,10 @@ def test_tool_names(server: OrchestratorMCPServer) -> None:
     assert "orchestrator_escalate_requirement" in names
     assert "orchestrator_list_repos" in names
     assert "orchestrator_list_branches" in names
+    assert "orchestrator_create_child_run" in names
+    assert "orchestrator_list_child_runs" in names
+    assert "orchestrator_wait_for_run" in names
+    assert "orchestrator_get_run_evidence" in names
 
 
 async def test_server_lists_tools(server: OrchestratorMCPServer) -> None:

@@ -32,7 +32,10 @@ from orchestrator.api.schemas.runs import (
     BackMergeResponse,
     BackwardTransitionRequest,
     BranchStatusResponse,
+    ChildRunListResponse,
+    CreateChildRunRequest,
     CreateRunRequest,
+    EvidenceBundleSchema,
     GradeSummaryItem,
     GuidanceResponse,
     MergeBackRequest,
@@ -41,6 +44,8 @@ from orchestrator.api.schemas.runs import (
     RecoverRequest,
     RecoverResponse,
     ResumeRunRequest,
+    RunEvidenceItem,
+    RunEvidenceResponse,
     RunListResponse,
     RunResponse,
     StepConditionSchema,
@@ -261,6 +266,9 @@ def _run_to_response(run: Run) -> RunResponse:
         routine_embedded=run.routine_embedded,
         routine_path=run.routine_path,
         routine_commit=run.routine_commit,
+        parent_run_id=run.parent_run_id,
+        parent_slice_id=run.parent_slice_id,
+        oversight_state=run.oversight_state,
         agent_type=run.agent_type.value if run.agent_type else None,
         agent_type_display=get_agent_display_name(run.agent_type, run.agent_config),
         agent_icon=get_agent_icon(run.agent_type),
@@ -296,15 +304,20 @@ def _run_to_response(run: Run) -> RunResponse:
     )
 
 
-@router.post("", response_model=RunResponse, status_code=201)
-async def create_run(
-    request: CreateRunRequest,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
-) -> RunResponse:
-    """Create a new run from a routine (by ID or embedded inline)."""
+def _build_run_from_request(
+    request: CreateRunRequest | CreateChildRunRequest,
+    routine_dirs: list[tuple[Path, RoutineSource]],
+    *,
+    repo_name: str | None = None,
+    branch: str | None = None,
+) -> tuple[Run, RoutineConfig]:
+    """Build a draft run from a create request without persisting it."""
+    resolved_repo_name = repo_name or request.repo_name
+    resolved_branch = branch or request.branch
+    if resolved_repo_name is None or resolved_branch is None:
+        raise HTTPException(status_code=422, detail="repo_name and branch are required")
+
     if request.routine_embedded is not None:
-        # Inline/embedded routine: parse and validate the provided dict
         try:
             routine_config = RoutineConfig.model_validate(request.routine_embedded)
         except ValidationError as exc:
@@ -317,14 +330,13 @@ async def create_run(
             ) from exc
         run = create_run_from_routine(
             routine=routine_config,
-            repo_name=request.repo_name,
-            source_branch=request.branch,
+            repo_name=resolved_repo_name,
+            source_branch=resolved_branch,
             config=request.config if request.config else None,
             routine_source=RoutineSource.EMBEDDED,
         )
         run.routine_embedded = request.routine_embedded
     else:
-        # Lookup routine by ID from discovered routines
         found = discover_routines(routine_dirs)
         routine_config = None
         matched_routine = None
@@ -341,17 +353,15 @@ async def create_run(
 
         run = create_run_from_routine(
             routine=routine_config,
-            repo_name=request.repo_name,
-            source_branch=request.branch,
+            repo_name=resolved_repo_name,
+            source_branch=resolved_branch,
             config=request.config if request.config else None,
             routine_source=source,
             routine_path=str(matched_routine.path) if matched_routine.commit else None,
             routine_commit=matched_routine.commit,
         )
-        # For LOCAL routines, capture the source directory for file copying
         if isinstance(matched_routine.path, Path):
             run.routine_source_dir = str(matched_routine.path.parent)
-        # Store routine config for auto-verify and prompt generation
         run.routine_embedded = routine_config.model_dump(mode="json", by_alias=True)
 
     if request.merge_strategy is not None:
@@ -361,7 +371,6 @@ async def create_run(
         run.agent_type = AgentRunnerType(request.agent_type)
 
     if request.agent_config:
-        # Validate agent_config keys against the agent's known config schema
         if run.agent_type is not None:
             from orchestrator.runners import AGENT_CONFIG_FIELDS
 
@@ -376,10 +385,8 @@ async def create_run(
                     ),
                 )
         run.agent_config = request.agent_config
-        # Pin the verifier model at run creation so later config changes don't affect it
         run.verifier_model = request.agent_config.get("model")
 
-    # Resolve env file specs from routine config and request overrides
     if request.env_files and request.env_files.files is not None:
         request_specs = [f.model_dump() for f in request.env_files.files]
     else:
@@ -389,14 +396,86 @@ async def create_run(
         routine_specs=routine_config.env_files if routine_config.env_files else None,
         request_specs=request_specs,
     )
-
-    # Store resolved env file specs on the run
     run.env_file_specs = env_specs
     if request.env_files and request.env_files.source_dir:
         run.env_source_dir = request.env_files.source_dir
 
+    return run, routine_config
+
+
+@router.post("", response_model=RunResponse, status_code=201)
+async def create_run(
+    request: CreateRunRequest,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
+) -> RunResponse:
+    """Create a new run from a routine (by ID or embedded inline)."""
+    run, _ = _build_run_from_request(request, routine_dirs)
     created = await service.create_run(run)
     return _run_to_response(created)
+
+
+@router.post("/{parent_run_id}/children", response_model=RunResponse, status_code=201)
+async def create_child_run(
+    parent_run_id: str,
+    request: CreateChildRunRequest,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
+) -> RunResponse:
+    """Create a child run linked to an oversight parent run."""
+    parent = await service.get_run(parent_run_id)
+    run, _ = _build_run_from_request(
+        request,
+        routine_dirs,
+        repo_name=request.repo_name or parent.repo_name,
+        branch=request.branch or parent.source_branch or "main",
+    )
+    if run.id == parent_run_id:
+        raise HTTPException(status_code=409, detail="Child run cannot parent itself")
+    if request.agent_type is None:
+        run.agent_type = parent.agent_type
+    if not request.agent_config:
+        run.agent_config = dict(parent.agent_config)
+        run.verifier_model = parent.verifier_model
+
+    created = await service.create_child_run(
+        parent_run_id,
+        run,
+        parent_slice_id=request.parent_slice_id,
+        next_action_decision=request.next_action_decision,
+    )
+    if request.start:
+        await service.start_run(created.id)
+    return _run_to_response(await service.get_run(created.id))
+
+
+@router.get("/{parent_run_id}/children", response_model=ChildRunListResponse)
+async def list_child_runs(
+    parent_run_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> ChildRunListResponse:
+    """List child runs linked to an oversight parent run."""
+    children = await service.list_child_runs(parent_run_id)
+    return ChildRunListResponse(
+        parent_run_id=parent_run_id,
+        children=[_run_to_response(child) for child in children],
+    )
+
+
+@router.get("/{run_id}/evidence", response_model=RunEvidenceResponse)
+async def get_run_evidence(
+    run_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> RunEvidenceResponse:
+    """Return structured phase4.evidence.v1 bundles produced by a run."""
+    items: list[RunEvidenceItem] = []
+    for raw in await service.collect_run_evidence(run_id):
+        try:
+            bundle = EvidenceBundleSchema.model_validate(raw["bundle"])
+        except ValidationError:
+            continue
+        items.append(RunEvidenceItem(path=raw["path"], bundle=bundle))
+    return RunEvidenceResponse(run_id=run_id, evidence=items)
 
 
 @router.get("", response_model=RunListResponse)

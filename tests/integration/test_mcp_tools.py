@@ -76,6 +76,26 @@ def _make_run() -> Run:
     )
 
 
+EMBEDDED_ROUTINE: dict[str, object] = {
+    "id": "mcp-child-slice",
+    "name": "MCP Child Slice",
+    "steps": [
+        {
+            "id": "S-01",
+            "title": "Slice",
+            "tasks": [
+                {
+                    "id": "T-01",
+                    "title": "Prove child orchestration",
+                    "task_context": "Prove child orchestration.",
+                    "requirements": [{"id": "R1", "desc": "Done"}],
+                }
+            ],
+        }
+    ],
+}
+
+
 async def test_get_requirements(handler: ToolHandler, service: WorkflowService) -> None:
     run = _make_run()
     await service.create_run(run)
@@ -170,6 +190,69 @@ async def test_set_grade(handler: ToolHandler, service: WorkflowService) -> None
 async def test_unknown_tool(handler: ToolHandler) -> None:
     with pytest.raises(ValueError, match="Unknown tool"):
         await handler.handle("nonexistent_tool", {})
+
+
+async def test_oversight_child_run_tools(
+    handler: ToolHandler,
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    parent = _make_run()
+    await service.create_run(parent)
+
+    create_result = await handler.handle(
+        "orchestrator_create_child_run",
+        {
+            "parent_run_id": "run-1",
+            "parent_slice_id": "slice-01",
+            "routine_embedded": EMBEDDED_ROUTINE,
+            "next_action_decision": "continue",
+        },
+    )
+    child_id = create_result["child_run_id"]
+    assert create_result["parent_run_id"] == "run-1"
+    assert create_result["parent_slice_id"] == "slice-01"
+
+    list_result = await handler.handle(
+        "orchestrator_list_child_runs",
+        {"parent_run_id": "run-1"},
+    )
+    assert [child["id"] for child in list_result["children"]] == [child_id]
+
+    wait_result = await handler.handle(
+        "orchestrator_wait_for_run",
+        {"run_id": child_id, "timeout_seconds": 0},
+    )
+    assert wait_result["run_id"] == child_id
+    assert wait_result["terminal"] is False
+
+    worktree = tmp_path / "worktree"
+    evidence_dir = worktree / "docs" / "phase5"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "slice-01-evidence.json").write_text(
+        """{
+  "schema_version": "phase4.evidence.v1",
+  "slice_id": "slice-01",
+  "routine_id": "mcp-child-slice",
+  "assumption_tested": "MCP can retrieve native child evidence.",
+  "summary": "Evidence returned through ToolHandler.",
+  "commands_run": [{"command": "printf ok", "exit_code": 0, "stdout_excerpt": "ok", "stderr_excerpt": ""}],
+  "test_results": [{"name": "mcp evidence", "status": "passed", "details": "valid"}],
+  "target_bug_reproduced": "not_targeted",
+  "real_frontend_path_exercised": false,
+  "real_execution_surface": "MCP ToolHandler",
+  "files_changed": ["docs/phase5/slice-01-evidence.json"],
+  "evidence_files": ["docs/phase5/slice-01-evidence.json"],
+  "open_uncertainties": [],
+  "next_recommendation": "proceed",
+  "outcome": "verified_fix"
+}""",
+        encoding="utf-8",
+    )
+    await service.set_worktree_path(child_id, str(worktree))
+
+    evidence_result = await handler.handle("orchestrator_get_run_evidence", {"run_id": child_id})
+    assert evidence_result["evidence"][0]["bundle"]["outcome"] == "verified_fix"
 
 
 async def test_full_workflow_via_tools(handler: ToolHandler, service: WorkflowService) -> None:

@@ -340,6 +340,11 @@ class Run(BaseModel):
         None  # Absolute path to routine dir on disk (transient, not persisted)
     )
 
+    # Oversight parent/child orchestration
+    parent_run_id: str | None = None
+    parent_slice_id: str | None = None
+    oversight_state: dict[str, Any] = Field(default_factory=lambda: {})
+
     # Agent configuration
     agent_type: AgentRunnerType | None = None
     agent_config: dict[str, Any] = Field(default_factory=lambda: {})

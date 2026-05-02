@@ -9,10 +9,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from orchestrator.config.enums import ChecklistStatus
+from orchestrator.config import RoutineConfig
+from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RoutineSource
 from orchestrator.git import get_repo, list_branches, list_repos
 from orchestrator.git.repos import RepoNotFoundError
 from orchestrator.api.mcp.clarification_tools import CLARIFICATION_TOOL
+from orchestrator.state.factory import create_run_from_routine
 from orchestrator.time_utils import format_utc_datetime
 from orchestrator.workflow import ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService
@@ -160,6 +162,70 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
             "required": ["repo_name"],
         },
     },
+    {
+        "name": "orchestrator_create_child_run",
+        "description": "Create an oversight child run from an embedded routine.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "parent_run_id": {"type": "string", "description": "Parent oversight run ID"},
+                "parent_slice_id": {"type": "string", "description": "Slice ID for this child"},
+                "routine_embedded": {
+                    "type": "object",
+                    "description": "Embedded routine config for the child run",
+                },
+                "repo_name": {"type": "string", "description": "Optional child repo name"},
+                "branch": {"type": "string", "description": "Optional child source branch"},
+                "config": {"type": "object", "description": "Optional child run config"},
+                "agent_type": {"type": "string", "description": "Optional child runner type"},
+                "agent_config": {"type": "object", "description": "Optional child runner config"},
+                "next_action_decision": {
+                    "type": "string",
+                    "enum": ["continue", "replan", "stop", "environment_blocked"],
+                    "description": "Parent oversight decision that led to this child",
+                },
+                "start": {"type": "boolean", "description": "Whether to enqueue child start"},
+            },
+            "required": ["parent_run_id", "parent_slice_id", "routine_embedded"],
+        },
+    },
+    {
+        "name": "orchestrator_list_child_runs",
+        "description": "List child runs linked to an oversight parent run.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "parent_run_id": {"type": "string", "description": "Parent oversight run ID"},
+            },
+            "required": ["parent_run_id"],
+        },
+    },
+    {
+        "name": "orchestrator_wait_for_run",
+        "description": "Wait briefly for a run to complete or fail, then return its current status.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "Run ID to observe"},
+                "timeout_seconds": {
+                    "type": "number",
+                    "description": "Maximum seconds to wait, capped at 30",
+                },
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "orchestrator_get_run_evidence",
+        "description": "Return structured phase4.evidence.v1 bundles from a run worktree.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "Run ID to inspect"},
+            },
+            "required": ["run_id"],
+        },
+    },
 ]
 
 
@@ -198,6 +264,14 @@ class ToolHandler:
             return await self._list_repos(arguments)
         elif tool_name == "orchestrator_list_branches":
             return await self._list_branches(arguments)
+        elif tool_name == "orchestrator_create_child_run":
+            return await self._create_child_run(arguments)
+        elif tool_name == "orchestrator_list_child_runs":
+            return await self._list_child_runs(arguments)
+        elif tool_name == "orchestrator_wait_for_run":
+            return await self._wait_for_run(arguments)
+        elif tool_name == "orchestrator_get_run_evidence":
+            return await self._get_run_evidence(arguments)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -415,3 +489,87 @@ class ToolHandler:
             return {"error": str(e), "branches": []}
         except Exception as e:
             return {"error": str(e), "branches": []}
+
+    async def _create_child_run(self, args: dict[str, Any]) -> dict[str, Any]:
+        parent_run_id: str = args["parent_run_id"]
+        parent_slice_id: str = args["parent_slice_id"]
+        routine_embedded: dict[str, Any] = args["routine_embedded"]
+        decision: str = args.get("next_action_decision", "continue")
+        if decision not in ("continue", "replan", "stop", "environment_blocked"):
+            raise ValueError(
+                "next_action_decision must be one of: continue, replan, stop, environment_blocked"
+            )
+
+        parent = await self._service.get_run(parent_run_id)
+        routine_config = RoutineConfig.model_validate(routine_embedded)
+        child = create_run_from_routine(
+            routine=routine_config,
+            repo_name=args.get("repo_name") or parent.repo_name,
+            source_branch=args.get("branch") or parent.source_branch or "main",
+            config=args.get("config") or {},
+            routine_source=RoutineSource.EMBEDDED,
+        )
+        child.routine_embedded = routine_embedded
+
+        agent_type: str | None = args.get("agent_type")
+        if agent_type:
+            child.agent_type = AgentRunnerType(agent_type)
+        else:
+            child.agent_type = parent.agent_type
+        child.agent_config = args.get("agent_config") or dict(parent.agent_config)
+        child.verifier_model = child.agent_config.get("model") or parent.verifier_model
+
+        child = await self._service.create_child_run(
+            parent_run_id,
+            child,
+            parent_slice_id=parent_slice_id,
+            next_action_decision=decision,
+        )
+        if args.get("start", False):
+            await self._service.start_run(child.id)
+
+        return {
+            "parent_run_id": parent_run_id,
+            "child_run_id": child.id,
+            "parent_slice_id": child.parent_slice_id,
+            "status": child.status.value,
+            "started": bool(args.get("start", False)),
+        }
+
+    async def _list_child_runs(self, args: dict[str, Any]) -> dict[str, Any]:
+        parent_run_id: str = args["parent_run_id"]
+        children = await self._service.list_child_runs(parent_run_id)
+        return {
+            "parent_run_id": parent_run_id,
+            "children": [
+                {
+                    "id": child.id,
+                    "routine_id": child.routine_id,
+                    "parent_slice_id": child.parent_slice_id,
+                    "status": child.status.value,
+                    "pause_reason": child.pause_reason,
+                    "completed_at": format_utc_datetime(child.completed_at)
+                    if child.completed_at
+                    else None,
+                }
+                for child in children
+            ],
+        }
+
+    async def _wait_for_run(self, args: dict[str, Any]) -> dict[str, Any]:
+        run_id: str = args["run_id"]
+        timeout_seconds = min(float(args.get("timeout_seconds", 0)), 30.0)
+        run = await self._service.wait_for_run_terminal(run_id, timeout_seconds)
+        terminal = run.status.value in ("completed", "failed")
+        return {
+            "run_id": run.id,
+            "status": run.status.value,
+            "terminal": terminal,
+            "pause_reason": run.pause_reason,
+            "last_error": run.last_error,
+        }
+
+    async def _get_run_evidence(self, args: dict[str, Any]) -> dict[str, Any]:
+        run_id: str = args["run_id"]
+        evidence = await self._service.collect_run_evidence(run_id)
+        return {"run_id": run_id, "evidence": evidence}

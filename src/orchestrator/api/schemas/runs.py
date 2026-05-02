@@ -77,6 +77,106 @@ class CreateRunRequest(ApiModel):
         return self
 
 
+class CreateChildRunRequest(ApiModel):
+    """Create a child run linked to an oversight parent run."""
+
+    routine_id: str | None = None
+    routine_embedded: dict[str, Any] | None = None
+    repo_name: str | None = None
+    branch: str | None = None
+    config: dict[str, Any] = {}
+    agent_type: str | None = None
+    agent_config: dict[str, Any] = {}
+    env_files: EnvFileRequestConfig | None = None
+    merge_strategy: str | None = None
+    parent_slice_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+    next_action_decision: Literal[
+        "continue",
+        "replan",
+        "stop",
+        "environment_blocked",
+    ] = "continue"
+    start: bool = False
+
+    @field_validator("agent_type", mode="before")
+    @classmethod
+    def validate_agent_type(cls, v: str | None) -> str | None:
+        return _validate_agent_type(v)
+
+    @field_validator("merge_strategy", mode="before")
+    @classmethod
+    def validate_merge_strategy(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        lowered = v.lower()
+        if lowered not in _VALID_MERGE_STRATEGIES:
+            raise ValueError(
+                f"Invalid merge_strategy '{v}'. Valid options: {', '.join(_VALID_MERGE_STRATEGIES)}"
+            )
+        return lowered
+
+    @model_validator(mode="after")
+    def validate_routine_source(self) -> "CreateChildRunRequest":
+        has_id = self.routine_id is not None
+        has_embedded = self.routine_embedded is not None
+        if has_id == has_embedded:
+            raise ValueError("Exactly one of 'routine_id' or 'routine_embedded' must be provided")
+        return self
+
+
+class EvidenceCommandSchema(ApiModel):
+    command: str
+    exit_code: int
+    stdout_excerpt: str = ""
+    stderr_excerpt: str = ""
+
+
+class EvidenceTestResultSchema(ApiModel):
+    name: str
+    status: Literal["passed", "failed", "skipped", "not_run"]
+    details: str = ""
+
+
+class EvidenceBundleSchema(ApiModel):
+    """Planner-facing phase4.evidence.v1 bundle."""
+
+    schema_version: Literal["phase4.evidence.v1"]
+    slice_id: str
+    routine_id: str
+    assumption_tested: str
+    summary: str
+    commands_run: list[EvidenceCommandSchema]
+    test_results: list[EvidenceTestResultSchema]
+    target_bug_reproduced: Literal["reproduced", "not_reproduced", "not_targeted", "unknown"]
+    real_frontend_path_exercised: bool
+    real_execution_surface: str
+    files_changed: list[str]
+    evidence_files: list[str]
+    open_uncertainties: list[str]
+    next_recommendation: Literal["proceed", "replan", "stop", "environment_blocked"]
+    outcome: Literal[
+        "verified_fix",
+        "bug_not_reproduced",
+        "environment_blocked",
+        "needs_revision",
+    ]
+
+
+class RunEvidenceItem(ApiModel):
+    path: str
+    bundle: EvidenceBundleSchema
+
+
+class RunEvidenceResponse(ApiModel):
+    run_id: str
+    evidence: list[RunEvidenceItem]
+
+
+class ChildRunListResponse(ApiModel):
+    parent_run_id: str
+    children: list["RunResponse"]
+
+
 class GradeSummaryItem(ApiModel):
     grade: str | None = None
     priority: str
@@ -131,6 +231,9 @@ class RunResponse(ApiModel):
     routine_embedded: dict[str, Any] | None = None
     routine_path: str | None = None
     routine_commit: str | None = None
+    parent_run_id: str | None = None
+    parent_slice_id: str | None = None
+    oversight_state: dict[str, Any] = {}
     agent_type: str | None = None
     agent_type_display: str
     agent_icon: str

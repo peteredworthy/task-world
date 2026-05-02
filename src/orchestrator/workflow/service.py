@@ -1,11 +1,12 @@
 """Async workflow service wiring WorkflowEngine to persistent storage."""
 
 import asyncio
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -2199,6 +2200,105 @@ class WorkflowService:
         return await self._repo.list_by_repo_and_status(
             repo_name, status, include_action_logs=False
         )
+
+    async def list_child_runs(self, parent_run_id: str) -> list[Run]:
+        """List child runs linked to an oversight parent run."""
+        await self._repo.get(parent_run_id)
+        return await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+
+    async def create_child_run(
+        self,
+        parent_run_id: str,
+        child_run: Run,
+        *,
+        parent_slice_id: str,
+        next_action_decision: str,
+    ) -> Run:
+        """Persist a child run and record it in the parent's oversight history."""
+        parent = await self._repo.get(parent_run_id)
+        if child_run.id == parent_run_id:
+            raise InvalidTransitionError(parent.status.value, "create_child_run (self-parent)")
+
+        child_run.parent_run_id = parent_run_id
+        child_run.parent_slice_id = parent_slice_id
+
+        state: dict[str, Any] = dict(parent.oversight_state)
+        slices = list(state.get("slices", []))
+        now = self._clock.now()
+        slices.append(
+            {
+                "slice_id": parent_slice_id,
+                "child_run_id": child_run.id,
+                "routine_id": child_run.routine_id,
+                "decision": next_action_decision,
+                "created_at": now.isoformat(),
+            }
+        )
+        state["slices"] = slices
+        state["last_child_run_id"] = child_run.id
+        state["last_decision"] = next_action_decision
+        parent.oversight_state = state
+        parent.updated_at = now
+
+        await self._repo.save(parent)
+        await self._repo.save(child_run)
+        await self._session.commit()
+        return child_run
+
+    async def wait_for_run_terminal(self, run_id: str, timeout_seconds: float) -> Run:
+        """Wait briefly for a run to reach a terminal state, then return its current state."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        while True:
+            run = await self._repo.get(run_id)
+            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+                return run
+            if loop.time() >= deadline:
+                return run
+            await asyncio.sleep(0.25)
+
+    async def collect_run_evidence(self, run_id: str) -> list[dict[str, Any]]:
+        """Collect phase4.evidence.v1 bundles from a run worktree."""
+        run = await self._repo.get(run_id)
+        if not run.worktree_path:
+            return []
+
+        worktree = Path(run.worktree_path).resolve()
+        if not worktree.is_dir():
+            return []
+
+        def scan() -> list[dict[str, Any]]:
+            bundles: list[dict[str, Any]] = []
+            for path in sorted(worktree.rglob("*evidence*.json")):
+                if len(bundles) >= 100:
+                    break
+                try:
+                    resolved = path.resolve()
+                except OSError:
+                    continue
+                if not resolved.is_file() or worktree not in resolved.parents:
+                    continue
+                try:
+                    if resolved.stat().st_size > 1_000_000:
+                        continue
+                    raw = resolved.read_text(encoding="utf-8")
+                    data = json.loads(raw)
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    continue
+                if not isinstance(data, dict):
+                    continue
+                bundle = cast(dict[str, Any], data)
+                if bundle.get("schema_version") != "phase4.evidence.v1":
+                    continue
+                bundles.append(
+                    {
+                        "path": str(resolved.relative_to(worktree)),
+                        "bundle": bundle,
+                    }
+                )
+            return bundles
+
+        return await asyncio.to_thread(scan)
 
     async def get_task(self, run_id: str, task_id: str) -> TaskState:
         """Get a task by run ID and task ID."""

@@ -244,11 +244,16 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
     # - orchestrator_complete_recovery: recovery-agent-only
     # - orchestrator_list_repos: informational, not workflow-related
     # - orchestrator_list_branches: informational, not workflow-related
+    # - oversight parent/child tools: coordinator-only, not task callback flow
     excluded_tools = {
         "orchestrator_set_grade",
         "orchestrator_complete_recovery",
         "orchestrator_list_repos",
         "orchestrator_list_branches",
+        "orchestrator_create_child_run",
+        "orchestrator_list_child_runs",
+        "orchestrator_wait_for_run",
+        "orchestrator_get_run_evidence",
     }
     agent_tools = registered_names - excluded_tools
     for name in agent_tools:

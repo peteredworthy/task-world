@@ -253,6 +253,9 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
         routine_embedded=model.routine_embedded if action_logs_loaded else None,
         routine_path=model.routine_path,
         routine_commit=model.routine_commit,
+        parent_run_id=model.parent_run_id,
+        parent_slice_id=model.parent_slice_id,
+        oversight_state=model.oversight_state or {},
         agent_type=AgentRunnerType(model.runner_type) if model.runner_type else None,
         agent_config=model.runner_config or {},
         verifier_model=model.verifier_model,
@@ -395,6 +398,9 @@ def _to_model(run: Run) -> RunModel:
         routine_embedded=run.routine_embedded,
         routine_path=run.routine_path,
         routine_commit=run.routine_commit,
+        parent_run_id=run.parent_run_id,
+        parent_slice_id=run.parent_slice_id,
+        oversight_state=run.oversight_state,
         runner_type=run.agent_type.value if run.agent_type else None,
         runner_config=run.agent_config,
         verifier_model=run.verifier_model,
@@ -479,6 +485,19 @@ class RunRepository:
             _eager_run_query(include_action_logs=include_action_logs).where(
                 RunModel.status == status.value
             )
+        )
+        return [
+            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+        ]
+
+    async def list_child_runs(
+        self, parent_run_id: str, *, include_action_logs: bool = True
+    ) -> list[Run]:
+        """List child runs for an oversight parent run."""
+        result = await self._session.execute(
+            _eager_run_query(include_action_logs=include_action_logs)
+            .where(RunModel.parent_run_id == parent_run_id)
+            .order_by(RunModel.created_at.asc())
         )
         return [
             _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()

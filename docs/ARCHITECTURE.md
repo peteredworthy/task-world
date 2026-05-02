@@ -583,6 +583,9 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | POST | `/api/runs/{id}/pause` | Pause run |
 | POST | `/api/runs/{id}/resume` | Resume run |
 | POST | `/api/runs/{id}/cancel` | Cancel run |
+| POST | `/api/runs/{id}/children` | Create an oversight child run |
+| GET | `/api/runs/{id}/children` | List oversight child runs |
+| GET | `/api/runs/{id}/evidence` | Return structured `phase4.evidence.v1` bundles from the run worktree |
 | GET | `/api/runs/{id}/activity` | Activity log (paginated) |
 | GET | `/api/runs/{id}/activity/stream` | Activity SSE stream |
 | GET | `/api/runs/{id}/guidance` | Aggregate guidance for agents |

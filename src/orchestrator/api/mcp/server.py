@@ -24,6 +24,10 @@ BUILDER_TOOLS = {
     "orchestrator_escalate_requirement",
     "orchestrator_list_repos",
     "orchestrator_list_branches",
+    "orchestrator_create_child_run",
+    "orchestrator_list_child_runs",
+    "orchestrator_wait_for_run",
+    "orchestrator_get_run_evidence",
 }
 
 VERIFIER_TOOLS = {
@@ -253,6 +257,84 @@ class OrchestratorMCPServer:
             orchestrator_list_branches,
             name="orchestrator_list_branches",
             description="List branches in a repository with optional glob pattern filter.",
+        )
+
+        async def orchestrator_create_child_run(
+            parent_run_id: str,
+            parent_slice_id: str,
+            routine_embedded: dict[str, object],
+            repo_name: str = "",
+            branch: str = "",
+            config: dict[str, object] | None = None,
+            agent_type: str = "",
+            agent_config: dict[str, object] | None = None,
+            next_action_decision: str = "continue",
+            start: bool = False,
+        ) -> str:
+            """Create an oversight child run from an embedded routine."""
+            args: dict[str, object] = {
+                "parent_run_id": parent_run_id,
+                "parent_slice_id": parent_slice_id,
+                "routine_embedded": routine_embedded,
+                "next_action_decision": next_action_decision,
+                "start": start,
+            }
+            if repo_name:
+                args["repo_name"] = repo_name
+            if branch:
+                args["branch"] = branch
+            if config is not None:
+                args["config"] = config
+            if agent_type:
+                args["agent_type"] = agent_type
+            if agent_config is not None:
+                args["agent_config"] = agent_config
+            result = await handler.handle("orchestrator_create_child_run", args)
+            return json.dumps(result)
+
+        async def orchestrator_list_child_runs(parent_run_id: str) -> str:
+            """List child runs linked to an oversight parent run."""
+            result = await handler.handle(
+                "orchestrator_list_child_runs",
+                {"parent_run_id": parent_run_id},
+            )
+            return json.dumps(result)
+
+        async def orchestrator_wait_for_run(
+            run_id: str,
+            timeout_seconds: float = 0,
+        ) -> str:
+            """Wait briefly for a run to complete or fail, then return current status."""
+            result = await handler.handle(
+                "orchestrator_wait_for_run",
+                {"run_id": run_id, "timeout_seconds": timeout_seconds},
+            )
+            return json.dumps(result)
+
+        async def orchestrator_get_run_evidence(run_id: str) -> str:
+            """Return structured phase4.evidence.v1 bundles from a run worktree."""
+            result = await handler.handle("orchestrator_get_run_evidence", {"run_id": run_id})
+            return json.dumps(result)
+
+        self._mcp.add_tool(
+            orchestrator_create_child_run,
+            name="orchestrator_create_child_run",
+            description="Create an oversight child run from an embedded routine.",
+        )
+        self._mcp.add_tool(
+            orchestrator_list_child_runs,
+            name="orchestrator_list_child_runs",
+            description="List child runs linked to an oversight parent run.",
+        )
+        self._mcp.add_tool(
+            orchestrator_wait_for_run,
+            name="orchestrator_wait_for_run",
+            description="Wait briefly for a run to complete or fail, then return current status.",
+        )
+        self._mcp.add_tool(
+            orchestrator_get_run_evidence,
+            name="orchestrator_get_run_evidence",
+            description="Return structured phase4.evidence.v1 bundles from a run worktree.",
         )
 
     @property
