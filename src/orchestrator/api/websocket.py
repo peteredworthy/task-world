@@ -177,14 +177,14 @@ class BatchingConnectionManager(ConnectionManager):
             if run_id in self._timer_tasks:
                 del self._timer_tasks[run_id]
 
-        # Send batch - wrap events in a batch envelope
-        batch_data = {
-            "type": "batch",
-            "run_id": run_id,
-            "events": events,
-            "count": len(events),
-        }
-        await super().broadcast_to_run(run_id, batch_data)
+            # Send batch inside the lock to preserve ordering relative to subsequent batches
+            batch_data = {
+                "type": "batch",
+                "run_id": run_id,
+                "events": events,
+                "count": len(events),
+            }
+            await super().broadcast_to_run(run_id, batch_data)
 
     async def flush_all(self) -> None:
         """Immediately flush all pending batches for all runs.

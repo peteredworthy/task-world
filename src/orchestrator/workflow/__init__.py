@@ -38,6 +38,7 @@ from orchestrator.workflow.engine import (
     transition_to_building,
     transition_to_pending_approval,
     transition_to_pending_clarification,
+    transition_force_accept,
     transition_to_recovering,
     transition_to_verifying,
 )
@@ -215,6 +216,7 @@ __all__ = [
     "transition_to_building",
     "transition_to_pending_approval",
     "transition_to_pending_clarification",
+    "transition_force_accept",
     "transition_to_recovering",
     "transition_to_verifying",
     # Locks

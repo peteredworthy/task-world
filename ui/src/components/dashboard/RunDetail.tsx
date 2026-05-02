@@ -27,7 +27,7 @@ import type { RunResponse } from '../../types';
 import type { PendingAction } from '../../types/clarifications';
 
 /** Detect if the run is stuck: active but a task has failed with no remaining attempts. */
-function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | null } {
+export function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | null } {
   if (run.status !== 'active') return { stuck: false, failedTask: null };
   for (const step of run.steps) {
     const failed = step.tasks.find(
@@ -123,7 +123,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
   const [approvalReviewAction, setApprovalReviewAction] = useState<PendingAction | null>(null);
-  const autoOpenedRef = useRef(false);
+  const autoOpenedRef = useRef<string | null>(null);
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
     const detail = err instanceof ApiError
@@ -164,12 +164,13 @@ function RunDetailInner({ runId }: { runId: string }) {
     }
   }, [searchParams, setSearchParams, selectedPendingAction, taskPendingActions]);
 
-  // Auto-open pending action modal on first load (when no URL action param)
+  // Auto-open pending action modal when a new pending action arrives (when no URL action param)
   useEffect(() => {
-    if (autoOpenedRef.current) return;
     if (!primaryPendingAction || selectedPendingAction) return;
     if (searchParams.get('action')) return; // URL param effect handles this case
-    autoOpenedRef.current = true;
+    const key = `${primaryPendingAction.task_id}:${primaryPendingAction.action_type}`;
+    if (autoOpenedRef.current === key) return;
+    autoOpenedRef.current = key;
     setSelectedPendingAction(primaryPendingAction);
   }, [primaryPendingAction, selectedPendingAction, searchParams]);
 

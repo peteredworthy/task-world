@@ -97,6 +97,8 @@ function createWebSocket(
           queryKey: ['clarification-history', runId, data.payload.task_id],
         });
       }
+    } else if (eventType === 'approval_requested') {
+      qc.invalidateQueries({ queryKey: ['pending-actions', runId] });
     } else {
       qc.invalidateQueries({ queryKey: ['run', runId] });
     }
