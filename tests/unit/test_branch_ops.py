@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from orchestrator.git import back_merge, get_branch_status, merge_back
-from orchestrator.git.errors import BranchNotFoundError, MergeConflictError
+from orchestrator.git import back_merge, get_branch_status, merge_back, merge_child_into_parent
+from orchestrator.git.errors import BranchNotFoundError, BranchSafetyError, MergeConflictError
 
 from tests.unit.git_helpers import _commit_file, _git
 
@@ -237,3 +237,54 @@ class TestMergeBack:
     def test_branch_not_found(self, git_repo: Path) -> None:
         with pytest.raises(BranchNotFoundError, match="nonexistent"):
             merge_back(git_repo, "nonexistent", "main")
+
+
+class TestMergeChildIntoParent:
+    def test_clean_merge_into_parent_run_branch(self, git_repo: Path) -> None:
+        parent_branch = "orchestrator/run-parent"
+        child_branch = "orchestrator/run-child"
+
+        _git(["checkout", "-b", parent_branch], cwd=git_repo)
+        _git(["checkout", "main"], cwd=git_repo)
+        _git(["checkout", "-b", child_branch], cwd=git_repo)
+        _commit_file(git_repo, "child.txt", "child work\n", "Child work")
+
+        _git(["checkout", parent_branch], cwd=git_repo)
+
+        result = merge_child_into_parent(git_repo, "parent", "child")
+
+        assert result.status == "clean"
+        assert result.parent_branch == parent_branch
+        assert result.child_branch == child_branch
+        assert result.merge_commit_sha
+        assert (git_repo / "child.txt").read_text() == "child work\n"
+        assert _git(["rev-parse", "--abbrev-ref", "HEAD"], cwd=git_repo) == parent_branch
+
+    def test_refuses_protected_branch(self, git_repo: Path) -> None:
+        parent_branch = "orchestrator/run-parent"
+        child_branch = "orchestrator/run-child"
+        _git(["branch", parent_branch], cwd=git_repo)
+        _git(["branch", child_branch], cwd=git_repo)
+
+        with pytest.raises(BranchSafetyError, match="protected branch main"):
+            merge_child_into_parent(git_repo, "parent", "child")
+
+    def test_conflict_result_when_not_aborting(self, git_repo: Path) -> None:
+        parent_branch = "orchestrator/run-parent"
+        child_branch = "orchestrator/run-child"
+
+        _git(["checkout", "-b", parent_branch], cwd=git_repo)
+        _commit_file(git_repo, "README.md", "# Parent\n", "Parent change")
+
+        _git(["checkout", "main"], cwd=git_repo)
+        _git(["checkout", "-b", child_branch], cwd=git_repo)
+        _commit_file(git_repo, "README.md", "# Child\n", "Child change")
+
+        _git(["checkout", parent_branch], cwd=git_repo)
+
+        result = merge_child_into_parent(git_repo, "parent", "child")
+
+        assert result.status == "conflicts"
+        assert result.merge_commit_sha is None
+        assert result.conflict_files == ["README.md"]
+        assert result.conflict_count == 1

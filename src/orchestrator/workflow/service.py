@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -80,6 +81,8 @@ from orchestrator.workflow.engine.transitions import (
     transition_to_recovering,
 )
 from orchestrator.workflow.completion import handle_run_completion
+from orchestrator.workflow.oversight import ACCEPTANCE_OUTCOMES, reduce_parent_oversight_state
+from orchestrator.git import ParentChildMergeResult, merge_child_into_parent
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.git.utils import commit_uncommitted_changes, get_head_commit
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
@@ -1888,6 +1891,9 @@ class WorkflowService:
                     )
                     break
 
+        await self._apply_oversight_terminal_guard(updated_run, state, buffer)
+        updated_run = state.get_run(run_id)
+
         await self._persist(state, run_id, buffer)
 
         # Call env_lifecycle hook for task_end if configured and task completed successfully
@@ -2206,6 +2212,93 @@ class WorkflowService:
         await self._repo.get(parent_run_id)
         return await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
 
+    async def get_parent_oversight(self, parent_run_id: str) -> dict[str, Any]:
+        """Return the latest persisted oversight state for a parent run."""
+        parent = await self._repo.get(parent_run_id)
+        return dict(parent.oversight_state)
+
+    async def refresh_parent_oversight(self, parent_run_id: str) -> Run:
+        """Recompute and persist the parent oversight snapshot from child state."""
+        parent = await self._repo.get(parent_run_id)
+        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        parent.oversight_state = reduce_parent_oversight_state(
+            parent,
+            children,
+            evidence_by_run_id,
+        )
+        parent.updated_at = self._clock.now()
+        await self._repo.save(parent)
+        await self._session.commit()
+        return parent
+
+    async def accept_child_run(
+        self, parent_run_id: str, child_run_id: str
+    ) -> ParentChildMergeResult:
+        """Accept a completed child by merging it into the parent run branch."""
+        parent = await self._repo.get(parent_run_id)
+        child = await self._repo.get(child_run_id)
+        if child.parent_run_id != parent_run_id:
+            raise InvalidTransitionError(child.status.value, "accept_child_run (wrong parent)")
+        if child.status != RunStatus.COMPLETED:
+            raise InvalidTransitionError(
+                child.status.value,
+                "accept_child_run (requires completed child)",
+            )
+        if not parent.worktree_path:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "accept_child_run (parent missing worktree)",
+            )
+        if not child.worktree_path:
+            raise InvalidTransitionError(
+                child.status.value,
+                "accept_child_run (child missing worktree)",
+            )
+
+        child_evidence = await self.collect_run_evidence(child_run_id)
+        child_outcomes: set[str] = set()
+        for raw in child_evidence:
+            bundle_obj = raw.get("bundle")
+            if isinstance(bundle_obj, dict):
+                bundle = cast(dict[str, Any], bundle_obj)
+                outcome = bundle.get("outcome")
+                if isinstance(outcome, str):
+                    child_outcomes.add(outcome)
+        if not child_outcomes & ACCEPTANCE_OUTCOMES:
+            raise InvalidTransitionError(
+                child.status.value,
+                "accept_child_run (requires verified_fix or behavior_already_correct evidence)",
+            )
+
+        result = await asyncio.to_thread(
+            merge_child_into_parent,
+            Path(parent.worktree_path),
+            parent_run_id,
+            child_run_id,
+            child_worktree_path=Path(child.worktree_path),
+            abort_on_conflict=False,
+        )
+
+        state = dict(parent.oversight_state)
+        if result.status == "clean":
+            self._record_child_acceptance(parent, child, result, state)
+        else:
+            self._record_child_merge_conflict(parent, child, result, state)
+
+        parent.oversight_state = state
+        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        parent.oversight_state = reduce_parent_oversight_state(
+            parent,
+            children,
+            evidence_by_run_id,
+        )
+        parent.updated_at = self._clock.now()
+        await self._repo.save(parent)
+        await self._session.commit()
+        return result
+
     async def create_child_run(
         self,
         parent_run_id: str,
@@ -2245,6 +2338,125 @@ class WorkflowService:
         await self._session.commit()
         return child_run
 
+    async def _collect_child_evidence(
+        self, child_runs: list[Run]
+    ) -> dict[str, list[dict[str, Any]]]:
+        evidence_by_run_id: dict[str, list[dict[str, Any]]] = {}
+        for child in child_runs:
+            evidence_by_run_id[child.id] = await self.collect_run_evidence(child.id)
+        return evidence_by_run_id
+
+    def _record_child_acceptance(
+        self,
+        parent: Run,
+        child: Run,
+        result: ParentChildMergeResult,
+        state: dict[str, Any],
+    ) -> None:
+        accepted_ids = sorted(
+            {*self._state_str_list(state.get("accepted_child_run_ids")), child.id}
+        )
+        accepted_children = self._state_dict_list(state.get("accepted_children"))
+        accepted_children = [
+            item for item in accepted_children if item.get("child_run_id") != child.id
+        ]
+        accepted_children.append(
+            {
+                "child_run_id": child.id,
+                "parent_slice_id": child.parent_slice_id,
+                "merge_commit_sha": result.merge_commit_sha,
+                "merged_at": self._clock.now().isoformat(),
+            }
+        )
+        state["accepted_child_run_ids"] = accepted_ids
+        state["accepted_children"] = accepted_children
+        state["last_accepted_child_run_id"] = child.id
+        state["last_child_merge_commit_sha"] = result.merge_commit_sha
+        state["merge_conflicts"] = [
+            item
+            for item in self._state_dict_list(state.get("merge_conflicts"))
+            if item.get("child_run_id") != child.id
+        ]
+        parent.pause_reason = None
+        parent.last_error = None
+
+    def _record_child_merge_conflict(
+        self,
+        parent: Run,
+        child: Run,
+        result: ParentChildMergeResult,
+        state: dict[str, Any],
+    ) -> None:
+        conflicts = self._state_dict_list(state.get("merge_conflicts"))
+        conflicts = [item for item in conflicts if item.get("child_run_id") != child.id]
+        conflicts.append(
+            {
+                "child_run_id": child.id,
+                "parent_slice_id": child.parent_slice_id,
+                "conflict_files": result.conflict_files,
+                "conflict_count": result.conflict_count,
+                "detected_at": self._clock.now().isoformat(),
+            }
+        )
+        state["merge_conflicts"] = conflicts
+        if parent.status == RunStatus.ACTIVE:
+            parent.status = RunStatus.PAUSED
+            parent.pause_reason = "child_merge_conflict"
+        parent.last_error = (
+            f"Accepting child run {child.id} produced merge conflicts: "
+            + ", ".join(result.conflict_files)
+        )
+
+    def _state_str_list(self, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [item for item in cast(list[Any], value) if isinstance(item, str)]
+
+    def _state_dict_list(self, value: Any) -> list[dict[str, Any]]:
+        if not isinstance(value, list):
+            return []
+        return [
+            cast(dict[str, Any], item) for item in cast(list[Any], value) if isinstance(item, dict)
+        ]
+
+    async def _apply_oversight_terminal_guard(
+        self,
+        run: Run,
+        state: SessionStateManager,
+        buffer: BufferingEmitter,
+    ) -> None:
+        children = await self._repo.list_child_runs(run.id, include_action_logs=False)
+        if not children:
+            return
+
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        oversight_state = reduce_parent_oversight_state(run, children, evidence_by_run_id)
+        run.oversight_state = oversight_state
+        terminal_guard = oversight_state.get("terminal_guard", {})
+        if run.status in (RunStatus.COMPLETED, RunStatus.FAILED) and not terminal_guard.get(
+            "can_complete",
+            False,
+        ):
+            old_status = run.status
+            run.status = RunStatus.PAUSED
+            run.pause_reason = "oversight_children_unresolved"
+            blocking_reasons = terminal_guard.get("blocking_reasons", [])
+            run.last_error = (
+                "Parent run cannot complete while child oversight is unresolved: "
+                + "; ".join(str(reason) for reason in blocking_reasons)
+            )
+            run.completed_at = None
+            buffer.emit(
+                RunStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run.id,
+                    event_type="run_status_changed",
+                    old_status=old_status,
+                    new_status=RunStatus.PAUSED,
+                )
+            )
+        state.update_run(run)
+
     async def wait_for_run_terminal(self, run_id: str, timeout_seconds: float) -> Run:
         """Wait briefly for a run to reach a terminal state, then return its current state."""
         loop = asyncio.get_running_loop()
@@ -2267,9 +2479,54 @@ class WorkflowService:
         if not worktree.is_dir():
             return []
 
+        def changed_evidence_paths() -> list[Path] | None:
+            if not run.source_branch_sha:
+                return None
+            try:
+                diff = subprocess.run(
+                    [
+                        "git",
+                        "diff",
+                        "--name-only",
+                        "--diff-filter=ACMRT",
+                        f"{run.source_branch_sha}..HEAD",
+                    ],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                untracked = subprocess.run(
+                    ["git", "ls-files", "--others", "--exclude-standard"],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                return None
+
+            rel_paths = {
+                line.strip()
+                for output in (diff.stdout, untracked.stdout)
+                for line in output.splitlines()
+                if line.strip()
+            }
+            return [
+                worktree / rel_path
+                for rel_path in sorted(rel_paths)
+                if Path(rel_path).suffix == ".json" and "evidence" in Path(rel_path).name
+            ]
+
         def scan() -> list[dict[str, Any]]:
             bundles: list[dict[str, Any]] = []
-            for path in sorted(worktree.rglob("*evidence*.json")):
+            candidate_paths = changed_evidence_paths()
+            paths = (
+                candidate_paths
+                if candidate_paths is not None
+                else sorted(worktree.rglob("*evidence*.json"))
+            )
+            for path in paths:
                 if len(bundles) >= 100:
                     break
                 try:

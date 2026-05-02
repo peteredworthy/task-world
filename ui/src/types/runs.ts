@@ -55,6 +55,82 @@ export interface EnvFileSpec {
   promote_on_success: boolean;
 }
 
+export interface OversightEvidenceSummary {
+  path: string;
+  slice_id: string;
+  routine_id: string;
+  outcome: string;
+  next_recommendation: string;
+  target_bug_reproduced: string;
+  summary: string;
+}
+
+export interface ChildOversightSummary {
+  run_id: string;
+  slice_id: string;
+  status: RunStatus;
+  routine_id: string | null;
+  created_at: string;
+  evidence: OversightEvidenceSummary[];
+  invalid_evidence_paths: string[];
+  blocking_reasons: string[];
+}
+
+export interface OversightAttentionItem {
+  kind: 'child' | 'slice' | 'parent';
+  run_id: string | null;
+  slice_id: string | null;
+  reason: string;
+}
+
+export interface OversightTerminalGuard {
+  can_complete: boolean;
+  blocking_reasons: string[];
+  blocking_child_run_ids: string[];
+}
+
+export interface ParentOversightState {
+  schema_version?: string;
+  parent_run_id?: string;
+  parent_status?: RunStatus;
+  current_understanding?: unknown;
+  target_inventory?: Record<string, unknown>[];
+  decisions?: Record<string, unknown>[];
+  accepted_child_run_ids?: string[];
+  accepted_children?: Record<string, unknown>[];
+  rejected_child_run_ids?: string[];
+  abandoned_child_run_ids?: string[];
+  merge_conflicts?: Record<string, unknown>[];
+  max_child_runs?: number;
+  child_count?: number;
+  child_counts?: Record<string, number>;
+  child_summaries?: ChildOversightSummary[];
+  attempt_counts_by_slice?: Record<string, Record<string, number>>;
+  active_child_run_ids?: string[];
+  merge_queue?: string[];
+  attention_items?: OversightAttentionItem[];
+  stalled_slices?: Record<string, unknown>[];
+  illegal_state_reasons?: string[];
+  terminal_guard?: OversightTerminalGuard;
+  next_parent_action?: string;
+  slices?: Record<string, unknown>[];
+}
+
+export interface ParentOversightResponse {
+  run_id: string;
+  oversight_state: ParentOversightState;
+}
+
+export interface AcceptChildRunResponse {
+  parent_run_id: string;
+  child_run_id: string;
+  status: 'clean' | 'conflicts';
+  merge_commit_sha: string | null;
+  conflict_files: string[];
+  conflict_count: number;
+  oversight_state: ParentOversightState;
+}
+
 export interface RunResponse {
   id: string;
   repo_name: string;
@@ -65,13 +141,21 @@ export interface RunResponse {
   routine_sha: string | null;
   routine_source: string | null;
   routine_embedded: Record<string, unknown> | null;
+  routine_path: string | null;
+  routine_commit: string | null;
+  parent_run_id: string | null;
+  parent_slice_id: string | null;
+  oversight_state: ParentOversightState;
   agent_type: AgentRunnerType | null;
   agent_type_display: string;
   agent_icon: string;
   agent_config: Record<string, unknown>;
+  verifier_model: string | null;
   worktree_enabled: boolean;
   worktree_path: string | null;
+  worktree_relative_path: string | null;
   source_branch: string | null;
+  source_branch_sha: string | null;
   merge_strategy: string | null;
   config: Record<string, unknown>;
   env_file_specs: EnvFileSpec[];
@@ -87,6 +171,7 @@ export interface RunResponse {
   total_tokens_write: number;
   total_tokens_cache: number;
   total_duration_ms: number;
+  total_num_actions: number;
   token_usage_by_model: ModelTokenUsage[];
   estimated_cost_usd: number | null;
   cost_disclaimer: string | null;

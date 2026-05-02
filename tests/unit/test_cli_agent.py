@@ -252,8 +252,11 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
         "orchestrator_list_branches",
         "orchestrator_create_child_run",
         "orchestrator_list_child_runs",
+        "orchestrator_accept_child_run",
         "orchestrator_wait_for_run",
         "orchestrator_get_run_evidence",
+        "orchestrator_get_parent_oversight",
+        "orchestrator_refresh_parent_oversight",
     }
     agent_tools = registered_names - excluded_tools
     for name in agent_tools:

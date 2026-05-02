@@ -8,12 +8,15 @@ from orchestrator.api.schemas.envfiles import CopyBackRequest, RevertEnvFileRequ
 from orchestrator.api.schemas.repos import AddRepoRequest
 from orchestrator.api.schemas.review import FilePrune, PruneSelection, RevertFileRequest
 from orchestrator.api.schemas.runs import (
+    AcceptChildRunResponse,
     BackwardTransitionRequest,
     ChildRunListResponse,
     CreateChildRunRequest,
     CreateRunRequest,
+    EvidenceBundleSchema,
     RunEvidenceResponse,
     MergeBackRequest,
+    ParentOversightResponse,
     RecoverRequest,
     RecoverResponse,
     ResumeRunRequest,
@@ -28,6 +31,7 @@ from orchestrator.api.schemas.tasks import (
 
 __all__ = [
     "AddRepoRequest",
+    "AcceptChildRunResponse",
     "ApiModel",
     "BackwardTransitionRequest",
     "CallbackInstructions",
@@ -36,8 +40,10 @@ __all__ = [
     "CostEstimate",
     "CreateChildRunRequest",
     "CreateRunRequest",
+    "EvidenceBundleSchema",
     "FilePrune",
     "MergeBackRequest",
+    "ParentOversightResponse",
     "PRICING",
     "PruneSelection",
     "RecoverRequest",

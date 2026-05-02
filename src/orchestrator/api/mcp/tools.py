@@ -201,6 +201,18 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "orchestrator_accept_child_run",
+        "description": "Merge an accepted child run into its parent run branch.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "parent_run_id": {"type": "string", "description": "Parent run ID"},
+                "child_run_id": {"type": "string", "description": "Child run ID to accept"},
+            },
+            "required": ["parent_run_id", "child_run_id"],
+        },
+    },
+    {
         "name": "orchestrator_wait_for_run",
         "description": "Wait briefly for a run to complete or fail, then return its current status.",
         "inputSchema": {
@@ -222,6 +234,28 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "run_id": {"type": "string", "description": "Run ID to inspect"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "orchestrator_get_parent_oversight",
+        "description": "Return the persisted super-parent oversight snapshot for a parent run.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "Parent run ID to inspect"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "orchestrator_refresh_parent_oversight",
+        "description": "Recompute and persist the super-parent oversight snapshot.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "Parent run ID to refresh"},
             },
             "required": ["run_id"],
         },
@@ -268,10 +302,16 @@ class ToolHandler:
             return await self._create_child_run(arguments)
         elif tool_name == "orchestrator_list_child_runs":
             return await self._list_child_runs(arguments)
+        elif tool_name == "orchestrator_accept_child_run":
+            return await self._accept_child_run(arguments)
         elif tool_name == "orchestrator_wait_for_run":
             return await self._wait_for_run(arguments)
         elif tool_name == "orchestrator_get_run_evidence":
             return await self._get_run_evidence(arguments)
+        elif tool_name == "orchestrator_get_parent_oversight":
+            return await self._get_parent_oversight(arguments)
+        elif tool_name == "orchestrator_refresh_parent_oversight":
+            return await self._refresh_parent_oversight(arguments)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -556,6 +596,21 @@ class ToolHandler:
             ],
         }
 
+    async def _accept_child_run(self, args: dict[str, Any]) -> dict[str, Any]:
+        parent_run_id: str = args["parent_run_id"]
+        child_run_id: str = args["child_run_id"]
+        result = await self._service.accept_child_run(parent_run_id, child_run_id)
+        oversight_state = await self._service.get_parent_oversight(parent_run_id)
+        return {
+            "parent_run_id": parent_run_id,
+            "child_run_id": child_run_id,
+            "status": result.status,
+            "merge_commit_sha": result.merge_commit_sha,
+            "conflict_files": result.conflict_files,
+            "conflict_count": result.conflict_count,
+            "oversight_state": oversight_state,
+        }
+
     async def _wait_for_run(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
         timeout_seconds = min(float(args.get("timeout_seconds", 0)), 30.0)
@@ -573,3 +628,13 @@ class ToolHandler:
         run_id: str = args["run_id"]
         evidence = await self._service.collect_run_evidence(run_id)
         return {"run_id": run_id, "evidence": evidence}
+
+    async def _get_parent_oversight(self, args: dict[str, Any]) -> dict[str, Any]:
+        run_id: str = args["run_id"]
+        oversight_state = await self._service.get_parent_oversight(run_id)
+        return {"run_id": run_id, "oversight_state": oversight_state}
+
+    async def _refresh_parent_oversight(self, args: dict[str, Any]) -> dict[str, Any]:
+        run_id: str = args["run_id"]
+        run = await self._service.refresh_parent_oversight(run_id)
+        return {"run_id": run.id, "oversight_state": run.oversight_state}

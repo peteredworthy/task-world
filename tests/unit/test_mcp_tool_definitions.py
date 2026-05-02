@@ -5,7 +5,7 @@ from orchestrator.api import ORCHESTRATOR_TOOLS
 
 def test_tool_definitions_well_formed() -> None:
     """Verify tool definitions have required fields."""
-    assert len(ORCHESTRATOR_TOOLS) == 13
+    assert len(ORCHESTRATOR_TOOLS) == 16
 
     for tool in ORCHESTRATOR_TOOLS:
         assert "name" in tool
@@ -28,6 +28,9 @@ def test_tool_definitions_well_formed() -> None:
         "orchestrator_list_branches",
         "orchestrator_create_child_run",
         "orchestrator_list_child_runs",
+        "orchestrator_accept_child_run",
         "orchestrator_wait_for_run",
         "orchestrator_get_run_evidence",
+        "orchestrator_get_parent_oversight",
+        "orchestrator_refresh_parent_oversight",
     }

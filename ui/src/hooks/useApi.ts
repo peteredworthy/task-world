@@ -48,6 +48,39 @@ export function useGuidance(runId: string | undefined) {
   });
 }
 
+export function useParentOversight(runId: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ['parentOversight', runId],
+    queryFn: () => api.getParentOversight(runId!),
+    enabled: !!runId && enabled,
+    refetchInterval: 10000,
+  });
+}
+
+export function useRefreshParentOversight(runId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.refreshParentOversight(runId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['parentOversight', runId] });
+      qc.invalidateQueries({ queryKey: ['run', runId] });
+      qc.invalidateQueries({ queryKey: ['runs'] });
+    },
+  });
+}
+
+export function useAcceptChildRun(parentRunId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (childRunId: string) => api.acceptChildRun(parentRunId, childRunId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['parentOversight', parentRunId] });
+      qc.invalidateQueries({ queryKey: ['run', parentRunId] });
+      qc.invalidateQueries({ queryKey: ['runs'] });
+    },
+  });
+}
+
 export function useEnvFiles(runId: string | undefined) {
   return useQuery({
     queryKey: ['envFiles', runId],

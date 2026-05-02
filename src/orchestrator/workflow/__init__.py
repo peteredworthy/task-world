@@ -169,6 +169,18 @@ from orchestrator.workflow.dry_run import (
     get_step_by_id,
     parse_dry_run_response,
 )
+from orchestrator.workflow.oversight import (
+    ACCEPTANCE_OUTCOMES,
+    REVISION_OUTCOMES,
+    ChildOversightSummary,
+    EvidenceOutcome,
+    OversightAttentionItem,
+    OversightEvidenceSummary,
+    OversightTerminalGuard,
+    ParentOversightSnapshot,
+    reduce_parent_oversight,
+    reduce_parent_oversight_state,
+)
 
 __all__ = [
     # Artifacts
@@ -321,4 +333,15 @@ __all__ = [
     "get_step_by_id",
     "handle_run_completion",
     "parse_dry_run_response",
+    # Oversight reducer
+    "ACCEPTANCE_OUTCOMES",
+    "REVISION_OUTCOMES",
+    "ChildOversightSummary",
+    "EvidenceOutcome",
+    "OversightAttentionItem",
+    "OversightEvidenceSummary",
+    "OversightTerminalGuard",
+    "ParentOversightSnapshot",
+    "reduce_parent_oversight",
+    "reduce_parent_oversight_state",
 ]

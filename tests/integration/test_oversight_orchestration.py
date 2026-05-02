@@ -109,3 +109,14 @@ async def test_create_list_start_child_run_and_read_evidence(
     assert len(evidence) == 1
     assert evidence[0]["path"] == "docs/phase5/slice-01-evidence.json"
     assert evidence[0]["bundle"]["outcome"] == "verified_fix"
+
+    refresh_resp = await client.post(f"/api/runs/{parent_id}/oversight/refresh")
+    assert refresh_resp.status_code == 200, refresh_resp.text
+    oversight = refresh_resp.json()["oversight_state"]
+    assert oversight["child_count"] == 1
+    assert oversight["child_summaries"][0]["run_id"] == child_id
+    assert oversight["terminal_guard"]["can_complete"] is False
+
+    get_oversight_resp = await client.get(f"/api/runs/{parent_id}/oversight")
+    assert get_oversight_resp.status_code == 200, get_oversight_resp.text
+    assert get_oversight_resp.json()["oversight_state"]["child_count"] == 1

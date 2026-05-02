@@ -1,0 +1,214 @@
+routine:
+  id: "super-parent"
+  name: "Super Parent Sequential Oversight"
+  description: |
+    Turn one high-level instruction into bounded, verifiable child runs. The parent
+    routine maintains target inventory, selects one useful next slice, creates an
+    embedded child routine, waits for child state/evidence, refreshes understanding,
+    integrates accepted child work, and writes the final report. V1 runs one child
+    implementation run at a time.
+
+  strict_validation: true
+
+  inputs:
+    - name: instruction
+      required: true
+      description: "The high-level user job to complete."
+    - name: source_artifacts
+      required: false
+      default: []
+      description: "Optional source documents or file paths the parent should inspect."
+    - name: max_child_runs
+      required: false
+      default: 20
+      description: "Guardrail limit for child runs in this parent job."
+
+  steps:
+    - id: "SP-01"
+      title: "Intake Inventory"
+      step_context: |
+        Build a durable target inventory from the instruction and source artifacts. Keep IDs stable
+        because child slices and evidence refer back to them.
+      tasks:
+        - id: "T-01"
+          title: "Create Target Inventory"
+          task_context: |
+            Read the user instruction and source artifacts. Write `docs/super-parent/current-understanding.md`
+            with the original instruction, assumptions, target inventory, out-of-scope items, and initial
+            risks. Separate concrete bugs, missing tests, design improvements, policy gaps, reproduction
+            targets, and clarification needs. Assign stable IDs such as `INV-001`.
+          requirements:
+            - id: "R1"
+              desc: "Inventory contains stable IDs for every in-scope target and separates target classes."
+              priority: critical
+            - id: "R2"
+              desc: "Out-of-scope and clarification-needed items are explicit instead of silently dropped."
+              priority: critical
+            - id: "R3"
+              desc: "`docs/super-parent/current-understanding.md` records original instruction and current assumptions."
+              priority: critical
+          artifacts:
+            - path: "docs/super-parent/current-understanding.md"
+              required: true
+          auto_verify:
+            items:
+              - id: "understanding_exists"
+                cmd: "test -f docs/super-parent/current-understanding.md"
+                must: true
+          retry:
+            max_attempts: 2
+
+    - id: "SP-02"
+      title: "Select Next Slice"
+      step_context: |
+        Choose the next bounded child slice using the current inventory and evidence. Do not decompose the
+        whole job before evidence justifies the expansion.
+      tasks:
+        - id: "T-01"
+          title: "Write Slice Brief"
+          task_context: |
+            Select one next child slice. Write `docs/super-parent/next-slice.md` with the assumption under test,
+            target IDs, expected files or subsystems, verifiable requirements, stop/replan conditions, and
+            evidence artifacts. Prefer slices that reduce uncertainty and exercise a real execution surface.
+          requirements:
+            - id: "R1"
+              desc: "Slice is bounded to one assumption or one coherent group of related requirements."
+              priority: critical
+            - id: "R2"
+              desc: "Slice brief defines success, bug-not-reproduced, environment-blocked, and replan evidence."
+              priority: critical
+            - id: "R3"
+              desc: "Slice brief names the real verification surface, not only file existence."
+              priority: critical
+          artifacts:
+            - path: "docs/super-parent/next-slice.md"
+              required: true
+          auto_verify:
+            items:
+              - id: "next_slice_exists"
+                cmd: "test -f docs/super-parent/next-slice.md"
+                must: true
+          retry:
+            max_attempts: 2
+
+    - id: "SP-03"
+      title: "Launch Child Run"
+      step_context: |
+        Convert the selected slice into an embedded child routine and create a linked child run through the
+        orchestrator API or MCP tools.
+      tasks:
+        - id: "T-01"
+          title: "Create Embedded Child Routine"
+          task_context: |
+            Generate one embedded child routine for the selected slice. The child routine must include stable
+            requirement IDs, auto-verify commands where possible, verifier rubric IDs matching requirement IDs,
+            retry limits, stop/replan conditions, and a required `phase4.evidence.v1` bundle. Create the child
+            run using `orchestrator_create_child_run` or `POST /api/runs/{parent}/children`.
+          requirements:
+            - id: "R1"
+              desc: "Child routine is embedded on the child run and is not written to `routines/` unless promoted by a human."
+              priority: critical
+            - id: "R2"
+              desc: "Child run is linked to the parent with `parent_run_id` and `parent_slice_id`."
+              priority: critical
+            - id: "R3"
+              desc: "Child routine requires a `phase4.evidence.v1` bundle with a distinct outcome."
+              priority: critical
+            - id: "R4"
+              desc: "The selected runner and runner config are preserved for the child."
+              priority: critical
+          retry:
+            max_attempts: 2
+
+    - id: "SP-04"
+      title: "Evaluate Evidence And Integrate"
+      step_context: |
+        Wait for child terminal or paused state, refresh deterministic oversight state, and integrate only
+        accepted child work into the parent branch.
+      tasks:
+        - id: "T-01"
+          title: "Evaluate Child Evidence"
+          task_context: |
+            Wait for the child run with `orchestrator_wait_for_run`, then collect evidence with
+            `orchestrator_get_run_evidence` and refresh parent oversight. Update
+            `docs/super-parent/current-understanding.md` before asking for human input, accepting a child,
+            or stopping.
+          requirements:
+            - id: "R1"
+              desc: "Evidence is collected from the child worktree and validated against the standard schema."
+              priority: critical
+            - id: "R2"
+              desc: "Missing, malformed, or contradictory evidence becomes a replan or failure input."
+              priority: critical
+            - id: "R3"
+              desc: "`bug_not_reproduced` asks the human with reproduction paths tried."
+              priority: critical
+            - id: "R4"
+              desc: "Three failed or revision attempts for the same slice are declared stalled."
+              priority: critical
+          artifacts:
+            - path: "docs/super-parent/current-understanding.md"
+              required: true
+          retry:
+            max_attempts: 2
+        - id: "T-02"
+          title: "Accept And Merge Child"
+          task_context: |
+            If child evidence supports acceptance, call the service-owned child acceptance operation so the
+            child branch merges into the parent worktree branch. Do not merge failed children or merge directly
+            to the source branch. Record merge status, conflicts, validation needs, and evidence paths.
+          requirements:
+            - id: "R1"
+              desc: "Accepted children merge only into the parent run branch from the parent worktree."
+              priority: critical
+            - id: "R2"
+              desc: "Failed or unsupported child outcomes remain unmerged and are recorded for audit."
+              priority: critical
+            - id: "R3"
+              desc: "Merge conflicts are recorded as parent attention items rather than hidden."
+              priority: critical
+          retry:
+            max_attempts: 2
+
+    - id: "SP-05"
+      title: "Parent Validation And Report"
+      step_context: |
+        Validate the original instruction on the integrated parent branch and write the final report.
+      tasks:
+        - id: "T-01"
+          title: "Run Integrated Validation"
+          task_context: |
+            Run the work-specific validation surface and broad regression commands needed for the job. Validation
+            must run on the integrated parent branch, not only on isolated child worktrees.
+          requirements:
+            - id: "R1"
+              desc: "Integrated validation covers the original instruction and accepted child verification surfaces."
+              priority: critical
+            - id: "R2"
+              desc: "Failures are summarized with impact on the final outcome."
+              priority: critical
+          retry:
+            max_attempts: 1
+        - id: "T-02"
+          title: "Write Final Report"
+          task_context: |
+            Write `docs/super-parent/final-report.md` with original instruction, final target inventory status,
+            child runs, evidence consumed, files changed, final validation commands, remaining risks, human
+            decisions, and clear success/blocked/failed outcome.
+          requirements:
+            - id: "R1"
+              desc: "Final report includes child run IDs, slice IDs, evidence paths, validation commands, and outcome."
+              priority: critical
+            - id: "R2"
+              desc: "No terminal success is claimed while blocking child work, unmerged accepted children, or unresolved human actions remain."
+              priority: critical
+          artifacts:
+            - path: "docs/super-parent/final-report.md"
+              required: true
+          auto_verify:
+            items:
+              - id: "final_report_exists"
+                cmd: "test -f docs/super-parent/final-report.md"
+                must: true
+          retry:
+            max_attempts: 1

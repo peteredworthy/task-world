@@ -16,8 +16,12 @@ Required planner-facing fields:
 - `evidence_files`: artifacts a reviewer or next planner can inspect.
 - `open_uncertainties`: remaining unknowns.
 - `next_recommendation`: `proceed`, `replan`, `stop`, or `environment_blocked`.
-- `outcome`: `verified_fix`, `bug_not_reproduced`, `environment_blocked`, or `needs_revision`.
+- `outcome`: `verified_fix`, `bug_not_reproduced`, `behavior_already_correct`,
+  `environment_blocked`, `needs_revision`, `partial_progress`, or
+  `unrelated_failure`.
 
 The next planner should consume this bundle directly before authoring the next
-slice. `verified_fix`, `bug_not_reproduced`, and `environment_blocked` are
-distinct outcomes and must not be collapsed into a generic pass/fail summary.
+slice. `verified_fix`, `bug_not_reproduced`, `behavior_already_correct`,
+`environment_blocked`, `needs_revision`, `partial_progress`, and
+`unrelated_failure` are distinct outcomes and must not be collapsed into a
+generic pass/fail summary.

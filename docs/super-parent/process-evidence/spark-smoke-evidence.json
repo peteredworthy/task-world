@@ -1,0 +1,59 @@
+{
+  "schema_version": "phase4.evidence.v1",
+  "slice_id": "super-parent-smoke-v1",
+  "routine_id": "super-parent",
+  "assumption_tested": "Parent oversight pipeline can be verified from committed assets in the repository.",
+  "summary": "Confirmed the super-parent routine exists, the reducer is implemented, and parent oversight APIs are present.",
+  "commands_run": [
+    {
+      "command": "test -f routines/super-parent/routine.yaml",
+      "exit_code": 0,
+      "stdout_excerpt": "routines/super-parent/routine.yaml exists",
+      "stderr_excerpt": ""
+    },
+    {
+      "command": "rg -n \"def reduce_parent_oversight_state\" src/orchestrator/workflow/oversight.py",
+      "exit_code": 0,
+      "stdout_excerpt": "found reducer in super-parent oversight module",
+      "stderr_excerpt": ""
+    },
+    {
+      "command": "rg -n \"/{run_id}/oversight\" src/orchestrator/api/routers/runs.py",
+      "exit_code": 0,
+      "stdout_excerpt": "oversight endpoints in run router are registered",
+      "stderr_excerpt": ""
+    }
+  ],
+  "test_results": [
+    {
+      "name": "R1 routine validation",
+      "status": "passed",
+      "details": "load_routine_from_path validated routines/super-parent/routine.yaml"
+    },
+    {
+      "name": "R2 reducer presence",
+      "status": "passed",
+      "details": "reduce_parent_oversight_state defined in src/orchestrator/workflow/oversight.py"
+    },
+    {
+      "name": "R3 API oversight endpoints",
+      "status": "passed",
+      "details": "run router exposes parent oversight and child-accept/list/create endpoints"
+    }
+  ],
+  "target_bug_reproduced": "not_targeted",
+  "real_frontend_path_exercised": false,
+  "real_execution_surface": "Repository source inspection and routine loader validation",
+  "files_changed": [
+    "routines/super-parent/routine.yaml",
+    "src/orchestrator/workflow/oversight.py",
+    "src/orchestrator/api/routers/runs.py",
+    "docs/super-parent/process-evidence/spark-smoke-evidence.json"
+  ],
+  "evidence_files": [
+    "docs/super-parent/process-evidence/spark-smoke-evidence.json"
+  ],
+  "open_uncertainties": [],
+  "next_recommendation": "proceed",
+  "outcome": "verified_fix"
+}

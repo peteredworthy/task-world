@@ -27,6 +27,7 @@ from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.git import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
+    AcceptChildRunResponse,
     AgentCancelledRequest,
     AttemptOutcome,
     BackMergeResponse,
@@ -41,6 +42,7 @@ from orchestrator.api.schemas.runs import (
     MergeBackRequest,
     MergeBackResponse,
     MergeReadinessSnapshot,
+    ParentOversightResponse,
     RecoverRequest,
     RecoverResponse,
     ResumeRunRequest,
@@ -462,6 +464,29 @@ async def list_child_runs(
     )
 
 
+@router.post(
+    "/{parent_run_id}/children/{child_run_id}/accept",
+    response_model=AcceptChildRunResponse,
+)
+async def accept_child_run(
+    parent_run_id: str,
+    child_run_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> AcceptChildRunResponse:
+    """Merge an accepted child run into its parent run branch."""
+    result = await service.accept_child_run(parent_run_id, child_run_id)
+    oversight_state = await service.get_parent_oversight(parent_run_id)
+    return AcceptChildRunResponse(
+        parent_run_id=parent_run_id,
+        child_run_id=child_run_id,
+        status=result.status,
+        merge_commit_sha=result.merge_commit_sha,
+        conflict_files=result.conflict_files,
+        conflict_count=result.conflict_count,
+        oversight_state=oversight_state,
+    )
+
+
 @router.get("/{run_id}/evidence", response_model=RunEvidenceResponse)
 async def get_run_evidence(
     run_id: str,
@@ -476,6 +501,28 @@ async def get_run_evidence(
             continue
         items.append(RunEvidenceItem(path=raw["path"], bundle=bundle))
     return RunEvidenceResponse(run_id=run_id, evidence=items)
+
+
+@router.get("/{run_id}/oversight", response_model=ParentOversightResponse)
+async def get_parent_oversight(
+    run_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> ParentOversightResponse:
+    """Return the latest persisted super-parent oversight snapshot."""
+    return ParentOversightResponse(
+        run_id=run_id,
+        oversight_state=await service.get_parent_oversight(run_id),
+    )
+
+
+@router.post("/{run_id}/oversight/refresh", response_model=ParentOversightResponse)
+async def refresh_parent_oversight(
+    run_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> ParentOversightResponse:
+    """Recompute and persist the super-parent oversight snapshot."""
+    run = await service.refresh_parent_oversight(run_id)
+    return ParentOversightResponse(run_id=run.id, oversight_state=run.oversight_state)
 
 
 @router.get("", response_model=RunListResponse)

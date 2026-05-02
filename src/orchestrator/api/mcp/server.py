@@ -26,8 +26,11 @@ BUILDER_TOOLS = {
     "orchestrator_list_branches",
     "orchestrator_create_child_run",
     "orchestrator_list_child_runs",
+    "orchestrator_accept_child_run",
     "orchestrator_wait_for_run",
     "orchestrator_get_run_evidence",
+    "orchestrator_get_parent_oversight",
+    "orchestrator_refresh_parent_oversight",
 }
 
 VERIFIER_TOOLS = {
@@ -300,6 +303,14 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
+        async def orchestrator_accept_child_run(parent_run_id: str, child_run_id: str) -> str:
+            """Merge an accepted child run into its parent run branch."""
+            result = await handler.handle(
+                "orchestrator_accept_child_run",
+                {"parent_run_id": parent_run_id, "child_run_id": child_run_id},
+            )
+            return json.dumps(result)
+
         async def orchestrator_wait_for_run(
             run_id: str,
             timeout_seconds: float = 0,
@@ -316,6 +327,19 @@ class OrchestratorMCPServer:
             result = await handler.handle("orchestrator_get_run_evidence", {"run_id": run_id})
             return json.dumps(result)
 
+        async def orchestrator_get_parent_oversight(run_id: str) -> str:
+            """Return the persisted super-parent oversight snapshot."""
+            result = await handler.handle("orchestrator_get_parent_oversight", {"run_id": run_id})
+            return json.dumps(result)
+
+        async def orchestrator_refresh_parent_oversight(run_id: str) -> str:
+            """Recompute and persist the super-parent oversight snapshot."""
+            result = await handler.handle(
+                "orchestrator_refresh_parent_oversight",
+                {"run_id": run_id},
+            )
+            return json.dumps(result)
+
         self._mcp.add_tool(
             orchestrator_create_child_run,
             name="orchestrator_create_child_run",
@@ -327,6 +351,11 @@ class OrchestratorMCPServer:
             description="List child runs linked to an oversight parent run.",
         )
         self._mcp.add_tool(
+            orchestrator_accept_child_run,
+            name="orchestrator_accept_child_run",
+            description="Merge an accepted child run into its parent run branch.",
+        )
+        self._mcp.add_tool(
             orchestrator_wait_for_run,
             name="orchestrator_wait_for_run",
             description="Wait briefly for a run to complete or fail, then return current status.",
@@ -335,6 +364,16 @@ class OrchestratorMCPServer:
             orchestrator_get_run_evidence,
             name="orchestrator_get_run_evidence",
             description="Return structured phase4.evidence.v1 bundles from a run worktree.",
+        )
+        self._mcp.add_tool(
+            orchestrator_get_parent_oversight,
+            name="orchestrator_get_parent_oversight",
+            description="Return the persisted super-parent oversight snapshot.",
+        )
+        self._mcp.add_tool(
+            orchestrator_refresh_parent_oversight,
+            name="orchestrator_refresh_parent_oversight",
+            description="Recompute and persist the super-parent oversight snapshot.",
         )
 
     @property

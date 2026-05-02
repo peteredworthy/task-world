@@ -3,9 +3,11 @@
 from orchestrator.git.ops.branch_ops import (
     BackMergeResult,
     BranchStatus,
+    ParentChildMergeResult,
     RevertBackMergeResult,
     back_merge,
     get_branch_status,
+    merge_child_into_parent,
     merge_back,
     revert_back_merge,
 )
@@ -36,6 +38,7 @@ __all__ = [
     "ConflictBlock",
     "FileSelectionEntry",
     "Hunk",
+    "ParentChildMergeResult",
     "PruneStats",
     "RevertBackMergeResult",
     "apply_prune",
@@ -44,6 +47,7 @@ __all__ = [
     "get_branch_status",
     "get_conflict_blocks",
     "get_conflict_files",
+    "merge_child_into_parent",
     "merge_back",
     "parse_conflict_blocks",
     "preview_prune",

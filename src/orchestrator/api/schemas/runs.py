@@ -157,8 +157,11 @@ class EvidenceBundleSchema(ApiModel):
     outcome: Literal[
         "verified_fix",
         "bug_not_reproduced",
+        "behavior_already_correct",
         "environment_blocked",
         "needs_revision",
+        "partial_progress",
+        "unrelated_failure",
     ]
 
 
@@ -170,6 +173,21 @@ class RunEvidenceItem(ApiModel):
 class RunEvidenceResponse(ApiModel):
     run_id: str
     evidence: list[RunEvidenceItem]
+
+
+class ParentOversightResponse(ApiModel):
+    run_id: str
+    oversight_state: dict[str, Any]
+
+
+class AcceptChildRunResponse(ApiModel):
+    parent_run_id: str
+    child_run_id: str
+    status: Literal["clean", "conflicts"]
+    merge_commit_sha: str | None = None
+    conflict_files: list[str] = []
+    conflict_count: int = 0
+    oversight_state: dict[str, Any]
 
 
 class ChildRunListResponse(ApiModel):

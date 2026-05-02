@@ -35,6 +35,11 @@ class BranchError(GitError):
     """Base class for branch-related errors."""
 
 
+class BranchSafetyError(BranchError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 class BranchNotFoundError(BranchError):
     def __init__(self, branch: str) -> None:
         self.branch = branch

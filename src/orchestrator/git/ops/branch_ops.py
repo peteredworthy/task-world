@@ -3,9 +3,11 @@
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Literal
 
 from orchestrator.git.errors import (
     BranchNotFoundError,
+    BranchSafetyError,
     DirtyWorkingTreeError,
     GitCommandError,
     MergeConflictError,
@@ -87,6 +89,18 @@ class RevertBackMergeResult:
 
     reverted_commit: str
     new_head: str
+
+
+@dataclass
+class ParentChildMergeResult:
+    """Result of accepting a child run into its parent run branch."""
+
+    status: Literal["clean", "conflicts"]
+    parent_branch: str
+    child_branch: str
+    merge_commit_sha: str | None = None
+    conflict_files: list[str] = field(default_factory=list[str])
+    conflict_count: int = 0
 
 
 def get_branch_status(repo_path: Path, run_branch: str, source_branch: str) -> BranchStatus:
@@ -260,6 +274,79 @@ def sync_branch_to_worktree(repo_path: Path, branch: str, worktree_path: Path) -
     branch_sha = _run_git(["rev-parse", branch], cwd=repo_path).stdout.strip()
     if wt_head != branch_sha:
         _run_git(["branch", "-f", branch, wt_head], cwd=repo_path)
+
+
+def merge_child_into_parent(
+    parent_worktree_path: Path,
+    parent_run_id: str,
+    child_run_id: str,
+    *,
+    child_worktree_path: Path | None = None,
+    abort_on_conflict: bool = False,
+) -> ParentChildMergeResult:
+    """Merge a completed child run branch into its parent run branch.
+
+    The merge happens in the parent run worktree. It never checks out or merges
+    into the source branch, and it refuses to run unless the parent run branch
+    is already checked out.
+    """
+    parent_branch = f"orchestrator/run-{parent_run_id}"
+    child_branch = f"orchestrator/run-{child_run_id}"
+    protected_branches = {"main", "master"}
+
+    if not _branch_exists(parent_worktree_path, parent_branch):
+        raise BranchNotFoundError(parent_branch)
+    if not _branch_exists(parent_worktree_path, child_branch):
+        raise BranchNotFoundError(child_branch)
+
+    if child_worktree_path is not None and child_worktree_path.exists():
+        sync_branch_to_worktree(parent_worktree_path, child_branch, child_worktree_path)
+
+    current_branch = _run_git(
+        ["rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=parent_worktree_path,
+    ).stdout.strip()
+    if current_branch in protected_branches:
+        raise BranchSafetyError(
+            f"Refusing to accept child run into protected branch {current_branch}"
+        )
+    if current_branch != parent_branch:
+        raise BranchSafetyError(f"Parent worktree is on {current_branch}, expected {parent_branch}")
+
+    dirty_files = _get_dirty_files(parent_worktree_path)
+    if dirty_files:
+        raise DirtyWorkingTreeError(current_branch, dirty_files)
+
+    try:
+        _run_git(["merge", "--no-ff", child_branch, "--no-edit"], cwd=parent_worktree_path)
+    except GitCommandError:
+        conflict_files = _get_conflict_files(parent_worktree_path)
+        if abort_on_conflict:
+            subprocess.run(
+                ["git", "merge", "--abort"],
+                cwd=parent_worktree_path,
+                capture_output=True,
+                text=True,
+            )
+            raise MergeConflictError(child_branch, parent_branch, conflict_files)
+        return ParentChildMergeResult(
+            status="conflicts",
+            parent_branch=parent_branch,
+            child_branch=child_branch,
+            merge_commit_sha=None,
+            conflict_files=conflict_files,
+            conflict_count=len(conflict_files),
+        )
+
+    merge_commit_sha = _run_git(["rev-parse", "HEAD"], cwd=parent_worktree_path).stdout.strip()
+    return ParentChildMergeResult(
+        status="clean",
+        parent_branch=parent_branch,
+        child_branch=child_branch,
+        merge_commit_sha=merge_commit_sha,
+        conflict_files=[],
+        conflict_count=0,
+    )
 
 
 def _get_dirty_files(repo_path: Path) -> list[str]:

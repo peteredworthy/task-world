@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isRunStuck } from '../RunDetail';
+import { isRunStuck } from '../../../lib/runStuck';
 import type { RunResponse, StepSummary, TaskSummary } from '../../../types';
 
 function makeTask(overrides: Partial<TaskSummary> = {}): TaskSummary {

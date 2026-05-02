@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
-import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack, useResumeRun, useSkipStep } from '../../hooks/useApi';
+import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack, useResumeRun, useSkipStep, useParentOversight, useRefreshParentOversight, useAcceptChildRun } from '../../hooks/useApi';
 import { useBranchStatus } from '../../hooks/useReview';
 import { useActivityStream } from '../../hooks/useActivityStream';
 import { usePendingActions } from '../../hooks/usePendingActions';
@@ -21,25 +21,12 @@ import { BranchStatusPanel } from '../detail/BranchStatusPanel';
 import { EnvFilesPanel } from '../detail/EnvFilesPanel';
 import { getLastAgentError } from '../../lib/activity';
 import { getPauseReasonMessage } from '../../lib/pauseReason';
+import { isRunStuck } from '../../lib/runStuck';
 import { ApiError } from '../../api/client';
 import { ReviewMergeTab } from '../review/ReviewMergeTab';
 import { ModelCostBreakdown } from '../detail/ModelCostBreakdown';
-import type { RunResponse } from '../../types';
+import type { ChildOversightSummary, ParentOversightState, RunResponse } from '../../types';
 import type { PendingAction } from '../../types/clarifications';
-
-/** Detect if the run is stuck: active but a task has failed with no remaining attempts. */
-export function isRunStuck(run: RunResponse): { stuck: boolean; failedTask: string | null } {
-  if (run.status !== 'active') return { stuck: false, failedTask: null };
-  for (const step of run.steps) {
-    const failed = step.tasks.find(
-      t => !t.parent_task_id && t.status === 'failed' && t.current_attempt >= t.max_attempts,
-    );
-    if (failed) {
-      return { stuck: true, failedTask: failed.title || failed.config_id };
-    }
-  }
-  return { stuck: false, failedTask: null };
-}
 
 /** Find the current actionable step (skipping already completed steps). */
 function findActionableStep(run: RunResponse): { step: RunResponse['steps'][0]; index: number } | null {
@@ -51,6 +38,194 @@ function findActionableStep(run: RunResponse): { step: RunResponse['steps'][0]; 
     return { step: run.steps[index], index };
   }
   return null;
+}
+
+function hasOversightState(oversight: ParentOversightState | null | undefined): boolean {
+  if (!oversight) return false;
+  return Boolean(
+    oversight.schema_version ||
+    (oversight.child_count ?? 0) > 0 ||
+    (oversight.child_summaries?.length ?? 0) > 0 ||
+    (oversight.slices?.length ?? 0) > 0 ||
+    (oversight.merge_queue?.length ?? 0) > 0 ||
+    (oversight.attention_items?.length ?? 0) > 0,
+  );
+}
+
+function formatOversightReason(reason: string): string {
+  return reason.replace(/_/g, ' ').replace(/:/g, ': ');
+}
+
+function ParentRunBanner({ run }: { run: RunResponse }) {
+  if (!run.parent_run_id) return null;
+  return (
+    <div className="mb-4 rounded-md border border-border bg-bg-elevated px-4 py-3">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-medium text-text-primary">Child run</span>
+        {run.parent_slice_id && (
+          <span className="rounded border border-border bg-bg-surface px-2 py-0.5 text-xs text-text-secondary">
+            {run.parent_slice_id}
+          </span>
+        )}
+        <Link
+          to={`/runs/${run.parent_run_id}`}
+          className="text-accent-purple hover:text-accent-purple/80"
+        >
+          Parent {run.parent_run_id}
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function ParentOversightPanel({
+  oversight,
+  onRefresh,
+  refreshing,
+  onAcceptChild,
+  acceptingChildId,
+}: {
+  oversight: ParentOversightState;
+  onRefresh: () => void;
+  refreshing: boolean;
+  onAcceptChild: (child: ChildOversightSummary) => void;
+  acceptingChildId: string | undefined;
+}) {
+  const childCounts = Object.entries(oversight.child_counts ?? {});
+  const children = oversight.child_summaries ?? [];
+  const mergeQueue = new Set(oversight.merge_queue ?? []);
+  const acceptedChildren = new Set(oversight.accepted_child_run_ids ?? []);
+  const attentionItems = oversight.attention_items ?? [];
+  const blockingReasons = oversight.terminal_guard?.blocking_reasons ?? [];
+  const legacySlices = oversight.slices ?? [];
+
+  return (
+    <div className="mb-6 rounded-md border border-border bg-bg-elevated">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-text-primary">Parent Oversight</h2>
+          <div className="mt-1 flex flex-wrap gap-2 text-xs text-text-secondary">
+            <span>{oversight.child_count ?? children.length ?? legacySlices.length} child runs</span>
+            {oversight.next_parent_action && <span>Next: {formatOversightReason(oversight.next_parent_action)}</span>}
+            {oversight.terminal_guard && (
+              <span>{oversight.terminal_guard.can_complete ? 'Terminal clear' : 'Terminal blocked'}</span>
+            )}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={refreshing}
+          className="rounded border border-border px-3 py-1.5 text-xs font-medium text-text-secondary hover:bg-bg-muted hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        >
+          {refreshing ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </div>
+
+      <div className="space-y-4 px-4 py-4">
+        {childCounts.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            {childCounts.map(([status, count]) => (
+              <span
+                key={status}
+                className="rounded border border-border bg-bg-surface px-2 py-1 text-xs text-text-secondary"
+              >
+                {status}: {count}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {blockingReasons.length > 0 && (
+          <div className="rounded-md border border-status-paused/30 bg-status-paused/10 px-3 py-2">
+            <p className="text-xs font-medium text-status-paused">Blocking reasons</p>
+            <ul className="mt-1 space-y-1 text-xs text-text-secondary">
+              {blockingReasons.slice(0, 5).map((reason) => (
+                <li key={reason} className="break-words">{formatOversightReason(reason)}</li>
+              ))}
+              {blockingReasons.length > 5 && (
+                <li>{blockingReasons.length - 5} more</li>
+              )}
+            </ul>
+          </div>
+        )}
+
+        {attentionItems.length > 0 && (
+          <div>
+            <p className="mb-2 text-xs font-medium text-text-secondary">Attention</p>
+            <div className="space-y-1 text-xs text-text-muted">
+              {attentionItems.slice(0, 5).map((item, index) => (
+                <div key={`${item.kind}:${item.run_id ?? item.slice_id ?? index}`} className="break-words">
+                  {item.slice_id && <span className="text-text-secondary">{item.slice_id}: </span>}
+                  {formatOversightReason(item.reason)}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {children.length > 0 && (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-xs">
+              <thead className="text-text-muted">
+                <tr className="border-b border-border">
+                  <th className="py-2 pr-4 font-medium">Child</th>
+                  <th className="py-2 pr-4 font-medium">Slice</th>
+                  <th className="py-2 pr-4 font-medium">Status</th>
+                  <th className="py-2 pr-4 font-medium">Evidence</th>
+                  <th className="py-2 text-right font-medium">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {children.map((child) => {
+                  const outcomes = child.evidence.map((item) => item.outcome);
+                  const canAccept = mergeQueue.has(child.run_id) && !acceptedChildren.has(child.run_id);
+                  return (
+                    <tr key={child.run_id} className="border-b border-border/70 last:border-0">
+                      <td className="py-2 pr-4">
+                        <Link to={`/runs/${child.run_id}`} className="font-mono text-accent-purple hover:text-accent-purple/80">
+                          {child.run_id}
+                        </Link>
+                      </td>
+                      <td className="py-2 pr-4 text-text-secondary">{child.slice_id}</td>
+                      <td className="py-2 pr-4">
+                        <RunStatusBadge status={child.status} />
+                      </td>
+                      <td className="py-2 pr-4 text-text-secondary">
+                        {outcomes.length > 0 ? outcomes.join(', ') : 'none'}
+                      </td>
+                      <td className="py-2 text-right">
+                        {acceptedChildren.has(child.run_id) ? (
+                          <span className="text-status-completed">Accepted</span>
+                        ) : canAccept ? (
+                          <button
+                            type="button"
+                            onClick={() => onAcceptChild(child)}
+                            disabled={acceptingChildId === child.run_id}
+                            className="rounded border border-status-completed/40 bg-status-completed/10 px-2.5 py-1 text-xs font-medium text-status-completed hover:bg-status-completed/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          >
+                            {acceptingChildId === child.run_id ? 'Accepting...' : 'Accept'}
+                          </button>
+                        ) : (
+                          <span className="text-text-muted">-</span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {children.length === 0 && legacySlices.length > 0 && (
+          <div className="text-xs text-text-secondary">
+            {legacySlices.length} child link{legacySlices.length === 1 ? '' : 's'} recorded. Refresh to compute the full oversight snapshot.
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 
@@ -79,6 +254,12 @@ function RunDetailInner({ runId }: { runId: string }) {
   const mergeBack = useMergeBack();
   const resumeRun = useResumeRun();
   const skipStep = useSkipStep(runId);
+  const oversightQueryEnabled = Boolean(
+    run && (run.parent_run_id || hasOversightState(run.oversight_state)),
+  );
+  const { data: oversightData } = useParentOversight(runId, oversightQueryEnabled);
+  const refreshOversight = useRefreshParentOversight(runId);
+  const acceptChildRun = useAcceptChildRun(runId);
   const { data: branchStatus } = useBranchStatus(runId);
   const { isPruneMode, onTogglePruneMode, onOpenBackMergeModal } = useReviewMerge();
   const [showResumeDialog, setShowResumeDialog] = useState(false);
@@ -87,6 +268,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
   const [selectedPendingAction, setSelectedPendingAction] = useState<PendingAction | null>(null);
   const [approvalReviewAction, setApprovalReviewAction] = useState<PendingAction | null>(null);
+  const [acceptTarget, setAcceptTarget] = useState<ChildOversightSummary | null>(null);
   const autoOpenedRef = useRef<string | null>(null);
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
@@ -161,6 +343,8 @@ function RunDetailInner({ runId }: { runId: string }) {
   const embeddedName = (run.routine_embedded as Record<string, unknown> | null)?.name as string | undefined;
   const routineName = routine?.name || embeddedName || run.routine_id || 'Run';
   const events = activityData?.events ?? [];
+  const oversight = oversightData?.oversight_state ?? run.oversight_state;
+  const showOversight = hasOversightState(oversight);
 
   // Check if the run is stuck (failed task blocking progress)
   const { stuck: isStuck, failedTask: stuckTaskName } = isRunStuck(run);
@@ -323,6 +507,21 @@ function RunDetailInner({ runId }: { runId: string }) {
 
 
           <>
+          <ParentRunBanner run={run} />
+
+          {showOversight && (
+            <ParentOversightPanel
+              oversight={oversight}
+              onRefresh={() => {
+                setMutationError(null);
+                refreshOversight.mutate(undefined, { onError: handleMutationError('refresh oversight') });
+              }}
+              refreshing={refreshOversight.isPending}
+              onAcceptChild={(child) => setAcceptTarget(child)}
+              acceptingChildId={acceptChildRun.variables}
+            />
+          )}
+
           {/* Manual gate control panel */}
           {run.status === 'paused' && run.pause_reason === 'manual_gate' && (() => {
             const actionable = findActionableStep(run);
@@ -601,6 +800,61 @@ function RunDetailInner({ runId }: { runId: string }) {
           pendingAction={approvalReviewAction}
           runId={runId}
         />
+      )}
+
+      {acceptTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="accept-child-title"
+            className="w-full max-w-md rounded-md border border-border bg-bg-elevated shadow-xl"
+          >
+            <div className="border-b border-border px-5 py-4">
+              <h2 id="accept-child-title" className="text-base font-semibold text-text-primary">
+                Accept Child Run
+              </h2>
+              <p className="mt-1 text-sm text-text-secondary">
+                Merge child run <span className="font-mono">{acceptTarget.run_id}</span> into this parent run branch.
+              </p>
+            </div>
+            <div className="px-5 py-4 text-sm text-text-secondary">
+              {acceptTarget.evidence.length > 0 && (
+                <p>
+                  Evidence outcome: {acceptTarget.evidence.map((item) => item.outcome).join(', ')}
+                </p>
+              )}
+              {acceptTarget.blocking_reasons.length > 0 && (
+                <p className="mt-2 text-status-paused">
+                  Current block: {formatOversightReason(acceptTarget.blocking_reasons[0])}
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setAcceptTarget(null)}
+                className="rounded border border-border px-3 py-1.5 text-sm text-text-secondary hover:bg-bg-muted hover:text-text-primary transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMutationError(null);
+                  acceptChildRun.mutate(acceptTarget.run_id, {
+                    onSuccess: () => setAcceptTarget(null),
+                    onError: handleMutationError('accept child'),
+                  });
+                }}
+                disabled={acceptChildRun.isPending}
+                className="rounded bg-status-completed/20 border border-status-completed/40 px-3 py-1.5 text-sm font-medium text-status-completed hover:bg-status-completed/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {acceptChildRun.isPending ? 'Accepting...' : 'Accept Child'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

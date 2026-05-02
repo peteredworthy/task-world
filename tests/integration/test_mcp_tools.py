@@ -254,6 +254,131 @@ async def test_oversight_child_run_tools(
     evidence_result = await handler.handle("orchestrator_get_run_evidence", {"run_id": child_id})
     assert evidence_result["evidence"][0]["bundle"]["outcome"] == "verified_fix"
 
+    refresh_result = await handler.handle(
+        "orchestrator_refresh_parent_oversight",
+        {"run_id": "run-1"},
+    )
+    assert refresh_result["oversight_state"]["child_count"] == 1
+    assert refresh_result["oversight_state"]["terminal_guard"]["can_complete"] is False
+
+    get_result = await handler.handle(
+        "orchestrator_get_parent_oversight",
+        {"run_id": "run-1"},
+    )
+    assert get_result["oversight_state"]["child_summaries"][0]["run_id"] == child_id
+
+
+async def test_parent_terminal_guard_pauses_unresolved_child(service: WorkflowService) -> None:
+    parent = _make_run()
+    parent.status = RunStatus.ACTIVE
+    task = parent.steps[0].tasks[0]
+    task.status = TaskStatus.VERIFYING
+    for item in task.checklist:
+        item.status = ChecklistStatus.DONE
+        item.grade = "A"
+    await service.create_run(parent)
+
+    child = Run(
+        id="child-1",
+        repo_name=parent.repo_name,
+        status=RunStatus.ACTIVE,
+        parent_run_id=parent.id,
+        parent_slice_id="slice-01",
+        source_branch="main",
+        created_at=parent.created_at,
+        updated_at=parent.updated_at,
+    )
+    await service.create_child_run(
+        parent.id,
+        child,
+        parent_slice_id="slice-01",
+        next_action_decision="continue",
+    )
+
+    result = await service.complete_verification(parent.id, task.id)
+
+    assert result.success
+    updated_parent = await service.get_run(parent.id)
+    assert updated_parent.status == RunStatus.PAUSED
+    assert updated_parent.pause_reason == "oversight_children_unresolved"
+    assert updated_parent.oversight_state["terminal_guard"]["can_complete"] is False
+    assert updated_parent.oversight_state["active_child_run_ids"] == ["child-1"]
+
+
+async def test_collect_run_evidence_uses_files_changed_since_source_commit(
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "repo"
+    worktree.mkdir()
+    subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+    committed_dir = worktree / "docs" / "old"
+    committed_dir.mkdir(parents=True)
+    (committed_dir / "old-evidence.json").write_text(
+        '{"schema_version":"phase4.evidence.v1","outcome":"environment_blocked"}',
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=worktree, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True, capture_output=True)
+    base_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    evidence_dir = worktree / "docs" / "new"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "new-evidence.json").write_text(
+        """{
+  "schema_version": "phase4.evidence.v1",
+  "slice_id": "slice-new",
+  "routine_id": "evidence-filter",
+  "assumption_tested": "Only changed evidence is collected.",
+  "summary": "New evidence was produced by this run.",
+  "commands_run": [],
+  "test_results": [],
+  "target_bug_reproduced": "not_targeted",
+  "real_frontend_path_exercised": false,
+  "real_execution_surface": "git worktree",
+  "files_changed": ["docs/new/new-evidence.json"],
+  "evidence_files": ["docs/new/new-evidence.json"],
+  "open_uncertainties": [],
+  "next_recommendation": "proceed",
+  "outcome": "verified_fix"
+}""",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=worktree, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add new evidence"],
+        cwd=worktree,
+        check=True,
+        capture_output=True,
+    )
+
+    run = _make_run()
+    run.worktree_path = str(worktree)
+    run.source_branch_sha = base_sha
+    await service.create_run(run)
+
+    evidence = await service.collect_run_evidence(run.id)
+
+    assert [item["path"] for item in evidence] == ["docs/new/new-evidence.json"]
+
 
 async def test_full_workflow_via_tools(handler: ToolHandler, service: WorkflowService) -> None:
     """Full workflow: get requirements -> update -> submit -> grade -> verify."""
