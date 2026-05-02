@@ -20,6 +20,7 @@ import { RecoveryPanel } from '../detail/RecoveryPanel';
 import { BranchStatusPanel } from '../detail/BranchStatusPanel';
 import { EnvFilesPanel } from '../detail/EnvFilesPanel';
 import { getLastAgentError } from '../../lib/activity';
+import { getPauseReasonMessage } from '../../lib/pauseReason';
 import { ApiError } from '../../api/client';
 import { ReviewMergeTab } from '../review/ReviewMergeTab';
 import { ModelCostBreakdown } from '../detail/ModelCostBreakdown';
@@ -52,43 +53,6 @@ function findActionableStep(run: RunResponse): { step: RunResponse['steps'][0]; 
   return null;
 }
 
-function getPauseReasonMessage(run: RunResponse): string {
-  if (!run.pause_reason) return '';
-
-  if (run.pause_reason === 'no_executor_running') {
-    if (run.agent_type === 'user_managed') {
-      return 'Paused — no managed executor is attached. Connect an external agent or resume with a managed runner.';
-    }
-    return 'Paused — no executor is running. Resume the run to start a managed runner.';
-  }
-
-  const messages: Record<string, string> = {
-    server_shutdown: 'Paused — server restarted; resume will continue from the current task',
-    executor_not_started: 'Paused — executor startup safety marker; this should clear automatically within a few seconds',
-    agent_not_available: 'Paused — selected agent runner is not available',
-    agent_execution_error: 'Paused — agent execution error',
-    agent_exit_failure: 'Paused — agent exited with error',
-    gate_blocked: 'Paused — checklist gate not satisfied',
-    manual_gate: 'Paused — waiting at manual gate',
-    recovery_loop: 'Paused — recovery loop detected',
-    unexpected_error: 'Paused — unexpected error',
-    agent_health_check_failed: 'Paused — agent health check failed',
-    agent_not_running_on_startup: 'Paused — agent was not running when the server started',
-    recovered: 'Paused — recovered from failure',
-    recovery_triggered: 'Paused — recovery triggered',
-    requirement_escalated: 'Paused — agent flagged an unfulfillable requirement',
-    waiting_for_approval: 'Paused — waiting for step approval',
-    awaiting_approval: 'Paused — waiting for step approval',
-    awaiting_user_input: 'Paused — waiting for user input',
-    fan_out_child_failed: 'Paused — one or more fan-out children failed',
-    fan_out_orphaned: 'Paused — fan-out task needs recovery',
-    rate_limit: 'Paused — API rate or credit limit hit',
-    all_steps_complete_but_active: 'Paused — all steps complete but run stayed active',
-    no_actionable_tasks: 'Paused — no actionable tasks in current step',
-  };
-
-  return messages[run.pause_reason] ?? `Paused (${run.pause_reason})`;
-}
 
 function RunDetailInner({ runId }: { runId: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -490,7 +454,7 @@ function RunDetailInner({ runId }: { runId: string }) {
 
           {/* Pending actions banner */}
           {pendingActionsCount > 0 && (
-            <div className="mb-4 rounded-md bg-bg-elevated border border-border px-3 py-2 flex items-center justify-between gap-3">
+            <div data-testid="pending-actions-badge" className="mb-4 rounded-md bg-bg-elevated border border-border px-3 py-2 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 min-w-0">
                 <svg className="h-4 w-4 text-text-secondary shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />

@@ -29,6 +29,7 @@ const PruneModeContext = createContext<PruneModeContextValue | null>(null);
 
 export function usePruneMode(): PruneModeContextValue {
   const ctx = useContext(PruneModeContext);
+  /* v8 ignore next 3 -- outside-provider misuse guard; unreachable in correct usage */
   if (!ctx) {
     throw new Error('usePruneMode must be used within a PruneModeProvider');
   }

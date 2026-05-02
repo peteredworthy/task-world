@@ -193,6 +193,11 @@ async function setupRoutes(page: Page, overrides: RouteOverrides = {}) {
     route.fulfill({ json: { auth_enabled: false, auth_token: null } }),
   );
 
+  // Sidebar quota polling; not relevant to the review workbench.
+  await page.route('**/api/agent-runners', (route) =>
+    route.fulfill({ json: [] }),
+  );
+
   // Run detail (polled by RunDetail)
   await page.route(`**/api/runs/${RUN_ID}`, (route) => {
     if (route.request().method() === 'GET') {
@@ -257,23 +262,20 @@ async function setupRoutes(page: Page, overrides: RouteOverrides = {}) {
 }
 
 /**
- * Navigate to the run detail page and activate the Review & Merge tab.
- * Waits for the tab button to be visible (meaning the run data has loaded),
- * then clicks it and waits for the review content to appear.
+ * Navigate to the run detail page and wait for the Review & Merge workbench.
  */
 async function openReviewTab(page: Page) {
   await page.goto(`/runs/${RUN_ID}`);
-
-  // Wait for the "Review & Merge" tab button to appear (run must be loaded first)
-  const reviewTabBtn = page.getByRole('button', { name: /Review/i }).first();
-  await expect(reviewTabBtn).toBeVisible({ timeout: 15_000 });
-  await reviewTabBtn.click();
 
   // Wait for at least one review panel to become visible.
   // Use .first() to avoid strict-mode failure when both headings render together.
   await expect(
     page.getByText('Branch Status').or(page.getByText('Modified Files')).first(),
-  ).toBeVisible({ timeout: 10_000 });
+  ).toBeVisible({ timeout: 15_000 });
+}
+
+function coreFileEntry(page: Page) {
+  return page.getByTitle('src/orchestrator/core.py').first();
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +307,7 @@ test.describe('Review & Merge workbench – visual regression', () => {
     await openReviewTab(page);
 
     // Wait for at least one file path to render in the file list
-    await expect(page.getByText('src/orchestrator/core.py').first()).toBeVisible();
+    await expect(coreFileEntry(page)).toBeVisible();
 
     await expect(page).toHaveScreenshot('visual-review-tab-file-list.png');
   });
@@ -318,23 +320,21 @@ test.describe('Review & Merge workbench – visual regression', () => {
     await openReviewTab(page);
 
     // Wait for the file list to load
-    await expect(page.getByText('src/orchestrator/core.py').first()).toBeVisible();
+    await expect(coreFileEntry(page)).toBeVisible();
 
     // Click the file row button in FileListSection.
     // FileListSection renders each file as a button containing the path text.
     await page
       .getByRole('button')
-      .filter({ hasText: 'src/orchestrator/core.py' })
+      .filter({ hasText: 'core.py' })
       .first()
       .click();
 
-    // Wait for the diff dialog to open (it renders a close button with this aria-label)
-    await expect(
-      page.getByRole('button', { name: 'Close diff dialog' }),
-    ).toBeVisible({ timeout: 10_000 });
+    // Wait for the selected diff to render in the main review panel.
+    await expect(page.getByText('Review selected file diff')).toBeVisible({ timeout: 10_000 });
 
-    // Verify we are in inline mode (the default — "Inline" button is highlighted)
-    await expect(page.getByRole('button', { name: 'Inline' })).toBeVisible();
+    // Switch to inline mode.
+    await page.getByRole('button', { name: 'Inline' }).click();
 
     await expect(page).toHaveScreenshot('visual-diff-dialog-inline.png');
   });
@@ -346,17 +346,15 @@ test.describe('Review & Merge workbench – visual regression', () => {
     await setupRoutes(page);
     await openReviewTab(page);
 
-    await expect(page.getByText('src/orchestrator/core.py').first()).toBeVisible();
+    await expect(coreFileEntry(page)).toBeVisible();
     await page
       .getByRole('button')
-      .filter({ hasText: 'src/orchestrator/core.py' })
+      .filter({ hasText: 'core.py' })
       .first()
       .click();
 
-    // Wait for diff dialog to open
-    await expect(
-      page.getByRole('button', { name: 'Close diff dialog' }),
-    ).toBeVisible({ timeout: 10_000 });
+    // Wait for the selected diff to render in the main review panel.
+    await expect(page.getByText('Review selected file diff')).toBeVisible({ timeout: 10_000 });
 
     // Switch to split mode
     await page.getByRole('button', { name: 'Split' }).click();
@@ -372,7 +370,7 @@ test.describe('Review & Merge workbench – visual regression', () => {
     await openReviewTab(page);
 
     // Wait for file list to load first
-    await expect(page.getByText('src/orchestrator/core.py').first()).toBeVisible();
+    await expect(coreFileEntry(page)).toBeVisible();
 
     // Activate prune mode via the header button
     await page.getByRole('button', { name: /Prune Mode/i }).click();
@@ -423,10 +421,7 @@ test.describe('Review & Merge workbench – visual regression', () => {
     await expect(page.getByText('Tests pass').first()).toBeVisible();
 
     // Capture the readiness bar element — it contains the "Commit Merge Back" button
-    const readinessBar = page
-      .locator('div')
-      .filter({ has: page.getByRole('button', { name: 'Commit Merge Back' }) })
-      .last();
+    const readinessBar = page.locator('[aria-label="Merge readiness"]');
 
     await expect(readinessBar).toBeVisible();
     await expect(readinessBar).toHaveScreenshot('visual-merge-readiness-ready.png');
@@ -447,10 +442,7 @@ test.describe('Review & Merge workbench – visual regression', () => {
     await expect(mergeBtn).toBeVisible();
     await expect(mergeBtn).toBeDisabled();
 
-    const readinessBar = page
-      .locator('div')
-      .filter({ has: page.getByRole('button', { name: 'Commit Merge Back' }) })
-      .last();
+    const readinessBar = page.locator('[aria-label="Merge readiness"]');
 
     await expect(readinessBar).toBeVisible();
     await expect(readinessBar).toHaveScreenshot('visual-merge-readiness-blocked.png');

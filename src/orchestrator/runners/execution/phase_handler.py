@@ -430,12 +430,12 @@ class PhaseHandler:
         context: ExecutionContext,
     ) -> None:
         # Define callbacks - recovery agent uses complete_recovery via dynamic tool
-        async def on_checklist_update(
+        async def on_checklist_update(  # pragma: no cover
             req_id: str, status: ChecklistStatus, note: str | None
         ) -> None:
             pass  # Recovery agent does not update checklist directly
 
-        async def on_submit() -> None:
+        async def on_submit() -> None:  # pragma: no cover
             pass  # Recovery agent uses complete_recovery, not submit
 
         # Define output streaming callback

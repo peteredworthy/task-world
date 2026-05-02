@@ -56,7 +56,7 @@ packages = ["src/orchestrator"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-n auto --dist loadfile --timeout=30"
+addopts = "-n auto --dist loadfile --timeout=30 --cov=src/orchestrator --cov-branch --cov-report=term-missing --cov-fail-under=71"
 timeout = 30
 markers = [
     "slow: tests that invoke real external tools (LLMs, Docker, CLI agents)",
@@ -68,6 +68,31 @@ filterwarnings = [
     "ignore:websockets\\.server\\.WebSocketServerProtocol:DeprecationWarning",
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
+
+[tool.coverage.run]
+branch = true
+source = ["src/orchestrator"]
+
+[tool.coverage.report]
+# Standard patterns that are never worth tracking:
+# - TYPE_CHECKING guards (dead at runtime)
+# - Abstract stubs (raise NotImplementedError)
+# - Defensive protocol compliance (def __repr__, __str__)
+# - Main-entry guards
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@(abc\\.)?abstractmethod",
+    "def __repr__",
+    "def __str__",
+    "if __name__ == .__main__.:",
+]
+# Files that are external integrations or generated — tracked but not gated.
+# Add a comment when omitting: explains WHY, not just what.
+# Example: openhands/docker_agent.py — integration-only; subprocess calls
+# make unit tests shallow. Coverage lives in integration suite.
+omit = []
 
 [tool.ruff]
 line-length = 100

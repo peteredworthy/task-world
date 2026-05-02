@@ -81,7 +81,7 @@ export function MergeReadinessBar({ runId, onMergeCommit }: MergeReadinessBarPro
       : '';
 
   return (
-    <div className="shrink-0 border-t border-border bg-bg-primary px-4 py-3">
+    <div className="shrink-0 border-t border-border bg-bg-primary px-4 py-3" aria-label="Merge readiness">
       <div className="flex items-center gap-4 flex-wrap">
         {/* Gate indicators */}
         <div className="flex items-center gap-4 flex-wrap flex-1 min-w-0">

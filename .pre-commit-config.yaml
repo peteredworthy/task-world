@@ -37,6 +37,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
+      - id: enum-drift
+        name: enum-drift
+        entry: uv run python scripts/export_enums.py --check
+        language: system
+        pass_filenames: false
+        files: ^(src/orchestrator/config/enums\.py|ui/src/types/generated-enums\.ts)$
       - id: ui-lint
         name: ui-lint
         entry: bash -c 'test -d ui/node_modules && npm --prefix ui run lint || echo "Skipping ui-lint (node_modules not installed)"'

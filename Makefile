@@ -14,7 +14,8 @@
         test-codex-api \
         test-codex-callbacks \
         test-codex-allowlist \
-        test-codex-parity
+        test-codex-parity \
+        check-enum-drift
 
 
 # ---------------------------------------------------------------------------
@@ -136,3 +137,11 @@ test-codex-parity:
 		tests/unit/test_codex_server_parity.py \
 		tests/integration/test_codex_server_remote_parity.py \
 		-v
+
+
+# ---------------------------------------------------------------------------
+# Enum codegen drift check
+# ---------------------------------------------------------------------------
+
+check-enum-drift:
+	uv run python scripts/export_enums.py --check

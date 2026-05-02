@@ -18,6 +18,7 @@ export function taskStatusColor(status: TaskStatus): string {
     case 'verifying': return 'bg-accent-purple/20 text-accent-purple';
     case 'recovering': return 'bg-amber-500/20 text-amber-600';
     case 'fan_out_running': return 'bg-status-active/20 text-status-active';
+    case 'pending_user_action': return 'bg-status-paused/20 text-status-paused';
     case 'completed': return 'bg-status-completed/20 text-status-completed';
     case 'failed': return 'bg-status-failed/20 text-status-failed';
   }
