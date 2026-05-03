@@ -38,7 +38,7 @@ function extractFailingTests(logOutput: string): string[] {
   return failing;
 }
 
-/** Map agent_type to a visual style */
+/** Map agent_runner_type to a visual style */
 function agentVisual(agentType: string): { tintBg: string; tintText: string; icon: string } {
   const lower = agentType.toLowerCase();
   if (lower.includes('openhands')) {
@@ -117,7 +117,7 @@ export function AgentFixTestsModal({
     try {
       if (showAdvanced && selectedAgent) {
         await agentFixTests.mutateAsync({
-          agentType: selectedAgent.agent_type,
+          agentType: selectedAgent.agent_runner_type,
           agentConfig: agentConfigValues,
         });
       } else {
@@ -230,10 +230,10 @@ export function AgentFixTestsModal({
                 <AgentRunnerIcon icon={run.agent_icon} className="h-5 w-5" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-text-primary truncate">
-                    {run.agent_type_display}
+                    {run.agent_runner_type_display}
                   </div>
-                  {run.agent_type && (
-                    <div className="text-xs text-text-muted truncate">{run.agent_type}</div>
+                  {run.agent_runner_type && (
+                    <div className="text-xs text-text-muted truncate">{run.agent_runner_type}</div>
                   )}
                 </div>
                 <span className="text-xs text-text-muted shrink-0">run default</span>
@@ -252,12 +252,12 @@ export function AgentFixTestsModal({
                 <div className="grid grid-cols-3 gap-2.5">
                   {allAgents.map((agent, idx) => {
                     const isSelected = selectedAgentIndex === String(idx);
-                    const visual = agentVisual(agent.agent_type);
+                    const visual = agentVisual(agent.agent_runner_type);
                     const unavailable = !agent.available;
 
                     return (
                       <button
-                        key={`${agent.agent_type}:${agent.name}`}
+                        key={`${agent.agent_runner_type}:${agent.name}`}
                         type="button"
                         disabled={unavailable || submitting}
                         onClick={() => {
@@ -313,7 +313,7 @@ export function AgentFixTestsModal({
 
                         {/* Type subtitle */}
                         <span className="text-[11px] text-text-muted mt-0.5 block truncate">
-                          {agent.agent_type}
+                          {agent.agent_runner_type}
                         </span>
                       </button>
                     );
@@ -327,7 +327,7 @@ export function AgentFixTestsModal({
           {showAdvanced && selectedAgent && (
             <div>
               <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
-                Agent Configuration
+                Agent Runner Configuration
               </label>
               <AgentRunnerConfigForm
                 agent={selectedAgent}

@@ -156,7 +156,7 @@ def register_error_handlers(app: FastAPI) -> None:
     ) -> JSONResponse:
         return JSONResponse(
             status_code=499,
-            content={"error": "agent_cancelled", "agent_type": exc.agent_type},
+            content={"error": "agent_cancelled", "agent_runner_type": exc.agent_runner_type},
         )
 
     @app.exception_handler(AgentNotAvailableError)
@@ -167,7 +167,7 @@ def register_error_handlers(app: FastAPI) -> None:
             status_code=503,
             content={
                 "error": "agent_not_available",
-                "agent_type": exc.agent_type,
+                "agent_runner_type": exc.agent_runner_type,
                 "reason": exc.reason,
             },
         )
@@ -180,7 +180,7 @@ def register_error_handlers(app: FastAPI) -> None:
             status_code=500,
             content={
                 "error": "agent_execution_error",
-                "agent_type": exc.agent_type,
+                "agent_runner_type": exc.agent_runner_type,
                 "message": exc.message,
             },
         )

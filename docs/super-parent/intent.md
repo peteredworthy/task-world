@@ -69,7 +69,7 @@ A slice is the next bounded unit of work selected by the parent. A slice include
 
 ### Evidence Bundle
 
-Every child run must leave structured evidence for the parent. The baseline schema is `phase4.evidence.v1`, with enough information for the parent to decide whether the broader task should proceed, replan, or stop.
+Every child run must leave structured evidence for the parent. The baseline schema is `run.evidence.v1`, with enough information for the parent to decide whether the broader task should proceed, replan, or stop.
 
 Evidence must distinguish:
 

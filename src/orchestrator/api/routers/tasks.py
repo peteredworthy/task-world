@@ -233,7 +233,7 @@ async def get_task(
                     )
                     for u in att.token_usage_by_model
                 ],
-                agent_type=att.agent_type.value if att.agent_type else None,
+                agent_runner_type=att.agent_runner_type.value if att.agent_runner_type else None,
                 agent_model=att.agent_model,
                 agent_settings=att.agent_settings,
                 error=att.error,
@@ -954,10 +954,10 @@ async def force_accept_task(
         run = await service.get_run(run_id)
         if (
             run.status == RunStatus.ACTIVE
-            and run.agent_type is not None
+            and run.agent_runner_type is not None
             and not executor.is_running(run_id)
         ):
-            executor.spawn_for_run(run_id, run.agent_type, run.agent_config)
+            executor.spawn_for_run(run_id, run.agent_runner_type, run.agent_runner_config)
 
     return TransitionResponse(
         success=result.success,

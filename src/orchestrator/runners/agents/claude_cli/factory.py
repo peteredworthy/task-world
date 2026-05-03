@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 
 def create_cli_agent(
-    agent_config: dict[str, Any],
+    agent_runner_config: dict[str, Any],
     *,
     run_id: str | None = None,
     phase: str = "building",
@@ -27,17 +27,17 @@ def create_cli_agent(
     global_config: GlobalConfig | None = None,
     **kwargs: Any,
 ) -> CLIAgent:
-    """Create a CLIAgent from agent_config.
+    """Create a CLIAgent from agent_runner_config.
 
     Handles both ``claude`` and ``codex`` commands, selecting the appropriate
     stream parser and default CLI args for each.
 
     Args:
-        agent_config: Configuration dict from the run (command, model, etc.).
+        agent_runner_config: Configuration dict from the run (command, model, etc.).
         run_id: Optional run ID for monitor integration.
         phase: ``"building"`` or ``"verifying"``.
         nudger_config: Pre-built nudger config.  When ``None``, falls back to
-            ``global_config.nudger.to_agent_config()`` if available.
+            ``global_config.nudger.to_agent_runner_config()`` if available.
         runner_monitor: Optional agent monitor instance.
         global_config: Optional global config for nudger defaults.
         **kwargs: Ignored (for forward compatibility).
@@ -45,15 +45,15 @@ def create_cli_agent(
     Returns:
         A configured CLIAgent instance.
     """
-    command = agent_config.get("command", "claude")
-    model = agent_config.get("model")
-    callback_channel = agent_config.get("callback_channel", "rest")
-    poll_interval = agent_config.get("poll_interval", 5.0)
+    command = agent_runner_config.get("command", "claude")
+    model = agent_runner_config.get("model")
+    callback_channel = agent_runner_config.get("callback_channel", "rest")
+    poll_interval = agent_runner_config.get("poll_interval", 5.0)
 
     # Build args based on command
-    args = agent_config.get("args", [])
+    args = agent_runner_config.get("args", [])
     parser = None
-    max_turns = agent_config.get("max_turns")
+    max_turns = agent_runner_config.get("max_turns")
     if command == "claude" and not args:
         args = [
             "-p",
@@ -71,7 +71,7 @@ def create_cli_agent(
 
     # Resolve nudger config
     if nudger_config is None and global_config and global_config.nudger:
-        nudger_config = global_config.nudger.to_agent_config()
+        nudger_config = global_config.nudger.to_agent_runner_config()
 
     return CLIAgent(
         command=command,

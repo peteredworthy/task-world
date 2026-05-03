@@ -34,8 +34,8 @@ async def db_setup() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
 
 def _create_test_run(
     run_id: str = "test-run",
-    agent_type: AgentRunnerType | None = None,
-    agent_config: dict[str, Any] | None = None,
+    agent_runner_type: AgentRunnerType | None = None,
+    agent_runner_config: dict[str, Any] | None = None,
 ) -> Run:
     """Create a minimal test run."""
     routine = RoutineConfig(
@@ -63,8 +63,8 @@ def _create_test_run(
         source_branch="main",
         id_generator=lambda: run_id,  # Use fixed ID for testing
     )
-    run.agent_type = agent_type
-    run.agent_config = agent_config or {}
+    run.agent_runner_type = agent_runner_type
+    run.agent_runner_config = agent_runner_config or {}
     return run
 
 
@@ -83,7 +83,9 @@ async def test_on_agent_died_transitions_run_to_paused(
     async with session_factory() as session:
         repo = RunRepository(session)
         run = _create_test_run(
-            run_id="run1", agent_type=AgentRunnerType.CLI_SUBPROCESS, agent_config={"pid": 12345}
+            run_id="run1",
+            agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+            agent_runner_config={"pid": 12345},
         )
         run.status = RunStatus.ACTIVE
         await repo.save(run)
@@ -92,7 +94,7 @@ async def test_on_agent_died_transitions_run_to_paused(
     # Call on_agent_died
     await monitor.on_agent_died(
         run_id="run1",
-        agent_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
         exit_code=1,
         reason="agent_process_died",
     )
@@ -109,7 +111,7 @@ async def test_on_agent_died_transitions_run_to_paused(
         events = await event_store.get_events_for_run("run1")
         assert len(events) == 2
         assert events[0]["type"] == "agent_died"
-        assert events[0]["payload"]["agent_type"] == "cli_subprocess"
+        assert events[0]["payload"]["agent_runner_type"] == "cli_subprocess"
         assert events[0]["payload"]["exit_code"] == 1
         assert events[0]["payload"]["reason"] == "agent_process_died"
         assert events[1]["type"] == "run_status_changed"
@@ -128,7 +130,7 @@ async def test_on_agent_died_ignores_non_active_run(
     # Create a COMPLETED run
     async with session_factory() as session:
         repo = RunRepository(session)
-        run = _create_test_run(run_id="run2", agent_type=AgentRunnerType.CLI_SUBPROCESS)
+        run = _create_test_run(run_id="run2", agent_runner_type=AgentRunnerType.CLI_SUBPROCESS)
         run.status = RunStatus.COMPLETED
         await repo.save(run)
         await session.commit()
@@ -136,7 +138,7 @@ async def test_on_agent_died_ignores_non_active_run(
     # Call on_agent_died
     await monitor.on_agent_died(
         run_id="run2",
-        agent_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
         exit_code=1,
     )
 
@@ -167,8 +169,8 @@ async def test_check_agent_alive_cli_subprocess_with_valid_pid(
     current_pid = os.getpid()
     run = _create_test_run(
         run_id="run3",
-        agent_type=AgentRunnerType.CLI_SUBPROCESS,
-        agent_config={"pid": current_pid},
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_config={"pid": current_pid},
     )
     run.status = RunStatus.ACTIVE
 
@@ -186,13 +188,13 @@ async def test_check_agent_alive_cli_subprocess_with_dead_pid(
     monitor = AgentRunnerMonitor(session_factory)
 
     # CLI_SUBPROCESS spawns a new process per task so PID is stale between
-    # tasks.  check_agent_alive always returns True for this agent type;
+    # tasks.  check_agent_alive always returns True for this agent runner type;
     # the executor's own try/except handles real subprocess failures.
     fake_pid = 999999
     run = _create_test_run(
         run_id="run4",
-        agent_type=AgentRunnerType.CLI_SUBPROCESS,
-        agent_config={"pid": fake_pid},
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_config={"pid": fake_pid},
     )
     run.status = RunStatus.ACTIVE
 
@@ -215,8 +217,8 @@ async def test_check_agent_alive_cli_subprocess_without_pid(
 
     run = _create_test_run(
         run_id="run5",
-        agent_type=AgentRunnerType.CLI_SUBPROCESS,
-        agent_config={},  # No PID — not yet spawned
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_config={},  # No PID — not yet spawned
     )
     run.status = RunStatus.ACTIVE
 
@@ -239,8 +241,8 @@ async def test_check_agent_alive_openhands_local_returns_true(
 
     run = _create_test_run(
         run_id="run6",
-        agent_type=AgentRunnerType.OPENHANDS_LOCAL,
-        agent_config={},
+        agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
+        agent_runner_config={},
     )
     run.status = RunStatus.ACTIVE
 
@@ -265,8 +267,8 @@ async def test_check_agent_alive_user_managed_within_timeout(
 
     run = _create_test_run(
         run_id="run7",
-        agent_type=AgentRunnerType.USER_MANAGED,
-        agent_config={"last_activity_at": last_activity.isoformat()},
+        agent_runner_type=AgentRunnerType.USER_MANAGED,
+        agent_runner_config={"last_activity_at": last_activity.isoformat()},
     )
     run.status = RunStatus.ACTIVE
 
@@ -291,8 +293,8 @@ async def test_check_agent_alive_user_managed_beyond_timeout(
 
     run = _create_test_run(
         run_id="run8",
-        agent_type=AgentRunnerType.USER_MANAGED,
-        agent_config={"last_activity_at": last_activity.isoformat()},
+        agent_runner_type=AgentRunnerType.USER_MANAGED,
+        agent_runner_config={"last_activity_at": last_activity.isoformat()},
     )
     run.status = RunStatus.ACTIVE
 
@@ -310,8 +312,8 @@ async def test_check_agent_alive_user_managed_without_last_activity(
 
     run = _create_test_run(
         run_id="run9",
-        agent_type=AgentRunnerType.USER_MANAGED,
-        agent_config={},  # No last_activity_at
+        agent_runner_type=AgentRunnerType.USER_MANAGED,
+        agent_runner_config={},  # No last_activity_at
     )
     run.status = RunStatus.ACTIVE
 
@@ -320,14 +322,14 @@ async def test_check_agent_alive_user_managed_without_last_activity(
 
 
 @pytest.mark.asyncio
-async def test_check_agent_alive_with_no_agent_type(
+async def test_check_agent_alive_with_no_agent_runner_type(
     db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Run without agent_type should be considered dead."""
+    """Run without agent_runner_type should be considered dead."""
     session_factory = db_setup
     monitor = AgentRunnerMonitor(session_factory)
 
-    run = _create_test_run(run_id="run10", agent_type=None)
+    run = _create_test_run(run_id="run10", agent_runner_type=None)
     run.status = RunStatus.DRAFT
 
     is_alive = await monitor.check_agent_alive(run)
@@ -346,8 +348,8 @@ async def test_check_agent_alive_user_managed_with_malformed_timestamp(
 
     run = _create_test_run(
         run_id="run11",
-        agent_type=AgentRunnerType.USER_MANAGED,
-        agent_config={"last_activity_at": "not-a-valid-timestamp"},
+        agent_runner_type=AgentRunnerType.USER_MANAGED,
+        agent_runner_config={"last_activity_at": "not-a-valid-timestamp"},
     )
     run.status = RunStatus.ACTIVE
 
@@ -372,8 +374,8 @@ async def test_on_agent_died_releases_building_task_lock_codex_server(
         repo = RunRepository(session)
         run = _create_test_run(
             run_id="run-lock-cs",
-            agent_type=AgentRunnerType.CODEX_SERVER,
-            agent_config={"pid": 999999},
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_config={"pid": 999999},
         )
         run.status = RunStatus.ACTIVE
         # Simulate the task being in BUILDING state (agent started it)
@@ -391,7 +393,7 @@ async def test_on_agent_died_releases_building_task_lock_codex_server(
     # Agent dies → monitor should release the lock
     await monitor.on_agent_died(
         run_id="run-lock-cs",
-        agent_type=AgentRunnerType.CODEX_SERVER,
+        agent_runner_type=AgentRunnerType.CODEX_SERVER,
         reason="local_codex_process_not_alive",
     )
 
@@ -412,8 +414,8 @@ async def test_on_agent_died_without_lock_manager_does_not_error(
         repo = RunRepository(session)
         run = _create_test_run(
             run_id="run-nolock",
-            agent_type=AgentRunnerType.CODEX_SERVER,
-            agent_config={"pid": 999999},
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_config={"pid": 999999},
         )
         run.status = RunStatus.ACTIVE
         task_state = run.steps[0].tasks[0]
@@ -424,7 +426,7 @@ async def test_on_agent_died_without_lock_manager_does_not_error(
     # Should not raise even without a lock_manager
     await monitor.on_agent_died(
         run_id="run-nolock",
-        agent_type=AgentRunnerType.CODEX_SERVER,
+        agent_runner_type=AgentRunnerType.CODEX_SERVER,
         reason="local_codex_process_not_alive",
     )
 
@@ -448,8 +450,8 @@ async def test_on_agent_died_does_not_release_completed_task_lock(
         repo = RunRepository(session)
         run = _create_test_run(
             run_id="run-completed",
-            agent_type=AgentRunnerType.CODEX_SERVER,
-            agent_config={"pid": 999999},
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_config={"pid": 999999},
         )
         run.status = RunStatus.ACTIVE
         # Task is already COMPLETED — no lock should be held or released
@@ -466,7 +468,7 @@ async def test_on_agent_died_does_not_release_completed_task_lock(
 
     await monitor.on_agent_died(
         run_id="run-completed",
-        agent_type=AgentRunnerType.CODEX_SERVER,
+        agent_runner_type=AgentRunnerType.CODEX_SERVER,
         reason="local_codex_process_not_alive",
     )
 

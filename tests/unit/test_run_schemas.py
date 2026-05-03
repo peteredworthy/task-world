@@ -5,8 +5,8 @@ from pydantic import ValidationError
 
 from orchestrator.api import (
     CreateRunRequest,
-    get_agent_display_name,
-    get_agent_icon,
+    get_agent_runner_display_name,
+    get_agent_runner_icon,
 )
 from orchestrator.config import AgentRunnerType
 
@@ -70,72 +70,73 @@ def test_create_run_request_with_neither_raises() -> None:
 
 
 def test_create_run_request_preserves_config() -> None:
-    """Config, agent_type, and agent_config pass through correctly."""
+    """Config, agent_runner_type, and agent_runner_config pass through correctly."""
     req = CreateRunRequest(
         routine_id="my-routine",
         repo_name="proj-1",
         branch="main",
         config={"key": "value"},
-        agent_type="cli_subprocess",
-        agent_config={"model": "test"},
+        agent_runner_type="cli_subprocess",
+        agent_runner_config={"model": "test"},
     )
     assert req.config == {"key": "value"}
-    assert req.agent_type == "cli_subprocess"
-    assert req.agent_config == {"model": "test"}
+    assert req.agent_runner_type == "cli_subprocess"
+    assert req.agent_runner_config == {"model": "test"}
 
 
-def test_get_agent_display_name_openhands_local() -> None:
+def test_get_agent_runner_display_name_openhands_local() -> None:
     """OpenHands local agent returns correct display name."""
-    assert get_agent_display_name(AgentRunnerType.OPENHANDS_LOCAL) == "OpenHands"
+    assert get_agent_runner_display_name(AgentRunnerType.OPENHANDS_LOCAL) == "OpenHands"
 
 
-def test_get_agent_display_name_openhands_docker() -> None:
+def test_get_agent_runner_display_name_openhands_docker() -> None:
     """OpenHands docker agent returns correct display name."""
-    assert get_agent_display_name(AgentRunnerType.OPENHANDS_DOCKER) == "OpenHands Docker"
+    assert get_agent_runner_display_name(AgentRunnerType.OPENHANDS_DOCKER) == "OpenHands Docker"
 
 
-def test_get_agent_display_name_cli_subprocess() -> None:
+def test_get_agent_runner_display_name_cli_subprocess() -> None:
     """CLI subprocess agent returns correct display name."""
-    assert get_agent_display_name(AgentRunnerType.CLI_SUBPROCESS) == "Claude CLI"
+    assert get_agent_runner_display_name(AgentRunnerType.CLI_SUBPROCESS) == "Claude CLI"
 
 
-def test_get_agent_display_name_cli_subprocess_uses_command_when_present() -> None:
+def test_get_agent_runner_display_name_cli_subprocess_uses_command_when_present() -> None:
     """CLI subprocess display uses selected command when available."""
     assert (
-        get_agent_display_name(AgentRunnerType.CLI_SUBPROCESS, {"command": "codex"}) == "codex CLI"
+        get_agent_runner_display_name(AgentRunnerType.CLI_SUBPROCESS, {"command": "codex"})
+        == "codex CLI"
     )
 
 
-def test_get_agent_display_name_user_managed() -> None:
-    """User managed agent returns correct display name."""
-    assert get_agent_display_name(AgentRunnerType.USER_MANAGED) == "External Agent"
+def test_get_agent_runner_display_name_user_managed() -> None:
+    """User-managed agent runner returns correct display name."""
+    assert get_agent_runner_display_name(AgentRunnerType.USER_MANAGED) == "User Managed"
 
 
-def test_get_agent_display_name_none() -> None:
-    """None agent type returns 'No Agent'."""
-    assert get_agent_display_name(None) == "No Agent"
+def test_get_agent_runner_display_name_none() -> None:
+    """None agent runner type returns 'No Agent Runner'."""
+    assert get_agent_runner_display_name(None) == "No Agent Runner"
 
 
-def test_get_agent_icon_openhands_local() -> None:
+def test_get_agent_runner_icon_openhands_local() -> None:
     """OpenHands local agent returns correct icon."""
-    assert get_agent_icon(AgentRunnerType.OPENHANDS_LOCAL) == "openhands"
+    assert get_agent_runner_icon(AgentRunnerType.OPENHANDS_LOCAL) == "openhands"
 
 
-def test_get_agent_icon_openhands_docker() -> None:
+def test_get_agent_runner_icon_openhands_docker() -> None:
     """OpenHands docker agent returns correct icon."""
-    assert get_agent_icon(AgentRunnerType.OPENHANDS_DOCKER) == "docker"
+    assert get_agent_runner_icon(AgentRunnerType.OPENHANDS_DOCKER) == "docker"
 
 
-def test_get_agent_icon_cli_subprocess() -> None:
+def test_get_agent_runner_icon_cli_subprocess() -> None:
     """CLI subprocess agent returns correct icon."""
-    assert get_agent_icon(AgentRunnerType.CLI_SUBPROCESS) == "cli"
+    assert get_agent_runner_icon(AgentRunnerType.CLI_SUBPROCESS) == "cli"
 
 
-def test_get_agent_icon_user_managed() -> None:
+def test_get_agent_runner_icon_user_managed() -> None:
     """User managed agent returns correct icon."""
-    assert get_agent_icon(AgentRunnerType.USER_MANAGED) == "external"
+    assert get_agent_runner_icon(AgentRunnerType.USER_MANAGED) == "external"
 
 
-def test_get_agent_icon_none() -> None:
-    """None agent type returns 'none' icon."""
-    assert get_agent_icon(None) == "none"
+def test_get_agent_runner_icon_none() -> None:
+    """None agent runner type returns 'none' icon."""
+    assert get_agent_runner_icon(None) == "none"

@@ -105,7 +105,7 @@ class TestErrorIntegration:
             OrchestratorError(
                 ErrorCode.AGENT_ERROR,
                 "Agent crashed",
-                {"agent_type": "cli"},
+                {"agent_runner_type": "cli"},
             ),
             OrchestratorError(
                 ErrorCode.INVALID_CONFIG,

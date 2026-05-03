@@ -86,7 +86,7 @@ class AgentRunnerMonitor:
     async def on_agent_died(
         self,
         run_id: str,
-        agent_type: AgentRunnerType,
+        agent_runner_type: AgentRunnerType,
         exit_code: int | None = None,
         reason: str = "agent_process_died",
         pause_run: bool = True,
@@ -107,7 +107,7 @@ class AgentRunnerMonitor:
 
         Args:
             run_id: The run whose agent died.
-            agent_type: The type of agent that died.
+            agent_runner_type: The type of agent that died.
             exit_code: Optional exit code if available.
             reason: Reason string (e.g., "agent_process_died", "agent_not_running_on_startup").
             pause_run: Whether to transition the run to PAUSED (default True).
@@ -146,7 +146,7 @@ class AgentRunnerMonitor:
                                 logger.debug(
                                     f"Run {run_id}: released orphaned lock on task "
                                     f"{task.id} (status={task.status.value}) after "
-                                    f"agent {agent_type.value} death"
+                                    f"agent {agent_runner_type.value} death"
                                 )
 
             # Log the agent death event
@@ -154,7 +154,7 @@ class AgentRunnerMonitor:
                 timestamp=datetime.now(timezone.utc),
                 run_id=run_id,
                 event_type="agent_died",
-                agent_type=agent_type,
+                agent_runner_type=agent_runner_type,
                 exit_code=exit_code,
                 reason=reason,
                 task_id=task_id,
@@ -186,21 +186,21 @@ class AgentRunnerMonitor:
 
         if pause_run:
             logger.warning(
-                f"Run {run_id}: agent {agent_type.value} died (exit_code={exit_code}), "
+                f"Run {run_id}: agent {agent_runner_type.value} died (exit_code={exit_code}), "
                 f"transitioned to PAUSED. Reason: {reason}"
             )
         else:
             logger.warning(
-                f"Run {run_id}: agent {agent_type.value} died (exit_code={exit_code}), "
+                f"Run {run_id}: agent {agent_runner_type.value} died (exit_code={exit_code}), "
                 f"logged event only (pause_run=False). Reason: {reason}"
             )
 
     async def check_agent_alive(self, run: Run) -> bool:
         """Check if a run's agent is still active.
 
-        Different checks are performed based on the agent type:
-        - CLI_SUBPROCESS: Check if PID from agent_config is alive
-        - OPENHANDS_DOCKER: Check if container from agent_config is running
+        Different checks are performed based on the agent runner type:
+        - CLI_SUBPROCESS: Check if PID from agent_runner_config is alive
+        - OPENHANDS_DOCKER: Check if container from agent_runner_config is running
         - OPENHANDS_LOCAL: Always returns False (in-process agent gone after restart)
         - USER_MANAGED: Check if last_activity_at is within timeout
 
@@ -210,10 +210,10 @@ class AgentRunnerMonitor:
         Returns:
             True if the agent is still alive/active, False otherwise.
         """
-        if run.agent_type is None:
+        if run.agent_runner_type is None:
             return False
 
-        if run.agent_type == AgentRunnerType.CLI_SUBPROCESS:
+        if run.agent_runner_type == AgentRunnerType.CLI_SUBPROCESS:
             # CLIAgent spawns a NEW subprocess per task (each execute() call
             # creates a fresh `claude` process).  Between tasks the old PID is
             # dead while the executor loop is still running.  PID-based health
@@ -226,14 +226,14 @@ class AgentRunnerMonitor:
             # recover_active_runs_on_startup handles orphaned runs separately.
             return True
 
-        elif run.agent_type == AgentRunnerType.OPENHANDS_DOCKER:
+        elif run.agent_runner_type == AgentRunnerType.OPENHANDS_DOCKER:
             # Check if container from run metadata is still running
-            container_id = run.agent_config.get("container_id")
+            container_id = run.agent_runner_config.get("container_id")
             if container_id is None:
                 return False
             return await _is_container_running(container_id)
 
-        elif run.agent_type == AgentRunnerType.OPENHANDS_LOCAL:
+        elif run.agent_runner_type == AgentRunnerType.OPENHANDS_LOCAL:
             # In-process agent — runs via asyncio.to_thread inside the
             # executor task.  The executor's own try/except handles failures,
             # so the health monitor should not interfere while it's running.
@@ -241,7 +241,7 @@ class AgentRunnerMonitor:
             # orphaned runs separately.
             return True
 
-        elif run.agent_type == AgentRunnerType.CODEX_SERVER:
+        elif run.agent_runner_type == AgentRunnerType.CODEX_SERVER:
             # CodexServerAgent spawns a NEW subprocess per task (each execute()
             # call creates a fresh codex app-server process).  Between tasks the
             # old PID is dead while the executor loop is still running.  PID-based
@@ -254,9 +254,9 @@ class AgentRunnerMonitor:
             # recover_active_runs_on_startup handles orphaned runs separately.
             return True
 
-        elif run.agent_type == AgentRunnerType.USER_MANAGED:
+        elif run.agent_runner_type == AgentRunnerType.USER_MANAGED:
             # Check if last activity was within timeout
-            last_activity_str = run.agent_config.get("last_activity_at")
+            last_activity_str = run.agent_runner_config.get("last_activity_at")
             if last_activity_str is None:
                 return False
 
@@ -279,11 +279,11 @@ class AgentRunnerMonitor:
             now = datetime.now(timezone.utc)
             return now - last_activity < timeout
 
-        elif run.agent_type == AgentRunnerType.CLAUDE_SDK:
+        elif run.agent_runner_type == AgentRunnerType.CLAUDE_SDK:
             # In-process agent — same rationale as OPENHANDS_LOCAL
             return True
 
-        # Unknown agent type
+        # Unknown agent runner type
         return False
 
     async def recover_active_runs_on_startup(self) -> list[str]:
@@ -312,7 +312,7 @@ class AgentRunnerMonitor:
             repo = RunRepository(session)
             active_runs = await repo.list_by_status(RunStatus.ACTIVE)
 
-        # In-process agent types cannot survive a server restart, so they
+        # In-process agent runner types cannot survive a server restart, so they
         # are always considered dead on startup regardless of check_agent_alive
         # (which returns True for them during normal operation to avoid the
         # periodic health monitor killing them prematurely).
@@ -324,7 +324,7 @@ class AgentRunnerMonitor:
         }
 
         for run in active_runs:
-            if run.agent_type in _IN_PROCESS_AGENT_TYPES:
+            if run.agent_runner_type in _IN_PROCESS_AGENT_TYPES:
                 agent_alive = False
             else:
                 agent_alive = await self.check_agent_alive(run)
@@ -333,7 +333,7 @@ class AgentRunnerMonitor:
                 # on_agent_died creates its own session and commits
                 await self.on_agent_died(
                     run_id=run.id,
-                    agent_type=run.agent_type or AgentRunnerType.CLI_SUBPROCESS,
+                    agent_runner_type=run.agent_runner_type or AgentRunnerType.CLI_SUBPROCESS,
                     reason="agent_not_running_on_startup",
                 )
                 paused_runs.append(run.id)

@@ -12,7 +12,6 @@ from orchestrator.config.enums import (
     Complexity,
     GateType,
     ModelProfile,
-    PhaseType,
     Priority,
     StepType,
 )
@@ -187,17 +186,6 @@ class RetryConfig(BaseModel):
     max_attempts: int = 3
 
 
-class PhaseConfig(BaseModel):
-    """Configuration for a task phase."""
-
-    type: PhaseType
-    prompt: str | None = None
-    profile: ModelProfile | None = None
-    condition: str | None = None
-    cmd: str | None = None
-    retry_target: int | None = None
-
-
 class GateConfig(BaseModel):
     """Gate configuration for a step or task."""
 
@@ -247,7 +235,6 @@ class TaskConfig(BaseModel):
     task_context: str = ""
     complexity: Complexity = Complexity.STANDARD
     profile: ModelProfile | None = None
-    planner_agent: str | None = None
     builder_agent: str | None = None
     verifier_agent: str | None = None
     model_overrides: dict[str, dict[str, str]] | None = None
@@ -259,11 +246,10 @@ class TaskConfig(BaseModel):
     context_from: list[ContextSource] = Field(default_factory=lambda: [])
     fan_out: FanOutConfig | None = None
     script: str | None = None
-    phases: list[PhaseConfig] | None = None
 
     @model_validator(mode="after")
     def _validate_task_config(self) -> "TaskConfig":
-        """Validate task configuration: mode exclusivity, phases constraints, and verification."""
+        """Validate task configuration: mode exclusivity and verification."""
         # Validate fan_out, script, and task_context are mutually exclusive.
         if self.fan_out is not None:
             if self.task_context != "":
@@ -279,23 +265,6 @@ class TaskConfig(BaseModel):
                 raise ValueError(
                     f"Task '{self.id}': 'script' and 'task_context' are mutually exclusive."
                 )
-
-        # Validate phases constraints.
-        if self.phases is not None:
-            if self.fan_out is not None:
-                raise ValueError(
-                    f"Task '{self.id}': 'phases' and 'fan_out' are mutually exclusive."
-                )
-            if self.script is not None:
-                raise ValueError(f"Task '{self.id}': 'phases' and 'script' are mutually exclusive.")
-            # Validate retry_target < phase_index for each phase.
-            for phase_index, phase in enumerate(self.phases):
-                if phase.retry_target is not None:
-                    if phase.retry_target >= phase_index:
-                        raise ValueError(
-                            f"Task '{self.id}': phase {phase_index} has retry_target={phase.retry_target}, "
-                            f"but retry_target must be less than the phase index."
-                        )
 
         # Auto-generate auto_verify items for required context_from sources.
         # This catches missing input files deterministically at auto-verify time
@@ -417,7 +386,6 @@ class StepConfig(BaseModel):
     file: str | None = None
     title: str | None = None
     step_context: str | None = None
-    planner_agent: str | None = None
     builder_agent: str | None = None
     verifier_agent: str | None = None
     gate: GateConfig | None = None
@@ -522,7 +490,6 @@ class RoutineConfig(BaseModel):
     description: str | None = None
     inputs: list[RoutineInputConfig] = Field(default_factory=lambda: [])
     steps: list[StepConfig]
-    planner_agent: str | None = None
     builder_agent: str | None = None
     verifier_agent: str | None = None
     env_files: list[EnvFileConfig] = Field(default_factory=lambda: [])

@@ -27,7 +27,7 @@ def _make_context(
 
 def test_cli_agent_info() -> None:
     agent = CLIAgent(command="claude")
-    assert agent.info.agent_type == AgentRunnerType.CLI_SUBPROCESS
+    assert agent.info.agent_runner_type == AgentRunnerType.CLI_SUBPROCESS
     assert agent.info.name == "claude"
 
 
@@ -256,6 +256,7 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
         "orchestrator_wait_for_run",
         "orchestrator_get_run_evidence",
         "orchestrator_get_parent_oversight",
+        "orchestrator_update_parent_oversight",
         "orchestrator_refresh_parent_oversight",
     }
     agent_tools = registered_names - excluded_tools

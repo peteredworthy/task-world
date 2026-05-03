@@ -28,7 +28,7 @@ export interface AgentRunnerQuota {
 }
 
 export interface AgentRunnerOption {
-  agent_type: AgentRunnerType;
+  agent_runner_type: AgentRunnerType;
   name: string;
   title: string;
   description: string;

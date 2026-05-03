@@ -1,5 +1,5 @@
 {
-  "schema_version": "phase4.evidence.v1",
+  "schema_version": "run.evidence.v1",
   "slice_id": "super-parent-smoke-v1",
   "routine_id": "super-parent",
   "assumption_tested": "Parent oversight pipeline can be verified from committed assets in the repository.",

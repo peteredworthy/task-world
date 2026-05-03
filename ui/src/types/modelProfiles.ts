@@ -7,7 +7,7 @@ export interface ModelProfileInfo {
   description: string;
 }
 
-export interface RunnerProfileDefaults {
-  runner_type: string;
-  profiles: Partial<Record<ModelProfile, string>>;
+export interface AgentRunnerModelDefaults {
+  agent_runner_type: string;
+  model_profile_defaults: Partial<Record<ModelProfile, string>>;
 }

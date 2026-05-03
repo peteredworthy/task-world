@@ -63,8 +63,8 @@ class _TestExecutor(AgentRunnerExecutor):
 
     def _create_agent(
         self,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
         run_id: str | None = None,
         phase: str = "building",
     ) -> _GateBlockedAgent:  # noqa: ARG002,E501
@@ -160,8 +160,8 @@ async def test_execute_task_gate_blocked_does_not_call_on_agent_died(tmp_path: P
         run=run,
         task_state=task_state,
         service=service,
-        agent_type=AgentRunnerType.CLI_SUBPROCESS,
-        agent_config={},
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_config={},
     )
 
     assert monitor.calls == 0

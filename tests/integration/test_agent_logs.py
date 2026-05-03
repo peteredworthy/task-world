@@ -104,7 +104,7 @@ def _make_run_with_attempt(
                                 id="att-1",
                                 attempt_num=1,
                                 started_at=now,
-                                agent_type=AgentRunnerType.CLI_SUBPROCESS,
+                                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
                                 agent_output=agent_output,
                                 error=error,
                             )

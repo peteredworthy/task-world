@@ -10,14 +10,14 @@ from orchestrator.runners import ToolDetector
 
 @click.group()
 def agents() -> None:
-    """Manage agents."""
+    """Manage agent runners."""
     pass
 
 
 @agents.command("detect")
 @click.pass_context
 def detect_agents(ctx: click.Context) -> None:
-    """Detect available agents."""
+    """Detect available agent runners."""
 
     async def _detect() -> None:
         as_json = ctx.obj["json"]
@@ -29,7 +29,7 @@ def detect_agents(ctx: click.Context) -> None:
             result = [
                 {
                     "name": option.name,
-                    "agent_type": option.agent_type,
+                    "agent_runner_type": option.agent_runner_type,
                     "available": option.available,
                     "detail": option.detail,
                     "install_hint": option.install_hint,
@@ -38,11 +38,11 @@ def detect_agents(ctx: click.Context) -> None:
             ]
             click.echo(json.dumps(result, indent=2))
         else:
-            click.echo("Available agents:")
+            click.echo("Available agent runners:")
             for option in agent_options:
                 status = "✓" if option.available else "✗"
                 click.echo(f"\n  {status} {option.name}")
-                click.echo(f"    Type: {option.agent_type}")
+                click.echo(f"    Runner type: {option.agent_runner_type}")
                 click.echo(f"    Status: {option.detail}")
                 if not option.available and option.install_hint:
                     click.echo(f"    Install: {option.install_hint}")
@@ -53,5 +53,5 @@ def detect_agents(ctx: click.Context) -> None:
 @agents.command("list")
 @click.pass_context
 def list_agents(ctx: click.Context) -> None:
-    """List available agent types (alias for detect)."""
+    """List available agent runner types (alias for detect)."""
     ctx.invoke(detect_agents)

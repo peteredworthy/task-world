@@ -5,7 +5,7 @@ Add optional agent assignment fields to the routine schema at routine, step, and
 ## Intent Verification
 **Original Intent**: Enable routines to specify which agent (prompt+profile) to use at each level, with cascading defaults (see `docs/agent-runners2/intent.md` -- "Agents" and routine schema sections).
 **Functionality to Produce**:
-- `RoutineConfig`, `StepConfig`, `TaskConfig` extended with `planner_agent`, `builder_agent`, `verifier_agent` optional fields
+- `RoutineConfig`, `StepConfig`, `TaskConfig` extended with `builder_agent`, `verifier_agent` optional fields
 - `resolve_agent()` function implementing cascading resolution: task -> step -> routine -> system default
 - Prompt generation prepends resolved agent's system prompt to task prompt
 - Backward compatible: routines without agent fields use defaults
@@ -20,17 +20,16 @@ Add optional agent assignment fields to the routine schema at routine, step, and
 
 ## Task 1: Extend Config Models with Agent Fields
 
-**Description**: Add optional `planner_agent`, `builder_agent`, `verifier_agent` string fields to `RoutineConfig`, `StepConfig`, and `TaskConfig`.
+**Description**: Add optional `builder_agent`, `verifier_agent` string fields to `RoutineConfig`, `StepConfig`, and `TaskConfig`.
 
 **Implementation Plan (Do These Steps)**
 - [ ] Add to `RoutineConfig` in `src/orchestrator/config/models.py`:
   ```python
-  planner_agent: str | None = None
   builder_agent: str | None = None
   verifier_agent: str | None = None
   ```
-- [ ] Add the same 3 optional fields to `StepConfig`
-- [ ] Add the same 3 optional fields to `TaskConfig`
+- [ ] Add the same 2 optional fields to `StepConfig`
+- [ ] Add the same 2 optional fields to `TaskConfig`
 - [ ] Verify existing routine YAML files parse without error (new fields default to None)
 
 **Dependencies**
@@ -92,7 +91,7 @@ Add optional agent assignment fields to the routine schema at routine, step, and
 **Constraints**
 - Resolution function must be pure (no DB access) -- DB lookup is a separate step
 - Warn on missing agent, don't error -- fall back to system default
-- Planner resolution is supported but has no engine integration
+- Planner is a standalone agent config; it is not a routine role.
 
 **Functionality (Expected Outcomes)**
 - [ ] Task-level override takes precedence over step and routine

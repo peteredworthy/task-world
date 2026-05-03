@@ -517,7 +517,7 @@ class DockerOpenHandsAgent:
     @property
     def info(self) -> AgentRunnerInfo:
         return AgentRunnerInfo(
-            agent_type=AgentRunnerType.OPENHANDS_DOCKER,
+            agent_runner_type=AgentRunnerType.OPENHANDS_DOCKER,
             name="OpenHands (Docker)",
             version=None,
         )

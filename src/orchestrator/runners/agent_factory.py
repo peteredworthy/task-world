@@ -29,7 +29,7 @@ class AgentFactory(Protocol):
 
     def __call__(
         self,
-        agent_config: dict[str, Any],
+        agent_runner_config: dict[str, Any],
         **kwargs: Any,
     ) -> Any: ...
 
@@ -38,27 +38,27 @@ class AgentFactory(Protocol):
 _REGISTRY: dict[AgentRunnerType, AgentFactory] = {}
 
 
-def register(agent_type: AgentRunnerType, factory: AgentFactory) -> None:
+def register(agent_runner_type: AgentRunnerType, factory: AgentFactory) -> None:
     """Register an agent factory for a given type."""
-    _REGISTRY[agent_type] = factory
-    logger.debug("Registered agent factory for %s", agent_type.value)
+    _REGISTRY[agent_runner_type] = factory
+    logger.debug("Registered agent factory for %s", agent_runner_type.value)
 
 
 def create(
-    agent_type: AgentRunnerType,
-    agent_config: dict[str, Any],
+    agent_runner_type: AgentRunnerType,
+    agent_runner_config: dict[str, Any],
     run_id: str | None = None,
     phase: str = "building",
     **kwargs: Any,
 ) -> AgentRunner:
     """Create an agent instance via the registry."""
-    factory = _REGISTRY.get(agent_type)
+    factory = _REGISTRY.get(agent_runner_type)
     if factory is None:
         raise AgentNotAvailableError(
-            agent_type.value if agent_type else "none",
-            f"No registered factory for agent type: {agent_type}",
+            agent_runner_type.value if agent_runner_type else "none",
+            f"No registered factory for agent runner type: {agent_runner_type}",
         )
-    return factory(agent_config, run_id=run_id, phase=phase, **kwargs)
+    return factory(agent_runner_config, run_id=run_id, phase=phase, **kwargs)
 
 
 def get_registry() -> dict[AgentRunnerType, AgentFactory]:

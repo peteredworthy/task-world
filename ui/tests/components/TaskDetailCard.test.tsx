@@ -262,7 +262,7 @@ describe('TaskDetailCard', () => {
           payload: {
             old_status: 'pending',
             new_status: 'building',
-            agent_type: 'openhands_local',
+            agent_runner_type: 'openhands_local',
           },
         },
       ];

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from orchestrator.config.models import EnvFileSpec
 from orchestrator.config.enums import (
@@ -97,7 +97,10 @@ class SubAgentLog(BaseModel):
     """
 
     agent_id: str = ""
-    agent_type: str = ""  # e.g. "Explore"
+    subagent_type: str = Field(
+        default="",
+        validation_alias=AliasChoices("subagent_type", "agent_runner_type"),
+    )  # e.g. "Explore"
     description: str = ""
     model: str | None = None
 
@@ -230,7 +233,7 @@ class Attempt(BaseModel):
     auto_verify_results: list[dict[str, Any]] = Field(default_factory=lambda: [])
 
     # Agent snapshot - record what agent was used for this attempt
-    agent_type: AgentRunnerType | None = None
+    agent_runner_type: AgentRunnerType | None = None
     agent_model: str | None = None  # e.g. "claude-sonnet-4-5-20250514"
     agent_settings: dict[str, Any] = Field(default_factory=dict)
 
@@ -346,8 +349,8 @@ class Run(BaseModel):
     oversight_state: dict[str, Any] = Field(default_factory=lambda: {})
 
     # Agent configuration
-    agent_type: AgentRunnerType | None = None
-    agent_config: dict[str, Any] = Field(default_factory=lambda: {})
+    agent_runner_type: AgentRunnerType | None = None
+    agent_runner_config: dict[str, Any] = Field(default_factory=lambda: {})
     verifier_model: str | None = None  # Pinned at run creation; verifier always uses this model
 
     # Worktree
@@ -375,7 +378,7 @@ class Run(BaseModel):
     updated_at: datetime = Field(default_factory=_utc_now)
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    agent_started_at: datetime | None = None
+    agent_runner_started_at: datetime | None = None
 
     # Aggregate metrics
     total_tokens_read: int = 0

@@ -26,7 +26,7 @@ _USER_MANAGED_CONFIG: list[AgentConfigField] = [
 def detect() -> AgentOption:
     """User Managed is always available for external agent connections."""
     return AgentOption(
-        agent_type=AgentRunnerType.USER_MANAGED,
+        agent_runner_type=AgentRunnerType.USER_MANAGED,
         name="User Managed",
         title="User Managed Agent",
         description="Passive agent that waits for external actors (humans or third-party tools) to complete work via REST API or MCP.",

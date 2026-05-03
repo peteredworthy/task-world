@@ -1,10 +1,10 @@
 import type { RunResponse } from '../types/runs';
 
-export function getPauseReasonMessage(run: Pick<RunResponse, 'pause_reason' | 'agent_type'>): string {
+export function getPauseReasonMessage(run: Pick<RunResponse, 'pause_reason' | 'agent_runner_type'>): string {
   if (!run.pause_reason) return '';
 
   if (run.pause_reason === 'no_executor_running') {
-    if (run.agent_type === 'user_managed') {
+    if (run.agent_runner_type === 'user_managed') {
       return 'Paused — no managed executor is attached. Connect an external agent or resume with a managed runner.';
     }
     return 'Paused — no executor is running. Resume the run to start a managed runner.';

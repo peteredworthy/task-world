@@ -801,7 +801,7 @@ function CollapsedRow(props: RunCardProps) {
               <span className="text-border-hover">|</span>
               <span className="flex items-center gap-1.5">
                 <AgentRunnerIcon icon={run.agent_icon} className="h-3.5 w-3.5" />
-                <span className="truncate">{run.agent_type_display}</span>
+                <span className="truncate">{run.agent_runner_type_display}</span>
               </span>
             </>
           )}
@@ -934,9 +934,9 @@ function ExpandedView(props: RunCardProps) {
             title={`Source Branch: ${sourceBranch}`}
           />
           <MetaPill
-            label="Agent"
-            value={run.agent_type_display}
-            title={`Agent: ${run.agent_type_display}`}
+            label="Agent Runner"
+            value={run.agent_runner_type_display}
+            title={`Agent Runner: ${run.agent_runner_type_display}`}
             icon={
               run.agent_icon !== 'none' ? <AgentRunnerIcon icon={run.agent_icon} className="h-4 w-4 shrink-0 text-text-muted" /> : undefined
             }

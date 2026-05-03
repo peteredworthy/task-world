@@ -225,8 +225,8 @@ export function useResumeRun() {
     }) => {
       const hasPayload = agentType || agentConfig || resumeStrategy;
       return api.resumeRun(runId, hasPayload ? {
-        agent_type: agentType,
-        agent_config: agentConfig,
+        agent_runner_type: agentType,
+        agent_runner_config: agentConfig,
         resume_strategy: resumeStrategy,
       } : undefined);
     },

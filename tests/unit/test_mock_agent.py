@@ -26,7 +26,7 @@ async def test_mock_agent_satisfies_protocol() -> None:
 
 async def test_mock_agent_info() -> None:
     agent = MockAgent()
-    assert agent.info.agent_type == AgentRunnerType.CLI_SUBPROCESS
+    assert agent.info.agent_runner_type == AgentRunnerType.CLI_SUBPROCESS
     assert agent.info.name == "mock"
 
 

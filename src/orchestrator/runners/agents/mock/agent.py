@@ -58,7 +58,7 @@ class MockAgent:
     @property
     def info(self) -> AgentRunnerInfo:
         return AgentRunnerInfo(
-            agent_type=AgentRunnerType.CLI_SUBPROCESS,
+            agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
             name="mock",
             version="1.0.0",
         )

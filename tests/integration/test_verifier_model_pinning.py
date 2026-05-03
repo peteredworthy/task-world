@@ -1,7 +1,7 @@
 """Integration tests for verifier model pinning via the HTTP API.
 
 Verifies that:
-- Run creation stores verifier_model from agent_config
+- Run creation stores verifier_model from agent_runner_config
 - verifier_model is persisted and survives a round-trip through the DB
 """
 
@@ -36,32 +36,32 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
 async def _create_run(
     client: AsyncClient,
-    agent_config: dict[str, Any] | None = None,
+    agent_runner_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create a run with optional agent_config and return the response body."""
+    """Create a run with optional agent_runner_config and return the response body."""
     body: dict[str, Any] = {
         "routine_id": "simple-routine",
         "repo_name": "proj-1",
         "branch": "main",
-        "agent_type": "claude_sdk",
+        "agent_runner_type": "claude_sdk",
     }
-    if agent_config is not None:
-        body["agent_config"] = agent_config
+    if agent_runner_config is not None:
+        body["agent_runner_config"] = agent_runner_config
     resp = await client.post("/api/runs", json=body)
     assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
     return resp.json()
 
 
 async def test_run_creation_stores_verifier_model(client: AsyncClient) -> None:
-    """Run created with agent_config model should store it as verifier_model."""
-    data = await _create_run(client, agent_config={"model": "claude-opus-4-5"})
+    """Run created with agent_runner_config model should store it as verifier_model."""
+    data = await _create_run(client, agent_runner_config={"model": "claude-opus-4-5"})
     assert data["verifier_model"] == "claude-opus-4-5"
 
 
-async def test_run_creation_verifier_model_none_when_no_agent_config(
+async def test_run_creation_verifier_model_none_when_no_agent_runner_config(
     client: AsyncClient,
 ) -> None:
-    """Run created without agent_config should have verifier_model=None."""
+    """Run created without agent_runner_config should have verifier_model=None."""
     resp = await client.post(
         "/api/runs",
         json={
@@ -75,17 +75,17 @@ async def test_run_creation_verifier_model_none_when_no_agent_config(
     assert data.get("verifier_model") is None
 
 
-async def test_run_creation_verifier_model_none_when_model_not_in_agent_config(
+async def test_run_creation_verifier_model_none_when_model_not_in_agent_runner_config(
     client: AsyncClient,
 ) -> None:
-    """Run created with agent_config but no model key should have verifier_model=None."""
-    data = await _create_run(client, agent_config={"max_turns": 30})
+    """Run created with agent_runner_config but no model key should have verifier_model=None."""
+    data = await _create_run(client, agent_runner_config={"max_turns": 30})
     assert data.get("verifier_model") is None
 
 
 async def test_verifier_model_persisted_on_get(client: AsyncClient) -> None:
     """verifier_model should survive a DB round-trip (GET after POST)."""
-    created = await _create_run(client, agent_config={"model": "claude-haiku-4-5"})
+    created = await _create_run(client, agent_runner_config={"model": "claude-haiku-4-5"})
     run_id = created["id"]
 
     resp = await client.get(f"/api/runs/{run_id}")

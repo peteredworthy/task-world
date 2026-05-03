@@ -68,8 +68,8 @@ export function buildDefaultAgentConfig(agent: AgentRunnerOption): Record<string
             config[key] = val;
         }
     }
-    // CLI backends share agent_type, so pin the selected command explicitly.
-    if (agent.agent_type === 'cli_subprocess' && typeof config.command !== 'string') {
+    // CLI backends share agent_runner_type, so pin the selected command explicitly.
+    if (agent.agent_runner_type === 'cli_subprocess' && typeof config.command !== 'string') {
         config.command = agent.name;
     }
     return config;

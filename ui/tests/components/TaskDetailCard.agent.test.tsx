@@ -62,7 +62,7 @@ async function expandTaskAndAttempts() {
 
 describe('TaskDetailCard - Agent Display', () => {
   describe('attempt agent info rendering', () => {
-    it('shows agent icon and type when attempt has agent_type', async () => {
+    it('shows agent icon and type when attempt has agent_runner_type', async () => {
       // Mock the useTask hook to return attempt data with agent info
       const mockTaskDetail: TaskDetail = {
         id: 'task-1',
@@ -82,7 +82,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: null,
             outcome: null,
-            agent_type: 'openhands_local',
+            agent_runner_type: 'openhands_local',
             agent_model: null,
             grade_snapshot: [],
             builder_prompt: null,
@@ -111,7 +111,7 @@ describe('TaskDetailCard - Agent Display', () => {
         expect(screen.getByText('Attempt #1')).toBeInTheDocument();
       });
 
-      // Check for agent type display (formatted)
+      // Check for agent runner type display (formatted)
       expect(screen.getByText('Openhands Local')).toBeInTheDocument();
     });
 
@@ -134,7 +134,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: null,
             outcome: null,
-            agent_type: 'openhands_local',
+            agent_runner_type: 'openhands_local',
             agent_model: 'gpt-4o',
             grade_snapshot: [],
             builder_prompt: null,
@@ -183,7 +183,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
             outcome: 'pass',
-            agent_type: 'openhands_local',
+            agent_runner_type: 'openhands_local',
             agent_model: 'gpt-4o',
             grade_snapshot: [],
             builder_prompt: null,
@@ -215,7 +215,7 @@ describe('TaskDetailCard - Agent Display', () => {
       });
     });
 
-    it('handles null agent_type gracefully', async () => {
+    it('handles null agent_runner_type gracefully', async () => {
       const mockTaskDetail: TaskDetail = {
         id: 'task-1',
         run_id: 'run-1',
@@ -234,7 +234,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: null,
             outcome: null,
-            agent_type: null,
+            agent_runner_type: null,
             agent_model: null,
             grade_snapshot: [],
             builder_prompt: null,
@@ -263,7 +263,7 @@ describe('TaskDetailCard - Agent Display', () => {
         expect(screen.getByText('Attempt #1')).toBeInTheDocument();
       });
 
-      // Should not show agent info section when agent_type is null
+      // Should not show agent info section when agent_runner_type is null
       expect(screen.queryByText(/Openhands/i)).not.toBeInTheDocument();
       expect(screen.queryByText(/CLI/i)).not.toBeInTheDocument();
     });
@@ -287,7 +287,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
             outcome: 'revision',
-            agent_type: 'cli_subprocess',
+            agent_runner_type: 'cli_subprocess',
             agent_model: null,
             grade_snapshot: [],
             builder_prompt: null,
@@ -304,7 +304,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
             outcome: 'revision',
-            agent_type: 'openhands_docker',
+            agent_runner_type: 'openhands_docker',
             agent_model: null,
             grade_snapshot: [],
             builder_prompt: null,
@@ -321,7 +321,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
             outcome: 'pass',
-            agent_type: 'user_managed',
+            agent_runner_type: 'user_managed',
             agent_model: null,
             grade_snapshot: [],
             builder_prompt: null,
@@ -378,7 +378,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: null,
             outcome: null,
-            agent_type: 'cli_subprocess',
+            agent_runner_type: 'cli_subprocess',
             agent_model: null,
             grade_snapshot: [],
             builder_prompt: null,
@@ -403,12 +403,12 @@ describe('TaskDetailCard - Agent Display', () => {
       await expandTaskAndAttempts();
 
       await waitFor(() => {
-        expect(screen.getByText('Agent:')).toBeInTheDocument();
+        expect(screen.getByText('Agent Runner:')).toBeInTheDocument();
         expect(screen.getByText('codex')).toBeInTheDocument();
       });
     });
 
-    it('falls back to formatted agent type when command is unavailable', async () => {
+    it('falls back to formatted agent runner type when command is unavailable', async () => {
       const mockTaskDetail: TaskDetail = {
         id: 'task-1',
         run_id: 'run-1',
@@ -427,7 +427,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: null,
             outcome: null,
-            agent_type: 'openhands_local',
+            agent_runner_type: 'openhands_local',
             agent_model: null,
             grade_snapshot: [],
             builder_prompt: null,

@@ -44,7 +44,6 @@ class AgentRunnerType(str, Enum):
     USER_MANAGED = "user_managed"
     CODEX_SERVER = "codex_server"
     CLAUDE_SDK = "claude_sdk"
-    SCRIPT = "script"
 
 
 class RoutineSource(str, Enum):
@@ -80,14 +79,3 @@ class ModelProfile(str, Enum):
     DESIGNER = "designer"
     CODER = "coder"
     SUMMARIZER = "summarizer"
-
-
-class PhaseType(str, Enum):
-    build = "build"
-    verify = "verify"
-    plan = "plan"
-    summarize = "summarize"
-    gap_check = "gap_check"
-    script = "script"
-    auto_verify = "auto_verify"
-    human_review = "human_review"

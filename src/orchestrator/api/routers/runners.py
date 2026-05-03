@@ -10,9 +10,9 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.deps import get_session, get_tool_detector
-from orchestrator.api.schemas.model_profiles import RunnerProfileDefaultsSchema
+from orchestrator.api.schemas.model_profiles import AgentRunnerModelProfileDefaultsSchema
 from orchestrator.config.enums import ModelProfile
-from orchestrator.db import RunnerProfileDefaultModel
+from orchestrator.db import AgentRunnerModelProfileDefaultModel
 from orchestrator.runners.agent_detector import ToolDetector
 from orchestrator.runners.types import AgentRunnerOption
 
@@ -58,42 +58,51 @@ async def discover_local_models(
         return {"models": [], "error": str(exc)}
 
 
-@router.get("/{runner_type}/profiles", response_model=RunnerProfileDefaultsSchema)
-async def get_runner_profiles(
+@router.get(
+    "/{runner_type}/model-profile-defaults",
+    response_model=AgentRunnerModelProfileDefaultsSchema,
+)
+async def get_agent_runner_model_profile_defaults(
     runner_type: str,
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> RunnerProfileDefaultsSchema:
-    """Get per-profile model defaults for a runner type."""
+) -> AgentRunnerModelProfileDefaultsSchema:
+    """Get model defaults for each profile on an agent runner type."""
     result = await session.execute(
-        select(RunnerProfileDefaultModel).where(
-            RunnerProfileDefaultModel.runner_type == runner_type
+        select(AgentRunnerModelProfileDefaultModel).where(
+            AgentRunnerModelProfileDefaultModel.runner_type == runner_type
         )
     )
     rows = result.scalars().all()
-    profiles: dict[ModelProfile, str] = {}
+    model_defaults: dict[ModelProfile, str] = {}
     for row in rows:
         try:
-            profiles[ModelProfile(row.profile)] = row.model
+            model_defaults[ModelProfile(row.profile)] = row.model
         except ValueError:
             pass
-    return RunnerProfileDefaultsSchema(runner_type=runner_type, profiles=profiles)
+    return AgentRunnerModelProfileDefaultsSchema(
+        agent_runner_type=runner_type,
+        model_profile_defaults=model_defaults,
+    )
 
 
-@router.put("/{runner_type}/profiles", response_model=RunnerProfileDefaultsSchema)
-async def set_runner_profiles(
+@router.put(
+    "/{runner_type}/model-profile-defaults",
+    response_model=AgentRunnerModelProfileDefaultsSchema,
+)
+async def set_agent_runner_model_profile_defaults(
     runner_type: str,
-    body: RunnerProfileDefaultsSchema,
+    body: AgentRunnerModelProfileDefaultsSchema,
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> RunnerProfileDefaultsSchema:
-    """Set per-profile model defaults for a runner type."""
+) -> AgentRunnerModelProfileDefaultsSchema:
+    """Set model defaults for each profile on an agent runner type."""
     await session.execute(
-        delete(RunnerProfileDefaultModel).where(
-            RunnerProfileDefaultModel.runner_type == runner_type
+        delete(AgentRunnerModelProfileDefaultModel).where(
+            AgentRunnerModelProfileDefaultModel.runner_type == runner_type
         )
     )
-    for profile, model in body.profiles.items():
+    for profile, model in body.model_profile_defaults.items():
         session.add(
-            RunnerProfileDefaultModel(
+            AgentRunnerModelProfileDefaultModel(
                 id=str(uuid.uuid4()),
                 runner_type=runner_type,
                 profile=profile.value,
@@ -101,4 +110,7 @@ async def set_runner_profiles(
             )
         )
     await session.commit()
-    return RunnerProfileDefaultsSchema(runner_type=runner_type, profiles=body.profiles)
+    return AgentRunnerModelProfileDefaultsSchema(
+        agent_runner_type=runner_type,
+        model_profile_defaults=body.model_profile_defaults,
+    )

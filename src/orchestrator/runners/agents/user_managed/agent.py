@@ -60,7 +60,7 @@ class UserManagedAgent:
     @property
     def info(self) -> AgentRunnerInfo:
         return AgentRunnerInfo(
-            agent_type=AgentRunnerType.USER_MANAGED,
+            agent_runner_type=AgentRunnerType.USER_MANAGED,
             name="User Managed",
         )
 

@@ -14,11 +14,10 @@ from orchestrator.runners.profiles.models import AgentConfigModel
 
 logger = logging.getLogger(__name__)
 
-Phase = Literal["planner", "builder", "verifier"]
+Phase = Literal["builder", "verifier"]
 
 # System defaults match the seeded agent names
 _SYSTEM_DEFAULTS: dict[Phase, str] = {
-    "planner": "Planner",
     "builder": "Builder",
     "verifier": "Verifier",
 }
@@ -36,10 +35,10 @@ def resolve_agent_name(
         1. Task-level override  (task_agent)
         2. Step-level override  (step_agent)
         3. Routine-level override (routine_agent)
-        4. System default ("Planner", "Builder", or "Verifier")
+        4. System default ("Builder" or "Verifier")
 
     Args:
-        phase: One of "planner", "builder", or "verifier".
+        phase: One of "builder" or "verifier".
         task_agent: Agent name from task config, or None if not set.
         step_agent: Agent name from step config, or None if not set.
         routine_agent: Agent name from routine config, or None if not set.

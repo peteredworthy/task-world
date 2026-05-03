@@ -74,8 +74,8 @@ def start_run(client: httpx.Client, routine_id: str, config: dict) -> str:
     """Create and start a new run from a routine."""
     payload = {
         "routine_id": routine_id,
-        "agent_type": "cli_subprocess",
-        "agent_config": {"command": "claude"},
+        "agent_runner_type": "cli_subprocess",
+        "agent_runner_config": {"command": "claude"},
         "config": config,
     }
     r = client.post(f"{BASE}/runs", json=payload)

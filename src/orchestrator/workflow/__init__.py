@@ -174,12 +174,17 @@ from orchestrator.workflow.oversight import (
     REVISION_OUTCOMES,
     ChildOversightSummary,
     EvidenceOutcome,
+    FinalValidationMarker,
     OversightAttentionItem,
     OversightEvidenceSummary,
     OversightTerminalGuard,
     ParentOversightSnapshot,
+    RunEvidenceBundle,
+    RunEvidenceCommand,
+    RunEvidenceTestResult,
     reduce_parent_oversight,
     reduce_parent_oversight_state,
+    TargetInventoryItem,
 )
 
 __all__ = [
@@ -338,10 +343,15 @@ __all__ = [
     "REVISION_OUTCOMES",
     "ChildOversightSummary",
     "EvidenceOutcome",
+    "FinalValidationMarker",
     "OversightAttentionItem",
     "OversightEvidenceSummary",
     "OversightTerminalGuard",
     "ParentOversightSnapshot",
+    "RunEvidenceBundle",
+    "RunEvidenceCommand",
+    "RunEvidenceTestResult",
+    "TargetInventoryItem",
     "reduce_parent_oversight",
     "reduce_parent_oversight_state",
 ]

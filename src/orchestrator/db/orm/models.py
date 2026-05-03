@@ -276,9 +276,11 @@ class ClarificationRequestModel(Base):
     )
 
 
-class RunnerProfileDefaultModel(Base):
-    __tablename__ = "runner_profile_defaults"
-    __table_args__ = (UniqueConstraint("runner_type", "profile", name="uq_runner_profile"),)
+class AgentRunnerModelProfileDefaultModel(Base):
+    __tablename__ = "agent_runner_model_profile_defaults"
+    __table_args__ = (
+        UniqueConstraint("runner_type", "profile", name="uq_agent_runner_model_profile"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     runner_type: Mapped[str] = mapped_column(String, nullable=False)

@@ -105,9 +105,19 @@ def list_runs(ctx: click.Context, repo: str | None, status: str | None) -> None:
 @click.option("--branch", "-b", required=True, help="Branch to base worktree on")
 @click.option("--config", "-c", multiple=True, help="Config key=value pairs")
 @click.option(
-    "--agent", "-a", help="Agent type (openhands_local, cli_subprocess, user_managed, etc.)"
+    "--agent-runner",
+    "--agent",
+    "-a",
+    "agent",
+    help="Agent runner type (openhands_local, cli_subprocess, user_managed, etc.)",
 )
-@click.option("--agent-config", "-ac", multiple=True, help="Agent config key=value pairs")
+@click.option(
+    "--agent-runner-config",
+    "--agent-config",
+    "-ac",
+    multiple=True,
+    help="Agent runner config key=value pairs",
+)
 @click.pass_context
 def create_run(
     ctx: click.Context,
@@ -116,7 +126,7 @@ def create_run(
     branch: str,
     config: tuple[str, ...],
     agent: str | None,
-    agent_config: tuple[str, ...],
+    agent_runner_config: tuple[str, ...],
 ) -> None:
     """Create a new run."""
 
@@ -133,12 +143,13 @@ def create_run(
             key, value = kv.split("=", 1)
             cfg[key] = value
 
-        # Parse agent config
+        # Parse agent runner config
         agent_cfg: dict[str, str] = {}
-        for kv in agent_config:
+        for kv in agent_runner_config:
             if "=" not in kv:
                 click.echo(
-                    f"Error: Invalid agent config format '{kv}'. Expected key=value", err=True
+                    f"Error: Invalid agent runner config format '{kv}'. Expected key=value",
+                    err=True,
                 )
                 sys.exit(1)
             key, value = kv.split("=", 1)
@@ -179,12 +190,12 @@ def create_run(
             # Set agent if provided
             if agent:
                 try:
-                    run.agent_type = AgentRunnerType(agent)
+                    run.agent_runner_type = AgentRunnerType(agent)
                 except ValueError:
-                    click.echo(f"Error: Invalid agent type '{agent}'", err=True)
+                    click.echo(f"Error: Invalid agent runner type '{agent}'", err=True)
                     sys.exit(1)
                 if agent_cfg:
-                    run.agent_config = agent_cfg
+                    run.agent_runner_config = agent_cfg
 
             # Save to database
             await repository.save(run)
@@ -198,11 +209,13 @@ def create_run(
                 "routine_id": run.routine_id,
                 "repo_name": run.repo_name,
                 "status": run.status.value,
-                "agent_type": run.agent_type.value if run.agent_type else None,
+                "agent_runner_type": run.agent_runner_type.value if run.agent_runner_type else None,
             }
             click.echo(json.dumps(result, indent=2))
         else:
-            agent_str = f" with agent {run.agent_type.value}" if run.agent_type else ""
+            agent_str = (
+                f" with agent {run.agent_runner_type.value}" if run.agent_runner_type else ""
+            )
             click.echo(f"Created run {run.id}{agent_str}")
 
     asyncio.run(_create())
@@ -245,11 +258,13 @@ def start_run(ctx: click.Context, run_id: str) -> None:
             result = {
                 "id": run.id,
                 "status": run.status.value,
-                "agent_type": run.agent_type.value if run.agent_type else None,
+                "agent_runner_type": run.agent_runner_type.value if run.agent_runner_type else None,
             }
             click.echo(json.dumps(result, indent=2))
         else:
-            agent_str = f" with agent {run.agent_type.value}" if run.agent_type else ""
+            agent_str = (
+                f" with agent {run.agent_runner_type.value}" if run.agent_runner_type else ""
+            )
             click.echo(f"Started run {run.id}{agent_str}")
 
     asyncio.run(_start())
@@ -551,16 +566,28 @@ def pause_run(ctx: click.Context, run_id: str, url: str) -> None:
 @click.argument("run_id")
 @click.option("--url", default="http://localhost:8000", help="API server URL")
 @click.option(
+    "--agent-runner",
     "--agent",
     "-a",
-    help="Agent type to switch to (openhands_local, cli_subprocess, user_managed, etc.)",
+    "agent",
+    help="Agent runner type to switch to (openhands_local, cli_subprocess, user_managed, etc.)",
 )
-@click.option("--agent-config", "-ac", multiple=True, help="Agent config key=value pairs")
+@click.option(
+    "--agent-runner-config",
+    "--agent-config",
+    "-ac",
+    multiple=True,
+    help="Agent runner config key=value pairs",
+)
 @click.pass_context
 def resume_run(
-    ctx: click.Context, run_id: str, url: str, agent: str | None, agent_config: tuple[str, ...]
+    ctx: click.Context,
+    run_id: str,
+    url: str,
+    agent: str | None,
+    agent_runner_config: tuple[str, ...],
 ) -> None:
-    """Resume a run (PAUSED -> ACTIVE), optionally changing the agent."""
+    """Resume a run (PAUSED -> ACTIVE), optionally changing the agent runner."""
 
     async def _resume() -> None:
         as_json = ctx.obj["json"]
@@ -570,26 +597,27 @@ def resume_run(
         request_body: dict[str, Any] = {}
 
         if agent:
-            # Validate agent type
+            # Validate agent runner type
             try:
                 AgentRunnerType(agent)  # Validate it's a valid enum value
-                request_body["agent_type"] = agent
+                request_body["agent_runner_type"] = agent
             except ValueError:
-                click.echo(f"Error: Invalid agent type '{agent}'", err=True)
+                click.echo(f"Error: Invalid agent runner type '{agent}'", err=True)
                 sys.exit(1)
 
-        # Parse agent config if provided
-        if agent_config:
+        # Parse agent runner config if provided
+        if agent_runner_config:
             agent_cfg: dict[str, str] = {}
-            for kv in agent_config:
+            for kv in agent_runner_config:
                 if "=" not in kv:
                     click.echo(
-                        f"Error: Invalid agent config format '{kv}'. Expected key=value", err=True
+                        f"Error: Invalid agent runner config format '{kv}'. Expected key=value",
+                        err=True,
                     )
                     sys.exit(1)
                 key, value = kv.split("=", 1)
                 agent_cfg[key] = value
-            request_body["agent_config"] = agent_cfg
+            request_body["agent_runner_config"] = agent_cfg
 
         try:
             async with httpx.AsyncClient() as client:
@@ -617,7 +645,7 @@ def resume_run(
         if as_json:
             click.echo(json.dumps(result, indent=2))
         else:
-            agent_str = f" with agent {result.get('agent_type')}" if agent else ""
+            agent_str = f" with agent {result.get('agent_runner_type')}" if agent else ""
             click.echo(f"Resumed run {run_id}{agent_str}")
             click.echo(f"Status: {result.get('status')}")
 
@@ -702,8 +730,8 @@ def status_run(ctx: click.Context, run_id: str, url: str) -> None:
             click.echo(f"Repository: {result.get('repo_name')}")
             if result.get("routine_id"):
                 click.echo(f"Routine: {result.get('routine_id')}")
-            if result.get("agent_type"):
-                click.echo(f"Agent: {result.get('agent_type')}")
+            if result.get("agent_runner_type"):
+                click.echo(f"Agent Runner: {result.get('agent_runner_type')}")
 
             # Show step progress
             steps = result.get("steps", [])

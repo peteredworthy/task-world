@@ -12,13 +12,13 @@ Add optional agent assignment fields to the routine schema at routine, step, and
 
 ### Inputs
 
-- Routine YAML with optional fields: `planner_agent`, `builder_agent`, `verifier_agent` at routine, step, and task levels
+- Routine YAML with optional fields: `builder_agent`, `verifier_agent` at routine, step, and task levels
 - Agent name strings referencing agents in the `agent_configs` table
 - Current phase (build/verify) to determine which agent role to resolve
 
 ### Outputs
 
-- `RoutineConfig`, `StepConfig`, `TaskConfig` models extended with optional `planner_agent`, `builder_agent`, `verifier_agent` string fields
+- `RoutineConfig`, `StepConfig`, `TaskConfig` models extended with optional `builder_agent`, `verifier_agent` string fields
 - `resolve_agent(phase, task_config, step_config, routine_config)` pure function implementing cascading resolution: task -> step -> routine -> system default
 - Prompt generation updated: resolved agent's `system_prompt` concatenated with separator before task-specific prompt
 - Routine validation: warn (log) if referenced agent name doesn't exist, but don't block routine loading
@@ -31,7 +31,7 @@ Add optional agent assignment fields to the routine schema at routine, step, and
 
 ## Tasks
 
-1. Add optional `planner_agent`, `builder_agent`, `verifier_agent` fields to `RoutineConfig`, `StepConfig`, `TaskConfig` in `config/models.py`
+1. Add optional `builder_agent`, `verifier_agent` fields to `RoutineConfig`, `StepConfig`, `TaskConfig` in `config/models.py`
 2. Implement `resolve_agent()` pure function with cascading resolution logic
 3. Update prompt generation in task prompt endpoint to prepend resolved agent's system prompt
 4. Prompt composition: agent system prompt + `"\n\n---\n\n"` separator + task prompt

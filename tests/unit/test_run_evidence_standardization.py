@@ -1,4 +1,4 @@
-"""Unit coverage for the phase-4 evidence standardization coordinator."""
+"""Unit coverage for the run evidence standardization coordinator."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Any
 
 
-SCRIPT_PATH = Path(__file__).parents[2] / "scripts" / "run_phase4_evidence_standardization.py"
+SCRIPT_PATH = Path(__file__).parents[2] / "scripts" / "run_evidence_standardization.py"
 
 
 def _load_module() -> Any:
-    spec = importlib.util.spec_from_file_location("phase4_evidence_standardization", SCRIPT_PATH)
+    spec = importlib.util.spec_from_file_location("run_evidence_standardization", SCRIPT_PATH)
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -25,10 +25,10 @@ def _load_module() -> Any:
 def test_evidence_bundle_requires_planner_consumable_fields() -> None:
     module = _load_module()
     bundle = module.EvidenceBundle.model_validate(
-        module.demo_specs("phase4-test")[0],
+        module.demo_specs("run-test")[0],
     )
 
-    assert bundle.schema_version == "phase4.evidence.v1"
+    assert bundle.schema_version == "run.evidence.v1"
     assert bundle.assumption_tested
     assert bundle.commands_run[0].exit_code == 0
     assert "test -f" in bundle.commands_run[0].command
@@ -38,11 +38,11 @@ def test_evidence_bundle_requires_planner_consumable_fields() -> None:
     assert bundle.outcome == "verified_fix"
 
 
-def test_classification_distinguishes_required_phase4_outcomes() -> None:
+def test_classification_distinguishes_required_run_evidence_outcomes() -> None:
     module = _load_module()
     outcomes = []
 
-    for spec in module.demo_specs("phase4-test"):
+    for spec in module.demo_specs("run-test"):
         bundle = module.EvidenceBundle.model_validate(spec)
         outcome, notes = module.classify_bundle(bundle)
         outcomes.append(outcome)
@@ -53,7 +53,7 @@ def test_classification_distinguishes_required_phase4_outcomes() -> None:
 
 def test_environment_blocked_cannot_claim_real_path_execution() -> None:
     module = _load_module()
-    spec = module.demo_specs("phase4-test")[2] | {"real_frontend_path_exercised": True}
+    spec = module.demo_specs("run-test")[2] | {"real_frontend_path_exercised": True}
     bundle = module.EvidenceBundle.model_validate(spec)
 
     outcome, notes = module.classify_bundle(bundle)
@@ -64,7 +64,7 @@ def test_environment_blocked_cannot_claim_real_path_execution() -> None:
 
 def test_local_routine_writes_parseable_bundle(tmp_path: Path) -> None:
     module = _load_module()
-    feature = "phase4-test"
+    feature = "run-test"
     spec = module.demo_specs(feature)[1]
     routine = module.routine_for_bundle(spec, feature)
 
@@ -87,7 +87,7 @@ def test_local_routine_writes_parseable_bundle(tmp_path: Path) -> None:
 def test_success_criteria_require_all_standard_outcomes() -> None:
     module = _load_module()
     records = []
-    for index, spec in enumerate(module.demo_specs("phase4-test"), start=1):
+    for index, spec in enumerate(module.demo_specs("run-test"), start=1):
         bundle = module.EvidenceBundle.model_validate(spec)
         outcome, notes = module.classify_bundle(bundle)
         records.append(
@@ -109,7 +109,7 @@ def test_success_criteria_require_all_standard_outcomes() -> None:
         status="completed",
         pause_reason=None,
         worktree_path="/tmp/worktree",
-        evidence_files=["docs/phase4-test/slice-01-verified-fix-evidence.json"],
+        evidence_files=["docs/run-test/slice-01-verified-fix-evidence.json"],
         activity_events=4,
         notes=[],
     )
@@ -121,12 +121,12 @@ def test_success_criteria_require_all_standard_outcomes() -> None:
     assert criteria["environment_blocked_distinguishable"] is True
     assert criteria["orchestrator_validation_passed"] is True
     assert criteria["orchestrator_execution_completed"] is True
-    assert criteria["ready_for_phase5"] is True
+    assert criteria["ready_for_native_orchestration"] is True
 
 
 def test_success_criteria_do_not_pass_when_api_validation_is_unavailable() -> None:
     module = _load_module()
-    spec = module.demo_specs("phase4-test")[0]
+    spec = module.demo_specs("run-test")[0]
     bundle = module.EvidenceBundle.model_validate(spec)
     outcome, notes = module.classify_bundle(bundle)
     criteria = module.compute_success_criteria(
@@ -148,19 +148,19 @@ def test_success_criteria_do_not_pass_when_api_validation_is_unavailable() -> No
             status="completed",
             pause_reason=None,
             worktree_path="/tmp/worktree",
-            evidence_files=["docs/phase4-test/slice-01-verified-fix-evidence.json"],
+            evidence_files=["docs/run-test/slice-01-verified-fix-evidence.json"],
             activity_events=4,
             notes=[],
         ),
     )
 
     assert criteria["orchestrator_validation_passed"] is False
-    assert criteria["ready_for_phase5"] is False
+    assert criteria["ready_for_native_orchestration"] is False
 
 
 def test_success_criteria_do_not_pass_without_completed_orchestrator_execution() -> None:
     module = _load_module()
-    spec = module.demo_specs("phase4-test")[0]
+    spec = module.demo_specs("run-test")[0]
     bundle = module.EvidenceBundle.model_validate(spec)
     outcome, notes = module.classify_bundle(bundle)
     criteria = module.compute_success_criteria(
@@ -189,7 +189,7 @@ def test_success_criteria_do_not_pass_without_completed_orchestrator_execution()
     )
 
     assert criteria["orchestrator_execution_completed"] is False
-    assert criteria["ready_for_phase5"] is False
+    assert criteria["ready_for_native_orchestration"] is False
 
 
 def test_script_help_is_available() -> None:

@@ -17,8 +17,8 @@ vi.mock('../../hooks/useApi', () => ({
 }));
 
 vi.mock('../../api/client', () => ({
-  fetchRunnerProfiles: vi.fn(),
-  saveRunnerProfiles: vi.fn(),
+  fetchAgentRunnerModelDefaults: vi.fn(),
+  saveAgentRunnerModelDefaults: vi.fn(),
 }));
 
 vi.mock('../../components/agentRunnerConfigUtils', () => ({
@@ -28,13 +28,13 @@ vi.mock('../../components/agentRunnerConfigUtils', () => ({
   saveAgentFieldDefault: vi.fn(),
 }));
 
-const mockFetchRunnerProfiles = vi.mocked(apiClient.fetchRunnerProfiles);
-const mockSaveRunnerProfiles = vi.mocked(apiClient.saveRunnerProfiles);
+const mockFetchAgentRunnerModelDefaults = vi.mocked(apiClient.fetchAgentRunnerModelDefaults);
+const mockSaveAgentRunnerModelDefaults = vi.mocked(apiClient.saveAgentRunnerModelDefaults);
 const mockUseAgents = vi.mocked(apiHooks.useAgentRunners);
 
 function makeAgent(overrides: Partial<AgentRunnerOption> = {}): AgentRunnerOption {
   return {
-    agent_type: 'cli_subprocess',
+    agent_runner_type: 'cli_subprocess',
     name: 'test-runner',
     title: 'Test Runner',
     description: 'A test agent runner',
@@ -48,13 +48,13 @@ function makeAgent(overrides: Partial<AgentRunnerOption> = {}): AgentRunnerOptio
 }
 
 beforeEach(() => {
-  mockFetchRunnerProfiles.mockResolvedValue({
-    runner_type: 'cli_subprocess',
-    profiles: {},
+  mockFetchAgentRunnerModelDefaults.mockResolvedValue({
+    agent_runner_type: 'cli_subprocess',
+    model_profile_defaults: {},
   });
-  mockSaveRunnerProfiles.mockResolvedValue({
-    runner_type: 'cli_subprocess',
-    profiles: {},
+  mockSaveAgentRunnerModelDefaults.mockResolvedValue({
+    agent_runner_type: 'cli_subprocess',
+    model_profile_defaults: {},
   });
   mockUseAgents.mockReturnValue({
     data: [makeAgent()],
@@ -70,14 +70,14 @@ afterEach(() => {
 
 async function renderAndExpandProfiles() {
   render(<AgentRunners />);
-  const btn = await screen.findByRole('button', { name: /model profiles/i });
+  const btn = await screen.findByRole('button', { name: /model defaults/i });
   await userEvent.click(btn);
 }
 
-describe('AgentRunnerCard — Model Profiles section', () => {
-  it('renders the Model Profiles toggle button', () => {
+describe('AgentRunnerCard — Model Defaults section', () => {
+  it('renders the Model Defaults toggle button', () => {
     render(<AgentRunners />);
-    expect(screen.getByRole('button', { name: /model profiles/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /model defaults/i })).toBeInTheDocument();
   });
 
   it('expands to show 4 profile fields when toggled', async () => {
@@ -91,9 +91,9 @@ describe('AgentRunnerCard — Model Profiles section', () => {
   });
 
   it('loads profile data on mount and populates fields', async () => {
-    mockFetchRunnerProfiles.mockResolvedValue({
-      runner_type: 'cli_subprocess',
-      profiles: {
+    mockFetchAgentRunnerModelDefaults.mockResolvedValue({
+      agent_runner_type: 'cli_subprocess',
+      model_profile_defaults: {
         architect: 'claude-opus-4',
         coder: 'claude-sonnet-4',
       },
@@ -108,13 +108,13 @@ describe('AgentRunnerCard — Model Profiles section', () => {
       expect(values).toContain('claude-sonnet-4');
     });
 
-    expect(mockFetchRunnerProfiles).toHaveBeenCalledWith('cli_subprocess');
+    expect(mockFetchAgentRunnerModelDefaults).toHaveBeenCalledWith('cli_subprocess');
   });
 
-  it('calls saveRunnerProfiles with correct payload on Save', async () => {
-    mockFetchRunnerProfiles.mockResolvedValue({
-      runner_type: 'cli_subprocess',
-      profiles: { architect: 'gpt-4o' },
+  it('calls saveAgentRunnerModelDefaults with correct payload on Save', async () => {
+    mockFetchAgentRunnerModelDefaults.mockResolvedValue({
+      agent_runner_type: 'cli_subprocess',
+      model_profile_defaults: { architect: 'gpt-4o' },
     });
 
     await renderAndExpandProfiles();
@@ -129,11 +129,11 @@ describe('AgentRunnerCard — Model Profiles section', () => {
     await userEvent.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
-      expect(mockSaveRunnerProfiles).toHaveBeenCalledWith(
+      expect(mockSaveAgentRunnerModelDefaults).toHaveBeenCalledWith(
         'cli_subprocess',
         expect.objectContaining({
-          runner_type: 'cli_subprocess',
-          profiles: expect.objectContaining({ architect: 'gpt-4o' }),
+          agent_runner_type: 'cli_subprocess',
+          model_profile_defaults: expect.objectContaining({ architect: 'gpt-4o' }),
         }),
       );
     });
@@ -149,8 +149,8 @@ describe('AgentRunnerCard — Model Profiles section', () => {
     });
   });
 
-  it('shows "Failed to save" error when saveRunnerProfiles rejects', async () => {
-    mockSaveRunnerProfiles.mockRejectedValue(new Error('Network error'));
+  it('shows "Failed to save" error when saveAgentRunnerModelDefaults rejects', async () => {
+    mockSaveAgentRunnerModelDefaults.mockRejectedValue(new Error('Network error'));
 
     await renderAndExpandProfiles();
 
@@ -163,7 +163,7 @@ describe('AgentRunnerCard — Model Profiles section', () => {
 
   it('disables Save button while saving is in progress', async () => {
     let resolveSave: (v: any) => void;
-    mockSaveRunnerProfiles.mockImplementation(
+    mockSaveAgentRunnerModelDefaults.mockImplementation(
       () => new Promise((resolve) => { resolveSave = resolve; }),
     );
 
@@ -174,14 +174,14 @@ describe('AgentRunnerCard — Model Profiles section', () => {
 
     expect(screen.getByRole('button', { name: /saving/i })).toBeDisabled();
 
-    resolveSave!({ runner_type: 'cli_subprocess', profiles: {} });
+    resolveSave!({ agent_runner_type: 'cli_subprocess', model_profile_defaults: {} });
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /save/i })).not.toBeDisabled();
     });
   });
 
-  it('gracefully handles fetchRunnerProfiles failure (starts with empty fields)', async () => {
-    mockFetchRunnerProfiles.mockRejectedValue(new Error('Load failed'));
+  it('gracefully handles fetchAgentRunnerModelDefaults failure (starts with empty fields)', async () => {
+    mockFetchAgentRunnerModelDefaults.mockRejectedValue(new Error('Load failed'));
 
     await renderAndExpandProfiles();
 

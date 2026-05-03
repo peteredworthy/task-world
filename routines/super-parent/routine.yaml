@@ -29,14 +29,18 @@ routine:
       step_context: |
         Build a durable target inventory from the instruction and source artifacts. Keep IDs stable
         because child slices and evidence refer back to them.
+      mcp_servers:
+        - name: "orchestrator"
+          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Create Target Inventory"
           task_context: |
             Read the user instruction and source artifacts. Write `docs/super-parent/current-understanding.md`
             with the original instruction, assumptions, target inventory, out-of-scope items, and initial
-            risks. Separate concrete bugs, missing tests, design improvements, policy gaps, reproduction
-            targets, and clarification needs. Assign stable IDs such as `INV-001`.
+            risks. Call `orchestrator_update_parent_oversight` with matching `target_inventory` and
+            `current_understanding` payloads. Separate concrete bugs, missing tests, design improvements,
+            policy gaps, reproduction targets, and clarification needs. Assign stable IDs such as `INV-001`.
           requirements:
             - id: "R1"
               desc: "Inventory contains stable IDs for every in-scope target and separates target classes."
@@ -63,6 +67,9 @@ routine:
       step_context: |
         Choose the next bounded child slice using the current inventory and evidence. Do not decompose the
         whole job before evidence justifies the expansion.
+      mcp_servers:
+        - name: "orchestrator"
+          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Write Slice Brief"
@@ -96,13 +103,16 @@ routine:
       step_context: |
         Convert the selected slice into an embedded child routine and create a linked child run through the
         orchestrator API or MCP tools.
+      mcp_servers:
+        - name: "orchestrator"
+          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Create Embedded Child Routine"
           task_context: |
             Generate one embedded child routine for the selected slice. The child routine must include stable
             requirement IDs, auto-verify commands where possible, verifier rubric IDs matching requirement IDs,
-            retry limits, stop/replan conditions, and a required `phase4.evidence.v1` bundle. Create the child
+            retry limits, stop/replan conditions, and a required `run.evidence.v1` bundle. Create the child
             run using `orchestrator_create_child_run` or `POST /api/runs/{parent}/children`.
           requirements:
             - id: "R1"
@@ -112,7 +122,7 @@ routine:
               desc: "Child run is linked to the parent with `parent_run_id` and `parent_slice_id`."
               priority: critical
             - id: "R3"
-              desc: "Child routine requires a `phase4.evidence.v1` bundle with a distinct outcome."
+              desc: "Child routine requires a `run.evidence.v1` bundle with a distinct outcome."
               priority: critical
             - id: "R4"
               desc: "The selected runner and runner config are preserved for the child."
@@ -125,14 +135,18 @@ routine:
       step_context: |
         Wait for child terminal or paused state, refresh deterministic oversight state, and integrate only
         accepted child work into the parent branch.
+      mcp_servers:
+        - name: "orchestrator"
+          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Evaluate Child Evidence"
           task_context: |
             Wait for the child run with `orchestrator_wait_for_run`, then collect evidence with
-            `orchestrator_get_run_evidence` and refresh parent oversight. Update
-            `docs/super-parent/current-understanding.md` before asking for human input, accepting a child,
-            or stopping.
+            `orchestrator_get_run_evidence` and refresh parent oversight. Use a long enough wait window
+            for normal child execution and treat paused children as meaningful states. Update
+            `docs/super-parent/current-understanding.md` and call `orchestrator_update_parent_oversight`
+            before asking for human input, accepting a child, or stopping.
           requirements:
             - id: "R1"
               desc: "Evidence is collected from the child worktree and validated against the standard schema."
@@ -174,12 +188,19 @@ routine:
       title: "Parent Validation And Report"
       step_context: |
         Validate the original instruction on the integrated parent branch and write the final report.
+      mcp_servers:
+        - name: "orchestrator"
+          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Run Integrated Validation"
           task_context: |
             Run the work-specific validation surface and broad regression commands needed for the job. Validation
-            must run on the integrated parent branch, not only on isolated child worktrees.
+            must run on the integrated parent branch, not only on isolated child worktrees. Record the result
+            with `orchestrator_update_parent_oversight` using `final_validation`, including
+            `integrated_commit_sha`, `report_path`, non-empty `commands_run`, and non-empty `evidence_files`.
+            The commit SHA must match the parent worktree HEAD, every passing command must have exit code 0,
+            and the report/evidence paths must already exist under the parent worktree so the service can verify them.
           requirements:
             - id: "R1"
               desc: "Integrated validation covers the original instruction and accepted child verification surfaces."

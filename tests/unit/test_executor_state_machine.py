@@ -69,7 +69,7 @@ def _base_run(routine: RoutineConfig | None = None) -> Run:
         source_branch="main",
     )
     run.routine_embedded = routine.model_dump(mode="json")
-    run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
     run.status = RunStatus.ACTIVE
     return run
 

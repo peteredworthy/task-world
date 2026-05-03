@@ -1,7 +1,7 @@
 """Integration tests for Codex agent lifecycle control paths.
 
 Covers the full create→start→pause→resume→cancel lifecycle for the
-``codex_server`` agent type, and validates the deterministic recovery
+``codex_server`` agent runner type, and validates the deterministic recovery
 rule (healthy vs stale session) via the REST API.
 """
 
@@ -58,18 +58,18 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
 
 async def _create_codex_run(
     client: AsyncClient,
-    agent_type: str = "codex_server",
-    agent_config: dict[str, Any] | None = None,
+    agent_runner_type: str = "codex_server",
+    agent_runner_config: dict[str, Any] | None = None,
     repo_name: str = "proj-codex",
 ) -> dict[str, Any]:
     body: dict[str, Any] = {
         "routine_id": "simple-routine",
         "repo_name": repo_name,
         "branch": "main",
-        "agent_type": agent_type,
+        "agent_runner_type": agent_runner_type,
     }
-    if agent_config:
-        body["agent_config"] = agent_config
+    if agent_runner_config:
+        body["agent_runner_config"] = agent_runner_config
     resp = await client.post("/api/runs", json=body)
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -113,7 +113,7 @@ async def _cancel(client: AsyncClient, run_id: str, drain: DrainFn) -> dict[str,
 async def test_codex_server_lifecycle_create(client: AsyncClient) -> None:
     """codex_server run is created in DRAFT status."""
     data = await _create_codex_run(client, "codex_server")
-    assert data["agent_type"] == "codex_server"
+    assert data["agent_runner_type"] == "codex_server"
     assert data["status"] == "draft"
 
 
@@ -126,7 +126,7 @@ async def test_codex_server_lifecycle_start(
     run_id = data["id"]
     started = await _start(client, run_id, drain)
     assert started["status"] == "active"
-    assert started["agent_type"] == "codex_server"
+    assert started["agent_runner_type"] == "codex_server"
 
 
 async def test_codex_server_lifecycle_pause(
@@ -166,21 +166,21 @@ async def test_codex_server_lifecycle_cancel(
     assert cancelled["status"] == "failed"
 
 
-async def test_codex_server_lifecycle_resume_preserves_agent_config(
+async def test_codex_server_lifecycle_resume_preserves_agent_runner_config(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
-    """Resuming codex_server preserves agent_config when none is supplied."""
+    """Resuming codex_server preserves agent_runner_config when none is supplied."""
     client, drain = client_and_drain
     cfg = {"restrictions": "none", "model": "o3"}
     data = await _create_codex_run(
-        client, "codex_server", agent_config=cfg, repo_name="proj-cs-cfg"
+        client, "codex_server", agent_runner_config=cfg, repo_name="proj-cs-cfg"
     )
     run_id = data["id"]
     await _start(client, run_id, drain)
     await _pause(client, run_id, drain)
     resumed = await _resume(client, run_id, drain)
-    assert resumed["agent_config"]["restrictions"] == "none"
-    assert resumed["agent_config"]["model"] == "o3"
+    assert resumed["agent_runner_config"]["restrictions"] == "none"
+    assert resumed["agent_runner_config"]["model"] == "o3"
 
 
 # ===========================================================================
@@ -196,7 +196,7 @@ async def test_codex_lifecycle_recovery_local_no_pid_start_is_clean(
     data = await _create_codex_run(
         client,
         "codex_server",
-        agent_config={"callback_channel": "rest"},
+        agent_runner_config={"callback_channel": "rest"},
         repo_name="proj-nopid",
     )
     run_id = data["id"]
@@ -204,4 +204,4 @@ async def test_codex_lifecycle_recovery_local_no_pid_start_is_clean(
     resp = await client.get(f"/api/runs/{run_id}")
     data2 = resp.json()
     assert data2["status"] == "active"
-    assert "pid" not in data2.get("agent_config", {})
+    assert "pid" not in data2.get("agent_runner_config", {})

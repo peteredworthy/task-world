@@ -55,7 +55,7 @@ async def _create_and_start_run(client: AsyncClient, drain: DrainFn) -> tuple[st
 
 
 async def test_agent_started_sets_timestamp(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
-    """POST /runs/{id}/agent-started sets agent_started_at timestamp."""
+    """POST /runs/{id}/agent-started sets agent_runner_started_at timestamp."""
     client, drain = client_and_drain
     run_id, _ = await _create_and_start_run(client, drain)
 
@@ -63,21 +63,21 @@ async def test_agent_started_sets_timestamp(client_and_drain: tuple[AsyncClient,
     response = await client.get(f"/api/runs/{run_id}")
     assert response.status_code == 200
     data = response.json()
-    assert data["agent_started_at"] is None
+    assert data["agent_runner_started_at"] is None
 
     # Mark agent as started
     response = await client.post(f"/api/runs/{run_id}/agent-started")
     assert response.status_code == 200
     data = response.json()
-    assert data["agent_started_at"] is not None
-    assert data["agent_started_at"].endswith("Z")
+    assert data["agent_runner_started_at"] is not None
+    assert data["agent_runner_started_at"].endswith("Z")
 
     # Verify the timestamp persists
     response = await client.get(f"/api/runs/{run_id}")
     assert response.status_code == 200
     data = response.json()
-    assert data["agent_started_at"] is not None
-    assert data["agent_started_at"].endswith("Z")
+    assert data["agent_runner_started_at"] is not None
+    assert data["agent_runner_started_at"].endswith("Z")
 
 
 async def test_agent_started_can_be_called_multiple_times(
@@ -90,13 +90,13 @@ async def test_agent_started_can_be_called_multiple_times(
     # First call
     response = await client.post(f"/api/runs/{run_id}/agent-started")
     assert response.status_code == 200
-    first_timestamp = response.json()["agent_started_at"]
+    first_timestamp = response.json()["agent_runner_started_at"]
     assert first_timestamp is not None
 
     # Second call (should update timestamp)
     response = await client.post(f"/api/runs/{run_id}/agent-started")
     assert response.status_code == 200
-    second_timestamp = response.json()["agent_started_at"]
+    second_timestamp = response.json()["agent_runner_started_at"]
     assert second_timestamp is not None
     # Note: timestamps might be the same if called quickly, but that's OK
 
@@ -265,7 +265,7 @@ async def test_full_user_managed_lifecycle(client_and_drain: tuple[AsyncClient, 
     # Mark agent started
     response = await client.post(f"/api/runs/{run_id}/agent-started")
     assert response.status_code == 200
-    assert response.json()["agent_started_at"] is not None
+    assert response.json()["agent_runner_started_at"] is not None
 
     # Get initial guidance
     response = await client.get(f"/api/runs/{run_id}/guidance")

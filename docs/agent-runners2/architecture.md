@@ -5,7 +5,6 @@
 ```
                           ┌─────────────────────────────┐
                           │         Routine YAML         │
-                          │  planner_agent: "Planner"    │
                           │  builder_agent: "Builder"    │
                           │  verifier_agent: "Verifier"  │
                           └──────────┬──────────────────┘
@@ -78,7 +77,7 @@ Profiles are an enum, not user-extensible (initially). The per-runner mapping is
 A prompt template paired with a model profile. Agents define *what* to do (via prompt) and *how hard to think* (via profile). The runner determines *where* and *how* to execute.
 
 **Default agents:**
-- **Planner** -- profile: ARCHITECT. System prompt for breaking down work into steps/tasks. User-assignable only; no special workflow engine integration (no planning phase exists).
+- **Planner** -- profile: ARCHITECT. System prompt for breaking down work into steps/tasks. Available as a standalone agent config; no routine schema or workflow engine integration.
 - **Builder** -- profile: CODER. System prompt for implementing requirements.
 - **Verifier** -- profile: CODER. System prompt for grading work against requirements.
 
@@ -100,7 +99,7 @@ agent_configs
 ├── created_at: datetime
 └── updated_at: datetime
 
-runner_profile_defaults
+agent_runner_model_profile_defaults
 ├── id: UUID (PK)
 ├── runner_type: enum (CLI_SUBPROCESS|OPENHANDS_LOCAL|...)
 ├── profile: enum (ARCHITECT|DESIGNER|CODER|SUMMARIZER)
@@ -139,8 +138,8 @@ runs (renamed columns)
 | Method | Path | Purpose |
 |--------|------|---------|
 | `GET` | `/api/model-profiles` | List all profiles (enum values) |
-| `GET` | `/api/agent-runners/{type}/profiles` | Get runner's profile-to-model defaults |
-| `PUT` | `/api/agent-runners/{type}/profiles` | Set runner's profile-to-model defaults |
+| `GET` | `/api/agent-runners/{type}/model-profile-defaults` | Get Agent Runner Model Defaults |
+| `PUT` | `/api/agent-runners/{type}/model-profile-defaults` | Set Agent Runner Model Defaults |
 | `GET` | `/api/agents` | List agents (the new concept) |
 | `POST` | `/api/agents` | Create agent |
 | `GET` | `/api/agents/{id}` | Get agent detail |
@@ -166,9 +165,9 @@ class AgentSchema(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-class RunnerProfileDefaultsSchema(BaseModel):
-    runner_type: str
-    profiles: dict[str, str]  # {profile_name: model_string}
+class AgentRunnerModelProfileDefaultsSchema(BaseModel):
+    agent_runner_type: str
+    model_profile_defaults: dict[str, str]  # {profile_name: model_string}
 
 # Renamed
 class AgentRunnerOption(BaseModel):       # was AgentOption
@@ -190,7 +189,6 @@ routine:
   name: "Example Routine"
 
   # Routine-level defaults (optional)
-  planner_agent: "Planner"
   builder_agent: "Builder"
   verifier_agent: "Verifier"
 
@@ -245,7 +243,7 @@ src/orchestrator/
 │       ├── runners.py          # renamed from agents.py
 │       └── agents.py           # NEW
 └── db/
-    └── models.py               # RunModel (renamed columns), AgentConfigModel, RunnerProfileDefaultModel
+    └── models.py               # RunModel (renamed columns), AgentConfigModel, AgentRunnerModelProfileDefaultModel
 ```
 
 ## Frontend Structure After Refactor
@@ -279,7 +277,7 @@ ui/src/
 2. Routine specifies **agents** for each role (or uses defaults).
 3. Engine resolves agent for current phase (build/verify) via cascading lookup.
 4. Resolved agent provides: system prompt + model profile.
-5. Runner resolves model profile to concrete model string. Resolution order: per-run profile overrides -> runner's profile defaults.
+5. Runner resolves model profile to concrete model string. Resolution order: per-run model overrides -> Agent Runner Model Defaults.
 6. Runner executes with resolved model and concatenated prompt (agent system prompt + separator + task prompt).
 
 ### Prompt Generation (modified)

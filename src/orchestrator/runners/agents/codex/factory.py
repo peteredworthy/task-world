@@ -11,23 +11,23 @@ from orchestrator.runners.agents.codex.agent import CodexServerAgent
 
 
 def create_codex_agent(
-    agent_config: dict[str, Any],
+    agent_runner_config: dict[str, Any],
     **kwargs: Any,
 ) -> CodexServerAgent:
-    """Create a CodexServerAgent from agent_config.
+    """Create a CodexServerAgent from agent_runner_config.
 
     Args:
-        agent_config: Configuration dict from the run (model, callback_channel,
+        agent_runner_config: Configuration dict from the run (model, callback_channel,
             api_key, restrictions).
         **kwargs: Ignored (for forward compatibility).
 
     Returns:
         A configured CodexServerAgent instance.
     """
-    model = agent_config.get("model")
-    callback_channel = agent_config.get("callback_channel", "rest")
-    api_key = agent_config.get("api_key")
-    restrictions = agent_config.get("restrictions", "managed")
+    model = agent_runner_config.get("model")
+    callback_channel = agent_runner_config.get("callback_channel", "rest")
+    api_key = agent_runner_config.get("api_key")
+    restrictions = agent_runner_config.get("restrictions", "managed")
 
     return CodexServerAgent(
         model=model,

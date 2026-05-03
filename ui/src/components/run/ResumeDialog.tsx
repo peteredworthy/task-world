@@ -24,7 +24,7 @@ interface DialogState {
   prevOpen: boolean;
 }
 
-/** Map agent_type to a display icon and tint color */
+/** Map agent_runner_type to a display icon and tint color */
 function agentVisual(agentType: string): { icon: string; tintBg: string; tintText: string } {
   const lower = agentType.toLowerCase();
   if (lower.includes('openhands')) {
@@ -111,7 +111,7 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
     try {
       await resumeRun.mutateAsync({
         runId: run.id,
-        agentType: selectedAgent.agent_type,
+        agentType: selectedAgent.agent_runner_type,
         agentConfig: state.agentConfigValues,
         resumeStrategy: hasWorktree ? state.worktreeStrategy : undefined,
       });
@@ -226,11 +226,11 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
                 <AgentRunnerIcon icon={run.agent_icon} className="h-5 w-5" />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm font-medium text-text-primary truncate">
-                    {run.agent_type_display}
+                    {run.agent_runner_type_display}
                   </div>
-                  {run.agent_type && (
+                  {run.agent_runner_type && (
                     <div className="text-xs text-text-muted truncate">
-                      {run.agent_type}
+                      {run.agent_runner_type}
                     </div>
                   )}
                 </div>
@@ -303,12 +303,12 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
                     <div className="grid grid-cols-3 gap-2.5">
                       {allAgents.map((agent, idx) => {
                         const isSelected = state.selectedAgentIndex === String(idx);
-                        const visual = agentVisual(agent.agent_type);
+                        const visual = agentVisual(agent.agent_runner_type);
                         const disabled = !agent.available;
 
                         return (
                           <button
-                            key={`${agent.agent_type}:${agent.name}`}
+                            key={`${agent.agent_runner_type}:${agent.name}`}
                             type="button"
                             disabled={disabled}
                             onClick={() => {
@@ -378,9 +378,9 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
                               />
                             </div>
 
-                            {/* Agent type subtitle */}
+                            {/* Agent runner type subtitle */}
                             <span className="text-[11px] text-text-muted mt-0.5 block truncate">
-                              {agent.agent_type}
+                              {agent.agent_runner_type}
                             </span>
                           </button>
                         );
@@ -389,12 +389,12 @@ export function ResumeDialog({ open, run, onClose }: ResumeDialogProps) {
                   )}
                 </div>
 
-                {/* Agent Configuration */}
+                {/* Agent Runner Configuration */}
                 {selectedAgent && (
                   <div>
                     <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
                       <span className="text-base leading-none">{'\u{1F527}'}</span>
-                      Agent Configuration
+                      Agent Runner Configuration
                     </label>
                     <AgentRunnerConfigForm
                       agent={selectedAgent}

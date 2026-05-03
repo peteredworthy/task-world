@@ -1,4 +1,4 @@
-"""Tests for agent types and protocol."""
+"""Tests for agent runner types and protocol."""
 
 from orchestrator.runners.errors import (
     AgentCancelledError,
@@ -81,26 +81,28 @@ def test_execution_result_failure() -> None:
 
 def test_agent_info() -> None:
     info = AgentRunnerInfo(
-        agent_type=AgentRunnerType.CLI_SUBPROCESS, name="claude", version="1.0.0"
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS, name="claude", version="1.0.0"
     )
-    assert info.agent_type == AgentRunnerType.CLI_SUBPROCESS
+    assert info.agent_runner_type == AgentRunnerType.CLI_SUBPROCESS
     assert info.name == "claude"
     assert info.version == "1.0.0"
 
 
 def test_agent_info_no_version() -> None:
-    info = AgentRunnerInfo(agent_type=AgentRunnerType.OPENHANDS_LOCAL, name="openhands_local")
+    info = AgentRunnerInfo(
+        agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL, name="openhands_local"
+    )
     assert info.version is None
 
 
-def test_agent_type_claude_sdk_in_enum() -> None:
+def test_agent_runner_type_claude_sdk_in_enum() -> None:
     assert AgentRunnerType.CLAUDE_SDK == "claude_sdk"
     assert AgentRunnerType.CLAUDE_SDK in AgentRunnerType
 
 
 def test_agent_option() -> None:
     opt = AgentOption(
-        agent_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
         name="Claude CLI",
         available=True,
         detail="Found at /usr/local/bin/claude",
@@ -111,7 +113,7 @@ def test_agent_option() -> None:
 
 def test_agent_option_unavailable() -> None:
     opt = AgentOption(
-        agent_type=AgentRunnerType.OPENHANDS_LOCAL,
+        agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
         name="OpenHands",
         available=False,
         detail="Server not reachable",
@@ -126,7 +128,7 @@ class _FakeAgent:
 
     @property
     def info(self) -> AgentRunnerInfo:
-        return AgentRunnerInfo(agent_type=AgentRunnerType.CLI_SUBPROCESS, name="fake")
+        return AgentRunnerInfo(agent_runner_type=AgentRunnerType.CLI_SUBPROCESS, name="fake")
 
     async def execute(
         self,
@@ -156,14 +158,14 @@ def test_agent_error_hierarchy() -> None:
 
 def test_agent_execution_error() -> None:
     err = AgentExecutionError("openhands_local", "connection refused")
-    assert err.agent_type == "openhands_local"
+    assert err.agent_runner_type == "openhands_local"
     assert err.message == "connection refused"
     assert "openhands_local" in str(err)
 
 
 def test_agent_not_available_error() -> None:
     err = AgentNotAvailableError("cli_subprocess", "claude not found in PATH")
-    assert err.agent_type == "cli_subprocess"
+    assert err.agent_runner_type == "cli_subprocess"
     assert err.reason == "claude not found in PATH"
 
 
@@ -175,7 +177,7 @@ def test_agent_not_available_error_no_reason() -> None:
 
 def test_agent_cancelled_error() -> None:
     err = AgentCancelledError("cli_subprocess")
-    assert err.agent_type == "cli_subprocess"
+    assert err.agent_runner_type == "cli_subprocess"
     assert "cancelled" in str(err)
 
 
@@ -191,7 +193,7 @@ def test_callback_type_aliases_exist() -> None:
 # --- AgentConfigField ---
 
 
-def test_agent_config_field_string() -> None:
+def test_agent_runner_config_field_string() -> None:
     field = AgentConfigField(
         name="model",
         field_type="string",
@@ -205,7 +207,7 @@ def test_agent_config_field_string() -> None:
     assert field.options is None
 
 
-def test_agent_config_field_select() -> None:
+def test_agent_runner_config_field_select() -> None:
     field = AgentConfigField(
         name="callback_channel",
         field_type="select",
@@ -218,7 +220,7 @@ def test_agent_config_field_select() -> None:
     assert field.options == ["rest", "mcp"]
 
 
-def test_agent_config_field_number() -> None:
+def test_agent_runner_config_field_number() -> None:
     field = AgentConfigField(
         name="timeout_minutes",
         field_type="number",
@@ -234,7 +236,7 @@ def test_agent_option_with_config_schema() -> None:
         AgentConfigField(name="max_iterations", field_type="number", default=100),
     ]
     opt = AgentOption(
-        agent_type=AgentRunnerType.OPENHANDS_LOCAL,
+        agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
         name="OpenHands",
         available=True,
         config_schema=schema,
@@ -246,7 +248,7 @@ def test_agent_option_with_config_schema() -> None:
 
 def test_agent_option_config_schema_defaults_to_empty() -> None:
     opt = AgentOption(
-        agent_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
         name="claude",
         available=True,
     )

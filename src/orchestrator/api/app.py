@@ -118,7 +118,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 active_runs = await repo.list_by_status(RunStatus.ACTIVE)
 
             for run in active_runs:
-                if run.agent_type and run.agent_type in (
+                if run.agent_runner_type and run.agent_runner_type in (
                     _AT.CLI_SUBPROCESS,
                     _AT.OPENHANDS_LOCAL,
                     _AT.OPENHANDS_DOCKER,
@@ -126,11 +126,13 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     _AT.CLAUDE_SDK,
                 ):
                     if not executor.is_running(run.id):
-                        spawned = executor.spawn_for_run(run.id, run.agent_type, run.agent_config)
+                        spawned = executor.spawn_for_run(
+                            run.id, run.agent_runner_type, run.agent_runner_config
+                        )
                         if spawned:
                             logger.info(
                                 f"Startup recovery: re-spawned executor loop for "
-                                f"active run {run.id} ({run.agent_type.value})"
+                                f"active run {run.id} ({run.agent_runner_type.value})"
                             )
 
             # Auto-resume runs that were paused by restart-recoverable causes.
@@ -149,8 +151,8 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     r
                     for r in paused_runs_all
                     if _is_startup_recoverable_pause_reason(r.pause_reason)
-                    and r.agent_type is not None
-                    and r.agent_type
+                    and r.agent_runner_type is not None
+                    and r.agent_runner_type
                     in (
                         _AT.CLI_SUBPROCESS,
                         _AT.OPENHANDS_LOCAL,
@@ -212,13 +214,15 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                         await svc.apply_resume_run(run.id, resume_strategy="continue")
                         await session.commit()
 
-                    _agent_type = run.agent_type
-                    assert _agent_type is not None  # filtered above
-                    spawned = executor.spawn_for_run(run.id, _agent_type, run.agent_config)
+                    _agent_runner_type = run.agent_runner_type
+                    assert _agent_runner_type is not None  # filtered above
+                    spawned = executor.spawn_for_run(
+                        run.id, _agent_runner_type, run.agent_runner_config
+                    )
                     if spawned:
                         logger.info(
                             f"Startup recovery: auto-resumed run {run.id} "
-                            f"({_agent_type.value}) after server shutdown"
+                            f"({_agent_runner_type.value}) after server shutdown"
                         )
                 except Exception as resume_err:
                     logger.warning(
@@ -588,8 +592,8 @@ def create_app(
     register_error_handlers(app)
 
     # Register routers with auth dependency
-    from orchestrator.api.routers.agents import router as agent_configs_router
-    from orchestrator.api.routers.runners import router as agents_router
+    from orchestrator.api.routers.agents import router as agents_router
+    from orchestrator.api.routers.runners import router as agent_runners_router
     from orchestrator.api.routers.clarifications import router as clarifications_router
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.envfiles import router as envfiles_router
@@ -601,8 +605,8 @@ def create_app(
     from orchestrator.api.routers.tasks import router as tasks_router
 
     auth_deps = [Depends(require_auth)]
-    app.include_router(agent_configs_router, dependencies=auth_deps)
     app.include_router(agents_router, dependencies=auth_deps)
+    app.include_router(agent_runners_router, dependencies=auth_deps)
     app.include_router(clarifications_router, dependencies=auth_deps)
     app.include_router(config_router, dependencies=auth_deps)
     app.include_router(envfiles_router, dependencies=auth_deps)

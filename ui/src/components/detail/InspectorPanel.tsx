@@ -95,22 +95,26 @@ function InspectorModal({ open, title, onClose, children, size = 'lg' }: Inspect
   );
 }
 
-function formatAgentType(agentType: string | null): string {
-  if (!agentType) return 'Unknown';
-  return agentType
+function formatAgentRunnerType(agentRunnerType: string | null): string {
+  if (!agentRunnerType) return 'Unknown';
+  return agentRunnerType
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }
 
-function getAgentDisplayName(att: AttemptSchema): string {
-  if (att.agent_type === 'cli_subprocess') {
+function isScriptAttempt(att: AttemptSchema): boolean {
+  return att.agent_settings?.execution_kind === 'script' || att.agent_runner_type === 'script';
+}
+
+function getAgentRunnerDisplayName(att: AttemptSchema): string {
+  if (att.agent_runner_type === 'cli_subprocess') {
     const command = att.agent_settings?.command;
     if (typeof command === 'string' && command.trim().length > 0) {
       return command.trim();
     }
   }
-  return formatAgentType(att.agent_type);
+  return formatAgentRunnerType(att.agent_runner_type);
 }
 
 function eventLabel(eventType: string, payload: Record<string, unknown>): string {
@@ -446,7 +450,8 @@ function InspectorAttemptCard({
   const tokensWrite = getMetric(att.metrics, 'tokens_write');
   const totalTokens = tokensRead + tokensWrite;
   const hasAgentLogs = att.has_output || att.has_action_log;
-  const hasPrompts = Boolean(att.builder_prompt || att.verifier_prompt || att.outcome);
+  const isScript = isScriptAttempt(att);
+  const hasPrompts = !isScript && Boolean(att.builder_prompt || att.verifier_prompt || att.outcome);
   const hasBodyContent = Boolean(
     att.error
     || att.grade_snapshot.length > 0
@@ -481,10 +486,10 @@ function InspectorAttemptCard({
               )}
             </div>
 
-            {att.agent_type && (
+            {(att.agent_runner_type || isScript) && (
               <div className="flex flex-wrap items-center gap-1.5 text-xs text-text-secondary mb-1.5">
-                <span>Agent:</span>
-                <span className="font-medium text-text-primary truncate">{getAgentDisplayName(att)}</span>
+                <span>{isScript ? 'Execution:' : 'Agent Runner:'}</span>
+                <span className="font-medium text-text-primary truncate">{isScript ? 'Script' : getAgentRunnerDisplayName(att)}</span>
                 {att.agent_model && (
                   <>
                     <span className="text-text-muted">·</span>

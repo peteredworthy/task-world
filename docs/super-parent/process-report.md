@@ -46,7 +46,7 @@ Spark child evidence endpoint:
 - `GET /api/runs/b1bd62c2-6f8a-45ba-92ef-64054f23b670/evidence`
 - Returned exactly one bundle after the evidence-filter fix:
   - `path`: `docs/super-parent/process-evidence/spark-smoke-evidence.json`
-  - `schema_version`: `phase4.evidence.v1`
+  - `schema_version`: `run.evidence.v1`
   - `outcome`: `verified_fix`
   - `next_recommendation`: `proceed`
 

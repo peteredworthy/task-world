@@ -198,6 +198,15 @@ async def test_oversight_child_run_tools(
     tmp_path: Path,
 ) -> None:
     parent = _make_run()
+    parent.status = RunStatus.ACTIVE
+    parent_worktree = tmp_path / "parent-worktree"
+    parent_worktree.mkdir()
+    _init_repo(parent_worktree)
+    report_path = parent_worktree / "docs" / "super-parent" / "final-report.md"
+    report_path.parent.mkdir(parents=True)
+    report_path.write_text("# Final validation\n", encoding="utf-8")
+    parent.worktree_path = str(parent_worktree)
+    parent_head = _git(["rev-parse", "HEAD"], cwd=parent_worktree)
     await service.create_run(parent)
 
     create_result = await handler.handle(
@@ -225,13 +234,20 @@ async def test_oversight_child_run_tools(
     )
     assert wait_result["run_id"] == child_id
     assert wait_result["terminal"] is False
+    assert wait_result["meaningful_state"] is False
+
+    parent_after_wait = await service.get_run("run-1")
+    assert [item["phase"] for item in parent_after_wait.oversight_state["child_waits"]] == [
+        "started",
+        "observed",
+    ]
 
     worktree = tmp_path / "worktree"
-    evidence_dir = worktree / "docs" / "phase5"
+    evidence_dir = worktree / "docs" / "run-evidence"
     evidence_dir.mkdir(parents=True)
     (evidence_dir / "slice-01-evidence.json").write_text(
         """{
-  "schema_version": "phase4.evidence.v1",
+  "schema_version": "run.evidence.v1",
   "slice_id": "slice-01",
   "routine_id": "mcp-child-slice",
   "assumption_tested": "MCP can retrieve native child evidence.",
@@ -241,8 +257,8 @@ async def test_oversight_child_run_tools(
   "target_bug_reproduced": "not_targeted",
   "real_frontend_path_exercised": false,
   "real_execution_surface": "MCP ToolHandler",
-  "files_changed": ["docs/phase5/slice-01-evidence.json"],
-  "evidence_files": ["docs/phase5/slice-01-evidence.json"],
+  "files_changed": ["docs/run-evidence/slice-01-evidence.json"],
+  "evidence_files": ["docs/run-evidence/slice-01-evidence.json"],
   "open_uncertainties": [],
   "next_recommendation": "proceed",
   "outcome": "verified_fix"
@@ -266,6 +282,34 @@ async def test_oversight_child_run_tools(
         {"run_id": "run-1"},
     )
     assert get_result["oversight_state"]["child_summaries"][0]["run_id"] == child_id
+
+    update_result = await handler.handle(
+        "orchestrator_update_parent_oversight",
+        {
+            "run_id": "run-1",
+            "current_understanding": {"summary": "MCP recorded durable facts"},
+            "target_inventory": [{"id": "INV-001", "resolved": True}],
+            "final_validation": {
+                "passed": True,
+                "integrated_commit_sha": parent_head,
+                "report_path": "docs/super-parent/final-report.md",
+                "commands_run": [
+                    {
+                        "command": "uv run pytest tests/integration/test_mcp_tools.py",
+                        "exit_code": 0,
+                    }
+                ],
+                "evidence_files": ["docs/super-parent/final-report.md"],
+            },
+            "decision": {"kind": "mcp_update"},
+        },
+    )
+    updated_state = update_result["oversight_state"]
+    assert updated_state["current_understanding"] == {"summary": "MCP recorded durable facts"}
+    assert updated_state["target_inventory"][0]["id"] == "INV-001"
+    assert updated_state["final_validation"]["passed"] is True
+    assert updated_state["final_validation"]["service_verified"] is True
+    assert updated_state["decisions"][0]["kind"] == "mcp_update"
 
 
 async def test_parent_terminal_guard_pauses_unresolved_child(service: WorkflowService) -> None:
@@ -327,7 +371,7 @@ async def test_collect_run_evidence_uses_files_changed_since_source_commit(
     committed_dir = worktree / "docs" / "old"
     committed_dir.mkdir(parents=True)
     (committed_dir / "old-evidence.json").write_text(
-        '{"schema_version":"phase4.evidence.v1","outcome":"environment_blocked"}',
+        '{"schema_version":"run.evidence.v1","outcome":"environment_blocked"}',
         encoding="utf-8",
     )
     subprocess.run(["git", "add", "."], cwd=worktree, check=True, capture_output=True)
@@ -344,7 +388,7 @@ async def test_collect_run_evidence_uses_files_changed_since_source_commit(
     evidence_dir.mkdir(parents=True)
     (evidence_dir / "new-evidence.json").write_text(
         """{
-  "schema_version": "phase4.evidence.v1",
+  "schema_version": "run.evidence.v1",
   "slice_id": "slice-new",
   "routine_id": "evidence-filter",
   "assumption_tested": "Only changed evidence is collected.",

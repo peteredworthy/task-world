@@ -8,10 +8,10 @@
 **Context:** The architecture defines 3 default agents (Planner, Builder, Verifier), but the current execution flow only has build and verify phases. The execution flow diagram says the engine resolves agent for build/verify - no planning phase exists. Should we: (a) add a planning phase to the workflow engine, (b) keep Planner as a pre-defined agent that users can assign manually but has no special engine integration, or (c) drop Planner from the initial scope?
 **Options:**
 1. Add a planning phase to the workflow engine
-2. Keep Planner as a user-assignable agent (no special engine integration)
+2. Keep Planner as a standalone agent config (no special engine integration)
 3. Drop Planner from initial scope
 
-**Answer:** Keep Planner as a user-assignable agent (no special engine integration)
+**Answer:** Keep Planner as a standalone agent config (no special engine integration)
 **Answered by:** user
 **Answered at:** 2026-03-06T15:08:55.804132+00:00
 

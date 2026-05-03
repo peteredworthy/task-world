@@ -135,7 +135,7 @@ class AttemptStore:
         run_id: str,
         agent_metadata: dict[str, Any],
     ) -> None:
-        """Persist agent metadata (PID, container_id, etc.) to run.agent_config immediately.
+        """Persist agent metadata (PID, container_id, etc.) to run.agent_runner_config immediately.
 
         This should be called right after creating the agent process so that if the
         orchestrator crashes or the agent dies, we can still check if it's alive

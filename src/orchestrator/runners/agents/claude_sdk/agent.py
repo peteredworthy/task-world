@@ -418,7 +418,7 @@ class ClaudeSDKAgent:
     def info(self) -> AgentRunnerInfo:
         """Return static metadata for this agent instance."""
         return AgentRunnerInfo(
-            agent_type=AgentRunnerType.CLAUDE_SDK,
+            agent_runner_type=AgentRunnerType.CLAUDE_SDK,
             name="Claude SDK",
             version=None,
         )

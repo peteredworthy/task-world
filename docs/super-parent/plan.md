@@ -23,7 +23,7 @@ Implementation:
 - Add a reusable `super-parent` routine under `routines/super-parent/`.
 - Define intake inventory, slice selection, child creation, evidence evaluation, and final
   report tasks with stable requirement IDs.
-- Require every generated child routine to include `phase4.evidence.v1` output.
+- Require every generated child routine to include `run.evidence.v1` output.
 - Document the implementation slices in this file.
 
 Verifiable requirements:
@@ -47,7 +47,7 @@ Implementation:
 
 - Add a pure `workflow.oversight` reducer with typed payloads for child summaries, evidence
   outcomes, attention items, attempt counts, merge queue, and terminal guards.
-- Expand the `phase4.evidence.v1` API schema to distinguish the outcomes required by the
+- Expand the `run.evidence.v1` API schema to distinguish the outcomes required by the
   intent: `verified_fix`, `bug_not_reproduced`, `behavior_already_correct`,
   `environment_blocked`, `needs_revision`, `partial_progress`, and `unrelated_failure`.
 - Compute stalled slices when the same `parent_slice_id` reaches three failed or revision

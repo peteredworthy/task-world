@@ -727,29 +727,31 @@ async def agent_resolve_conflicts(
     if not conflict_file_paths:
         raise HTTPException(status_code=409, detail="No merge conflicts to resolve")
 
-    # Resolve agent type and config from body or run defaults
-    agent_type_str: str | None = body.agent_type
-    agent_config_override: dict[str, Any] | None = body.agent_config
+    # Resolve agent runner type and config from body or run defaults
+    agent_runner_type_str: str | None = body.agent_runner_type
+    agent_runner_config_override: dict[str, Any] | None = body.agent_runner_config
 
-    agent_type: AgentRunnerType | None
-    if agent_type_str:
-        valid_agent_types = [e.value for e in AgentRunnerType]
-        if agent_type_str not in valid_agent_types:
+    agent_runner_type: AgentRunnerType | None
+    if agent_runner_type_str:
+        valid_agent_runner_types = [e.value for e in AgentRunnerType]
+        if agent_runner_type_str not in valid_agent_runner_types:
             raise HTTPException(
                 status_code=422,
-                detail=f"Invalid agent_type '{agent_type_str}'. Valid options: {', '.join(valid_agent_types)}",
+                detail=f"Invalid agent_runner_type '{agent_runner_type_str}'. Valid options: {', '.join(valid_agent_runner_types)}",
             )
-        agent_type = AgentRunnerType(agent_type_str)
+        agent_runner_type = AgentRunnerType(agent_runner_type_str)
     else:
-        agent_type = run.agent_type
+        agent_runner_type = run.agent_runner_type
 
-    agent_config: dict[str, Any] = agent_config_override or run.agent_config or {}
+    agent_runner_config: dict[str, Any] = (
+        agent_runner_config_override or run.agent_runner_config or {}
+    )
 
     job_id = str(uuid.uuid4())
 
     # Dispatch the agent in the background
-    if agent_type is not None:
-        executor.spawn_for_run(run.id, agent_type, agent_config)
+    if agent_runner_type is not None:
+        executor.spawn_for_run(run.id, agent_runner_type, agent_runner_config)
 
     await emitter.emit(
         AgentFixStarted(
@@ -757,7 +759,7 @@ async def agent_resolve_conflicts(
             run_id=run_id,
             event_type="agent_fix_started",
             job_id=job_id,
-            agent_type=agent_type.value if agent_type else "",
+            agent_runner_type=agent_runner_type.value if agent_runner_type else "",
         )
     )
 

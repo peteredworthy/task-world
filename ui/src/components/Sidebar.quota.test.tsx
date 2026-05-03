@@ -25,7 +25,7 @@ function makeQuota(overrides: Partial<AgentRunnerQuota> = {}): AgentRunnerQuota 
 
 function makeAgent(overrides: Partial<AgentRunnerOption> = {}): AgentRunnerOption {
   return {
-    agent_type: 'test_agent',
+    agent_runner_type: 'test_agent',
     name: 'Test Agent',
     title: 'Test Agent Title',
     description: 'A test agent description',
@@ -67,8 +67,8 @@ describe('Sidebar quota section', () => {
   it('hides section when all agents have null quota', () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
-      makeAgent({ agent_type: 'agent1', name: 'Agent One', quota: null }),
-      makeAgent({ agent_type: 'agent2', name: 'Agent Two', quota: null }),
+      makeAgent({ agent_runner_type: 'agent1', name: 'Agent One', quota: null }),
+      makeAgent({ agent_runner_type: 'agent2', name: 'Agent Two', quota: null }),
     ]);
 
     renderSidebar(queryClient);
@@ -100,9 +100,9 @@ describe('Sidebar quota section', () => {
   it('renders one row per agent with non-null quota', () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
-      makeAgent({ agent_type: 'agent1', name: 'Agent Alpha', quota: makeQuota({ balance_usd: 5.00 }) }),
-      makeAgent({ agent_type: 'agent2', name: 'Agent Beta', quota: makeQuota({ balance_usd: 10.00 }) }),
-      makeAgent({ agent_type: 'agent3', name: 'Agent Gamma', quota: null }),
+      makeAgent({ agent_runner_type: 'agent1', name: 'Agent Alpha', quota: makeQuota({ balance_usd: 5.00 }) }),
+      makeAgent({ agent_runner_type: 'agent2', name: 'Agent Beta', quota: makeQuota({ balance_usd: 10.00 }) }),
+      makeAgent({ agent_runner_type: 'agent3', name: 'Agent Gamma', quota: null }),
     ]);
 
     renderSidebar(queryClient);
@@ -116,13 +116,13 @@ describe('Sidebar quota section', () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({
-        agent_type: 'agent1',
+        agent_runner_type: 'agent1',
         name: 'Available Agent',
         available: true,
         quota: makeQuota({ balance_usd: 5.00 }),
       }),
       makeAgent({
-        agent_type: 'agent2',
+        agent_runner_type: 'agent2',
         name: 'Unavailable Agent',
         available: false,
         quota: makeQuota({ balance_usd: 5.00 }),
@@ -144,7 +144,7 @@ describe('Sidebar quota section', () => {
     ];
     queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({
-        agent_type: 'agent1',
+        agent_runner_type: 'agent1',
         name: 'Claude',
         quota: makeQuota({ balance_pct: 39, balance_usd: null, breakdown }),
       }),
@@ -172,7 +172,7 @@ describe('Sidebar quota section', () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({
-        agent_type: 'agent1',
+        agent_runner_type: 'agent1',
         name: 'Static Agent',
         quota: makeQuota({ balance_usd: 5, breakdown: null }),
       }),
@@ -191,7 +191,7 @@ describe('Sidebar quota section', () => {
     const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
     queryClient.setQueryData<AgentOption[]>(['agent-runners'], [
       makeAgent({
-        agent_type: 'agent1',
+        agent_runner_type: 'agent1',
         name: 'Stale Agent',
         quota: makeQuota({ balance_usd: 5.00, fetched_at: fiveMinAgo }),
       }),
@@ -209,7 +209,7 @@ describe('Sidebar quota section', () => {
     const thirtySecAgo = new Date(Date.now() - 30 * 1000).toISOString();
     queryClient.setQueryData<AgentOption[]>(['agent-runners'], [
       makeAgent({
-        agent_type: 'agent1',
+        agent_runner_type: 'agent1',
         name: 'Fresh Agent',
         quota: makeQuota({ balance_usd: 5.00, fetched_at: thirtySecAgo }),
       }),
@@ -225,7 +225,7 @@ describe('Sidebar quota section', () => {
     const queryClient = new QueryClient();
     queryClient.setQueryData<AgentRunnerOption[]>(['agent-runners'], [
       makeAgent({
-        agent_type: 'agent1',
+        agent_runner_type: 'agent1',
         name: 'Agent One',
         quota: makeQuota({ balance_usd: 5.00 }),
       }),

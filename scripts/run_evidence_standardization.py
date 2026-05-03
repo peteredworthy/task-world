@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Standardize oversight-loop evidence bundles for phase 4.
+"""Standardize oversight-loop evidence bundles.
 
-Phase 4 keeps the solution at the convention/script layer. The coordinator
-validates each slice routine through the Orchestrator API when available,
-executes deterministic demo slices locally, validates their JSON evidence
-bundles, classifies the outcome, and writes durable results for the next
-planning cycle.
+The coordinator validates each slice routine through the Orchestrator API when
+available, executes deterministic demo slices locally, validates their JSON
+evidence bundles, classifies the outcome, and writes durable results for the
+next planning cycle.
 """
 
 from __future__ import annotations
@@ -28,13 +27,13 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 
 DEFAULT_API = "http://localhost:8000"
-DEFAULT_FEATURE = "phase4-evidence-standardization-smoke"
-DEFAULT_OUTPUT = "docs/large-tasks/phase-4-evidence-standardization-results.json"
-DEFAULT_REPORT = "docs/large-tasks/phase-4-evidence-standardization-report.html"
-DEFAULT_STATE = "docs/large-tasks/phase-4-evidence-standardization-state.json"
-DEFAULT_SLICES_DIR = "docs/large-tasks/phase-4/slices"
-DEFAULT_LOCAL_WORKTREE = "docs/large-tasks/phase-4/local-worktree"
-DEFAULT_SCHEMA_DOC = "docs/large-tasks/phase-4/evidence-bundle-schema.md"
+DEFAULT_FEATURE = "run-evidence-standardization-smoke"
+DEFAULT_OUTPUT = "docs/large-tasks/run-evidence-standardization-results.json"
+DEFAULT_REPORT = "docs/large-tasks/run-evidence-standardization-report.html"
+DEFAULT_STATE = "docs/large-tasks/run-evidence-standardization-state.json"
+DEFAULT_SLICES_DIR = "docs/large-tasks/run-evidence/slices"
+DEFAULT_LOCAL_WORKTREE = "docs/large-tasks/run-evidence/local-worktree"
+DEFAULT_SCHEMA_DOC = "docs/large-tasks/run-evidence/evidence-bundle-schema.md"
 
 BugStatus = Literal["reproduced", "not_reproduced", "not_targeted", "unknown"]
 Recommendation = Literal["proceed", "replan", "stop", "environment_blocked"]
@@ -56,7 +55,7 @@ class TestEvidence(BaseModel):
 
 
 class EvidenceBundle(BaseModel):
-    schema_version: Literal["phase4.evidence.v1"]
+    schema_version: Literal["run.evidence.v1"]
     slice_id: str = Field(min_length=1)
     routine_id: str = Field(min_length=1)
     assumption_tested: str = Field(min_length=1)
@@ -111,7 +110,7 @@ class OrchestratorExecutionEvidence:
 
 
 @dataclass(frozen=True)
-class Phase4Result:
+class EvidenceStandardizationResult:
     objective: str
     feature: str
     completed: bool
@@ -188,7 +187,7 @@ def evidence_payload(
 ) -> dict[str, Any]:
     evidence_file = f"docs/{feature}/{slice_id}-evidence.json"
     return {
-        "schema_version": "phase4.evidence.v1",
+        "schema_version": "run.evidence.v1",
         "slice_id": slice_id,
         "routine_id": routine_id,
         "assumption_tested": assumption,
@@ -203,9 +202,9 @@ def evidence_payload(
         ],
         "test_results": [
             {
-                "name": "phase4 evidence contract",
+                "name": "run evidence contract",
                 "status": "passed" if outcome != "environment_blocked" else "skipped",
-                "details": "Validated by phase 4 schema.",
+                "details": "Validated by run evidence schema.",
             }
         ],
         "target_bug_reproduced": target_bug_reproduced,
@@ -224,23 +223,23 @@ def demo_specs(feature: str) -> list[dict[str, Any]]:
         evidence_payload(
             feature=feature,
             slice_id="slice-01-verified-fix",
-            routine_id="phase4-verified-fix",
+            routine_id="run-verified-fix",
             assumption="A completed slice can prove a fix with a standard evidence bundle.",
             summary="The target behavior passed on the real execution surface.",
             target_bug_reproduced="reproduced",
             real_frontend_path_exercised=False,
             real_execution_surface="Local slice worktree filesystem probe",
             probe_command=(
-                "test -f docs/phase4-evidence-standardization-smoke/"
+                "test -f docs/run-evidence-standardization-smoke/"
                 "slice-01-verified-fix-target.txt && printf '%s\\n' 'target artifact exists'"
             ),
             probe_exit_code=0,
             probe_stdout="target artifact exists",
             probe_stderr="",
             files_changed=[
-                "routines/phase4-verified-fix.sh",
-                "docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-target.txt",
-                "docs/phase4-evidence-standardization-smoke/slice-01-verified-fix-evidence.json",
+                "routines/run-verified-fix.sh",
+                "docs/run-evidence-standardization-smoke/slice-01-verified-fix-target.txt",
+                "docs/run-evidence-standardization-smoke/slice-01-verified-fix-evidence.json",
             ],
             open_uncertainties=[],
             next_recommendation="proceed",
@@ -249,14 +248,14 @@ def demo_specs(feature: str) -> list[dict[str, Any]]:
         evidence_payload(
             feature=feature,
             slice_id="slice-02-bug-not-reproduced",
-            routine_id="phase4-bug-not-reproduced",
+            routine_id="run-bug-not-reproduced",
             assumption="A slice can stop cleanly when the target bug is not reproduced.",
             summary="The reported bug was not reproduced on the named real surface.",
             target_bug_reproduced="not_reproduced",
             real_frontend_path_exercised=False,
             real_execution_surface="Local slice worktree filesystem probe",
             probe_command=(
-                "test ! -f docs/phase4-evidence-standardization-smoke/"
+                "test ! -f docs/run-evidence-standardization-smoke/"
                 "slice-02-bug-not-reproduced-present.txt && "
                 "printf '%s\\n' 'reported bug marker absent'"
             ),
@@ -264,8 +263,8 @@ def demo_specs(feature: str) -> list[dict[str, Any]]:
             probe_stdout="reported bug marker absent",
             probe_stderr="",
             files_changed=[
-                "routines/phase4-bug-not-reproduced.sh",
-                "docs/phase4-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json",
+                "routines/run-bug-not-reproduced.sh",
+                "docs/run-evidence-standardization-smoke/slice-02-bug-not-reproduced-evidence.json",
             ],
             open_uncertainties=["Need reporter environment details before implementation."],
             next_recommendation="stop",
@@ -274,22 +273,22 @@ def demo_specs(feature: str) -> list[dict[str, Any]]:
         evidence_payload(
             feature=feature,
             slice_id="slice-03-environment-blocked",
-            routine_id="phase4-environment-blocked",
+            routine_id="run-environment-blocked",
             assumption="A slice can preserve environment failures without mislabeling them as fixes.",
             summary="The browser surface could not run, so the result is blocked.",
             target_bug_reproduced="unknown",
             real_frontend_path_exercised=False,
             real_execution_surface="Local browser-runtime availability probe",
             probe_command=(
-                "test -x .phase4/browser-runtime || "
+                "test -x .run-evidence/browser-runtime || "
                 "{ printf '%s\\n' 'browser runtime marker missing' >&2; false; }"
             ),
             probe_exit_code=1,
             probe_stdout="",
             probe_stderr="browser runtime marker missing",
             files_changed=[
-                "routines/phase4-environment-blocked.sh",
-                "docs/phase4-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json",
+                "routines/run-environment-blocked.sh",
+                "docs/run-evidence-standardization-smoke/slice-03-environment-blocked-evidence.json",
             ],
             open_uncertainties=["Install or expose the browser runtime before replanning."],
             next_recommendation="environment_blocked",
@@ -347,8 +346,8 @@ def routine_for_bundle(bundle: dict[str, Any], feature: str) -> dict[str, Any]:
     )
     return {
         "id": routine_id,
-        "name": f"Phase 4 Evidence {slice_id}",
-        "description": "Deterministic slice proving the phase 4 evidence bundle contract.",
+        "name": f"Run Evidence {slice_id}",
+        "description": "Deterministic slice proving the run evidence bundle contract.",
         "steps": [
             {
                 "id": "S-01",
@@ -362,7 +361,7 @@ def routine_for_bundle(bundle: dict[str, Any], feature: str) -> dict[str, Any]:
                         "requirements": [
                             {
                                 "id": "R1",
-                                "desc": "Write a phase4.evidence.v1 JSON evidence bundle.",
+                                "desc": "Write a run.evidence.v1 JSON evidence bundle.",
                             },
                             {
                                 "id": "R2",
@@ -407,7 +406,7 @@ def classify_bundle(bundle: EvidenceBundle) -> tuple[Outcome, list[str]]:
         if bundle.next_recommendation != "environment_blocked":
             notes.append("Environment-blocked outcomes must recommend environment_blocked.")
     else:
-        notes.append("Needs-revision evidence is not phase-4 ready.")
+        notes.append("Needs-revision evidence is not run evidence ready.")
 
     required_context = [
         bundle.assumption_tested,
@@ -531,7 +530,7 @@ def compute_success_criteria(
             slice_result.validation.status == "valid" for slice_result in slices
         ),
         "orchestrator_execution_completed": orchestrator_execution_completed,
-        "ready_for_phase5": bool(slices)
+        "ready_for_native_orchestration": bool(slices)
         and all(slice_result.valid_bundle for slice_result in slices)
         and all(slice_result.validation.status == "valid" for slice_result in slices)
         and orchestrator_execution_completed
@@ -540,10 +539,10 @@ def compute_success_criteria(
 
 
 def schema_doc() -> str:
-    return """# Phase 4 Evidence Bundle Schema
+    return """# Run Evidence Bundle Schema
 
 Every oversight-loop slice should write one JSON evidence bundle using
-`schema_version: phase4.evidence.v1`.
+`schema_version: run.evidence.v1`.
 
 Required planner-facing fields:
 
@@ -566,7 +565,7 @@ distinct outcomes and must not be collapsed into a generic pass/fail summary.
 """
 
 
-def render_report(result: Phase4Result) -> str:
+def render_report(result: EvidenceStandardizationResult) -> str:
     rows = "\n".join(
         "<tr>"
         f"<td>{html.escape(slice_result.slice_id)}</td>"
@@ -604,7 +603,7 @@ def render_report(result: Phase4Result) -> str:
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Phase 4 Evidence Standardization Report</title>
+  <title>Run Evidence Standardization Report</title>
   <style>
     :root {{ color-scheme: light; font-family: Inter, system-ui, sans-serif; }}
     body {{ margin: 0; background: #f7f8fa; color: #1f2933; }}
@@ -625,7 +624,7 @@ def render_report(result: Phase4Result) -> str:
 <main>
   <section>
     <p class="kicker">Large Task Delivery</p>
-    <h1>Phase 4 Evidence Standardization</h1>
+    <h1>Run Evidence Standardization</h1>
     <p>{html.escape(result.objective)}</p>
     <p><strong>Result:</strong> {html.escape(result.stop_reason)}</p>
   </section>
@@ -655,8 +654,8 @@ def render_report(result: Phase4Result) -> str:
     {orchestrator}
   </section>
   <section>
-    <h2>Phase 5 Readiness</h2>
-    <p>The evidence schema is stable, but Phase 5 is only ready once an orchestrator run completes and produces this bundle in its run worktree.</p>
+    <h2>Native Orchestration Readiness</h2>
+    <p>The evidence schema is stable once an orchestrator run completes and produces this bundle in its run worktree.</p>
   </section>
 </main>
 </body>
@@ -664,12 +663,12 @@ def render_report(result: Phase4Result) -> str:
 """
 
 
-def write_state(path: Path, result: Phase4Result) -> None:
+def write_state(path: Path, result: EvidenceStandardizationResult) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(result), indent=2) + "\n")
 
 
-def run_phase4(args: argparse.Namespace) -> Phase4Result:
+def run_standardization(args: argparse.Namespace) -> EvidenceStandardizationResult:
     slices_dir = Path(args.slices_dir)
     slices_dir.mkdir(parents=True, exist_ok=True)
     local_worktree = Path(args.local_worktree)
@@ -709,7 +708,7 @@ def run_phase4(args: argparse.Namespace) -> Phase4Result:
             )
         )
 
-        partial = Phase4Result(
+        partial = EvidenceStandardizationResult(
             objective=args.objective,
             feature=args.feature,
             completed=False,
@@ -733,7 +732,7 @@ def run_phase4(args: argparse.Namespace) -> Phase4Result:
         if completed
         else "Evidence schema is standardized, but orchestrator execution is not yet proven."
     )
-    result = Phase4Result(
+    result = EvidenceStandardizationResult(
         objective=args.objective,
         feature=args.feature,
         completed=completed,
@@ -753,7 +752,7 @@ def main() -> int:
     parser.add_argument("--feature", default=DEFAULT_FEATURE)
     parser.add_argument(
         "--objective",
-        default="Prove phase 4 standardized evidence before native orchestration.",
+        default="Prove standardized run evidence before native orchestration.",
     )
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     parser.add_argument("--report", default=DEFAULT_REPORT)
@@ -765,7 +764,7 @@ def main() -> int:
     parser.add_argument("--orchestrator-activity-json", default="")
     args = parser.parse_args()
 
-    result = run_phase4(args)
+    result = run_standardization(args)
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(asdict(result), indent=2) + "\n")

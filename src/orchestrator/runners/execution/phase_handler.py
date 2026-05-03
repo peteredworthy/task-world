@@ -126,7 +126,7 @@ class PhaseHandler:
         agent: "AgentRunner",
         context: ExecutionContext,
         req_desc_to_id: dict[str, str],
-        agent_type_value: str = "",
+        agent_runner_type_value: str = "",
         session: Any = None,
     ) -> None:
         """Execute the agent for a single phase (building / verifying / recovering).
@@ -140,7 +140,7 @@ class PhaseHandler:
             context: Ready-to-use ExecutionContext (prompt, working_dir, etc.).
             req_desc_to_id: Mapping of lowercase requirement descriptions to IDs
                             for fuzzy-match fallback.
-            agent_type_value: String label for the agent type (used in error messages).
+            agent_runner_type_value: String label for the agent runner type (used in error messages).
             session: Optional DB session (forwarded to ``store_attempt_prompt``
                      in the building phase to avoid StaticPool issues).
         """
@@ -152,7 +152,7 @@ class PhaseHandler:
                 agent,
                 context,
                 req_desc_to_id,
-                agent_type_value=agent_type_value,
+                agent_runner_type_value=agent_runner_type_value,
                 session=session,
             )
         elif phase == "verifying":
@@ -178,7 +178,7 @@ class PhaseHandler:
         agent: "AgentRunner",
         context: ExecutionContext,
         req_desc_to_id: dict[str, str],
-        agent_type_value: str = "",
+        agent_runner_type_value: str = "",
         session: Any = None,
     ) -> None:
         from orchestrator.runners.errors import AgentExecutionError
@@ -264,9 +264,9 @@ class PhaseHandler:
             logger.warning("Agent submit blocked by gate - task remains BUILDING, will retry")
             return
 
-        # Store agent metadata (PID, etc.) in run's agent_config
+        # Store agent metadata (PID, etc.) in run's agent_runner_config
         if result.agent_metadata:
-            run.agent_config = {**run.agent_config, **result.agent_metadata}
+            run.agent_runner_config = {**run.agent_runner_config, **result.agent_metadata}
 
         # Extract metrics and per-model token usage from action_log
         metrics, token_usage_by_model = self._extract_metrics_and_usage(result)
@@ -281,7 +281,7 @@ class PhaseHandler:
 
         if not result.success:
             raise AgentExecutionError(
-                agent_type=agent_type_value,
+                agent_runner_type=agent_runner_type_value,
                 message=result.error or "Agent execution returned unsuccessful result",
             )
 
@@ -402,7 +402,7 @@ class PhaseHandler:
 
         # Store agent metadata
         if result.agent_metadata:
-            run.agent_config = {**run.agent_config, **result.agent_metadata}
+            run.agent_runner_config = {**run.agent_runner_config, **result.agent_metadata}
 
         # Extract metrics and per-model token usage from action_log
         metrics, token_usage_by_model = self._extract_metrics_and_usage(result)
@@ -472,7 +472,7 @@ class PhaseHandler:
 
         # Store agent metadata
         if result.agent_metadata:
-            run.agent_config = {**run.agent_config, **result.agent_metadata}
+            run.agent_runner_config = {**run.agent_runner_config, **result.agent_metadata}
 
         # Extract metrics and per-model token usage from action_log
         metrics, token_usage_by_model = self._extract_metrics_and_usage(result)

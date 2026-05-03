@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import subprocess
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -23,6 +24,7 @@ from orchestrator.api.deps import (
     get_workflow_service,
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
+from orchestrator.git import list_branches
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.git import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
@@ -43,6 +45,7 @@ from orchestrator.api.schemas.runs import (
     MergeBackResponse,
     MergeReadinessSnapshot,
     ParentOversightResponse,
+    ParentOversightUpdateRequest,
     RecoverRequest,
     RecoverResponse,
     ResumeRunRequest,
@@ -53,8 +56,8 @@ from orchestrator.api.schemas.runs import (
     StepConditionSchema,
     StepSummary,
     TaskSummary,
-    get_agent_display_name,
-    get_agent_icon,
+    get_agent_runner_display_name,
+    get_agent_runner_icon,
 )
 from orchestrator.api.schemas.steps import (
     HumanApprovalRequest,
@@ -215,7 +218,7 @@ def _run_to_response(run: Run) -> RunResponse:
         actual_cost_usd = 0.0
         model_hint: str | None = None
 
-        raw_model = run.agent_config.get("model")
+        raw_model = run.agent_runner_config.get("model")
         if isinstance(raw_model, str) and raw_model:
             model_hint = raw_model
 
@@ -271,10 +274,12 @@ def _run_to_response(run: Run) -> RunResponse:
         parent_run_id=run.parent_run_id,
         parent_slice_id=run.parent_slice_id,
         oversight_state=run.oversight_state,
-        agent_type=run.agent_type.value if run.agent_type else None,
-        agent_type_display=get_agent_display_name(run.agent_type, run.agent_config),
-        agent_icon=get_agent_icon(run.agent_type),
-        agent_config=run.agent_config,
+        agent_runner_type=run.agent_runner_type.value if run.agent_runner_type else None,
+        agent_runner_type_display=get_agent_runner_display_name(
+            run.agent_runner_type, run.agent_runner_config
+        ),
+        agent_icon=get_agent_runner_icon(run.agent_runner_type),
+        agent_runner_config=run.agent_runner_config,
         verifier_model=run.verifier_model,
         worktree_enabled=run.worktree_enabled,
         worktree_path=run.worktree_path,
@@ -294,7 +299,7 @@ def _run_to_response(run: Run) -> RunResponse:
         updated_at=run.updated_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
-        agent_started_at=run.agent_started_at,
+        agent_runner_started_at=run.agent_runner_started_at,
         total_tokens_read=run.total_tokens_read,
         total_tokens_write=run.total_tokens_write,
         total_tokens_cache=run.total_tokens_cache,
@@ -304,6 +309,33 @@ def _run_to_response(run: Run) -> RunResponse:
         estimated_cost_usd=estimated_cost_usd,
         cost_disclaimer=cost_disclaimer,
     )
+
+
+def _resolve_child_source_branch(*, parent_run: Run, request_branch: str | None) -> str:
+    """Resolve the branch to use when creating an oversight child run.
+
+    Prefer the parent accumulation branch if it exists in the parent worktree.
+    This keeps later child slices based on integrated accepted child work. An
+    explicit branch is only honored when the parent accumulation branch is not
+    present yet.
+    """
+
+    parent_accum_branch = f"orchestrator/run-{parent_run.id}"
+    worktree_path = parent_run.worktree_path
+
+    if worktree_path:
+        try:
+            branches = list_branches(Path(worktree_path), local_only=True)
+        except (OSError, subprocess.CalledProcessError):
+            branches = []
+        else:
+            if any(branch.name == parent_accum_branch for branch in branches):
+                return parent_accum_branch
+
+    if request_branch:
+        return request_branch
+
+    return parent_run.source_branch or "main"
 
 
 def _build_run_from_request(
@@ -369,25 +401,25 @@ def _build_run_from_request(
     if request.merge_strategy is not None:
         run.merge_strategy = request.merge_strategy
 
-    if request.agent_type is not None:
-        run.agent_type = AgentRunnerType(request.agent_type)
+    if request.agent_runner_type is not None:
+        run.agent_runner_type = AgentRunnerType(request.agent_runner_type)
 
-    if request.agent_config:
-        if run.agent_type is not None:
+    if request.agent_runner_config:
+        if run.agent_runner_type is not None:
             from orchestrator.runners import AGENT_CONFIG_FIELDS
 
-            valid_fields = AGENT_CONFIG_FIELDS.get(run.agent_type, set())
-            unknown = set(request.agent_config.keys()) - valid_fields
+            valid_fields = AGENT_CONFIG_FIELDS.get(run.agent_runner_type, set())
+            unknown = set(request.agent_runner_config.keys()) - valid_fields
             if unknown:
                 raise HTTPException(
                     status_code=422,
                     detail=(
-                        f"Unknown agent_config fields for {run.agent_type.value}: "
+                        f"Unknown agent_runner_config fields for {run.agent_runner_type.value}: "
                         f"{sorted(unknown)}. Valid fields: {sorted(valid_fields)}"
                     ),
                 )
-        run.agent_config = request.agent_config
-        run.verifier_model = request.agent_config.get("model")
+        run.agent_runner_config = request.agent_runner_config
+        run.verifier_model = request.agent_runner_config.get("model")
 
     if request.env_files and request.env_files.files is not None:
         request_specs = [f.model_dump() for f in request.env_files.files]
@@ -430,14 +462,14 @@ async def create_child_run(
         request,
         routine_dirs,
         repo_name=request.repo_name or parent.repo_name,
-        branch=request.branch or parent.source_branch or "main",
+        branch=_resolve_child_source_branch(parent_run=parent, request_branch=request.branch),
     )
     if run.id == parent_run_id:
         raise HTTPException(status_code=409, detail="Child run cannot parent itself")
-    if request.agent_type is None:
-        run.agent_type = parent.agent_type
-    if not request.agent_config:
-        run.agent_config = dict(parent.agent_config)
+    if request.agent_runner_type is None:
+        run.agent_runner_type = parent.agent_runner_type
+    if not request.agent_runner_config:
+        run.agent_runner_config = dict(parent.agent_runner_config)
         run.verifier_model = parent.verifier_model
 
     created = await service.create_child_run(
@@ -492,7 +524,7 @@ async def get_run_evidence(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
 ) -> RunEvidenceResponse:
-    """Return structured phase4.evidence.v1 bundles produced by a run."""
+    """Return structured run.evidence.v1 bundles produced by a run."""
     items: list[RunEvidenceItem] = []
     for raw in await service.collect_run_evidence(run_id):
         try:
@@ -513,6 +545,27 @@ async def get_parent_oversight(
         run_id=run_id,
         oversight_state=await service.get_parent_oversight(run_id),
     )
+
+
+@router.patch("/{run_id}/oversight", response_model=ParentOversightResponse)
+async def update_parent_oversight(
+    run_id: str,
+    request: ParentOversightUpdateRequest,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> ParentOversightResponse:
+    """Persist parent-authored oversight facts and recompute the snapshot."""
+    run = await service.update_parent_oversight(
+        run_id,
+        current_understanding=request.current_understanding,
+        target_inventory=[item.model_dump(mode="json") for item in request.target_inventory]
+        if request.target_inventory is not None
+        else None,
+        final_validation=request.final_validation.model_dump(mode="json")
+        if request.final_validation is not None
+        else None,
+        decisions=request.decisions,
+    )
+    return ParentOversightResponse(run_id=run.id, oversight_state=run.oversight_state)
 
 
 @router.post("/{run_id}/oversight/refresh", response_model=ParentOversightResponse)
@@ -602,6 +655,7 @@ async def cancel_run(
         raise HTTPException(status_code=409, detail="Cannot cancel a run in STOPPING state")
     # Cancel any running agent first
     await executor.cancel_run(run_id)
+    await _cancel_active_child_executors(run_id, service, executor)
     run = await service.cancel_run(run_id)
     return _run_to_response(run)
 
@@ -621,8 +675,21 @@ async def pause_run(
         raise HTTPException(status_code=409, detail="Cannot pause a run in STOPPING state")
     # Cancel any running agent first
     await executor.cancel_run(run_id)
+    await _cancel_active_child_executors(run_id, service, executor)
     run = await service.pause_run(run_id)
     return _run_to_response(run)
+
+
+async def _cancel_active_child_executors(
+    parent_run_id: str,
+    service: WorkflowService,
+    executor: AgentRunnerExecutor,
+) -> None:
+    """Stop active child executor processes before parent control settles."""
+    children = await service.list_child_runs(parent_run_id)
+    for child in children:
+        if child.status in (RunStatus.ACTIVE, RunStatus.STOPPING):
+            await executor.cancel_run(child.id)
 
 
 @router.post("/{run_id}/resume", response_model=RunResponse, status_code=202)
@@ -642,9 +709,15 @@ async def resume_run(
     if current_run.status == RunStatus.STOPPING:
         raise HTTPException(status_code=409, detail="Cannot resume a run in STOPPING state")
 
-    # Schema validator normalizes agent_type to a valid lowercase value
-    agent_type = AgentRunnerType(request.agent_type) if request and request.agent_type else None
-    agent_config = request.agent_config if request and request.agent_config else None
+    # Schema validator normalizes agent_runner_type to a valid lowercase value
+    agent_runner_type = (
+        AgentRunnerType(request.agent_runner_type)
+        if request and request.agent_runner_type
+        else None
+    )
+    agent_runner_config = (
+        request.agent_runner_config if request and request.agent_runner_config else None
+    )
     resume_strategy = request.resume_strategy if request else None
 
     # Handle worktree reset before changing run state
@@ -655,8 +728,8 @@ async def resume_run(
 
     run = await service.resume_run(
         run_id,
-        agent_type=agent_type,
-        agent_config=agent_config,
+        agent_runner_type=agent_runner_type,
+        agent_runner_config=agent_runner_config,
         resume_strategy=resume_strategy,
     )
 
@@ -673,16 +746,16 @@ async def recover_run(
     run = await service.get_run(run_id)
     if run.status == RunStatus.STOPPING:
         raise HTTPException(status_code=409, detail="Cannot recover a run in STOPPING state")
-    # Schema validator normalizes agent_type to a valid lowercase value
-    agent_type = AgentRunnerType(body.agent_type) if body.agent_type else None
-    agent_config = body.agent_config if body.agent_config else None
+    # Schema validator normalizes agent_runner_type to a valid lowercase value
+    agent_runner_type = AgentRunnerType(body.agent_runner_type) if body.agent_runner_type else None
+    agent_runner_config = body.agent_runner_config if body.agent_runner_config else None
     try:
         result = await service.recover_run(
             run_id=run_id,
             target_task_id=body.target_task_id,
             additional_attempts=body.additional_attempts,
-            agent_type=agent_type,
-            agent_config=agent_config,
+            agent_runner_type=agent_runner_type,
+            agent_runner_config=agent_runner_config,
             preserve_checklist=body.preserve_checklist,
             guidance=body.guidance,
             reset_branch=body.reset_branch,
@@ -985,13 +1058,13 @@ async def approve_step(
 
     if (
         run.status == RunStatus.ACTIVE
-        and run.agent_type is not None
+        and run.agent_runner_type is not None
         and not executor.is_running(run_id)
     ):
-        spawned = executor.spawn_for_run(run_id, run.agent_type, run.agent_config)
+        spawned = executor.spawn_for_run(run_id, run.agent_runner_type, run.agent_runner_config)
         if spawned:
             logger.info(
-                f"API: Re-spawned {run.agent_type.value} agent after step approval for run {run_id}"
+                f"API: Re-spawned {run.agent_runner_type.value} agent after step approval for run {run_id}"
             )
 
     # Build response
@@ -1247,14 +1320,14 @@ async def agent_started(
 ) -> RunResponse:
     """Mark that user has started their external agent.
 
-    Sets the agent_started_at timestamp on the run.
+    Sets the agent_runner_started_at timestamp on the run.
     """
     from datetime import datetime, timezone
 
     run = await repository.get(run_id)
 
-    # Set agent_started_at timestamp
-    run.agent_started_at = datetime.now(timezone.utc)
+    # Set agent_runner_started_at timestamp
+    run.agent_runner_started_at = datetime.now(timezone.utc)
     run.updated_at = datetime.now(timezone.utc)
 
     # Save the run (flushes to DB)

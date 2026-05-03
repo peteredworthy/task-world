@@ -14,7 +14,7 @@ from orchestrator.config import AgentRunnerType
 # since quota tests only care about quota-attachment behavior.
 _MINIMAL_OPTIONS = [
     AgentOption(
-        agent_type=AgentRunnerType.USER_MANAGED,
+        agent_runner_type=AgentRunnerType.USER_MANAGED,
         name="User Managed",
         available=True,
         detail="stub",
@@ -242,7 +242,8 @@ async def test_detect_all_concurrent_quota_fetch() -> None:
     detector = ToolDetector(agents=stubs)
 
     fake_options = [
-        _AO(agent_type=AgentRunnerType.USER_MANAGED, name=n, available=True) for n in AGENT_NAMES
+        _AO(agent_runner_type=AgentRunnerType.USER_MANAGED, name=n, available=True)
+        for n in AGENT_NAMES
     ]
 
     start = time.monotonic()

@@ -332,7 +332,7 @@ routine:
           title: "Define ModelProfile Enum and DB Model"
           task_context: |
             Add ModelProfile enum to config/enums.py with 4 values: ARCHITECT,
-            DESIGNER, CODER, SUMMARIZER. Create RunnerProfileDefaultModel
+            DESIGNER, CODER, SUMMARIZER. Create AgentRunnerModelProfileDefaultModel
             SQLAlchemy model in db/models.py with columns: id (UUID PK),
             runner_type (enum), profile (enum), model (str). Add unique
             constraint on (runner_type, profile).
@@ -341,7 +341,7 @@ routine:
               desc: "ModelProfile enum has 4 values: ARCHITECT, DESIGNER, CODER, SUMMARIZER"
               priority: critical
             - id: "R2"
-              desc: "RunnerProfileDefaultModel is importable with correct columns"
+              desc: "AgentRunnerModelProfileDefaultModel is importable with correct columns"
               priority: critical
             - id: "R3"
               desc: "Unique constraint on (runner_type, profile) pair"
@@ -352,19 +352,19 @@ routine:
                 cmd: "uv run python -c \"from orchestrator.config.enums import ModelProfile; assert len(list(ModelProfile)) == 4; print('OK')\""
                 must: true
               - id: "model_import"
-                cmd: "uv run python -c \"from orchestrator.db.models import RunnerProfileDefaultModel; print('OK')\""
+                cmd: "uv run python -c \"from orchestrator.db.models import AgentRunnerModelProfileDefaultModel; print('OK')\""
                 must: true
 
         - id: "T-02"
           title: "Create Alembic Migration and Pydantic Schemas"
           task_context: |
-            Generate Alembic migration for runner_profile_defaults table.
+            Generate Alembic migration for agent_runner_model_profile_defaults table.
             Create Pydantic schemas: ModelProfileSchema (name, description),
-            RunnerProfileDefaultsSchema (runner_type, profiles dict).
+            AgentRunnerModelProfileDefaultsSchema (agent_runner_type, model_profile_defaults dict).
             Migration must be reversible.
           requirements:
             - id: "R1"
-              desc: "Alembic migration creates runner_profile_defaults table"
+              desc: "Alembic migration creates agent_runner_model_profile_defaults table"
               priority: critical
             - id: "R2"
               desc: "Migration applies and reverses cleanly"
@@ -383,9 +383,9 @@ routine:
           task_context: |
             Create src/orchestrator/api/routers/model_profiles.py with:
             GET /api/model-profiles (returns list of profiles with descriptions).
-            Add per-runner profile endpoints to runners router:
-            GET /api/agent-runners/{type}/profiles,
-            PUT /api/agent-runners/{type}/profiles.
+            Add per-runner model default endpoints to runners router:
+            GET /api/agent-runners/{type}/model-profile-defaults,
+            PUT /api/agent-runners/{type}/model-profile-defaults.
             Register the new router in app.py.
 
             Profile descriptions: ARCHITECT (planning/design), DESIGNER (UI/UX),
@@ -395,7 +395,7 @@ routine:
               desc: "GET /api/model-profiles returns 4 profiles"
               priority: critical
             - id: "R2"
-              desc: "PUT then GET profile defaults round-trips correctly"
+              desc: "PUT then GET Agent Runner Model Defaults round-trips correctly"
               priority: critical
           auto_verify:
             items:
@@ -409,9 +409,9 @@ routine:
         - id: "T-04"
           title: "Wire Profiles into Execution and Write Tests"
           task_context: |
-            Wire profile defaults into execution context: when a runner starts,
+            Wire Agent Runner Model Defaults into execution context: when a runner starts,
             resolve the model from profile mapping. Resolution order: per-run
-            profile overrides (future) -> runner profile defaults -> runner
+            model overrides (future) -> Agent Runner Model Defaults -> runner
             built-in default model. Write unit tests for ModelProfile enum and
             profile-to-model resolution. Write integration tests for profile
             API endpoints. Verify all existing tests still pass.
@@ -443,9 +443,9 @@ routine:
         - id: "T-01"
           title: "Add Profile Types and API Functions"
           task_context: |
-            Add TypeScript types for model profiles (ModelProfile, RunnerProfileDefaults)
-            and create API functions: fetchModelProfiles(), fetchRunnerProfiles(type),
-            saveRunnerProfiles(type, profiles). Wire to backend endpoints.
+            Add TypeScript types for model profiles (ModelProfile, AgentRunnerModelDefaults)
+            and create API functions: fetchModelProfiles(), fetchAgentRunnerModelDefaults(type),
+            saveAgentRunnerModelDefaults(type, defaults). Wire to backend endpoints.
           requirements:
             - id: "R1"
               desc: "Profile TypeScript types are importable and type-check clean"
@@ -465,7 +465,7 @@ routine:
             Add a "Model Profiles" collapsible section to each AgentRunnerCard
             with 4 model selector fields (Architect, Designer, Coder, Summarizer).
             Each field is a combobox/input allowing custom model strings. Wire
-            save button to PUT /api/agent-runners/{type}/profiles. Empty field
+            save button to PUT /api/agent-runners/{type}/model-profile-defaults. Empty field
             means "use runner default".
           requirements:
             - id: "R1"
@@ -640,7 +640,7 @@ routine:
         - id: "T-01"
           title: "Extend Config Models with Agent Fields"
           task_context: |
-            Add optional planner_agent, builder_agent, verifier_agent string
+            Add optional builder_agent, verifier_agent string
             fields to RoutineConfig, StepConfig, and TaskConfig in
             src/orchestrator/config/models.py. All default to None for backward
             compatibility. Verify existing routine YAML files parse unchanged.
@@ -834,7 +834,7 @@ routine:
             Write E2E tests: (1) routine with agent overrides at routine/step/task
             levels -- create custom agents with distinct prompts, verify prompt
             endpoint returns correct agent-prefixed prompt, verify model uses
-            profile defaults. (2) Existing routine without agent fields uses
+            Agent Runner Model Defaults. (2) Existing routine without agent fields uses
             system defaults. Tests must be self-contained (create own data, clean up).
           requirements:
             - id: "R1"

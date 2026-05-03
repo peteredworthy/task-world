@@ -176,8 +176,8 @@ async def clone_run() -> None:
         new_run.routine_embedded = routine_config.model_dump(mode="json", by_alias=True)
         if isinstance(matched_routine.path, Path):
             new_run.routine_source_dir = str(matched_routine.path.parent)
-        new_run.agent_type = ref_run.agent_type
-        new_run.agent_config = dict(ref_run.agent_config)
+        new_run.agent_runner_type = ref_run.agent_runner_type
+        new_run.agent_runner_config = dict(ref_run.agent_runner_config)
         new_run.verifier_model = ref_run.verifier_model
         new_run.merge_strategy = ref_run.merge_strategy
         new_run.env_file_specs = list(ref_run.env_file_specs)
@@ -234,7 +234,7 @@ async def clone_run() -> None:
                         completed_at=now,
                         outcome="passed",
                         metrics=AttemptMetrics(),
-                        agent_type=ref_run.agent_type,
+                        agent_runner_type=ref_run.agent_runner_type,
                         agent_model=ref_run.verifier_model,
                     )
                 ]

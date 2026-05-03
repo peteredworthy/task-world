@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { getPauseReasonMessage } from '../../src/lib/pauseReason';
 
-function run(pause_reason: string, agent_type = 'claude') {
-  return { pause_reason, agent_type };
+function run(pause_reason: string, agent_runner_type = 'claude') {
+  return { pause_reason, agent_runner_type };
 }
 
 describe('getPauseReasonMessage', () => {
   it('returns empty string when pause_reason is null', () => {
-    expect(getPauseReasonMessage({ pause_reason: null, agent_type: 'claude' })).toBe('');
+    expect(getPauseReasonMessage({ pause_reason: null, agent_runner_type: 'claude' })).toBe('');
   });
 
   const CASES: Array<[string, string, string?]> = [

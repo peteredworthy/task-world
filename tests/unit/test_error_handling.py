@@ -261,7 +261,7 @@ class TestErrorUsageExamples:
             code=ErrorCode.AGENT_ERROR,
             message="Agent execution failed",
             details={
-                "agent_type": "openhands",
+                "agent_runner_type": "openhands",
                 "task_id": "task123",
                 "error": "Connection timeout",
                 "duration_seconds": 120,

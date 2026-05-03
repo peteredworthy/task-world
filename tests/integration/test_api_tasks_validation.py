@@ -40,7 +40,9 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
 
 async def _create_and_start_run(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run, start it, and return (run_id, task_id)."""
-    create_resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "user_managed"})
+    create_resp = await client.post(
+        "/api/runs", json={**BASE_BODY, "agent_runner_type": "user_managed"}
+    )
     assert create_resp.status_code == 201
     run_id = create_resp.json()["id"]
 

@@ -428,7 +428,7 @@ async def test_executor_stops_at_human_approval_gate(
             routine_source=RoutineSource.EMBEDDED,
         )
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
         run = await service.create_run(run)
         await session.commit()
 
@@ -515,7 +515,7 @@ async def test_executor_proceeds_after_gate_approved(
             routine_source=RoutineSource.EMBEDDED,
         )
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
         run = await service.create_run(run)
         await session.commit()
 
@@ -583,7 +583,7 @@ async def test_approve_step_respawns_agent_for_active_run(
             "repo_name": "test-project",
             "branch": "main",
             "routine_embedded": routine.model_dump(mode="json"),
-            "agent_type": "cli_subprocess",
+            "agent_runner_type": "cli_subprocess",
         },
     )
     assert create_resp.status_code == 201
@@ -684,7 +684,7 @@ async def test_step_without_gate_not_blocked(
             routine_source=RoutineSource.EMBEDDED,
         )
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
         run = await service.create_run(run)
         await session.commit()
 

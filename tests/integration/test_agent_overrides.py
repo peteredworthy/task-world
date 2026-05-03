@@ -2,7 +2,7 @@
 
 Covers:
 1. Cascading resolution: task > step > routine > system default
-2. Model profile defaults stored and returned per agent
+2. Agent model profiles stored and returned per agent
 3. Builder and verifier phases both apply agent system prompts
 4. Full run lifecycle with agent overrides works end-to-end
 5. Backward compatibility: routines without agent fields fall back to system defaults
@@ -337,14 +337,14 @@ class TestCascadingResolution:
 
 
 # ===========================================================================
-# Section 2: Model profile defaults
+# Section 2: Agent model profiles
 # ===========================================================================
 
 
-class TestModelProfileDefaults:
-    """Model profile is stored per-agent and survives GET roundtrip."""
+class TestAgentModelProfiles:
+    """Model profile is stored per agent and survives GET roundtrip."""
 
-    async def test_model_profile_defaults_per_agent(self, client: AsyncClient) -> None:
+    async def test_model_profiles_roundtrip_per_agent(self, client: AsyncClient) -> None:
         """Each agent's model_profile is stored and returned correctly via GET /api/agents."""
         profiles: list[tuple[str, str]] = [
             ("E2E-ArchAgent", "architect"),

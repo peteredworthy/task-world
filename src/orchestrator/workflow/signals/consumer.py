@@ -304,8 +304,8 @@ class SignalConsumer:
         run = await service.apply_start_run(run_id)
         workflow = RunWorkflow(
             run_id=run_id,
-            agent_type=run.agent_type,
-            agent_config=run.agent_config,
+            agent_runner_type=run.agent_runner_type,
+            agent_runner_config=run.agent_runner_config,
         )
         register_active_run(run_id)
         self._active_workflows[run_id] = workflow
@@ -324,25 +324,25 @@ class SignalConsumer:
         """RESUME: PAUSED → ACTIVE, create RunWorkflow, register."""
         from orchestrator.config.enums import AgentRunnerType as _AT
 
-        agent_type: _AT | None = None
-        agent_config: dict[str, Any] | None = None
+        agent_runner_type: _AT | None = None
+        agent_runner_config: dict[str, Any] | None = None
         resume_strategy: str | None = None
         if payload:
-            if "agent_type" in payload:
-                agent_type = _AT(payload["agent_type"])
-            agent_config = payload.get("agent_config")
+            if "agent_runner_type" in payload:
+                agent_runner_type = _AT(payload["agent_runner_type"])
+            agent_runner_config = payload.get("agent_runner_config")
             resume_strategy = payload.get("resume_strategy")
 
         run = await service.apply_resume_run(
             run_id,
-            agent_type=agent_type,
-            agent_config=agent_config,
+            agent_runner_type=agent_runner_type,
+            agent_runner_config=agent_runner_config,
             resume_strategy=resume_strategy,
         )
         workflow = RunWorkflow(
             run_id=run_id,
-            agent_type=run.agent_type,
-            agent_config=run.agent_config,
+            agent_runner_type=run.agent_runner_type,
+            agent_runner_config=run.agent_runner_config,
         )
         register_active_run(run_id)
         self._active_workflows[run_id] = workflow

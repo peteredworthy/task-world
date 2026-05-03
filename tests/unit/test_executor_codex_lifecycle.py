@@ -53,8 +53,8 @@ def _make_executor(global_config: GlobalConfig | None = None) -> AgentRunnerExec
 
 def _create_test_run(
     run_id: str = "test-run",
-    agent_type: AgentRunnerType | None = None,
-    agent_config: dict | None = None,
+    agent_runner_type: AgentRunnerType | None = None,
+    agent_runner_config: dict | None = None,
 ) -> Run:
     routine = RoutineConfig(
         id="test-routine",
@@ -80,8 +80,8 @@ def _create_test_run(
         source_branch="main",
         id_generator=lambda: run_id,
     )
-    run.agent_type = agent_type
-    run.agent_config = agent_config or {}
+    run.agent_runner_type = agent_runner_type
+    run.agent_runner_config = agent_runner_config or {}
     return run
 
 
@@ -142,17 +142,17 @@ class TestPrepareCodexConfigLocal:
         assert stale_reason is not None
         assert "not_alive" in stale_reason
 
-    def test_non_codex_agent_type_returned_unchanged(self) -> None:
-        """Non-Codex agent types are not classified — config returned unchanged."""
+    def test_non_codex_agent_runner_type_returned_unchanged(self) -> None:
+        """Non-Codex agent runner types are not classified — config returned unchanged."""
         executor = _make_executor()
         config = {"pid": os.getpid(), "command": "claude"}
-        for agent_type in (
+        for agent_runner_type in (
             AgentRunnerType.CLI_SUBPROCESS,
             AgentRunnerType.OPENHANDS_LOCAL,
             AgentRunnerType.OPENHANDS_DOCKER,
             AgentRunnerType.USER_MANAGED,
         ):
-            result_config, stale_reason = executor._prepare_codex_config(agent_type, config)
+            result_config, stale_reason = executor._prepare_codex_config(agent_runner_type, config)
             assert stale_reason is None
             assert result_config is config
 
@@ -163,7 +163,7 @@ class TestPrepareCodexConfigLocal:
 
 
 class TestCheckAgentAliveCodexLocal:
-    """AgentRunnerMonitor.check_agent_alive for CODEX_SERVER agent type."""
+    """AgentRunnerMonitor.check_agent_alive for CODEX_SERVER agent runner type."""
 
     @pytest.mark.asyncio
     async def test_codex_server_alive_pid(self, db_setup: async_sessionmaker[AsyncSession]) -> None:
@@ -171,8 +171,8 @@ class TestCheckAgentAliveCodexLocal:
         monitor = AgentRunnerMonitor(db_setup)
         run = _create_test_run(
             run_id="r1",
-            agent_type=AgentRunnerType.CODEX_SERVER,
-            agent_config={"pid": os.getpid()},
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_config={"pid": os.getpid()},
         )
         run.status = RunStatus.ACTIVE
         assert await monitor.check_agent_alive(run) is True
@@ -188,8 +188,8 @@ class TestCheckAgentAliveCodexLocal:
         monitor = AgentRunnerMonitor(db_setup)
         run = _create_test_run(
             run_id="r2",
-            agent_type=AgentRunnerType.CODEX_SERVER,
-            agent_config={"pid": 999999},
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_config={"pid": 999999},
         )
         run.status = RunStatus.ACTIVE
         assert await monitor.check_agent_alive(run) is True
@@ -200,8 +200,8 @@ class TestCheckAgentAliveCodexLocal:
         monitor = AgentRunnerMonitor(db_setup)
         run = _create_test_run(
             run_id="r3",
-            agent_type=AgentRunnerType.CODEX_SERVER,
-            agent_config={},
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_config={},
         )
         run.status = RunStatus.ACTIVE
         assert await monitor.check_agent_alive(run) is True
@@ -229,8 +229,8 @@ async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
             repo = RunRepository(session)
             run = _create_test_run(
                 run_id="run-cs",
-                agent_type=AgentRunnerType.CODEX_SERVER,
-                agent_config={"pid": 999999},
+                agent_runner_type=AgentRunnerType.CODEX_SERVER,
+                agent_runner_config={"pid": 999999},
             )
             run.status = RunStatus.ACTIVE
             await repo.save(run)
@@ -238,7 +238,7 @@ async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
 
         await monitor.on_agent_died(
             run_id="run-cs",
-            agent_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
             reason="local_codex_process_not_alive",
         )
 

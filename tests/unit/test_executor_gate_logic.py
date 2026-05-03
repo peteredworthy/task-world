@@ -66,7 +66,7 @@ def _make_run_with_human_gate(routine_id: str = "gate-test") -> object:
         routine_source=RoutineSource.EMBEDDED,
     )
     run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
-    run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
     return run
 
 
@@ -138,7 +138,7 @@ class TestExecutorGateLogic:
             routine_source=RoutineSource.EMBEDDED,
         )
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
 
         executor = _make_executor()
         task, reason = executor._find_next_task(run)

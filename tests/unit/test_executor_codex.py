@@ -43,7 +43,7 @@ def test_executor_codex_create_agent_codex_server_returns_correct_type() -> None
 
 
 def test_executor_codex_create_agent_codex_server_model_forwarded() -> None:
-    """model in agent_config is forwarded to CodexServerAgent."""
+    """model in agent_runner_config is forwarded to CodexServerAgent."""
     executor = _make_executor()
     agent = executor._create_agent(
         AgentRunnerType.CODEX_SERVER,
@@ -54,7 +54,7 @@ def test_executor_codex_create_agent_codex_server_model_forwarded() -> None:
 
 
 def test_executor_codex_create_agent_codex_server_model_none_when_absent() -> None:
-    """model defaults to None when not present in agent_config."""
+    """model defaults to None when not present in agent_runner_config."""
     executor = _make_executor()
     agent = executor._create_agent(AgentRunnerType.CODEX_SERVER, {})
     assert isinstance(agent, CodexServerAgent)
@@ -81,7 +81,7 @@ def test_executor_codex_create_agent_codex_server_callback_channel_mcp() -> None
 
 
 def test_executor_codex_create_agent_codex_server_api_key_forwarded() -> None:
-    """api_key in agent_config is forwarded to CodexServerAgent."""
+    """api_key in agent_runner_config is forwarded to CodexServerAgent."""
     executor = _make_executor()
     agent = executor._create_agent(
         AgentRunnerType.CODEX_SERVER,
@@ -91,16 +91,16 @@ def test_executor_codex_create_agent_codex_server_api_key_forwarded() -> None:
     assert agent._api_key == "local-key"  # pragma: allowlist secret
 
 
-def test_executor_codex_create_agent_codex_server_agent_type_is_codex_server() -> None:
-    """CodexServerAgent.info.agent_type is AgentRunnerType.CODEX_SERVER."""
+def test_executor_codex_create_agent_codex_server_agent_runner_type_is_codex_server() -> None:
+    """CodexServerAgent.info.agent_runner_type is AgentRunnerType.CODEX_SERVER."""
     executor = _make_executor()
     agent = executor._create_agent(AgentRunnerType.CODEX_SERVER, {})
     assert isinstance(agent, CodexServerAgent)
-    assert agent.info.agent_type == AgentRunnerType.CODEX_SERVER
+    assert agent.info.agent_runner_type == AgentRunnerType.CODEX_SERVER
 
 
 # ===========================================================================
-# Unsupported agent type — should raise AgentNotAvailableError
+# Unsupported agent runner type — should raise AgentNotAvailableError
 # ===========================================================================
 
 

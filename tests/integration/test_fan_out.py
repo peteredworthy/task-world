@@ -161,8 +161,8 @@ class _FanOutExecutor(AgentRunnerExecutor):
 
     def _create_agent(
         self,
-        agent_type: AgentRunnerType,  # noqa: ARG002
-        agent_config: dict[str, object],  # noqa: ARG002
+        agent_runner_type: AgentRunnerType,  # noqa: ARG002
+        agent_runner_config: dict[str, object],  # noqa: ARG002
         run_id: str | None = None,  # noqa: ARG002
         phase: str = "building",  # noqa: ARG002
     ) -> _FanOutIntegrationAgent:
@@ -645,8 +645,8 @@ class TestFanOutRegression:
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
         run.status = RunStatus.ACTIVE
         run.worktree_path = str(tmp_path)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {"command": "test-agent", "model": "test-model"}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "test-agent", "model": "test-model"}
 
         async with session_factory() as session:
             repo = RunRepository(session)
@@ -663,8 +663,8 @@ class TestFanOutRegression:
                 run=persisted_run,
                 task_state=parent_task,
                 service=service,
-                agent_type=AgentRunnerType.CLI_SUBPROCESS,
-                agent_config=run.agent_config,
+                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+                agent_runner_config=run.agent_runner_config,
             )
 
         async with session_factory() as session:
@@ -705,8 +705,8 @@ class TestFanOutRegression:
                 run=persisted_run,
                 task_state=parent_task,
                 service=service,
-                agent_type=AgentRunnerType.CLI_SUBPROCESS,
-                agent_config=run.agent_config,
+                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+                agent_runner_config=run.agent_runner_config,
             )
 
         async with session_factory() as session:
@@ -787,8 +787,8 @@ class TestFanOutRegression:
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
         run.status = RunStatus.ACTIVE
         run.worktree_path = str(tmp_path)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {"command": "test-agent", "model": "test-model"}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "test-agent", "model": "test-model"}
 
         async with session_factory() as session:
             repo = RunRepository(session)
@@ -806,8 +806,8 @@ class TestFanOutRegression:
                 run=persisted_run,
                 task_state=parent_task,
                 service=service,
-                agent_type=AgentRunnerType.CLI_SUBPROCESS,
-                agent_config=run.agent_config,
+                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+                agent_runner_config=run.agent_runner_config,
             )
 
         # Verify: all 3 children persisted with correct state
@@ -933,8 +933,8 @@ class TestFanOutRegression:
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
         run.status = RunStatus.ACTIVE
         run.worktree_path = str(tmp_path)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {"command": "test-agent", "model": "test-model"}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "test-agent", "model": "test-model"}
 
         async with session_factory() as session:
             repo = RunRepository(session)
@@ -951,8 +951,8 @@ class TestFanOutRegression:
                 run=persisted_run,
                 task_state=parent_task,
                 service=service,
-                agent_type=AgentRunnerType.CLI_SUBPROCESS,
-                agent_config=run.agent_config,
+                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+                agent_runner_config=run.agent_runner_config,
             )
 
         async with session_factory() as session:
@@ -1024,8 +1024,8 @@ class TestFanOutRegression:
         run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
         run.status = RunStatus.ACTIVE
         run.worktree_path = str(tmp_path)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {"command": "test-agent", "model": "test-model"}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "test-agent", "model": "test-model"}
 
         async with session_factory() as session:
             repo = RunRepository(session)
@@ -1085,8 +1085,8 @@ class TestFanOutRegression:
                 run=persisted_run,
                 task_state=parent_task,
                 service=service,
-                agent_type=AgentRunnerType.CLI_SUBPROCESS,
-                agent_config=run.agent_config,
+                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+                agent_runner_config=run.agent_runner_config,
             )
 
         # Verify: parent stays in FAN_OUT_RUNNING (not FAILED)

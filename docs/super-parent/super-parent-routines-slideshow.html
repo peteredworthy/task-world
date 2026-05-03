@@ -1,0 +1,462 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Super Parent Routine Mechanics Report</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #172026;
+      --muted: #52606d;
+      --line: #d5dde5;
+      --panel: #f7f9fb;
+      --accent: #1f7a6d;
+      --accent-2: #8a5a12;
+      --danger: #b23b3b;
+      --bg: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+
+    main {
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    .deck {
+      display: flex;
+      width: 1200vw;
+      min-height: 100vh;
+      transition: transform 180ms ease-out;
+    }
+
+    .slide {
+      width: 100vw;
+      min-height: 100vh;
+      padding: clamp(28px, 5vw, 72px);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 28px;
+    }
+
+    .slide h1,
+    .slide h2 {
+      margin: 0;
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    .slide h1 {
+      font-size: clamp(42px, 6vw, 82px);
+      max-width: 980px;
+    }
+
+    .slide h2 {
+      font-size: clamp(32px, 4vw, 56px);
+    }
+
+    .subtitle {
+      margin-top: 18px;
+      font-size: clamp(18px, 2vw, 25px);
+      line-height: 1.42;
+      max-width: 900px;
+      color: var(--muted);
+    }
+
+    .content {
+      align-self: center;
+      display: grid;
+      gap: 24px;
+      max-width: 1160px;
+      width: 100%;
+    }
+
+    .two {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 24px;
+      align-items: stretch;
+    }
+
+    .three {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .panel,
+    .node {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 20px;
+    }
+
+    .panel h3,
+    .node h3 {
+      margin: 0 0 10px;
+      font-size: 19px;
+    }
+
+    .panel p,
+    .node p,
+    li {
+      color: var(--muted);
+      font-size: 18px;
+      line-height: 1.42;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 22px;
+    }
+
+    li + li { margin-top: 8px; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      align-items: center;
+    }
+
+    .flow .node {
+      min-height: 130px;
+      position: relative;
+      border-color: #c8d8d4;
+    }
+
+    .node strong {
+      display: block;
+      color: var(--accent);
+      font-size: 13px;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+
+    .arrow {
+      align-self: center;
+      justify-self: center;
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 28px;
+    }
+
+    .matrix {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 1fr;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .matrix div {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      border-right: 1px solid var(--line);
+      font-size: 16px;
+    }
+
+    .matrix div:nth-child(3n) { border-right: 0; }
+    .matrix div:nth-last-child(-n+3) { border-bottom: 0; }
+    .head { background: #edf3f1; font-weight: 700; color: var(--ink); }
+    .ok { color: var(--accent); font-weight: 700; }
+    .warn { color: var(--accent-2); font-weight: 700; }
+    .bad { color: var(--danger); font-weight: 700; }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--muted);
+      font-size: 14px;
+      border-top: 1px solid var(--line);
+      padding-top: 14px;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: var(--accent); }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .92em;
+      background: #eef2f5;
+      padding: 2px 5px;
+      border-radius: 5px;
+    }
+
+    @media (max-width: 820px) {
+      .two,
+      .three,
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow { display: none; }
+      .slide { overflow-y: auto; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="deck" id="deck">
+      <section class="slide">
+        <header>
+          <h1>Super Parent Routine Mechanics</h1>
+          <p class="subtitle">Implementation review and capability report for the reusable parent routine model.</p>
+        </header>
+        <div class="content two">
+          <div class="panel">
+            <h3>Review Outcome</h3>
+            <p>The implementation now has the deterministic mechanics needed for a sequential Super Parent to create child runs, collect validated evidence, merge accepted work into the parent branch, and block terminal success until inventory and integrated validation are recorded.</p>
+          </div>
+          <div class="panel">
+            <h3>Verification</h3>
+            <p>Full suite: <code>3091 passed</code>, <code>15 skipped</code>, coverage threshold met at <code>72.13%</code>. Additional focused MCP, REST, reducer, runner, and service tests passed.</p>
+          </div>
+        </div>
+        <footer class="footer"><span>Slide 1</span><span>Use arrow keys or buttons</span></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Mental Model</h2>
+          <p class="subtitle">A routine is policy. The orchestrator supplies durable mechanics. Child runs supply implementation evidence.</p>
+        </header>
+        <div class="content flow">
+          <div class="node"><strong>Parent</strong><h3>Inventory</h3><p>Translate the instruction into stable target IDs and current understanding.</p></div>
+          <div class="arrow">-&gt;</div>
+          <div class="node"><strong>Slice</strong><h3>Bounded Work</h3><p>Select one useful assumption, behavior, or bug target to test next.</p></div>
+          <div class="arrow">-&gt;</div>
+          <div class="node"><strong>Child</strong><h3>Fresh Run</h3><p>Create an embedded routine and run it in an isolated child worktree.</p></div>
+        </div>
+        <footer class="footer"><span>Slide 2</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>State Loop</h2>
+          <p class="subtitle">The parent loop is evidence-driven and state-constrained.</p>
+        </header>
+        <div class="content flow">
+          <div class="node"><strong>Wait</strong><h3>Terminal Or Paused</h3><p>The wait tool now treats completed, failed, and paused children as meaningful states.</p></div>
+          <div class="arrow">-&gt;</div>
+          <div class="node"><strong>Reduce</strong><h3>Oversight Snapshot</h3><p>Child state, evidence, merge records, inventory, and final validation produce the next action.</p></div>
+          <div class="arrow">-&gt;</div>
+          <div class="node"><strong>Act</strong><h3>Merge Or Continue</h3><p>The parent accepts, replans, asks for help, validates, or launches the next slice.</p></div>
+        </div>
+        <footer class="footer"><span>Slide 3</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Evidence Contract</h2>
+          <p class="subtitle">Acceptance now depends on a full <code>run.evidence.v1</code> bundle, not only an outcome string.</p>
+        </header>
+        <div class="content two">
+          <div class="panel">
+            <h3>Accepted Evidence</h3>
+            <ul>
+              <li>Valid schema version and required fields.</li>
+              <li>Structured command and test evidence.</li>
+              <li>Explicit target reproduction status.</li>
+              <li>Distinct outcome such as <code>verified_fix</code> or <code>behavior_already_correct</code>.</li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Rejected Evidence</h3>
+            <ul>
+              <li>Malformed bundles become invalid evidence paths.</li>
+              <li>Missing evidence blocks acceptance.</li>
+              <li>Revision outcomes never enter the merge queue.</li>
+              <li><code>bug_not_reproduced</code> requires parent or human decision.</li>
+            </ul>
+          </div>
+        </div>
+        <footer class="footer"><span>Slide 4</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Branch Model</h2>
+          <p class="subtitle">Accepted child work accumulates on the parent run branch.</p>
+        </header>
+        <div class="content flow">
+          <div class="node"><strong>Source</strong><h3><code>main</code></h3><p>The base branch is not where parent/child implementation work runs.</p></div>
+          <div class="arrow">-&gt;</div>
+          <div class="node"><strong>Parent Worktree</strong><h3><code>orchestrator/run-&lt;parent&gt;</code></h3><p>The parent run owns this worktree and accumulation branch.</p></div>
+          <div class="arrow">-&gt;</div>
+          <div class="node"><strong>Child Worktree</strong><h3><code>orchestrator/run-&lt;child&gt;</code></h3><p>Branches from the parent branch when present, then merges back into it through the service API.</p></div>
+        </div>
+        <footer class="footer"><span>Slide 5</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Guardrails</h2>
+          <p class="subtitle">The parent cannot use child mechanics in illegal steady states.</p>
+        </header>
+        <div class="content matrix">
+          <div class="head">Guard</div><div class="head">Mechanic</div><div class="head">Effect</div>
+          <div>One active child in V1</div><div><code>create_child_run</code> checks active/stopping children</div><div class="ok">Blocks accidental parallel implementation</div>
+          <div>Pause or cancel parent</div><div>Service propagates control to active children</div><div class="ok">Prevents paused parent with active child work</div>
+          <div>Terminal parent</div><div>Reducer requires resolved inventory and service-verified final validation</div><div class="ok">Prevents isolated-child success claims</div>
+          <div>Child count</div><div>Configured <code>max_child_runs</code> enforced at creation and reduction</div><div class="ok">Stops unbounded retries</div>
+        </div>
+        <footer class="footer"><span>Slide 6</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Oversight Write Path</h2>
+          <p class="subtitle">The parent now has a durable tool/API route for facts it authors.</p>
+        </header>
+        <div class="content three">
+          <div class="panel"><h3><code>target_inventory</code></h3><p>Stable inventory IDs, scope, and resolved status are validated and stored.</p></div>
+          <div class="panel"><h3><code>current_understanding</code></h3><p>The parent can persist live context for resume, UI, and human review.</p></div>
+          <div class="panel"><h3><code>final_validation</code></h3><p>The service verifies the parent HEAD, report path, evidence files, and passing command exits before terminal success is allowed.</p></div>
+        </div>
+        <footer class="footer"><span>Slide 7</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>MCP Tool Surface</h2>
+          <p class="subtitle">The parent routine now attaches the orchestrator MCP server on each step.</p>
+        </header>
+        <div class="content two">
+          <div class="panel">
+            <h3>Coordinator Tools</h3>
+            <ul>
+              <li><code>orchestrator_create_child_run</code></li>
+              <li><code>orchestrator_wait_for_run</code></li>
+              <li><code>orchestrator_get_run_evidence</code></li>
+              <li><code>orchestrator_accept_child_run</code></li>
+              <li><code>orchestrator_update_parent_oversight</code></li>
+            </ul>
+          </div>
+          <div class="panel">
+            <h3>Routine Effect</h3>
+            <p>The prose instructions and the callable tool surface now line up. Codex Server receives the MCP server config instead of silently skipping unknown local tool names.</p>
+          </div>
+        </div>
+        <footer class="footer"><span>Slide 8</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Git Safety</h2>
+          <p class="subtitle">The wrapper is a defense-in-depth layer around run-worktree command use.</p>
+        </header>
+        <div class="content two">
+          <div class="panel">
+            <h3>Allowed</h3>
+            <p><code>status</code>, <code>diff</code>, <code>add</code>, <code>restore</code>, <code>commit</code>, <code>log</code>, <code>show</code>, <code>rev-parse</code>, <code>ls-files</code>.</p>
+          </div>
+          <div class="panel">
+            <h3>Blocked</h3>
+            <p>Branch switching, merges, rebases, resets, pushes, fetches, ref updates, unsafe flags, git env overrides, and path arguments outside the run worktree.</p>
+          </div>
+        </div>
+        <footer class="footer"><span>Slide 9</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Ability Expansion</h2>
+          <p class="subtitle">These mechanics make parent-style routines generally authorable, not hard-coded to one controller.</p>
+        </header>
+        <div class="content three">
+          <div class="panel"><h3>Routine Authors</h3><p>Can express orchestration policy while relying on service-owned state checks, merges, and evidence validation.</p></div>
+          <div class="panel"><h3>Agents</h3><p>Can use MCP tools to launch children, update oversight state, and integrate accepted work from clean contexts.</p></div>
+          <div class="panel"><h3>Users</h3><p>Get a single parent run that reports child progress, human attention needs, final validation, and remaining risk.</p></div>
+        </div>
+        <footer class="footer"><span>Slide 10</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Residual Risk</h2>
+          <p class="subtitle">The implementation is now suitable for sequential Super Parent use, with these operational boundaries.</p>
+        </header>
+        <div class="content two">
+          <div class="panel">
+            <h3>V1 Boundary</h3>
+            <p>Sequential orchestration is supported. Parallel child fan-in, predictive conflict planning, and batch invalidation are still V2 concerns.</p>
+          </div>
+          <div class="panel">
+            <h3>Wait Model</h3>
+            <p>Wait intent and observations are written into the parent oversight payload. Final validation markers are stamped by the service and invalidated when the parent HEAD no longer matches the verified commit.</p>
+          </div>
+        </div>
+        <footer class="footer"><span>Slide 11</span><div class="controls"><button data-prev>Back</button><button data-next>Next</button></div></footer>
+      </section>
+
+      <section class="slide">
+        <header>
+          <h2>Verification Summary</h2>
+          <p class="subtitle">Checks run after implementation.</p>
+        </header>
+        <div class="content matrix">
+          <div class="head">Check</div><div class="head">Scope</div><div class="head">Result</div>
+          <div><code>uv run ruff check .</code></div><div>Repository lint</div><div class="ok">Passed</div>
+          <div><code>uv run pyright</code></div><div>Repository type check</div><div class="ok">Passed</div>
+          <div><code>uv run pytest -q</code></div><div>Full repository suite</div><div class="ok">3091 passed, 15 skipped</div>
+          <div>Routine load check</div><div><code>routines/super-parent/routine.yaml</code></div><div class="ok">5 steps, MCP attached to each</div>
+        </div>
+        <footer class="footer"><span>Slide 12</span><div class="controls"><button data-prev>Back</button><button data-next>Start</button></div></footer>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const deck = document.getElementById("deck");
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    let index = 0;
+
+    function show(nextIndex) {
+      index = (nextIndex + slides.length) % slides.length;
+      deck.style.transform = `translateX(${-index * 100}vw)`;
+    }
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown") show(index + 1);
+      if (event.key === "ArrowLeft" || event.key === "PageUp") show(index - 1);
+      if (event.key === "Home") show(0);
+      if (event.key === "End") show(slides.length - 1);
+    });
+
+    document.querySelectorAll("[data-next]").forEach((button) => {
+      button.addEventListener("click", () => show(index + 1));
+    });
+
+    document.querySelectorAll("[data-prev]").forEach((button) => {
+      button.addEventListener("click", () => show(index - 1));
+    });
+  </script>
+</body>
+</html>

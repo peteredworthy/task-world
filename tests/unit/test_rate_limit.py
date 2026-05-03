@@ -234,11 +234,11 @@ def test_parser_only_flags_rate_limit_once_on_repeated_messages():
 def test_agent_rate_limit_error_full_construction():
     resets_at = datetime(2026, 1, 7, 18, 0, 0)
     err = AgentRateLimitError(
-        agent_type="claude_cli",
+        agent_runner_type="claude_cli",
         session_id="sess_abc123",
         resets_at=resets_at,
     )
-    assert err.agent_type == "claude_cli"
+    assert err.agent_runner_type == "claude_cli"
     assert err.session_id == "sess_abc123"
     assert err.resets_at == resets_at
     assert "rate limit" in str(err).lower()
@@ -247,13 +247,13 @@ def test_agent_rate_limit_error_full_construction():
 
 def test_agent_rate_limit_error_str_includes_reset_time():
     resets_at = datetime(2026, 1, 7, 18, 0, 0)
-    err = AgentRateLimitError(agent_type="claude_cli", resets_at=resets_at)
+    err = AgentRateLimitError(agent_runner_type="claude_cli", resets_at=resets_at)
     assert "resets at" in str(err).lower()
 
 
 def test_agent_rate_limit_error_minimal_construction():
-    err = AgentRateLimitError(agent_type="claude_cli")
-    assert err.agent_type == "claude_cli"
+    err = AgentRateLimitError(agent_runner_type="claude_cli")
+    assert err.agent_runner_type == "claude_cli"
     assert err.session_id is None
     assert err.resets_at is None
     assert "rate limit" in str(err).lower()
@@ -262,7 +262,7 @@ def test_agent_rate_limit_error_minimal_construction():
 def test_agent_rate_limit_error_is_agent_error():
     from orchestrator.runners.errors import AgentError
 
-    err = AgentRateLimitError(agent_type="claude_cli")
+    err = AgentRateLimitError(agent_runner_type="claude_cli")
     assert isinstance(err, AgentError)
     assert isinstance(err, Exception)
 

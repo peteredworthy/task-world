@@ -41,10 +41,10 @@ Programmatic rename of all backend Python references using `rope` for Python fil
 
 **Steps:**
 1. Define `ModelProfile` enum: `ARCHITECT`, `DESIGNER`, `CODER`, `SUMMARIZER`.
-2. Create DB model `RunnerProfileDefaultModel` (or JSON column on runner config) mapping profile -> model string per runner type.
-3. Create API endpoints: `GET /api/model-profiles` (list profiles), `GET /api/agent-runners/{type}/profiles` (get runner's profile defaults), `PUT /api/agent-runners/{type}/profiles` (set defaults).
+2. Create DB model `AgentRunnerModelProfileDefaultModel` (or JSON column on runner config) mapping profile -> model string per runner type.
+3. Create API endpoints: `GET /api/model-profiles` (list profiles), `GET /api/agent-runners/{type}/model-profile-defaults` (get Agent Runner Model Defaults), `PUT /api/agent-runners/{type}/model-profile-defaults` (set defaults).
 4. Add Alembic migration for new table/columns.
-5. Wire profile defaults into execution context -- when a runner starts, it receives the resolved model for the relevant profile.
+5. Wire Agent Runner Model Defaults into execution context -- when a runner starts, it receives the resolved model for the relevant profile.
 6. Tests for profile CRUD and resolution.
 
 **Verification:** API returns profiles, defaults can be set and retrieved. Runner execution uses profile-resolved model.
@@ -65,7 +65,7 @@ Programmatic rename of all backend Python references using `rope` for Python fil
 1. Create `AgentConfig` model: `id`, `name`, `system_prompt` (text), `default_prompt` (text, factory default), `model_profile` (FK to ModelProfile enum), `created_at`, `updated_at`.
 2. Seed three default agents: Planner (ARCHITECT profile), Builder (CODER profile), Verifier (CODER profile). Store factory default prompts in `default_prompt` column.
 3. Create API endpoints: `GET /api/agents` (list), `POST /api/agents` (create), `GET /api/agents/{id}` (detail), `PUT /api/agents/{id}` (update), `DELETE /api/agents/{id}` (delete), `POST /api/agents/{id}/reset-prompt` (reset to factory default).
-4. Planner agent has no special engine integration -- it is user-assignable only.
+4. Planner agent has no special engine integration and is not a routine role.
 5. Add Alembic migration.
 6. Tests for agent CRUD including prompt reset.
 
@@ -74,7 +74,7 @@ Programmatic rename of all backend Python references using `rope` for Python fil
 ### M6: Routine Schema Update
 
 **Steps:**
-1. Add optional fields to `RoutineConfig`: `planner_agent`, `builder_agent`, `verifier_agent` (agent name or ID).
+1. Add optional fields to `RoutineConfig`: `builder_agent`, `verifier_agent` (agent name or ID).
 2. Add same optional fields to `StepConfig` and `TaskConfig`.
 3. Implement cascading resolution: task -> step -> routine -> system default.
 4. Update prompt generation to use the resolved agent's system prompt.

@@ -38,10 +38,10 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     routine_sha: null,
     routine_source: null,
     routine_embedded: null,
-    agent_type: null,
-    agent_type_display: 'No Agent',
+    agent_runner_type: null,
+    agent_runner_type_display: 'No Agent Runner',
     agent_icon: 'none',
-    agent_config: {},
+    agent_runner_config: {},
     worktree_enabled: false,
     worktree_path: null,
     source_branch: null,
@@ -53,7 +53,7 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
     updated_at: new Date().toISOString(),
     started_at: null,
     completed_at: null,
-    agent_started_at: null,
+    agent_runner_started_at: null,
     total_tokens_read: 0,
     total_tokens_write: 0,
     total_tokens_cache: 0,
@@ -100,7 +100,7 @@ describe('RunCard', () => {
     const run = makeRun({
       status: 'active',
       source_branch: 'mcp-ops-c',
-      agent_type_display: 'Codex Server',
+      agent_runner_type_display: 'Codex Server',
       agent_icon: 'codex',
       started_at: '2026-03-03T12:00:00Z',
       total_tokens_read: 1200,
@@ -113,7 +113,7 @@ describe('RunCard', () => {
 
     expect(screen.getByText('Run ID')).toBeInTheDocument();
     expect(screen.getByText('Source Branch')).toBeInTheDocument();
-    expect(screen.getByText('Agent')).toBeInTheDocument();
+    expect(screen.getByText('Agent Runner')).toBeInTheDocument();
     expect(screen.getByText('Started')).toBeInTheDocument();
     expect(screen.getByText('Total Tokens')).toBeInTheDocument();
     expect(screen.getByText('Est. Cost')).toBeInTheDocument();
@@ -342,42 +342,42 @@ describe('RunCard', () => {
   });
 
   describe('agent display', () => {
-    it('renders agent icon and name when agent is set in expanded view', () => {
+    it('renders agent runner icon and name when agent is set in expanded view', () => {
       const run = makeRun({
-        agent_type: 'openhands_local',
-        agent_type_display: 'OpenHands',
+        agent_runner_type: 'openhands_local',
+        agent_runner_type_display: 'OpenHands',
         agent_icon: 'openhands',
       });
       renderCard(run, { expanded: true });
 
       expect(screen.getByText('OpenHands')).toBeInTheDocument();
-      expect(screen.getByText('Agent')).toBeInTheDocument();
+      expect(screen.getByText('Agent Runner')).toBeInTheDocument();
     });
 
-    it('renders CLI agent icon and name', () => {
+    it('renders CLI agent runner icon and name', () => {
       const run = makeRun({
-        agent_type: 'cli_subprocess',
-        agent_type_display: 'CLI Agent',
+        agent_runner_type: 'cli_subprocess',
+        agent_runner_type_display: 'CLI Agent',
         agent_icon: 'cli',
       });
       renderCard(run, { expanded: true });
       expect(screen.getByText('CLI Agent')).toBeInTheDocument();
     });
 
-    it('renders Docker agent icon and name', () => {
+    it('renders Docker agent runner icon and name', () => {
       const run = makeRun({
-        agent_type: 'openhands_docker',
-        agent_type_display: 'OpenHands Docker',
+        agent_runner_type: 'openhands_docker',
+        agent_runner_type_display: 'OpenHands Docker',
         agent_icon: 'docker',
       });
       renderCard(run, { expanded: true });
       expect(screen.getByText('OpenHands Docker')).toBeInTheDocument();
     });
 
-    it('renders external agent icon and name', () => {
+    it('renders external agent runner icon and name', () => {
       const run = makeRun({
-        agent_type: 'user_managed',
-        agent_type_display: 'User Managed',
+        agent_runner_type: 'user_managed',
+        agent_runner_type_display: 'User Managed',
         agent_icon: 'external',
       });
       renderCard(run, { expanded: true });
@@ -386,32 +386,32 @@ describe('RunCard', () => {
 
     it('shows fallback agent text when agent_icon is none', () => {
       const run = makeRun({
-        agent_type: null,
-        agent_type_display: 'No Agent',
+        agent_runner_type: null,
+        agent_runner_type_display: 'No Agent Runner',
         agent_icon: 'none',
       });
       renderCard(run, { expanded: true });
 
-      expect(screen.getByText('No Agent')).toBeInTheDocument();
+      expect(screen.getByText('No Agent Runner')).toBeInTheDocument();
     });
 
-    it('shows agent info in the expanded details strip', () => {
+    it('shows agent runner info in the expanded details strip', () => {
       const run = makeRun({
-        agent_type: 'openhands_local',
-        agent_type_display: 'OpenHands',
+        agent_runner_type: 'openhands_local',
+        agent_runner_type_display: 'OpenHands',
         agent_icon: 'openhands',
         routine_id: 'my-routine',
       });
       renderCard(run, { expanded: true });
 
-      expect(screen.getByText('Agent')).toBeInTheDocument();
+      expect(screen.getByText('Agent Runner')).toBeInTheDocument();
       expect(screen.getByText('OpenHands')).toBeInTheDocument();
     });
 
-    it('shows agent info in collapsed view too', () => {
+    it('shows agent runner info in collapsed view too', () => {
       const run = makeRun({
-        agent_type: 'openhands_local',
-        agent_type_display: 'OpenHands',
+        agent_runner_type: 'openhands_local',
+        agent_runner_type_display: 'OpenHands',
         agent_icon: 'openhands',
       });
       renderCard(run, { expanded: false });

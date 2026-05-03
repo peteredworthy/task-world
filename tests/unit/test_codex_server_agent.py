@@ -67,7 +67,7 @@ class _FailingTransport:
 
 def test_agent_info_type() -> None:
     agent = CodexServerAgent()
-    assert agent.info.agent_type == AgentRunnerType.CODEX_SERVER
+    assert agent.info.agent_runner_type == AgentRunnerType.CODEX_SERVER
 
 
 def test_agent_info_name() -> None:
@@ -449,7 +449,7 @@ async def test_execute_startup_failure_raises_agent_not_available_error() -> Non
         )
     # Must be the typed agent error, never a bare RuntimeError or similar.
     assert isinstance(exc_info.value, AgentNotAvailableError)
-    assert exc_info.value.agent_type == AgentRunnerType.CODEX_SERVER.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CODEX_SERVER.value
 
 
 async def test_execute_cancelled_before_start_raises_agent_cancelled_error() -> None:
@@ -462,7 +462,7 @@ async def test_execute_cancelled_before_start_raises_agent_cancelled_error() -> 
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentRunnerType.CODEX_SERVER.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CODEX_SERVER.value
 
 
 async def test_execute_agent_not_available_error_does_not_leak_internal_details() -> None:
@@ -479,8 +479,8 @@ async def test_execute_agent_not_available_error_does_not_leak_internal_details(
         exc = e
 
     assert exc is not None
-    # The error type is explicit and structured — it carries agent_type as a field.
-    assert exc.agent_type == AgentRunnerType.CODEX_SERVER.value
+    # The error type is explicit and structured — it carries agent_runner_type as a field.
+    assert exc.agent_runner_type == AgentRunnerType.CODEX_SERVER.value
 
 
 class _GenericFailingCodexServerAgent(CodexServerAgent):
@@ -541,7 +541,7 @@ async def test_execute_generic_failure_raises_agent_execution_error() -> None:
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentRunnerType.CODEX_SERVER.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CODEX_SERVER.value
 
 
 async def test_execute_generic_failure_does_not_leak_secret_in_error_message() -> None:
@@ -598,4 +598,4 @@ async def test_execute_asyncio_cancelled_error_maps_to_agent_cancelled_error() -
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentRunnerType.CODEX_SERVER.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CODEX_SERVER.value

@@ -11,10 +11,10 @@ from orchestrator.db.orm.base import Base
 
 # Import all models so Alembic can detect them
 import orchestrator.db.orm.models as _models  # noqa: F401
-import orchestrator.runners.profiles.models as _agent_models  # noqa: F401
+from orchestrator.runners import AgentConfigModel as _AgentConfigModel  # noqa: F401
 
 _models_loaded = _models  # ensure pyright sees the import as used
-_agent_models_loaded = _agent_models  # ensure pyright sees the import as used
+_agent_model_loaded = _AgentConfigModel  # ensure pyright sees the import as used
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

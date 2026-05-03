@@ -139,8 +139,8 @@ async def test_executor_pauses_run_on_agent_not_available(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {"command": "nonexistent_command_xyz_12345"}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "nonexistent_command_xyz_12345"}
 
         run = await service.create_run(run)
         run_id = run.id
@@ -192,8 +192,8 @@ async def test_executor_pauses_run_on_agent_execution_error(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {
             "command": "python3",
             "args": ["-c", "import time; time.sleep(300)"],
             "poll_interval": 0.1,
@@ -238,8 +238,8 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {
             "command": "python3",
             "args": ["-c", "import sys; sys.exit(1)"],
         }
@@ -289,8 +289,8 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {"command": "echo", "args": ["hello"]}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "echo", "args": ["hello"]}
 
         run = await service.create_run(run)
         run_id = run.id
@@ -332,8 +332,8 @@ async def test_executor_persists_builder_prompt_before_execution(
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
         run.worktree_path = str(tmp_path)
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {"command": "false"}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "false"}
         (tmp_path / ".task-world").mkdir(exist_ok=True)
         (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")
 
@@ -385,10 +385,10 @@ async def test_agent_metadata_persisted_immediately(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
         # Use a command that exits immediately — the PID is persisted via
         # the on_agent_metadata callback before the process terminates.
-        run.agent_config = {"command": "false"}
+        run.agent_runner_config = {"command": "false"}
         run.worktree_path = str(tmp_path)
         (tmp_path / ".task-world").mkdir(exist_ok=True)
         (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")
@@ -402,11 +402,11 @@ async def test_agent_metadata_persisted_immediately(
 
     async with session_factory() as session:
         run = await RunRepository(session).get(run_id)
-        assert "pid" in run.agent_config, (
+        assert "pid" in run.agent_runner_config, (
             f"Agent metadata (pid) should be persisted when subprocess is created. "
-            f"Got agent_config: {run.agent_config}"
+            f"Got agent_runner_config: {run.agent_runner_config}"
         )
-        pid = run.agent_config.get("pid")
+        pid = run.agent_runner_config.get("pid")
         assert isinstance(pid, int) and pid > 0, f"Invalid pid: {pid}"
 
 
@@ -435,8 +435,8 @@ async def test_agent_death_detection_on_startup(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.config.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {"command": "false"}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "false"}
         run.worktree_path = str(tmp_path)
         (tmp_path / ".task-world").mkdir(exist_ok=True)
         (tmp_path / ".task-world" / "config.yaml").write_text("test_command: null\n")

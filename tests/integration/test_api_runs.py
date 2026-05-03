@@ -384,7 +384,7 @@ async def test_recover_run_not_found_when_target_task_missing(
 
 
 async def test_resume_with_agent_change(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
-    """Resume a paused run while changing the agent type and config."""
+    """Resume a paused run while changing the agent runner type and config."""
     client, drain = client_and_drain
     created = await _create_run(client)
     run_id = created["id"]
@@ -396,8 +396,8 @@ async def test_resume_with_agent_change(client_and_drain: tuple[AsyncClient, Dra
             "routine_id": "simple-routine",
             "repo_name": "proj-2",
             "branch": "main",
-            "agent_type": "cli_subprocess",
-            "agent_config": {"callback_channel": "mcp"},
+            "agent_runner_type": "cli_subprocess",
+            "agent_runner_config": {"callback_channel": "mcp"},
         },
     )
     assert response.status_code == 201
@@ -415,8 +415,8 @@ async def test_resume_with_agent_change(client_and_drain: tuple[AsyncClient, Dra
     response = await client.post(
         f"/api/runs/{run_id}/resume",
         json={
-            "agent_type": "user_managed",
-            "agent_config": {"timeout_minutes": 30},
+            "agent_runner_type": "user_managed",
+            "agent_runner_config": {"timeout_minutes": 30},
         },
     )
     assert response.status_code == 202
@@ -425,8 +425,8 @@ async def test_resume_with_agent_change(client_and_drain: tuple[AsyncClient, Dra
 
     # Verify the run is active with new agent
     assert data["status"] == "active"
-    assert data["agent_type"] == "user_managed"
-    assert data["agent_config"] == {"timeout_minutes": 30}
+    assert data["agent_runner_type"] == "user_managed"
+    assert data["agent_runner_config"] == {"timeout_minutes": 30}
 
     # Verify the agent change event was emitted
     events_response = await client.get(f"/api/runs/{run_id}/activity")
@@ -439,8 +439,8 @@ async def test_resume_with_agent_change(client_and_drain: tuple[AsyncClient, Dra
     event = agent_changed_events[0]
     assert event["payload"]["old_agent"] == "cli_subprocess"
     assert event["payload"]["new_agent"] == "user_managed"
-    assert event["payload"]["old_agent_config"] == {"callback_channel": "mcp"}
-    assert event["payload"]["new_agent_config"] == {"timeout_minutes": 30}
+    assert event["payload"]["old_agent_runner_config"] == {"callback_channel": "mcp"}
+    assert event["payload"]["new_agent_runner_config"] == {"timeout_minutes": 30}
 
 
 async def test_resume_without_agent_change(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
@@ -456,8 +456,8 @@ async def test_resume_without_agent_change(client_and_drain: tuple[AsyncClient, 
             "routine_id": "simple-routine",
             "repo_name": "proj-3",
             "branch": "main",
-            "agent_type": "cli_subprocess",
-            "agent_config": {"stdin_mode": "open"},
+            "agent_runner_type": "cli_subprocess",
+            "agent_runner_config": {"stdin_mode": "open"},
         },
     )
     assert response.status_code == 201
@@ -479,8 +479,8 @@ async def test_resume_without_agent_change(client_and_drain: tuple[AsyncClient, 
 
     # Verify the run is active with the same agent
     assert data["status"] == "active"
-    assert data["agent_type"] == "cli_subprocess"
-    assert data["agent_config"] == {"stdin_mode": "open"}
+    assert data["agent_runner_type"] == "cli_subprocess"
+    assert data["agent_runner_config"] == {"stdin_mode": "open"}
 
     # Verify no agent_changed event was emitted
     events_response = await client.get(f"/api/runs/{run_id}/activity")
@@ -493,17 +493,17 @@ async def test_resume_without_agent_change(client_and_drain: tuple[AsyncClient, 
 async def test_resume_with_config_only_change(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
-    """Resume a paused run while changing only the agent config (not the type)."""
+    """Resume a paused run while changing only the agent runner config (not the type)."""
     client, drain = client_and_drain
-    # Create a run with initial agent config
+    # Create a run with initial agent runner config
     response = await client.post(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
             "repo_name": "proj-4",
             "branch": "main",
-            "agent_type": "cli_subprocess",
-            "agent_config": {"stdin_mode": "close", "model": "gpt-4"},
+            "agent_runner_type": "cli_subprocess",
+            "agent_runner_config": {"stdin_mode": "close", "model": "gpt-4"},
         },
     )
     assert response.status_code == 201
@@ -517,21 +517,21 @@ async def test_resume_with_config_only_change(
     assert resp.status_code == 202
     await drain(run_id)
 
-    # Resume with updated config only (no agent_type change)
+    # Resume with updated config only (no agent_runner_type change)
     response = await client.post(
         f"/api/runs/{run_id}/resume",
         json={
-            "agent_config": {"stdin_mode": "open", "model": "claude-3"},
+            "agent_runner_config": {"stdin_mode": "open", "model": "claude-3"},
         },
     )
     assert response.status_code == 202
     await drain(run_id)
     data = (await client.get(f"/api/runs/{run_id}")).json()
 
-    # Verify the run is active with same agent type but updated config
+    # Verify the run is active with same agent runner type but updated config
     assert data["status"] == "active"
-    assert data["agent_type"] == "cli_subprocess"
-    assert data["agent_config"] == {"stdin_mode": "open", "model": "claude-3"}
+    assert data["agent_runner_type"] == "cli_subprocess"
+    assert data["agent_runner_config"] == {"stdin_mode": "open", "model": "claude-3"}
 
     # Verify the agent change event was emitted (config changed even though type didn't)
     events_response = await client.get(f"/api/runs/{run_id}/activity")
@@ -544,33 +544,36 @@ async def test_resume_with_config_only_change(
     event = agent_changed_events[0]
     assert event["payload"]["old_agent"] == "cli_subprocess"
     assert event["payload"]["new_agent"] == "cli_subprocess"
-    assert event["payload"]["old_agent_config"] == {"stdin_mode": "close", "model": "gpt-4"}
-    assert event["payload"]["new_agent_config"] == {"stdin_mode": "open", "model": "claude-3"}
+    assert event["payload"]["old_agent_runner_config"] == {"stdin_mode": "close", "model": "gpt-4"}
+    assert event["payload"]["new_agent_runner_config"] == {
+        "stdin_mode": "open",
+        "model": "claude-3",
+    }
 
 
-async def test_create_run_with_agent_config(client: AsyncClient) -> None:
-    """agent_config is stored and returned in the response."""
+async def test_create_run_with_agent_runner_config(client: AsyncClient) -> None:
+    """agent_runner_config is stored and returned in the response."""
     response = await client.post(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
             "repo_name": "proj-1",
             "branch": "main",
-            "agent_type": "cli_subprocess",
-            "agent_config": {"model": "claude-4", "callback_channel": "mcp"},
+            "agent_runner_type": "cli_subprocess",
+            "agent_runner_config": {"model": "claude-4", "callback_channel": "mcp"},
         },
     )
     assert response.status_code == 201
     data = response.json()
-    assert data["agent_type"] == "cli_subprocess"
-    assert data["agent_config"]["model"] == "claude-4"
-    assert data["agent_config"]["callback_channel"] == "mcp"
+    assert data["agent_runner_type"] == "cli_subprocess"
+    assert data["agent_runner_config"]["model"] == "claude-4"
+    assert data["agent_runner_config"]["callback_channel"] == "mcp"
 
 
-async def test_create_run_agent_config_defaults_to_empty(client: AsyncClient) -> None:
-    """agent_config defaults to empty dict when not provided."""
+async def test_create_run_agent_runner_config_defaults_to_empty(client: AsyncClient) -> None:
+    """agent_runner_config defaults to empty dict when not provided."""
     data = await _create_run(client)
-    assert data["agent_config"] == {}
+    assert data["agent_runner_config"] == {}
 
 
 # --- B2: cancel_run and recent_hours tests ---

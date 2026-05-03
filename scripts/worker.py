@@ -79,17 +79,17 @@ async def _poll_and_spawn(
         active_runs = await repo.list_by_status(RunStatus.ACTIVE)
 
     for run in active_runs:
-        if run.agent_type not in managed_types:
+        if run.agent_runner_type not in managed_types:
             continue
         from orchestrator.runners.executor import AgentRunnerExecutor
 
         ex: AgentRunnerExecutor = executor  # type: ignore[assignment]
         if not ex.is_running(run.id):
-            spawned = ex.spawn_for_run(run.id, run.agent_type, run.agent_config)
+            spawned = ex.spawn_for_run(run.id, run.agent_runner_type, run.agent_runner_config)
             if spawned:
                 logger.info(
                     f"Worker: spawned executor loop for active run {run.id} "
-                    f"({run.agent_type.value})"
+                    f"({run.agent_runner_type.value})"
                 )
 
 

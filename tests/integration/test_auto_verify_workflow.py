@@ -580,9 +580,9 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
         str(tmp_path),
         [{"id": "check1", "cmd": f"bash {script}", "must": True}],
     )
-    # Set agent config
-    run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-    run.agent_config = {
+    # Set agent runner config
+    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_runner_config = {
         "model": "claude-sonnet-4-5-20250514",
         "temperature": 0.7,
         "api_key": "secret-key",
@@ -623,7 +623,7 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
     assert task.attempts[0].auto_verify_results[0]["passed"] is True
 
     # Verify agent snapshot was populated on the single attempt
-    assert task.attempts[0].agent_type == AgentRunnerType.CLI_SUBPROCESS
+    assert task.attempts[0].agent_runner_type == AgentRunnerType.CLI_SUBPROCESS
     assert task.attempts[0].agent_model == "claude-sonnet-4-5-20250514"
     assert task.attempts[0].agent_settings["model"] == "claude-sonnet-4-5-20250514"
     assert task.attempts[0].agent_settings["temperature"] == 0.7

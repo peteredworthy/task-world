@@ -15,14 +15,14 @@ _VALID_AGENT_TYPES = [e.value for e in AgentRunnerType]
 _VALID_MERGE_STRATEGIES = [e.value for e in MergeStrategy]
 
 
-def _validate_agent_type(v: str | None) -> str | None:
-    """Validate and normalize agent_type (case-insensitive)."""
+def _validate_agent_runner_type(v: str | None) -> str | None:
+    """Validate and normalize agent_runner_type (case-insensitive)."""
     if v is None:
         return v
     lowered = v.lower()
     if lowered not in _VALID_AGENT_TYPES:
         raise ValueError(
-            f"Invalid agent_type '{v}'. Valid options: {', '.join(_VALID_AGENT_TYPES)}"
+            f"Invalid agent_runner_type '{v}'. Valid options: {', '.join(_VALID_AGENT_TYPES)}"
         )
     return lowered
 
@@ -45,15 +45,15 @@ class CreateRunRequest(ApiModel):
     branch: str  # Source branch to base worktree on
     routine_embedded: dict[str, Any] | None = None
     config: dict[str, Any] = {}
-    agent_type: str | None = None
-    agent_config: dict[str, Any] = {}
+    agent_runner_type: str | None = None
+    agent_runner_config: dict[str, Any] = {}
     env_files: EnvFileRequestConfig | None = None
     merge_strategy: str | None = None
 
-    @field_validator("agent_type", mode="before")
+    @field_validator("agent_runner_type", mode="before")
     @classmethod
-    def validate_agent_type(cls, v: str | None) -> str | None:
-        return _validate_agent_type(v)
+    def validate_agent_runner_type(cls, v: str | None) -> str | None:
+        return _validate_agent_runner_type(v)
 
     @field_validator("merge_strategy", mode="before")
     @classmethod
@@ -85,8 +85,8 @@ class CreateChildRunRequest(ApiModel):
     repo_name: str | None = None
     branch: str | None = None
     config: dict[str, Any] = {}
-    agent_type: str | None = None
-    agent_config: dict[str, Any] = {}
+    agent_runner_type: str | None = None
+    agent_runner_config: dict[str, Any] = {}
     env_files: EnvFileRequestConfig | None = None
     merge_strategy: str | None = None
     parent_slice_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
@@ -98,10 +98,10 @@ class CreateChildRunRequest(ApiModel):
     ] = "continue"
     start: bool = False
 
-    @field_validator("agent_type", mode="before")
+    @field_validator("agent_runner_type", mode="before")
     @classmethod
-    def validate_agent_type(cls, v: str | None) -> str | None:
-        return _validate_agent_type(v)
+    def validate_agent_runner_type(cls, v: str | None) -> str | None:
+        return _validate_agent_runner_type(v)
 
     @field_validator("merge_strategy", mode="before")
     @classmethod
@@ -138,9 +138,9 @@ class EvidenceTestResultSchema(ApiModel):
 
 
 class EvidenceBundleSchema(ApiModel):
-    """Planner-facing phase4.evidence.v1 bundle."""
+    """Planner-facing run.evidence.v1 bundle."""
 
-    schema_version: Literal["phase4.evidence.v1"]
+    schema_version: Literal["run.evidence.v1"]
     slice_id: str
     routine_id: str
     assumption_tested: str
@@ -178,6 +178,46 @@ class RunEvidenceResponse(ApiModel):
 class ParentOversightResponse(ApiModel):
     run_id: str
     oversight_state: dict[str, Any]
+
+
+class TargetInventoryItemSchema(ApiModel):
+    """Parent-authored target inventory item for super-parent oversight."""
+
+    schema_version: Literal["super_parent.target_inventory.v1"] = "super_parent.target_inventory.v1"
+    id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
+    in_scope: bool = True
+    resolved: bool = False
+
+
+class FinalValidationMarkerSchema(ApiModel):
+    """Parent-authored integrated validation marker."""
+
+    schema_version: Literal["super_parent.final_validation.v1"] = "super_parent.final_validation.v1"
+    passed: bool
+    integration_scope: Literal["integrated", "final"] = "integrated"
+    integrated_commit_sha: str = Field(min_length=7)
+    report_path: str = Field(min_length=1)
+    commands_run: list[EvidenceCommandSchema] = Field(min_length=1)
+    evidence_files: list[str] = Field(min_length=1)
+
+
+class ParentOversightUpdateRequest(ApiModel):
+    """Durable parent-authored facts to merge into the oversight payload."""
+
+    current_understanding: dict[str, Any] | None = None
+    target_inventory: list[TargetInventoryItemSchema] | None = None
+    final_validation: FinalValidationMarkerSchema | None = None
+    decisions: list[dict[str, Any]] | None = None
+    decision: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _normalize_single_decision(self) -> "ParentOversightUpdateRequest":
+        if self.decision is not None:
+            if self.decisions is None:
+                self.decisions = [self.decision]
+            else:
+                self.decisions.append(self.decision)
+        return self
 
 
 class AcceptChildRunResponse(ApiModel):
@@ -252,10 +292,10 @@ class RunResponse(ApiModel):
     parent_run_id: str | None = None
     parent_slice_id: str | None = None
     oversight_state: dict[str, Any] = {}
-    agent_type: str | None = None
-    agent_type_display: str
+    agent_runner_type: str | None = None
+    agent_runner_type_display: str
     agent_icon: str
-    agent_config: dict[str, Any] = {}
+    agent_runner_config: dict[str, Any] = {}
     verifier_model: str | None = None
     worktree_enabled: bool = True
     worktree_path: str | None = None
@@ -272,7 +312,7 @@ class RunResponse(ApiModel):
     updated_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
-    agent_started_at: datetime | None = None
+    agent_runner_started_at: datetime | None = None
     total_tokens_read: int = 0
     total_tokens_write: int = 0
     total_tokens_cache: int = 0
@@ -314,14 +354,14 @@ class BackwardTransitionRequest(ApiModel):
 class ResumeRunRequest(ApiModel):
     """Request to resume a paused run, optionally changing the agent."""
 
-    agent_type: str | None = None
-    agent_config: dict[str, Any] | None = None
+    agent_runner_type: str | None = None
+    agent_runner_config: dict[str, Any] | None = None
     resume_strategy: str | None = None  # "continue" | "reset_worktree"
 
-    @field_validator("agent_type", mode="before")
+    @field_validator("agent_runner_type", mode="before")
     @classmethod
-    def validate_agent_type(cls, v: str | None) -> str | None:
-        return _validate_agent_type(v)
+    def validate_agent_runner_type(cls, v: str | None) -> str | None:
+        return _validate_agent_runner_type(v)
 
     @model_validator(mode="after")
     def validate_resume_strategy(self) -> "ResumeRunRequest":
@@ -336,16 +376,16 @@ class RecoverRequest(ApiModel):
 
     target_task_id: str
     additional_attempts: int = Field(default=1, ge=0)
-    agent_type: str | None = None
-    agent_config: dict[str, Any] | None = None
+    agent_runner_type: str | None = None
+    agent_runner_config: dict[str, Any] | None = None
     preserve_checklist: bool = False
     guidance: str | None = None
     reset_branch: bool = True
 
-    @field_validator("agent_type", mode="before")
+    @field_validator("agent_runner_type", mode="before")
     @classmethod
-    def validate_agent_type(cls, v: str | None) -> str | None:
-        return _validate_agent_type(v)
+    def validate_agent_runner_type(cls, v: str | None) -> str | None:
+        return _validate_agent_runner_type(v)
 
 
 class RecoverResponse(ApiModel):
@@ -404,45 +444,46 @@ class MergeBackResponse(ApiModel):
     message: str
 
 
-def get_agent_display_name(
-    agent_type: AgentRunnerType | None, agent_config: dict[str, Any] | None = None
+def get_agent_runner_display_name(
+    agent_runner_type: AgentRunnerType | None, agent_runner_config: dict[str, Any] | None = None
 ) -> str:
-    """Get human-readable display name for an agent type.
+    """Get human-readable display name for an agent runner type.
 
     Args:
-        agent_type: The agent type enum value, or None
+        agent_runner_type: The agent runner type enum value, or None
 
     Returns:
         Display name string for the UI
     """
-    if agent_type is None:
-        return "No Agent"
+    if agent_runner_type is None:
+        return "No Agent Runner"
 
     display_map = {
         AgentRunnerType.OPENHANDS_LOCAL: "OpenHands",
         AgentRunnerType.OPENHANDS_DOCKER: "OpenHands Docker",
         AgentRunnerType.CLI_SUBPROCESS: "Claude CLI",
-        AgentRunnerType.USER_MANAGED: "External Agent",
+        AgentRunnerType.USER_MANAGED: "User Managed",
         AgentRunnerType.CODEX_SERVER: "Codex Server",
+        AgentRunnerType.CLAUDE_SDK: "Claude SDK",
     }
-    display_name = display_map.get(agent_type, "Unknown Agent")
-    if agent_type == AgentRunnerType.CLI_SUBPROCESS:
-        command = (agent_config or {}).get("command")
+    display_name = display_map.get(agent_runner_type, "Unknown Agent Runner")
+    if agent_runner_type == AgentRunnerType.CLI_SUBPROCESS:
+        command = (agent_runner_config or {}).get("command")
         if isinstance(command, str) and command.strip():
             return f"{command} CLI"
     return display_name
 
 
-def get_agent_icon(agent_type: AgentRunnerType | None) -> str:
-    """Get icon key for an agent type.
+def get_agent_runner_icon(agent_runner_type: AgentRunnerType | None) -> str:
+    """Get icon key for an agent runner type.
 
     Args:
-        agent_type: The agent type enum value, or None
+        agent_runner_type: The agent runner type enum value, or None
 
     Returns:
         Icon key string for the UI
     """
-    if agent_type is None:
+    if agent_runner_type is None:
         return "none"
 
     icon_map = {
@@ -451,6 +492,7 @@ def get_agent_icon(agent_type: AgentRunnerType | None) -> str:
         AgentRunnerType.CLI_SUBPROCESS: "cli",
         AgentRunnerType.USER_MANAGED: "external",
         AgentRunnerType.CODEX_SERVER: "codex",
+        AgentRunnerType.CLAUDE_SDK: "claude",
     }
 
-    return icon_map.get(agent_type, "unknown")
+    return icon_map.get(agent_runner_type, "unknown")

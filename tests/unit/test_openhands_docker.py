@@ -15,7 +15,7 @@ from orchestrator.config import AgentRunnerType
 
 def test_docker_agent_info() -> None:
     agent = DockerOpenHandsAgent()
-    assert agent.info.agent_type == AgentRunnerType.OPENHANDS_DOCKER
+    assert agent.info.agent_runner_type == AgentRunnerType.OPENHANDS_DOCKER
     assert agent.info.name == "OpenHands (Docker)"
 
 

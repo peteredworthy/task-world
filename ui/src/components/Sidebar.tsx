@@ -183,7 +183,7 @@ export function Sidebar() {
         <div className="px-3 pb-4">
           <div className="text-text-muted text-[11px] uppercase tracking-wide mb-1 px-1.5">Agent Quotas</div>
           {quotaAgents.map((agent) => (
-            <AgentQuotaRow key={agent.agent_type} agent={agent} />
+            <AgentQuotaRow key={agent.agent_runner_type} agent={agent} />
           ))}
         </div>
       )}

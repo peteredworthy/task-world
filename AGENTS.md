@@ -101,8 +101,8 @@ All runners satisfy the `AgentRunner` protocol (`src/orchestrator/runners/interf
 |---|---|---|
 | `GET` | `/api/agent-runners` | List available runners with availability and config schema |
 | `GET` | `/api/agent-runners/local-models` | Discover models from a local OpenAI-compatible server |
-| `GET` | `/api/agent-runners/{type}/profiles` | Get per-profile model defaults for a runner type |
-| `PUT` | `/api/agent-runners/{type}/profiles` | Set per-profile model defaults for a runner type |
+| `GET` | `/api/agent-runners/{type}/model-profile-defaults` | Get Agent Runner Model Defaults for a runner type |
+| `PUT` | `/api/agent-runners/{type}/model-profile-defaults` | Set Agent Runner Model Defaults for a runner type |
 
 ### Model Profiles
 
@@ -117,10 +117,10 @@ Four profiles (`ModelProfile` enum in `src/orchestrator/config/enums.py`):
 | `coder` | Implementation, code changes, debugging |
 | `summarizer` | Distillation, note-taking, lightweight analysis |
 
-**Per-runner defaults** — each runner stores a `profile → model` mapping in the database (`RunnerProfileDefaultModel`). When a task specifies a profile, resolution proceeds:
+**Agent Runner Model Defaults** — each runner stores a `profile → model` mapping in the database (`AgentRunnerModelProfileDefaultModel`). When a task specifies a profile, resolution proceeds:
 
-1. Runner profile defaults (`GET /api/agent-runners/{type}/profiles`)
-2. Runner built-in default model (from `agent_config`)
+1. Agent Runner Model Defaults (`GET /api/agent-runners/{type}/model-profile-defaults`)
+2. Runner built-in default model (from `agent_runner_config`)
 3. `None` (no model override)
 
 Resolution logic lives in `src/orchestrator/runners/profile_resolution.py`.
@@ -304,7 +304,7 @@ When investigating a run by ID, use these data sources:
 
 **1. API (primary source of truth when server is running):**
 ```bash
-# Run status, pause_reason, last_error, agent_type, worktree_path
+# Run status, pause_reason, last_error, agent_runner_type, worktree_path
 curl -s http://localhost:8000/api/runs/<run-id> | python3 -m json.tool
 
 # All tasks with status, attempts, grades
@@ -339,7 +339,7 @@ git -C <worktree_path> log --oneline -5
 - `pause_reason` — why it paused (`server_shutdown`, `gate_blocked`, `agent_execution_error`, `waiting_for_approval`, etc.)
 - `last_error` — detailed error message when paused due to failure
 - `worktree_path` — filesystem path to the run's worktree (null if no worktree)
-- `agent_type` — which agent runner is executing
+- `agent_runner_type` — which agent runner is executing
 
 ## Documentation Maintenance
 

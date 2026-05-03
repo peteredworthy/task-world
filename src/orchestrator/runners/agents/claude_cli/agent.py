@@ -27,6 +27,7 @@ from orchestrator.runners.errors import (
 )
 from orchestrator.workflow import GateBlockedError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
+from orchestrator.runners.environment import build_agent_subprocess_env
 from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
@@ -72,7 +73,7 @@ class CLIAgent:
             global_cfg = load_global_config()
             agent = CLIAgent(
                 command="claude",
-                nudger_config=global_cfg.nudger.to_agent_config(),
+                nudger_config=global_cfg.nudger.to_agent_runner_config(),
             )
     """
 
@@ -111,7 +112,7 @@ class CLIAgent:
     @property
     def info(self) -> AgentRunnerInfo:
         return AgentRunnerInfo(
-            agent_type=AgentRunnerType.CLI_SUBPROCESS,
+            agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
             name=self._command,
         )
 
@@ -399,7 +400,11 @@ class CLIAgent:
             # Build a clean environment for the child process.
             # Remove CLAUDECODE so that nested `claude` invocations don't
             # refuse to start with "cannot be launched inside another session".
-            child_env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+            child_env = build_agent_subprocess_env(
+                base_env={k: v for k, v in os.environ.items() if k != "CLAUDECODE"},
+                run_worktree=context.working_dir,
+                expected_run_branch=context.expected_git_branch,
+            )
 
             # Pass auth token via environment variable if present
             if context.auth_token:
@@ -420,7 +425,7 @@ class CLIAgent:
             )
 
             # Store PID for agent monitoring
-            # This should be persisted to run.agent_config["pid"] by the caller
+            # This should be persisted to run.agent_runner_config["pid"] by the caller
             # so that AgentRunnerMonitor can check process liveness
             agent_pid = self._process.pid
 
@@ -506,7 +511,7 @@ class CLIAgent:
                             try:
                                 await self._runner_monitor.on_agent_died(
                                     run_id=self._run_id,
-                                    agent_type=AgentRunnerType.CLI_SUBPROCESS,
+                                    agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
                                     exit_code=None,
                                     reason=f"agent_stuck_killed_after_{nudger.nudge_count}_nudges",
                                     pause_run=False,
@@ -543,7 +548,7 @@ class CLIAgent:
                 try:
                     await self._runner_monitor.on_agent_died(
                         run_id=self._run_id,
-                        agent_type=AgentRunnerType.CLI_SUBPROCESS,
+                        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
                         exit_code=self._process.returncode,
                         reason="agent_exit_failure",
                         pause_run=False,
@@ -586,7 +591,7 @@ class CLIAgent:
             # doing work.  Raise before any retry logic can consume a slot.
             if action_log and action_log.rate_limit_hit:
                 raise AgentRateLimitError(
-                    agent_type="cli_subprocess",
+                    agent_runner_type="cli_subprocess",
                     session_id=action_log.session_id,
                     resets_at=action_log.rate_limit_resets_at,
                 )
@@ -639,7 +644,7 @@ class CLIAgent:
                     exit_code = self._process.returncode
                     await self._runner_monitor.on_agent_died(
                         run_id=self._run_id,
-                        agent_type=AgentRunnerType.CLI_SUBPROCESS,
+                        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
                         exit_code=exit_code,
                         reason="agent_execution_error",
                         pause_run=False,

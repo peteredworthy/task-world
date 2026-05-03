@@ -61,7 +61,7 @@ task-world/
 │   │   ├── routers/           # API endpoints (11 routers)
 │   │   │   ├── agents.py      # GET/POST/PUT/DELETE /api/agents
 │   │   │   ├── runners.py     # GET /api/agent-runners
-│   │   │   ├── model_profiles.py # GET/PUT /api/agent-runners/{type}/profiles
+│   │   │   ├── model_profiles.py # GET/PUT /api/agent-runners/{type}/model-profile-defaults
 │   │   │   ├── routines.py    # /api/routines CRUD + validate
 │   │   │   ├── runs.py        # /api/runs CRUD + lifecycle
 │   │   │   ├── tasks.py       # Task operations, checklist, grades, prompts
@@ -500,9 +500,9 @@ The stub `_scheduled_resume_check()` method has been removed from `workflow/sign
 
 ---
 
-### TD-07: Unimplemented Planning Phase
+### ~~TD-07: Unimplemented Task Phase Schema~~ — RESOLVED
 
-`PhaseType` enum includes `plan`, `gap_check`, `summarize`, `human_review`, and `auto_verify` alongside the active `build` and `verify` phases. `RoutineConfig`, `StepConfig`, and `TaskConfig` all carry a `planner_agent` field. Neither the planner agent field nor the additional phase types are read by the executor — planning was designed but never implemented.
+The unused `PhaseType` enum, `PhaseConfig` model, `TaskConfig.phases` field, planner-agent routine override fields, and phase validator path have been removed. The historical Alembic revision remains in the migration chain, and a follow-up migration removes the unused task phase columns from the final schema.
 
 ---
 
@@ -542,8 +542,8 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/config` | Global configuration |
 | GET | `/api/agent-runners` | List available agent runner backends as `AgentRunnerOption[]`; includes OpenHands (local/Docker), CLI (claude/codex), Codex Server (local), Codex Server Remote, and User Managed |
 | GET | `/api/agent-runners/local-models` | Discover models from a local OpenAI-compatible LLM server |
-| GET | `/api/agent-runners/{type}/profiles` | Get per-profile model defaults for a runner type |
-| PUT | `/api/agent-runners/{type}/profiles` | Set per-profile model defaults for a runner type |
+| GET | `/api/agent-runners/{type}/model-profile-defaults` | Get Agent Runner Model Defaults for a runner type |
+| PUT | `/api/agent-runners/{type}/model-profile-defaults` | Set Agent Runner Model Defaults for a runner type |
 | GET | `/api/agents` | List all agent configs (name + system_prompt + model_profile) |
 | POST | `/api/agents` | Create an agent config |
 | GET | `/api/agents/{id}` | Get agent config by ID |
@@ -585,7 +585,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | POST | `/api/runs/{id}/cancel` | Cancel run |
 | POST | `/api/runs/{id}/children` | Create an oversight child run |
 | GET | `/api/runs/{id}/children` | List oversight child runs |
-| GET | `/api/runs/{id}/evidence` | Return structured `phase4.evidence.v1` bundles from the run worktree |
+| GET | `/api/runs/{id}/evidence` | Return structured `run.evidence.v1` bundles from the run worktree |
 | GET | `/api/runs/{id}/activity` | Activity log (paginated) |
 | GET | `/api/runs/{id}/activity/stream` | Activity SSE stream |
 | GET | `/api/runs/{id}/guidance` | Aggregate guidance for agents |
@@ -767,4 +767,4 @@ The following event types (`src/orchestrator/workflow/events/types.py`) are emit
 | `TestRunCompleted` | Test run finishes | test_run_id, status, duration_ms |
 | `ConflictResolved` | Conflict file resolved | file_path, remaining_conflicts |
 | `BackMergeReverted` | Back-merge undone | reverted_commit, new_head |
-| `AgentFixStarted` | Agent dispatched for conflict/test fix | job_id, agent_type |
+| `AgentFixStarted` | Agent dispatched for conflict/test fix | job_id, agent_runner_type |

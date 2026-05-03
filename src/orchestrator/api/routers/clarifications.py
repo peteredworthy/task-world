@@ -304,11 +304,11 @@ async def respond_to_clarification(
         run = await service.apply_resume_run(run_id)
         logger.info(f"API: Resumed paused run {run_id} after clarification response")
     # Always re-spawn agent after a clarification response (run should now be ACTIVE)
-    if run.agent_type is not None and not executor.is_running(run_id):
-        spawned = executor.spawn_for_run(run_id, run.agent_type, run.agent_config)
+    if run.agent_runner_type is not None and not executor.is_running(run_id):
+        spawned = executor.spawn_for_run(run_id, run.agent_runner_type, run.agent_runner_config)
         if spawned:
             logger.info(
-                f"API: Re-spawned {run.agent_type.value} agent after clarification response for run {run_id}"
+                f"API: Re-spawned {run.agent_runner_type.value} agent after clarification response for run {run_id}"
             )
     return TransitionResponse(
         success=result.success,

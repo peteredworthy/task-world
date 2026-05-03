@@ -109,7 +109,7 @@ class AttemptSchema(ApiModel):
     token_usage_by_model: list[ModelTokenUsageSchema] = []
 
     # Agent snapshot
-    agent_type: str | None = None
+    agent_runner_type: str | None = None
     agent_model: str | None = None
     agent_settings: dict[str, Any] = {}
     error: str | None = None

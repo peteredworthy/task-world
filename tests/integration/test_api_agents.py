@@ -89,30 +89,30 @@ async def test_list_agents(agents_data: list[dict[str, Any]]) -> None:
 
     # Verify structure
     for agent_data in data:
-        assert "agent_type" in agent_data
+        assert "agent_runner_type" in agent_data
         assert "name" in agent_data
         assert "available" in agent_data
 
     # OpenHands Docker availability depends on whether Docker is present
-    oh_docker = [a for a in data if a["agent_type"] == "openhands_docker"]
+    oh_docker = [a for a in data if a["agent_runner_type"] == "openhands_docker"]
     assert len(oh_docker) == 1
     assert isinstance(oh_docker[0]["available"], bool)
 
     # OpenHands local should also be present
-    oh_local = [a for a in data if a["agent_type"] == "openhands_local"]
+    oh_local = [a for a in data if a["agent_runner_type"] == "openhands_local"]
     assert len(oh_local) == 1
 
     # User Managed always available
-    um_list = [a for a in data if a["agent_type"] == "user_managed"]
+    um_list = [a for a in data if a["agent_runner_type"] == "user_managed"]
     assert len(um_list) == 1
     assert um_list[0]["available"] is True
 
 
 async def test_list_agents_has_both_openhands_types(agents_data: list[dict[str, Any]]) -> None:
     """Both OPENHANDS_LOCAL and OPENHANDS_DOCKER entries are present."""
-    agent_types = [a["agent_type"] for a in agents_data]
-    assert "openhands_local" in agent_types
-    assert "openhands_docker" in agent_types
+    agent_runner_types = [a["agent_runner_type"] for a in agents_data]
+    assert "openhands_local" in agent_runner_types
+    assert "openhands_docker" in agent_runner_types
 
 
 async def test_list_agents_includes_config_schema(agents_data: list[dict[str, Any]]) -> None:
@@ -131,7 +131,7 @@ async def test_list_agents_includes_config_schema(agents_data: list[dict[str, An
 
 async def test_list_agents_includes_codex_server(agents_data: list[dict[str, Any]]) -> None:
     """GET /api/agents always includes a codex_server entry."""
-    cs_entries = [a for a in agents_data if a["agent_type"] == "codex_server"]
+    cs_entries = [a for a in agents_data if a["agent_runner_type"] == "codex_server"]
     assert len(cs_entries) == 1, "Expected exactly one codex_server entry"
 
     cs = cs_entries[0]
@@ -143,7 +143,7 @@ async def test_list_agents_includes_codex_server(agents_data: list[dict[str, Any
 
 async def test_codex_server_unavailable_has_install_hint(agents_data: list[dict[str, Any]]) -> None:
     """When codex_server is unavailable, the response includes an actionable install_hint."""
-    cs = next(a for a in agents_data if a["agent_type"] == "codex_server")
+    cs = next(a for a in agents_data if a["agent_runner_type"] == "codex_server")
     if not cs["available"]:
         assert "install_hint" in cs
         assert cs["install_hint"] != "", (
@@ -154,7 +154,7 @@ async def test_codex_server_unavailable_has_install_hint(agents_data: list[dict[
 async def test_codex_server_has_stable_shape(agents_data: list[dict[str, Any]]) -> None:
     """codex_server entry has stable response shape."""
     required_keys = {
-        "agent_type",
+        "agent_runner_type",
         "name",
         "title",
         "description",
@@ -164,7 +164,7 @@ async def test_codex_server_has_stable_shape(agents_data: list[dict[str, Any]]) 
         "config_schema",
     }
 
-    entry = next(a for a in agents_data if a["agent_type"] == "codex_server")
+    entry = next(a for a in agents_data if a["agent_runner_type"] == "codex_server")
     assert required_keys.issubset(entry.keys()), (
         f"codex_server missing keys: {required_keys - entry.keys()}"
     )
@@ -175,7 +175,7 @@ async def test_codex_server_has_stable_shape(agents_data: list[dict[str, Any]]) 
 
 async def test_codex_server_config_fields(agents_data: list[dict[str, Any]]) -> None:
     """codex_server exposes model, restrictions, and callback_channel config fields."""
-    cs = next(a for a in agents_data if a["agent_type"] == "codex_server")
+    cs = next(a for a in agents_data if a["agent_runner_type"] == "codex_server")
     schema = cast(list[dict[str, Any]], cs["config_schema"])
     field_names = [f["name"] for f in schema]
 

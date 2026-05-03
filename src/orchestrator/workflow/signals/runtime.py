@@ -130,15 +130,15 @@ class RunWorkflow:
     def __init__(
         self,
         run_id: str,
-        agent_type: AgentRunnerType | None = None,
-        agent_config: dict[str, Any] | None = None,
+        agent_runner_type: AgentRunnerType | None = None,
+        agent_runner_config: dict[str, Any] | None = None,
         *,
         callbacks: ExecutorCallbacks | None = None,
         transport: SignalTransport | None = None,
     ) -> None:
         self.run_id = run_id
-        self.agent_type = agent_type
-        self.agent_config = agent_config if agent_config is not None else {}
+        self.agent_runner_type = agent_runner_type
+        self.agent_runner_config = agent_runner_config if agent_runner_config is not None else {}
 
         # Executor services grouped in a dataclass
         self._callbacks = callbacks or ExecutorCallbacks()
@@ -164,11 +164,11 @@ class RunWorkflow:
         )
 
         run_id = self.run_id
-        agent_type = self.agent_type
+        agent_runner_type = self.agent_runner_type
 
         # Background health monitor (same as before)
         health_monitor_task = asyncio.create_task(
-            self._callbacks.monitor_agent_health(run_id, agent_type)
+            self._callbacks.monitor_agent_health(run_id, agent_runner_type)
         )
 
         # FIX-6: Write a safety pause BEFORE entering the loop so that if the
@@ -401,8 +401,8 @@ class RunWorkflow:
         assert self._callbacks.attempt_store is not None, "attempt_store required for _run_loop()"
 
         run_id = self.run_id
-        agent_type = self.agent_type
-        agent_config = self.agent_config
+        agent_runner_type = self.agent_runner_type
+        agent_runner_config = self.agent_runner_config
 
         # Track tasks whose recovery was already attempted in this session.
         recovery_attempted: set[str] = set()
@@ -492,16 +492,17 @@ class RunWorkflow:
                         )
                         await session.commit()
                     elif action.kind in ("complete", "fail"):
-                        await repo.save(run)
-                        await session.commit()
-                        logger.info(f"Run {run_id}: safety-net completion → {run.status.value}")
+                        guarded_run = await service.save_run_with_oversight_terminal_guard(run)
+                        logger.info(
+                            f"Run {run_id}: safety-net completion → {guarded_run.status.value}"
+                        )
                     break
 
                 # no_task_reason is None → task_state is set
                 assert task_state is not None
 
                 effective_config, stale_reason = self._callbacks.prepare_codex_config(
-                    agent_type, agent_config
+                    agent_runner_type, agent_runner_config
                 )
                 if stale_reason is not None:
                     logger.info(
@@ -531,7 +532,7 @@ class RunWorkflow:
                         run,
                         task_state,
                         service,
-                        agent_type,
+                        agent_runner_type,
                         effective_config,
                         summary_cache=summary_cache,
                         session=session,

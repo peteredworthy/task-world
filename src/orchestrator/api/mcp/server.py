@@ -30,6 +30,7 @@ BUILDER_TOOLS = {
     "orchestrator_wait_for_run",
     "orchestrator_get_run_evidence",
     "orchestrator_get_parent_oversight",
+    "orchestrator_update_parent_oversight",
     "orchestrator_refresh_parent_oversight",
 }
 
@@ -269,8 +270,8 @@ class OrchestratorMCPServer:
             repo_name: str = "",
             branch: str = "",
             config: dict[str, object] | None = None,
-            agent_type: str = "",
-            agent_config: dict[str, object] | None = None,
+            agent_runner_type: str = "",
+            agent_runner_config: dict[str, object] | None = None,
             next_action_decision: str = "continue",
             start: bool = False,
         ) -> str:
@@ -288,10 +289,10 @@ class OrchestratorMCPServer:
                 args["branch"] = branch
             if config is not None:
                 args["config"] = config
-            if agent_type:
-                args["agent_type"] = agent_type
-            if agent_config is not None:
-                args["agent_config"] = agent_config
+            if agent_runner_type:
+                args["agent_runner_type"] = agent_runner_type
+            if agent_runner_config is not None:
+                args["agent_runner_config"] = agent_runner_config
             result = await handler.handle("orchestrator_create_child_run", args)
             return json.dumps(result)
 
@@ -315,7 +316,7 @@ class OrchestratorMCPServer:
             run_id: str,
             timeout_seconds: float = 0,
         ) -> str:
-            """Wait briefly for a run to complete or fail, then return current status."""
+            """Wait for a run to complete, fail, or pause, then return current status."""
             result = await handler.handle(
                 "orchestrator_wait_for_run",
                 {"run_id": run_id, "timeout_seconds": timeout_seconds},
@@ -323,13 +324,36 @@ class OrchestratorMCPServer:
             return json.dumps(result)
 
         async def orchestrator_get_run_evidence(run_id: str) -> str:
-            """Return structured phase4.evidence.v1 bundles from a run worktree."""
+            """Return structured run.evidence.v1 bundles from a run worktree."""
             result = await handler.handle("orchestrator_get_run_evidence", {"run_id": run_id})
             return json.dumps(result)
 
         async def orchestrator_get_parent_oversight(run_id: str) -> str:
             """Return the persisted super-parent oversight snapshot."""
             result = await handler.handle("orchestrator_get_parent_oversight", {"run_id": run_id})
+            return json.dumps(result)
+
+        async def orchestrator_update_parent_oversight(
+            run_id: str,
+            current_understanding: dict[str, object] | None = None,
+            target_inventory: list[dict[str, object]] | None = None,
+            final_validation: dict[str, object] | None = None,
+            decisions: list[dict[str, object]] | None = None,
+            decision: dict[str, object] | None = None,
+        ) -> str:
+            """Persist parent-authored super-parent oversight facts."""
+            args: dict[str, object] = {"run_id": run_id}
+            if current_understanding is not None:
+                args["current_understanding"] = current_understanding
+            if target_inventory is not None:
+                args["target_inventory"] = target_inventory
+            if final_validation is not None:
+                args["final_validation"] = final_validation
+            if decisions is not None:
+                args["decisions"] = decisions
+            if decision is not None:
+                args["decision"] = decision
+            result = await handler.handle("orchestrator_update_parent_oversight", args)
             return json.dumps(result)
 
         async def orchestrator_refresh_parent_oversight(run_id: str) -> str:
@@ -358,17 +382,22 @@ class OrchestratorMCPServer:
         self._mcp.add_tool(
             orchestrator_wait_for_run,
             name="orchestrator_wait_for_run",
-            description="Wait briefly for a run to complete or fail, then return current status.",
+            description="Wait for a run to complete, fail, or pause, then return current status.",
         )
         self._mcp.add_tool(
             orchestrator_get_run_evidence,
             name="orchestrator_get_run_evidence",
-            description="Return structured phase4.evidence.v1 bundles from a run worktree.",
+            description="Return structured run.evidence.v1 bundles from a run worktree.",
         )
         self._mcp.add_tool(
             orchestrator_get_parent_oversight,
             name="orchestrator_get_parent_oversight",
             description="Return the persisted super-parent oversight snapshot.",
+        )
+        self._mcp.add_tool(
+            orchestrator_update_parent_oversight,
+            name="orchestrator_update_parent_oversight",
+            description="Persist parent-authored super-parent oversight facts.",
         )
         self._mcp.add_tool(
             orchestrator_refresh_parent_oversight,

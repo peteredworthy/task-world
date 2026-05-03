@@ -13,44 +13,48 @@ from orchestrator.api import (
 
 
 # ---------------------------------------------------------------------------
-# agent_type validator (CreateRunRequest, ResumeRunRequest, RecoverRequest)
+# agent_runner_type validator (CreateRunRequest, ResumeRunRequest, RecoverRequest)
 # ---------------------------------------------------------------------------
 
 
-def test_invalid_agent_type_rejected() -> None:
-    """Invalid agent_type raises ValidationError with helpful message."""
+def test_invalid_agent_runner_type_rejected() -> None:
+    """Invalid agent_runner_type raises ValidationError with helpful message."""
     with pytest.raises(ValidationError) as exc_info:
-        CreateRunRequest(routine_id="r", repo_name="proj", branch="main", agent_type="INVALID")
-    assert "Invalid agent_type" in str(exc_info.value)
+        CreateRunRequest(
+            routine_id="r", repo_name="proj", branch="main", agent_runner_type="INVALID"
+        )
+    assert "Invalid agent_runner_type" in str(exc_info.value)
     assert "Valid options" in str(exc_info.value)
 
 
-def test_uppercase_agent_type_normalised() -> None:
-    """agent_type is accepted and normalised to lowercase."""
+def test_uppercase_agent_runner_type_normalised() -> None:
+    """agent_runner_type is accepted and normalised to lowercase."""
     req = CreateRunRequest(
-        routine_id="r", repo_name="proj", branch="main", agent_type="CODEX_SERVER"
+        routine_id="r", repo_name="proj", branch="main", agent_runner_type="CODEX_SERVER"
     )
-    assert req.agent_type == "codex_server"
+    assert req.agent_runner_type == "codex_server"
 
 
-def test_mixed_case_agent_type_normalised() -> None:
-    """Mixed-case agent_type is normalised to lowercase."""
-    req = CreateRunRequest(routine_id="r", repo_name="proj", branch="main", agent_type="Claude_SDK")
-    assert req.agent_type == "claude_sdk"
-
-
-def test_valid_lowercase_agent_type_accepted() -> None:
-    """Standard lowercase agent type is accepted unchanged."""
+def test_mixed_case_agent_runner_type_normalised() -> None:
+    """Mixed-case agent_runner_type is normalised to lowercase."""
     req = CreateRunRequest(
-        routine_id="r", repo_name="proj", branch="main", agent_type="user_managed"
+        routine_id="r", repo_name="proj", branch="main", agent_runner_type="Claude_SDK"
     )
-    assert req.agent_type == "user_managed"
+    assert req.agent_runner_type == "claude_sdk"
 
 
-def test_null_agent_type_accepted() -> None:
-    """None/missing agent_type is accepted."""
+def test_valid_lowercase_agent_runner_type_accepted() -> None:
+    """Standard lowercase agent runner type is accepted unchanged."""
+    req = CreateRunRequest(
+        routine_id="r", repo_name="proj", branch="main", agent_runner_type="user_managed"
+    )
+    assert req.agent_runner_type == "user_managed"
+
+
+def test_null_agent_runner_type_accepted() -> None:
+    """None/missing agent_runner_type is accepted."""
     req = CreateRunRequest(routine_id="r", repo_name="proj", branch="main")
-    assert req.agent_type is None
+    assert req.agent_runner_type is None
 
 
 # ---------------------------------------------------------------------------
@@ -101,21 +105,21 @@ def test_backward_transition_zero_index_accepted() -> None:
 
 
 # ---------------------------------------------------------------------------
-# ResumeRunRequest.agent_type validator
+# ResumeRunRequest.agent_runner_type validator
 # ---------------------------------------------------------------------------
 
 
-def test_resume_invalid_agent_type_rejected() -> None:
-    """Invalid agent_type in ResumeRunRequest raises ValidationError."""
+def test_resume_invalid_agent_runner_type_rejected() -> None:
+    """Invalid agent_runner_type in ResumeRunRequest raises ValidationError."""
     with pytest.raises(ValidationError) as exc_info:
-        ResumeRunRequest(agent_type="NOT_REAL")
-    assert "Invalid agent_type" in str(exc_info.value)
+        ResumeRunRequest(agent_runner_type="NOT_REAL")
+    assert "Invalid agent_runner_type" in str(exc_info.value)
 
 
-def test_resume_valid_agent_type_normalised() -> None:
-    """Valid agent_type in ResumeRunRequest is accepted."""
-    req = ResumeRunRequest(agent_type="CODEX_SERVER")
-    assert req.agent_type == "codex_server"
+def test_resume_valid_agent_runner_type_normalised() -> None:
+    """Valid agent_runner_type in ResumeRunRequest is accepted."""
+    req = ResumeRunRequest(agent_runner_type="CODEX_SERVER")
+    assert req.agent_runner_type == "codex_server"
 
 
 # ---------------------------------------------------------------------------

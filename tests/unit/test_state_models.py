@@ -23,11 +23,11 @@ def test_run_with_values() -> None:
         repo_name="test-project",
         source_branch="main",
         routine_id="planning",
-        agent_type=AgentRunnerType.OPENHANDS_LOCAL,
+        agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
         config={"feature": "auth"},
     )
     assert run.routine_id == "planning"
-    assert run.agent_type == AgentRunnerType.OPENHANDS_LOCAL
+    assert run.agent_runner_type == AgentRunnerType.OPENHANDS_LOCAL
     assert run.config["feature"] == "auth"
 
 

@@ -34,7 +34,7 @@ import type {
   RoutineListResponse,
   RunListResponse,
   RunResponse,
-  RunnerProfileDefaults,
+  AgentRunnerModelDefaults,
   SetGradeRequest,
   TaskDetailResponse,
   TransitionResponse,
@@ -321,7 +321,7 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/pause', { method: 'POST' });
   },
 
-  resumeRun(runId: string, payload?: { agent_type?: string; agent_config?: Record<string, unknown>; resume_strategy?: string }): Promise<RunResponse> {
+  resumeRun(runId: string, payload?: { agent_runner_type?: string; agent_runner_config?: Record<string, unknown>; resume_strategy?: string }): Promise<RunResponse> {
     return fetchApi('/api/runs/' + runId + '/resume', {
       method: 'POST',
       body: payload ? JSON.stringify(payload) : undefined,
@@ -641,14 +641,17 @@ export const api = {
     return fetchApi('/api/model-profiles');
   },
 
-  fetchRunnerProfiles(runnerType: string): Promise<RunnerProfileDefaults> {
-    return fetchApi('/api/agent-runners/' + encodeURIComponent(runnerType) + '/profiles');
+  fetchAgentRunnerModelDefaults(runnerType: string): Promise<AgentRunnerModelDefaults> {
+    return fetchApi('/api/agent-runners/' + encodeURIComponent(runnerType) + '/model-profile-defaults');
   },
 
-  saveRunnerProfiles(runnerType: string, profiles: RunnerProfileDefaults): Promise<RunnerProfileDefaults> {
-    return fetchApi('/api/agent-runners/' + encodeURIComponent(runnerType) + '/profiles', {
+  saveAgentRunnerModelDefaults(
+    runnerType: string,
+    defaults: AgentRunnerModelDefaults,
+  ): Promise<AgentRunnerModelDefaults> {
+    return fetchApi('/api/agent-runners/' + encodeURIComponent(runnerType) + '/model-profile-defaults', {
       method: 'PUT',
-      body: JSON.stringify(profiles),
+      body: JSON.stringify(defaults),
     });
   },
 };
@@ -717,10 +720,13 @@ export function fetchModelProfiles(): Promise<ModelProfileInfo[]> {
   return api.fetchModelProfiles();
 }
 
-export function fetchRunnerProfiles(runnerType: string): Promise<RunnerProfileDefaults> {
-  return api.fetchRunnerProfiles(runnerType);
+export function fetchAgentRunnerModelDefaults(runnerType: string): Promise<AgentRunnerModelDefaults> {
+  return api.fetchAgentRunnerModelDefaults(runnerType);
 }
 
-export function saveRunnerProfiles(runnerType: string, profiles: RunnerProfileDefaults): Promise<RunnerProfileDefaults> {
-  return api.saveRunnerProfiles(runnerType, profiles);
+export function saveAgentRunnerModelDefaults(
+  runnerType: string,
+  defaults: AgentRunnerModelDefaults,
+): Promise<AgentRunnerModelDefaults> {
+  return api.saveAgentRunnerModelDefaults(runnerType, defaults);
 }

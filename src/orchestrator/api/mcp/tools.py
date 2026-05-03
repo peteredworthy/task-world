@@ -6,8 +6,10 @@ It is tested independently of server transport.
 
 from __future__ import annotations
 
+import subprocess
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from orchestrator.config import RoutineConfig
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RoutineSource
@@ -15,9 +17,34 @@ from orchestrator.git import get_repo, list_branches, list_repos
 from orchestrator.git.repos import RepoNotFoundError
 from orchestrator.api.mcp.clarification_tools import CLARIFICATION_TOOL
 from orchestrator.state.factory import create_run_from_routine
+from orchestrator.state import Run
 from orchestrator.time_utils import format_utc_datetime
 from orchestrator.workflow import ClarificationQuestion
 from orchestrator.workflow.service import WorkflowService
+
+
+def _resolve_child_source_branch(parent_run: Run, requested_branch: str | None) -> str:
+    """Resolve the branch to use when creating an oversight child run.
+
+    Prefer the parent accumulation branch when present in the parent worktree,
+    then honor an explicit branch if no accumulation branch exists.
+    """
+
+    parent_accum_branch = f"orchestrator/run-{parent_run.id}"
+    if parent_run.worktree_path:
+        try:
+            branches = list_branches(Path(parent_run.worktree_path), local_only=True)
+        except (OSError, subprocess.CalledProcessError):
+            branches = []
+        else:
+            if any(branch.name == parent_accum_branch for branch in branches):
+                return parent_accum_branch
+
+    if requested_branch:
+        return requested_branch
+
+    return parent_run.source_branch or "main"
+
 
 # JSON schemas for the orchestrator MCP tools
 ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
@@ -177,8 +204,14 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
                 "repo_name": {"type": "string", "description": "Optional child repo name"},
                 "branch": {"type": "string", "description": "Optional child source branch"},
                 "config": {"type": "object", "description": "Optional child run config"},
-                "agent_type": {"type": "string", "description": "Optional child runner type"},
-                "agent_config": {"type": "object", "description": "Optional child runner config"},
+                "agent_runner_type": {
+                    "type": "string",
+                    "description": "Optional child runner type",
+                },
+                "agent_runner_config": {
+                    "type": "object",
+                    "description": "Optional child runner config",
+                },
                 "next_action_decision": {
                     "type": "string",
                     "enum": ["continue", "replan", "stop", "environment_blocked"],
@@ -214,14 +247,14 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "orchestrator_wait_for_run",
-        "description": "Wait briefly for a run to complete or fail, then return its current status.",
+        "description": "Wait for a run to complete, fail, or pause, then return its current status.",
         "inputSchema": {
             "type": "object",
             "properties": {
                 "run_id": {"type": "string", "description": "Run ID to observe"},
                 "timeout_seconds": {
                     "type": "number",
-                    "description": "Maximum seconds to wait, capped at 30",
+                    "description": "Maximum seconds to wait, capped at 300",
                 },
             },
             "required": ["run_id"],
@@ -229,7 +262,7 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "orchestrator_get_run_evidence",
-        "description": "Return structured phase4.evidence.v1 bundles from a run worktree.",
+        "description": "Return structured run.evidence.v1 bundles from a run worktree.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -245,6 +278,93 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "run_id": {"type": "string", "description": "Parent run ID to inspect"},
+            },
+            "required": ["run_id"],
+        },
+    },
+    {
+        "name": "orchestrator_update_parent_oversight",
+        "description": (
+            "Persist parent-authored super-parent oversight facts such as target inventory, "
+            "final validation, current understanding, and decisions."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "run_id": {"type": "string", "description": "Parent run ID to update"},
+                "current_understanding": {
+                    "type": "object",
+                    "description": "Optional current understanding payload",
+                },
+                "target_inventory": {
+                    "type": "array",
+                    "description": "Optional full replacement target inventory",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "schema_version": {
+                                "type": "string",
+                                "enum": ["super_parent.target_inventory.v1"],
+                            },
+                            "id": {"type": "string"},
+                            "in_scope": {"type": "boolean"},
+                            "resolved": {"type": "boolean"},
+                        },
+                        "required": ["id"],
+                    },
+                },
+                "final_validation": {
+                    "type": "object",
+                    "description": "Optional integrated final validation marker",
+                    "properties": {
+                        "schema_version": {
+                            "type": "string",
+                            "enum": ["super_parent.final_validation.v1"],
+                        },
+                        "passed": {"type": "boolean"},
+                        "integration_scope": {
+                            "type": "string",
+                            "enum": ["integrated", "final"],
+                        },
+                        "integrated_commit_sha": {"type": "string", "minLength": 7},
+                        "report_path": {"type": "string", "minLength": 1},
+                        "commands_run": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "command": {"type": "string"},
+                                    "exit_code": {"type": "integer"},
+                                    "stdout_excerpt": {"type": "string"},
+                                    "stderr_excerpt": {"type": "string"},
+                                },
+                                "required": ["command", "exit_code"],
+                            },
+                        },
+                        "evidence_files": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {"type": "string"},
+                        },
+                    },
+                    "required": [
+                        "passed",
+                        "integrated_commit_sha",
+                        "report_path",
+                        "commands_run",
+                        "evidence_files",
+                    ],
+                },
+                "decisions": {
+                    "type": "array",
+                    "description": "Optional decision records to append",
+                    "items": {"type": "object"},
+                },
+                "decision": {
+                    "type": "object",
+                    "description": "Optional single decision record to append",
+                },
             },
             "required": ["run_id"],
         },
@@ -310,6 +430,8 @@ class ToolHandler:
             return await self._get_run_evidence(arguments)
         elif tool_name == "orchestrator_get_parent_oversight":
             return await self._get_parent_oversight(arguments)
+        elif tool_name == "orchestrator_update_parent_oversight":
+            return await self._update_parent_oversight(arguments)
         elif tool_name == "orchestrator_refresh_parent_oversight":
             return await self._refresh_parent_oversight(arguments)
         else:
@@ -545,19 +667,21 @@ class ToolHandler:
         child = create_run_from_routine(
             routine=routine_config,
             repo_name=args.get("repo_name") or parent.repo_name,
-            source_branch=args.get("branch") or parent.source_branch or "main",
+            source_branch=_resolve_child_source_branch(parent, args.get("branch")),
             config=args.get("config") or {},
             routine_source=RoutineSource.EMBEDDED,
         )
         child.routine_embedded = routine_embedded
 
-        agent_type: str | None = args.get("agent_type")
-        if agent_type:
-            child.agent_type = AgentRunnerType(agent_type)
+        agent_runner_type: str | None = args.get("agent_runner_type")
+        if agent_runner_type:
+            child.agent_runner_type = AgentRunnerType(agent_runner_type)
         else:
-            child.agent_type = parent.agent_type
-        child.agent_config = args.get("agent_config") or dict(parent.agent_config)
-        child.verifier_model = child.agent_config.get("model") or parent.verifier_model
+            child.agent_runner_type = parent.agent_runner_type
+        child.agent_runner_config = args.get("agent_runner_config") or dict(
+            parent.agent_runner_config
+        )
+        child.verifier_model = child.agent_runner_config.get("model") or parent.verifier_model
 
         child = await self._service.create_child_run(
             parent_run_id,
@@ -613,13 +737,32 @@ class ToolHandler:
 
     async def _wait_for_run(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
-        timeout_seconds = min(float(args.get("timeout_seconds", 0)), 30.0)
+        timeout_seconds = min(float(args.get("timeout_seconds", 0)), 300.0)
+        initial_run = await self._service.get_run(run_id)
+        parent_run_id = initial_run.parent_run_id
+        if parent_run_id:
+            await self._service.record_child_wait_observation(
+                parent_run_id,
+                run_id,
+                observed_status=initial_run.status,
+                phase="started",
+                timeout_seconds=timeout_seconds,
+            )
         run = await self._service.wait_for_run_terminal(run_id, timeout_seconds)
+        if parent_run_id:
+            await self._service.record_child_wait_observation(
+                parent_run_id,
+                run_id,
+                observed_status=run.status,
+                phase="observed",
+                timeout_seconds=timeout_seconds,
+            )
         terminal = run.status.value in ("completed", "failed")
         return {
             "run_id": run.id,
             "status": run.status.value,
             "terminal": terminal,
+            "meaningful_state": terminal or run.status.value == "paused",
             "pause_reason": run.pause_reason,
             "last_error": run.last_error,
         }
@@ -633,6 +776,43 @@ class ToolHandler:
         run_id: str = args["run_id"]
         oversight_state = await self._service.get_parent_oversight(run_id)
         return {"run_id": run_id, "oversight_state": oversight_state}
+
+    async def _update_parent_oversight(self, args: dict[str, Any]) -> dict[str, Any]:
+        run_id: str = args["run_id"]
+        decisions: list[dict[str, Any]] | None = None
+        if isinstance(args.get("decisions"), list):
+            decisions = [
+                dict(cast(Mapping[str, Any], item))
+                for item in args["decisions"]
+                if isinstance(item, Mapping)
+            ]
+        if isinstance(args.get("decision"), Mapping):
+            decisions = [*(decisions or []), dict(cast(Mapping[str, Any], args["decision"]))]
+
+        current_understanding: dict[str, Any] | None = None
+        if isinstance(args.get("current_understanding"), Mapping):
+            current_understanding = dict(cast(Mapping[str, Any], args["current_understanding"]))
+
+        target_inventory: list[dict[str, Any]] | None = None
+        if isinstance(args.get("target_inventory"), list):
+            target_inventory = [
+                dict(cast(Mapping[str, Any], item))
+                for item in args["target_inventory"]
+                if isinstance(item, Mapping)
+            ]
+
+        final_validation: dict[str, Any] | None = None
+        if isinstance(args.get("final_validation"), Mapping):
+            final_validation = dict(cast(Mapping[str, Any], args["final_validation"]))
+
+        run = await self._service.update_parent_oversight(
+            run_id,
+            current_understanding=current_understanding,
+            target_inventory=target_inventory,
+            final_validation=final_validation,
+            decisions=decisions,
+        )
+        return {"run_id": run.id, "oversight_state": run.oversight_state}
 
     async def _refresh_parent_oversight(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]

@@ -110,23 +110,27 @@ function CompactGradeBadges({ grades }: { grades: GradeSummaryItem[] }) {
   );
 }
 
-/** Format agent type for display */
-function formatAgentType(agentType: string | null): string {
-  if (!agentType) return 'Unknown';
-  return agentType
+/** Format agent runner type for display */
+function formatAgentRunnerType(agentRunnerType: string | null): string {
+  if (!agentRunnerType) return 'Unknown';
+  return agentRunnerType
     .split('_')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 }
 
-function getAgentDisplayName(att: AttemptSchema): string {
-  if (att.agent_type === 'cli_subprocess') {
+function isScriptAttempt(att: AttemptSchema): boolean {
+  return att.agent_settings?.execution_kind === 'script' || att.agent_runner_type === 'script';
+}
+
+function getAgentRunnerDisplayName(att: AttemptSchema): string {
+  if (att.agent_runner_type === 'cli_subprocess') {
     const command = att.agent_settings?.command;
     if (typeof command === 'string' && command.trim().length > 0) {
       return command.trim();
     }
   }
-  return formatAgentType(att.agent_type);
+  return formatAgentRunnerType(att.agent_runner_type);
 }
 
 function DisclosureHeader({
@@ -371,7 +375,7 @@ function AttemptCard({
     needsApiPrompt ? taskId : undefined,
   );
 
-  const isScript = att.agent_type === 'script';
+  const isScript = isScriptAttempt(att);
   const durationMs = getMetric(att.metrics, 'duration_ms');
   const tokensRead = getMetric(att.metrics, 'tokens_read');
   const tokensWrite = getMetric(att.metrics, 'tokens_write');
@@ -417,10 +421,10 @@ function AttemptCard({
               ) : null}
             </div>
 
-            {att.agent_type && (
+            {(att.agent_runner_type || isScript) && (
               <div className="flex items-center gap-1.5 text-xs text-text-secondary mb-1.5">
-                <span>Agent:</span>
-                <span className="font-medium text-text-primary">{getAgentDisplayName(att)}</span>
+                <span>{isScript ? 'Execution:' : 'Agent Runner:'}</span>
+                <span className="font-medium text-text-primary">{isScript ? 'Script' : getAgentRunnerDisplayName(att)}</span>
                 {att.agent_model && (
                   <>
                     <span className="text-text-muted">·</span>

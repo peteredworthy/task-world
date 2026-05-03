@@ -47,6 +47,7 @@ from orchestrator.runners.agents.codex.common import (
     route_tool_call,
 )
 from orchestrator.runners.agents.codex.parser import CodexStreamParser
+from orchestrator.runners.environment import build_agent_subprocess_env
 from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
@@ -229,7 +230,7 @@ class CodexServerAgent:
     def info(self) -> AgentRunnerInfo:
         """Return static metadata for this agent instance."""
         return AgentRunnerInfo(
-            agent_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
             name="Codex Server",
             version=None,
         )
@@ -832,7 +833,11 @@ class CodexServerAgent:
 
         # Strip OPENAI_API_KEY and set isolated CODEX_HOME.  Also run from the
         # worktree (not the orchestrator cwd) to avoid loading a .env file.
-        clean_env = {k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"}
+        clean_env = build_agent_subprocess_env(
+            base_env={k: v for k, v in os.environ.items() if k != "OPENAI_API_KEY"},
+            run_worktree=context.working_dir,
+            expected_run_branch=context.expected_git_branch,
+        )
         clean_env["CODEX_HOME"] = str(tmp_codex_home)
 
         # Build argv.  The `--sandbox` and `--ask-for-approval` CLI flags only
@@ -862,7 +867,7 @@ class CodexServerAgent:
                     "codex executable not found; install Codex CLI to use this agent",
                 ) from exc
             raise AgentExecutionError(
-                agent_type=AgentRunnerType.CODEX_SERVER.value,
+                agent_runner_type=AgentRunnerType.CODEX_SERVER.value,
                 message=f"Working directory does not exist: {context.working_dir}",
             ) from exc
         except OSError as exc:

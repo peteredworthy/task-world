@@ -28,7 +28,7 @@ async def test_health_check_no_api_key() -> None:
 
 def test_agent_info() -> None:
     agent = OpenHandsAgent()
-    assert agent.info.agent_type == AgentRunnerType.OPENHANDS_LOCAL
+    assert agent.info.agent_runner_type == AgentRunnerType.OPENHANDS_LOCAL
     assert agent.info.name == "OpenHands"
 
 

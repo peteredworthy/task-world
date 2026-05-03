@@ -109,8 +109,8 @@ class AgentChangedEvent(WorkflowEvent):
 
     old_agent: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS
     new_agent: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS
-    old_agent_config: dict[str, Any] = field(default_factory=lambda: {})
-    new_agent_config: dict[str, Any] = field(default_factory=lambda: {})
+    old_agent_runner_config: dict[str, Any] = field(default_factory=lambda: {})
+    new_agent_runner_config: dict[str, Any] = field(default_factory=lambda: {})
     reason: str = "user_changed_on_resume"
 
 
@@ -118,7 +118,7 @@ class AgentChangedEvent(WorkflowEvent):
 class AgentDiedEvent(WorkflowEvent):
     """Emitted when a managed agent process dies."""
 
-    agent_type: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS
+    agent_runner_type: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS
     exit_code: int | None = None
     reason: str = "agent_process_died"
     task_id: str | None = None
@@ -286,7 +286,7 @@ class AgentFixStarted(WorkflowEvent):
     """Emitted when an agent is dispatched to fix conflicts or tests."""
 
     job_id: str = ""
-    agent_type: str = ""
+    agent_runner_type: str = ""
 
 
 @dataclass

@@ -50,8 +50,8 @@ async def session_factory(engine):
 def _make_service() -> MagicMock:
     svc = MagicMock()
     run_stub = MagicMock()
-    run_stub.agent_type = None
-    run_stub.agent_config = {}
+    run_stub.agent_runner_type = None
+    run_stub.agent_runner_config = {}
     svc.start_run = AsyncMock(return_value=run_stub)
     svc.resume_run = AsyncMock(return_value=run_stub)
     svc.pause_run = AsyncMock(return_value=MagicMock())

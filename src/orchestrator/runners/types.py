@@ -101,6 +101,7 @@ class ExecutionContext(BaseModel):
     auth_token: str | None = None
     end_commit: str | None = None  # For verifier: commit to checkout before verification
     step_id: str | None = None
+    expected_git_branch: str | None = None
     available_tools: list[str] | None = None
     mcp_servers: list[MCPServerConfig] | None = None
 
@@ -108,15 +109,15 @@ class ExecutionContext(BaseModel):
 class AgentRunnerInfo(BaseModel):
     """Information about a concrete agent instance."""
 
-    agent_type: AgentRunnerType
+    agent_runner_type: AgentRunnerType
     name: str
     version: str | None = None
 
 
 class AgentConfigField(BaseModel):
-    """Schema for a single agent configuration field.
+    """Schema for a single agent runner configuration field.
 
-    Used by the frontend to render config forms per agent type.
+    Used by the frontend to render config forms per agent runner type.
     """
 
     name: str
@@ -165,7 +166,7 @@ AgentQuota = AgentRunnerQuota
 class AgentRunnerOption(BaseModel):
     """An available agent runner option returned by the detector."""
 
-    agent_type: str
+    agent_runner_type: str
     name: str
     title: str = ""
     description: str = ""

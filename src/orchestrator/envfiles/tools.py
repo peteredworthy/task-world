@@ -59,7 +59,7 @@ ENV_FILE_TOOLS: list[dict[str, Any]] = [
 
 
 class EnvFileToolExecutor:
-    """Handles env file tool calls from any agent type."""
+    """Handles env file tool calls from any agent runner type."""
 
     def __init__(self, store: EnvFileStore) -> None:
         self._store = store

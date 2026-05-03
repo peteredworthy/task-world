@@ -43,10 +43,10 @@ class NudgerConfig(BaseModel):
     nudge_after_seconds: int = 300
     kill_after_seconds: int = 600
 
-    def to_agent_config(self) -> AgentNudgerConfig:
+    def to_agent_runner_config(self) -> AgentNudgerConfig:
         """Convert to agent NudgerConfig format.
 
-        The global config uses seconds as integers, while the agent config
+        The global config uses seconds as integers, while the agent runner config
         uses timedeltas for more flexible configuration.
         """
         from datetime import timedelta

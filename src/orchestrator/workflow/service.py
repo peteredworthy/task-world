@@ -6,9 +6,10 @@ import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, cast
+from pathlib import Path, PurePosixPath
+from typing import Any, Literal, cast
 
+from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import (
@@ -81,7 +82,14 @@ from orchestrator.workflow.engine.transitions import (
     transition_to_recovering,
 )
 from orchestrator.workflow.completion import handle_run_completion
-from orchestrator.workflow.oversight import ACCEPTANCE_OUTCOMES, reduce_parent_oversight_state
+from orchestrator.workflow.oversight import (
+    ACCEPTANCE_OUTCOMES,
+    FinalValidationMarker,
+    RunEvidenceBundle,
+    REVISION_OUTCOMES,
+    TargetInventoryItem,
+    reduce_parent_oversight_state,
+)
 from orchestrator.git import ParentChildMergeResult, merge_child_into_parent
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.git.utils import commit_uncommitted_changes, get_head_commit
@@ -266,21 +274,27 @@ class WorkflowService:
         await self._session.commit()
         return run
 
-    def _sanitize_agent_config(self, agent_config: dict[str, Any]) -> dict[str, Any]:
-        """Sanitize agent config by removing sensitive keys.
+    async def save_run_with_oversight_terminal_guard(self, run: Run) -> Run:
+        """Persist a run after applying any super-parent terminal guard."""
+        _, state, buffer = self._build_engine(run)
+        await self._apply_oversight_terminal_guard(run, state, buffer)
+        return await self._persist(state, run.id, buffer)
+
+    def _sanitize_agent_runner_config(self, agent_runner_config: dict[str, Any]) -> dict[str, Any]:
+        """Sanitize agent runner config by removing sensitive keys.
 
         Creates a copy with settings like model, temperature, max_tokens, nudge settings,
         but excludes API keys, tokens, passwords, and other secrets.
 
         Args:
-            agent_config: The agent configuration dict
+            agent_runner_config: The agent runner configuration dict
 
         Returns:
             A sanitized copy of the config without sensitive keys
         """
         sensitive_keys = {"api_key", "api_token", "password", "secret", "auth_token"}
         sanitized: dict[str, Any] = {}
-        for key, value in agent_config.items():
+        for key, value in agent_runner_config.items():
             # Skip sensitive keys (check case-insensitive)
             if any(sensitive in key.lower() for sensitive in sensitive_keys):
                 continue
@@ -353,6 +367,12 @@ class WorkflowService:
         engine, state, buffer = self._build_engine(run)
         engine.cancel_run(run_id, reason)
 
+        await self._pause_or_cancel_run_for_parent_control(
+            run,
+            action="cancel",
+            reason=reason or "cancel",
+        )
+
         # Get the updated run after engine processing
         updated_run = state.get_run(run_id)
 
@@ -406,7 +426,7 @@ class WorkflowService:
 
         run = await self._repo.get(run_id)
         logger.info(
-            f"Starting run {run_id}: agent_type={run.agent_type}, "
+            f"Starting run {run_id}: agent_runner_type={run.agent_runner_type}, "
             f"repo={run.repo_name}, routine={run.routine_id}"
         )
 
@@ -455,6 +475,31 @@ class WorkflowService:
         engine.stop_run(run_id)
         return await self._persist(state, run_id, buffer)
 
+    async def _pause_or_cancel_run_for_parent_control(
+        self,
+        parent: Run,
+        *,
+        action: Literal["pause", "cancel"],
+        reason: str,
+        error_detail: str | None = None,
+    ) -> None:
+        """Pause/cancel active/suspending child runs when a parent run is controlled."""
+        children = await self._repo.list_child_runs(parent.id, include_action_logs=False)
+        control_reason = f"parent_{reason}"
+
+        for child in children:
+            if child.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
+                continue
+            try:
+                if action == "pause":
+                    await self._pause_child_run(child, control_reason, error_detail)
+                else:
+                    await self._cancel_child_run(child, control_reason)
+            except InvalidTransitionError:
+                # Child states can change while the parent is being controlled;
+                # do not fail parent control because one child raced to terminal.
+                continue
+
     async def pause_run(
         self,
         run_id: str,
@@ -481,6 +526,77 @@ class WorkflowService:
         await self._session.commit()
         return stopping_run
 
+    async def _pause_child_run(
+        self,
+        child: Run,
+        reason: str,
+        error_detail: str | None = None,
+    ) -> None:
+        """Pause a single child run via direct workflow-engine mutation."""
+        engine, state, buffer = self._build_engine(child)
+        managed_child = state.get_run(child.id)
+        if managed_child.status == RunStatus.ACTIVE:
+            engine.stop_run(child.id)
+        engine.pause_run(child.id, reason=reason, error_detail=error_detail)
+
+        managed_child = state.get_run(child.id)
+        self._mark_paused_open_attempts(managed_child, now=self._clock.now())
+        state.update_run(managed_child)
+        await self._persist(state, child.id, buffer)
+
+    async def _validate_child_evidence_for_acceptance(
+        self,
+        child_status: RunStatus,
+        child_evidence: list[dict[str, Any]],
+    ) -> set[str]:
+        """Validate run evidence bundles and return all reported outcomes."""
+        outcomes: set[str] = set()
+        for raw in child_evidence:
+            bundle_obj = raw.get("bundle")
+            if not isinstance(bundle_obj, dict):
+                raise InvalidTransitionError(
+                    child_status.value,
+                    "accept_child_run (invalid run.evidence.v1 bundle)",
+                )
+            try:
+                bundle = RunEvidenceBundle.model_validate(bundle_obj)
+            except ValidationError as err:
+                raise InvalidTransitionError(
+                    child_status.value,
+                    "accept_child_run (invalid run.evidence.v1 bundle)",
+                ) from err
+            outcomes.add(bundle.outcome)
+        if outcomes & REVISION_OUTCOMES or outcomes - ACCEPTANCE_OUTCOMES:
+            raise InvalidTransitionError(
+                child_status.value,
+                "accept_child_run (evidence contains non-acceptance outcome)",
+            )
+        return outcomes
+
+    async def _cancel_child_run(self, child: Run, reason: str) -> None:
+        """Cancel a single child run via direct workflow-engine mutation."""
+        engine, state, buffer = self._build_engine(child)
+        engine.cancel_run(child.id, reason)
+        await self._persist(state, child.id, buffer)
+
+    def _mark_paused_open_attempts(self, run: Run, *, now: datetime | None = None) -> bool:
+        """Mark open attempts on in-progress non-fanout tasks as paused."""
+        if now is None:
+            now = self._clock.now()
+        modified = False
+        for step in run.steps:
+            for task in step.tasks:
+                if task.parent_task_id is not None:
+                    continue  # fan-out child: skip
+                if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                    if task.attempts:
+                        current = task.attempts[-1]
+                        if current.completed_at is None:
+                            current.paused_at = now
+                            current.outcome = "paused"
+                            modified = True
+        return modified
+
     async def apply_pause_run(
         self,
         run_id: str,
@@ -494,21 +610,17 @@ class WorkflowService:
         run = await self._repo.get(run_id)
         engine, state, buffer = self._build_engine(run)
         engine.pause_run(run_id, reason=reason, error_detail=error_detail)
+        await self._pause_or_cancel_run_for_parent_control(
+            run,
+            action="pause",
+            reason=reason,
+            error_detail=error_detail,
+        )
 
         # Stamp paused_at + outcome=paused on open attempts for in-progress tasks.
         # Skip fan-out children (parent_task_id is not None) — they are managed
         # by the executor directly and may have already committed a terminal outcome.
-        now = datetime.now(timezone.utc)
-        for step in run.steps:
-            for task in step.tasks:
-                if task.parent_task_id is not None:
-                    continue  # fan-out child: skip, executor owns its attempts
-                if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
-                    if task.attempts:
-                        current = task.attempts[-1]
-                        if current.completed_at is None:  # only open attempts
-                            current.paused_at = now
-                            current.outcome = "paused"
+        self._mark_paused_open_attempts(run, now=self._clock.now())
         state.update_run(run)
 
         return await self._persist(state, run_id, buffer)
@@ -516,8 +628,8 @@ class WorkflowService:
     async def resume_run(
         self,
         run_id: str,
-        agent_type: AgentRunnerType | None = None,
-        agent_config: dict[str, object] | None = None,
+        agent_runner_type: AgentRunnerType | None = None,
+        agent_runner_config: dict[str, object] | None = None,
         resume_strategy: str | None = None,
     ) -> Run:
         """Resume a run (PAUSED -> ACTIVE) via signal queue.
@@ -531,10 +643,10 @@ class WorkflowService:
             raise InvalidTransitionError(run.status.value, "active")
         queue = self._get_signal_queue()
         payload: dict[str, Any] = {}
-        if agent_type is not None:
-            payload["agent_type"] = agent_type.value
-        if agent_config is not None:
-            payload["agent_config"] = agent_config
+        if agent_runner_type is not None:
+            payload["agent_runner_type"] = agent_runner_type.value
+        if agent_runner_config is not None:
+            payload["agent_runner_config"] = agent_runner_config
         if resume_strategy is not None:
             payload["resume_strategy"] = resume_strategy
         await queue.enqueue(run_id, WorkflowSignal.RESUME, payload or None)
@@ -544,8 +656,8 @@ class WorkflowService:
     async def apply_resume_run(
         self,
         run_id: str,
-        agent_type: AgentRunnerType | None = None,
-        agent_config: dict[str, object] | None = None,
+        agent_runner_type: AgentRunnerType | None = None,
+        agent_runner_config: dict[str, object] | None = None,
         resume_strategy: str | None = None,
     ) -> Run:
         """Resume a run (PAUSED -> ACTIVE) via direct DB mutation.
@@ -554,8 +666,8 @@ class WorkflowService:
 
         Args:
             run_id: The run ID
-            agent_type: Optional new agent type to use
-            agent_config: Optional new agent config to use
+            agent_runner_type: Optional new agent runner type to use
+            agent_runner_config: Optional new agent runner config to use
             resume_strategy: "continue" (default) or "revert" to reset current phase
 
         Returns:
@@ -611,17 +723,17 @@ class WorkflowService:
                 state.update_run(run)
 
         # If agent is being changed (type or config), emit AgentChangedEvent and update run
-        if agent_type is not None or agent_config is not None:
-            old_agent = run.agent_type
-            old_config = run.agent_config or {}
+        if agent_runner_type is not None or agent_runner_config is not None:
+            old_agent = run.agent_runner_type
+            old_config = run.agent_runner_config or {}
 
-            # Determine new agent type: use provided type or keep existing
-            new_agent = agent_type if agent_type is not None else old_agent
-            new_config = agent_config if agent_config is not None else old_config
+            # Determine new agent runner type: use provided type or keep existing
+            new_agent = agent_runner_type if agent_runner_type is not None else old_agent
+            new_config = agent_runner_config if agent_runner_config is not None else old_config
 
-            # Update the run's agent configuration
-            run.agent_type = new_agent
-            run.agent_config = new_config
+            # Update the run's agent runner configuration
+            run.agent_runner_type = new_agent
+            run.agent_runner_config = new_config
 
             # Emit the agent change event only if either type or config actually changed
             # Only emit if new_agent is not None (required by AgentChangedEvent)
@@ -633,8 +745,8 @@ class WorkflowService:
                         event_type="agent_changed",
                         old_agent=old_agent or AgentRunnerType.CLI_SUBPROCESS,
                         new_agent=new_agent,
-                        old_agent_config=old_config,
-                        new_agent_config=new_config,
+                        old_agent_runner_config=old_config,
+                        new_agent_runner_config=new_config,
                         reason="user_changed_on_resume",
                     )
                 )
@@ -651,8 +763,8 @@ class WorkflowService:
         run_id: str,
         target_task_id: str,
         additional_attempts: int = 1,
-        agent_type: AgentRunnerType | None = None,
-        agent_config: dict[str, object] | None = None,
+        agent_runner_type: AgentRunnerType | None = None,
+        agent_runner_config: dict[str, object] | None = None,
         preserve_checklist: bool = False,
         guidance: str | None = None,
         reset_branch: bool = True,
@@ -738,9 +850,11 @@ class WorkflowService:
         target_task.attempts.append(Attempt(attempt_num=next_attempt_num, started_at=now))
         if target_task.attempts:
             active_attempt = target_task.attempts[-1]
-            active_attempt.agent_type = run.agent_type
-            active_attempt.agent_model = run.agent_config.get("model")
-            active_attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+            active_attempt.agent_runner_type = run.agent_runner_type
+            active_attempt.agent_model = run.agent_runner_config.get("model")
+            active_attempt.agent_settings = self._sanitize_agent_runner_config(
+                run.agent_runner_config
+            )
 
         # Reset all downstream tasks.
         for _, _, task in downstream:
@@ -771,10 +885,10 @@ class WorkflowService:
         run.completed_at = None
         run.updated_at = now
 
-        if agent_type is not None:
-            run.agent_type = agent_type
-        if agent_config is not None:
-            run.agent_config = agent_config
+        if agent_runner_type is not None:
+            run.agent_runner_type = agent_runner_type
+        if agent_runner_config is not None:
+            run.agent_runner_config = agent_runner_config
 
         # Restore worktree to the commit before the target task's first attempt,
         # so the branch is in the same state as when the task was first queued.
@@ -827,9 +941,9 @@ class WorkflowService:
             # Populate agent snapshot on new attempt
             if task.attempts:
                 attempt = task.attempts[-1]
-                attempt.agent_type = run.agent_type
-                attempt.agent_model = run.agent_config.get("model")
-                attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+                attempt.agent_runner_type = run.agent_runner_type
+                attempt.agent_model = run.agent_runner_config.get("model")
+                attempt.agent_settings = self._sanitize_agent_runner_config(run.agent_runner_config)
                 # Revert restores the worktree to the previous start_commit,
                 # so the new attempt starts from the same point.
                 if len(task.attempts) >= 2:
@@ -855,9 +969,9 @@ class WorkflowService:
             # Populate agent snapshot
             if task.attempts:
                 attempt = task.attempts[-1]
-                attempt.agent_type = run.agent_type
-                attempt.agent_model = run.agent_config.get("model")
-                attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+                attempt.agent_runner_type = run.agent_runner_type
+                attempt.agent_model = run.agent_runner_config.get("model")
+                attempt.agent_settings = self._sanitize_agent_runner_config(run.agent_runner_config)
 
             # No checkout needed — worktree is already at end_commit
             # (submit_for_verification auto-commits and captures HEAD).
@@ -1287,9 +1401,9 @@ class WorkflowService:
 
         next_attempt_num = task.current_attempt + 1
         attempt = Attempt(attempt_num=next_attempt_num, started_at=self._clock.now())
-        attempt.agent_type = run.agent_type
-        attempt.agent_model = run.agent_config.get("model")
-        attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+        attempt.agent_runner_type = run.agent_runner_type
+        attempt.agent_model = run.agent_runner_config.get("model")
+        attempt.agent_settings = self._sanitize_agent_runner_config(run.agent_runner_config)
 
         await self._repo.create_task_attempt(task_id, attempt, status=TaskStatus.BUILDING)
         await self._event_emitter.emit_batch(
@@ -1486,7 +1600,8 @@ class WorkflowService:
         task_in_state = state.get_task(run_id, task_id)
         if task_in_state.attempts:
             attempt = task_in_state.attempts[-1]
-            attempt.agent_type = AgentRunnerType.SCRIPT
+            attempt.agent_runner_type = None
+            attempt.agent_settings = {**attempt.agent_settings, "execution_kind": "script"}
 
         await self._persist(state, run_id, buffer)
 
@@ -2217,15 +2332,172 @@ class WorkflowService:
         parent = await self._repo.get(parent_run_id)
         return dict(parent.oversight_state)
 
-    async def refresh_parent_oversight(self, parent_run_id: str) -> Run:
-        """Recompute and persist the parent oversight snapshot from child state."""
+    async def update_parent_oversight(
+        self,
+        parent_run_id: str,
+        *,
+        current_understanding: dict[str, Any] | None = None,
+        target_inventory: list[dict[str, Any]] | None = None,
+        final_validation: dict[str, Any] | None = None,
+        decisions: list[dict[str, Any]] | None = None,
+    ) -> Run:
+        """Persist parent-authored oversight facts, then recompute derived state."""
         parent = await self._repo.get(parent_run_id)
+        if parent.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (parent is terminal)",
+            )
+
+        state: dict[str, Any] = dict(parent.oversight_state)
+        if current_understanding is not None:
+            state["current_understanding"] = current_understanding
+        if target_inventory is not None:
+            state["target_inventory"] = [
+                TargetInventoryItem.model_validate(item).model_dump(mode="json")
+                for item in target_inventory
+            ]
+        if final_validation is not None:
+            state["final_validation"] = self._verify_final_validation_marker(
+                parent,
+                final_validation,
+            ).model_dump(mode="json")
+        if decisions is not None:
+            existing_decisions = self._state_dict_list(state.get("decisions"))
+            existing_decisions.extend(dict(item) for item in decisions)
+            state["decisions"] = existing_decisions
+
+        parent.oversight_state = self._drop_stale_final_validation(parent, state)
         children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
         evidence_by_run_id = await self._collect_child_evidence(children)
         parent.oversight_state = reduce_parent_oversight_state(
             parent,
             children,
             evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(parent),
+        )
+        parent.updated_at = self._clock.now()
+        await self._repo.save(parent)
+        await self._session.commit()
+        return parent
+
+    def _verify_final_validation_marker(
+        self,
+        parent: Run,
+        final_validation: dict[str, Any],
+    ) -> FinalValidationMarker:
+        """Stamp final validation only after checking deterministic worktree facts."""
+        marker = FinalValidationMarker.model_validate(final_validation).model_copy(
+            update={"service_verified": False}
+        )
+        worktree = self._final_validation_worktree(parent)
+        head_commit = get_head_commit(worktree)
+        if head_commit is None:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (final validation requires git worktree)",
+            )
+        if head_commit != marker.integrated_commit_sha:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (final validation commit does not match parent HEAD)",
+            )
+        if marker.passed and any(command.exit_code != 0 for command in marker.commands_run):
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (final validation command failed)",
+            )
+
+        self._resolve_final_validation_artifact(parent, worktree, marker.report_path)
+        for evidence_file in marker.evidence_files:
+            self._resolve_final_validation_artifact(parent, worktree, evidence_file)
+
+        return marker.model_copy(update={"service_verified": True})
+
+    def _final_validation_worktree(self, parent: Run) -> Path:
+        if parent.worktree_path is None:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (final validation requires parent worktree)",
+            )
+        worktree = Path(parent.worktree_path).resolve()
+        if not worktree.is_dir():
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (final validation requires parent worktree)",
+            )
+        return worktree
+
+    def _resolve_final_validation_artifact(
+        self,
+        parent: Run,
+        worktree: Path,
+        raw_path: str,
+    ) -> Path:
+        if (
+            raw_path != raw_path.strip()
+            or PurePosixPath(raw_path).is_absolute()
+            or (len(raw_path) >= 2 and raw_path[1] == ":")
+            or ".." in PurePosixPath(raw_path).parts
+            or "\\" in raw_path
+            or re.search(r"[\x00-\x1f]", raw_path)
+        ):
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (final validation artifact path invalid)",
+            )
+
+        resolved = (worktree / raw_path).resolve()
+        if resolved != worktree and worktree not in resolved.parents:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (final validation artifact path invalid)",
+            )
+        if not resolved.is_file():
+            raise InvalidTransitionError(
+                parent.status.value,
+                "update_parent_oversight (final validation artifact missing)",
+            )
+        return resolved
+
+    def _drop_stale_final_validation(
+        self,
+        parent: Run,
+        oversight_state: dict[str, Any],
+    ) -> dict[str, Any]:
+        state = dict(oversight_state)
+        raw_marker = state.get("final_validation")
+        if not isinstance(raw_marker, dict):
+            return state
+        try:
+            marker = FinalValidationMarker.model_validate(raw_marker)
+        except ValidationError:
+            return state
+        if not marker.service_verified:
+            return state
+        if parent.worktree_path is None:
+            state.pop("final_validation", None)
+            return state
+
+        head_commit = get_head_commit(Path(parent.worktree_path))
+        if head_commit != marker.integrated_commit_sha:
+            state.pop("final_validation", None)
+        return state
+
+    async def refresh_parent_oversight(self, parent_run_id: str) -> Run:
+        """Recompute and persist the parent oversight snapshot from child state."""
+        parent = await self._repo.get(parent_run_id)
+        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        parent.oversight_state = self._drop_stale_final_validation(
+            parent,
+            parent.oversight_state,
+        )
+        parent.oversight_state = reduce_parent_oversight_state(
+            parent,
+            children,
+            evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(parent),
         )
         parent.updated_at = self._clock.now()
         await self._repo.save(parent)
@@ -2257,14 +2529,10 @@ class WorkflowService:
             )
 
         child_evidence = await self.collect_run_evidence(child_run_id)
-        child_outcomes: set[str] = set()
-        for raw in child_evidence:
-            bundle_obj = raw.get("bundle")
-            if isinstance(bundle_obj, dict):
-                bundle = cast(dict[str, Any], bundle_obj)
-                outcome = bundle.get("outcome")
-                if isinstance(outcome, str):
-                    child_outcomes.add(outcome)
+        child_outcomes = await self._validate_child_evidence_for_acceptance(
+            child.status,
+            child_evidence,
+        )
         if not child_outcomes & ACCEPTANCE_OUTCOMES:
             raise InvalidTransitionError(
                 child.status.value,
@@ -2286,13 +2554,14 @@ class WorkflowService:
         else:
             self._record_child_merge_conflict(parent, child, result, state)
 
-        parent.oversight_state = state
+        parent.oversight_state = self._drop_stale_final_validation(parent, state)
         children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
         evidence_by_run_id = await self._collect_child_evidence(children)
         parent.oversight_state = reduce_parent_oversight_state(
             parent,
             children,
             evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(parent),
         )
         parent.updated_at = self._clock.now()
         await self._repo.save(parent)
@@ -2311,6 +2580,31 @@ class WorkflowService:
         parent = await self._repo.get(parent_run_id)
         if child_run.id == parent_run_id:
             raise InvalidTransitionError(parent.status.value, "create_child_run (self-parent)")
+        if parent.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "create_child_run (requires active parent)",
+            )
+
+        existing_children = await self._repo.list_child_runs(
+            parent_run_id, include_action_logs=False
+        )
+        blocking_children = [
+            child
+            for child in existing_children
+            if child.id not in self._resolved_child_run_ids(parent)
+        ]
+        if blocking_children:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "create_child_run (unresolved child already exists)",
+            )
+        max_child_runs = self._max_child_runs_for_parent(parent)
+        if len(existing_children) >= max_child_runs:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "create_child_run (max child run limit reached)",
+            )
 
         child_run.parent_run_id = parent_run_id
         child_run.parent_slice_id = parent_slice_id
@@ -2337,6 +2631,38 @@ class WorkflowService:
         await self._repo.save(child_run)
         await self._session.commit()
         return child_run
+
+    def _resolved_child_run_ids(self, parent: Run) -> set[str]:
+        """Return child IDs that the parent has explicitly resolved."""
+        state = parent.oversight_state
+        resolved: set[str] = set()
+        for key in (
+            "accepted_child_run_ids",
+            "rejected_child_run_ids",
+            "abandoned_child_run_ids",
+            "closed_child_run_ids",
+        ):
+            resolved.update(self._state_str_list(state.get(key)))
+        for item in self._state_dict_list(state.get("accepted_children")):
+            child_id = item.get("child_run_id") or item.get("run_id")
+            if isinstance(child_id, str):
+                resolved.add(child_id)
+        return resolved
+
+    def _max_child_runs_for_parent(self, parent: Run) -> int:
+        """Resolve the configured child-run limit for a parent run."""
+        for source in (parent.oversight_state, parent.config):
+            value = source.get("max_child_runs")
+            if isinstance(value, int) and value > 0:
+                return value
+            if isinstance(value, str):
+                try:
+                    parsed = int(value)
+                except ValueError:
+                    continue
+                if parsed > 0:
+                    return parsed
+        return 20
 
     async def _collect_child_evidence(
         self, child_runs: list[Run]
@@ -2426,11 +2752,17 @@ class WorkflowService:
         buffer: BufferingEmitter,
     ) -> None:
         children = await self._repo.list_child_runs(run.id, include_action_logs=False)
-        if not children:
+        if not children and not self._is_oversight_parent_run(run):
             return
 
         evidence_by_run_id = await self._collect_child_evidence(children)
-        oversight_state = reduce_parent_oversight_state(run, children, evidence_by_run_id)
+        run.oversight_state = self._drop_stale_final_validation(run, run.oversight_state)
+        oversight_state = reduce_parent_oversight_state(
+            run,
+            children,
+            evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(run),
+        )
         run.oversight_state = oversight_state
         terminal_guard = oversight_state.get("terminal_guard", {})
         if run.status in (RunStatus.COMPLETED, RunStatus.FAILED) and not terminal_guard.get(
@@ -2457,20 +2789,76 @@ class WorkflowService:
             )
         state.update_run(run)
 
+    def _is_oversight_parent_run(self, run: Run) -> bool:
+        """Return whether a run is meant to use super-parent terminal guards."""
+        if run.routine_id == "super-parent":
+            return True
+        if (
+            isinstance(run.routine_embedded, dict)
+            and run.routine_embedded.get("id") == "super-parent"
+        ):
+            return True
+        oversight_keys = {
+            "current_understanding",
+            "target_inventory",
+            "final_validation",
+            "slices",
+            "accepted_child_run_ids",
+            "max_child_runs",
+        }
+        return bool(oversight_keys & set(run.oversight_state.keys()))
+
     async def wait_for_run_terminal(self, run_id: str, timeout_seconds: float) -> Run:
-        """Wait briefly for a run to reach a terminal state, then return its current state."""
+        """Wait for a run to reach terminal or paused state, then return current state."""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_seconds
         while True:
             run = await self._repo.get(run_id)
-            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.PAUSED):
                 return run
             if loop.time() >= deadline:
                 return run
             await asyncio.sleep(0.25)
 
+    async def record_child_wait_observation(
+        self,
+        parent_run_id: str,
+        child_run_id: str,
+        *,
+        observed_status: RunStatus,
+        phase: Literal["started", "observed"],
+        timeout_seconds: float,
+    ) -> Run:
+        """Persist parent wait intent/observation for child-run recovery."""
+        parent = await self._repo.get(parent_run_id)
+        state = dict(parent.oversight_state)
+        waits = self._state_dict_list(state.get("child_waits"))
+        waits.append(
+            {
+                "child_run_id": child_run_id,
+                "phase": phase,
+                "observed_status": observed_status.value,
+                "timeout_seconds": timeout_seconds,
+                "recorded_at": self._clock.now().isoformat(),
+            }
+        )
+        state["child_waits"] = waits[-50:]
+        parent.oversight_state = self._drop_stale_final_validation(parent, state)
+        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        parent.oversight_state = reduce_parent_oversight_state(
+            parent,
+            children,
+            evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(parent),
+        )
+        parent.updated_at = self._clock.now()
+        await self._repo.save(parent)
+        await self._session.commit()
+        return parent
+
     async def collect_run_evidence(self, run_id: str) -> list[dict[str, Any]]:
-        """Collect phase4.evidence.v1 bundles from a run worktree."""
+        """Collect run.evidence.v1 bundles from a run worktree."""
         run = await self._repo.get(run_id)
         if not run.worktree_path:
             return []
@@ -2545,7 +2933,7 @@ class WorkflowService:
                 if not isinstance(data, dict):
                     continue
                 bundle = cast(dict[str, Any], data)
-                if bundle.get("schema_version") != "phase4.evidence.v1":
+                if bundle.get("schema_version") != "run.evidence.v1":
                     continue
                 bundles.append(
                     {
@@ -3341,9 +3729,9 @@ class WorkflowService:
         # Populate agent snapshot on the new attempt
         if task.attempts:
             attempt = task.attempts[-1]
-            attempt.agent_type = run.agent_type
-            attempt.agent_model = run.agent_config.get("model")
-            attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+            attempt.agent_runner_type = run.agent_runner_type
+            attempt.agent_model = run.agent_runner_config.get("model")
+            attempt.agent_settings = self._sanitize_agent_runner_config(run.agent_runner_config)
             # Capture start_commit: recovery retry starts from where the previous attempt ended.
             if len(task.attempts) >= 2:
                 prev_end = task.attempts[-2].end_commit

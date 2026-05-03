@@ -87,7 +87,7 @@ def detect() -> AgentOption:
         models = fetch_claude_models()
         config_schema = _claude_sdk_config_with_models(models)
         return AgentOption(
-            agent_type=AgentRunnerType.CLAUDE_SDK,
+            agent_runner_type=AgentRunnerType.CLAUDE_SDK,
             name="Claude SDK",
             title="Claude SDK Agent",
             description=(
@@ -101,7 +101,7 @@ def detect() -> AgentOption:
         )
     except ImportError:
         return AgentOption(
-            agent_type=AgentRunnerType.CLAUDE_SDK,
+            agent_runner_type=AgentRunnerType.CLAUDE_SDK,
             name="Claude SDK",
             title="Claude SDK Agent",
             description=(

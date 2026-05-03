@@ -79,8 +79,8 @@ async def test_apply_resume_run_continue_preserves_current_phase_state() -> None
             source_branch="main",
         )
         run.routine_embedded = routine.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CODEX_SERVER
-        run.agent_config = {"model": "gpt-5.4-mini"}
+        run.agent_runner_type = AgentRunnerType.CODEX_SERVER
+        run.agent_runner_config = {"model": "gpt-5.4-mini"}
         run.status = RunStatus.PAUSED
         run.pause_reason = "executor_not_started"
 

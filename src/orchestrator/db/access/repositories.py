@@ -51,6 +51,13 @@ from orchestrator.time_utils import (
 )
 
 
+def _attempt_agent_runner_type(value: str | None) -> AgentRunnerType | None:
+    """Parse persisted attempt runner type, tolerating legacy script markers."""
+    if value is None or value == "script":
+        return None
+    return AgentRunnerType(value)
+
+
 def _ensure_utc(dt: datetime) -> datetime:
     """Ensure a datetime has UTC timezone info.
 
@@ -131,6 +138,9 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                             token_usage_list.append(ModelTokenUsage.model_validate(item))
                         except Exception:
                             pass
+                agent_settings = att_model.agent_settings or {}
+                if att_model.runner_type == "script":
+                    agent_settings = {**agent_settings, "execution_kind": "script"}
 
                 attempts.append(
                     Attempt(
@@ -153,11 +163,9 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                         grade_snapshot=grade_snapshot,
                         auto_verify_results=att_model.auto_verify_results or [],
                         token_usage_by_model=token_usage_list,
-                        agent_type=AgentRunnerType(att_model.runner_type)
-                        if att_model.runner_type
-                        else None,
+                        agent_runner_type=_attempt_agent_runner_type(att_model.runner_type),
                         agent_model=att_model.agent_model,
-                        agent_settings=att_model.agent_settings or {},
+                        agent_settings=agent_settings,
                         agent_output=att_model.agent_output if action_logs_loaded else None,
                         error=att_model.error,
                         action_log=action_log,
@@ -256,8 +264,8 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
         parent_run_id=model.parent_run_id,
         parent_slice_id=model.parent_slice_id,
         oversight_state=model.oversight_state or {},
-        agent_type=AgentRunnerType(model.runner_type) if model.runner_type else None,
-        agent_config=model.runner_config or {},
+        agent_runner_type=AgentRunnerType(model.runner_type) if model.runner_type else None,
+        agent_runner_config=model.runner_config or {},
         verifier_model=model.verifier_model,
         worktree_enabled=bool(model.worktree_enabled),
         worktree_path=model.worktree_path,
@@ -274,7 +282,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
         updated_at=_ensure_utc(model.updated_at),
         started_at=_ensure_utc_optional(model.started_at),
         completed_at=_ensure_utc_optional(model.completed_at),
-        agent_started_at=_ensure_utc_optional(model.runner_started_at),
+        agent_runner_started_at=_ensure_utc_optional(model.runner_started_at),
         total_tokens_read=model.total_tokens_read,
         total_tokens_write=model.total_tokens_write,
         total_tokens_cache=model.total_tokens_cache,
@@ -326,7 +334,7 @@ def _to_model(run: Run) -> RunModel:
                         grade_snapshot=snapshot_json,
                         auto_verify_results=auto_verify_json,
                         token_usage_by_model=token_usage_json,
-                        runner_type=att.agent_type.value if att.agent_type else None,
+                        runner_type=att.agent_runner_type.value if att.agent_runner_type else None,
                         agent_model=att.agent_model,
                         agent_settings=att.agent_settings if att.agent_settings else None,
                         agent_output=att.agent_output,
@@ -401,8 +409,8 @@ def _to_model(run: Run) -> RunModel:
         parent_run_id=run.parent_run_id,
         parent_slice_id=run.parent_slice_id,
         oversight_state=run.oversight_state,
-        runner_type=run.agent_type.value if run.agent_type else None,
-        runner_config=run.agent_config,
+        runner_type=run.agent_runner_type.value if run.agent_runner_type else None,
+        runner_config=run.agent_runner_config,
         verifier_model=run.verifier_model,
         worktree_enabled=run.worktree_enabled,
         worktree_path=run.worktree_path,
@@ -419,7 +427,7 @@ def _to_model(run: Run) -> RunModel:
         updated_at=run.updated_at,
         started_at=run.started_at,
         completed_at=run.completed_at,
-        runner_started_at=run.agent_started_at,
+        runner_started_at=run.agent_runner_started_at,
         total_tokens_read=run.total_tokens_read,
         total_tokens_write=run.total_tokens_write,
         total_tokens_cache=run.total_tokens_cache,
@@ -588,7 +596,7 @@ class RunRepository:
                 num_actions=attempt.metrics.num_actions,
                 grade_snapshot=None,
                 auto_verify_results=None,
-                runner_type=attempt.agent_type.value if attempt.agent_type else None,
+                runner_type=attempt.agent_runner_type.value if attempt.agent_runner_type else None,
                 agent_model=attempt.agent_model,
                 agent_settings=attempt.agent_settings if attempt.agent_settings else None,
                 agent_output=attempt.agent_output,

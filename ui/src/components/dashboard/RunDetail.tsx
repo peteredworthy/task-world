@@ -355,7 +355,7 @@ function RunDetailInner({ runId }: { runId: string }) {
     : null;
 
   // Find active task for guidance panel
-  const activeTask = run.agent_type === 'user_managed'
+  const activeTask = run.agent_runner_type === 'user_managed'
     ? run.steps.flatMap(s => s.tasks).find(t => t.status === 'building' || t.status === 'verifying')
     : null;
 

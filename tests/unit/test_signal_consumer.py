@@ -58,8 +58,8 @@ def _make_service(
     svc = MagicMock()
 
     run_stub = MagicMock()
-    run_stub.agent_type = None
-    run_stub.agent_config = {}
+    run_stub.agent_runner_type = None
+    run_stub.agent_runner_config = {}
 
     # Public lifecycle methods (kept for backward compat with some tests)
     svc.start_run = AsyncMock(return_value=start_run_result or run_stub)
@@ -295,7 +295,7 @@ async def test_resume_inactive_path(session_factory):
     await consumer._dispatch_signal_by_id(sig_id)
 
     service.apply_resume_run.assert_awaited_once_with(
-        "run-1", agent_type=None, agent_config=None, resume_strategy=None
+        "run-1", agent_runner_type=None, agent_runner_config=None, resume_strategy=None
     )
     assert "run-1" in consumer._active_workflows
     assert has_active_workflow("run-1")

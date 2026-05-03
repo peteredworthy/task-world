@@ -86,8 +86,8 @@ def _is_codex_process_alive(pid: int) -> bool:
 
 
 def prepare_codex_config(
-    agent_type: AgentRunnerType,
-    agent_config: dict[str, Any],
+    agent_runner_type: AgentRunnerType,
+    agent_runner_config: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None]:
     """Apply the deterministic recovery rule for Codex agents.
 
@@ -101,29 +101,29 @@ def prepare_codex_config(
       removed) and a non-None ``stale_reason`` string describing why the
       session was discarded.
 
-    Only CODEX_SERVER is handled; all other agent types are returned
+    Only CODEX_SERVER is handled; all other agent runner types are returned
     unchanged with ``stale_reason=None``.
 
     Args:
-        agent_type: The agent type of the run.
-        agent_config: The current agent_config dict from the run.
+        agent_runner_type: The agent runner type of the run.
+        agent_runner_config: The current agent_runner_config dict from the run.
 
     Returns:
         ``(effective_config, stale_reason)`` where ``effective_config``
-        is the agent_config to use for agent creation (may have session
+        is the agent_runner_config to use for agent creation (may have session
         keys stripped) and ``stale_reason`` is ``None`` when the session
-        is healthy or the agent type is not Codex.
+        is healthy or the agent runner type is not Codex.
     """
-    if agent_type == AgentRunnerType.CODEX_SERVER:
-        pid_raw = agent_config.get("pid")
+    if agent_runner_type == AgentRunnerType.CODEX_SERVER:
+        pid_raw = agent_runner_config.get("pid")
         if pid_raw is None:
-            return agent_config, None
+            return agent_runner_config, None
         pid = int(pid_raw)
         if _is_codex_process_alive(pid):
-            return agent_config, None
+            return agent_runner_config, None
         stale_reason = f"local_codex_process_not_alive (pid={pid})"
-        cleaned = {k: v for k, v in agent_config.items() if k != "pid"}
+        cleaned = {k: v for k, v in agent_runner_config.items() if k != "pid"}
         logger.info("Codex config: session stale — %s; starting fresh", stale_reason)
         return cleaned, stale_reason
 
-    return agent_config, None
+    return agent_runner_config, None

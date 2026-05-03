@@ -456,7 +456,7 @@ class OpenHandsAgent:
     @property
     def info(self) -> AgentRunnerInfo:
         return AgentRunnerInfo(
-            agent_type=AgentRunnerType.OPENHANDS_LOCAL,
+            agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
             name="OpenHands",
             version=None,
         )

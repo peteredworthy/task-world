@@ -1,4 +1,4 @@
-"""Integration tests for the codex_server agent type."""
+"""Integration tests for the codex_server agent runner type."""
 
 from pathlib import Path
 
@@ -40,45 +40,45 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
 
 
 async def _create_run_with_agent(
-    client: AsyncClient, agent_type: str, agent_config: dict[str, Any] | None = None
+    client: AsyncClient, agent_runner_type: str, agent_runner_config: dict[str, Any] | None = None
 ) -> dict[str, Any]:
-    """Helper: create a run with the given agent type and return the response data."""
+    """Helper: create a run with the given agent runner type and return the response data."""
     body: dict[str, Any] = {
         "routine_id": "simple-routine",
         "repo_name": "proj-1",
         "branch": "main",
-        "agent_type": agent_type,
+        "agent_runner_type": agent_runner_type,
     }
-    if agent_config is not None:
-        body["agent_config"] = agent_config
+    if agent_runner_config is not None:
+        body["agent_runner_config"] = agent_runner_config
     response = await client.post("/api/runs", json=body)
     assert response.status_code == 201
     return response.json()
 
 
 async def test_create_run_with_codex_server(client: AsyncClient) -> None:
-    """codex_server agent type is accepted and persisted on creation."""
+    """codex_server agent runner type is accepted and persisted on creation."""
     data = await _create_run_with_agent(client, "codex_server")
-    assert data["agent_type"] == "codex_server"
+    assert data["agent_runner_type"] == "codex_server"
     assert data["status"] == "draft"
 
 
 async def test_read_run_round_trip_codex_server(client: AsyncClient) -> None:
-    """A run created with codex_server returns the same agent_type on GET."""
+    """A run created with codex_server returns the same agent_runner_type on GET."""
     created = await _create_run_with_agent(client, "codex_server", {"model": "gpt-4o"})
     run_id = created["id"]
 
     response = await client.get(f"/api/runs/{run_id}")
     assert response.status_code == 200
     data = response.json()
-    assert data["agent_type"] == "codex_server"
-    assert data["agent_config"] == {"model": "gpt-4o"}
+    assert data["agent_runner_type"] == "codex_server"
+    assert data["agent_runner_config"] == {"model": "gpt-4o"}
 
 
-async def test_update_run_agent_type_to_codex_server(
+async def test_update_run_agent_runner_type_to_codex_server(
     client_and_drain: tuple[AsyncClient, DrainFn],
 ) -> None:
-    """Resuming a paused run with codex_server updates agent_type correctly."""
+    """Resuming a paused run with codex_server updates agent_runner_type correctly."""
     client, drain = client_and_drain
     response = await client.post(
         "/api/runs",
@@ -86,8 +86,8 @@ async def test_update_run_agent_type_to_codex_server(
             "routine_id": "simple-routine",
             "repo_name": "proj-codex",
             "branch": "main",
-            "agent_type": "cli_subprocess",
-            "agent_config": {"callback_channel": "rest"},
+            "agent_runner_type": "cli_subprocess",
+            "agent_runner_config": {"callback_channel": "rest"},
         },
     )
     assert response.status_code == 201
@@ -103,19 +103,19 @@ async def test_update_run_agent_type_to_codex_server(
     response = await client.post(
         f"/api/runs/{run_id}/resume",
         json={
-            "agent_type": "codex_server",
-            "agent_config": {"model": "gpt-4o"},
+            "agent_runner_type": "codex_server",
+            "agent_runner_config": {"model": "gpt-4o"},
         },
     )
     assert response.status_code == 202
     await drain(run_id)
     data = (await client.get(f"/api/runs/{run_id}")).json()
-    assert data["agent_type"] == "codex_server"
-    assert data["agent_config"] == {"model": "gpt-4o"}
+    assert data["agent_runner_type"] == "codex_server"
+    assert data["agent_runner_config"] == {"model": "gpt-4o"}
 
 
 async def test_codex_server_display_name(client: AsyncClient) -> None:
-    """codex_server agent type returns a non-empty display name."""
+    """codex_server agent runner type returns a non-empty display name."""
     data = await _create_run_with_agent(client, "codex_server")
-    assert data["agent_type_display"] == "Codex Server"
+    assert data["agent_runner_type_display"] == "Codex Server"
     assert data["agent_icon"] == "codex"

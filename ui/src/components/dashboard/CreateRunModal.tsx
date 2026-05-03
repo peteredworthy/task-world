@@ -31,7 +31,7 @@ interface FormState {
   selectedAgentIndex: string; // index into allAgents array, '' means none
   autoStart: boolean;
   configJson: string;
-  /** Structured agent config values (field name → value), updated by AgentRunnerConfigForm */
+  /** Structured agent runner config values (field name → value), updated by AgentRunnerConfigForm */
   agentConfigValues: Record<string, unknown>;
   configError: string;
   prevOpen: boolean;
@@ -51,7 +51,7 @@ const INITIAL_FORM: FormState = {
   prevOpen: false,
 };
 
-/** Map agent_type to a display icon and tint color */
+/** Map agent_runner_type to a display icon and tint color */
 function agentVisual(agentType: string): { icon: string; tintBg: string; tintText: string } {
   const lower = agentType.toLowerCase();
   if (lower.includes('openhands')) {
@@ -202,8 +202,8 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
         repo_name: form.repoName,
         branch: form.targetBranch || 'main',
         config,
-        agent_type: selectedAgent?.agent_type || undefined,
-        agent_config: agentConfig,
+        agent_runner_type: selectedAgent?.agent_runner_type || undefined,
+        agent_runner_config: agentConfig,
       });
 
       if (form.autoStart) {
@@ -411,12 +411,12 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                   <div className="grid grid-cols-3 gap-2.5">
                     {allAgents.map((agent, idx) => {
                       const isSelected = form.selectedAgentIndex === String(idx);
-                      const visual = agentVisual(agent.agent_type);
+                      const visual = agentVisual(agent.agent_runner_type);
                       const disabled = !agent.available;
 
                       return (
                         <button
-                          key={`${agent.agent_type}:${agent.name}`}
+                          key={`${agent.agent_runner_type}:${agent.name}`}
                           type="button"
                           disabled={disabled}
                           onClick={() => {
@@ -485,9 +485,9 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                             />
                           </div>
 
-                          {/* Agent type subtitle */}
+                          {/* Agent runner type subtitle */}
                           <span className="text-[11px] text-text-muted mt-0.5 block truncate">
-                            {agent.agent_type}
+                            {agent.agent_runner_type}
                           </span>
                         </button>
                       );
@@ -496,12 +496,12 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                 )}
               </div>
 
-              {/* Agent Configuration (shown when agent is selected) */}
+              {/* Agent Runner Configuration (shown when agent is selected) */}
               {selectedAgent && (
                 <div>
                   <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
                     <span className="text-base leading-none">{'\u{1F527}'}</span>
-                    Agent Configuration
+                    Agent Runner Configuration
                   </label>
                   <AgentRunnerConfigForm
                     agent={selectedAgent}

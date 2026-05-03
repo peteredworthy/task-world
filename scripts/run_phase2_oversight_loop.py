@@ -167,8 +167,8 @@ def create_run(
     repo_name: str,
     branch: str,
     routine: dict[str, Any],
-    agent_type: str,
-    agent_config: dict[str, Any],
+    agent_runner_type: str,
+    agent_runner_config: dict[str, Any],
 ) -> str:
     response = request_json(
         "POST",
@@ -177,8 +177,8 @@ def create_run(
             "repo_name": repo_name,
             "branch": branch,
             "routine_embedded": routine,
-            "agent_type": agent_type,
-            "agent_config": agent_config,
+            "agent_runner_type": agent_runner_type,
+            "agent_runner_config": agent_runner_config,
         },
     )
     run_id = response.get("id")
@@ -617,8 +617,8 @@ def run_loop(args: argparse.Namespace) -> LoopResult:
                 repo_name=args.repo_name,
                 branch=args.branch,
                 routine=routine,
-                agent_type=args.agent_type,
-                agent_config=json.loads(args.agent_config),
+                agent_runner_type=args.agent_runner_type,
+                agent_runner_config=json.loads(args.agent_runner_config),
             )
             start_run(api_url, run_id)
             evidence = poll_run(
@@ -696,8 +696,15 @@ def main() -> int:
     parser.add_argument("--command-timeout", type=int, default=120)
     parser.add_argument("--run-timeout-seconds", type=int, default=300)
     parser.add_argument("--poll-seconds", type=int, default=5)
-    parser.add_argument("--agent-type", default="script")
-    parser.add_argument("--agent-config", default="{}")
+    parser.add_argument(
+        "--agent-runner-type",
+        "--agent-type",
+        dest="agent_runner_type",
+        default="user_managed",
+    )
+    parser.add_argument(
+        "--agent-runner-config", "--agent-config", dest="agent_runner_config", default="{}"
+    )
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
     parser.add_argument("--state", default=DEFAULT_STATE)
     parser.add_argument("--report", default=DEFAULT_REPORT)

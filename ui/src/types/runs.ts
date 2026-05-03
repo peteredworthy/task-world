@@ -146,10 +146,10 @@ export interface RunResponse {
   parent_run_id: string | null;
   parent_slice_id: string | null;
   oversight_state: ParentOversightState;
-  agent_type: AgentRunnerType | null;
-  agent_type_display: string;
+  agent_runner_type: AgentRunnerType | null;
+  agent_runner_type_display: string;
   agent_icon: string;
-  agent_config: Record<string, unknown>;
+  agent_runner_config: Record<string, unknown>;
   verifier_model: string | null;
   worktree_enabled: boolean;
   worktree_path: string | null;
@@ -166,7 +166,7 @@ export interface RunResponse {
   updated_at: string;
   started_at: string | null;
   completed_at: string | null;
-  agent_started_at: string | null;
+  agent_runner_started_at: string | null;
   total_tokens_read: number;
   total_tokens_write: number;
   total_tokens_cache: number;
@@ -187,6 +187,6 @@ export interface CreateRunRequest {
   branch: string;
   routine_embedded?: Record<string, unknown>;
   config?: Record<string, unknown>;
-  agent_type?: string;
-  agent_config?: Record<string, unknown>;
+  agent_runner_type?: string;
+  agent_runner_config?: Record<string, unknown>;
 }

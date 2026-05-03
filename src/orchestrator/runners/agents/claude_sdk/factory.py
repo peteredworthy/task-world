@@ -6,16 +6,16 @@ from orchestrator.runners.agents.claude_sdk.agent import ClaudeSDKAgent
 
 
 def create(
-    agent_config: dict[str, Any],
+    agent_runner_config: dict[str, Any],
     run_id: str | None = None,
     phase: str = "building",
     **kwargs: Any,
 ) -> ClaudeSDKAgent:
-    """Create a ClaudeSDKAgent from agent_config."""
-    model = agent_config.get("model", "claude-sonnet-4-5")
-    api_key = agent_config.get("api_key")
-    auth_token = agent_config.get("auth_token")
-    max_turns = agent_config.get("max_turns", 50)
+    """Create a ClaudeSDKAgent from agent_runner_config."""
+    model = agent_runner_config.get("model", "claude-sonnet-4-5")
+    api_key = agent_runner_config.get("api_key")
+    auth_token = agent_runner_config.get("auth_token")
+    max_turns = agent_runner_config.get("max_turns", 50)
 
     return ClaudeSDKAgent(
         model=model,

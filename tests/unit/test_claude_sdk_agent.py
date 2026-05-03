@@ -168,7 +168,7 @@ def _make_cancelling_query(agent: ClaudeSDKAgent):
 
 def test_agent_info_type() -> None:
     agent = ClaudeSDKAgent()
-    assert agent.info.agent_type == AgentRunnerType.CLAUDE_SDK
+    assert agent.info.agent_runner_type == AgentRunnerType.CLAUDE_SDK
 
 
 def test_agent_info_name() -> None:
@@ -280,7 +280,7 @@ async def test_execute_raises_agent_not_available_when_sdk_not_installed() -> No
                 on_checklist_update=_noop_checklist,
                 on_submit=_noop_submit,
             )
-        assert exc_info.value.agent_type == AgentRunnerType.CLAUDE_SDK.value
+        assert exc_info.value.agent_runner_type == AgentRunnerType.CLAUDE_SDK.value
     finally:
         module._SDK_AVAILABLE = original
 
@@ -299,7 +299,7 @@ async def test_execute_raises_agent_not_available_when_no_credentials() -> None:
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentRunnerType.CLAUDE_SDK.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CLAUDE_SDK.value
 
 
 # ---------------------------------------------------------------------------
@@ -439,7 +439,7 @@ async def test_execute_api_error_raises_agent_execution_error() -> None:
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentRunnerType.CLAUDE_SDK.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CLAUDE_SDK.value
 
 
 async def test_execute_api_error_does_not_leak_secret_in_message() -> None:
@@ -469,7 +469,7 @@ async def test_execute_error_result_raises_agent_execution_error() -> None:
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentRunnerType.CLAUDE_SDK.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CLAUDE_SDK.value
 
 
 async def test_execute_asyncio_cancelled_error_maps_to_agent_cancelled_error() -> None:
@@ -481,7 +481,7 @@ async def test_execute_asyncio_cancelled_error_maps_to_agent_cancelled_error() -
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentRunnerType.CLAUDE_SDK.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CLAUDE_SDK.value
 
 
 async def test_execute_cancelled_before_start_raises_agent_cancelled_error() -> None:
@@ -493,7 +493,7 @@ async def test_execute_cancelled_before_start_raises_agent_cancelled_error() -> 
             on_checklist_update=_noop_checklist,
             on_submit=_noop_submit,
         )
-    assert exc_info.value.agent_type == AgentRunnerType.CLAUDE_SDK.value
+    assert exc_info.value.agent_runner_type == AgentRunnerType.CLAUDE_SDK.value
 
 
 async def test_execute_cancelled_mid_stream_raises_agent_cancelled_error() -> None:
@@ -586,7 +586,7 @@ def test_api_key_takes_priority_over_auth_token() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_claude_sdk_agent_type_in_enum() -> None:
+def test_claude_sdk_agent_runner_type_in_enum() -> None:
     assert AgentRunnerType.CLAUDE_SDK == "claude_sdk"
     assert AgentRunnerType.CLAUDE_SDK in AgentRunnerType
 

@@ -90,7 +90,7 @@ export interface AttemptSchema {
   metrics: Record<string, unknown>;
   grade_snapshot: GradeSnapshotItem[];
   auto_verify_results: Record<string, unknown>[] | null;
-  agent_type: string | null;
+  agent_runner_type: string | null;
   agent_model: string | null;
   agent_settings: Record<string, unknown>;
   error: string | null;

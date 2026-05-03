@@ -25,18 +25,18 @@ _LLM_CONFIG_KEYS = {
 _NUMERIC_LLM_KEYS = {"timeout", "num_retries", "temperature", "top_p", "max_output_tokens"}
 
 
-def coerce_llm_config(agent_config: dict[str, Any]) -> dict[str, Any]:
+def coerce_llm_config(agent_runner_config: dict[str, Any]) -> dict[str, Any]:
     """Extract LLM config keys and coerce numeric strings to proper types.
 
     Args:
-        agent_config: The raw agent_config dict from the run.
+        agent_runner_config: The raw agent_runner_config dict from the run.
 
     Returns:
         A dict containing only LLM-relevant keys with numeric values
         properly coerced from strings.
     """
     result: dict[str, Any] = {}
-    for k, v in agent_config.items():
+    for k, v in agent_runner_config.items():
         if k not in _LLM_CONFIG_KEYS:
             continue
         if k in _NUMERIC_LLM_KEYS and isinstance(v, str):

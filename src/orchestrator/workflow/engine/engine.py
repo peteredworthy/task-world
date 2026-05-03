@@ -78,31 +78,31 @@ class WorkflowEngine:
         self._emitter: EventEmitter = emitter or NoOpEmitter()
         self._lock_manager = lock_manager
 
-    def _extract_model(self, agent_config: dict[str, Any]) -> str | None:
-        """Extract model name from agent config.
+    def _extract_model(self, agent_runner_config: dict[str, Any]) -> str | None:
+        """Extract model name from agent runner config.
 
         Args:
-            agent_config: The agent configuration dict
+            agent_runner_config: The agent runner configuration dict
 
         Returns:
             The model name if present, None otherwise
         """
-        return agent_config.get("model")
+        return agent_runner_config.get("model")
 
-    def _sanitize_agent_config(self, agent_config: dict[str, Any]) -> dict[str, Any]:
-        """Sanitize agent config by removing sensitive keys.
+    def _sanitize_agent_runner_config(self, agent_runner_config: dict[str, Any]) -> dict[str, Any]:
+        """Sanitize agent runner config by removing sensitive keys.
 
         Creates a copy with settings like model, temperature, max_tokens, nudge settings,
         but excludes API keys, tokens, passwords, and other secrets.
 
         Args:
-            agent_config: The agent configuration dict
+            agent_runner_config: The agent runner configuration dict
 
         Returns:
             A sanitized copy of the config without sensitive keys
         """
         sanitized: dict[str, Any] = {}
-        for key, value in agent_config.items():
+        for key, value in agent_runner_config.items():
             # Skip sensitive keys (check case-insensitive)
             if any(sensitive in key.lower() for sensitive in self._SENSITIVE_KEYS):
                 continue
@@ -328,9 +328,9 @@ class WorkflowEngine:
             # Populate agent snapshot on the newly created attempt
             if task.attempts:
                 attempt = task.attempts[-1]
-                attempt.agent_type = run.agent_type
-                attempt.agent_model = self._extract_model(run.agent_config)
-                attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+                attempt.agent_runner_type = run.agent_runner_type
+                attempt.agent_model = self._extract_model(run.agent_runner_config)
+                attempt.agent_settings = self._sanitize_agent_runner_config(run.agent_runner_config)
 
             self._state.update_run(run)
             self._emitter.emit(
@@ -423,9 +423,9 @@ class WorkflowEngine:
         # If a new attempt was created (revision), populate agent snapshot
         if result.success and len(task.attempts) > old_attempt_count:
             attempt = task.attempts[-1]
-            attempt.agent_type = run.agent_type
-            attempt.agent_model = self._extract_model(run.agent_config)
-            attempt.agent_settings = self._sanitize_agent_config(run.agent_config)
+            attempt.agent_runner_type = run.agent_runner_type
+            attempt.agent_model = self._extract_model(run.agent_runner_config)
+            attempt.agent_settings = self._sanitize_agent_runner_config(run.agent_runner_config)
 
         if result.grade_result is not None:
             self._emitter.emit(

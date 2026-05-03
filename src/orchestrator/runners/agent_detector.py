@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentDetector(Protocol):
-    """Protocol that agent config modules must satisfy for detection."""
+    """Protocol that agent runner config modules must satisfy for detection."""
 
     def detect(self) -> AgentRunnerOption | list[AgentRunnerOption]: ...
 
@@ -49,16 +49,16 @@ class AgentDetector(Protocol):
 _DETECTORS: dict[AgentRunnerType, AgentDetector] = {}
 
 
-def register_detector(agent_type: AgentRunnerType, detector: AgentDetector) -> None:
-    """Register a detector for an agent type."""
-    _DETECTORS[agent_type] = detector
-    logger.debug("Registered detector for %s", agent_type.value)
+def register_detector(agent_runner_type: AgentRunnerType, detector: AgentDetector) -> None:
+    """Register a detector for an agent runner type."""
+    _DETECTORS[agent_runner_type] = detector
+    logger.debug("Registered detector for %s", agent_runner_type.value)
 
 
 def detect_all() -> list[AgentRunnerOption]:
-    """Run detection for all registered agent types."""
+    """Run detection for all registered agent runner types."""
     results: list[AgentRunnerOption] = []
-    for agent_type, detector in _DETECTORS.items():
+    for agent_runner_type, detector in _DETECTORS.items():
         try:
             result = detector.detect()
             if isinstance(result, list):
@@ -66,13 +66,13 @@ def detect_all() -> list[AgentRunnerOption]:
             else:
                 results.append(result)
         except Exception:
-            logger.debug("Detection failed for %s", agent_type.value, exc_info=True)
+            logger.debug("Detection failed for %s", agent_runner_type.value, exc_info=True)
     return results
 
 
-def get_config_schema(agent_type: AgentRunnerType) -> list[AgentConfigField]:
-    """Get the config schema for a specific agent type."""
-    detector = _DETECTORS.get(agent_type)
+def get_config_schema(agent_runner_type: AgentRunnerType) -> list[AgentConfigField]:
+    """Get the config schema for a specific agent runner type."""
+    detector = _DETECTORS.get(agent_runner_type)
     if detector is None:
         return []
     return detector.config_schema()
@@ -84,7 +84,7 @@ def get_detector_registry() -> dict[AgentRunnerType, AgentDetector]:
 
 
 # ---------------------------------------------------------------------------
-# Config schemas for each agent type
+# Config schemas for each agent runner type
 # ---------------------------------------------------------------------------
 
 _OPENHANDS_LOCAL_CONFIG: list[AgentConfigField] = [
@@ -291,7 +291,7 @@ _CLAUDE_SDK_CONFIG: list[AgentConfigField] = [
 
 
 # Mapping from AgentRunnerType to the set of valid config field names.
-# Used by the API layer to reject unknown agent_config keys at creation time.
+# Used by the API layer to reject unknown agent_runner_config keys at creation time.
 AGENT_CONFIG_FIELDS: dict[AgentRunnerType, set[str]] = {
     AgentRunnerType.OPENHANDS_LOCAL: {f.name for f in _OPENHANDS_LOCAL_CONFIG},
     AgentRunnerType.OPENHANDS_DOCKER: {f.name for f in _OPENHANDS_DOCKER_CONFIG},
@@ -539,7 +539,7 @@ class ToolDetector:
         sdk_available = importlib.util.find_spec("openhands.sdk") is not None
         if sdk_available:
             return AgentRunnerOption(
-                agent_type=AgentRunnerType.OPENHANDS_LOCAL,
+                agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
                 name="OpenHands (local)",
                 title="OpenHands Local Agent",
                 description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
@@ -548,7 +548,7 @@ class ToolDetector:
                 config_schema=_OPENHANDS_LOCAL_CONFIG,
             )
         return AgentRunnerOption(
-            agent_type=AgentRunnerType.OPENHANDS_LOCAL,
+            agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
             name="OpenHands (local)",
             title="OpenHands Local Agent",
             description="In-process LLM agent using the OpenHands SDK. Runs entirely locally with no remote server required.",
@@ -569,7 +569,7 @@ class ToolDetector:
         # 1. Check DockerWorkspace importable (use find_spec to avoid heavy import)
         if importlib.util.find_spec("openhands.workspace") is None:
             return AgentRunnerOption(
-                agent_type=AgentRunnerType.OPENHANDS_DOCKER,
+                agent_runner_type=AgentRunnerType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
                 title="OpenHands Docker Agent",
                 description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -582,7 +582,7 @@ class ToolDetector:
         # 2. Check docker CLI in PATH
         if shutil.which("docker") is None:
             return AgentRunnerOption(
-                agent_type=AgentRunnerType.OPENHANDS_DOCKER,
+                agent_runner_type=AgentRunnerType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
                 title="OpenHands Docker Agent",
                 description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -603,7 +603,7 @@ class ToolDetector:
             returncode = await asyncio.wait_for(proc.wait(), timeout=10)
             if returncode != 0:
                 return AgentRunnerOption(
-                    agent_type=AgentRunnerType.OPENHANDS_DOCKER,
+                    agent_runner_type=AgentRunnerType.OPENHANDS_DOCKER,
                     name="OpenHands (Docker)",
                     title="OpenHands Docker Agent",
                     description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -614,7 +614,7 @@ class ToolDetector:
                 )
         except (TimeoutError, FileNotFoundError, OSError):
             return AgentRunnerOption(
-                agent_type=AgentRunnerType.OPENHANDS_DOCKER,
+                agent_runner_type=AgentRunnerType.OPENHANDS_DOCKER,
                 name="OpenHands (Docker)",
                 title="OpenHands Docker Agent",
                 description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -625,7 +625,7 @@ class ToolDetector:
             )
 
         return AgentRunnerOption(
-            agent_type=AgentRunnerType.OPENHANDS_DOCKER,
+            agent_runner_type=AgentRunnerType.OPENHANDS_DOCKER,
             name="OpenHands (Docker)",
             title="OpenHands Docker Agent",
             description="LLM agent running in an isolated Docker container. Provides full sandboxing and reproducible execution environments.",
@@ -662,7 +662,7 @@ class ToolDetector:
             if path is not None:
                 results.append(
                     AgentRunnerOption(
-                        agent_type=AgentRunnerType.CLI_SUBPROCESS,
+                        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
                         name=tool_name,
                         title=f"{tool_name.capitalize()} CLI Agent",
                         description=f"Subprocess agent running the {tool_name} CLI tool. Sends prompts via stdin and reads outputs from stdout.",
@@ -674,7 +674,7 @@ class ToolDetector:
             else:
                 results.append(
                     AgentRunnerOption(
-                        agent_type=AgentRunnerType.CLI_SUBPROCESS,
+                        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
                         name=tool_name,
                         title=f"{tool_name.capitalize()} CLI Agent",
                         description=f"Subprocess agent running the {tool_name} CLI tool. Sends prompts via stdin and reads outputs from stdout.",
@@ -730,7 +730,7 @@ class ToolDetector:
             models = fetch_codex_models()
             config_schema = _codex_server_config_with_models(models)
             return AgentRunnerOption(
-                agent_type=AgentRunnerType.CODEX_SERVER,
+                agent_runner_type=AgentRunnerType.CODEX_SERVER,
                 name="Codex Server",
                 title="Codex Server (local)",
                 description=(
@@ -743,7 +743,7 @@ class ToolDetector:
                 config_schema=config_schema,
             )
         return AgentRunnerOption(
-            agent_type=AgentRunnerType.CODEX_SERVER,
+            agent_runner_type=AgentRunnerType.CODEX_SERVER,
             name="Codex Server",
             title="Codex Server (local)",
             description=(
@@ -776,7 +776,7 @@ class ToolDetector:
             models = fetch_claude_models()
             config_schema = _claude_sdk_config_with_models(models)
             return AgentRunnerOption(
-                agent_type=AgentRunnerType.CLAUDE_SDK,
+                agent_runner_type=AgentRunnerType.CLAUDE_SDK,
                 name="Claude SDK",
                 title="Claude SDK Agent",
                 description=(
@@ -790,7 +790,7 @@ class ToolDetector:
             )
         except ImportError:
             return AgentRunnerOption(
-                agent_type=AgentRunnerType.CLAUDE_SDK,
+                agent_runner_type=AgentRunnerType.CLAUDE_SDK,
                 name="Claude SDK",
                 title="Claude SDK Agent",
                 description=(
@@ -807,7 +807,7 @@ class ToolDetector:
     def _detect_user_managed(self) -> AgentRunnerOption:
         """User Managed is always available for external agent connections."""
         return AgentRunnerOption(
-            agent_type=AgentRunnerType.USER_MANAGED,
+            agent_runner_type=AgentRunnerType.USER_MANAGED,
             name="User Managed",
             title="User Managed Agent",
             description="Passive agent that waits for external actors (humans or third-party tools) to complete work via REST API or MCP.",

@@ -60,17 +60,17 @@ __all__ = [
 
 
 def resolve_verifier_config(
-    agent_config: dict[str, Any],
+    agent_runner_config: dict[str, Any],
     verifier_model: str | None,
 ) -> dict[str, Any]:
-    """Build the effective agent config for the verifier phase.
+    """Build the effective agent runner config for the verifier phase.
 
     If *verifier_model* is set (pinned at run creation), it overrides the
-    ``model`` key in *agent_config*.  Otherwise *agent_config* is returned
+    ``model`` key in *agent_runner_config*.  Otherwise *agent_runner_config* is returned
     as-is (shallow copy).  This is a pure function so it can be unit-tested
     without mocking executor internals.
     """
-    config = dict(agent_config)
+    config = dict(agent_runner_config)
     if verifier_model is not None:
         config["model"] = verifier_model
     return config
@@ -80,7 +80,7 @@ class AgentRunnerExecutor:
     """Executes agents for runs in the background.
 
     This class is responsible for:
-    1. Creating the appropriate agent based on agent_type
+    1. Creating the appropriate agent based on agent_runner_type
     2. Running the agent in a background task
     3. Handling callbacks to update workflow state
     4. Persisting agent metadata (PID, etc.) for liveness detection
@@ -413,31 +413,33 @@ class AgentRunnerExecutor:
             return run
 
         # For user-managed agents, don't spawn anything - external agent will poll
-        if run.agent_type == AgentRunnerType.USER_MANAGED:
+        if run.agent_runner_type == AgentRunnerType.USER_MANAGED:
             logger.info(f"Run {run_id}: user-managed agent, waiting for external connection")
             return run
 
         # For managed agents, spawn in background
-        agent_type = run.agent_type
-        if agent_type in (
+        agent_runner_type = run.agent_runner_type
+        if agent_runner_type in (
             AgentRunnerType.CLI_SUBPROCESS,
             AgentRunnerType.OPENHANDS_LOCAL,
             AgentRunnerType.OPENHANDS_DOCKER,
             AgentRunnerType.CODEX_SERVER,
             AgentRunnerType.CLAUDE_SDK,
         ):
-            assert agent_type is not None  # Type narrowing for pyright
+            assert agent_runner_type is not None  # Type narrowing for pyright
             # Clear stale PID so the health monitor treats the agent as
             # "not yet spawned" until the new subprocess registers its PID.
             # Without this, the monitor finds the old dead PID and immediately
             # pauses the run again after resume.
-            agent_config = {k: v for k, v in run.agent_config.items() if k != "pid"}
-            if "pid" in run.agent_config:
+            agent_runner_config = {k: v for k, v in run.agent_runner_config.items() if k != "pid"}
+            if "pid" in run.agent_runner_config:
                 await self._attempt_store.persist_agent_metadata(run_id, {"pid": None})
-            task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, agent_config))
+            task = asyncio.create_task(
+                self._run_agent_loop(run_id, agent_runner_type, agent_runner_config)
+            )
             task.add_done_callback(lambda t: self._on_agent_loop_done(run_id, t))
             self._running_tasks[run_id] = task
-            logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
+            logger.info(f"Run {run_id}: spawned {agent_runner_type.value} agent in background")
 
         return run
 
@@ -447,7 +449,7 @@ class AgentRunnerExecutor:
         Called by the signal consumer (via workflow_runner) after RUN_START or RESUME
         has already been applied.  Does NOT perform any state transition.
         """
-        # Load the run to inspect worktree settings and agent config.
+        # Load the run to inspect worktree settings and agent runner config.
         async with self._session_factory() as session:
             service = await self._create_service(session)
             run = await service.get_run(run_id)
@@ -517,23 +519,23 @@ class AgentRunnerExecutor:
             logger.info(f"Run {run_id}: agent spawning disabled, skipping")
             return
 
-        if run.agent_type == AgentRunnerType.USER_MANAGED:
+        if run.agent_runner_type == AgentRunnerType.USER_MANAGED:
             logger.info(f"Run {run_id}: user-managed agent, waiting for external connection")
             return
 
-        agent_type = run.agent_type
-        if agent_type in (
+        agent_runner_type = run.agent_runner_type
+        if agent_runner_type in (
             AgentRunnerType.CLI_SUBPROCESS,
             AgentRunnerType.OPENHANDS_LOCAL,
             AgentRunnerType.OPENHANDS_DOCKER,
             AgentRunnerType.CODEX_SERVER,
             AgentRunnerType.CLAUDE_SDK,
         ):
-            assert agent_type is not None  # narrowed by membership test above
-            self.spawn_for_run(run_id, agent_type, run.agent_config or {})
+            assert agent_runner_type is not None  # narrowed by membership test above
+            self.spawn_for_run(run_id, agent_runner_type, run.agent_runner_config or {})
 
     async def _monitor_agent_health(
-        self, run_id: str, agent_type: AgentRunnerType, check_interval: float = 30.0
+        self, run_id: str, agent_runner_type: AgentRunnerType, check_interval: float = 30.0
     ) -> None:
         """Background task to periodically check if the agent is still alive.
 
@@ -566,12 +568,12 @@ class AgentRunnerExecutor:
                         agent_alive = await monitor.check_agent_alive(run)
                         if not agent_alive:
                             logger.warning(
-                                f"Run {run_id}: agent {agent_type.value} is no longer alive, "
+                                f"Run {run_id}: agent {agent_runner_type.value} is no longer alive, "
                                 f"transitioning to PAUSED"
                             )
                             await monitor.on_agent_died(
                                 run_id=run_id,
-                                agent_type=agent_type,
+                                agent_runner_type=agent_runner_type,
                                 reason="agent_health_check_failed",
                             )
                             break
@@ -586,8 +588,8 @@ class AgentRunnerExecutor:
     async def _run_agent_loop(
         self,
         run_id: str,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
     ) -> None:
         """Thin delegator: creates a RunWorkflow and awaits its run() method.
 
@@ -613,8 +615,8 @@ class AgentRunnerExecutor:
         )
         workflow = RunWorkflow(
             run_id,
-            agent_type,
-            agent_config,
+            agent_runner_type,
+            agent_runner_config,
             callbacks=callbacks,
         )
         await workflow.run()
@@ -698,8 +700,8 @@ class AgentRunnerExecutor:
         run: Run,
         task_state: TaskState,
         service: WorkflowService,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
         summary_cache: SummaryCache | None = None,
         session: "AsyncSession | None" = None,
     ) -> None:
@@ -714,7 +716,7 @@ class AgentRunnerExecutor:
         # Get routine config
         if run.routine_embedded is None:
             raise AgentExecutionError(
-                agent_type.value, "Cannot execute task without routine config"
+                agent_runner_type.value, "Cannot execute task without routine config"
             )
 
         routine_config = RoutineConfig.model_validate(run.routine_embedded)
@@ -751,7 +753,7 @@ class AgentRunnerExecutor:
 
         if task_config is None:
             raise AgentExecutionError(
-                agent_type.value, f"Task config not found: {task_state.config_id}"
+                agent_runner_type.value, f"Task config not found: {task_state.config_id}"
             )
 
         # Only intercept fan-out/script for initial execution, not for
@@ -782,8 +784,8 @@ class AgentRunnerExecutor:
                     task_state,
                     task_config,
                     service,
-                    agent_type,
-                    agent_config,
+                    agent_runner_type,
+                    agent_runner_config,
                     step_context=step_context,
                     step_id=step_id,
                     available_tools=available_tools,
@@ -794,19 +796,20 @@ class AgentRunnerExecutor:
                 return
 
         # Apply profile-based model resolution when the task has a profile assigned.
-        # Resolution order: runner profile defaults (DB) -> agent_config model -> None
+        # Resolution order: agent runner model defaults (DB) -> agent_runner_config model -> None
         if task_config.profile is not None and session is not None:
             from sqlalchemy import select as sa_select
 
             from orchestrator.config.enums import ModelProfile
-            from orchestrator.db import RunnerProfileDefaultModel
+            from orchestrator.db import AgentRunnerModelProfileDefaultModel
             from orchestrator.runners.detection.profile_resolution import resolve_model_for_profile
 
             rows = (
                 (
                     await session.execute(
-                        sa_select(RunnerProfileDefaultModel).where(
-                            RunnerProfileDefaultModel.runner_type == agent_type.value
+                        sa_select(AgentRunnerModelProfileDefaultModel).where(
+                            AgentRunnerModelProfileDefaultModel.runner_type
+                            == agent_runner_type.value
                         )
                     )
                 )
@@ -821,14 +824,14 @@ class AgentRunnerExecutor:
             resolved_model = resolve_model_for_profile(
                 task_config.profile,
                 profile_defaults,
-                fallback_model=agent_config.get("model"),
+                fallback_model=agent_runner_config.get("model"),
             )
-            if resolved_model is not None and resolved_model != agent_config.get("model"):
+            if resolved_model is not None and resolved_model != agent_runner_config.get("model"):
                 logger.debug(
                     f"Task {task_state.id}: resolved model '{resolved_model}' "
                     f"from profile '{task_config.profile.value}'"
                 )
-                agent_config = {**agent_config, "model": resolved_model}
+                agent_runner_config = {**agent_runner_config, "model": resolved_model}
 
         phase = self._phase_for_task_status(task_state.status)
 
@@ -839,8 +842,8 @@ class AgentRunnerExecutor:
                 task_state,
                 task_config,
                 service,
-                agent_type,
-                agent_config,
+                agent_runner_type,
+                agent_runner_config,
                 step_id=step_id,
                 available_tools=available_tools,
                 mcp_servers=mcp_servers,
@@ -853,8 +856,8 @@ class AgentRunnerExecutor:
                 run,
                 task_state,
                 service,
-                agent_type,
-                agent_config,
+                agent_runner_type,
+                agent_runner_config,
                 step_id=step_id,
                 available_tools=available_tools,
                 mcp_servers=mcp_servers,
@@ -867,12 +870,12 @@ class AgentRunnerExecutor:
             await service.start_task(run.id, task_state.id)
 
         # Create the agent (pass run_id for death detection)
-        agent = self._create_agent(agent_type, agent_config, run.id, phase=phase)
+        agent = self._create_agent(agent_runner_type, agent_runner_config, run.id, phase=phase)
 
         # Build the context - worktree_path is required for agent execution
         if not run.worktree_path:
             raise AgentExecutionError(
-                agent_type=agent_type.value,
+                agent_runner_type=agent_runner_type.value,
                 message="Cannot run agent without worktree_path set on run",
             )
         working_dir = run.worktree_path
@@ -925,6 +928,8 @@ class AgentRunnerExecutor:
         # Also build a map from description to ID for fuzzy matching
         req_desc_to_id = {item.desc.lower().strip(): item.req_id for item in task_state.checklist}
 
+        expected_run_branch = f"orchestrator/run-{run.id}"
+
         context = ExecutionContext(
             run_id=run.id,
             task_id=task_state.id,
@@ -933,6 +938,7 @@ class AgentRunnerExecutor:
             requirements=requirements,
             api_base_url=self._api_base_url,
             step_id=step_id,
+            expected_git_branch=expected_run_branch,
             available_tools=available_tools,
             mcp_servers=mcp_servers,
         )
@@ -945,7 +951,7 @@ class AgentRunnerExecutor:
             agent=agent,
             context=context,
             req_desc_to_id=req_desc_to_id,
-            agent_type_value=agent_type.value,
+            agent_runner_type_value=agent_runner_type.value,
             session=session,
         )
 
@@ -955,8 +961,8 @@ class AgentRunnerExecutor:
         parent_task: TaskState,
         task_config: Any,  # TaskConfig from config/models.py
         service: WorkflowService,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
         step_context: str | None = None,
         step_id: str | None = None,
         available_tools: list[str] | None = None,
@@ -978,7 +984,9 @@ class AgentRunnerExecutor:
         fan_out: FanOutConfig = task_config.fan_out
         worktree_path = run.worktree_path
         if not worktree_path:
-            raise AgentExecutionError(agent_type.value, "Cannot run fan-out without worktree_path")
+            raise AgentExecutionError(
+                agent_runner_type.value, "Cannot run fan-out without worktree_path"
+            )
 
         parent_task = await service.start_fan_out_parent(run.id, parent_task.id)
         await self._attempt_store.store_attempt_prompt(
@@ -1121,8 +1129,8 @@ class AgentRunnerExecutor:
                             child=child,
                             fan_out=fan_out,
                             task_config=task_config,
-                            agent_type=agent_type,
-                            agent_config=agent_config,
+                            agent_runner_type=agent_runner_type,
+                            agent_runner_config=agent_runner_config,
                             worktree_path=worktree_path,
                             step_context=step_context,
                             step_id=step_id,
@@ -1335,8 +1343,8 @@ class AgentRunnerExecutor:
         child: TaskState,
         fan_out: Any,  # FanOutConfig
         task_config: Any,  # TaskConfig (parent)
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
         worktree_path: str,
         step_context: str | None = None,
         step_id: str | None = None,
@@ -1416,12 +1424,15 @@ class AgentRunnerExecutor:
         prompt_parts.append(f"\nInput file: {input_path}\nOutput file: {output_path}")
 
         full_prompt = "\n\n".join(prompt_parts)
+        expected_run_branch = f"orchestrator/run-{run.id}"
 
         # Create agent and execute (apply max_turns limit if configured)
-        child_agent_config = agent_config
+        child_agent_runner_config = agent_runner_config
         if fan_out.max_turns is not None:
-            child_agent_config = {**agent_config, "max_turns": fan_out.max_turns}
-        agent = self._create_agent(agent_type, child_agent_config, run.id, phase="building")
+            child_agent_runner_config = {**agent_runner_config, "max_turns": fan_out.max_turns}
+        agent = self._create_agent(
+            agent_runner_type, child_agent_runner_config, run.id, phase="building"
+        )
         context = ExecutionContext(
             run_id=run.id,
             task_id=child_id,
@@ -1430,6 +1441,7 @@ class AgentRunnerExecutor:
             requirements=[],
             api_base_url=self._api_base_url,
             step_id=step_id,
+            expected_git_branch=expected_run_branch,
             available_tools=available_tools,
             mcp_servers=mcp_servers,
         )
@@ -1444,7 +1456,7 @@ class AgentRunnerExecutor:
                 agent=agent,
                 context=context,
                 req_desc_to_id={},
-                agent_type_value=agent_type.value,
+                agent_runner_type_value=agent_runner_type.value,
                 session=None,
             )
         except Exception as e:
@@ -1526,8 +1538,8 @@ class AgentRunnerExecutor:
         task_state: TaskState,
         task_config: Any,  # TaskConfig from config/models.py
         service: WorkflowService,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
         step_id: str | None = None,
         available_tools: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
@@ -1553,15 +1565,17 @@ class AgentRunnerExecutor:
         phase = self._phase_for_task_status(task_state.status)
 
         # Use pinned verifier model from run state (snapshotted at creation time)
-        effective_verifier_config = resolve_verifier_config(agent_config, run.verifier_model)
+        effective_verifier_config = resolve_verifier_config(agent_runner_config, run.verifier_model)
 
         # Create the agent for verification (pass run_id for death detection)
-        agent = self._create_agent(agent_type, effective_verifier_config, run.id, phase=phase)
+        agent = self._create_agent(
+            agent_runner_type, effective_verifier_config, run.id, phase=phase
+        )
 
         # Build the verifier context - worktree_path is required
         if not run.worktree_path:
             raise AgentExecutionError(
-                agent_type=agent_type.value,
+                agent_runner_type=agent_runner_type.value,
                 message="Cannot run agent without worktree_path set on run",
             )
         working_dir = run.worktree_path
@@ -1570,6 +1584,8 @@ class AgentRunnerExecutor:
         requirements = [f"{item.req_id}: {item.desc}" for item in task_state.checklist]
         # Also build a map from description to ID for fuzzy matching
         req_desc_to_id = {item.desc.lower().strip(): item.req_id for item in task_state.checklist}
+
+        expected_run_branch = f"orchestrator/run-{run.id}"
 
         # Pass end_commit for metadata — the worktree is already at this
         # commit because submit_for_verification captures HEAD after
@@ -1587,6 +1603,7 @@ class AgentRunnerExecutor:
             api_base_url=self._api_base_url,
             end_commit=end_commit,
             step_id=step_id,
+            expected_git_branch=expected_run_branch,
             available_tools=available_tools,
             mcp_servers=mcp_servers,
         )
@@ -1606,8 +1623,8 @@ class AgentRunnerExecutor:
         run: Run,
         task_state: TaskState,
         service: WorkflowService,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
         step_id: str | None = None,
         available_tools: list[str] | None = None,
         mcp_servers: list[Any] | None = None,
@@ -1626,17 +1643,19 @@ class AgentRunnerExecutor:
 
         if not recovery_prompt:
             raise AgentExecutionError(
-                agent_type.value,
+                agent_runner_type.value,
                 "No recovery prompt found on latest attempt for RECOVERING task",
             )
 
+        expected_run_branch = f"orchestrator/run-{run.id}"
+
         # Create the agent for recovery phase (uses "building" MCP tools)
-        agent = self._create_agent(agent_type, agent_config, run.id, phase="building")
+        agent = self._create_agent(agent_runner_type, agent_runner_config, run.id, phase="building")
 
         # Build the context - worktree_path is required for agent execution
         if not run.worktree_path:
             raise AgentExecutionError(
-                agent_type=agent_type.value,
+                agent_runner_type=agent_runner_type.value,
                 message="Cannot run agent without worktree_path set on run",
             )
 
@@ -1648,6 +1667,7 @@ class AgentRunnerExecutor:
             requirements=[],
             api_base_url=self._api_base_url,
             step_id=step_id,
+            expected_git_branch=expected_run_branch,
             available_tools=available_tools,
             mcp_servers=mcp_servers,
         )
@@ -1671,24 +1691,24 @@ class AgentRunnerExecutor:
 
     @staticmethod
     def _prepare_codex_config(
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
     ) -> tuple[dict[str, Any], str | None]:
         """Delegate to the codex config module for session recovery."""
         from orchestrator.runners.agents.codex.config import prepare_codex_config
 
-        return prepare_codex_config(agent_type, agent_config)
+        return prepare_codex_config(agent_runner_type, agent_runner_config)
 
     def _get_nudger_config(self) -> Any:
         """Extract nudger config from global config, if available."""
         if self._global_config and self._global_config.nudger:
-            return self._global_config.nudger.to_agent_config()
+            return self._global_config.nudger.to_agent_runner_config()
         return None
 
     def _create_agent(
         self,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
         run_id: str | None = None,
         phase: str = "building",
     ) -> AgentRunner:
@@ -1696,8 +1716,8 @@ class AgentRunnerExecutor:
         from orchestrator.runners import agent_factory
 
         return agent_factory.create(
-            agent_type,
-            agent_config,
+            agent_runner_type,
+            agent_runner_config,
             run_id=run_id,
             phase=phase,
             nudger_config=self._get_nudger_config(),
@@ -1708,25 +1728,25 @@ class AgentRunnerExecutor:
     def spawn_for_run(
         self,
         run_id: str,
-        agent_type: AgentRunnerType,
-        agent_config: dict[str, Any],
+        agent_runner_type: AgentRunnerType,
+        agent_runner_config: dict[str, Any],
     ) -> bool:
         """Spawn an agent for a run in the background.
 
         Args:
             run_id: The run ID
-            agent_type: The type of agent to spawn
-            agent_config: Configuration for the agent
+            agent_runner_type: The type of agent to spawn
+            agent_runner_config: Configuration for the agent
 
         Returns:
             True if an agent was spawned, False if spawning is disabled or
-            the agent type is not managed.
+            the agent runner type is not managed.
         """
         if not self._spawn_agents:
             logger.info(f"Run {run_id}: agent spawning disabled, skipping")
             return False
 
-        if agent_type not in (
+        if agent_runner_type not in (
             AgentRunnerType.CLI_SUBPROCESS,
             AgentRunnerType.OPENHANDS_LOCAL,
             AgentRunnerType.OPENHANDS_DOCKER,
@@ -1739,14 +1759,14 @@ class AgentRunnerExecutor:
         # spawned" until the new subprocess registers its PID via the
         # on_agent_metadata callback.  Without this, resuming a run whose old
         # process has died causes the monitor to immediately re-pause it.
-        clean_config = {k: v for k, v in agent_config.items() if k != "pid"}
-        if "pid" in agent_config:
+        clean_config = {k: v for k, v in agent_runner_config.items() if k != "pid"}
+        if "pid" in agent_runner_config:
             asyncio.create_task(self._attempt_store.persist_agent_metadata(run_id, {"pid": None}))
 
-        task = asyncio.create_task(self._run_agent_loop(run_id, agent_type, clean_config))
+        task = asyncio.create_task(self._run_agent_loop(run_id, agent_runner_type, clean_config))
         task.add_done_callback(lambda t: self._on_agent_loop_done(run_id, t))
         self._running_tasks[run_id] = task
-        logger.info(f"Run {run_id}: spawned {agent_type.value} agent in background")
+        logger.info(f"Run {run_id}: spawned {agent_runner_type.value} agent in background")
         return True
 
     def _on_agent_loop_done(self, run_id: str, task: asyncio.Task[None]) -> None:

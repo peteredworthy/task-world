@@ -3,10 +3,10 @@
 Add model profile configuration UI to each Agent Runner card, allowing users to set which model each runner uses for each cognitive profile (Architect, Designer, Coder, Summarizer).
 
 ## Intent Verification
-**Original Intent**: Provide a UI for configuring per-runner model profile defaults (see `docs/agent-runners2/intent.md` -- "Model Profiles" section).
+**Original Intent**: Provide a UI for configuring Agent Runner Model Defaults (see `docs/agent-runners2/intent.md` -- "Model Profiles" section).
 **Functionality to Produce**:
 - "Model Profiles" section on each `AgentRunnerCard` with 4 model selector fields
-- Save/load wired to `PUT/GET /api/agent-runners/{type}/profiles`
+- Save/load wired to `PUT/GET /api/agent-runners/{type}/model-profile-defaults`
 - Profile-to-model mappings displayed on runner cards
 
 **Final Verification Criteria**:
@@ -18,7 +18,7 @@ Add model profile configuration UI to each Agent Runner card, allowing users to 
 
 ## Task 1: Add Profile Types and API Functions
 
-**Description**: Add TypeScript types for model profiles and create API functions for fetching/saving profile defaults.
+**Description**: Add TypeScript types for model profiles and create API functions for fetching/saving Agent Runner Model Defaults.
 
 **Implementation Plan (Do These Steps)**
 - [ ] Add types to `ui/src/types/agentRunners.ts` (or a new `profiles.ts`):
@@ -27,16 +27,16 @@ Add model profile configuration UI to each Agent Runner card, allowing users to 
     name: string;
     description: string;
   }
-  export interface RunnerProfileDefaults {
-    runner_type: string;
-    profiles: Record<string, string>;  // profile_name -> model_string
+  export interface AgentRunnerModelDefaults {
+    agent_runner_type: string;
+    model_profile_defaults: Record<string, string>;  // profile_name -> model_string
   }
   ```
 - [ ] Add `profile_defaults` field to `AgentRunnerOption` type: `profile_defaults: Record<string, string>`
 - [ ] Create API functions:
   - `fetchModelProfiles(): Promise<ModelProfile[]>` -- GET /api/model-profiles
-  - `fetchRunnerProfiles(type: string): Promise<RunnerProfileDefaults>` -- GET /api/agent-runners/{type}/profiles
-  - `saveRunnerProfiles(type: string, profiles: Record<string, string>): Promise<void>` -- PUT /api/agent-runners/{type}/profiles
+  - `fetchAgentRunnerModelDefaults(type: string): Promise<AgentRunnerModelDefaults>` -- GET /api/agent-runners/{type}/model-profile-defaults
+  - `saveAgentRunnerModelDefaults(type: string, defaults: AgentRunnerModelDefaults): Promise<void>` -- PUT /api/agent-runners/{type}/model-profile-defaults
 
 **Dependencies**
 - [ ] Step 2 must be complete (frontend uses `AgentRunner` naming)
@@ -65,10 +65,10 @@ Add model profile configuration UI to each Agent Runner card, allowing users to 
 **Implementation Plan (Do These Steps)**
 - [ ] Add a "Model Profiles" collapsible section to `AgentRunnerCard`
 - [ ] Fetch available profiles from `GET /api/model-profiles` (or use static list of 4)
-- [ ] Fetch current profile defaults from `GET /api/agent-runners/{type}/profiles` on card load
+- [ ] Fetch current Agent Runner Model Defaults from `GET /api/agent-runners/{type}/model-profile-defaults` on card load
 - [ ] Render 4 model selector fields (one per profile: Architect, Designer, Coder, Summarizer)
 - [ ] Each field is a combobox/input allowing custom model strings
-- [ ] Wire save button to `PUT /api/agent-runners/{type}/profiles`
+- [ ] Wire save button to `PUT /api/agent-runners/{type}/model-profile-defaults`
 - [ ] Show loading/error states during API operations
 - [ ] Clear a model field = remove the override (use runner default)
 

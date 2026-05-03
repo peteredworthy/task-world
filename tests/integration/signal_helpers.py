@@ -54,18 +54,18 @@ async def drain_signals(
         elif signal.signal_type == WorkflowSignal.RESUME:
             from orchestrator.config.enums import AgentRunnerType as _AT
 
-            agent_type: _AT | None = None
-            agent_config: dict[str, Any] | None = None
+            agent_runner_type: _AT | None = None
+            agent_runner_config: dict[str, Any] | None = None
             resume_strategy: str | None = None
             if signal.payload:
-                if "agent_type" in signal.payload:
-                    agent_type = _AT(signal.payload["agent_type"])
-                agent_config = signal.payload.get("agent_config")
+                if "agent_runner_type" in signal.payload:
+                    agent_runner_type = _AT(signal.payload["agent_runner_type"])
+                agent_runner_config = signal.payload.get("agent_runner_config")
                 resume_strategy = signal.payload.get("resume_strategy")
             await service.apply_resume_run(
                 run_id,
-                agent_type=agent_type,
-                agent_config=agent_config,
+                agent_runner_type=agent_runner_type,
+                agent_runner_config=agent_runner_config,
                 resume_strategy=resume_strategy,
             )
 

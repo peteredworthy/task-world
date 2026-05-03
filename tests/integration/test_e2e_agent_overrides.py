@@ -5,7 +5,7 @@ Requirements tested:
    - Creates custom agents with distinct system prompts and model profiles.
    - Verifies prompt endpoint returns the correct agent-prefixed system prompt
      for each resolution level (task wins over step wins over routine).
-   - Verifies model_profile defaults are stored and returned correctly per agent.
+   - Verifies agent model profiles are stored and returned correctly.
    - Covers both builder and verifier phases.
 2. Backward-compatible routine (no agent fields):
    - Verifies that a routine with no agent overrides uses the seeded system-default
@@ -157,7 +157,7 @@ class TestAgentOverridesAllLevels:
     """Comprehensive E2E: create agents at routine / step / task level.
 
     Verifies that the prompt endpoint resolves the correct agent at each
-    level and that model_profile defaults are stored and returned correctly.
+    level and that agent model profiles are stored and returned correctly.
     """
 
     async def test_task_level_wins_over_step_and_routine(
@@ -296,7 +296,7 @@ class TestAgentOverridesAllLevels:
         assert "ROUTINE-VERIFIER prompt" not in system
         assert "STEP-VERIFIER prompt" not in system
 
-    async def test_model_profile_defaults_per_agent(self, client: AsyncClient) -> None:
+    async def test_model_profiles_roundtrip_per_agent(self, client: AsyncClient) -> None:
         """Each agent's model_profile is stored and returned correctly via GET /api/agents."""
         profiles: list[tuple[str, str]] = [
             ("E2E-ArchAgent", "architect"),

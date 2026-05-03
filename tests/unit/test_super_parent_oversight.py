@@ -38,7 +38,7 @@ def _evidence(outcome: str, *, slice_id: str = "slice-1") -> dict[str, Any]:
     return {
         "path": f"docs/{slice_id}/{outcome}-evidence.json",
         "bundle": {
-            "schema_version": "phase4.evidence.v1",
+            "schema_version": "run.evidence.v1",
             "slice_id": slice_id,
             "routine_id": "slice-routine",
             "assumption_tested": "The child completed the slice.",
@@ -54,6 +54,29 @@ def _evidence(outcome: str, *, slice_id: str = "slice-1") -> dict[str, Any]:
             "next_recommendation": "proceed",
             "outcome": outcome,
         },
+    }
+
+
+def _final_validation(
+    *,
+    passed: bool = True,
+    service_verified: bool = True,
+) -> dict[str, Any]:
+    return {
+        "schema_version": "super_parent.final_validation.v1",
+        "passed": passed,
+        "integrated_commit_sha": "abc1234",
+        "report_path": "docs/super-parent/final-report.md",
+        "commands_run": [
+            {
+                "command": "uv run pytest tests/unit/test_super_parent_oversight.py",
+                "exit_code": 0 if passed else 1,
+                "stdout_excerpt": "",
+                "stderr_excerpt": "",
+            }
+        ],
+        "evidence_files": ["docs/super-parent/final-report.md"],
+        "service_verified": service_verified,
     }
 
 
@@ -117,6 +140,33 @@ def test_completed_accepted_child_blocks_parent_until_merged() -> None:
     assert "child: accepted_child_not_merged" in snapshot.terminal_guard.blocking_reasons
 
 
+def test_malformed_acceptance_evidence_is_invalid_and_not_mergeable() -> None:
+    parent = _run("parent", status=RunStatus.ACTIVE)
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-1",
+    )
+    malformed_evidence = {
+        "path": "docs/slice-1/evidence.json",
+        "bundle": {
+            "schema_version": "run.evidence.v1",
+            "outcome": "verified_fix",
+        },
+    }
+
+    snapshot = reduce_parent_oversight(parent, [child], {"child": [malformed_evidence]})
+
+    assert snapshot.merge_queue == []
+    assert snapshot.child_summaries[0].invalid_evidence_paths == ["docs/slice-1/evidence.json"]
+    assert snapshot.child_summaries[0].blocking_reasons == [
+        "completed_child_missing_evidence",
+        "invalid_evidence_bundle",
+    ]
+    assert "child: invalid_evidence_bundle" in snapshot.terminal_guard.blocking_reasons
+
+
 def test_bug_not_reproduced_requires_parent_decision() -> None:
     parent = _run("parent", status=RunStatus.ACTIVE)
     child = _run(
@@ -178,7 +228,115 @@ def test_three_failed_or_revision_attempts_stall_slice() -> None:
     ]
 
 
-def test_phase4_evidence_schema_accepts_expanded_outcomes() -> None:
+def test_parent_cannot_complete_without_target_inventory() -> None:
+    parent = _run(
+        "parent",
+        status=RunStatus.ACTIVE,
+        oversight_state={"accepted_child_run_ids": ["child"]},
+    )
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-1",
+    )
+
+    snapshot = reduce_parent_oversight(
+        parent,
+        [child],
+        {"child": [_evidence("verified_fix")]},
+    )
+
+    assert not snapshot.terminal_guard.can_complete
+    assert "target_inventory_missing" in snapshot.terminal_guard.blocking_reasons
+    assert snapshot.final_validation is None
+
+
+def test_parent_cannot_complete_with_unresolved_in_scope_inventory_or_failed_validation() -> None:
+    parent = _run(
+        "parent",
+        status=RunStatus.ACTIVE,
+        oversight_state={
+            "accepted_child_run_ids": ["child"],
+            "target_inventory": [{"id": "bug-1", "in_scope": True, "resolved": False}],
+            "final_validation": _final_validation(passed=False),
+        },
+    )
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-1",
+    )
+
+    snapshot = reduce_parent_oversight(
+        parent,
+        [child],
+        {"child": [_evidence("verified_fix")]},
+    )
+
+    assert not snapshot.terminal_guard.can_complete
+    assert "unresolved_target_inventory:bug-1" in snapshot.terminal_guard.blocking_reasons
+    assert "final_validation_not_passed" in snapshot.terminal_guard.blocking_reasons
+
+
+def test_parent_can_complete_only_with_resolved_inventory_and_passed_validation() -> None:
+    parent = _run(
+        "parent",
+        status=RunStatus.ACTIVE,
+        oversight_state={
+            "accepted_child_run_ids": ["child"],
+            "target_inventory": [{"id": "bug-1", "in_scope": True, "resolved": True}],
+            "final_validation": _final_validation(passed=True),
+        },
+    )
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-1",
+    )
+
+    snapshot = reduce_parent_oversight(
+        parent,
+        [child],
+        {"child": [_evidence("verified_fix")]},
+    )
+
+    assert snapshot.terminal_guard.can_complete
+    assert snapshot.next_parent_action == "complete_parent"
+    assert snapshot.final_validation is not None
+    assert snapshot.final_validation.passed is True
+
+
+def test_parent_cannot_complete_with_unverified_final_validation() -> None:
+    parent = _run(
+        "parent",
+        status=RunStatus.ACTIVE,
+        oversight_state={
+            "accepted_child_run_ids": ["child"],
+            "target_inventory": [{"id": "bug-1", "in_scope": True, "resolved": True}],
+            "final_validation": _final_validation(passed=True, service_verified=False),
+        },
+    )
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-1",
+    )
+
+    snapshot = reduce_parent_oversight(
+        parent,
+        [child],
+        {"child": [_evidence("verified_fix")]},
+    )
+
+    assert not snapshot.terminal_guard.can_complete
+    assert "final_validation_not_service_verified" in snapshot.terminal_guard.blocking_reasons
+
+
+def test_run_evidence_schema_accepts_expanded_outcomes() -> None:
     for outcome in (
         "verified_fix",
         "bug_not_reproduced",

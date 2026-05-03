@@ -15,7 +15,7 @@ function makeAttempt(overrides: Partial<AttemptSchema> & { id: string; attempt_n
     metrics: {},
     grade_snapshot: [],
     auto_verify_results: null,
-    agent_type: null,
+    agent_runner_type: null,
     agent_model: null,
     agent_settings: {},
     error: null,

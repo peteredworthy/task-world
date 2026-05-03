@@ -186,7 +186,7 @@ export function AgentRunnerConfigForm({ agent, values, onChange, disabled }: Age
     }
 
     const isOpenHands =
-        agent.agent_type === 'openhands_local' || agent.agent_type === 'openhands_docker';
+        agent.agent_runner_type === 'openhands_local' || agent.agent_runner_type === 'openhands_docker';
 
     const remainingFields = isOpenHands
         ? agent.config_schema.filter((f) => !OPENHANDS_LLM_FIELDS.has(f.name))

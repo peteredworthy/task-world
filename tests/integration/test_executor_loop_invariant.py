@@ -112,8 +112,8 @@ async def _create_active_run(
             routine_source=RoutineSource.LOCAL,
         )
         run.routine_embedded = routine.model_dump(mode="json")
-        run.agent_type = AgentRunnerType.CLI_SUBPROCESS
-        run.agent_config = {}
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {}
         run = await service.create_run(run)
         run_id = run.id
 

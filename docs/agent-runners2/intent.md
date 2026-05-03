@@ -5,7 +5,7 @@
 Rename the current "agents" concept to "agent-runners" throughout the backend and UI, then introduce two new concepts: [S-01/T-01/R1, S-02/T-01/R1]
 
 1. **Model Profiles** (Architect, Designer, Coder, Summarizer) -- per-runner configuration that maps each profile to a specific model, enabling different model strengths for different cognitive tasks. [S-03/T-01/R1, S-03/T-03/R1, S-04/T-02/R1]
-2. **Agents** (Planner, Builder, Verifier) -- a prompt paired with a model profile. Agents are assigned to routine roles (planner, builder, verifier) at the routine, step, or task level with cascading defaults. [S-05/T-03/R2, S-06/T-02/R1]
+2. **Agents** (Planner, Builder, Verifier) -- a prompt paired with a model profile. Agents are assigned to routine roles (builder, verifier) at the routine, step, or task level with cascading defaults. [S-05/T-03/R2, S-06/T-02/R1]
 
 ## Scope
 
@@ -15,8 +15,8 @@ Rename the current "agents" concept to "agent-runners" throughout the backend an
 - **Python naming convention**: Use prefixed names throughout -- `AgentRunner`, `AgentRunnerType`, `AgentRunnerExecutor` -- to avoid confusion with the new Agent concept. [S-01/T-01/R1, S-01/T-01/R2]
 - **Model Profiles** -- new backend model and API. Four initial profiles: Architect, Designer, Coder, Summarizer. Each agent-runner stores a default model for each profile. UI page for configuring profile-to-model mappings per runner. [S-03/T-01/R1, S-03/T-02/R1, S-03/T-03/R1, S-03/T-03/R2, S-04/T-01/R1, S-04/T-02/R1, S-04/T-02/R2]
 - **Agents** -- new backend model and API. Three initial agents: Planner, Builder, Verifier. Each agent has a name, editable system prompt, and an associated model profile. Factory default prompts are stored separately so users can reset edited prompts to defaults. New UI section for managing agents (CRUD, prompt editing, profile selection, reset to defaults). [S-05/T-01/R1, S-05/T-02/R1, S-05/T-02/R3, S-05/T-03/R1, S-05/T-03/R2, S-07/T-02/R1, S-07/T-02/R2, S-07/T-02/R3]
-- **Planner agent** -- the Planner is a user-assignable agent with no special engine integration. There is no planning phase in the workflow engine; users can reference the Planner agent in routines but it has no automatic behavior. [S-05/T-03/R3]
-- **Routine schema update** -- add optional `planner_agent`, `builder_agent`, `verifier_agent` fields at routine, step, and task levels. Task-level overrides step-level, step-level overrides routine-level. [S-06/T-01/R1, S-06/T-02/R1, S-06/T-02/R2]
+- **Planner agent** -- the Planner is a standalone agent config with no routine role or workflow engine integration. There is no planning phase in the workflow engine. [S-05/T-03/R3]
+- **Routine schema update** -- add optional `builder_agent`, `verifier_agent` fields at routine, step, and task levels. Task-level overrides step-level, step-level overrides routine-level. [S-06/T-01/R1, S-06/T-02/R1, S-06/T-02/R2]
 - **Per-run model-profile overrides** -- when creating a run, users can override the model for each profile used in the routine (not just a single model override). This allows fine-grained control per run. [S-03/T-04/R1]
 - **UI updates** -- rename all "Agents" labels to "Agent Runners", add new "Agents" section for prompt/profile management, add model profile configuration on each runner card. Frontend routes: `/agent-runners` for runners, `/agents` for the new agents concept. [S-02/T-03/R1, S-02/T-03/R3, S-07/T-03/R1, S-07/T-03/R2, S-04/T-02/R1]
 - **Non-breaking execution** -- at every milestone, running a routine must still work end-to-end. The system must remain functional after each incremental change. [S-01/T-06/R1, S-01/T-06/R2, S-08/T-03/R1, S-08/T-03/R2]
@@ -35,8 +35,8 @@ Rename the current "agents" concept to "agent-runners" throughout the backend an
 2. All frontend references updated -- page titles, routes (`/agent-runners`), component names, labels, types. [S-02/T-01/R1, S-02/T-02/R1, S-02/T-03/R1, S-02/T-03/R3]
 3. Model profiles exist as a first-class concept: API CRUD, DB storage, per-runner defaults configurable via UI. All 4 profiles included: Architect, Designer, Coder, Summarizer. [S-03/T-01/R1, S-03/T-03/R1, S-03/T-03/R2, S-04/T-02/R1, S-04/T-02/R2]
 4. Agents (Planner, Builder, Verifier) exist as a first-class concept: API CRUD, DB storage, prompt editing, model profile association, and factory-default prompt reset via UI. [S-05/T-02/R1, S-05/T-02/R3, S-05/T-03/R1, S-05/T-03/R2, S-07/T-02/R1, S-07/T-02/R2, S-07/T-02/R3]
-5. Planner agent is user-assignable only -- no special workflow engine integration. [S-05/T-03/R3]
-6. Routine YAML schema accepts `planner_agent`, `builder_agent`, `verifier_agent` at routine/step/task level with proper cascading. [S-06/T-01/R1, S-06/T-02/R1, S-06/T-02/R2]
+5. Planner agent is standalone only -- no special workflow engine integration. [S-05/T-03/R3]
+6. Routine YAML schema accepts `builder_agent`, `verifier_agent` at routine/step/task level with proper cascading. [S-06/T-01/R1, S-06/T-02/R1, S-06/T-02/R2]
 7. Per-run model-profile overrides allow users to customize models for each profile when creating a run. [S-03/T-04/R1]
 8. All existing tests pass (with updated references). [S-01/T-06/R1, S-01/T-06/R2, S-02/T-04/R1, S-08/T-03/R1, S-08/T-03/R2]
 9. A routine can be created, started, and run to completion at every milestone. [S-08/T-01/R2, S-08/T-02/R3]

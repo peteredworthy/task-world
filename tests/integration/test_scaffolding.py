@@ -335,7 +335,7 @@ steps:
             # For PROJECT routines, path is already relative to repo root
             run.routine_path = routine.path
             run.routine_commit = routine.commit
-            run.agent_type = AgentRunnerType.USER_MANAGED
+            run.agent_runner_type = AgentRunnerType.USER_MANAGED
             run.worktree_enabled = True
 
             repo_db = RunRepository(session)
@@ -476,7 +476,7 @@ steps:
             # For PROJECT routines, path is already relative to repo root
             run.routine_path = routine.path
             run.routine_commit = routine.commit
-            run.agent_type = AgentRunnerType.USER_MANAGED
+            run.agent_runner_type = AgentRunnerType.USER_MANAGED
             run.worktree_enabled = True
 
             repo_db = RunRepository(session)

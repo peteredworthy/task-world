@@ -6,12 +6,12 @@ from orchestrator.runners.agents.user_managed.agent import UserManagedAgent
 
 
 def create(
-    agent_config: dict[str, Any],
+    agent_runner_config: dict[str, Any],
     run_id: str | None = None,
     phase: str = "building",
     **kwargs: Any,
 ) -> UserManagedAgent:
-    """Create a UserManagedAgent from agent_config.
+    """Create a UserManagedAgent from agent_runner_config.
 
     Requires ``service`` in kwargs (a TaskSubmitCallback implementation).
     WorkflowService implements this protocol.
@@ -22,8 +22,8 @@ def create(
             "UserManagedAgent factory requires 'service' kwarg (TaskSubmitCallback implementation)"
         )
 
-    callback_channel = agent_config.get("callback_channel", "mcp")
-    timeout_minutes = int(agent_config.get("timeout_minutes", 60))
+    callback_channel = agent_runner_config.get("callback_channel", "mcp")
+    timeout_minutes = int(agent_runner_config.get("timeout_minutes", 60))
 
     return UserManagedAgent(
         service=service,

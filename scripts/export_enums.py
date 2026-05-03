@@ -2,9 +2,9 @@
 export_enums.py — Generate ui/src/types/generated-enums.ts from Python str enums.
 
 Usage:
-  python scripts/export_enums.py              # write to default output path
-  python scripts/export_enums.py --out PATH   # write to custom path
-  python scripts/export_enums.py --check      # compare without writing; exit 1 if stale
+  uv run python scripts/export_enums.py              # write to default output path
+  uv run python scripts/export_enums.py --out PATH   # write to custom path
+  uv run python scripts/export_enums.py --check      # compare without writing; exit 1 if stale
 """
 
 import argparse
@@ -24,7 +24,7 @@ DEFAULT_OUT_REL = "ui/src/types/generated-enums.ts"
 HEADER = """\
 // AUTO-GENERATED — do not edit by hand.
 // Source: {source}
-// Run `python scripts/export_enums.py` to regenerate.
+// Run `uv run python scripts/export_enums.py` to regenerate.
 """
 
 
@@ -108,7 +108,7 @@ def main() -> int:
         )
         sys.stderr.write(
             f"STALE: {out_path} is out of date. "
-            "Run `python scripts/export_enums.py` to regenerate.\n\n"
+            "Run `uv run python scripts/export_enums.py` to regenerate.\n\n"
         )
         sys.stderr.writelines(diff)
         return 1

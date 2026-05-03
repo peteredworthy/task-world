@@ -124,7 +124,7 @@ Introduce the new "Agent" concept -- a prompt template paired with a model profi
 **References**
 - `docs/agent-runners2/architecture.md` -- API endpoints table
 - `docs/agent-runners2/plan.md` -- M5 steps 5-7
-- Clarification Q1: Planner is user-assignable only, no engine integration
+- Clarification Q1: Planner is standalone only, no engine integration
 
 **Constraints**
 - Note: `GET /api/agents` now returns the new Agent concept, not runners (runners are at `/api/agent-runners`)

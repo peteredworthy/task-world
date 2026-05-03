@@ -1,4 +1,4 @@
-"""Integration tests for model profiles and runner profile API endpoints."""
+"""Integration tests for model profiles and agent runner model-default API endpoints."""
 
 from collections.abc import AsyncGenerator
 
@@ -44,79 +44,93 @@ class TestListModelProfiles:
             assert len(item["description"]) > 0
 
 
-class TestRunnerProfileEndpoints:
-    async def test_get_profiles_empty_for_unknown_runner(self, client: AsyncClient) -> None:
-        response = await client.get("/api/agent-runners/cli_subprocess/profiles")
+class TestAgentRunnerModelDefaultEndpoints:
+    async def test_get_model_defaults_empty_for_unknown_runner(self, client: AsyncClient) -> None:
+        response = await client.get("/api/agent-runners/cli_subprocess/model-profile-defaults")
         assert response.status_code == 200
         data = response.json()
-        assert data["runner_type"] == "cli_subprocess"
-        assert data["profiles"] == {}
+        assert data["agent_runner_type"] == "cli_subprocess"
+        assert data["model_profile_defaults"] == {}
 
-    async def test_set_and_get_profiles_roundtrip(self, client: AsyncClient) -> None:
+    async def test_set_and_get_model_defaults_roundtrip(self, client: AsyncClient) -> None:
         payload = {
-            "runner_type": "claude_sdk",
-            "profiles": {
+            "agent_runner_type": "claude_sdk",
+            "model_profile_defaults": {
                 "coder": "claude-sonnet-4-6",
                 "architect": "claude-opus-4-6",
             },
         }
-        put_resp = await client.put("/api/agent-runners/claude_sdk/profiles", json=payload)
+        put_resp = await client.put(
+            "/api/agent-runners/claude_sdk/model-profile-defaults", json=payload
+        )
         assert put_resp.status_code == 200
         put_data = put_resp.json()
-        assert put_data["runner_type"] == "claude_sdk"
-        assert put_data["profiles"]["coder"] == "claude-sonnet-4-6"
-        assert put_data["profiles"]["architect"] == "claude-opus-4-6"
+        assert put_data["agent_runner_type"] == "claude_sdk"
+        assert put_data["model_profile_defaults"]["coder"] == "claude-sonnet-4-6"
+        assert put_data["model_profile_defaults"]["architect"] == "claude-opus-4-6"
 
-        get_resp = await client.get("/api/agent-runners/claude_sdk/profiles")
+        get_resp = await client.get("/api/agent-runners/claude_sdk/model-profile-defaults")
         assert get_resp.status_code == 200
         get_data = get_resp.json()
-        assert get_data["profiles"]["coder"] == "claude-sonnet-4-6"
-        assert get_data["profiles"]["architect"] == "claude-opus-4-6"
+        assert get_data["model_profile_defaults"]["coder"] == "claude-sonnet-4-6"
+        assert get_data["model_profile_defaults"]["architect"] == "claude-opus-4-6"
 
-    async def test_put_replaces_all_existing_profiles(self, client: AsyncClient) -> None:
+    async def test_put_replaces_all_existing_model_defaults(self, client: AsyncClient) -> None:
         first = {
-            "runner_type": "cli_subprocess",
-            "profiles": {"coder": "model-a", "designer": "model-b"},
+            "agent_runner_type": "cli_subprocess",
+            "model_profile_defaults": {"coder": "model-a", "designer": "model-b"},
         }
-        await client.put("/api/agent-runners/cli_subprocess/profiles", json=first)
+        await client.put("/api/agent-runners/cli_subprocess/model-profile-defaults", json=first)
 
         second = {
-            "runner_type": "cli_subprocess",
-            "profiles": {"summarizer": "model-c"},
+            "agent_runner_type": "cli_subprocess",
+            "model_profile_defaults": {"summarizer": "model-c"},
         }
-        await client.put("/api/agent-runners/cli_subprocess/profiles", json=second)
+        await client.put("/api/agent-runners/cli_subprocess/model-profile-defaults", json=second)
 
-        get_resp = await client.get("/api/agent-runners/cli_subprocess/profiles")
+        get_resp = await client.get("/api/agent-runners/cli_subprocess/model-profile-defaults")
         data = get_resp.json()
         # Old entries should be gone; only new entry remains
-        assert "coder" not in data["profiles"]
-        assert "designer" not in data["profiles"]
-        assert data["profiles"]["summarizer"] == "model-c"
+        assert "coder" not in data["model_profile_defaults"]
+        assert "designer" not in data["model_profile_defaults"]
+        assert data["model_profile_defaults"]["summarizer"] == "model-c"
 
     async def test_profiles_isolated_per_runner_type(self, client: AsyncClient) -> None:
         await client.put(
-            "/api/agent-runners/claude_sdk/profiles",
-            json={"runner_type": "claude_sdk", "profiles": {"coder": "sdk-model"}},
+            "/api/agent-runners/claude_sdk/model-profile-defaults",
+            json={
+                "agent_runner_type": "claude_sdk",
+                "model_profile_defaults": {"coder": "sdk-model"},
+            },
         )
         await client.put(
-            "/api/agent-runners/cli_subprocess/profiles",
-            json={"runner_type": "cli_subprocess", "profiles": {"coder": "cli-model"}},
+            "/api/agent-runners/cli_subprocess/model-profile-defaults",
+            json={
+                "agent_runner_type": "cli_subprocess",
+                "model_profile_defaults": {"coder": "cli-model"},
+            },
         )
 
-        sdk_resp = await client.get("/api/agent-runners/claude_sdk/profiles")
-        cli_resp = await client.get("/api/agent-runners/cli_subprocess/profiles")
+        sdk_resp = await client.get("/api/agent-runners/claude_sdk/model-profile-defaults")
+        cli_resp = await client.get("/api/agent-runners/cli_subprocess/model-profile-defaults")
 
-        assert sdk_resp.json()["profiles"]["coder"] == "sdk-model"
-        assert cli_resp.json()["profiles"]["coder"] == "cli-model"
+        assert sdk_resp.json()["model_profile_defaults"]["coder"] == "sdk-model"
+        assert cli_resp.json()["model_profile_defaults"]["coder"] == "cli-model"
 
-    async def test_put_empty_profiles_clears_all(self, client: AsyncClient) -> None:
+    async def test_put_empty_model_defaults_clears_all(self, client: AsyncClient) -> None:
         await client.put(
-            "/api/agent-runners/openhands_local/profiles",
-            json={"runner_type": "openhands_local", "profiles": {"coder": "some-model"}},
+            "/api/agent-runners/openhands_local/model-profile-defaults",
+            json={
+                "agent_runner_type": "openhands_local",
+                "model_profile_defaults": {"coder": "some-model"},
+            },
         )
         await client.put(
-            "/api/agent-runners/openhands_local/profiles",
-            json={"runner_type": "openhands_local", "profiles": {}},
+            "/api/agent-runners/openhands_local/model-profile-defaults",
+            json={
+                "agent_runner_type": "openhands_local",
+                "model_profile_defaults": {},
+            },
         )
-        get_resp = await client.get("/api/agent-runners/openhands_local/profiles")
-        assert get_resp.json()["profiles"] == {}
+        get_resp = await client.get("/api/agent-runners/openhands_local/model-profile-defaults")
+        assert get_resp.json()["model_profile_defaults"] == {}

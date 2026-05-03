@@ -254,13 +254,13 @@ def load_sub_agents(working_dir: str, session_id: str) -> list[SubAgentLog]:
         meta_path = subagents_dir / f"{agent_id}.meta.json"
 
         # Read metadata
-        agent_type = ""
+        subagent_type = ""
         description = ""
         if meta_path.exists():
             try:
                 with open(meta_path) as mf:
                     meta = json.load(mf)
-                agent_type = meta.get("agentType", "")
+                subagent_type = meta.get("agentType", "")
                 description = meta.get("description", "")
             except (OSError, json.JSONDecodeError) as exc:
                 logger.debug("subagents: cannot read meta %s: %s", meta_path, exc)
@@ -271,7 +271,7 @@ def load_sub_agents(working_dir: str, session_id: str) -> list[SubAgentLog]:
         results.append(
             SubAgentLog(
                 agent_id=agent_id,
-                agent_type=agent_type,
+                subagent_type=subagent_type,
                 description=description,
                 model=model,
                 total_input_tokens=totals["input_tokens"],

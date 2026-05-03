@@ -154,7 +154,7 @@ async def test_pause_resume_cancel_via_api(test_app: FastAPI) -> None:
                         }
                     ],
                 },
-                "agent_type": "user_managed",
+                "agent_runner_type": "user_managed",
             },
         )
         assert create_response.status_code == 201
@@ -222,12 +222,12 @@ async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
                         }
                     ],
                 },
-                "agent_type": "user_managed",
+                "agent_runner_type": "user_managed",
             },
         )
         assert create_response.status_code == 201
         run_id = create_response.json()["id"]
-        assert create_response.json()["agent_type"] == "user_managed"
+        assert create_response.json()["agent_runner_type"] == "user_managed"
 
         # Start the run
         start_response = await client.post(f"/api/runs/{run_id}/start")
@@ -242,14 +242,14 @@ async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
         # Resume with agent switch to cli_subprocess
         resume_response = await client.post(
             f"/api/runs/{run_id}/resume",
-            json={"agent_type": "cli_subprocess", "agent_config": {"timeout": "300"}},
+            json={"agent_runner_type": "cli_subprocess", "agent_runner_config": {"timeout": "300"}},
         )
         assert resume_response.status_code == 202
         await drain(run_id)
         run_data = (await client.get(f"/api/runs/{run_id}")).json()
         assert run_data["status"] == "active"
-        assert run_data["agent_type"] == "cli_subprocess"
-        assert run_data["agent_config"] == {"timeout": "300"}
+        assert run_data["agent_runner_type"] == "cli_subprocess"
+        assert run_data["agent_runner_config"] == {"timeout": "300"}
 
         # Pause again
         pause_response2 = await client.post(f"/api/runs/{run_id}/pause")
@@ -260,7 +260,9 @@ async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
         resume_response2 = await client.post(f"/api/runs/{run_id}/resume")
         assert resume_response2.status_code == 202
         await drain(run_id)
-        assert (await client.get(f"/api/runs/{run_id}")).json()["agent_type"] == "cli_subprocess"
+        assert (await client.get(f"/api/runs/{run_id}")).json()[
+            "agent_runner_type"
+        ] == "cli_subprocess"
 
 
 def test_routines_list(runner: CliRunner, tmp_path: Path) -> None:

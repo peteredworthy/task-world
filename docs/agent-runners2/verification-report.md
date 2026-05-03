@@ -10,7 +10,7 @@ Cross-check of intent, plan, step plans, step files, architecture, clarification
 | Rename "agents" to "agent-runners" (frontend) | M2 | Yes |
 | Model Profiles (4 profiles, per-runner config) | M3 (backend), M4 (frontend) | Yes |
 | Agents (Planner, Builder, Verifier) with CRUD | M5 (backend), M7 (frontend) | Yes |
-| Planner agent: user-assignable, no engine integration | M5 (noted), confirmed by Clarification Q1 | Yes |
+| Planner agent: standalone, no engine integration | M5 (noted), confirmed by Clarification Q1 | Yes |
 | Routine schema: `*_agent` fields with cascading | M6 | Yes |
 | Per-run model-profile overrides | M3-M4 (partial), architecture doc | Yes -- resolution chain supports it, full implementation deferred to run creation |
 | Non-breaking execution at every milestone | Plan states each milestone ends with working system | Yes |
@@ -93,7 +93,7 @@ The dry-run notes identified 16 recommendations in 3 priority tiers. Status of e
 |---|---|
 | Architecture file structure matches plan milestones | Yes -- `runners/` (M1), `agents/` (M5), new routers, new schemas all documented |
 | Architecture API endpoints match step plans | Yes -- renamed endpoints (M1-M2) and new endpoints (M3, M5) all listed |
-| Architecture data model matches step files | Yes -- `runs` column renames, `runner_profile_defaults`, `agent_configs` all specified |
+| Architecture data model matches step files | Yes -- `runs` column renames, `agent_runner_model_profile_defaults`, `agent_configs` all specified |
 | Architecture execution flow matches step 6 resolution | Yes -- cascading resolution order documented: task -> step -> routine -> default |
 | Architecture prompt composition matches clarification Q6 | Yes -- "simple concatenation" documented |
 | Architecture per-run profile overrides match clarification Q5 | Yes -- `profile_overrides` on run creation documented |
@@ -104,7 +104,7 @@ All 10 clarifications have been incorporated into the artifacts:
 
 | Clarification | Incorporated In |
 |---|---|
-| Q1: Planner is user-assignable only | intent.md, plan.md M5, step-05-plan.md, architecture.md |
+| Q1: Planner is standalone only | intent.md, plan.md M5, step-05-plan.md, architecture.md |
 | Q2: Use prefixed names (AgentRunner*) | intent.md, plan.md M1, architecture.md, all step files |
 | Q3: Alembic migrations only | intent.md, plan.md, step-01-plan.md, step-03-plan.md |
 | Q4: Rope for Python + manual for non-Python | plan.md M1, step-01-plan.md |

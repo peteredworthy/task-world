@@ -10,9 +10,9 @@ import {
   loadAgentFieldDefaults,
   saveAgentFieldDefault,
 } from '../components/agentRunnerConfigUtils';
-import { fetchRunnerProfiles, saveRunnerProfiles } from '../api/client';
+import { fetchAgentRunnerModelDefaults, saveAgentRunnerModelDefaults } from '../api/client';
 import type { AgentRunnerOption } from '../types/agentRunners';
-import type { ModelProfile, RunnerProfileDefaults } from '../types/modelProfiles';
+import type { AgentRunnerModelDefaults, ModelProfile } from '../types/modelProfiles';
 
 const MODEL_PROFILES: { key: ModelProfile; label: string }[] = [
   { key: 'architect', label: 'Architect' },
@@ -139,36 +139,39 @@ function AgentRunnerCard({ agent }: { agent: AgentRunnerOption }) {
   const [restrictionsValue, setRestrictionsValue] = useState(initialRestrictions);
 
   const [showFullConfig, setShowFullConfig] = useState(false);
-  const [showModelProfiles, setShowModelProfiles] = useState(false);
-  const [profileModels, setProfileModels] = useState<Partial<Record<ModelProfile, string>>>({});
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileSaveStatus, setProfileSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
+  const [showModelDefaults, setShowModelDefaults] = useState(false);
+  const [modelDefaults, setModelDefaults] = useState<Partial<Record<ModelProfile, string>>>({});
+  const [modelDefaultsSaving, setModelDefaultsSaving] = useState(false);
+  const [modelDefaultsSaveStatus, setModelDefaultsSaveStatus] = useState<'idle' | 'saved' | 'error'>('idle');
 
   useEffect(() => {
-    fetchRunnerProfiles(agent.agent_type)
-      .then((data: RunnerProfileDefaults) => {
-        setProfileModels(data.profiles ?? {});
+    fetchAgentRunnerModelDefaults(agent.agent_runner_type)
+      .then((data: AgentRunnerModelDefaults) => {
+        setModelDefaults(data.model_profile_defaults ?? {});
       })
       .catch(() => {
         // ignore load errors; start empty
       });
-  }, [agent.agent_type]);
+  }, [agent.agent_runner_type]);
 
-  const handleSaveProfiles = useCallback(() => {
-    setProfileSaving(true);
-    setProfileSaveStatus('idle');
-    saveRunnerProfiles(agent.agent_type, { runner_type: agent.agent_type, profiles: profileModels })
+  const handleSaveModelDefaults = useCallback(() => {
+    setModelDefaultsSaving(true);
+    setModelDefaultsSaveStatus('idle');
+    saveAgentRunnerModelDefaults(agent.agent_runner_type, {
+      agent_runner_type: agent.agent_runner_type,
+      model_profile_defaults: modelDefaults,
+    })
       .then(() => {
-        setProfileSaveStatus('saved');
-        setTimeout(() => setProfileSaveStatus('idle'), 2000);
+        setModelDefaultsSaveStatus('saved');
+        setTimeout(() => setModelDefaultsSaveStatus('idle'), 2000);
       })
       .catch(() => {
-        setProfileSaveStatus('error');
+        setModelDefaultsSaveStatus('error');
       })
       .finally(() => {
-        setProfileSaving(false);
+        setModelDefaultsSaving(false);
       });
-  }, [agent.agent_type, profileModels]);
+  }, [agent.agent_runner_type, modelDefaults]);
 
   const [fullConfigValues, setFullConfigValues] = useState<Record<string, unknown>>(() => {
     const values: Record<string, unknown> = {};
@@ -317,28 +320,28 @@ function AgentRunnerCard({ agent }: { agent: AgentRunnerOption }) {
             </div>
           )}
 
-          {/* Model Profiles — collapsible section */}
+          {/* Model Defaults — collapsible section */}
           <div className="pt-2">
             <button
-              onClick={() => setShowModelProfiles(!showModelProfiles)}
+              onClick={() => setShowModelDefaults(!showModelDefaults)}
               className="text-xs font-medium text-accent-purple hover:text-accent-purple/80 transition-colors"
             >
-              {showModelProfiles ? '▼ Hide model profiles' : '▶ Model profiles'}
+              {showModelDefaults ? '▼ Hide model defaults' : '▶ Model defaults'}
             </button>
 
-            {showModelProfiles && (
+            {showModelDefaults && (
               <div className="mt-2 pt-2 border-t border-border/50 space-y-2">
                 <p className="text-[10px] font-medium text-text-muted uppercase tracking-wide">
-                  Per-profile model overrides
+                  Agent Runner Model Defaults
                 </p>
                 {MODEL_PROFILES.map(({ key, label }) => (
                   <div key={key}>
                     <p className="text-[10px] text-text-muted mb-0.5">{label}</p>
                     <input
                       type="text"
-                      value={profileModels[key] ?? ''}
+                      value={modelDefaults[key] ?? ''}
                       onChange={(e) =>
-                        setProfileModels((prev) => ({
+                        setModelDefaults((prev) => ({
                           ...prev,
                           [key]: e.target.value,
                         }))
@@ -350,16 +353,16 @@ function AgentRunnerCard({ agent }: { agent: AgentRunnerOption }) {
                 ))}
                 <div className="flex items-center gap-2 pt-1">
                   <button
-                    onClick={handleSaveProfiles}
-                    disabled={profileSaving}
+                    onClick={handleSaveModelDefaults}
+                    disabled={modelDefaultsSaving}
                     className="px-3 py-1 rounded bg-accent-purple/20 border border-accent-purple/40 text-xs font-medium text-accent-purple hover:bg-accent-purple/30 transition-colors disabled:opacity-50"
                   >
-                    {profileSaving ? 'Saving…' : 'Save'}
+                    {modelDefaultsSaving ? 'Saving…' : 'Save'}
                   </button>
-                  {profileSaveStatus === 'saved' && (
+                  {modelDefaultsSaveStatus === 'saved' && (
                     <span className="text-xs text-green-400">Saved</span>
                   )}
-                  {profileSaveStatus === 'error' && (
+                  {modelDefaultsSaveStatus === 'error' && (
                     <span className="text-xs text-red-400">Failed to save</span>
                   )}
                 </div>

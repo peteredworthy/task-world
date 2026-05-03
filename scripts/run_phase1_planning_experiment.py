@@ -108,8 +108,8 @@ def create_run(api_url: str, feature: str, model: str) -> dict[str, Any]:
             "idea": EXPERIMENT_IDEA,
             "codebase_context": CODEBASE_CONTEXT,
         },
-        "agent_type": "codex_server",
-        "agent_config": {
+        "agent_runner_type": "codex_server",
+        "agent_runner_config": {
             "model": model,
             "callback_channel": "rest",
             "restrictions": "managed",

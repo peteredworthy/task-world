@@ -164,7 +164,7 @@ Simulation of execution across all 8 steps. For each step, we walk through tasks
 
 **Expected Outputs:**
 - `ModelProfile` enum with 4 values
-- `RunnerProfileDefaultModel` SQLAlchemy model
+- `AgentRunnerModelProfileDefaultModel` SQLAlchemy model
 
 **Blockers & Mitigation:**
 - **Enum storage in SQLite.** SQLAlchemy's Enum type doesn't always work well with SQLite. May need to store as String and validate. **Mitigation:** Check how existing `AgentType` enum is stored in the DB model -- it uses `String`, not `Enum`.
@@ -188,7 +188,7 @@ Simulation of execution across all 8 steps. For each step, we walk through tasks
 - Router pattern follows existing codebase conventions
 
 **Expected Outputs:**
-- `GET /api/model-profiles`, `GET/PUT /api/agent-runners/{type}/profiles`
+- `GET /api/model-profiles`, `GET/PUT /api/agent-runners/{type}/model-profile-defaults`
 
 **Blockers & Mitigation:**
 - **Runner type path parameter validation.** The `{type}` parameter must match `AgentRunnerType` enum values. Need to validate and return 422 for invalid types. **Mitigation:** Task specifies this.

@@ -1,7 +1,7 @@
 """FastAPI application for the orchestrator."""
 
 from orchestrator.api.app import create_app
-from orchestrator.api.deps import get_connection_manager
+from orchestrator.api.deps import get_connection_manager, get_runner_executor
 from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.api.schemas.envfiles import CopyBackRequest, RevertEnvFileRequest
@@ -17,11 +17,12 @@ from orchestrator.api.schemas.runs import (
     RunEvidenceResponse,
     MergeBackRequest,
     ParentOversightResponse,
+    ParentOversightUpdateRequest,
     RecoverRequest,
     RecoverResponse,
     ResumeRunRequest,
-    get_agent_display_name,
-    get_agent_icon,
+    get_agent_runner_display_name,
+    get_agent_runner_icon,
 )
 from orchestrator.api.schemas.tasks import (
     CallbackInstructions,
@@ -44,6 +45,7 @@ __all__ = [
     "FilePrune",
     "MergeBackRequest",
     "ParentOversightResponse",
+    "ParentOversightUpdateRequest",
     "PRICING",
     "PruneSelection",
     "RecoverRequest",
@@ -56,9 +58,10 @@ __all__ = [
     "UpdateChecklistRequest",
     "create_app",
     "estimate_cost",
-    "get_agent_display_name",
-    "get_agent_icon",
+    "get_agent_runner_display_name",
+    "get_agent_runner_icon",
     "get_connection_manager",
+    "get_runner_executor",
 ]
 
 # Symbols in this dict are lazy-loaded from routers.tasks to avoid circular

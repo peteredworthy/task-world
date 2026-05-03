@@ -182,5 +182,5 @@ class RevertFileRequest(BaseModel):
 class AgentResolveConflictsRequest(BaseModel):
     """Request for agent-based conflict resolution."""
 
-    agent_type: str | None = None
-    agent_config: dict[str, Any] | None = None
+    agent_runner_type: str | None = None
+    agent_runner_config: dict[str, Any] | None = None

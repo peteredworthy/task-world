@@ -1,4 +1,4 @@
-"""Agent-related error types."""
+"""Agent runner-related error types."""
 
 from __future__ import annotations
 
@@ -6,63 +6,63 @@ from datetime import datetime
 
 
 class AgentError(Exception):
-    """Base class for agent errors."""
+    """Base class for agent runner errors."""
 
 
 class AgentConfigError(AgentError):
-    """Agent configuration is invalid or incomplete.
+    """Agent runner configuration is invalid or incomplete.
 
     Raised at construction time when required configuration (e.g. API token,
     base URL) is missing or fails validation before any network I/O is
     attempted.
     """
 
-    def __init__(self, agent_type: str, message: str) -> None:
-        self.agent_type = agent_type
+    def __init__(self, agent_runner_type: str, message: str) -> None:
+        self.agent_runner_type = agent_runner_type
         self.message = message
-        super().__init__(f"Agent '{agent_type}' configuration error: {message}")
+        super().__init__(f"Agent runner '{agent_runner_type}' configuration error: {message}")
 
 
 class AgentExecutionError(AgentError):
     """Error during agent execution."""
 
-    def __init__(self, agent_type: str, message: str) -> None:
-        self.agent_type = agent_type
+    def __init__(self, agent_runner_type: str, message: str) -> None:
+        self.agent_runner_type = agent_runner_type
         self.message = message
-        super().__init__(f"Agent '{agent_type}' execution failed: {message}")
+        super().__init__(f"Agent runner '{agent_runner_type}' execution failed: {message}")
 
 
 class AgentNotAvailableError(AgentError):
-    """Agent is not available on this system."""
+    """Agent runner is not available on this system."""
 
-    def __init__(self, agent_type: str, reason: str = "") -> None:
-        self.agent_type = agent_type
+    def __init__(self, agent_runner_type: str, reason: str = "") -> None:
+        self.agent_runner_type = agent_runner_type
         self.reason = reason
-        msg = f"Agent '{agent_type}' is not available"
+        msg = f"Agent runner '{agent_runner_type}' is not available"
         if reason:
             msg += f": {reason}"
         super().__init__(msg)
 
 
 class AgentCancelledError(AgentError):
-    """Agent execution was cancelled."""
+    """Agent runner execution was cancelled."""
 
-    def __init__(self, agent_type: str) -> None:
-        self.agent_type = agent_type
-        super().__init__(f"Agent '{agent_type}' execution was cancelled")
+    def __init__(self, agent_runner_type: str) -> None:
+        self.agent_runner_type = agent_runner_type
+        super().__init__(f"Agent runner '{agent_runner_type}' execution was cancelled")
 
 
 class AgentTimeoutError(AgentError):
-    """Agent execution timed out waiting for external action."""
+    """Agent runner execution timed out waiting for external action."""
 
-    def __init__(self, agent_type: str, message: str) -> None:
-        self.agent_type = agent_type
+    def __init__(self, agent_runner_type: str, message: str) -> None:
+        self.agent_runner_type = agent_runner_type
         self.message = message
-        super().__init__(f"Agent '{agent_type}' timed out: {message}")
+        super().__init__(f"Agent runner '{agent_runner_type}' timed out: {message}")
 
 
 class AgentRateLimitError(AgentError):
-    """Agent hit an API rate or credit limit.
+    """Agent runner hit an API rate or credit limit.
 
     Raised when the Claude CLI subprocess returns a rate-limit message instead
     of doing work.  The executor should pause the run immediately without
@@ -71,12 +71,12 @@ class AgentRateLimitError(AgentError):
 
     def __init__(
         self,
-        agent_type: str,
+        agent_runner_type: str,
         session_id: str | None = None,
         resets_at: datetime | None = None,
     ) -> None:
-        self.agent_type = agent_type
+        self.agent_runner_type = agent_runner_type
         self.session_id = session_id
         self.resets_at = resets_at
         reset_info = f" (resets at {resets_at})" if resets_at else ""
-        super().__init__(f"Agent '{agent_type}' hit rate limit{reset_info}")
+        super().__init__(f"Agent runner '{agent_runner_type}' hit rate limit{reset_info}")

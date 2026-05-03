@@ -10,7 +10,7 @@ All 11 completion criteria from the intent document are addressed by the 8-step 
 | 2 | Rename frontend references, routes, labels | Step 2 |
 | 3 | Model Profiles: CRUD, DB, per-runner defaults, all 4 profiles | Steps 3-4 |
 | 4 | Agents (Planner, Builder, Verifier): CRUD, prompts, profile association, factory reset | Steps 5, 7 |
-| 5 | Planner is user-assignable only (no engine integration) | Step 5 |
+| 5 | Planner is standalone only (no engine integration) | Step 5 |
 | 6 | Routine YAML: `*_agent` fields with cascading at routine/step/task | Step 6 |
 | 7 | Per-run model-profile overrides | Steps 3-4 (run creation) |
 | 8 | All existing tests pass | Every step ends with test verification |
@@ -24,10 +24,10 @@ All 11 completion criteria from the intent document are addressed by the 8-step 
 |------|-------|-------|-----------------|
 | 1 | Rename "Agents" to "Agent Runners" (Backend) | 6 | Backend uses `AgentRunner*` naming; Alembic migration renames DB columns; API at `/api/agent-runners` |
 | 2 | Rename "Agents" to "Agent Runners" (Frontend) | 4 | Frontend types, components, routes, labels all use "Agent Runner"; route at `/agent-runners` |
-| 3 | Model Profiles (Backend + DB) | 4 | `ModelProfile` enum (4 profiles), `runner_profile_defaults` table, profile API endpoints, execution wiring |
+| 3 | Model Profiles (Backend + DB) | 4 | `ModelProfile` enum (4 profiles), `agent_runner_model_profile_defaults` table, model default API endpoints, execution wiring |
 | 4 | Model Profiles (Frontend) | 3 | Profile-to-model configuration UI on each runner card |
 | 5 | Agents Concept (Backend + DB) | 4 | `agent_configs` table, Agent CRUD API at `/api/agents`, 3 seeded defaults with factory prompt reset |
-| 6 | Routine Schema Update | 3 | `planner_agent`/`builder_agent`/`verifier_agent` fields at routine/step/task; cascading resolution; prompt composition |
+| 6 | Routine Schema Update | 3 | `builder_agent`/`verifier_agent` fields at routine/step/task; cascading resolution; prompt composition |
 | 7 | Agents UI | 4 | Agents management page at `/agents` with CRUD, prompt editor, profile selector |
 | 8 | Integration Testing and Polish | 4 | E2E lifecycle tests, browser verification, documentation updates |
 
@@ -37,7 +37,7 @@ All 11 completion criteria from the intent document are addressed by the 8-step 
 
 Decisions confirmed via clarifications (all answered by user):
 
-1. **Planner agent** -- user-assignable only; no planning phase added to workflow engine (Q1).
+1. **Planner agent** -- standalone only; no planning phase added to workflow engine (Q1).
 2. **Python naming** -- prefixed names throughout: `AgentRunner`, `AgentRunnerType`, `AgentRunnerExecutor` (Q2).
 3. **Database migrations** -- Alembic only, no DB recreation fallback (Q3).
 4. **Refactoring tool** -- `rope` for Python AST-level renames + manual find-replace for non-Python files (Q4).

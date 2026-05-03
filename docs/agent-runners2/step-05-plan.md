@@ -49,7 +49,7 @@ Introduce the new "Agent" concept -- a prompt template paired with a model profi
 4. Implement CRUD service in `src/orchestrator/agents/service.py`
 5. Create API router `src/orchestrator/api/routers/agents.py` with all endpoints
 6. Seed 3 default agents (Planner, Builder, Verifier) with factory prompts
-7. Planner agent has no special engine integration -- user-assignable only
+7. Planner agent has no special engine integration -- standalone only
 8. Write unit tests for agent CRUD service
 9. Write integration tests for API endpoints including prompt reset
 
@@ -75,6 +75,6 @@ Introduce the new "Agent" concept -- a prompt template paired with a model profi
 
 - Plan: `docs/agent-runners2/plan.md` -- M5 specification
 - Architecture: `docs/agent-runners2/architecture.md` -- `agent_configs` table schema, API endpoints
-- Clarification Q1: Planner is user-assignable only, no engine integration
+- Clarification Q1: Planner is standalone only, no engine integration
 - Clarification Q7: Store factory defaults and allow reset
 - File structure: `src/orchestrator/agents/` (new directory for agent concept)

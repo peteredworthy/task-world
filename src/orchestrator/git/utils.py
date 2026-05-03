@@ -70,7 +70,7 @@ def commit_uncommitted_changes(
 
         # Commit
         subprocess.run(
-            ["git", "commit", "-m", message, "--no-verify"],
+            ["git", "commit", "-m", message],
             cwd=path,
             capture_output=True,
             text=True,

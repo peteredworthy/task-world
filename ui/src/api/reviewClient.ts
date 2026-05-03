@@ -77,7 +77,7 @@ export async function agentFixTests(
 ): Promise<AgentJobResponse> {
   return fetchApi<AgentJobResponse>(`/api/runs/${runId}/review/agent-fix-tests`, {
     method: 'POST',
-    body: JSON.stringify({ agent_type: agentType, agent_config: agentConfig }),
+    body: JSON.stringify({ agent_runner_type: agentType, agent_runner_config: agentConfig }),
   });
 }
 
@@ -105,7 +105,7 @@ export async function agentResolveConflicts(
 ): Promise<AgentJobResponse> {
   return fetchApi<AgentJobResponse>(`/api/runs/${runId}/review/conflicts/agent-resolve`, {
     method: 'POST',
-    body: JSON.stringify({ agent_type: agentType }),
+    body: JSON.stringify({ agent_runner_type: agentType }),
   });
 }
 

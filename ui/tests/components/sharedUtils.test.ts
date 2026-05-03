@@ -15,7 +15,7 @@ function makeAttempt(overrides: Partial<AttemptSchema> = {}): AttemptSchema {
     metrics: {},
     grade_snapshot: [],
     auto_verify_results: null,
-    agent_type: null,
+    agent_runner_type: null,
     agent_model: null,
     agent_settings: {},
     error: null,
@@ -34,7 +34,7 @@ function contextFor(status: TaskStatus, attempt: AttemptSchema) {
 describe('getLatestAttemptContext', () => {
   it('hides failure cards when an attempt is active again in building', () => {
     const activeAttempt = makeAttempt({
-      error: "Agent 'cli_subprocess' execution failed",
+      error: "Agent runner 'cli_subprocess' execution failed",
       auto_verify_results: [{ passed: false }],
       verifier_comment: 'Auto-verify failed. Fix and resubmit.',
       completed_at: null,

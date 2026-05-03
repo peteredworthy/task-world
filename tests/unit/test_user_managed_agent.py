@@ -40,7 +40,7 @@ def test_user_managed_agent_info() -> None:
     # Create a minimal mock service with the needed interface
     service = _FakeService()
     agent = UserManagedAgent(service=service)  # type: ignore[arg-type]
-    assert agent.info.agent_type == AgentRunnerType.USER_MANAGED
+    assert agent.info.agent_runner_type == AgentRunnerType.USER_MANAGED
     assert agent.info.name == "User Managed"
 
 

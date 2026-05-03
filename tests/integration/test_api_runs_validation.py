@@ -1,4 +1,4 @@
-"""Integration tests for run API input validation (agent_type, merge_strategy, agent_config)."""
+"""Integration tests for run API input validation (agent_runner_type, merge_strategy, agent_runner_config)."""
 
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -28,46 +28,46 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
     await app.state.engine.dispose()
 
 
-# --- agent_type validation ---
+# --- agent_runner_type validation ---
 
 
-async def test_invalid_agent_type_returns_422(client: AsyncClient) -> None:
-    """Invalid agent_type should return 422 with valid options listed."""
-    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "INVALID"})
+async def test_invalid_agent_runner_type_returns_422(client: AsyncClient) -> None:
+    """Invalid agent_runner_type should return 422 with valid options listed."""
+    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_runner_type": "INVALID"})
     assert resp.status_code == 422
     detail = resp.json()["detail"]
     # Pydantic wraps field_validator errors in the detail list
-    assert any("Invalid agent_type" in str(e) for e in detail)
+    assert any("Invalid agent_runner_type" in str(e) for e in detail)
     assert any("Valid options" in str(e) for e in detail)
 
 
-async def test_uppercase_agent_type_accepted(client: AsyncClient) -> None:
-    """Agent type should be accepted case-insensitively."""
-    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "CODEX_SERVER"})
+async def test_uppercase_agent_runner_type_accepted(client: AsyncClient) -> None:
+    """Agent runner type should be accepted case-insensitively."""
+    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_runner_type": "CODEX_SERVER"})
     assert resp.status_code == 201
     data = resp.json()
-    assert data["agent_type"] == "codex_server"
+    assert data["agent_runner_type"] == "codex_server"
 
 
-async def test_mixed_case_agent_type_accepted(client: AsyncClient) -> None:
-    """Mixed case agent type should be normalized to lowercase."""
-    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "Claude_SDK"})
+async def test_mixed_case_agent_runner_type_accepted(client: AsyncClient) -> None:
+    """Mixed case agent runner type should be normalized to lowercase."""
+    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_runner_type": "Claude_SDK"})
     assert resp.status_code == 201
-    assert resp.json()["agent_type"] == "claude_sdk"
+    assert resp.json()["agent_runner_type"] == "claude_sdk"
 
 
-async def test_valid_lowercase_agent_type_accepted(client: AsyncClient) -> None:
-    """Standard lowercase agent type should work as before."""
-    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "user_managed"})
+async def test_valid_lowercase_agent_runner_type_accepted(client: AsyncClient) -> None:
+    """Standard lowercase agent runner type should work as before."""
+    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_runner_type": "user_managed"})
     assert resp.status_code == 201
-    assert resp.json()["agent_type"] == "user_managed"
+    assert resp.json()["agent_runner_type"] == "user_managed"
 
 
-async def test_null_agent_type_accepted(client: AsyncClient) -> None:
-    """Null/missing agent_type should still be accepted."""
+async def test_null_agent_runner_type_accepted(client: AsyncClient) -> None:
+    """Null/missing agent_runner_type should still be accepted."""
     resp = await client.post("/api/runs", json=BASE_BODY)
     assert resp.status_code == 201
-    assert resp.json()["agent_type"] is None
+    assert resp.json()["agent_runner_type"] is None
 
 
 # --- merge_strategy validation ---
@@ -95,48 +95,50 @@ async def test_uppercase_merge_strategy_accepted(client: AsyncClient) -> None:
     assert resp.json()["merge_strategy"] == "merge"
 
 
-# --- agent_config key validation ---
+# --- agent_runner_config key validation ---
 
 
-async def test_unknown_agent_config_keys_returns_422(client: AsyncClient) -> None:
-    """Unknown agent_config keys should return 422 with valid fields listed."""
+async def test_unknown_agent_runner_config_keys_returns_422(client: AsyncClient) -> None:
+    """Unknown agent_runner_config keys should return 422 with valid fields listed."""
     resp = await client.post(
         "/api/runs",
         json={
             **BASE_BODY,
-            "agent_type": "codex_server",
-            "agent_config": {"model": "gpt-4o", "foo": "bar", "baz": 42},
+            "agent_runner_type": "codex_server",
+            "agent_runner_config": {"model": "gpt-4o", "foo": "bar", "baz": 42},
         },
     )
     assert resp.status_code == 422
     detail = resp.json()["detail"]
-    assert "Unknown agent_config fields" in detail
+    assert "Unknown agent_runner_config fields" in detail
     assert "foo" in detail
     assert "baz" in detail
     assert "Valid fields" in detail
 
 
-async def test_valid_agent_config_keys_accepted(client: AsyncClient) -> None:
-    """Valid agent_config keys should be accepted."""
+async def test_valid_agent_runner_config_keys_accepted(client: AsyncClient) -> None:
+    """Valid agent_runner_config keys should be accepted."""
     resp = await client.post(
         "/api/runs",
         json={
             **BASE_BODY,
-            "agent_type": "codex_server",
-            "agent_config": {"model": "gpt-4o", "restrictions": "none"},
+            "agent_runner_type": "codex_server",
+            "agent_runner_config": {"model": "gpt-4o", "restrictions": "none"},
         },
     )
     assert resp.status_code == 201
     data = resp.json()
-    assert data["agent_config"]["model"] == "gpt-4o"
-    assert data["agent_config"]["restrictions"] == "none"
+    assert data["agent_runner_config"]["model"] == "gpt-4o"
+    assert data["agent_runner_config"]["restrictions"] == "none"
 
 
-async def test_agent_config_without_agent_type_skips_validation(client: AsyncClient) -> None:
-    """agent_config without agent_type should not validate keys (no schema to check against)."""
+async def test_agent_runner_config_without_agent_runner_type_skips_validation(
+    client: AsyncClient,
+) -> None:
+    """agent_runner_config without agent_runner_type should not validate keys (no schema to check against)."""
     resp = await client.post(
         "/api/runs",
-        json={**BASE_BODY, "agent_config": {"anything": "goes"}},
+        json={**BASE_BODY, "agent_runner_config": {"anything": "goes"}},
     )
     assert resp.status_code == 201
 
@@ -144,10 +146,12 @@ async def test_agent_config_without_agent_type_skips_validation(client: AsyncCli
 # --- resume endpoint validation ---
 
 
-async def test_resume_invalid_agent_type_returns_422(client: AsyncClient) -> None:
-    """Invalid agent_type on resume should return 422."""
+async def test_resume_invalid_agent_runner_type_returns_422(client: AsyncClient) -> None:
+    """Invalid agent_runner_type on resume should return 422."""
     # Create and start a run, then pause it
-    create_resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "user_managed"})
+    create_resp = await client.post(
+        "/api/runs", json={**BASE_BODY, "agent_runner_type": "user_managed"}
+    )
     assert create_resp.status_code == 201
     run_id = create_resp.json()["id"]
 
@@ -155,11 +159,11 @@ async def test_resume_invalid_agent_type_returns_422(client: AsyncClient) -> Non
     await client.post(f"/api/runs/{run_id}/start")
     await client.post(f"/api/runs/{run_id}/pause")
 
-    # Try to resume with invalid agent type
-    resp = await client.post(f"/api/runs/{run_id}/resume", json={"agent_type": "NOT_REAL"})
+    # Try to resume with invalid agent runner type
+    resp = await client.post(f"/api/runs/{run_id}/resume", json={"agent_runner_type": "NOT_REAL"})
     assert resp.status_code == 422
     detail = resp.json()["detail"]
-    assert any("Invalid agent_type" in str(e) for e in detail)
+    assert any("Invalid agent_runner_type" in str(e) for e in detail)
 
 
 # --- list_runs status query param validation ---
@@ -185,7 +189,9 @@ async def test_list_runs_valid_status_accepted(client: AsyncClient) -> None:
 
 async def test_merge_back_invalid_strategy_returns_422(client: AsyncClient) -> None:
     """Invalid merge-back strategy should return 422."""
-    create_resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "user_managed"})
+    create_resp = await client.post(
+        "/api/runs", json={**BASE_BODY, "agent_runner_type": "user_managed"}
+    )
     run_id = create_resp.json()["id"]
     resp = await client.post(f"/api/runs/{run_id}/merge-back", json={"strategy": "rebase"})
     assert resp.status_code == 422
@@ -196,7 +202,9 @@ async def test_merge_back_invalid_strategy_returns_422(client: AsyncClient) -> N
 
 async def test_recover_negative_additional_attempts_returns_422(client: AsyncClient) -> None:
     """Negative additional_attempts should return 422."""
-    create_resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "user_managed"})
+    create_resp = await client.post(
+        "/api/runs", json={**BASE_BODY, "agent_runner_type": "user_managed"}
+    )
     run_id = create_resp.json()["id"]
     resp = await client.post(
         f"/api/runs/{run_id}/recover",
@@ -210,7 +218,9 @@ async def test_recover_negative_additional_attempts_returns_422(client: AsyncCli
 
 async def test_backward_transition_negative_index_returns_422(client: AsyncClient) -> None:
     """Negative target_step_index should return 422."""
-    create_resp = await client.post("/api/runs", json={**BASE_BODY, "agent_type": "user_managed"})
+    create_resp = await client.post(
+        "/api/runs", json={**BASE_BODY, "agent_runner_type": "user_managed"}
+    )
     run_id = create_resp.json()["id"]
     resp = await client.post(
         f"/api/runs/{run_id}/transition-back",
