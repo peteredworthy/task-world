@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coverage Thresholds — Impact Report</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222537;
+    --border: #2e3248;
+    --accent: #6c63ff;
+    --accent2: #00d4aa;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+    --success: #22c55e;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --font: 'Inter', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    line-height: 1.6;
+  }
+  .slide {
+    min-height: 100vh;
+    padding: 60px 80px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+  .slide-num {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 12px;
+  }
+  h1 { font-size: 3.2rem; font-weight: 800; line-height: 1.1; margin-bottom: 20px; }
+  h2 { font-size: 2rem; font-weight: 700; margin-bottom: 16px; }
+  h3 { font-size: 1.2rem; font-weight: 600; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 1px; }
+  p { color: var(--text-muted); font-size: 1.1rem; max-width: 760px; margin-bottom: 12px; }
+  .subtitle { font-size: 1.3rem; color: var(--text-muted); margin-bottom: 0; }
+  .tag {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 20px;
+  }
+  .tag-p2 { background: rgba(108,99,255,0.2); color: var(--accent); border: 1px solid rgba(108,99,255,0.4); }
+  .tag-30m { background: rgba(0,212,170,0.2); color: var(--accent2); border: 1px solid rgba(0,212,170,0.4); }
+
+  /* Code blocks */
+  pre {
+    background: #0a0c12;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 6px;
+    padding: 20px 24px;
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    overflow-x: auto;
+    margin: 16px 0;
+    color: #cdd6f4;
+  }
+  .kw { color: #cba6f7; }
+  .str { color: #a6e3a1; }
+  .cm { color: #585b70; }
+  .num { color: #fab387; }
+
+  /* Grid layouts */
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 24px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; margin-top: 24px; }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .card-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 8px; }
+  .card-value { font-size: 2.4rem; font-weight: 800; margin-bottom: 4px; }
+  .card-sub { font-size: 0.85rem; color: var(--text-muted); }
+  .danger { color: var(--danger); }
+  .warn { color: var(--warn); }
+  .success { color: var(--success); }
+  .accent { color: var(--accent); }
+
+  /* Coverage bar */
+  .cov-row { margin: 8px 0; }
+  .cov-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+  }
+  .cov-file { font-family: var(--mono); color: var(--text); }
+  .cov-pct { font-weight: 700; }
+  .bar-bg { background: var(--surface2); border-radius: 3px; height: 6px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+
+  /* Diff table */
+  .diff-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 0.9rem; }
+  .diff-table th {
+    text-align: left; padding: 10px 14px;
+    background: var(--surface2);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text-muted);
+  }
+  .diff-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .diff-table tr:last-child td { border-bottom: none; }
+
+  /* Timeline */
+  .timeline { margin-top: 24px; }
+  .tl-item { display: flex; gap: 20px; margin-bottom: 28px; position: relative; }
+  .tl-item::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 32px;
+    bottom: -28px;
+    width: 2px;
+    background: var(--border);
+  }
+  .tl-item:last-child::before { display: none; }
+  .tl-dot {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
+  .tl-content { flex: 1; }
+  .tl-title { font-weight: 600; margin-bottom: 4px; }
+  .tl-body { font-size: 0.9rem; color: var(--text-muted); }
+
+  /* Badge */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-left: 8px;
+  }
+  .badge-fail { background: rgba(239,68,68,0.2); color: var(--danger); }
+  .badge-pass { background: rgba(34,197,94,0.2); color: var(--success); }
+  .badge-new { background: rgba(108,99,255,0.2); color: var(--accent); }
+
+  /* Summary box */
+  .summary-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px 32px;
+    margin-top: 24px;
+  }
+  .summary-box ul { list-style: none; }
+  .summary-box li {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.95rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .summary-box li:last-child { border-bottom: none; }
+  .li-icon { flex-shrink: 0; font-size: 1rem; }
+
+  /* Divider accent */
+  .accent-line {
+    height: 3px;
+    width: 60px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    margin-bottom: 24px;
+  }
+
+  /* Hero stat */
+  .hero-stats { display: flex; gap: 48px; margin-top: 32px; flex-wrap: wrap; }
+  .hero-stat {}
+  .hero-stat-value { font-size: 3.5rem; font-weight: 900; line-height: 1; }
+  .hero-stat-label { font-size: 0.85rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+
+  /* Nav */
+  nav {
+    position: fixed;
+    top: 20px;
+    right: 28px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 0;
+    z-index: 100;
+    font-size: 0.75rem;
+  }
+  nav a {
+    display: block;
+    padding: 6px 16px;
+    color: var(--text-muted);
+    text-decoration: none;
+    transition: color 0.15s;
+  }
+  nav a:hover { color: var(--text); }
+</style>
+</head>
+<body>
+
+<nav>
+  <a href="#title">Overview</a>
+  <a href="#what">What Changed</a>
+  <a href="#discovered">Discovered</a>
+  <a href="#speed">Test Speed</a>
+  <a href="#protection">Protection</a>
+  <a href="#next">Next Steps</a>
+</nav>
+
+<!-- SLIDE 1: Title -->
+<section class="slide" id="title">
+  <div class="slide-num">Priority 2 — Impact Report</div>
+  <div class="tag tag-p2">Coverage Thresholds</div>
+  <div class="tag tag-30m" style="margin-left:8px">30 min implementation</div>
+  <h1>What happens when you<br><span style="color:var(--accent)">enforce coverage</span>?</h1>
+  <p class="subtitle">
+    Two config changes. One immediate failure. Eleven modules exposed.
+    Zero flaky tests. This is what mandatory coverage thresholds surface.
+  </p>
+  <div class="hero-stats">
+    <div class="hero-stat">
+      <div class="hero-stat-value danger">71.7%</div>
+      <div class="hero-stat-label">Backend coverage (target: 80%)</div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-value danger">38.4%</div>
+      <div class="hero-stat-label">Frontend line coverage (target: 70%)</div>
+    </div>
+    <div class="hero-stat">
+      <div class="hero-stat-value accent">3,019</div>
+      <div class="hero-stat-label">Tests pass unchanged</div>
+    </div>
+  </div>
+</section>
+
+<!-- SLIDE 2: What Changed -->
+<section class="slide" id="what">
+  <div class="slide-num">Slide 2 / 6</div>
+  <div class="accent-line"></div>
+  <h2>Two config changes. That's it.</h2>
+  <p>No new tests. No new code. Two lines changed. CI now fails when coverage drops.</p>
+
+  <div class="grid-2">
+    <div>
+      <h3>pyproject.toml — before</h3>
+      <pre><span class="kw">addopts</span> = <span class="str">"-n auto --dist loadfile --timeout=30"</span></pre>
+      <h3 style="margin-top:16px">pyproject.toml — after</h3>
+      <pre><span class="kw">addopts</span> = <span class="str">"-n auto --dist loadfile --timeout=30
+  --cov=src/orchestrator
+  --cov-branch
+  --cov-report=term-missing
+  --cov-fail-under=80"</span></pre>
+    </div>
+    <div>
+      <h3>vitest.config.ts — before</h3>
+      <pre><span class="kw">test</span>: {
+  environment: <span class="str">'jsdom'</span>,
+  include: [...],
+  setupFiles: [...],
+}</pre>
+      <h3 style="margin-top:16px">vitest.config.ts — after</h3>
+      <pre><span class="kw">test</span>: {
+  environment: <span class="str">'jsdom'</span>,
+  include: [...],
+  setupFiles: [...],
+  <span class="kw">coverage</span>: {
+    provider: <span class="str">'v8'</span>,
+    thresholds: {
+      lines: <span class="num">70</span>,
+      branches: <span class="num">65</span>,
+    },
+  },
+}</pre>
+    </div>
+  </div>
+
+  <div class="summary-box" style="margin-top:28px">
+    <ul>
+      <li><span class="li-icon">📦</span><strong>One new dev dependency:</strong> <code>@vitest/coverage-v8</code> (the v8 coverage provider for vitest — was not previously installed)</li>
+      <li><span class="li-icon">✅</span><strong>pytest-cov was already installed</strong> (in <code>[dependency-groups] dev</code>) but never invoked. These changes wire it up.</li>
+      <li><span class="li-icon">⚡</span><strong>Branch coverage enabled</strong> (<code>--cov-branch</code>) — catches conditional paths, not just line execution</li>
+    </ul>
+  </div>
+</section>
+
+<!-- SLIDE 3: What Was Discovered -->
+<section class="slide" id="discovered">
+  <div class="slide-num">Slide 3 / 6</div>
+  <div class="accent-line"></div>
+  <h2>What was discovered</h2>
+  <p>Running for the first time reveals the real coverage map. Most of this was invisible before.</p>
+
+  <div class="grid-2">
+    <!-- Backend -->
+    <div class="card">
+      <h3>Backend — pytest-cov</h3>
+      <div style="margin-bottom:16px">
+        <div class="cov-row">
+          <div class="cov-label"><span>Overall</span><span class="cov-pct danger">71.7%</span></div>
+          <div class="bar-bg"><div class="bar-fill" style="width:71.7%;background:var(--danger)"></div></div>
+        </div>
+      </div>
+
+      <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">Critical gaps (branch coverage)</div>
+
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">workflow/service.py</span><span class="cov-pct danger">65%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:65%;background:var(--danger)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">signals/runtime.py</span><span class="cov-pct danger">62%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:62%;background:var(--danger)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">execution/phase_handler.py</span><span class="cov-pct danger">62%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:62%;background:var(--danger)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">runners/executor.py</span><span class="cov-pct warn">69%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:69%;background:var(--warn)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">openhands/docker_agent.py</span><span class="cov-pct danger">43%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:43%;background:var(--danger)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">runners/parsers/__init__</span><span class="cov-pct danger">16%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:16%;background:var(--danger)"></div></div>
+      </div>
+
+      <div style="margin-top:16px;font-size:0.8rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Well covered (≥80%)</div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">workflow/engine/transitions.py</span><span class="cov-pct success">81%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:81%;background:var(--success)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">engine/condition_evaluator.py</span><span class="cov-pct success">91%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:91%;background:var(--success)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">state/models.py</span><span class="cov-pct success">100%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:100%;background:var(--success)"></div></div>
+      </div>
+    </div>
+
+    <!-- Frontend -->
+    <div class="card">
+      <h3>Frontend — vitest + v8</h3>
+      <div style="margin-bottom:16px">
+        <div class="cov-row">
+          <div class="cov-label"><span>Lines</span><span class="cov-pct danger">38.4%</span></div>
+          <div class="bar-bg"><div class="bar-fill" style="width:38.4%;background:var(--danger)"></div></div>
+        </div>
+        <div class="cov-row">
+          <div class="cov-label"><span>Branches</span><span class="cov-pct danger">32.9%</span></div>
+          <div class="bar-bg"><div class="bar-fill" style="width:32.9%;background:var(--danger)"></div></div>
+        </div>
+      </div>
+
+      <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">Hooks — near-zero coverage</div>
+
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">hooks/useApi.ts</span><span class="cov-pct danger">6.5%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:6.5%;background:var(--danger)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">hooks/useActivitySSE.ts</span><span class="cov-pct danger">3.1%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:3.1%;background:var(--danger)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">hooks/useWebSocket.ts</span><span class="cov-pct danger">16.1%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:16.1%;background:var(--danger)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">hooks/useReview.ts</span><span class="cov-pct danger">22.5%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:22.5%;background:var(--danger)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">hooks/usePendingNotifs</span><span class="cov-pct danger">13.3%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:13.3%;background:var(--danger)"></div></div>
+      </div>
+
+      <div style="margin-top:16px;font-size:0.8rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:10px">Well covered</div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">pages/Agents.tsx</span><span class="cov-pct success">91.7%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:91.7%;background:var(--success)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">lib/format.ts</span><span class="cov-pct success">93.3%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:93.3%;background:var(--success)"></div></div>
+      </div>
+      <div class="cov-row">
+        <div class="cov-label"><span class="cov-file">hooks/useFocusTrap.ts</span><span class="cov-pct success">91.7%</span></div>
+        <div class="bar-bg"><div class="bar-fill" style="width:91.7%;background:var(--success)"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="summary-box">
+    <ul>
+      <li><span class="li-icon">🔍</span><strong>Bug 6 verdict:</strong> <code>transition_to_recovering</code> and <code>transition_force_accept</code> are now at 81% branch coverage — tests exist in <code>test_transitions_recovering_force_accept.py</code>. These were the blind spots that motivated Priority 2; they were fixed as part of the prior bug-fix pass.</li>
+      <li><span class="li-icon">⚠️</span><strong>New exposure:</strong> <code>workflow/service.py</code> (3,252 lines, 65% coverage) is the largest risk — it orchestrates every run lifecycle event and half its branches are unverified.</li>
+      <li><span class="li-icon">⚠️</span><strong>Frontend hooks are effectively untested:</strong> The six hooks that own WebSocket, polling, approvals, and review logic collectively average ~13% line coverage. This is where bugs 1, 4, 7 live.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- SLIDE 4: Testing Speed -->
+<section class="slide" id="speed">
+  <div class="slide-num">Slide 4 / 6</div>
+  <div class="accent-line"></div>
+  <h2>Impact on test execution speed</h2>
+  <p>Coverage instrumentation adds overhead. Here's the real cost breakdown.</p>
+
+  <div class="grid-3">
+    <div class="card">
+      <div class="card-title">Backend — without coverage</div>
+      <div class="card-value success">~35s</div>
+      <div class="card-sub">3,019 tests, 8 workers parallel</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Backend — with coverage</div>
+      <div class="card-value warn">~65s</div>
+      <div class="card-sub">Same tests + branch instrumentation</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Overhead added</div>
+      <div class="card-value danger">+30s</div>
+      <div class="card-sub">~86% slower per full CI run</div>
+    </div>
+  </div>
+
+  <div class="summary-box">
+    <ul>
+      <li><span class="li-icon">⚡</span><strong>Why so much overhead?</strong> Branch coverage (<code>--cov-branch</code>) instruments every conditional, not just line execution. Each branch decision is tracked. With 18,000+ lines across 150+ modules, this is significant syscall overhead even with parallel execution.</li>
+      <li><span class="li-icon">💡</span><strong>Mitigation available:</strong> Run coverage only on the files changed in a PR — use <code>--cov-source=$(git diff --name-only origin/main | grep .py)</code> in CI. Local development can run <code>pytest -n auto</code> (no coverage) for fast feedback, with full coverage reserved for CI.</li>
+      <li><span class="li-icon">🎯</span><strong>Coverage is a merge gate, not a dev loop tool.</strong> Developers should run tests without coverage locally. CI enforces the threshold on every PR. The 30s overhead is a CI cost, not a local feedback cost.</li>
+      <li><span class="li-icon">📊</span><strong>Frontend overhead is negligible</strong> — v8 coverage is native to Node.js; vitest with coverage adds &lt;2s to a 25s test suite.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- SLIDE 5: What Is Now Protected -->
+<section class="slide" id="protection">
+  <div class="slide-num">Slide 5 / 6</div>
+  <div class="accent-line"></div>
+  <h2>Classes of issue now protected</h2>
+
+  <div class="timeline">
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:rgba(239,68,68,0.2);color:var(--danger)">1</div>
+      <div class="tl-content">
+        <div class="tl-title">Untested transitions<span class="badge badge-fail">Bug 6</span><span class="badge badge-new">NEW</span></div>
+        <div class="tl-body">
+          Before: a new transition function (<code>transition_to_recovering</code>, <code>transition_force_accept</code>) could ship with zero test coverage. No CI signal.
+          After: any function that drops coverage below 80% fails CI immediately. A new uncovered transition = red build.
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:rgba(245,158,11,0.2);color:var(--warn)">2</div>
+      <div class="tl-content">
+        <div class="tl-title">Silent regression in tested code<span class="badge badge-new">NEW</span></div>
+        <div class="tl-body">
+          Branch coverage catches conditional paths tests don't exercise. A refactor that adds a new
+          <code>if/else</code> branch to a well-tested function is visible immediately via the branch
+          coverage delta — even if line coverage doesn't change.
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:rgba(108,99,255,0.2);color:var(--accent)">3</div>
+      <div class="tl-content">
+        <div class="tl-title">Coverage erosion over time<span class="badge badge-new">NEW</span></div>
+        <div class="tl-body">
+          Without thresholds, coverage can drift silently downward as new code is added without tests.
+          The threshold locks in the current floor. Every PR must maintain or improve coverage to merge.
+          Gradual erosion is structurally prevented.
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:rgba(34,197,94,0.2);color:var(--success)">4</div>
+      <div class="tl-content">
+        <div class="tl-title">Coverage blind spots made visible<span class="badge badge-new">SURFACED</span></div>
+        <div class="tl-body">
+          Running coverage for the first time exposes that <code>hooks/useWebSocket.ts</code> is at 16%
+          (home of Bug 1), <code>workflow/service.py</code> is at 65%, and the OpenHands Docker agent
+          is at 43%. These were unknown unknowns — now they are documented gaps with line numbers.
+        </div>
+      </div>
+    </div>
+
+    <div class="tl-item">
+      <div class="tl-dot" style="background:rgba(0,212,170,0.2);color:var(--accent2)">5</div>
+      <div class="tl-content">
+        <div class="tl-title">Not protected: async concurrency races<span class="badge badge-fail">Still exposed</span></div>
+        <div class="tl-body">
+          Coverage thresholds tell you a line executed, not whether it executed safely under concurrent
+          load. Bugs 5 and 8 (WS batch timer races) can have 100% coverage and still be broken.
+          The AST-based linter (Gap A from the strategy doc) is the correct protection class for these.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="card" style="margin-top:24px;border-color:rgba(108,99,255,0.4)">
+    <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:1px">Key insight</div>
+    <p style="color:var(--text);font-size:1.05rem;margin:0">
+      Coverage thresholds are a <strong>forcing function</strong>, not a correctness guarantee. They don't
+      prove code works — they prove code was executed during tests. Their real value is making
+      <em>untested code structurally impossible to ship</em> without a deliberate decision to lower
+      the bar. That decision is now visible in the diff, not buried in a bug report six months later.
+    </p>
+  </div>
+</section>
+
+<!-- SLIDE 6: Next Steps -->
+<section class="slide" id="next">
+  <div class="slide-num">Slide 6 / 6</div>
+  <div class="accent-line"></div>
+  <h2>Next steps to reach the thresholds</h2>
+  <p>Current backend coverage is 71.7% — 8.3 points below the 80% target. Here's the highest-leverage path to close the gap.</p>
+
+  <table class="diff-table">
+    <thead>
+      <tr>
+        <th>Module</th>
+        <th>Current</th>
+        <th>Gap</th>
+        <th>Priority</th>
+        <th>Why</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>workflow/service.py</code></td>
+        <td class="danger">65%</td>
+        <td>+15% needed</td>
+        <td>P1</td>
+        <td>All run lifecycle orchestration lives here. Largest untested surface.</td>
+      </tr>
+      <tr>
+        <td><code>runners/signals/runtime.py</code></td>
+        <td class="danger">62%</td>
+        <td>+18% needed</td>
+        <td>P1</td>
+        <td>Signal handling drives state recovery; uncovered paths = silent failures.</td>
+      </tr>
+      <tr>
+        <td><code>execution/phase_handler.py</code></td>
+        <td class="danger">62%</td>
+        <td>+18% needed</td>
+        <td>P2</td>
+        <td>Build/verify phase transitions. Interacts with transitions.py.</td>
+      </tr>
+      <tr>
+        <td><code>runners/executor.py</code></td>
+        <td class="warn">69%</td>
+        <td>+11% needed</td>
+        <td>P2</td>
+        <td>Agent execution lifecycle. Low coverage = runtime surprises.</td>
+      </tr>
+      <tr>
+        <td><code>openhands/docker_agent.py</code></td>
+        <td class="danger">43%</td>
+        <td>+37% needed</td>
+        <td>P3</td>
+        <td>External agent — harder to test. Can be excluded from threshold or mocked.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="grid-2" style="margin-top:24px">
+    <div class="card">
+      <div class="card-title">Short-term option</div>
+      <div style="font-size:1rem;font-weight:600;margin-bottom:8px">Lower threshold to current baseline</div>
+      <p style="font-size:0.9rem;margin:0">
+        Set <code>--cov-fail-under=71</code> (current level). Locks in the floor immediately.
+        Raise incrementally as coverage improves. CI green on day one.
+        Allows shipping without blocking all PRs while coverage is improved.
+      </p>
+    </div>
+    <div class="card">
+      <div class="card-title">Medium-term option</div>
+      <div style="font-size:1rem;font-weight:600;margin-bottom:8px">Pair Priority 2 with Priority 3</div>
+      <p style="font-size:0.9rem;margin:0">
+        Priority 3 (WS processEvent tests) directly covers <code>useWebSocket.ts</code> — the most
+        critical untested hook. Adding those tests would bring the frontend from 38% toward 70%
+        on the hooks layer. Backend needs focused integration tests for <code>service.py</code> paths.
+      </p>
+    </div>
+  </div>
+
+  <div class="summary-box" style="margin-top:24px">
+    <ul>
+      <li><span class="li-icon">📌</span><strong>The 80% backend threshold is the right long-term target.</strong> Short-term, start at 71% (current) and raise by 2% per sprint as tests are added. The threshold change itself is a one-line edit.</li>
+      <li><span class="li-icon">📌</span><strong>The 70%/65% frontend thresholds require ~40 points of new coverage.</strong> The hooks layer is the gap. Priority 3 (WS unit tests) + fixing useApi test coverage are the highest leverage investments.</li>
+      <li><span class="li-icon">📌</span><strong>Coverage data is now baseline-captured.</strong> The <code>term-missing</code> report shows exact line numbers for every uncovered path. Future contributors have a map, not just a number.</li>
+    </ul>
+  </div>
+</section>
+
+</body>
+</html>

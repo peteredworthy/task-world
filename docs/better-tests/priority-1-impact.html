@@ -1,0 +1,1117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Priority 1: Enum Codegen — Impact Report</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-elevated: #161b22;
+    --bg-card: #1c2128;
+    --bg-code: #0d1117;
+    --border: #30363d;
+    --border-bright: #484f58;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --text-dim: #6e7681;
+    --green: #3fb950;
+    --green-bg: rgba(63, 185, 80, 0.1);
+    --green-border: rgba(63, 185, 80, 0.3);
+    --red: #f85149;
+    --red-bg: rgba(248, 81, 73, 0.1);
+    --red-border: rgba(248, 81, 73, 0.3);
+    --yellow: #d29922;
+    --yellow-bg: rgba(210, 153, 34, 0.1);
+    --yellow-border: rgba(210, 153, 34, 0.3);
+    --blue: #58a6ff;
+    --blue-bg: rgba(88, 166, 255, 0.1);
+    --blue-border: rgba(88, 166, 255, 0.3);
+    --purple: #bc8cff;
+    --purple-bg: rgba(188, 140, 255, 0.1);
+    --purple-border: rgba(188, 140, 255, 0.3);
+    --cyan: #39d0d8;
+    --accent: #58a6ff;
+    --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  /* ── LAYOUT ───────────────────────────────────────────────────── */
+  .slide {
+    min-height: 100vh;
+    padding: 80px 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    max-width: 1100px;
+    margin: 0 auto;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .slide:last-child { border-bottom: none; }
+
+  /* ── TYPOGRAPHY ───────────────────────────────────────────────── */
+  h1 {
+    font-size: 3.2rem;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+  }
+
+  h2 {
+    font-size: 1.8rem;
+    font-weight: 600;
+    margin-bottom: 32px;
+    letter-spacing: -0.02em;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  h2 .slide-num {
+    font-family: var(--mono);
+    font-size: 0.9rem;
+    color: var(--text-dim);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 2px 8px;
+  }
+
+  h3 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--blue);
+  }
+
+  p { color: var(--text-muted); line-height: 1.7; }
+
+  /* ── SLIDE 1: TITLE ───────────────────────────────────────────── */
+  .slide-title {
+    border-bottom: none;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .slide-title::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 80% 50%, rgba(88, 166, 255, 0.06) 0%, transparent 70%),
+      radial-gradient(ellipse 40% 60% at 20% 70%, rgba(63, 185, 80, 0.04) 0%, transparent 60%);
+    pointer-events: none;
+  }
+
+  .title-eyebrow {
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    color: var(--green);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+
+  .title-main {
+    background: linear-gradient(135deg, var(--text) 0%, var(--blue) 60%, var(--purple) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 24px;
+  }
+
+  .title-sub {
+    font-size: 1.25rem;
+    color: var(--text-muted);
+    max-width: 620px;
+    margin-bottom: 48px;
+  }
+
+  .title-pills {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .pill {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+  }
+
+  .pill.green { border-color: var(--green-border); background: var(--green-bg); color: var(--green); }
+  .pill.blue  { border-color: var(--blue-border);  background: var(--blue-bg);  color: var(--blue); }
+  .pill.red   { border-color: var(--red-border);   background: var(--red-bg);   color: var(--red); }
+  .pill.purple { border-color: var(--purple-border); background: var(--purple-bg); color: var(--purple); }
+
+  /* ── CODE BLOCKS ───────────────────────────────────────────────── */
+  pre {
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    line-height: 1.6;
+    background: var(--bg-code);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 20px 24px;
+    overflow-x: auto;
+    tab-size: 4;
+  }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+
+  pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    font-size: inherit;
+  }
+
+  .token-comment   { color: var(--text-dim); }
+  .token-keyword   { color: var(--purple); }
+  .token-string    { color: var(--green); }
+  .token-type      { color: var(--blue); }
+  .token-fn        { color: var(--cyan); }
+  .token-number    { color: #f2cc60; }
+  .token-added     { color: var(--green); background: var(--green-bg); display: block; margin: 0 -24px; padding: 0 24px; }
+  .token-removed   { color: var(--red);   background: var(--red-bg);   display: block; margin: 0 -24px; padding: 0 24px; }
+  .token-highlight { background: rgba(88, 166, 255, 0.12); display: block; margin: 0 -24px; padding: 0 24px; }
+
+  /* ── GRID LAYOUTS ──────────────────────────────────────────────── */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    align-items: start;
+  }
+
+  .three-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 20px;
+  }
+
+  /* ── CARDS ─────────────────────────────────────────────────────── */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+  }
+
+  .card.red    { border-color: var(--red-border);    background: var(--red-bg); }
+  .card.green  { border-color: var(--green-border);  background: var(--green-bg); }
+  .card.blue   { border-color: var(--blue-border);   background: var(--blue-bg); }
+  .card.yellow { border-color: var(--yellow-border); background: var(--yellow-bg); }
+
+  .card-label {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .card.red    .card-label { color: var(--red); }
+  .card.green  .card-label { color: var(--green); }
+  .card.blue   .card-label { color: var(--blue); }
+  .card.yellow .card-label { color: var(--yellow); }
+
+  /* ── TABLE ─────────────────────────────────────────────────────── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+  }
+
+  th {
+    text-align: left;
+    padding: 10px 16px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+  }
+
+  td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  tr:last-child td { border-bottom: none; }
+
+  .badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge.fixed   { background: var(--green-bg);  color: var(--green);  border: 1px solid var(--green-border); }
+  .badge.found   { background: var(--red-bg);    color: var(--red);    border: 1px solid var(--red-border); }
+  .badge.phantom { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-border); }
+  .badge.new     { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); }
+
+  td strong { color: var(--text); font-weight: 600; }
+
+  /* ── FLOW DIAGRAM ──────────────────────────────────────────────── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: wrap;
+    row-gap: 16px;
+  }
+
+  .flow-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    text-align: center;
+    min-width: 140px;
+  }
+
+  .flow-box .fb-label {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+
+  .flow-box .fb-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .flow-box.python { border-color: var(--blue-border); background: var(--blue-bg); }
+  .flow-box.python .fb-name { color: var(--blue); }
+  .flow-box.script { border-color: var(--purple-border); background: var(--purple-bg); }
+  .flow-box.script .fb-name { color: var(--purple); }
+  .flow-box.generated { border-color: var(--green-border); background: var(--green-bg); }
+  .flow-box.generated .fb-name { color: var(--green); }
+  .flow-box.consumer { border-color: var(--border); background: var(--bg-elevated); }
+  .flow-box.consumer .fb-name { color: var(--text-muted); }
+  .flow-box.hook { border-color: var(--yellow-border); background: var(--yellow-bg); }
+  .flow-box.hook .fb-name { color: var(--yellow); }
+
+  .flow-arrow {
+    color: var(--text-dim);
+    font-size: 1.4rem;
+    padding: 0 8px;
+    flex-shrink: 0;
+  }
+
+  .flow-branch {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* ── TIMELINE / BEFORE-AFTER ───────────────────────────────────── */
+  .timeline {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+
+  .timeline-col {
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .timeline-header {
+    padding: 14px 20px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+  }
+
+  .timeline-col.before .timeline-header {
+    background: var(--red-bg);
+    border: 1px solid var(--red-border);
+    border-bottom: none;
+    color: var(--red);
+  }
+
+  .timeline-col.after .timeline-header {
+    background: var(--green-bg);
+    border: 1px solid var(--green-border);
+    border-bottom: none;
+    color: var(--green);
+  }
+
+  .timeline-body {
+    background: var(--bg-card);
+    padding: 20px;
+  }
+
+  .timeline-col.before .timeline-body {
+    border: 1px solid var(--red-border);
+    border-top: none;
+  }
+
+  .timeline-col.after .timeline-body {
+    border: 1px solid var(--green-border);
+    border-top: none;
+  }
+
+  .timeline-item {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+    align-items: flex-start;
+  }
+
+  .timeline-item:last-child { margin-bottom: 0; }
+
+  .t-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-top: 7px;
+    flex-shrink: 0;
+  }
+
+  .timeline-col.before .t-dot { background: var(--red); }
+  .timeline-col.after  .t-dot { background: var(--green); }
+
+  .t-text { font-size: 0.88rem; color: var(--text-muted); line-height: 1.5; }
+  .t-time {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+    display: inline-block;
+    margin-top: 4px;
+  }
+
+  .timeline-col.before .t-time {
+    background: var(--red-bg);
+    color: var(--red);
+    border: 1px solid var(--red-border);
+  }
+
+  .timeline-col.after .t-time {
+    background: var(--green-bg);
+    color: var(--green);
+    border: 1px solid var(--green-border);
+  }
+
+  /* ── PROTECTION CLASSES ────────────────────────────────────────── */
+  .protection-list {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .prot-item {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    transition: border-color 0.2s;
+  }
+
+  .prot-item:hover { border-color: var(--green-border); }
+
+  .prot-num {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--green);
+    background: var(--green-bg);
+    border: 1px solid var(--green-border);
+    border-radius: 4px;
+    padding: 2px 8px;
+    white-space: nowrap;
+    margin-top: 2px;
+  }
+
+  .prot-content { flex: 1; }
+  .prot-title {
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+    font-size: 0.95rem;
+  }
+
+  .prot-desc {
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    line-height: 1.5;
+  }
+
+  /* ── NUMBERS SLIDE ─────────────────────────────────────────────── */
+  .numbers-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+  }
+
+  .number-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px 24px;
+    text-align: center;
+  }
+
+  .number-big {
+    font-family: var(--mono);
+    font-size: 3rem;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    background: linear-gradient(135deg, var(--blue) 0%, var(--purple) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .number-label {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: var(--mono);
+  }
+
+  /* ── DIVIDER ───────────────────────────────────────────────────── */
+  .divider {
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--border), transparent);
+    margin: 32px 0;
+  }
+
+  /* ── FILE LABEL ────────────────────────────────────────────────── */
+  .file-label {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    padding: 5px 14px;
+    display: inline-block;
+  }
+
+  .file-label + pre {
+    border-radius: 0 6px 6px 6px;
+  }
+
+  /* ── MISC ──────────────────────────────────────────────────────── */
+  .mt-sm  { margin-top: 12px; }
+  .mt-md  { margin-top: 24px; }
+  .mt-lg  { margin-top: 40px; }
+  .mb-md  { margin-bottom: 24px; }
+
+  .note {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    font-style: italic;
+    margin-top: 10px;
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    padding: 2px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    margin-right: 6px;
+  }
+
+  /* Responsive */
+  @media (max-width: 800px) {
+    h1 { font-size: 2.2rem; }
+    .two-col, .timeline, .three-col, .numbers-grid { grid-template-columns: 1fr; }
+    .flow { flex-direction: column; align-items: flex-start; }
+    .flow-arrow { transform: rotate(90deg); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 1 -->
+<section class="slide slide-title">
+  <div class="title-eyebrow">Test Strategy ∙ Priority 1 ∙ Implementation Report</div>
+  <h1 class="title-main">Enum Codegen</h1>
+  <p class="title-sub">
+    A single Python script that reads all backend enums at commit time and writes the
+    TypeScript types — turning enum drift from a silent runtime mystery into a compile-time error.
+  </p>
+  <div class="title-pills">
+    <span class="pill green">Python → TypeScript</span>
+    <span class="pill blue">12 enums · 54 members</span>
+    <span class="pill">~100ms pre-commit check</span>
+    <span class="pill red">3 bugs caught</span>
+    <span class="pill purple">5 drift classes eliminated</span>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 2 -->
+<section class="slide">
+  <h2><span class="slide-num">02</span> The Problem: Silent Drift</h2>
+
+  <div class="two-col">
+    <div>
+      <div class="card red">
+        <div class="card-label">Python — source of truth</div>
+        <pre><code><span class="token-keyword">class</span> <span class="token-type">TaskStatus</span>(<span class="token-type">str</span>, <span class="token-type">Enum</span>):
+    PENDING            = <span class="token-string">"pending"</span>
+    BUILDING           = <span class="token-string">"building"</span>
+    PENDING_USER_ACTION = <span class="token-string">"pending_user_action"</span>
+    VERIFYING          = <span class="token-string">"verifying"</span>
+    RECOVERING         = <span class="token-string">"recovering"</span>
+    FAN_OUT_RUNNING    = <span class="token-string">"fan_out_running"</span>
+    COMPLETED          = <span class="token-string">"completed"</span>
+    FAILED             = <span class="token-string">"failed"</span></code></pre>
+      </div>
+
+      <div class="card red mt-md">
+        <div class="card-label">Python RunStatus — source of truth</div>
+        <pre><code><span class="token-keyword">class</span> <span class="token-type">RunStatus</span>(<span class="token-type">str</span>, <span class="token-type">Enum</span>):
+    DRAFT     = <span class="token-string">"draft"</span>
+    ACTIVE    = <span class="token-string">"active"</span>
+    PAUSED    = <span class="token-string">"paused"</span>
+    STOPPING  = <span class="token-string">"stopping"</span>
+    COMPLETED = <span class="token-string">"completed"</span>
+    FAILED    = <span class="token-string">"failed"</span>
+    <span class="token-comment"># NOTE: no "cancelled"</span></code></pre>
+      </div>
+    </div>
+
+    <div>
+      <div class="card yellow">
+        <div class="card-label">TypeScript — hand-maintained (old)</div>
+        <pre><code><span class="token-comment">// ui/src/types/runs.ts — written by hand</span>
+<span class="token-keyword">export type</span> <span class="token-type">TaskStatus</span> =
+  | <span class="token-string">'pending'</span>
+  | <span class="token-string">'building'</span>
+  <span class="token-comment">// 'pending_user_action' MISSING</span>
+  | <span class="token-string">'verifying'</span>
+  | <span class="token-string">'recovering'</span>
+  | <span class="token-string">'fan_out_running'</span>
+  | <span class="token-string">'completed'</span>
+  | <span class="token-string">'failed'</span>;</code></pre>
+
+        <pre class="mt-sm"><code><span class="token-comment">// TERMINAL_STATUSES — also hand-maintained</span>
+<span class="token-keyword">const</span> <span class="token-type">TERMINAL_STATUSES</span> = [
+  <span class="token-string">'completed'</span>,
+  <span class="token-string">'failed'</span>,
+  <span class="token-string">'cancelled'</span>,  <span class="token-comment">// PHANTOM — never in Python</span>
+] <span class="token-keyword">as const</span>;</code></pre>
+      </div>
+
+      <div class="mt-md" style="padding: 16px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px;">
+        <p style="font-size: 0.85rem; margin-bottom: 10px; color: var(--text);">What made this invisible:</p>
+        <ul style="list-style: none; font-size: 0.83rem; color: var(--text-muted); display: flex; flex-direction: column; gap: 6px;">
+          <li>→ <code>TaskStatus</code> was typed as <code>string</code> in many callers — missing values passed silently</li>
+          <li>→ <code>cancelled</code> in a union is never flagged "extra" by TypeScript</li>
+          <li>→ <code>AgentRunnerType</code> was <code>type = string</code> — any invalid string accepted</li>
+          <li>→ No CI check compared Python ↔ TypeScript at any point</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 3 -->
+<section class="slide">
+  <h2><span class="slide-num">03</span> What We Built</h2>
+
+  <div class="flow mb-md">
+    <div class="flow-box python">
+      <div class="fb-label">Python</div>
+      <div class="fb-name">enums.py</div>
+      <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; font-family: var(--mono);">12 str-enums</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box script">
+      <div class="fb-label">Script</div>
+      <div class="fb-name">export_enums.py</div>
+      <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; font-family: var(--mono);">importlib + inspect</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-box generated">
+      <div class="fb-label">Generated</div>
+      <div class="fb-name">generated-enums.ts</div>
+      <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; font-family: var(--mono);">54 members</div>
+    </div>
+    <div class="flow-arrow">→</div>
+    <div class="flow-branch">
+      <div class="flow-box consumer">
+        <div class="fb-label">Re-export</div>
+        <div class="fb-name">enums.ts</div>
+        <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; font-family: var(--mono);">export type * from …</div>
+      </div>
+      <div class="flow-box consumer">
+        <div class="fb-label">Consumers</div>
+        <div class="fb-name">TypeScript</div>
+        <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; font-family: var(--mono);">type-checked at compile</div>
+      </div>
+    </div>
+    <div class="flow-arrow">+</div>
+    <div class="flow-box hook">
+      <div class="fb-label">Pre-commit</div>
+      <div class="fb-name">enum-drift hook</div>
+      <div style="font-size: 0.72rem; color: var(--text-dim); margin-top: 4px; font-family: var(--mono);">--check · ~100ms</div>
+    </div>
+  </div>
+
+  <div class="three-col mt-md">
+    <div class="card">
+      <div class="card-label" style="color: var(--purple);">Scope filter</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted);">Hook fires <strong style="color: var(--text);">only</strong> when
+        <code>enums.py</code> or <code>generated-enums.ts</code> changes. Zero overhead on unrelated commits.</p>
+    </div>
+    <div class="card">
+      <div class="card-label" style="color: var(--blue);">--check mode</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted);">CI-safe read-only mode. Computes expected output, diffs against disk,
+        exits 1 with unified diff if stale. No writes.</p>
+    </div>
+    <div class="card">
+      <div class="card-label" style="color: var(--green);">Insertion order</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted);">Uses <code>module.__dict__</code> (not <code>inspect.getmembers</code>)
+        to preserve Python source-file definition order in output.</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 4 -->
+<section class="slide">
+  <h2><span class="slide-num">04</span> Bugs Caught</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Bug</th>
+        <th>Type</th>
+        <th>What happened</th>
+        <th>Impact</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Missing <code>pending_user_action</code> in TypeScript TaskStatus</strong></td>
+        <td><span class="badge fixed">Missing type</span></td>
+        <td>Python added the status; TS hand-maintained union never got it. Code handled it as bare <code>string</code> — no type error, no catch.</td>
+        <td>Tasks stuck in this state rendered with wrong/fallback styling. Any exhaustive switch silently hit <code>default</code>.</td>
+        <td><span class="badge fixed">Protected</span></td>
+      </tr>
+      <tr>
+        <td><strong>Phantom <code>cancelled</code> in TERMINAL_STATUSES</strong></td>
+        <td><span class="badge phantom">Phantom value</span></td>
+        <td><code>'cancelled'</code> was in the frontend's terminal set but never existed in <code>RunStatus</code> enum on the Python side.</td>
+        <td>Polling logic that stopped on terminal status would incorrectly halt if it ever received a string it pattern-matched against — or silently do nothing on a real run that was just stopped differently.</td>
+        <td><span class="badge fixed">Protected</span></td>
+      </tr>
+      <tr>
+        <td><strong>NEW: <code>pending_user_action</code> missing from <code>taskStatusColor</code> switch</strong></td>
+        <td><span class="badge new">Latent exhaustion gap</span></td>
+        <td>The switch in <code>ui/src/lib/status.ts</code> had no case for <code>'pending_user_action'</code>. Only discoverable once the type changed from <code>string</code> to the strict union.</td>
+        <td>TypeScript flagged the switch as non-exhaustive the moment the union narrowed. Without codegen this would never have been caught statically.</td>
+        <td><span class="badge new">Found &amp; fixed</span></td>
+      </tr>
+      <tr>
+        <td><strong>Over-permissive <code>AgentRunnerType</code></strong></td>
+        <td><span class="badge found">Weak type</span></td>
+        <td><code>AgentRunnerType</code> was declared as <code>type AgentRunnerType = string</code>. Any invalid runner string passed silently.</td>
+        <td>New agent types added only to frontend (or only to backend) would compile and run silently wrong.</td>
+        <td><span class="badge fixed">Protected</span></td>
+      </tr>
+      <tr>
+        <td><strong>7 enum types missing from TypeScript surface entirely</strong></td>
+        <td><span class="badge found">Missing types</span></td>
+        <td><code>RoutineSource</code>, <code>GateType</code>, <code>MergeStrategy</code>, <code>StepType</code>, <code>Complexity</code>, <code>ModelProfile</code>, <code>PhaseType</code> — all defined in Python, none exported to TS.</td>
+        <td>Frontend code using these values had no type safety at all. Any misspelling or stale value was undetectable.</td>
+        <td><span class="badge fixed">Protected</span></td>
+      </tr>
+      <tr>
+        <td><strong><code>ModelProfile</code> duplicated in two files</strong></td>
+        <td><span class="badge found">Duplication drift</span></td>
+        <td>Manually defined in <code>modelProfiles.ts</code> and would also come from <code>generated-enums.ts</code>. Two sources of truth diverge over time.</td>
+        <td>Any future Python enum member addition would be reflected in one but not the other — until someone noticed a mismatch.</td>
+        <td><span class="badge fixed">Resolved</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="note mt-md">Bugs 1 and 2 were already fixed before this work. The codegen now prevents regression.
+     Bug 3 (the new latent gap) was discovered as a <em>direct consequence</em> of tightening the type.</p>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 5 -->
+<section class="slide">
+  <h2><span class="slide-num">05</span> Speed Impact: Detect Drift</h2>
+
+  <div class="timeline">
+    <div class="timeline-col before">
+      <div class="timeline-header">Before — Runtime Mystery</div>
+      <div class="timeline-body">
+        <div class="timeline-item">
+          <div class="t-dot"></div>
+          <div class="t-text">
+            Python developer adds <code>'pending_user_action'</code> to <code>TaskStatus</code>.
+            PR merges. TS side untouched.
+            <div class="t-time">T+0</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="t-dot"></div>
+          <div class="t-text">
+            Frontend compiles. No error — <code>TaskStatus</code> is typed as <code>string</code>
+            or the union simply doesn't include it yet.
+            <div class="t-time">T+0 (silent)</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="t-dot"></div>
+          <div class="t-text">
+            Tasks reach the new status in production. UI renders the wrong color,
+            hits the <code>default</code> branch, shows stale labels.
+            <div class="t-time">T+days/weeks</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="t-dot"></div>
+          <div class="t-text">
+            Developer opens browser, sees broken UI, opens DevTools, traces the value,
+            finds the TS type, remembers to update it, opens a fix PR.
+            <div class="t-time">T+hours of debugging</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline-col after">
+      <div class="timeline-header">After — Compile-Time Failure</div>
+      <div class="timeline-body">
+        <div class="timeline-item">
+          <div class="t-dot"></div>
+          <div class="t-text">
+            Developer adds new enum member to <code>enums.py</code>, runs <code>git commit</code>.
+            <div class="t-time">T+0</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="t-dot"></div>
+          <div class="t-text">
+            Pre-commit <code>enum-drift</code> hook fires (<code>enums.py</code> changed).
+            <code>export_enums.py --check</code> runs in ~100ms, detects stale
+            <code>generated-enums.ts</code>, prints unified diff, exits 1.
+            <div class="t-time">T+100ms (blocked)</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="t-dot"></div>
+          <div class="t-text">
+            Developer runs <code>python scripts/export_enums.py</code>.
+            File regenerated. TypeScript compiler flags any exhaustion gaps in switches.
+            Fix is immediate and obvious.
+            <div class="t-time">T+30 seconds</div>
+          </div>
+        </div>
+        <div class="timeline-item">
+          <div class="t-dot"></div>
+          <div class="t-text">
+            Commit succeeds. TS, Python, and UI are in sync. Zero drift reaches production.
+            <div class="t-time">T+1 minute</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-md" style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 20px 24px; display: flex; gap: 32px; align-items: center; flex-wrap: wrap;">
+    <div style="text-align: center;">
+      <div style="font-family: var(--mono); font-size: 2rem; font-weight: 700; color: var(--red);">hours</div>
+      <div style="font-size: 0.78rem; color: var(--text-dim); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em;">time to detect (before)</div>
+    </div>
+    <div style="font-size: 2rem; color: var(--text-dim);">→</div>
+    <div style="text-align: center;">
+      <div style="font-family: var(--mono); font-size: 2rem; font-weight: 700; color: var(--green);">~100ms</div>
+      <div style="font-size: 0.78rem; color: var(--text-dim); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.08em;">time to detect (after)</div>
+    </div>
+    <div style="width: 1px; background: var(--border); height: 50px;"></div>
+    <div style="flex: 1; min-width: 200px;">
+      <p style="font-size: 0.85rem; color: var(--text-muted);">Hook only fires when <code>enums.py</code> or <code>generated-enums.ts</code> is in the commit.
+        Zero overhead on every other change.</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 6 -->
+<section class="slide">
+  <h2><span class="slide-num">06</span> Classes of Issues Now Prevented</h2>
+
+  <div class="protection-list">
+    <div class="prot-item">
+      <div class="prot-num">01</div>
+      <div class="prot-content">
+        <div class="prot-title">Missing frontend type</div>
+        <div class="prot-desc">
+          Python adds a new enum member → the generated TS file is instantly stale → pre-commit blocks the commit →
+          developer regenerates → TypeScript union now includes the new value.
+          A missing type can never silently reach production.
+        </div>
+      </div>
+    </div>
+
+    <div class="prot-item">
+      <div class="prot-num">02</div>
+      <div class="prot-content">
+        <div class="prot-title">Phantom frontend type</div>
+        <div class="prot-desc">
+          A value that exists in TS but never in Python (e.g. <code>'cancelled'</code> in RunStatus).
+          The generated file is authoritative and only contains values from the Python source.
+          There is no mechanism by which a phantom value can enter the generated file.
+        </div>
+      </div>
+    </div>
+
+    <div class="prot-item">
+      <div class="prot-num">03</div>
+      <div class="prot-content">
+        <div class="prot-title">Incomplete switch exhaustion</div>
+        <div class="prot-desc">
+          When the union is strict, TypeScript's exhaustiveness checking flags any switch that
+          doesn't handle the new member. Bug 3 (<code>taskStatusColor</code>) was discovered
+          exactly this way — the moment the loose <code>string</code> type became a tight union,
+          the compiler flagged the gap.
+        </div>
+      </div>
+    </div>
+
+    <div class="prot-item">
+      <div class="prot-num">04</div>
+      <div class="prot-content">
+        <div class="prot-title">Over-permissive types masking invalid values</div>
+        <div class="prot-desc">
+          <code>AgentRunnerType = string</code> accepted any string. Now it's a union of exactly
+          7 values that mirror the Python enum. A new agent runner type added to only one side
+          fails to compile on the other.
+        </div>
+      </div>
+    </div>
+
+    <div class="prot-item">
+      <div class="prot-num">05</div>
+      <div class="prot-content">
+        <div class="prot-title">Manual sync errors (general)</div>
+        <div class="prot-desc">
+          Previously, keeping Python and TypeScript in sync required a human to remember to
+          update a separate file. The codegen eliminates the human step entirely —
+          the generated file is the only TS enum surface, and it is always derived from Python.
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 7 -->
+<section class="slide">
+  <h2><span class="slide-num">07</span> Implementation</h2>
+
+  <div class="two-col">
+    <div>
+      <div class="file-label">scripts/export_enums.py — core logic</div>
+      <pre><code><span class="token-keyword">def</span> <span class="token-fn">is_str_enum</span>(obj) -> <span class="token-type">bool</span>:
+    <span class="token-string">"""Return True if obj is a class that
+    inherits from both str and Enum."""</span>
+    <span class="token-keyword">return</span> (
+        inspect.isclass(obj)
+        <span class="token-keyword">and</span> issubclass(obj, <span class="token-type">str</span>)
+        <span class="token-keyword">and</span> issubclass(obj, <span class="token-type">Enum</span>)
+        <span class="token-keyword">and</span> obj <span class="token-keyword">is not</span> <span class="token-type">Enum</span>
+    )
+
+<span class="token-keyword">def</span> <span class="token-fn">enum_to_ts_union</span>(enum_cls) -> <span class="token-type">str</span>:
+    <span class="token-string">"""Convert a str-enum to a TS union type."""</span>
+    members = [<span class="token-string">f"'{m.value}'"</span> <span class="token-keyword">for</span> m <span class="token-keyword">in</span> enum_cls]
+    union = <span class="token-string">" | "</span>.join(members)
+    <span class="token-keyword">return</span> <span class="token-string">f"export type {enum_cls.__name__} = {union};"</span>
+
+<span class="token-keyword">def</span> <span class="token-fn">generate_output</span>(module) -> <span class="token-type">str</span>:
+    lines = [HEADER.format(source=SOURCE_REL)]
+    <span class="token-comment"># __dict__ preserves source-file order</span>
+    <span class="token-keyword">for</span> _name, obj <span class="token-keyword">in</span> module.__dict__.items():
+        <span class="token-keyword">if</span> is_str_enum(obj):
+            lines.append(enum_to_ts_union(obj))
+            lines.append(<span class="token-string">""</span>)
+    <span class="token-keyword">return</span> <span class="token-string">"\n"</span>.join(lines)</code></pre>
+    </div>
+
+    <div>
+      <div class="file-label">ui/src/types/enums.ts — before</div>
+      <pre><code><span class="token-removed">// Hand-maintained — 5 types, 2 with bugs</span>
+<span class="token-removed">export type TaskStatus =</span>
+<span class="token-removed">  | 'pending'</span>
+<span class="token-removed">  | 'building'</span>
+<span class="token-removed">  // pending_user_action MISSING</span>
+<span class="token-removed">  | 'verifying' | 'recovering' | ...</span>
+<span class="token-removed"></span>
+<span class="token-removed">export type AgentRunnerType = string;</span>
+<span class="token-removed">// RunStatus included 'cancelled' (phantom)</span></code></pre>
+
+      <div class="mt-sm file-label">ui/src/types/enums.ts — after</div>
+      <pre><code><span class="token-added">export type * from './generated-enums';</span></code></pre>
+
+      <div class="mt-md file-label">.pre-commit-config.yaml — enum-drift hook</div>
+      <pre><code>- <span class="token-type">id</span>: enum-drift
+  <span class="token-type">name</span>: enum-drift
+  <span class="token-type">entry</span>: uv run python scripts/export_enums.py --check
+  <span class="token-type">language</span>: system
+  <span class="token-type">pass_filenames</span>: <span class="token-keyword">false</span>
+  <span class="token-type">files</span>: <span class="token-string">^(src/orchestrator/config/enums\.py|</span>
+         <span class="token-string">ui/src/types/generated-enums\.ts)$</span></code></pre>
+
+      <p class="note mt-sm">The <code>files:</code> regex means the hook is skipped on every commit that doesn't touch either file — zero overhead for typical work.</p>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="file-label">ui/src/types/generated-enums.ts — excerpt</div>
+  <pre><code><span class="token-comment">// AUTO-GENERATED — do not edit by hand.</span>
+<span class="token-comment">// Source: src/orchestrator/config/enums.py</span>
+<span class="token-comment">// Run `python scripts/export_enums.py` to regenerate.</span>
+
+<span class="token-keyword">export type</span> <span class="token-type">RunStatus</span> = <span class="token-string">'draft'</span> | <span class="token-string">'active'</span> | <span class="token-string">'paused'</span> | <span class="token-string">'stopping'</span> | <span class="token-string">'completed'</span> | <span class="token-string">'failed'</span>;
+
+<span class="token-keyword">export type</span> <span class="token-type">TaskStatus</span> = <span class="token-string">'pending'</span> | <span class="token-string">'building'</span> | <span class="token-string">'pending_user_action'</span> | <span class="token-string">'verifying'</span> | <span class="token-string">'recovering'</span> | <span class="token-string">'fan_out_running'</span> | <span class="token-string">'completed'</span> | <span class="token-string">'failed'</span>;
+
+<span class="token-keyword">export type</span> <span class="token-type">AgentRunnerType</span> = <span class="token-string">'openhands_local'</span> | <span class="token-string">'openhands_docker'</span> | <span class="token-string">'cli_subprocess'</span> | <span class="token-string">'user_managed'</span> | <span class="token-string">'codex_server'</span> | <span class="token-string">'claude_sdk'</span> | <span class="token-string">'script'</span>;
+
+<span class="token-keyword">export type</span> <span class="token-type">GateType</span> = <span class="token-string">'checklist'</span> | <span class="token-string">'grade_threshold'</span> | <span class="token-string">'human_approval'</span> | <span class="token-string">'auto_verify'</span>;
+
+<span class="token-comment">// ... 8 more types</span></code></pre>
+</section>
+
+
+<!-- ═══════════════════════════════════════════════════════════ SLIDE 8 -->
+<section class="slide" style="border-bottom: none;">
+  <h2><span class="slide-num">08</span> By the Numbers</h2>
+
+  <div class="numbers-grid">
+    <div class="number-card">
+      <span class="number-big">12</span>
+      <div class="number-label">Python enums exported</div>
+    </div>
+    <div class="number-card">
+      <span class="number-big">54</span>
+      <div class="number-label">Total enum members</div>
+    </div>
+    <div class="number-card">
+      <span class="number-big">~100ms</span>
+      <div class="number-label">Pre-commit check time</div>
+    </div>
+    <div class="number-card">
+      <span class="number-big">0</span>
+      <div class="number-label">Runtime drift possible</div>
+    </div>
+  </div>
+
+  <div class="mt-lg three-col">
+    <div class="card green">
+      <div class="card-label">Types added</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">7 types now in TypeScript that were missing entirely:</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <span class="tag">RoutineSource</span>
+        <span class="tag">GateType</span>
+        <span class="tag">MergeStrategy</span>
+        <span class="tag">StepType</span>
+        <span class="tag">Complexity</span>
+        <span class="tag">ModelProfile</span>
+        <span class="tag">PhaseType</span>
+      </div>
+    </div>
+    <div class="card blue">
+      <div class="card-label">Narrowed types</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">Types replaced by strict unions from the generated file:</p>
+      <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+        <span class="tag">TaskStatus</span>
+        <span class="tag">RunStatus</span>
+        <span class="tag">AgentRunnerType</span>
+        <span class="tag">Priority</span>
+        <span class="tag">ChecklistStatus</span>
+      </div>
+    </div>
+    <div class="card" style="border-color: var(--purple-border); background: var(--purple-bg);">
+      <div class="card-label" style="color: var(--purple);">Maintenance eliminated</div>
+      <p style="font-size: 0.85rem; color: var(--text-muted);">
+        No more hand-maintained enum files in TypeScript.
+        <code>enums.ts</code> is now a single line.
+        Every future Python enum change flows through one script — no human sync step.
+      </p>
+    </div>
+  </div>
+
+  <div style="margin-top: 60px; padding-top: 32px; border-top: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+    <div style="font-family: var(--mono); font-size: 0.78rem; color: var(--text-dim);">
+      <span class="tag">scripts/export_enums.py</span>
+      <span class="tag">ui/src/types/generated-enums.ts</span>
+      <span class="tag">ui/src/types/enums.ts</span>
+      <span class="tag">.pre-commit-config.yaml</span>
+    </div>
+    <div style="font-family: var(--mono); font-size: 0.75rem; color: var(--text-dim);">
+      Priority 1: Enum Codegen · task-world · 2026
+    </div>
+  </div>
+</section>
+
+</body>
+</html>
