@@ -26,12 +26,50 @@ if [ -f "$ROOT/.git" ]; then
 fi
 
 cleanup() {
+  trap - EXIT INT TERM
   echo ""
   echo "Shutting down..."
-  kill 0 2>/dev/null
-  wait 2>/dev/null
+  if [ -n "${FRONTEND_SUPERVISOR_PID:-}" ]; then
+    kill "$FRONTEND_SUPERVISOR_PID" 2>/dev/null || true
+  fi
+  if [ -n "${BACKEND_PID:-}" ]; then
+    kill "$BACKEND_PID" 2>/dev/null || true
+  fi
+  wait 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
+
+run_frontend_supervisor() {
+  local frontend_pid=""
+
+  shutdown_frontend() {
+    if [ -n "$frontend_pid" ]; then
+      kill "$frontend_pid" 2>/dev/null || true
+      wait "$frontend_pid" 2>/dev/null || true
+    fi
+    exit 0
+  }
+
+  trap shutdown_frontend INT TERM
+
+  while true; do
+    echo "Starting frontend on http://localhost:5173 ..."
+    (
+      cd "$ROOT/ui"
+      npm run dev
+    ) &
+    frontend_pid=$!
+
+    set +e
+    wait "$frontend_pid"
+    local status=$?
+    set -e
+    frontend_pid=""
+
+    echo "Frontend exited with status $status; restarting in 2 seconds..."
+    sleep 2
+  done
+}
 
 # --- Kill stale uvicorn processes on port 8000 ---
 # Two uvicorn processes sharing the same DB cause executor death loops:
@@ -72,16 +110,25 @@ fi
 
 # Backend (FastAPI + uvicorn --reload)
 echo "Starting backend on http://localhost:8000 ..."
-cd "$ROOT"
-uv run uvicorn scripts.serve:app \
-  --reload \
-  --reload-dir "$ROOT/src" \
-  --reload-dir "$ROOT/scripts" \
-  --port 8000 &
+(
+  cd "$ROOT"
+  uv run uvicorn scripts.serve:app \
+    --reload \
+    --reload-dir "$ROOT/src" \
+    --reload-dir "$ROOT/scripts" \
+    --port 8000
+) &
+BACKEND_PID=$!
 
-# Frontend (Vite HMR)
-echo "Starting frontend on http://localhost:5173 ..."
-cd "$ROOT/ui"
-npm run dev &
+# Frontend (Vite HMR, restarted if it exits unexpectedly)
+run_frontend_supervisor &
+FRONTEND_SUPERVISOR_PID=$!
 
-wait
+set +e
+wait "$BACKEND_PID"
+BACKEND_STATUS=$?
+set -e
+
+echo "Backend exited with status $BACKEND_STATUS."
+cleanup
+exit "$BACKEND_STATUS"

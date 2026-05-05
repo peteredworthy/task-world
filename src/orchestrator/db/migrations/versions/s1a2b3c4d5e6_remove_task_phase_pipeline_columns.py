@@ -21,9 +21,15 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Remove the retired per-task phase pipeline state."""
+    inspector = sa.inspect(op.get_bind())
+    existing_columns = {column["name"] for column in inspector.get_columns("tasks")}
+    retired_columns = {"phase_outputs", "current_phase_index"} & existing_columns
+    if not retired_columns:
+        return
+
     with op.batch_alter_table("tasks", schema=None) as batch_op:
-        batch_op.drop_column("phase_outputs")
-        batch_op.drop_column("current_phase_index")
+        for column_name in sorted(retired_columns):
+            batch_op.drop_column(column_name)
 
 
 def downgrade() -> None:
