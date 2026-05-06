@@ -131,6 +131,20 @@ async def test_create_list_start_child_run_and_read_evidence(
     assert evidence[0]["path"] == "docs/run-evidence/slice-01-evidence.json"
     assert evidence[0]["bundle"]["outcome"] == "verified_fix"
 
+    parent_detail = (await client.get(f"/api/runs/{parent_id}")).json()
+    parent_detail_oversight = parent_detail["oversight_state"]
+    assert parent_detail_oversight["child_count"] == 1
+    assert parent_detail_oversight["child_summaries"][0]["evidence"][0]["path"] == (
+        "docs/run-evidence/slice-01-evidence.json"
+    )
+
+    run_list_resp = await client.get("/api/runs")
+    assert run_list_resp.status_code == 200, run_list_resp.text
+    parent_list_item = next(
+        item for item in run_list_resp.json()["runs"] if item["id"] == parent_id
+    )
+    assert parent_list_item["oversight_state"]["child_count"] == 1
+
     refresh_resp = await client.post(f"/api/runs/{parent_id}/oversight/refresh")
     assert refresh_resp.status_code == 200, refresh_resp.text
     oversight = refresh_resp.json()["oversight_state"]

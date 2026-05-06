@@ -2286,15 +2286,19 @@ class WorkflowService:
 
     async def get_run(self, run_id: str) -> Run:
         """Get a run by ID."""
-        return await self._repo.get(run_id)
+        return await self._with_current_oversight(await self._repo.get(run_id))
 
     async def list_runs(self, limit: int | None = None) -> list[Run]:
         """List all runs, optionally limited to the most recent N runs."""
-        return await self._repo.list_all(limit=limit, include_action_logs=False)
+        return await self._with_current_oversight_for_runs(
+            await self._repo.list_all(limit=limit, include_action_logs=False)
+        )
 
     async def list_runs_recent(self, hours: int) -> list[Run]:
         """List runs created within the last N hours."""
-        return await self._repo.list_recent(hours, include_action_logs=False)
+        return await self._with_current_oversight_for_runs(
+            await self._repo.list_recent(hours, include_action_logs=False)
+        )
 
     async def list_repo_names(self) -> list[str]:
         """List unique repository names across all runs."""
@@ -2302,16 +2306,20 @@ class WorkflowService:
 
     async def list_runs_by_repo(self, repo_name: str) -> list[Run]:
         """List runs for a repository."""
-        return await self._repo.list_by_repo(repo_name, include_action_logs=False)
+        return await self._with_current_oversight_for_runs(
+            await self._repo.list_by_repo(repo_name, include_action_logs=False)
+        )
 
     async def list_runs_by_status(self, status: RunStatus) -> list[Run]:
         """List runs filtered by status."""
-        return await self._repo.list_by_status(status, include_action_logs=False)
+        return await self._with_current_oversight_for_runs(
+            await self._repo.list_by_status(status, include_action_logs=False)
+        )
 
     async def list_runs_by_repo_and_status(self, repo_name: str, status: RunStatus) -> list[Run]:
         """List runs filtered by both repository and status."""
-        return await self._repo.list_by_repo_and_status(
-            repo_name, status, include_action_logs=False
+        return await self._with_current_oversight_for_runs(
+            await self._repo.list_by_repo_and_status(repo_name, status, include_action_logs=False)
         )
 
     async def list_child_runs(self, parent_run_id: str) -> list[Run]:
@@ -2323,6 +2331,16 @@ class WorkflowService:
         """Return current deterministic oversight state for a parent run."""
         parent = await self._repo.get(parent_run_id)
         return await self._compute_parent_oversight_state(parent)
+
+    async def _with_current_oversight(self, run: Run) -> Run:
+        """Attach computed oversight to parent runs before returning API data."""
+        if self._is_oversight_parent_run(run):
+            run.oversight_state = await self._compute_parent_oversight_state(run)
+        return run
+
+    async def _with_current_oversight_for_runs(self, runs: list[Run]) -> list[Run]:
+        """Attach computed oversight to any parent runs in a response list."""
+        return [await self._with_current_oversight(run) for run in runs]
 
     async def update_parent_oversight(
         self,
