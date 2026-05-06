@@ -96,7 +96,6 @@ class CreateChildRunRequest(ApiModel):
         "stop",
         "environment_blocked",
     ] = "continue"
-    start: bool = False
 
     @field_validator("agent_runner_type", mode="before")
     @classmethod

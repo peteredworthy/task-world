@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
-from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import EventStore, create_engine, create_session_factory, init_db
 from orchestrator.api import ToolHandler
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
@@ -221,6 +221,7 @@ async def test_oversight_child_run_tools(
     child_id = create_result["child_run_id"]
     assert create_result["parent_run_id"] == "run-1"
     assert create_result["parent_slice_id"] == "slice-01"
+    assert create_result["start_enqueued"] is True
 
     list_result = await handler.handle(
         "orchestrator_list_child_runs",
@@ -312,7 +313,10 @@ async def test_oversight_child_run_tools(
     assert updated_state["decisions"][0]["kind"] == "mcp_update"
 
 
-async def test_parent_terminal_guard_pauses_unresolved_child(service: WorkflowService) -> None:
+async def test_parent_terminal_guard_pauses_unresolved_child(
+    service: WorkflowService,
+    session: AsyncSession,
+) -> None:
     parent = _make_run()
     parent.status = RunStatus.ACTIVE
     task = parent.steps[0].tasks[0]
@@ -347,6 +351,14 @@ async def test_parent_terminal_guard_pauses_unresolved_child(service: WorkflowSe
     assert updated_parent.pause_reason == "oversight_children_unresolved"
     assert updated_parent.oversight_state["terminal_guard"]["can_complete"] is False
     assert updated_parent.oversight_state["active_child_run_ids"] == ["child-1"]
+    store = EventStore(session)
+    events = await store.get_events_for_run(parent.id)
+    status_events = [event["payload"] for event in events if event["type"] == "run_status_changed"]
+    assert any(event["new_status"] == "paused" for event in status_events)
+    assert not any(event["new_status"] == "completed" for event in status_events)
+    pending_actions = await service.get_pending_actions(parent.id)
+    assert pending_actions[0]["action_type"] == "oversight"
+    assert pending_actions[0]["details"]["active_child_run_ids"] == ["child-1"]
 
 
 async def test_collect_run_evidence_uses_files_changed_since_source_commit(

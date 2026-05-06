@@ -345,6 +345,7 @@ async def get_pending_actions(
             approval_prompt=action.get("approval_prompt"),
             summary_artifact=action.get("summary_artifact"),
             is_gate_approval=action.get("is_gate_approval", False),
+            details=action.get("details"),
         )
 
         # Add clarification request if present

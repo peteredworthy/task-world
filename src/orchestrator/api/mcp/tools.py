@@ -217,7 +217,6 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
                     "enum": ["continue", "replan", "stop", "environment_blocked"],
                     "description": "Parent oversight decision that led to this child",
                 },
-                "start": {"type": "boolean", "description": "Whether to enqueue child start"},
             },
             "required": ["parent_run_id", "parent_slice_id", "routine_embedded"],
         },
@@ -689,15 +688,13 @@ class ToolHandler:
             parent_slice_id=parent_slice_id,
             next_action_decision=decision,
         )
-        if args.get("start", False):
-            await self._service.start_run(child.id)
 
         return {
             "parent_run_id": parent_run_id,
             "child_run_id": child.id,
             "parent_slice_id": child.parent_slice_id,
             "status": child.status.value,
-            "started": bool(args.get("start", False)),
+            "start_enqueued": True,
         }
 
     async def _list_child_runs(self, args: dict[str, Any]) -> dict[str, Any]:

@@ -5,7 +5,8 @@ routine:
     Turn one high-level instruction into bounded, verifiable child runs. The parent
     routine maintains target inventory, selects one useful next slice, creates an
     embedded child routine, waits for child state/evidence, refreshes understanding,
-    integrates accepted child work, and writes the final report. V1 runs one child
+    integrates accepted child work, loops to the next unresolved slice, and writes
+    the final report once the target inventory is resolved. V1 runs one child
     implementation run at a time.
 
   strict_validation: true
@@ -102,7 +103,7 @@ routine:
       title: "Launch Child Run"
       step_context: |
         Convert the selected slice into an embedded child routine and create a linked child run through the
-        orchestrator API or MCP tools.
+        orchestrator API or MCP tools. Child creation enqueues the child start automatically.
       mcp_servers:
         - name: "orchestrator"
           url: "http://127.0.0.1:8000/mcp/sse"
@@ -113,7 +114,8 @@ routine:
             Generate one embedded child routine for the selected slice. The child routine must include stable
             requirement IDs, auto-verify commands where possible, verifier rubric IDs matching requirement IDs,
             retry limits, stop/replan conditions, and a required `run.evidence.v1` bundle. Create the child
-            run using `orchestrator_create_child_run` or `POST /api/runs/{parent}/children`.
+            run using `orchestrator_create_child_run` or `POST /api/runs/{parent}/children`; do not try to
+            pass a `start` flag.
           requirements:
             - id: "R1"
               desc: "Child routine is embedded on the child run and is not written to `routines/` unless promoted by a human."
@@ -125,7 +127,7 @@ routine:
               desc: "Child routine requires a `run.evidence.v1` bundle with a distinct outcome."
               priority: critical
             - id: "R4"
-              desc: "The selected runner and runner config are preserved for the child."
+              desc: "The selected runner and runner config are preserved for the child, and child start is enqueued."
               priority: critical
           retry:
             max_attempts: 2
@@ -183,6 +185,12 @@ routine:
               priority: critical
           retry:
             max_attempts: 2
+      transitions:
+        on_condition:
+          - condition: "super_parent_has_unresolved_inventory"
+            target: "SP-02"
+            max_iterations: 20
+            message: "Target inventory remains unresolved; select and launch the next child slice."
 
     - id: "SP-05"
       title: "Parent Validation And Report"

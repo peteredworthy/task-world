@@ -75,6 +75,7 @@ from orchestrator.workflow.events import (
 from orchestrator.workflow.locks import LockManager
 from orchestrator.workflow.engine.transitions import (
     TransitionResult,
+    check_run_completion,
     transition_from_approval,
     transition_from_clarification,
     transition_to_building,
@@ -259,7 +260,11 @@ class WorkflowService:
         state.add_run(run)
         buffer = BufferingEmitter()
         engine = WorkflowEngine(
-            state, clock=self._clock, emitter=buffer, lock_manager=self._lock_manager
+            state,
+            clock=self._clock,
+            emitter=buffer,
+            lock_manager=self._lock_manager,
+            auto_complete_runs=False,
         )
         return engine, state, buffer
 
@@ -1648,10 +1653,7 @@ class WorkflowService:
             # Transition: BUILDING -> VERIFYING -> COMPLETED
             # Since script tasks have no verification, we go directly through
             # submit_for_verification and complete_verification via the engine
-            from orchestrator.workflow.engine.transitions import (
-                check_run_completion,
-                check_step_progression,
-            )
+            from orchestrator.workflow.engine.transitions import check_step_progression
 
             task_in_state.status = TaskStatus.COMPLETED
             state.update_run(state.get_run(run_id))
@@ -1706,20 +1708,12 @@ class WorkflowService:
                             )
                         )
 
-                old_run_status = updated_run.status
-                new_run_status = check_run_completion(updated_run, self._clock.now())
-                if new_run_status is not None:
-                    buffer.emit(
-                        RunStatusChanged(
-                            timestamp=self._clock.now(),
-                            run_id=run_id,
-                            event_type="run_status_changed",
-                            old_status=old_run_status,
-                            new_status=new_run_status,
-                        )
-                    )
-
-            state.update_run(updated_run)
+            await self._resolve_run_completion_transition(
+                updated_run,
+                state,
+                buffer,
+                old_status=updated_run.status,
+            )
             await self._persist(state, run_id, buffer)
 
             logger.info(f"Run {run_id}: script task {task_id} completed successfully")
@@ -1978,6 +1972,7 @@ class WorkflowService:
 
         # Get the updated run after engine processing
         updated_run = state.get_run(run_id)
+        old_run_status = updated_run.status
 
         # Run step_auto_verify for any newly completed steps
         if result.success:
@@ -1990,23 +1985,18 @@ class WorkflowService:
                 all_passed, _ = await self._run_step_auto_verify(updated_run, step)
                 if not all_passed:
                     # Halt the run: mark it FAILED
-                    old_run_status = updated_run.status
                     updated_run.status = RunStatus.FAILED
                     updated_run.last_error = f"Step '{step.config_id}' auto-verify failed"
                     updated_run.completed_at = self._clock.now()
                     state.update_run(updated_run)
-                    buffer.emit(
-                        RunStatusChanged(
-                            timestamp=self._clock.now(),
-                            run_id=run_id,
-                            event_type="run_status_changed",
-                            old_status=old_run_status,
-                            new_status=RunStatus.FAILED,
-                        )
-                    )
                     break
 
-        await self._apply_oversight_terminal_guard(updated_run, state, buffer)
+        await self._resolve_run_completion_transition(
+            updated_run,
+            state,
+            buffer,
+            old_status=old_run_status,
+        )
         updated_run = state.get_run(run_id)
 
         await self._persist(state, run_id, buffer)
@@ -2629,6 +2619,8 @@ class WorkflowService:
 
         await self._repo.save(parent)
         await self._repo.save(child_run)
+        queue = self._get_signal_queue()
+        await queue.enqueue(child_run.id, WorkflowSignal.RUN_START)
         await self._session.commit()
         return child_run
 
@@ -2750,6 +2742,8 @@ class WorkflowService:
         run: Run,
         state: SessionStateManager,
         buffer: BufferingEmitter,
+        *,
+        emit_status_change: bool = True,
     ) -> None:
         children = await self._repo.list_child_runs(run.id, include_action_logs=False)
         if not children and not self._is_oversight_parent_run(run):
@@ -2778,16 +2772,51 @@ class WorkflowService:
                 + "; ".join(str(reason) for reason in blocking_reasons)
             )
             run.completed_at = None
+            if emit_status_change:
+                buffer.emit(
+                    RunStatusChanged(
+                        timestamp=self._clock.now(),
+                        run_id=run.id,
+                        event_type="run_status_changed",
+                        old_status=old_status,
+                        new_status=RunStatus.PAUSED,
+                    )
+                )
+        state.update_run(run)
+
+    async def _resolve_run_completion_transition(
+        self,
+        run: Run,
+        state: SessionStateManager,
+        buffer: BufferingEmitter,
+        *,
+        old_status: RunStatus,
+    ) -> None:
+        """Apply the final run transition after step progression and oversight reduction."""
+        if run.status == RunStatus.ACTIVE:
+            check_run_completion(run, self._clock.now())
+
+        if run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+            await self._apply_oversight_terminal_guard(
+                run,
+                state,
+                buffer,
+                emit_status_change=False,
+            )
+            run = state.get_run(run.id)
+        else:
+            state.update_run(run)
+
+        if run.status != old_status:
             buffer.emit(
                 RunStatusChanged(
                     timestamp=self._clock.now(),
                     run_id=run.id,
                     event_type="run_status_changed",
                     old_status=old_status,
-                    new_status=RunStatus.PAUSED,
+                    new_status=run.status,
                 )
             )
-        state.update_run(run)
 
     def _is_oversight_parent_run(self, run: Run) -> bool:
         """Return whether a run is meant to use super-parent terminal guards."""
@@ -3509,12 +3538,20 @@ class WorkflowService:
         task = self._find_task(run, task_id)
         step = self._find_step_for_task(run, task_id)
         old_status = task.status
+        old_run_status = run.status
 
         engine, state, buffer = self._build_engine(run)
         result = engine.force_accept(run_id, task_id)
         if not result.success:
             raise InvalidTransitionError(old_status.value, result.new_status.value)
 
+        updated_run = state.get_run(run_id)
+        await self._resolve_run_completion_transition(
+            updated_run,
+            state,
+            buffer,
+            old_status=old_run_status,
+        )
         updated_run = state.get_run(run_id)
         await self._persist(state, run_id, buffer)
 
@@ -3572,6 +3609,9 @@ class WorkflowService:
         run = await self._repo.get(run_id)
 
         actions: list[dict[str, Any]] = []
+        oversight_action = self._pending_oversight_action(run)
+        if oversight_action is not None:
+            actions.append(oversight_action)
         current_step_index = run.current_step_index
 
         # Be resilient to stale indices by skipping completed steps.
@@ -3622,6 +3662,43 @@ class WorkflowService:
                 actions.append(action)
 
         return actions
+
+    def _pending_oversight_action(self, run: Run) -> dict[str, Any] | None:
+        """Return a run-level pending action for blocked oversight parents."""
+        oversight_state = run.oversight_state
+        terminal_guard = oversight_state.get("terminal_guard")
+        attention_items = oversight_state.get("attention_items")
+        blocking_reasons: list[Any] = []
+        if isinstance(terminal_guard, dict):
+            terminal_guard_dict = cast(dict[str, Any], terminal_guard)
+            raw_reasons = terminal_guard_dict.get("blocking_reasons")
+            if isinstance(raw_reasons, list):
+                blocking_reasons = cast(list[Any], raw_reasons)
+
+        blocked = (
+            run.pause_reason == "oversight_children_unresolved"
+            or bool(attention_items)
+            or (run.status == RunStatus.PAUSED and bool(blocking_reasons))
+        )
+        if not blocked:
+            return None
+
+        return {
+            "task_id": "",
+            "step_id": "",
+            "action_type": "oversight",
+            "is_gate_approval": False,
+            "approval_prompt": run.last_error
+            or "Parent oversight requires human attention before completion can continue.",
+            "details": {
+                "pause_reason": run.pause_reason,
+                "next_parent_action": oversight_state.get("next_parent_action"),
+                "blocking_reasons": blocking_reasons,
+                "attention_items": attention_items if isinstance(attention_items, list) else [],
+                "active_child_run_ids": oversight_state.get("active_child_run_ids", []),
+                "paused_child_run_ids": oversight_state.get("paused_child_run_ids", []),
+            },
+        }
 
     # --- Recovery methods ---
 

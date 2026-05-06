@@ -35,3 +35,10 @@ def test_tool_definitions_well_formed() -> None:
         "orchestrator_update_parent_oversight",
         "orchestrator_refresh_parent_oversight",
     }
+
+
+def test_create_child_run_has_no_start_flag() -> None:
+    """Child runs always start through service-owned child creation."""
+    tool = next(t for t in ORCHESTRATOR_TOOLS if t["name"] == "orchestrator_create_child_run")
+
+    assert "start" not in tool["inputSchema"]["properties"]

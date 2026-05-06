@@ -23,7 +23,12 @@ from orchestrator.workflow.engine.condition_evaluator import (
     StepOutcome,
 )
 from orchestrator.workflow.engine.errors import GateBlockedError
-from orchestrator.workflow.events import StepSkipped, WorkflowEvent
+from orchestrator.workflow.events import (
+    RunStepBackward,
+    RunStatusChanged,
+    StepSkipped,
+    WorkflowEvent,
+)
 from orchestrator.workflow.engine.gates import GateResult, evaluate_checklist_gate
 from orchestrator.workflow.engine.grades import GradeResult, evaluate_grades
 
@@ -433,6 +438,113 @@ def step_has_failure(step: StepState) -> bool:
     return any(t.status == TaskStatus.FAILED for t in step.tasks if t.parent_task_id is None)
 
 
+def _step_checklist(step: StepState) -> list[ChecklistItem]:
+    return [item for task in step.tasks if task.parent_task_id is None for item in task.checklist]
+
+
+def _find_step_index(run: Run, target_step_id: str) -> int | None:
+    for index, step in enumerate(run.steps):
+        if step.config_id == target_step_id or step.id == target_step_id:
+            return index
+    return None
+
+
+def _reset_step_for_loop(step: StepState) -> None:
+    step.completed = False
+    step.skipped = False
+    step.skip_reason = None
+    step.human_approval = None
+    for task in step.tasks:
+        if task.parent_task_id is not None:
+            continue
+        task.status = TaskStatus.PENDING
+        task.pending_action_type = None
+        task.pending_clarification_id = None
+        for item in task.checklist:
+            item.status = ChecklistStatus.OPEN
+            item.note = None
+            item.grade = None
+            item.grade_reason = None
+
+
+def _pause_for_transition_error(
+    run: Run,
+    *,
+    reason: str,
+    message: str,
+    clock: Clock | None,
+    emitter: EventEmitter | None,
+) -> None:
+    old_status = run.status
+    run.status = RunStatus.PAUSED
+    run.pause_reason = reason
+    run.last_error = message
+    if clock is not None and emitter is not None:
+        emitter.emit(
+            RunStatusChanged(
+                timestamp=clock.now(),
+                run_id=run.id,
+                event_type="run_status_changed",
+                old_status=old_status,
+                new_status=RunStatus.PAUSED,
+            )
+        )
+
+
+def _apply_configured_transition(
+    run: Run,
+    step: StepState,
+    step_config: StepConfig,
+    *,
+    clock: Clock | None,
+    emitter: EventEmitter | None,
+    worktree_path: Path | None,
+) -> bool:
+    target_step_id, message = evaluate_transition_conditions(
+        step_config,
+        step,
+        _step_checklist(step),
+        run,
+        worktree_path,
+    )
+    if target_step_id is None:
+        return False
+
+    target_index = _find_step_index(run, target_step_id)
+    if target_index is None:
+        _pause_for_transition_error(
+            run,
+            reason="transition_target_missing",
+            message=f"Transition target step '{target_step_id}' was not found",
+            clock=clock,
+            emitter=emitter,
+        )
+        return True
+
+    current_index = run.current_step_index
+    if target_index == current_index + 1:
+        return False
+    if target_index > current_index:
+        run.current_step_index = target_index
+        return True
+
+    for index in range(target_index, current_index + 1):
+        _reset_step_for_loop(run.steps[index])
+    run.current_step_index = target_index
+    if clock is not None and emitter is not None:
+        emitter.emit(
+            RunStepBackward(
+                timestamp=clock.now(),
+                run_id=run.id,
+                event_type="run_step_backward",
+                from_step_index=current_index,
+                to_step_index=target_index,
+                reason=message or f"Transition condition returned to {target_step_id}",
+            )
+        )
+    return True
+
+
 def check_step_progression(
     run: Run,
     routine_config: RoutineConfig | None = None,
@@ -681,6 +793,22 @@ def check_step_progression(
         # Step is complete - check for fail-fast
         if step_has_failure(step):
             break
+
+        if routine_config is not None:
+            step_config = _find_step_config(routine_config, step.config_id)
+            if step_config is not None and step_config.transitions is not None:
+                if _apply_configured_transition(
+                    run,
+                    step,
+                    step_config,
+                    clock=clock,
+                    emitter=emitter,
+                    worktree_path=worktree_path,
+                ):
+                    changed = True
+                    if run.status == RunStatus.PAUSED:
+                        break
+                    continue
 
         # Try to advance to next step
         if run.current_step_index >= len(run.steps) - 1:
@@ -1187,6 +1315,21 @@ def evaluate_condition(
             item.priority == Priority.CRITICAL and item.status != ChecklistStatus.DONE
             for item in checklist
         )
+
+    if condition == "super_parent_has_unresolved_inventory":
+        inventory = run.oversight_state.get("target_inventory")
+        if not isinstance(inventory, list):
+            return True
+        for item in cast(list[object], inventory):
+            if not isinstance(item, dict):
+                return True
+            item_dict = cast(dict[str, Any], item)
+            if (
+                item_dict.get("in_scope", True) is not False
+                and item_dict.get("resolved") is not True
+            ):
+                return True
+        return False
 
     # Custom conditions via checklist items with special IDs
     if condition.startswith("checklist:"):

@@ -72,11 +72,13 @@ class WorkflowEngine:
         clock: Clock | None = None,
         emitter: EventEmitter | None = None,
         lock_manager: LockManager | None = None,
+        auto_complete_runs: bool = True,
     ) -> None:
         self._state = state_manager
         self._clock: Clock = clock or DefaultClock()
         self._emitter: EventEmitter = emitter or NoOpEmitter()
         self._lock_manager = lock_manager
+        self._auto_complete_runs = auto_complete_runs
 
     def _extract_model(self, agent_runner_config: dict[str, Any]) -> str | None:
         """Extract model name from agent runner config.
@@ -495,19 +497,20 @@ class WorkflowEngine:
                             )
                         )
 
-                # Check if the entire run is done
-                old_run_status = run.status
-                new_run_status = check_run_completion(run, self._clock.now())
-                if new_run_status is not None:
-                    self._emitter.emit(
-                        RunStatusChanged(
-                            timestamp=self._clock.now(),
-                            run_id=run_id,
-                            event_type="run_status_changed",
-                            old_status=old_run_status,
-                            new_status=new_run_status,
+                if self._auto_complete_runs:
+                    # Check if the entire run is done
+                    old_run_status = run.status
+                    new_run_status = check_run_completion(run, self._clock.now())
+                    if new_run_status is not None:
+                        self._emitter.emit(
+                            RunStatusChanged(
+                                timestamp=self._clock.now(),
+                                run_id=run_id,
+                                event_type="run_status_changed",
+                                old_status=old_run_status,
+                                new_status=new_run_status,
+                            )
                         )
-                    )
 
             self._state.update_run(run)
 
@@ -587,29 +590,30 @@ class WorkflowEngine:
                         )
                     )
 
-        new_run_status = check_run_completion(run, self._clock.now())
-        if new_run_status is not None:
-            self._emitter.emit(
-                RunStatusChanged(
-                    timestamp=self._clock.now(),
-                    run_id=run_id,
-                    event_type="run_status_changed",
-                    old_status=old_run_status,
-                    new_status=new_run_status,
+        new_run_status = None
+        if self._auto_complete_runs:
+            new_run_status = check_run_completion(run, self._clock.now())
+            if new_run_status is not None:
+                self._emitter.emit(
+                    RunStatusChanged(
+                        timestamp=self._clock.now(),
+                        run_id=run_id,
+                        event_type="run_status_changed",
+                        old_status=old_run_status,
+                        new_status=new_run_status,
+                    )
                 )
-            )
-        elif reactivated and run.status == RunStatus.ACTIVE:
-            # Run was re-activated and has more steps to go — emit the status change
-            self._emitter.emit(
-                RunStatusChanged(
-                    timestamp=self._clock.now(),
-                    run_id=run_id,
-                    event_type="run_status_changed",
-                    old_status=old_run_status,
-                    new_status=RunStatus.ACTIVE,
+            elif reactivated and run.status == RunStatus.ACTIVE:
+                # Run was re-activated and has more steps to go — emit the status change
+                self._emitter.emit(
+                    RunStatusChanged(
+                        timestamp=self._clock.now(),
+                        run_id=run_id,
+                        event_type="run_status_changed",
+                        old_status=old_run_status,
+                        new_status=RunStatus.ACTIVE,
+                    )
                 )
-            )
-
         self._state.update_run(run)
         return result
 

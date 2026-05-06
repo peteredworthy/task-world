@@ -1,7 +1,7 @@
 """Clarification API schemas."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import model_validator
 
@@ -99,3 +99,4 @@ class PendingActionSchema(ApiModel):
     summary_artifact: str | None = None
     approval_prompt: str | None = None
     is_gate_approval: bool = False
+    details: dict[str, Any] | None = None

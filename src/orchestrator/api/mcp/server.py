@@ -273,7 +273,6 @@ class OrchestratorMCPServer:
             agent_runner_type: str = "",
             agent_runner_config: dict[str, object] | None = None,
             next_action_decision: str = "continue",
-            start: bool = False,
         ) -> str:
             """Create an oversight child run from an embedded routine."""
             args: dict[str, object] = {
@@ -281,7 +280,6 @@ class OrchestratorMCPServer:
                 "parent_slice_id": parent_slice_id,
                 "routine_embedded": routine_embedded,
                 "next_action_decision": next_action_decision,
-                "start": start,
             }
             if repo_name:
                 args["repo_name"] = repo_name

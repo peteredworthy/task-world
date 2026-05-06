@@ -69,7 +69,6 @@ async def test_create_list_start_child_run_and_read_evidence(
             "routine_embedded": EMBEDDED_ROUTINE,
             "parent_slice_id": "slice-01",
             "next_action_decision": "continue",
-            "start": True,
         },
     )
     assert child_resp.status_code == 201, child_resp.text
@@ -203,7 +202,6 @@ async def test_parent_pause_cancels_active_child_executor(
                 "routine_embedded": EMBEDDED_ROUTINE,
                 "parent_slice_id": "slice-01",
                 "next_action_decision": "continue",
-                "start": True,
             },
         )
         assert child_resp.status_code == 201, child_resp.text

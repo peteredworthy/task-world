@@ -478,8 +478,6 @@ async def create_child_run(
         parent_slice_id=request.parent_slice_id,
         next_action_decision=request.next_action_decision,
     )
-    if request.start:
-        await service.start_run(created.id)
     return _run_to_response(await service.get_run(created.id))
 
 

@@ -4,10 +4,23 @@ import pytest
 from datetime import datetime, timezone
 from pathlib import Path
 
-from orchestrator.config import ChecklistStatus, Priority, TaskStatus
-from orchestrator.config.models import StepConfig, StepTransitions, TaskConfig, TransitionCondition
+from orchestrator.config import ChecklistStatus, Priority, RunStatus, TaskStatus
+from orchestrator.config.models import (
+    RoutineConfig,
+    StepConfig,
+    StepTransitions,
+    TaskConfig,
+    TransitionCondition,
+)
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState, TransitionTracker
-from orchestrator.workflow import evaluate_condition, evaluate_transition_conditions
+from orchestrator.workflow import (
+    BufferingEmitter,
+    DefaultClock,
+    RunStepBackward,
+    check_step_progression,
+    evaluate_condition,
+    evaluate_transition_conditions,
+)
 
 NOW = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
 
@@ -475,6 +488,92 @@ def test_evaluate_transition_conditions_initializes_tracker() -> None:
     evaluate_transition_conditions(step_config, step_state, checklist, run)
     assert run.transition_tracker is not None
     assert run.transition_tracker.get_count("S-01", "S-00") == 1
+
+
+def test_step_progression_applies_configured_loop_transition() -> None:
+    """Completed steps can route backward through configured transition rules."""
+    routine = RoutineConfig(
+        id="super-parent-test",
+        name="Super Parent Test",
+        steps=[
+            StepConfig(
+                id="SP-02",
+                title="Select Next Slice",
+                tasks=[TaskConfig(id="T-01", title="Select", task_context="Select")],
+            ),
+            StepConfig(
+                id="SP-03",
+                title="Launch Child Run",
+                tasks=[TaskConfig(id="T-01", title="Launch", task_context="Launch")],
+            ),
+            StepConfig(
+                id="SP-04",
+                title="Evaluate Evidence",
+                tasks=[TaskConfig(id="T-01", title="Evaluate", task_context="Evaluate")],
+                transitions=StepTransitions(
+                    on_condition=[
+                        TransitionCondition(
+                            condition="super_parent_has_unresolved_inventory",
+                            target="SP-02",
+                            max_iterations=3,
+                            message="Inventory remains unresolved",
+                        )
+                    ]
+                ),
+            ),
+        ],
+    )
+    run = Run(
+        id="run-1",
+        repo_name="proj-1",
+        status=RunStatus.ACTIVE,
+        current_step_index=2,
+        oversight_state={"target_inventory": [{"id": "INV-001", "resolved": False}]},
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="SP-02",
+                completed=True,
+                tasks=[TaskState(id="task-1", config_id="T-01", status=TaskStatus.COMPLETED)],
+            ),
+            StepState(
+                id="step-2",
+                config_id="SP-03",
+                completed=True,
+                tasks=[TaskState(id="task-2", config_id="T-01", status=TaskStatus.COMPLETED)],
+            ),
+            StepState(
+                id="step-3",
+                config_id="SP-04",
+                completed=False,
+                tasks=[TaskState(id="task-3", config_id="T-01", status=TaskStatus.COMPLETED)],
+            ),
+        ],
+    )
+    emitter = BufferingEmitter()
+
+    changed = check_step_progression(
+        run,
+        routine_config=routine,
+        clock=DefaultClock(),
+        emitter=emitter,
+    )
+
+    assert changed is True
+    assert run.current_step_index == 0
+    assert [step.completed for step in run.steps] == [False, False, False]
+    assert [step.tasks[0].status for step in run.steps] == [
+        TaskStatus.PENDING,
+        TaskStatus.PENDING,
+        TaskStatus.PENDING,
+    ]
+    assert run.transition_tracker is not None
+    assert run.transition_tracker.get_count("SP-04", "SP-02") == 1
+    events = emitter.drain()
+    assert len(events) == 1
+    assert isinstance(events[0], RunStepBackward)
+    assert events[0].from_step_index == 2
+    assert events[0].to_step_index == 0
 
 
 def test_evaluate_transition_conditions_with_worktree(tmp_path: Path) -> None:
