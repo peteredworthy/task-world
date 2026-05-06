@@ -284,24 +284,40 @@ class CLIAgent:
         callback_channel: str,
     ) -> str:
         """Build verifier-specific callback instructions."""
-        git_review_section = (
-            "\n\n## Reviewing Code\n"
-            "Use these commands to inspect the builder's changes:\n"
-            "- `git --no-pager log --oneline -10` — recent commits\n"
-            "- `git --no-pager diff HEAD~1 -- <file>` — diff for a specific file\n"
-            "- `git --no-pager show HEAD --stat` — which files changed\n"
-            "- `git --no-pager show HEAD -- <file>` — full diff for one file\n"
-            "IMPORTANT: Always use `git --no-pager` (or pipe through `| head -100`)\n"
-            "to prevent interactive pagers from blocking your terminal.\n"
-            "Never run bare `git diff` or `git show` without --no-pager.\n"
-        )
+        if context.work_mode == "oversight":
+            git_review_section = (
+                "\n\n## Reviewing Oversight Artifacts\n"
+                "Use these commands only to inspect committed oversight documentation or metadata:\n"
+                "- `git --no-pager show HEAD --stat` — which files changed\n"
+                "- `git --no-pager show HEAD -- docs/super-parent .mcp.json` — oversight artifacts\n"
+                "Do not require source, test, dependency, lockfile, migration, or UI edits for "
+                "oversight tasks. Grade the recorded decision, escalation, or replan path.\n"
+                "Never run bare `git diff` or `git show` without --no-pager.\n"
+            )
+            first_workflow_step = (
+                "Review the oversight artifacts, orchestrator state updates, and evidence decisions "
+                "made by the builder."
+            )
+        else:
+            git_review_section = (
+                "\n\n## Reviewing Code\n"
+                "Use these commands to inspect the builder's changes:\n"
+                "- `git --no-pager log --oneline -10` — recent commits\n"
+                "- `git --no-pager diff HEAD~1 -- <file>` — diff for a specific file\n"
+                "- `git --no-pager show HEAD --stat` — which files changed\n"
+                "- `git --no-pager show HEAD -- <file>` — full diff for one file\n"
+                "IMPORTANT: Always use `git --no-pager` (or pipe through `| head -100`)\n"
+                "to prevent interactive pagers from blocking your terminal.\n"
+                "Never run bare `git diff` or `git show` without --no-pager.\n"
+            )
+            first_workflow_step = "Review the code changes made by the builder."
 
         workflow_section = (
             f"\n\n## Orchestrator Integration (Verifier)\n"
             f"You are connected to an orchestrator. Your role is to VERIFY the builder's work.\n"
             f"Run ID: {context.run_id}, Task ID: {context.task_id}\n\n"
             f"### Required Workflow\n"
-            f"1. Review the code changes made by the builder.\n"
+            f"1. {first_workflow_step}\n"
             f"2. Grade EVERY requirement using the grading tool.\n"
             f"3. After grading all requirements, complete the verification.\n"
             f"4. Grades: A (excellent), B (good), C (adequate), D (poor), F (failing)\n"

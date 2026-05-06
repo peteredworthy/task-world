@@ -170,6 +170,18 @@ def test_verifier_prompt_basic() -> None:
     assert "Grade each requirement" in prompt.submission_instructions
 
 
+def test_verifier_prompt_oversight_mode_reviews_oversight_artifacts() -> None:
+    config = _task_config(work_mode="oversight")
+    state = _task_state()
+    prompt = generate_verifier_prompt(config, state)
+
+    assert "oversight reviewer" in prompt.system
+    assert "Review the oversight artifacts" in prompt.system
+    assert "Do not require or suggest source code, tests" in prompt.system
+    assert "Review the code changes made by the builder" not in prompt.system
+    assert "code reviewer" not in prompt.system
+
+
 def test_verifier_prompt_with_rubric() -> None:
     config = _task_config(
         rubric=[
@@ -734,6 +746,19 @@ def test_cli_agent_oversight_prompt_limits_git_workflow() -> None:
     assert "commit your changes to git" not in result
 
 
+def test_cli_agent_oversight_verifier_prompt_avoids_code_review() -> None:
+    context = _make_context("Verifier prompt", work_mode="oversight")
+    context.api_base_url = "http://localhost:8000"
+    result = CLIAgent.build_prompt(
+        "Verifier prompt", context, callback_channel="mcp", phase="verifying"
+    )
+
+    assert "Reviewing Oversight Artifacts" in result
+    assert "Review the oversight artifacts" in result
+    assert "Reviewing Code" not in result
+    assert "Review the code changes made by the builder" not in result
+
+
 def test_cli_agent_no_git_section_for_verifier() -> None:
     """CLIAgent.build_prompt does NOT add git workflow for verifier phase."""
     shared_prompt = _shared_system_prompt()
@@ -775,6 +800,15 @@ def test_openhands_prompt_oversight_mode_blocks_implementation_work() -> None:
     assert "commit your changes to git" not in result
 
 
+def test_openhands_verifier_prompt_oversight_mode_avoids_code_review() -> None:
+    context = _make_context("Some prompt", work_mode="oversight")
+    result = build_openhands_prompt(context, is_verifier=True)
+
+    assert "Review the oversight artifacts" in result
+    assert "Review the code changes made by the builder" not in result
+    assert "Do not require source, test, dependency" in result
+
+
 def test_codex_prompt_includes_sandbox_constraints() -> None:
     """build_codex_server_prompt includes sandbox constraint instructions."""
     context = _make_context("Some prompt")
@@ -808,6 +842,14 @@ def test_codex_prompt_oversight_mode_blocks_implementation_work() -> None:
     assert "commit your changes to git" not in result
 
 
+def test_codex_verifier_prompt_oversight_mode_avoids_code_review() -> None:
+    context = _make_context("Some prompt", work_mode="oversight")
+    result = build_codex_server_prompt(context, is_verifier=True)
+
+    assert "Review the oversight artifacts" in result
+    assert "Review the code changes made by the builder" not in result
+
+
 def test_claude_sdk_prompt_includes_tool_usage_patterns() -> None:
     """build_claude_sdk_prompt includes tool usage pattern instructions."""
     context = _make_context("Some prompt")
@@ -838,6 +880,15 @@ def test_claude_sdk_prompt_oversight_mode_blocks_implementation_work() -> None:
     assert "commit only allowed oversight artifacts" in result
     assert "Implement each requirement." not in result
     assert "commit your changes to git" not in result
+
+
+def test_claude_sdk_verifier_prompt_oversight_mode_avoids_code_review() -> None:
+    context = _make_context("Some prompt", work_mode="oversight")
+    result = build_claude_sdk_prompt(context, is_verifier=True)
+
+    assert "reviewing oversight artifacts" in result
+    assert "Examine the oversight artifacts" in result
+    assert "reviewing code changes" not in result
 
 
 def test_agent_specific_sections_not_in_verifier_prompts() -> None:

@@ -122,6 +122,7 @@ from orchestrator.workflow.oversight_guard import (
     OversightModeViolationError as OversightModeViolationError,
     ensure_oversight_worktree_changes_allowed as ensure_oversight_worktree_changes_allowed,
     find_oversight_change_violations as find_oversight_change_violations,
+    find_oversight_committed_change_violations as find_oversight_committed_change_violations,
 )
 
 from orchestrator.workflow.agent import (
@@ -360,6 +361,7 @@ __all__ = [
     "TargetInventoryItem",
     "ensure_oversight_worktree_changes_allowed",
     "find_oversight_change_violations",
+    "find_oversight_committed_change_violations",
     "reduce_parent_oversight",
     "reduce_parent_oversight_state",
 ]

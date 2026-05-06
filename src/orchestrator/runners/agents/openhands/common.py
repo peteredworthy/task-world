@@ -357,13 +357,26 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
     )
 
     if is_verifier:
+        verifier_action = (
+            "Review the oversight artifacts, orchestrator state updates, and evidence decisions "
+            "made by the builder."
+            if context.work_mode == "oversight"
+            else "Review the code changes made by the builder."
+        )
+        verifier_terminal_tip = (
+            "- To view oversight artifacts: `git --no-pager show HEAD -- docs/super-parent .mcp.json`\n"
+            "- Do not require source, test, dependency, lockfile, migration, or UI edits for oversight tasks.\n"
+            if context.work_mode == "oversight"
+            else "- To view the builder's changes:\n"
+            "  `git --no-pager show HEAD --stat` then `git --no-pager diff HEAD~1 -- <file>`\n"
+        )
         return (
             f"{context.prompt}\n\n"
             f"## Requirements\n{requirements_text}\n\n"
             "## Orchestrator Integration (Verifier)\n"
             "You are connected to an orchestrator. Your role is to VERIFY the builder's work.\n\n"
             "### Required Workflow\n"
-            "1. Review the code changes made by the builder.\n"
+            f"1. {verifier_action}\n"
             "2. Grade EVERY requirement using **orc_set_grade**.\n"
             "3. After grading all requirements, call **orc_submit** to complete verification.\n"
             "4. Grades: A (excellent), B (good), C (adequate), D (poor), F (failing)\n\n"
@@ -381,8 +394,7 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
             "### Terminal Tips\n"
             "- ALWAYS use `git --no-pager` for every git command to avoid pager hangs.\n"
             "- For long output, pipe through `| head -80` to limit lines.\n"
-            "- To view the builder's changes:\n"
-            "  `git --no-pager show HEAD --stat` then `git --no-pager diff HEAD~1 -- <file>`\n"
+            f"{verifier_terminal_tip}"
             "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager."
         )
 

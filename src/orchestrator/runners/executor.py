@@ -1445,6 +1445,7 @@ class AgentRunnerExecutor:
             expected_git_branch=expected_run_branch,
             available_tools=available_tools,
             mcp_servers=mcp_servers,
+            work_mode=task_config.work_mode,
         )
 
         # Run the agent

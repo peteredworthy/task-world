@@ -475,11 +475,17 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
     )
 
     if is_verifier:
+        verifier_action = (
+            "Review the oversight artifacts, orchestrator state updates, and evidence decisions "
+            "made by the builder."
+            if context.work_mode == "oversight"
+            else "Review the code changes made by the builder."
+        )
         tool_section = (
             "## Orchestrator Integration (Verifier)\n"
             "You are connected to an orchestrator. Your role is to VERIFY the builder's work.\n\n"
             "### Required Workflow\n"
-            "1. Review the code changes made by the builder.\n"
+            f"1. {verifier_action}\n"
             "2. Grade EVERY requirement using **grade**.\n"
             "3. After grading all requirements, call **submit** to complete verification.\n"
             "4. Grades: A (excellent), B (good), C (adequate), D (poor), F (failing)\n\n"

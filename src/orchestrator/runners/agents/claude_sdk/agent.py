@@ -323,11 +323,22 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
     )
 
     if is_verifier:
+        verifier_role = (
+            "You are reviewing oversight artifacts, orchestrator state updates, and evidence "
+            "decisions produced by a builder agent."
+            if context.work_mode == "oversight"
+            else "You are reviewing code changes made by a builder agent."
+        )
+        verifier_action = (
+            "Examine the oversight artifacts and recorded decisions."
+            if context.work_mode == "oversight"
+            else "Examine the code changes in the working directory."
+        )
         phase_section = (
             "## Your Role: Verifier\n"
-            "You are reviewing code changes made by a builder agent.\n\n"
+            f"{verifier_role}\n\n"
             "### Required Workflow\n"
-            "1. Examine the code changes in the working directory.\n"
+            f"1. {verifier_action}\n"
             "2. Grade EVERY requirement using the **grade** tool.\n"
             "   - Grades: A (excellent), B (good), C (adequate), D (poor), F (failing)\n"
             "3. After grading ALL requirements, call **submit** to complete verification.\n\n"

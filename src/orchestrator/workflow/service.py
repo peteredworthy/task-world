@@ -215,11 +215,14 @@ def resolve_step_config_id_for_task(run: Run, task_id: str) -> str | None:
     return None
 
 
-def guard_oversight_auto_commit(run: Run, task_config: TaskConfig | None) -> None:
+def guard_oversight_auto_commit(
+    run: Run, task_config: TaskConfig | None, task: TaskState | None = None
+) -> None:
     """Prevent implementation file auto-commits for oversight-only tasks."""
     if task_config is None or task_config.work_mode != "oversight" or not run.worktree_path:
         return
-    ensure_oversight_worktree_changes_allowed(Path(run.worktree_path))
+    base_commit = task.attempts[-1].start_commit if task is not None and task.attempts else None
+    ensure_oversight_worktree_changes_allowed(Path(run.worktree_path), base_commit=base_commit)
 
 
 def _resolve_working_path(run: Run) -> Path | None:
@@ -1816,7 +1819,7 @@ class WorkflowService:
             if project_path is not None:
                 # Auto-commit any uncommitted changes before running auto-verify
                 if run.worktree_path:
-                    guard_oversight_auto_commit(run, task_config_pre)
+                    guard_oversight_auto_commit(run, task_config_pre, task)
                     commit_uncommitted_changes(
                         Path(run.worktree_path),
                         f"Auto-commit builder changes for task {task_id}",
@@ -1910,7 +1913,7 @@ class WorkflowService:
         task_pre = state.get_task(run_id, task_id)
         if run.worktree_path and task_pre.attempts:
             worktree_path_obj = Path(run.worktree_path)
-            guard_oversight_auto_commit(run, task_config_pre)
+            guard_oversight_auto_commit(run, task_config_pre, task_pre)
             # Auto-commit any uncommitted changes left by the builder agent.
             # Some CLI agents (e.g. codex) may not commit their work, and the
             # verifier's git checkout of end_commit would destroy those changes.
@@ -2106,7 +2109,7 @@ class WorkflowService:
             project_path = _resolve_working_path(run)
             if project_path is not None:
                 if run.worktree_path:
-                    guard_oversight_auto_commit(run, task_config_pre)
+                    guard_oversight_auto_commit(run, task_config_pre, task)
                     commit_uncommitted_changes(
                         Path(run.worktree_path),
                         f"Auto-commit builder changes for task {task_id}",
@@ -2226,7 +2229,7 @@ class WorkflowService:
             worktree_path_obj = Path(run.worktree_path)
             step_config_id = resolve_step_config_id_for_task(run, task_id)
             task_config = resolve_task_config(run, task.config_id, step_config_id)
-            guard_oversight_auto_commit(run, task_config)
+            guard_oversight_auto_commit(run, task_config, task)
             commit_uncommitted_changes(
                 worktree_path_obj, f"Auto-commit builder changes for task {task_id}"
             )
