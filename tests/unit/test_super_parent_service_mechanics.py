@@ -149,6 +149,39 @@ def _prepare_final_validation_worktree(tmp_path: Path) -> tuple[Path, str]:
     return worktree, _git(["rev-parse", "HEAD"], cwd=worktree)
 
 
+async def test_collect_run_evidence_accepts_evidence_directory_with_slice_filename(
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    child_dir = tmp_path / "child-wt"
+    child_dir.mkdir()
+    _init_repo(child_dir)
+    base_sha = _git(["rev-parse", "HEAD"], cwd=child_dir)
+
+    evidence_dir = child_dir / "docs" / "super-parent" / "evidence"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "slice-p6-python-hypothesis.json").write_text(
+        json.dumps(_valid_evidence_bundle("behavior_already_correct")),
+        encoding="utf-8",
+    )
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.COMPLETED,
+        worktree_path=str(child_dir),
+    )
+    child.source_branch_sha = base_sha
+
+    await service.create_run(child)
+
+    evidence = await service.collect_run_evidence("child")
+
+    assert [item["path"] for item in evidence] == [
+        "docs/super-parent/evidence/slice-p6-python-hypothesis.json"
+    ]
+    assert evidence[0]["bundle"]["outcome"] == "behavior_already_correct"
+
+
 async def test_accept_child_run_rejects_malformed_verified_fix_evidence(
     service: WorkflowService,
     tmp_path: Path,
@@ -444,6 +477,13 @@ async def test_create_child_run_enqueues_child_start(session: AsyncSession) -> N
 
     signals = await transport.drain("child")
     assert [signal.signal_type for signal in signals] == [WorkflowSignal.RUN_START]
+    parent_after_child = await service.get_run("parent")
+    assert parent_after_child.oversight_state["child_count"] == 1
+    assert parent_after_child.oversight_state["last_child_run_id"] == "child"
+    assert (
+        "no_child_runs"
+        not in parent_after_child.oversight_state["terminal_guard"]["blocking_reasons"]
+    )
 
 
 async def test_create_child_run_rejects_second_active_child(

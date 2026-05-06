@@ -460,6 +460,8 @@ def _reset_step_for_loop(step: StepState) -> None:
         task.status = TaskStatus.PENDING
         task.pending_action_type = None
         task.pending_clarification_id = None
+        task.attempts = []
+        task.current_attempt = 0
         for item in task.checklist:
             item.status = ChecklistStatus.OPEN
             item.note = None

@@ -274,6 +274,8 @@ class WorkflowService:
         """Save state and events, then commit."""
         run = state.get_run(run_id)
         await self._repo.save(run)
+        if run.parent_run_id is not None:
+            await self._refresh_parent_oversight_without_commit(run.parent_run_id)
         events = buffer.drain()
         await self._event_emitter.emit_batch(events)
         await self._session.commit()
@@ -2318,9 +2320,9 @@ class WorkflowService:
         return await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
 
     async def get_parent_oversight(self, parent_run_id: str) -> dict[str, Any]:
-        """Return the latest persisted oversight state for a parent run."""
+        """Return current deterministic oversight state for a parent run."""
         parent = await self._repo.get(parent_run_id)
-        return dict(parent.oversight_state)
+        return await self._compute_parent_oversight_state(parent)
 
     async def update_parent_oversight(
         self,
@@ -2358,16 +2360,7 @@ class WorkflowService:
             state["decisions"] = existing_decisions
 
         parent.oversight_state = self._drop_stale_final_validation(parent, state)
-        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
-        evidence_by_run_id = await self._collect_child_evidence(children)
-        parent.oversight_state = reduce_parent_oversight_state(
-            parent,
-            children,
-            evidence_by_run_id,
-            max_child_runs=self._max_child_runs_for_parent(parent),
-        )
-        parent.updated_at = self._clock.now()
-        await self._repo.save(parent)
+        await self._refresh_parent_oversight_without_commit(parent_run_id, parent=parent)
         await self._session.commit()
         return parent
 
@@ -2476,23 +2469,43 @@ class WorkflowService:
 
     async def refresh_parent_oversight(self, parent_run_id: str) -> Run:
         """Recompute and persist the parent oversight snapshot from child state."""
-        parent = await self._repo.get(parent_run_id)
-        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
-        evidence_by_run_id = await self._collect_child_evidence(children)
-        parent.oversight_state = self._drop_stale_final_validation(
-            parent,
-            parent.oversight_state,
-        )
-        parent.oversight_state = reduce_parent_oversight_state(
-            parent,
-            children,
-            evidence_by_run_id,
-            max_child_runs=self._max_child_runs_for_parent(parent),
-        )
-        parent.updated_at = self._clock.now()
-        await self._repo.save(parent)
+        parent = await self._refresh_parent_oversight_without_commit(parent_run_id)
         await self._session.commit()
         return parent
+
+    async def _refresh_parent_oversight_without_commit(
+        self,
+        parent_run_id: str,
+        *,
+        parent: Run | None = None,
+    ) -> Run:
+        """Recompute and save parent oversight state without committing."""
+        parent = parent or await self._repo.get(parent_run_id)
+        parent.oversight_state = await self._compute_parent_oversight_state(parent)
+        parent.updated_at = self._clock.now()
+        await self._repo.save(parent)
+        return parent
+
+    async def _compute_parent_oversight_state(self, parent: Run) -> dict[str, Any]:
+        """Compute parent oversight from persisted parent facts plus current children."""
+        parent_run_id = parent.id
+        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        parent_for_reduce = parent.model_copy(
+            deep=True,
+            update={
+                "oversight_state": self._drop_stale_final_validation(
+                    parent,
+                    parent.oversight_state,
+                )
+            },
+        )
+        return reduce_parent_oversight_state(
+            parent_for_reduce,
+            children,
+            evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(parent_for_reduce),
+        )
 
     async def accept_child_run(
         self, parent_run_id: str, child_run_id: str
@@ -2619,6 +2632,7 @@ class WorkflowService:
 
         await self._repo.save(parent)
         await self._repo.save(child_run)
+        await self._refresh_parent_oversight_without_commit(parent_run_id, parent=parent)
         queue = self._get_signal_queue()
         await queue.enqueue(child_run.id, WorkflowSignal.RUN_START)
         await self._session.commit()
@@ -2896,6 +2910,13 @@ class WorkflowService:
         if not worktree.is_dir():
             return []
 
+        def is_evidence_json_path(path: Path) -> bool:
+            if path.suffix != ".json":
+                return False
+            return "evidence" in path.name.lower() or any(
+                "evidence" in part.lower() for part in path.parts
+            )
+
         def changed_evidence_paths() -> list[Path] | None:
             if not run.source_branch_sha:
                 return None
@@ -2932,7 +2953,7 @@ class WorkflowService:
             return [
                 worktree / rel_path
                 for rel_path in sorted(rel_paths)
-                if Path(rel_path).suffix == ".json" and "evidence" in Path(rel_path).name
+                if is_evidence_json_path(Path(rel_path))
             ]
 
         def scan() -> list[dict[str, Any]]:
@@ -2941,7 +2962,9 @@ class WorkflowService:
             paths = (
                 candidate_paths
                 if candidate_paths is not None
-                else sorted(worktree.rglob("*evidence*.json"))
+                else [
+                    path for path in sorted(worktree.rglob("*.json")) if is_evidence_json_path(path)
+                ]
             )
             for path in paths:
                 if len(bundles) >= 100:

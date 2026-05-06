@@ -12,7 +12,14 @@ from orchestrator.config.models import (
     TaskConfig,
     TransitionCondition,
 )
-from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState, TransitionTracker
+from orchestrator.state.models import (
+    Attempt,
+    ChecklistItem,
+    Run,
+    StepState,
+    TaskState,
+    TransitionTracker,
+)
 from orchestrator.workflow import (
     BufferingEmitter,
     DefaultClock,
@@ -534,13 +541,29 @@ def test_step_progression_applies_configured_loop_transition() -> None:
                 id="step-1",
                 config_id="SP-02",
                 completed=True,
-                tasks=[TaskState(id="task-1", config_id="T-01", status=TaskStatus.COMPLETED)],
+                tasks=[
+                    TaskState(
+                        id="task-1",
+                        config_id="T-01",
+                        status=TaskStatus.COMPLETED,
+                        attempts=[Attempt(attempt_num=1, started_at=NOW, outcome="passed")],
+                        current_attempt=1,
+                    )
+                ],
             ),
             StepState(
                 id="step-2",
                 config_id="SP-03",
                 completed=True,
-                tasks=[TaskState(id="task-2", config_id="T-01", status=TaskStatus.COMPLETED)],
+                tasks=[
+                    TaskState(
+                        id="task-2",
+                        config_id="T-01",
+                        status=TaskStatus.COMPLETED,
+                        attempts=[Attempt(attempt_num=1, started_at=NOW, outcome="passed")],
+                        current_attempt=1,
+                    )
+                ],
             ),
             StepState(
                 id="step-3",
@@ -567,6 +590,8 @@ def test_step_progression_applies_configured_loop_transition() -> None:
         TaskStatus.PENDING,
         TaskStatus.PENDING,
     ]
+    assert [step.tasks[0].current_attempt for step in run.steps] == [0, 0, 0]
+    assert [step.tasks[0].attempts for step in run.steps] == [[], [], []]
     assert run.transition_tracker is not None
     assert run.transition_tracker.get_count("SP-04", "SP-02") == 1
     events = emitter.drain()

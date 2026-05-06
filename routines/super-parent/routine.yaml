@@ -113,9 +113,13 @@ routine:
           task_context: |
             Generate one embedded child routine for the selected slice. The child routine must include stable
             requirement IDs, auto-verify commands where possible, verifier rubric IDs matching requirement IDs,
-            retry limits, stop/replan conditions, and a required `run.evidence.v1` bundle. Create the child
-            run using `orchestrator_create_child_run` or `POST /api/runs/{parent}/children`; do not try to
-            pass a `start` flag.
+            retry limits, stop/replan conditions, and a required `run.evidence.v1` bundle. The child evidence
+            bundle must use the exact service schema fields: `schema_version`, `slice_id`, `routine_id`,
+            `assumption_tested`, `summary`, `commands_run`, `test_results`, `target_bug_reproduced`,
+            `real_frontend_path_exercised`, `real_execution_surface`, `files_changed`, `evidence_files`,
+            `open_uncertainties`, `next_recommendation`, and `outcome`. Create the child run using
+            `orchestrator_create_child_run` or `POST /api/runs/{parent}/children`; do not try to pass a
+            `start` flag.
           requirements:
             - id: "R1"
               desc: "Child routine is embedded on the child run and is not written to `routines/` unless promoted by a human."
@@ -124,7 +128,7 @@ routine:
               desc: "Child run is linked to the parent with `parent_run_id` and `parent_slice_id`."
               priority: critical
             - id: "R3"
-              desc: "Child routine requires a `run.evidence.v1` bundle with a distinct outcome."
+              desc: "Child routine requires a schema-valid `run.evidence.v1` bundle with exact service field names and a distinct outcome."
               priority: critical
             - id: "R4"
               desc: "The selected runner and runner config are preserved for the child, and child start is enqueued."
