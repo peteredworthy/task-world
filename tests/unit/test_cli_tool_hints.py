@@ -156,6 +156,7 @@ class TestCLIMCPInfo:
             config = json.loads(mcp_json_path.read_text())
             assert "mcpServers" in config
             assert "ctx7" in config["mcpServers"]
+            assert config["mcpServers"]["ctx7"]["type"] == "sse"
             assert config["mcpServers"]["ctx7"]["url"] == "https://ctx7.example.com"
 
     def test_mcp_json_written_with_command(self):
@@ -183,6 +184,7 @@ class TestCLIMCPInfo:
 
             mcp_json_path = Path(tmpdir) / ".mcp.json"
             config = json.loads(mcp_json_path.read_text())
+            assert config["mcpServers"]["api_server"]["type"] == "sse"
             assert (
                 config["mcpServers"]["api_server"]["env"]["API_URL"]
                 == "https://internal.example.com"

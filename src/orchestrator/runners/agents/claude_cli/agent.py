@@ -362,6 +362,7 @@ class CLIAgent:
         for mcp in mcp_servers:
             server_entry: dict[str, Any] = {}
             if mcp.url:
+                server_entry["type"] = "sse"
                 server_entry["url"] = mcp.url
             elif mcp.command:
                 server_entry["command"] = mcp.command
