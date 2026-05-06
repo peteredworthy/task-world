@@ -66,6 +66,8 @@ class TestCLIMCPInfo:
         assert "ctx7" in prompt
         assert "https://ctx7.example.com" in prompt
         assert "## External MCP Servers" in prompt
+        assert "Use the registered MCP tools" in prompt
+        assert "do not call raw MCP SSE/message endpoints with curl" in prompt
 
     def test_no_mcp_section_when_none(self):
         """Test that no MCP section is added when mcp_servers is None."""
@@ -236,6 +238,31 @@ class TestCLIMCPInfo:
             config = json.loads(content)  # This will raise if JSON is invalid
             assert "mcpServers" in config
             assert len(config["mcpServers"]) == 2
+
+    def test_claude_args_include_explicit_mcp_config(self):
+        """Claude CLI receives explicit --mcp-config for routine MCP servers."""
+        agent = CLIAgent(command="claude", args=["-p"])
+        path = Path("/tmp/work/.mcp.json")
+
+        args = agent._args_with_mcp_config(path)
+
+        assert args == ["-p", "--mcp-config", str(path)]
+
+    def test_claude_args_do_not_duplicate_mcp_config(self):
+        """Existing user-provided --mcp-config is preserved."""
+        agent = CLIAgent(command="claude", args=["-p", "--mcp-config", "custom.json"])
+
+        args = agent._args_with_mcp_config(Path("/tmp/work/.mcp.json"))
+
+        assert args == ["-p", "--mcp-config", "custom.json"]
+
+    def test_non_claude_args_do_not_get_mcp_config(self):
+        """Other CLI commands are not given Claude-specific flags."""
+        agent = CLIAgent(command="codex", args=["exec"])
+
+        args = agent._args_with_mcp_config(Path("/tmp/work/.mcp.json"))
+
+        assert args == ["exec"]
 
 
 class TestCLIPromptBackwardCompatibility:

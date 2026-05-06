@@ -237,7 +237,13 @@ class CLIAgent:
 
         # Add external MCP server info
         if context.mcp_servers:
-            mcp_section = "\n\n## External MCP Servers\nThe following external MCP servers are available for this step:\n"
+            mcp_section = (
+                "\n\n## External MCP Servers\n"
+                "The following external MCP servers are configured for this Claude session. "
+                "Use the registered MCP tools exposed in your tool list when available; do "
+                "not call raw MCP SSE/message endpoints with curl unless no MCP tool is "
+                "registered.\n"
+            )
             for mcp in context.mcp_servers:
                 if mcp.url:
                     mcp_section += f"- **{mcp.name}**: {mcp.url}\n"
@@ -328,7 +334,13 @@ class CLIAgent:
 
         # Add external MCP server info
         if context.mcp_servers:
-            mcp_section = "\n\n## External MCP Servers\nThe following external MCP servers are available for this step:\n"
+            mcp_section = (
+                "\n\n## External MCP Servers\n"
+                "The following external MCP servers are configured for this Claude session. "
+                "Use the registered MCP tools exposed in your tool list when available; do "
+                "not call raw MCP SSE/message endpoints with curl unless no MCP tool is "
+                "registered.\n"
+            )
             for mcp in context.mcp_servers:
                 if mcp.url:
                     mcp_section += f"- **{mcp.name}**: {mcp.url}\n"
@@ -339,7 +351,7 @@ class CLIAgent:
 
         return prompt + git_review_section + api_section
 
-    def _write_mcp_json(self, working_dir: str, mcp_servers: list[Any]) -> None:
+    def _write_mcp_json(self, working_dir: str, mcp_servers: list[Any]) -> Path:
         """Write .mcp.json to working dir for Claude Code auto-discovery.
 
         Args:
@@ -363,8 +375,22 @@ class CLIAgent:
                 server_entry["env"][mcp.auth_token_env] = f"${{{mcp.auth_token_env}}}"
             mcp_config["mcpServers"][mcp.name] = server_entry
 
-        mcp_json_path = Path(working_dir) / ".mcp.json"
+        mcp_json_path = self._mcp_json_path(working_dir)
         mcp_json_path.write_text(json.dumps(mcp_config, indent=2))
+        return mcp_json_path
+
+    @staticmethod
+    def _mcp_json_path(working_dir: str) -> Path:
+        """Return the MCP config path used for Claude CLI subprocesses."""
+        return Path(working_dir) / ".mcp.json"
+
+    def _args_with_mcp_config(self, mcp_json_path: Path | None) -> list[str]:
+        """Return CLI args with explicit MCP config for Claude subprocesses."""
+        if mcp_json_path is None or Path(self._command).name != "claude":
+            return list(self._args)
+        if any(arg == "--mcp-config" or arg.startswith("--mcp-config=") for arg in self._args):
+            return list(self._args)
+        return [*self._args, "--mcp-config", str(mcp_json_path)]
 
     async def execute(
         self,
@@ -387,7 +413,6 @@ class CLIAgent:
         if self._cancelled:
             raise AgentCancelledError("cli_subprocess")
 
-        cmd = [path, *self._args]
         nudger = Nudger(self._nudger_config, self._time_provider)
         enriched_prompt = self.build_prompt(
             context.prompt,
@@ -410,9 +435,13 @@ class CLIAgent:
             if context.auth_token:
                 child_env["ORCHESTRATOR_AUTH_TOKEN"] = context.auth_token
 
-            # Write .mcp.json for Claude Code auto-discovery if MCP servers are configured
+            # Write .mcp.json and pass it explicitly. Claude auto-discovery is not
+            # reliable for non-interactive subprocesses in all environments.
+            mcp_json_path: Path | None = None
             if context.mcp_servers:
-                self._write_mcp_json(context.working_dir, context.mcp_servers)
+                mcp_json_path = self._write_mcp_json(context.working_dir, context.mcp_servers)
+
+            cmd = [path, *self._args_with_mcp_config(mcp_json_path)]
 
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,
