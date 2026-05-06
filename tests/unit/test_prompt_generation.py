@@ -1,5 +1,7 @@
 """Tests for prompt generation."""
 
+from typing import Literal
+
 from orchestrator.runners import build_claude_sdk_prompt
 from orchestrator.runners import build_codex_server_prompt
 from orchestrator.runners import build_openhands_prompt
@@ -26,6 +28,7 @@ def _task_config(
     task_context: str = "Implement {{feature}}",
     model_overrides: dict[str, dict[str, str]] | None = None,
     rubric: list[RubricItemConfig] | None = None,
+    work_mode: Literal["implementation", "oversight"] = "implementation",
 ) -> TaskConfig:
     verifier = VerifierConfig()
     if rubric:
@@ -40,6 +43,7 @@ def _task_config(
             RequirementConfig(id="R2", desc="Add tests"),
         ],
         verifier=verifier,
+        work_mode=work_mode,
     )
 
 
@@ -137,6 +141,19 @@ def test_builder_prompt_no_feedback_on_first_attempt() -> None:
 
     assert prompt.previous_feedback is None
     assert "Previous Feedback" not in prompt.user
+
+
+def test_builder_prompt_oversight_mode_blocks_implementation_work() -> None:
+    config = _task_config(work_mode="oversight")
+    state = _task_state()
+    prompt = generate_builder_prompt(config, state, {"feature": "auth"})
+
+    assert "oversight task" in prompt.system
+    assert "Perform only oversight, documentation, or orchestrator API/MCP operations" in (
+        prompt.system
+    )
+    assert "Do not edit source code, tests, dependency files, lockfiles" in prompt.system
+    assert "Implement all requirements" not in prompt.system
 
 
 # --- generate_verifier_prompt ---
@@ -597,13 +614,17 @@ def _shared_system_prompt() -> str:
     return generate_builder_prompt(config, state, {"feature": "auth"}).system
 
 
-def _make_context(prompt: str) -> ExecutionContext:
+def _make_context(
+    prompt: str,
+    work_mode: Literal["implementation", "oversight"] = "implementation",
+) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-1",
         task_id="task-1",
         working_dir="/tmp",
         prompt=prompt,
         requirements=["R1: do the thing"],
+        work_mode=work_mode,
     )
 
 
@@ -704,6 +725,15 @@ def test_cli_agent_includes_git_workflow_section() -> None:
     assert "Commit conventions" in result
 
 
+def test_cli_agent_oversight_prompt_limits_git_workflow() -> None:
+    context = _make_context("Task prompt", work_mode="oversight")
+    result = CLIAgent.build_prompt("Task prompt", context)
+
+    assert "commit only allowed oversight artifacts" in result
+    assert "Do not edit or commit source code, tests, dependency files" in result
+    assert "commit your changes to git" not in result
+
+
 def test_cli_agent_no_git_section_for_verifier() -> None:
     """CLIAgent.build_prompt does NOT add git workflow for verifier phase."""
     shared_prompt = _shared_system_prompt()
@@ -735,6 +765,16 @@ def test_openhands_prompt_includes_git_workflow() -> None:
     assert "## Git Workflow" in result
 
 
+def test_openhands_prompt_oversight_mode_blocks_implementation_work() -> None:
+    context = _make_context("Some prompt", work_mode="oversight")
+    result = build_openhands_prompt(context, is_verifier=False)
+
+    assert "Perform only oversight/documentation/API operations" in result
+    assert "commit only allowed oversight artifacts" in result
+    assert "Implement each requirement." not in result
+    assert "commit your changes to git" not in result
+
+
 def test_codex_prompt_includes_sandbox_constraints() -> None:
     """build_codex_server_prompt includes sandbox constraint instructions."""
     context = _make_context("Some prompt")
@@ -758,6 +798,16 @@ def test_codex_prompt_includes_git_workflow() -> None:
     assert "## Git Workflow" in result
 
 
+def test_codex_prompt_oversight_mode_blocks_implementation_work() -> None:
+    context = _make_context("Some prompt", work_mode="oversight")
+    result = build_codex_server_prompt(context, is_verifier=False)
+
+    assert "Perform only oversight/documentation/API operations" in result
+    assert "commit only allowed oversight artifacts" in result
+    assert "Implement each requirement." not in result
+    assert "commit your changes to git" not in result
+
+
 def test_claude_sdk_prompt_includes_tool_usage_patterns() -> None:
     """build_claude_sdk_prompt includes tool usage pattern instructions."""
     context = _make_context("Some prompt")
@@ -778,6 +828,16 @@ def test_claude_sdk_prompt_includes_git_workflow() -> None:
     context = _make_context("Some prompt")
     result = build_claude_sdk_prompt(context, is_verifier=False)
     assert "## Git Workflow" in result
+
+
+def test_claude_sdk_prompt_oversight_mode_blocks_implementation_work() -> None:
+    context = _make_context("Some prompt", work_mode="oversight")
+    result = build_claude_sdk_prompt(context, is_verifier=False)
+
+    assert "Perform only oversight/documentation/API operations" in result
+    assert "commit only allowed oversight artifacts" in result
+    assert "Implement each requirement." not in result
+    assert "commit your changes to git" not in result
 
 
 def test_agent_specific_sections_not_in_verifier_prompts() -> None:

@@ -336,6 +336,25 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
         is_verifier: If True, includes grading tools for verifier phase.
     """
     requirements_text = "\n".join(f"- {req}" for req in context.requirements)
+    workflow_action = (
+        "Perform only oversight/documentation/API operations. Do not implement source or test changes."
+        if context.work_mode == "oversight"
+        else "Implement each requirement."
+    )
+    git_section = (
+        "## Git Workflow\n"
+        "Before submitting, commit only allowed oversight artifacts:\n"
+        "- Allowed paths are task-requested documentation/metadata such as "
+        "`docs/super-parent/` and `.mcp.json`\n"
+        "- Do not edit or commit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
+        "- Always use `git --no-pager` for git commands.\n"
+        if context.work_mode == "oversight"
+        else "## Git Workflow\n"
+        "Before submitting, commit your changes to git:\n"
+        "- Stage changes: `git add <files>`\n"
+        "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
+        "- Always use `git --no-pager` for git commands.\n"
+    )
 
     if is_verifier:
         return (
@@ -375,7 +394,7 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
         "Use the tools below to report your work.\n\n"
         "### Required Workflow\n"
         "1. Read the requirements above carefully.\n"
-        "2. Implement each requirement.\n"
+        f"2. {workflow_action}\n"
         "3. After completing each requirement, call **orc_update_checklist** "
         "to mark it 'done'.\n"
         "4. Once ALL requirements are addressed, call **orc_submit** to submit.\n"
@@ -398,11 +417,7 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
         "- ALWAYS use `git --no-pager` for every git command to avoid pager hangs.\n"
         "- For long output, pipe through `| head -80` to limit lines.\n"
         "- NEVER run bare `git diff`, `git log`, or `git show` without --no-pager.\n\n"
-        "## Git Workflow\n"
-        "Before submitting, commit your changes to git:\n"
-        "- Stage changes: `git add <files>`\n"
-        "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
-        "- Always use `git --no-pager` for git commands.\n\n"
+        f"{git_section}\n"
         "## File Exploration Guidelines\n"
         "- NEVER re-read a file you have already read in this session.\n"
         "- If you catch yourself about to read the same file again, stop and use your existing knowledge.\n"

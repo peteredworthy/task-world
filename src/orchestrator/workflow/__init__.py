@@ -118,6 +118,11 @@ from orchestrator.workflow.signals.consumer import (
     register_active_run as register_active_run,  # consumer.py
     unregister_active_run as unregister_active_run,  # consumer.py
 )
+from orchestrator.workflow.oversight_guard import (
+    OversightModeViolationError as OversightModeViolationError,
+    ensure_oversight_worktree_changes_allowed as ensure_oversight_worktree_changes_allowed,
+    find_oversight_change_violations as find_oversight_change_violations,
+)
 
 from orchestrator.workflow.agent import (
     AutoVerifyResult,
@@ -346,12 +351,15 @@ __all__ = [
     "FinalValidationMarker",
     "OversightAttentionItem",
     "OversightEvidenceSummary",
+    "OversightModeViolationError",
     "OversightTerminalGuard",
     "ParentOversightSnapshot",
     "RunEvidenceBundle",
     "RunEvidenceCommand",
     "RunEvidenceTestResult",
     "TargetInventoryItem",
+    "ensure_oversight_worktree_changes_allowed",
+    "find_oversight_change_violations",
     "reduce_parent_oversight",
     "reduce_parent_oversight_state",
 ]

@@ -147,12 +147,21 @@ routine:
       tasks:
         - id: "T-01"
           title: "Evaluate Child Evidence"
+          work_mode: "oversight"
           task_context: |
             Wait for the child run with `orchestrator_wait_for_run`, then collect evidence with
-            `orchestrator_get_run_evidence` and refresh parent oversight. Use a long enough wait window
-            for normal child execution and treat paused children as meaningful states. Update
+            `orchestrator_get_run_evidence` and refresh parent oversight with
+            `orchestrator_refresh_parent_oversight`. Use a long enough wait window for normal child
+            execution and treat paused children as meaningful states. Update only
             `docs/super-parent/current-understanding.md` and call `orchestrator_update_parent_oversight`
-            before asking for human input, accepting a child, or stopping.
+            before asking for human input, accepting a child, or stopping. This is an orchestration-only
+            task: do not edit source code, tests, dependency files, lockfiles, migrations, UI files,
+            routine files, generated child work, or child worktree files. If evidence exposes missing
+            service behavior, record it as target inventory, a replan input, or a human action instead
+            of implementing it in this parent task. If a child is paused, failed without schema-valid
+            evidence, or requires a human decision, use
+            `orchestrator_request_clarification` or `orchestrator_escalate_requirement` unless the
+            oversight state clearly supports an autonomous replan and that replan is recorded.
           requirements:
             - id: "R1"
               desc: "Evidence is collected from the child worktree and validated against the standard schema."
@@ -173,16 +182,22 @@ routine:
             max_attempts: 2
         - id: "T-02"
           title: "Accept And Merge Child"
+          work_mode: "oversight"
           task_context: |
-            If child evidence supports acceptance, call the service-owned child acceptance operation so the
-            child branch merges into the parent worktree branch. Do not merge failed children or merge directly
-            to the source branch. Record merge status, conflicts, validation needs, and evidence paths.
+            Read the current parent oversight state first with `orchestrator_get_parent_oversight`. If child
+            evidence supports acceptance and the child appears in the merge queue, call
+            `orchestrator_accept_child_run` so the child branch merges into the parent worktree branch. Do
+            not merge failed, paused, unsupported, or missing-evidence children, and do not merge directly
+            to the source branch. Do not manually run `git merge`, resolve conflicts directly, inspect
+            implementation internals, or edit source/tests. Merge conflicts become parent attention items.
+            This task is orchestration-only. If there is no acceptable child to merge, record the no-op
+            merge decision, keep the child unmerged for audit, and submit.
           requirements:
             - id: "R1"
               desc: "Accepted children merge only into the parent run branch from the parent worktree."
               priority: critical
             - id: "R2"
-              desc: "Failed or unsupported child outcomes remain unmerged and are recorded for audit."
+              desc: "Failed, paused, missing-evidence, or unsupported child outcomes remain unmerged and are recorded for audit."
               priority: critical
             - id: "R3"
               desc: "Merge conflicts are recorded as parent attention items rather than hidden."

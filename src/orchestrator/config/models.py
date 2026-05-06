@@ -4,7 +4,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -233,6 +233,7 @@ class TaskConfig(BaseModel):
     id: str
     title: str
     task_context: str = ""
+    work_mode: Literal["implementation", "oversight"] = "implementation"
     complexity: Complexity = Complexity.STANDARD
     profile: ModelProfile | None = None
     builder_agent: str | None = None

@@ -91,6 +91,7 @@ from orchestrator.workflow.oversight import (
     TargetInventoryItem,
     reduce_parent_oversight_state,
 )
+from orchestrator.workflow.oversight_guard import ensure_oversight_worktree_changes_allowed
 from orchestrator.git import ParentChildMergeResult, merge_child_into_parent
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.git.utils import commit_uncommitted_changes, get_head_commit
@@ -193,6 +194,32 @@ def resolve_auto_verify_config(
     if not task_config.auto_verify.items:
         return None
     return task_config.auto_verify
+
+
+def resolve_task_config(
+    run: Run, task_config_id: str, step_config_id: str | None = None
+) -> TaskConfig | None:
+    """Resolve the TaskConfig for a task from the run's routine_embedded."""
+    if run.routine_embedded is None:
+        return None
+    routine_config = RoutineConfig.model_validate(run.routine_embedded)
+    return find_task_config(routine_config, task_config_id, step_config_id)
+
+
+def resolve_step_config_id_for_task(run: Run, task_id: str) -> str | None:
+    """Find the routine step config id for a runtime task id."""
+    for step in run.steps:
+        for task in step.tasks:
+            if task.id == task_id:
+                return step.config_id
+    return None
+
+
+def guard_oversight_auto_commit(run: Run, task_config: TaskConfig | None) -> None:
+    """Prevent implementation file auto-commits for oversight-only tasks."""
+    if task_config is None or task_config.work_mode != "oversight" or not run.worktree_path:
+        return
+    ensure_oversight_worktree_changes_allowed(Path(run.worktree_path))
 
 
 def _resolve_working_path(run: Run) -> Path | None:
@@ -1780,14 +1807,8 @@ class WorkflowService:
         # needing to explicitly call on_checklist_update() when auto-verify
         # already confirms the work was done.
         task = state.get_task(run_id, task_id)
-        step_config_id_pre = None
-        for step in run.steps:
-            for t in step.tasks:
-                if t.id == task_id:
-                    step_config_id_pre = step.config_id
-                    break
-            if step_config_id_pre is not None:
-                break
+        step_config_id_pre = resolve_step_config_id_for_task(run, task_id)
+        task_config_pre = resolve_task_config(run, task.config_id, step_config_id_pre)
 
         auto_verify_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
         if auto_verify_config is not None and self._auto_verify_runner is not None:
@@ -1795,6 +1816,7 @@ class WorkflowService:
             if project_path is not None:
                 # Auto-commit any uncommitted changes before running auto-verify
                 if run.worktree_path:
+                    guard_oversight_auto_commit(run, task_config_pre)
                     commit_uncommitted_changes(
                         Path(run.worktree_path),
                         f"Auto-commit builder changes for task {task_id}",
@@ -1888,6 +1910,7 @@ class WorkflowService:
         task_pre = state.get_task(run_id, task_id)
         if run.worktree_path and task_pre.attempts:
             worktree_path_obj = Path(run.worktree_path)
+            guard_oversight_auto_commit(run, task_config_pre)
             # Auto-commit any uncommitted changes left by the builder agent.
             # Some CLI agents (e.g. codex) may not commit their work, and the
             # verifier's git checkout of end_commit would destroy those changes.
@@ -2075,20 +2098,15 @@ class WorkflowService:
         if task.status == TaskStatus.VERIFYING:
             return TransitionResult(success=True, new_status=TaskStatus.VERIFYING)
 
-        step_config_id_pre = None
-        for step in run.steps:
-            for t in step.tasks:
-                if t.id == task_id:
-                    step_config_id_pre = step.config_id
-                    break
-            if step_config_id_pre is not None:
-                break
+        step_config_id_pre = resolve_step_config_id_for_task(run, task_id)
+        task_config_pre = resolve_task_config(run, task.config_id, step_config_id_pre)
 
         auto_verify_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
         if auto_verify_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
             if project_path is not None:
                 if run.worktree_path:
+                    guard_oversight_auto_commit(run, task_config_pre)
                     commit_uncommitted_changes(
                         Path(run.worktree_path),
                         f"Auto-commit builder changes for task {task_id}",
@@ -2206,6 +2224,9 @@ class WorkflowService:
         end_commit: str | None = None
         if run.worktree_path and task.attempts:
             worktree_path_obj = Path(run.worktree_path)
+            step_config_id = resolve_step_config_id_for_task(run, task_id)
+            task_config = resolve_task_config(run, task.config_id, step_config_id)
+            guard_oversight_auto_commit(run, task_config)
             commit_uncommitted_changes(
                 worktree_path_obj, f"Auto-commit builder changes for task {task_id}"
             )

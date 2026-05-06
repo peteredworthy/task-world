@@ -137,16 +137,32 @@ class CLIAgent:
         # because the CLI agent is responsible for committing work before submitting.
         git_section = ""
         if phase == "building":
-            git_section = (
-                "\n\n## Git Workflow\n"
-                "Before submitting, commit your changes to git:\n"
-                "- Stage all relevant changes: `git add <files>`\n"
-                "- Commit with a descriptive message: `git commit -m 'Description'`\n"
-                "- Example: `git commit -m 'Implement authentication system with login and signup'`\n"
-                "- ALWAYS use `git --no-pager` for git commands that produce output\n"
-                "  (e.g. `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`)\n"
-                "- Commit conventions: use imperative mood, e.g. 'Add feature' not 'Added feature'\n"
-            )
+            if context.work_mode == "oversight":
+                git_section = (
+                    "\n\n## Git Workflow\n"
+                    "Before submitting, commit only allowed oversight artifacts:\n"
+                    "- Allowed paths are task-requested documentation/metadata such as "
+                    "`docs/super-parent/` and `.mcp.json`\n"
+                    "- Do not edit or commit source code, tests, dependency files, lockfiles, "
+                    "migrations, or UI files during oversight tasks\n"
+                    "- If implementation changes seem required, record the need in oversight "
+                    "state, request clarification, or escalate instead\n"
+                    "- ALWAYS use `git --no-pager` for git commands that produce output\n"
+                    "  (e.g. `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`)\n"
+                    "- Commit conventions: use imperative mood, e.g. 'Record child evidence' "
+                    "not 'Recorded child evidence'\n"
+                )
+            else:
+                git_section = (
+                    "\n\n## Git Workflow\n"
+                    "Before submitting, commit your changes to git:\n"
+                    "- Stage all relevant changes: `git add <files>`\n"
+                    "- Commit with a descriptive message: `git commit -m 'Description'`\n"
+                    "- Example: `git commit -m 'Implement authentication system with login and signup'`\n"
+                    "- ALWAYS use `git --no-pager` for git commands that produce output\n"
+                    "  (e.g. `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`)\n"
+                    "- Commit conventions: use imperative mood, e.g. 'Add feature' not 'Added feature'\n"
+                )
 
         if context.api_base_url is None:
             return prompt + git_section
@@ -156,12 +172,18 @@ class CLIAgent:
         if phase == "verifying":
             return CLIAgent._build_verifier_prompt(prompt, context, base, callback_channel)
 
+        first_workflow_step = (
+            "Perform only oversight/documentation/API operations for each requirement. "
+            "Do not implement source or test changes."
+            if context.work_mode == "oversight"
+            else "Implement each requirement listed above."
+        )
         workflow_section = (
             f"\n\n## Orchestrator Integration\n"
             f"You are connected to an orchestrator that tracks your progress.\n"
             f"Run ID: {context.run_id}, Task ID: {context.task_id}\n\n"
             f"### Required Workflow\n"
-            f"1. Implement each requirement listed above.\n"
+            f"1. {first_workflow_step}\n"
             f"2. After completing each requirement, report it as 'done' "
             f"using the requirement ID exactly as listed "
             f"(for numeric IDs, R1/R-01/1 are all accepted).\n"

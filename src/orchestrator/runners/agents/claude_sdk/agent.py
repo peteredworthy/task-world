@@ -303,6 +303,24 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
         The fully assembled prompt string.
     """
     requirements_text = "\n".join(f"- {req}" for req in context.requirements)
+    workflow_action = (
+        "Perform only oversight/documentation/API operations. Do not implement source or test changes."
+        if context.work_mode == "oversight"
+        else "Implement each requirement."
+    )
+    git_section = (
+        "## Git Workflow\n"
+        "Before submitting, commit only allowed oversight artifacts:\n"
+        "- Stage only task-requested documentation/metadata such as `docs/super-parent/` and `.mcp.json`\n"
+        "- Do not edit or commit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
+        "- Always use `git --no-pager` for git commands.\n"
+        if context.work_mode == "oversight"
+        else "## Git Workflow\n"
+        "Before submitting, commit your changes to git:\n"
+        "- Stage changes: `git add <files>`\n"
+        "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
+        "- Always use `git --no-pager` for git commands.\n"
+    )
 
     if is_verifier:
         phase_section = (
@@ -325,7 +343,7 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
             "You are connected to an orchestrator that tracks your progress.\n\n"
             "### Required Workflow\n"
             "1. Read the requirements carefully.\n"
-            "2. Implement each requirement.\n"
+            f"2. {workflow_action}\n"
             "3. After completing each requirement, call **update_checklist** to mark it 'done'.\n"
             "4. Once ALL requirements are addressed, call **submit** to submit your work.\n"
             "5. All CRITICAL requirements must be 'done' before submission succeeds.\n\n"
@@ -333,11 +351,7 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
             "- **update_checklist**(req_id, status, note?) — Mark a requirement as done/blocked/not_applicable\n"
             "- **submit**() — Submit your work for verification\n"
             "- **request_clarification**(question) — Ask for clarification on ambiguous requirements\n\n"
-            "## Git Workflow\n"
-            "Before submitting, commit your changes to git:\n"
-            "- Stage changes: `git add <files>`\n"
-            "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
-            "- Always use `git --no-pager` for git commands.\n\n"
+            f"{git_section}\n"
             "## Tool Usage Patterns\n"
             "- Call **update_checklist** immediately after completing each requirement — don't batch updates.\n"
             "- Mark each item 'done' as you finish it, before moving to the next requirement.\n"

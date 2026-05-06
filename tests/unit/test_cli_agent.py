@@ -2,6 +2,7 @@
 
 import re
 from datetime import timedelta
+from typing import Literal
 
 from orchestrator.config.models import NudgerConfig
 from orchestrator.config import AgentRunnerType
@@ -13,6 +14,7 @@ def _make_context(
     api_base_url: str | None = None,
     prompt: str = "Do the thing",
     auth_token: str | None = None,
+    work_mode: Literal["implementation", "oversight"] = "implementation",
 ) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-1",
@@ -22,6 +24,7 @@ def _make_context(
         requirements=["R1"],
         api_base_url=api_base_url,
         auth_token=auth_token,
+        work_mode=work_mode,
     )
 
 
@@ -101,6 +104,17 @@ def test_build_prompt_without_api_url() -> None:
     assert "git commit" in result
 
 
+def test_build_prompt_without_api_url_oversight_mode_limits_git_workflow() -> None:
+    """Oversight builders get coordination-only git instructions."""
+    ctx = _make_context(api_base_url=None, prompt="Original prompt", work_mode="oversight")
+    result = CLIAgent.build_prompt("Original prompt", ctx)
+
+    assert "Original prompt" in result
+    assert "commit only allowed oversight artifacts" in result
+    assert "Do not edit or commit source code, tests, dependency files" in result
+    assert "commit your changes to git" not in result
+
+
 def test_build_prompt_without_api_url_verifier_phase_unchanged() -> None:
     """Without api_base_url, verifier phase returns prompt unchanged (no git section)."""
     ctx = _make_context(api_base_url=None, prompt="Original prompt")
@@ -124,6 +138,16 @@ def test_build_prompt_with_api_url() -> None:
     assert "GET" in result
     assert "/checklist/" in result
     assert "/submit" in result
+
+
+def test_build_prompt_with_api_url_oversight_mode_limits_workflow() -> None:
+    """Oversight builders with API access are told not to implement source/test changes."""
+    ctx = _make_context(api_base_url="http://localhost:8000", work_mode="oversight")
+    result = CLIAgent.build_prompt("Do the thing", ctx)
+
+    assert "Perform only oversight/documentation/API operations" in result
+    assert "Do not implement source or test changes" in result
+    assert "Implement each requirement listed above" not in result
 
 
 def test_build_prompt_strips_trailing_slash() -> None:

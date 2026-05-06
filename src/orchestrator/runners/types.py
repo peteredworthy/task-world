@@ -2,7 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel
 
@@ -104,6 +104,7 @@ class ExecutionContext(BaseModel):
     expected_git_branch: str | None = None
     available_tools: list[str] | None = None
     mcp_servers: list[MCPServerConfig] | None = None
+    work_mode: Literal["implementation", "oversight"] = "implementation"
 
 
 class AgentRunnerInfo(BaseModel):

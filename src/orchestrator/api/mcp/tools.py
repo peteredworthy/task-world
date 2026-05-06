@@ -470,9 +470,18 @@ class ToolHandler:
         }
 
     async def _submit(self, args: dict[str, Any]) -> dict[str, Any]:
+        from orchestrator.workflow import OversightModeViolationError
+
         run_id: str = args["run_id"]
         task_id: str = args["task_id"]
-        result = await self._service.submit_for_verification(run_id, task_id)
+        try:
+            result = await self._service.submit_for_verification(run_id, task_id)
+        except OversightModeViolationError as exc:
+            return {
+                "success": False,
+                "new_status": "building",
+                "error": str(exc),
+            }
         return {
             "success": result.success,
             "new_status": result.new_status.value,

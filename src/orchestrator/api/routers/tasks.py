@@ -55,6 +55,7 @@ from orchestrator.workflow import (
     resolve_artifact_path,
     GateBlockedError,
     InvalidTransitionError,
+    OversightModeViolationError,
     TaskContextBuilder,
     generate_builder_prompt,
     generate_verifier_prompt,
@@ -290,6 +291,8 @@ async def submit_task(
     except InvalidTransitionError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except GateBlockedError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except OversightModeViolationError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
     if not result.success:

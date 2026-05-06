@@ -454,6 +454,25 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
         The fully assembled prompt string.
     """
     requirements_text = "\n".join(f"- {req}" for req in context.requirements)
+    workflow_action = (
+        "Perform only oversight/documentation/API operations. Do not implement source or test changes."
+        if context.work_mode == "oversight"
+        else "Implement each requirement."
+    )
+    git_section = (
+        "## Git Workflow\n"
+        "Before calling submit, commit only allowed oversight artifacts:\n"
+        "- `git add <files>` — stage only task-requested documentation/metadata such as "
+        "`docs/super-parent/` and `.mcp.json`\n"
+        "- Do not edit or commit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
+        "- Always use `git --no-pager` for git commands.\n"
+        if context.work_mode == "oversight"
+        else "## Git Workflow\n"
+        "Before calling submit, commit your changes to git:\n"
+        "- `git add <files>` — stage relevant changes\n"
+        "- `git commit -m 'Description of changes'` — commit with descriptive message\n"
+        "- Always use `git --no-pager` for git commands.\n"
+    )
 
     if is_verifier:
         tool_section = (
@@ -484,7 +503,7 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
             "Use the callback tools below to report your work.\n\n"
             "### Required Workflow\n"
             "1. Read the requirements above carefully.\n"
-            "2. Implement each requirement.\n"
+            f"2. {workflow_action}\n"
             "3. After completing each requirement, call **update_checklist** "
             "to mark it 'done'.\n"
             "4. Once ALL requirements are addressed, call **submit** to submit.\n"
@@ -502,11 +521,7 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
             "  Submission will fail if any CRITICAL requirement is not 'done'.\n\n"
             "- **request_clarification**(question)\n"
             "  Request clarification on ambiguous requirements.\n\n"
-            "## Git Workflow\n"
-            "Before calling submit, commit your changes to git:\n"
-            "- `git add <files>` — stage relevant changes\n"
-            "- `git commit -m 'Description of changes'` — commit with descriptive message\n"
-            "- Always use `git --no-pager` for git commands.\n\n"
+            f"{git_section}\n"
             "## Sandbox Constraints\n"
             "- You run in a workspace-write sandbox with network access disabled.\n"
             "- File operations are restricted to the working directory.\n"
