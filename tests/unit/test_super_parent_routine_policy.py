@@ -24,6 +24,7 @@ def test_evaluate_child_evidence_is_orchestration_only() -> None:
     assert "orchestration-only" in normalized
     assert "do not edit source code, tests, dependency files, lockfiles" in normalized
     assert "orchestrator_refresh_parent_oversight" in normalized
+    assert "orchestrator_resolve_child_run" in normalized
     assert "orchestrator_request_clarification" in normalized
     assert "orchestrator_escalate_requirement" in normalized
     assert "paused, failed without schema-valid evidence" in normalized
@@ -39,6 +40,7 @@ def test_accept_and_merge_child_refuses_unacceptable_children() -> None:
     assert "Read the current parent oversight state first" in normalized
     assert "merge queue" in normalized
     assert "orchestrator_accept_child_run" in normalized
+    assert "orchestrator_resolve_child_run" in normalized
     assert "Do not merge failed, paused, unsupported, or missing-evidence children" in (normalized)
     assert "Do not manually run `git merge`" in normalized
     assert "edit source/tests" in normalized

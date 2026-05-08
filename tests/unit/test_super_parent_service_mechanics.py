@@ -252,6 +252,43 @@ async def test_accept_child_run_rejects_contradictory_evidence(
         await service.accept_child_run("parent", "child")
 
 
+async def test_accept_child_run_rejects_mismatched_evidence_identity(
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    parent = _parent_run(parent_id="parent")
+    parent.worktree_path = str(tmp_path / "parent-wt")
+    (tmp_path / "parent-wt").mkdir()
+
+    child_dir = tmp_path / "child-wt"
+    evidence_dir = child_dir / "docs" / "run-evidence"
+    evidence_dir.mkdir(parents=True)
+    bundle = _valid_evidence_bundle("verified_fix")
+    bundle["slice_id"] = "wrong-slice"
+    bundle["routine_id"] = "wrong-routine"
+    (evidence_dir / "slice-01-evidence.json").write_text(
+        json.dumps(bundle),
+        encoding="utf-8",
+    )
+
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.COMPLETED,
+        worktree_path=str(child_dir),
+    )
+    child.routine_id = "child-routine"
+
+    await service.create_run(parent)
+    await service.create_run(child)
+
+    with pytest.raises(
+        InvalidTransitionError,
+        match="slice_id: expected 'slice-01', got 'wrong-slice'",
+    ):
+        await service.accept_child_run("parent", "child")
+
+
 async def test_accept_child_run_rejects_missing_evidence(
     service: WorkflowService,
     tmp_path: Path,
@@ -406,7 +443,7 @@ async def test_refresh_parent_oversight_invalidates_stale_final_validation(
     )
 
 
-async def test_safety_net_save_applies_oversight_guard(
+async def test_safety_net_save_applies_terminal_guard(
     service: WorkflowService,
     tmp_path: Path,
 ) -> None:
@@ -548,6 +585,56 @@ async def test_create_child_run_rejects_unresolved_paused_child(
             parent_slice_id="slice-02",
             next_action_decision="continue",
         )
+
+
+async def test_resolve_child_run_unblocks_replacement_child(
+    session: AsyncSession,
+) -> None:
+    transport = InMemorySignalTransport()
+    service = WorkflowService(session, signal_transport=transport)
+    parent = _parent_run(parent_id="parent")
+    failed_child = _child_run(
+        child_id="failed-child",
+        parent_id="parent",
+        status=RunStatus.FAILED,
+        worktree_path="/tmp/failed-child-worktree",
+    )
+    next_child = _child_run(
+        child_id="next-child",
+        parent_id="parent",
+        status=RunStatus.DRAFT,
+        worktree_path="/tmp/next-child-worktree",
+    )
+
+    await service.create_run(parent)
+    await service.create_run(failed_child)
+
+    result = await service.resolve_child_run(
+        "parent",
+        "failed-child",
+        resolution="reject",
+        reason="Attempt failed and replacement slice is required.",
+    )
+
+    assert result.resolution == "reject"
+    parent_after_resolution = await service.get_run("parent")
+    assert parent_after_resolution.oversight_state["rejected_child_run_ids"] == ["failed-child"]
+    assert parent_after_resolution.oversight_state["next_parent_action"] == "launch_child"
+    assert (
+        "failed-child: failed_child_unresolved"
+        not in parent_after_resolution.oversight_state["terminal_guard"]["blocking_reasons"]
+    )
+    assert parent_after_resolution.oversight_state["decisions"][-1]["action"] == "reject"
+
+    await service.create_child_run(
+        "parent",
+        next_child,
+        parent_slice_id="slice-02",
+        next_action_decision="replan",
+    )
+
+    signals = await transport.drain("next-child")
+    assert [signal.signal_type for signal in signals] == [WorkflowSignal.RUN_START]
 
 
 async def test_create_child_run_enforces_configured_child_limit(

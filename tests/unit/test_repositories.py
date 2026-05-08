@@ -16,7 +16,7 @@ from orchestrator.config import (
     TaskStatus,
     load_routine_from_path,
 )
-from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import RunModel, create_engine, create_session_factory, init_db
 from orchestrator.db import RunRepository
 from orchestrator.state.errors import RunNotFoundError
 from orchestrator.state.factory import create_run_from_routine
@@ -230,6 +230,31 @@ async def test_list_all(repo: RunRepository) -> None:
     assert len(runs) == 2
     ids = {r.id for r in runs}
     assert ids == {"run-1", "run-2"}
+
+
+async def test_list_all_tolerates_legacy_script_runner_type(
+    session: AsyncSession, repo: RunRepository
+) -> None:
+    now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+    session.add(
+        RunModel(
+            id="legacy-script-run",
+            repo_name="proj-1",
+            status="completed",
+            runner_type="script",
+            runner_config={},
+            config={},
+            created_at=now,
+            updated_at=now,
+        )
+    )
+    await session.flush()
+
+    runs = await repo.list_all()
+    loaded = await repo.get("legacy-script-run")
+
+    assert [run.id for run in runs] == ["legacy-script-run"]
+    assert loaded.agent_runner_type is None
 
 
 async def test_list_by_repo(repo: RunRepository) -> None:

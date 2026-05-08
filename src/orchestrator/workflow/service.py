@@ -90,8 +90,8 @@ from orchestrator.workflow.oversight import (
     REVISION_OUTCOMES,
     TargetInventoryItem,
     reduce_parent_oversight_state,
+    validate_run_evidence_items,
 )
-from orchestrator.workflow.oversight_guard import ensure_oversight_worktree_changes_allowed
 from orchestrator.git import ParentChildMergeResult, merge_child_into_parent
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.git.utils import commit_uncommitted_changes, get_head_commit
@@ -139,6 +139,17 @@ class RecoveryResult:
     status: str
     pause_reason: str | None = None
     current_step_index: int | None = None
+
+
+@dataclass(frozen=True)
+class ChildRunResolutionResult:
+    """Result of a parent decision to close a child without merging it."""
+
+    parent_run_id: str
+    child_run_id: str
+    resolution: Literal["reject", "abandon"]
+    reason: str
+    resolved_at: datetime
 
 
 def find_task_config(
@@ -213,16 +224,6 @@ def resolve_step_config_id_for_task(run: Run, task_id: str) -> str | None:
             if task.id == task_id:
                 return step.config_id
     return None
-
-
-def guard_oversight_auto_commit(
-    run: Run, task_config: TaskConfig | None, task: TaskState | None = None
-) -> None:
-    """Prevent implementation file auto-commits for oversight-only tasks."""
-    if task_config is None or task_config.work_mode != "oversight" or not run.worktree_path:
-        return
-    base_commit = task.attempts[-1].start_commit if task is not None and task.attempts else None
-    ensure_oversight_worktree_changes_allowed(Path(run.worktree_path), base_commit=base_commit)
 
 
 def _resolve_working_path(run: Run) -> Path | None:
@@ -583,20 +584,28 @@ class WorkflowService:
 
     async def _validate_child_evidence_for_acceptance(
         self,
-        child_status: RunStatus,
+        child: Run,
         child_evidence: list[dict[str, Any]],
     ) -> set[str]:
         """Validate run evidence bundles and return all reported outcomes."""
+        child_status = child.status
+        valid_evidence, invalid_evidence = validate_run_evidence_items(
+            child_evidence,
+            expected_slice_id=child.parent_slice_id,
+            expected_routine_id=child.routine_id,
+        )
+        if invalid_evidence:
+            first_invalid = invalid_evidence[0]
+            details = "; ".join(f"{error.field}: {error.message}" for error in first_invalid.errors)
+            action = f"accept_child_run (invalid run.evidence.v1 bundle) {first_invalid.path}"
+            if details:
+                action = f"{action}: {details}"
+            raise InvalidTransitionError(child_status.value, action)
+
         outcomes: set[str] = set()
-        for raw in child_evidence:
-            bundle_obj = raw.get("bundle")
-            if not isinstance(bundle_obj, dict):
-                raise InvalidTransitionError(
-                    child_status.value,
-                    "accept_child_run (invalid run.evidence.v1 bundle)",
-                )
+        for raw in valid_evidence:
             try:
-                bundle = RunEvidenceBundle.model_validate(bundle_obj)
+                bundle = RunEvidenceBundle.model_validate(raw["bundle"])
             except ValidationError as err:
                 raise InvalidTransitionError(
                     child_status.value,
@@ -1811,7 +1820,6 @@ class WorkflowService:
         # already confirms the work was done.
         task = state.get_task(run_id, task_id)
         step_config_id_pre = resolve_step_config_id_for_task(run, task_id)
-        task_config_pre = resolve_task_config(run, task.config_id, step_config_id_pre)
 
         auto_verify_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
         if auto_verify_config is not None and self._auto_verify_runner is not None:
@@ -1819,7 +1827,6 @@ class WorkflowService:
             if project_path is not None:
                 # Auto-commit any uncommitted changes before running auto-verify
                 if run.worktree_path:
-                    guard_oversight_auto_commit(run, task_config_pre, task)
                     commit_uncommitted_changes(
                         Path(run.worktree_path),
                         f"Auto-commit builder changes for task {task_id}",
@@ -1913,7 +1920,6 @@ class WorkflowService:
         task_pre = state.get_task(run_id, task_id)
         if run.worktree_path and task_pre.attempts:
             worktree_path_obj = Path(run.worktree_path)
-            guard_oversight_auto_commit(run, task_config_pre, task_pre)
             # Auto-commit any uncommitted changes left by the builder agent.
             # Some CLI agents (e.g. codex) may not commit their work, and the
             # verifier's git checkout of end_commit would destroy those changes.
@@ -2102,14 +2108,12 @@ class WorkflowService:
             return TransitionResult(success=True, new_status=TaskStatus.VERIFYING)
 
         step_config_id_pre = resolve_step_config_id_for_task(run, task_id)
-        task_config_pre = resolve_task_config(run, task.config_id, step_config_id_pre)
 
         auto_verify_config = resolve_auto_verify_config(run, task.config_id, step_config_id_pre)
         if auto_verify_config is not None and self._auto_verify_runner is not None:
             project_path = _resolve_working_path(run)
             if project_path is not None:
                 if run.worktree_path:
-                    guard_oversight_auto_commit(run, task_config_pre, task)
                     commit_uncommitted_changes(
                         Path(run.worktree_path),
                         f"Auto-commit builder changes for task {task_id}",
@@ -2227,9 +2231,6 @@ class WorkflowService:
         end_commit: str | None = None
         if run.worktree_path and task.attempts:
             worktree_path_obj = Path(run.worktree_path)
-            step_config_id = resolve_step_config_id_for_task(run, task_id)
-            task_config = resolve_task_config(run, task.config_id, step_config_id)
-            guard_oversight_auto_commit(run, task_config, task)
             commit_uncommitted_changes(
                 worktree_path_obj, f"Auto-commit builder changes for task {task_id}"
             )
@@ -2575,7 +2576,7 @@ class WorkflowService:
 
         child_evidence = await self.collect_run_evidence(child_run_id)
         child_outcomes = await self._validate_child_evidence_for_acceptance(
-            child.status,
+            child,
             child_evidence,
         )
         if not child_outcomes & ACCEPTANCE_OUTCOMES:
@@ -2612,6 +2613,108 @@ class WorkflowService:
         await self._repo.save(parent)
         await self._session.commit()
         return result
+
+    async def resolve_child_run(
+        self,
+        parent_run_id: str,
+        child_run_id: str,
+        *,
+        resolution: Literal["reject", "abandon"],
+        reason: str,
+    ) -> ChildRunResolutionResult:
+        """Record a parent decision that closes a child without merging it."""
+        parent = await self._repo.get(parent_run_id)
+        child = await self._repo.get(child_run_id)
+        if child.parent_run_id != parent_run_id:
+            raise InvalidTransitionError(child.status.value, "resolve_child_run (wrong parent)")
+        if child.status in (RunStatus.DRAFT, RunStatus.ACTIVE, RunStatus.STOPPING):
+            raise InvalidTransitionError(
+                child.status.value,
+                "resolve_child_run (requires paused, completed, or failed child)",
+            )
+        if resolution not in ("reject", "abandon"):
+            raise InvalidTransitionError(
+                parent.status.value,
+                "resolve_child_run (invalid resolution)",
+            )
+        clean_reason = reason.strip()
+        if not clean_reason:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "resolve_child_run (requires reason)",
+            )
+
+        state: dict[str, Any] = dict(parent.oversight_state)
+        accepted_ids = set(self._state_str_list(state.get("accepted_child_run_ids")))
+        for item in self._state_dict_list(state.get("accepted_children")):
+            child_id = item.get("child_run_id") or item.get("run_id")
+            if isinstance(child_id, str):
+                accepted_ids.add(child_id)
+        if child.id in accepted_ids:
+            raise InvalidTransitionError(
+                child.status.value,
+                "resolve_child_run (child already accepted)",
+            )
+
+        rejected_ids = set(self._state_str_list(state.get("rejected_child_run_ids")))
+        abandoned_ids = set(self._state_str_list(state.get("abandoned_child_run_ids")))
+        if child.id in rejected_ids and resolution == "abandon":
+            raise InvalidTransitionError(
+                child.status.value,
+                "resolve_child_run (child already rejected)",
+            )
+        if child.id in abandoned_ids and resolution == "reject":
+            raise InvalidTransitionError(
+                child.status.value,
+                "resolve_child_run (child already abandoned)",
+            )
+
+        now = self._clock.now()
+        if resolution == "reject":
+            rejected_ids.add(child.id)
+            abandoned_ids.discard(child.id)
+        else:
+            abandoned_ids.add(child.id)
+            rejected_ids.discard(child.id)
+        state["rejected_child_run_ids"] = sorted(rejected_ids)
+        state["abandoned_child_run_ids"] = sorted(abandoned_ids)
+        state["merge_conflicts"] = [
+            item
+            for item in self._state_dict_list(state.get("merge_conflicts"))
+            if item.get("child_run_id") != child.id
+        ]
+        decisions = self._state_dict_list(state.get("decisions"))
+        decisions.append(
+            {
+                "kind": "child_resolution",
+                "action": resolution,
+                "child_run_id": child.id,
+                "slice_id": child.parent_slice_id,
+                "reason": clean_reason,
+                "decided_at": now.isoformat(),
+            }
+        )
+        state["decisions"] = decisions
+
+        parent.oversight_state = self._drop_stale_final_validation(parent, state)
+        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        parent.oversight_state = reduce_parent_oversight_state(
+            parent,
+            children,
+            evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(parent),
+        )
+        parent.updated_at = now
+        await self._repo.save(parent)
+        await self._session.commit()
+        return ChildRunResolutionResult(
+            parent_run_id=parent_run_id,
+            child_run_id=child.id,
+            resolution=resolution,
+            reason=clean_reason,
+            resolved_at=now,
+        )
 
     async def create_child_run(
         self,
@@ -3038,6 +3141,26 @@ class WorkflowService:
             return bundles
 
         return await asyncio.to_thread(scan)
+
+    async def collect_validated_run_evidence(
+        self,
+        run_id: str,
+        *,
+        expected_slice_id: str | None = None,
+        expected_routine_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Collect run evidence with valid bundles separated from validation failures."""
+        raw_items = await self.collect_run_evidence(run_id)
+        evidence, invalid_evidence = validate_run_evidence_items(
+            raw_items,
+            expected_slice_id=expected_slice_id,
+            expected_routine_id=expected_routine_id,
+        )
+        return {
+            "run_id": run_id,
+            "evidence": evidence,
+            "invalid_evidence": [item.model_dump(mode="json") for item in invalid_evidence],
+        }
 
     async def get_task(self, run_id: str, task_id: str) -> TaskState:
         """Get a task by run ID and task ID."""

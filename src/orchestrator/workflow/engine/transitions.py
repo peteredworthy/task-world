@@ -501,6 +501,7 @@ def _apply_configured_transition(
     clock: Clock | None,
     emitter: EventEmitter | None,
     worktree_path: Path | None,
+    include_on_complete: bool = True,
 ) -> bool:
     target_step_id, message = evaluate_transition_conditions(
         step_config,
@@ -508,6 +509,7 @@ def _apply_configured_transition(
         _step_checklist(step),
         run,
         worktree_path,
+        include_on_complete=include_on_complete,
     )
     if target_step_id is None:
         return False
@@ -792,8 +794,25 @@ def check_step_progression(
             # Step not complete, can't advance
             break
 
-        # Step is complete - check for fail-fast
+        # Step is complete. Explicit conditional transitions can intentionally
+        # route failed steps, but ordinary failures still fail-fast.
         if step_has_failure(step):
+            if routine_config is not None:
+                step_config = _find_step_config(routine_config, step.config_id)
+                if step_config is not None and step_config.transitions is not None:
+                    if _apply_configured_transition(
+                        run,
+                        step,
+                        step_config,
+                        clock=clock,
+                        emitter=emitter,
+                        worktree_path=worktree_path,
+                        include_on_complete=False,
+                    ):
+                        changed = True
+                        if run.status == RunStatus.PAUSED:
+                            break
+                        continue
             break
 
         if routine_config is not None:
@@ -1348,6 +1367,8 @@ def evaluate_transition_conditions(
     checklist: list[ChecklistItem],
     run: Run,
     worktree_path: Path | None = None,
+    *,
+    include_on_complete: bool = True,
 ) -> tuple[str | None, str | None]:
     """Evaluate transition conditions and return target step ID.
 
@@ -1382,5 +1403,7 @@ def evaluate_transition_conditions(
             run.transition_tracker.record_transition(step_config.id, cond.target)
             return cond.target, cond.message
 
-    # No conditions met, use on_complete if specified
-    return step_config.transitions.on_complete, None
+    # No conditions met, use on_complete if specified and allowed.
+    if include_on_complete:
+        return step_config.transitions.on_complete, None
+    return None, None

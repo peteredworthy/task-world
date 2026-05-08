@@ -313,6 +313,87 @@ async def test_oversight_child_run_tools(
     assert updated_state["decisions"][0]["kind"] == "mcp_update"
 
 
+async def test_resolve_child_run_tool_records_parent_decision(
+    handler: ToolHandler,
+    service: WorkflowService,
+) -> None:
+    parent = _make_run()
+    parent.status = RunStatus.ACTIVE
+    await service.create_run(parent)
+    child = Run(
+        id="child-1",
+        repo_name=parent.repo_name,
+        status=RunStatus.FAILED,
+        parent_run_id=parent.id,
+        parent_slice_id="slice-01",
+        source_branch="main",
+        created_at=parent.created_at,
+        updated_at=parent.updated_at,
+    )
+    await service.create_run(child)
+
+    result = await handler.handle(
+        "orchestrator_resolve_child_run",
+        {
+            "parent_run_id": parent.id,
+            "child_run_id": child.id,
+            "resolution": "abandon",
+            "reason": "Environment setup failed; launch replacement slice.",
+        },
+    )
+
+    assert result["resolution"] == "abandon"
+    oversight_state = result["oversight_state"]
+    assert oversight_state["abandoned_child_run_ids"] == ["child-1"]
+    assert oversight_state["decisions"][-1]["action"] == "abandon"
+    assert oversight_state["next_parent_action"] == "launch_child"
+
+
+async def test_get_run_evidence_tool_returns_validation_errors(
+    handler: ToolHandler,
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    run = _make_run()
+    worktree = tmp_path / "worktree"
+    evidence_dir = worktree / "docs" / "run-evidence"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "slice-01-evidence.json").write_text(
+        """{
+  "schema_version": "run.evidence.v1",
+  "slice_id": "slice-01",
+  "routine_id": "test-routine",
+  "assumption_tested": "Invalid evidence is reported.",
+  "summary": "Bad status should not be hidden.",
+  "commands_run": ["uv run pytest"],
+  "test_results": [{"name": "bad status", "status": "partial", "details": "invalid"}],
+  "target_bug_reproduced": true,
+  "real_frontend_path_exercised": false,
+  "real_execution_surface": "MCP ToolHandler",
+  "files_changed": [],
+  "evidence_files": [],
+  "open_uncertainties": [],
+  "next_recommendation": "waiver_requested",
+  "outcome": "verified_fix"
+}""",
+        encoding="utf-8",
+    )
+    run.worktree_path = str(worktree)
+    await service.create_run(run)
+
+    result = await handler.handle("orchestrator_get_run_evidence", {"run_id": run.id})
+
+    assert result["evidence"] == []
+    invalid = result["invalid_evidence"][0]
+    assert invalid["path"] == "docs/run-evidence/slice-01-evidence.json"
+    assert {error["field"] for error in invalid["errors"]} >= {
+        "commands_run.0",
+        "test_results.0.status",
+        "target_bug_reproduced",
+        "next_recommendation",
+    }
+
+
 async def test_parent_terminal_guard_pauses_unresolved_child(
     service: WorkflowService,
     session: AsyncSession,

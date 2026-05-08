@@ -41,6 +41,7 @@ from orchestrator.api.schemas.runs import (
     EvidenceBundleSchema,
     GradeSummaryItem,
     GuidanceResponse,
+    InvalidEvidenceItem,
     MergeBackRequest,
     MergeBackResponse,
     MergeReadinessSnapshot,
@@ -48,6 +49,8 @@ from orchestrator.api.schemas.runs import (
     ParentOversightUpdateRequest,
     RecoverRequest,
     RecoverResponse,
+    ResolveChildRunRequest,
+    ResolveChildRunResponse,
     ResumeRunRequest,
     RunEvidenceItem,
     RunEvidenceResponse,
@@ -517,20 +520,52 @@ async def accept_child_run(
     )
 
 
+@router.post(
+    "/{parent_run_id}/children/{child_run_id}/resolve",
+    response_model=ResolveChildRunResponse,
+)
+async def resolve_child_run(
+    parent_run_id: str,
+    child_run_id: str,
+    request: ResolveChildRunRequest,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> ResolveChildRunResponse:
+    """Reject or abandon a child run so the parent can continue iterating."""
+    result = await service.resolve_child_run(
+        parent_run_id,
+        child_run_id,
+        resolution=request.resolution,
+        reason=request.reason,
+    )
+    oversight_state = await service.get_parent_oversight(parent_run_id)
+    return ResolveChildRunResponse(
+        parent_run_id=parent_run_id,
+        child_run_id=child_run_id,
+        resolution=result.resolution,
+        reason=result.reason,
+        resolved_at=result.resolved_at,
+        oversight_state=oversight_state,
+    )
+
+
 @router.get("/{run_id}/evidence", response_model=RunEvidenceResponse)
 async def get_run_evidence(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
 ) -> RunEvidenceResponse:
     """Return structured run.evidence.v1 bundles produced by a run."""
-    items: list[RunEvidenceItem] = []
-    for raw in await service.collect_run_evidence(run_id):
-        try:
-            bundle = EvidenceBundleSchema.model_validate(raw["bundle"])
-        except ValidationError:
-            continue
-        items.append(RunEvidenceItem(path=raw["path"], bundle=bundle))
-    return RunEvidenceResponse(run_id=run_id, evidence=items)
+    validated = await service.collect_validated_run_evidence(run_id)
+    items = [
+        RunEvidenceItem(
+            path=item["path"],
+            bundle=EvidenceBundleSchema.model_validate(item["bundle"]),
+        )
+        for item in validated["evidence"]
+    ]
+    invalid_items = [
+        InvalidEvidenceItem.model_validate(item) for item in validated["invalid_evidence"]
+    ]
+    return RunEvidenceResponse(run_id=run_id, evidence=items, invalid_evidence=invalid_items)
 
 
 @router.get("/{run_id}/oversight", response_model=ParentOversightResponse)

@@ -51,11 +51,17 @@ from orchestrator.time_utils import (
 )
 
 
-def _attempt_agent_runner_type(value: str | None) -> AgentRunnerType | None:
-    """Parse persisted attempt runner type, tolerating legacy script markers."""
+def _agent_runner_type(value: str | None) -> AgentRunnerType | None:
+    """Parse persisted runner type, tolerating legacy script markers."""
     if value is None or value == "script":
         return None
-    return AgentRunnerType(value)
+    try:
+        return AgentRunnerType(value)
+    except ValueError:
+        logging.getLogger(__name__).warning(
+            "Unknown persisted agent runner type %r; treating as unset", value
+        )
+        return None
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -163,7 +169,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
                         grade_snapshot=grade_snapshot,
                         auto_verify_results=att_model.auto_verify_results or [],
                         token_usage_by_model=token_usage_list,
-                        agent_runner_type=_attempt_agent_runner_type(att_model.runner_type),
+                        agent_runner_type=_agent_runner_type(att_model.runner_type),
                         agent_model=att_model.agent_model,
                         agent_settings=agent_settings,
                         agent_output=att_model.agent_output if action_logs_loaded else None,
@@ -264,7 +270,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
         parent_run_id=model.parent_run_id,
         parent_slice_id=model.parent_slice_id,
         oversight_state=model.oversight_state or {},
-        agent_runner_type=AgentRunnerType(model.runner_type) if model.runner_type else None,
+        agent_runner_type=_agent_runner_type(model.runner_type),
         agent_runner_config=model.runner_config or {},
         verifier_model=model.verifier_model,
         worktree_enabled=bool(model.worktree_enabled),

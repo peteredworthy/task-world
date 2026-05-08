@@ -68,6 +68,20 @@ class OversightEvidenceSummary(BaseModel):
     summary: str = ""
 
 
+class EvidenceValidationIssue(BaseModel):
+    """Field-level evidence validation failure."""
+
+    field: str
+    message: str
+
+
+class InvalidEvidenceSummary(BaseModel):
+    """Invalid evidence file and the validation failures it triggered."""
+
+    path: str
+    errors: list[EvidenceValidationIssue] = Field(default_factory=list[EvidenceValidationIssue])
+
+
 class RunEvidenceCommand(BaseModel):
     """Command evidence inside a run evidence bundle."""
 
@@ -105,6 +119,14 @@ class RunEvidenceBundle(BaseModel):
     outcome: EvidenceOutcome
 
 
+class EvidenceValidationResult(BaseModel):
+    """Validated run evidence item or structured invalid evidence details."""
+
+    path: str
+    bundle: RunEvidenceBundle | None = None
+    invalid: InvalidEvidenceSummary | None = None
+
+
 class TargetInventoryItem(BaseModel):
     """Simplified target inventory entry used by terminal completion checks."""
 
@@ -137,6 +159,9 @@ class ChildOversightSummary(BaseModel):
     created_at: str
     evidence: list[OversightEvidenceSummary] = Field(default_factory=list[OversightEvidenceSummary])
     invalid_evidence_paths: list[str] = Field(default_factory=list[str])
+    invalid_evidence: list[InvalidEvidenceSummary] = Field(
+        default_factory=list[InvalidEvidenceSummary]
+    )
     blocking_reasons: list[str] = Field(default_factory=list[str])
 
 
@@ -274,7 +299,12 @@ def reduce_parent_oversight(
     for child in sorted_children:
         status = _status_value(child.status)
         child_counts[status] += 1
-        evidence, invalid_paths = _parse_evidence_items(evidence_by_run_id.get(child.id, ()))
+        evidence, invalid_evidence = _parse_evidence_items(
+            evidence_by_run_id.get(child.id, ()),
+            expected_slice_id=child.parent_slice_id,
+            expected_routine_id=child.routine_id,
+        )
+        invalid_paths = [item.path for item in invalid_evidence]
         slice_id = _slice_id_for_child(child, evidence)
         counters = attempt_counts.setdefault(slice_id, Counter())
         counters["total"] += 1
@@ -320,6 +350,7 @@ def reduce_parent_oversight(
                 created_at=child.created_at.isoformat(),
                 evidence=evidence,
                 invalid_evidence_paths=invalid_paths,
+                invalid_evidence=invalid_evidence,
                 blocking_reasons=child_blocking_reasons,
             )
         )
@@ -509,35 +540,129 @@ def _next_parent_action(
     return "launch_child"
 
 
+def validate_run_evidence_item(
+    raw_item: Mapping[str, Any],
+    *,
+    expected_slice_id: str | None = None,
+    expected_routine_id: str | None = None,
+) -> EvidenceValidationResult:
+    """Validate one collected run.evidence.v1 item with optional identity checks."""
+    bundle_obj = raw_item.get("bundle")
+    bundle: Mapping[str, Any] = (
+        cast(Mapping[str, Any], bundle_obj) if isinstance(bundle_obj, Mapping) else raw_item
+    )
+    path = _string_or_empty(raw_item.get("path")) or "<unknown>"
+    try:
+        bundle_model = RunEvidenceBundle.model_validate(bundle)
+    except ValidationError as err:
+        return EvidenceValidationResult(
+            path=path,
+            invalid=InvalidEvidenceSummary(path=path, errors=_validation_issues(err)),
+        )
+
+    id_errors = _evidence_identity_issues(
+        bundle_model,
+        expected_slice_id=expected_slice_id,
+        expected_routine_id=expected_routine_id,
+    )
+    if id_errors:
+        return EvidenceValidationResult(
+            path=path,
+            invalid=InvalidEvidenceSummary(path=path, errors=id_errors),
+        )
+    return EvidenceValidationResult(path=path, bundle=bundle_model)
+
+
+def validate_run_evidence_items(
+    raw_items: Sequence[Mapping[str, Any]],
+    *,
+    expected_slice_id: str | None = None,
+    expected_routine_id: str | None = None,
+) -> tuple[list[dict[str, Any]], list[InvalidEvidenceSummary]]:
+    """Return JSON-safe valid evidence items and structured invalid evidence records."""
+    valid: list[dict[str, Any]] = []
+    invalid: list[InvalidEvidenceSummary] = []
+    for raw_item in sorted(raw_items, key=lambda item: str(item.get("path", ""))):
+        result = validate_run_evidence_item(
+            raw_item,
+            expected_slice_id=expected_slice_id,
+            expected_routine_id=expected_routine_id,
+        )
+        if result.bundle is None:
+            if result.invalid is not None:
+                invalid.append(result.invalid)
+            continue
+        valid.append({"path": result.path, "bundle": result.bundle.model_dump(mode="json")})
+    return valid, invalid
+
+
 def _parse_evidence_items(
     raw_items: Sequence[Mapping[str, Any]],
-) -> tuple[list[OversightEvidenceSummary], list[str]]:
+    *,
+    expected_slice_id: str | None = None,
+    expected_routine_id: str | None = None,
+) -> tuple[list[OversightEvidenceSummary], list[InvalidEvidenceSummary]]:
     evidence: list[OversightEvidenceSummary] = []
-    invalid_paths: list[str] = []
+    invalid: list[InvalidEvidenceSummary] = []
     for raw_item in sorted(raw_items, key=lambda item: str(item.get("path", ""))):
-        bundle_obj = raw_item.get("bundle")
-        bundle: Mapping[str, Any] = (
-            cast(Mapping[str, Any], bundle_obj) if isinstance(bundle_obj, Mapping) else raw_item
+        result = validate_run_evidence_item(
+            raw_item,
+            expected_slice_id=expected_slice_id,
+            expected_routine_id=expected_routine_id,
         )
-        path = _string_or_empty(raw_item.get("path")) or "<unknown>"
-        try:
-            bundle_model = RunEvidenceBundle.model_validate(bundle)
-            evidence.append(
-                OversightEvidenceSummary.model_validate(
-                    {
-                        "path": path,
-                        "slice_id": bundle_model.slice_id,
-                        "routine_id": bundle_model.routine_id,
-                        "outcome": bundle_model.outcome,
-                        "next_recommendation": bundle_model.next_recommendation,
-                        "target_bug_reproduced": bundle_model.target_bug_reproduced,
-                        "summary": bundle_model.summary,
-                    }
-                )
+        if result.bundle is None:
+            if result.invalid is not None:
+                invalid.append(result.invalid)
+            continue
+        bundle_model = result.bundle
+        evidence.append(
+            OversightEvidenceSummary.model_validate(
+                {
+                    "path": result.path,
+                    "slice_id": bundle_model.slice_id,
+                    "routine_id": bundle_model.routine_id,
+                    "outcome": bundle_model.outcome,
+                    "next_recommendation": bundle_model.next_recommendation,
+                    "target_bug_reproduced": bundle_model.target_bug_reproduced,
+                    "summary": bundle_model.summary,
+                }
             )
-        except ValidationError:
-            invalid_paths.append(path)
-    return evidence, sorted(invalid_paths)
+        )
+    return evidence, invalid
+
+
+def _validation_issues(err: ValidationError) -> list[EvidenceValidationIssue]:
+    return [
+        EvidenceValidationIssue(
+            field=".".join(str(part) for part in error["loc"]) or "<root>",
+            message=str(error["msg"]),
+        )
+        for error in err.errors()
+    ]
+
+
+def _evidence_identity_issues(
+    bundle: RunEvidenceBundle,
+    *,
+    expected_slice_id: str | None,
+    expected_routine_id: str | None,
+) -> list[EvidenceValidationIssue]:
+    issues: list[EvidenceValidationIssue] = []
+    if expected_slice_id and bundle.slice_id != expected_slice_id:
+        issues.append(
+            EvidenceValidationIssue(
+                field="slice_id",
+                message=f"expected {expected_slice_id!r}, got {bundle.slice_id!r}",
+            )
+        )
+    if expected_routine_id and bundle.routine_id != expected_routine_id:
+        issues.append(
+            EvidenceValidationIssue(
+                field="routine_id",
+                message=f"expected {expected_routine_id!r}, got {bundle.routine_id!r}",
+            )
+        )
+    return issues
 
 
 def _slice_id_for_child(child_run: Run, evidence: Sequence[OversightEvidenceSummary]) -> str:

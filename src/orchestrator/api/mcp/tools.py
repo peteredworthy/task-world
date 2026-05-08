@@ -9,7 +9,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from orchestrator.config import RoutineConfig
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RoutineSource
@@ -245,6 +245,27 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "orchestrator_resolve_child_run",
+        "description": "Reject or abandon a child run so the parent can continue iterating.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "parent_run_id": {"type": "string", "description": "Parent run ID"},
+                "child_run_id": {"type": "string", "description": "Child run ID to resolve"},
+                "resolution": {
+                    "type": "string",
+                    "enum": ["reject", "abandon"],
+                    "description": "Parent decision for this child",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Audit reason for rejecting or abandoning this child",
+                },
+            },
+            "required": ["parent_run_id", "child_run_id", "resolution", "reason"],
+        },
+    },
+    {
         "name": "orchestrator_wait_for_run",
         "description": "Wait for a run to complete, fail, or pause, then return its current status.",
         "inputSchema": {
@@ -423,6 +444,8 @@ class ToolHandler:
             return await self._list_child_runs(arguments)
         elif tool_name == "orchestrator_accept_child_run":
             return await self._accept_child_run(arguments)
+        elif tool_name == "orchestrator_resolve_child_run":
+            return await self._resolve_child_run(arguments)
         elif tool_name == "orchestrator_wait_for_run":
             return await self._wait_for_run(arguments)
         elif tool_name == "orchestrator_get_run_evidence":
@@ -470,18 +493,9 @@ class ToolHandler:
         }
 
     async def _submit(self, args: dict[str, Any]) -> dict[str, Any]:
-        from orchestrator.workflow import OversightModeViolationError
-
         run_id: str = args["run_id"]
         task_id: str = args["task_id"]
-        try:
-            result = await self._service.submit_for_verification(run_id, task_id)
-        except OversightModeViolationError as exc:
-            return {
-                "success": False,
-                "new_status": "building",
-                "error": str(exc),
-            }
+        result = await self._service.submit_for_verification(run_id, task_id)
         return {
             "success": result.success,
             "new_status": result.new_status.value,
@@ -741,6 +755,32 @@ class ToolHandler:
             "oversight_state": oversight_state,
         }
 
+    async def _resolve_child_run(self, args: dict[str, Any]) -> dict[str, Any]:
+        parent_run_id: str = args["parent_run_id"]
+        child_run_id: str = args["child_run_id"]
+        resolution: str = args["resolution"]
+        if resolution not in ("reject", "abandon"):
+            raise ValueError("resolution must be one of: reject, abandon")
+        resolution_literal: Literal["reject", "abandon"] = (
+            "reject" if resolution == "reject" else "abandon"
+        )
+        reason = str(args["reason"]).strip()
+        result = await self._service.resolve_child_run(
+            parent_run_id,
+            child_run_id,
+            resolution=resolution_literal,
+            reason=reason,
+        )
+        oversight_state = await self._service.get_parent_oversight(parent_run_id)
+        return {
+            "parent_run_id": parent_run_id,
+            "child_run_id": child_run_id,
+            "resolution": result.resolution,
+            "reason": result.reason,
+            "resolved_at": format_utc_datetime(result.resolved_at),
+            "oversight_state": oversight_state,
+        }
+
     async def _wait_for_run(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
         timeout_seconds = min(float(args.get("timeout_seconds", 0)), 300.0)
@@ -775,8 +815,7 @@ class ToolHandler:
 
     async def _get_run_evidence(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
-        evidence = await self._service.collect_run_evidence(run_id)
-        return {"run_id": run_id, "evidence": evidence}
+        return await self._service.collect_validated_run_evidence(run_id)
 
     async def _get_parent_oversight(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]

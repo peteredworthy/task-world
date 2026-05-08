@@ -27,6 +27,7 @@ BUILDER_TOOLS = {
     "orchestrator_create_child_run",
     "orchestrator_list_child_runs",
     "orchestrator_accept_child_run",
+    "orchestrator_resolve_child_run",
     "orchestrator_wait_for_run",
     "orchestrator_get_run_evidence",
     "orchestrator_get_parent_oversight",
@@ -310,6 +311,24 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
+        async def orchestrator_resolve_child_run(
+            parent_run_id: str,
+            child_run_id: str,
+            resolution: Literal["reject", "abandon"],
+            reason: str,
+        ) -> str:
+            """Reject or abandon a child run so the parent can continue iterating."""
+            result = await handler.handle(
+                "orchestrator_resolve_child_run",
+                {
+                    "parent_run_id": parent_run_id,
+                    "child_run_id": child_run_id,
+                    "resolution": resolution,
+                    "reason": reason,
+                },
+            )
+            return json.dumps(result)
+
         async def orchestrator_wait_for_run(
             run_id: str,
             timeout_seconds: float = 0,
@@ -376,6 +395,11 @@ class OrchestratorMCPServer:
             orchestrator_accept_child_run,
             name="orchestrator_accept_child_run",
             description="Merge an accepted child run into its parent run branch.",
+        )
+        self._mcp.add_tool(
+            orchestrator_resolve_child_run,
+            name="orchestrator_resolve_child_run",
+            description="Reject or abandon a child run so the parent can continue iterating.",
         )
         self._mcp.add_tool(
             orchestrator_wait_for_run,

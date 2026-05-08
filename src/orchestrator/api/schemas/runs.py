@@ -169,9 +169,20 @@ class RunEvidenceItem(ApiModel):
     bundle: EvidenceBundleSchema
 
 
+class EvidenceValidationIssueSchema(ApiModel):
+    field: str
+    message: str
+
+
+class InvalidEvidenceItem(ApiModel):
+    path: str
+    errors: list[EvidenceValidationIssueSchema]
+
+
 class RunEvidenceResponse(ApiModel):
     run_id: str
     evidence: list[RunEvidenceItem]
+    invalid_evidence: list[InvalidEvidenceItem] = Field(default_factory=list[InvalidEvidenceItem])
 
 
 class ParentOversightResponse(ApiModel):
@@ -226,6 +237,28 @@ class AcceptChildRunResponse(ApiModel):
     merge_commit_sha: str | None = None
     conflict_files: list[str] = []
     conflict_count: int = 0
+    oversight_state: dict[str, Any]
+
+
+class ResolveChildRunRequest(ApiModel):
+    resolution: Literal["reject", "abandon"]
+    reason: str = Field(min_length=1, max_length=4000)
+
+    @field_validator("reason")
+    @classmethod
+    def normalize_reason(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("reason must not be blank")
+        return stripped
+
+
+class ResolveChildRunResponse(ApiModel):
+    parent_run_id: str
+    child_run_id: str
+    resolution: Literal["reject", "abandon"]
+    reason: str
+    resolved_at: datetime
     oversight_state: dict[str, Any]
 
 

@@ -160,11 +160,35 @@ def test_malformed_acceptance_evidence_is_invalid_and_not_mergeable() -> None:
 
     assert snapshot.merge_queue == []
     assert snapshot.child_summaries[0].invalid_evidence_paths == ["docs/slice-1/evidence.json"]
+    assert snapshot.child_summaries[0].invalid_evidence[0].errors[0].field == "slice_id"
     assert snapshot.child_summaries[0].blocking_reasons == [
         "completed_child_missing_evidence",
         "invalid_evidence_bundle",
     ]
     assert "child: invalid_evidence_bundle" in snapshot.terminal_guard.blocking_reasons
+
+
+def test_mismatched_child_evidence_is_invalid_and_not_mergeable() -> None:
+    parent = _run("parent", status=RunStatus.ACTIVE)
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-expected",
+    )
+    child.routine_id = "expected-routine"
+    mismatched = _evidence("verified_fix", slice_id="wrong-slice")
+    mismatched["bundle"]["routine_id"] = "wrong-routine"
+
+    snapshot = reduce_parent_oversight(parent, [child], {"child": [mismatched]})
+
+    invalid = snapshot.child_summaries[0].invalid_evidence[0]
+    assert snapshot.merge_queue == []
+    assert invalid.path == "docs/wrong-slice/verified_fix-evidence.json"
+    assert [(error.field, error.message) for error in invalid.errors] == [
+        ("slice_id", "expected 'slice-expected', got 'wrong-slice'"),
+        ("routine_id", "expected 'expected-routine', got 'wrong-routine'"),
+    ]
 
 
 def test_bug_not_reproduced_requires_parent_decision() -> None:

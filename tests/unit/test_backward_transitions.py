@@ -601,6 +601,110 @@ def test_step_progression_applies_configured_loop_transition() -> None:
     assert events[0].to_step_index == 0
 
 
+def test_step_progression_allows_conditional_loop_transition_for_failed_step() -> None:
+    """Conditional loop transitions can handle a terminal step with failures."""
+    routine = RoutineConfig(
+        id="super-parent-test",
+        name="Super Parent Test",
+        steps=[
+            StepConfig(
+                id="SP-02",
+                title="Select Next Slice",
+                tasks=[TaskConfig(id="T-01", title="Select", task_context="Select")],
+            ),
+            StepConfig(
+                id="SP-03",
+                title="Launch Child Run",
+                tasks=[TaskConfig(id="T-01", title="Launch", task_context="Launch")],
+            ),
+            StepConfig(
+                id="SP-04",
+                title="Evaluate Evidence",
+                tasks=[
+                    TaskConfig(id="T-01", title="Evaluate", task_context="Evaluate"),
+                    TaskConfig(id="T-02", title="Accept", task_context="Accept"),
+                ],
+                transitions=StepTransitions(
+                    on_condition=[
+                        TransitionCondition(
+                            condition="super_parent_has_unresolved_inventory",
+                            target="SP-02",
+                            max_iterations=3,
+                            message="Inventory remains unresolved",
+                        )
+                    ],
+                    on_complete="SP-05",
+                ),
+            ),
+            StepConfig(
+                id="SP-05",
+                title="Validate",
+                tasks=[TaskConfig(id="T-01", title="Validate", task_context="Validate")],
+            ),
+        ],
+    )
+    run = Run(
+        id="run-1",
+        repo_name="proj-1",
+        status=RunStatus.ACTIVE,
+        current_step_index=2,
+        oversight_state={"target_inventory": [{"id": "INV-001", "resolved": False}]},
+        steps=[
+            StepState(
+                id="step-1",
+                config_id="SP-02",
+                completed=True,
+                tasks=[TaskState(id="task-1", config_id="T-01", status=TaskStatus.COMPLETED)],
+            ),
+            StepState(
+                id="step-2",
+                config_id="SP-03",
+                completed=True,
+                tasks=[TaskState(id="task-2", config_id="T-01", status=TaskStatus.COMPLETED)],
+            ),
+            StepState(
+                id="step-3",
+                config_id="SP-04",
+                completed=False,
+                tasks=[
+                    TaskState(id="task-3", config_id="T-01", status=TaskStatus.FAILED),
+                    TaskState(id="task-4", config_id="T-02", status=TaskStatus.COMPLETED),
+                ],
+            ),
+            StepState(
+                id="step-4",
+                config_id="SP-05",
+                completed=False,
+                tasks=[TaskState(id="task-5", config_id="T-01", status=TaskStatus.PENDING)],
+            ),
+        ],
+    )
+    emitter = BufferingEmitter()
+
+    changed = check_step_progression(
+        run,
+        routine_config=routine,
+        clock=DefaultClock(),
+        emitter=emitter,
+    )
+
+    assert changed is True
+    assert run.status == RunStatus.ACTIVE
+    assert run.current_step_index == 0
+    assert [step.completed for step in run.steps] == [False, False, False, False]
+    assert [task.status for task in run.steps[2].tasks] == [
+        TaskStatus.PENDING,
+        TaskStatus.PENDING,
+    ]
+    assert run.transition_tracker is not None
+    assert run.transition_tracker.get_count("SP-04", "SP-02") == 1
+    events = emitter.drain()
+    assert len(events) == 1
+    assert isinstance(events[0], RunStepBackward)
+    assert events[0].from_step_index == 2
+    assert events[0].to_step_index == 0
+
+
 def test_evaluate_transition_conditions_with_worktree(tmp_path: Path) -> None:
     """File-based conditions work with worktree path."""
     conflicts_file = tmp_path / "CONFLICTS.md"

@@ -1,0 +1,452 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Super Parent UI Review</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #111827;
+        --muted: #4b5563;
+        --line: #d1d5db;
+        --paper: #f8fafc;
+        --white: #ffffff;
+        --blue: #2563eb;
+        --teal: #0f766e;
+        --green: #15803d;
+        --amber: #b45309;
+        --red: #b91c1c;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #e5e7eb;
+        color: var(--ink);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 28px;
+        padding: 28px;
+      }
+
+      section {
+        position: relative;
+        width: min(1280px, calc(100vw - 56px));
+        min-height: 720px;
+        margin: 0 auto;
+        padding: 46px 56px;
+        background: var(--white);
+        border: 1px solid var(--line);
+        box-shadow: 0 20px 45px rgb(15 23 42 / 0.12);
+        overflow: hidden;
+      }
+
+      .cover {
+        background: var(--paper);
+      }
+
+      .kicker {
+        margin: 0 0 10px;
+        color: var(--teal);
+        font-size: 12px;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: 0;
+      }
+
+      h1,
+      h2 {
+        margin: 0;
+        max-width: 860px;
+        font-weight: 780;
+        letter-spacing: 0;
+        line-height: 1.05;
+      }
+
+      h1 {
+        font-size: 54px;
+      }
+
+      h2 {
+        padding-bottom: 22px;
+        border-bottom: 1px solid var(--line);
+        font-size: 36px;
+      }
+
+      p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 18px;
+        line-height: 1.45;
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 1.2em;
+        color: var(--ink);
+        font-size: 20px;
+        line-height: 1.45;
+      }
+
+      li + li {
+        margin-top: 13px;
+      }
+
+      .cover-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 44px;
+        align-items: start;
+        margin-top: 28px;
+      }
+
+      .cover-copy {
+        display: grid;
+        gap: 32px;
+        padding-top: 22px;
+      }
+
+      .cards,
+      .three-cards,
+      .five-cards,
+      .workflow {
+        display: grid;
+        gap: 20px;
+      }
+
+      .cards {
+        grid-template-columns: repeat(2, 1fr);
+      }
+
+      .three-cards {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .five-cards {
+        grid-template-columns: repeat(5, 1fr);
+      }
+
+      .workflow {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .card {
+        min-height: 126px;
+        padding: 18px 18px 18px 24px;
+        border: 1px solid var(--line);
+        border-left: 8px solid var(--teal);
+        background: var(--white);
+      }
+
+      .card.blue {
+        border-left-color: var(--blue);
+      }
+
+      .card.green {
+        border-left-color: var(--green);
+      }
+
+      .card.amber {
+        border-left-color: var(--amber);
+      }
+
+      .card.red {
+        border-left-color: var(--red);
+      }
+
+      .card strong {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 17px;
+      }
+
+      .card span {
+        display: block;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.35;
+      }
+
+      .shot-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 28px;
+        margin-top: 34px;
+      }
+
+      figure {
+        margin: 0;
+      }
+
+      figcaption {
+        margin-bottom: 8px;
+        color: var(--teal);
+        font-size: 12px;
+        font-weight: 750;
+        text-transform: uppercase;
+      }
+
+      img {
+        display: block;
+        width: 100%;
+        max-height: 250px;
+        object-fit: contain;
+        background: var(--white);
+        border: 1px solid var(--line);
+      }
+
+      .tall-shot {
+        max-height: 330px;
+      }
+
+      .content {
+        display: grid;
+        gap: 28px;
+        margin-top: 34px;
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 42px;
+        align-items: start;
+        margin-top: 34px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 16px;
+      }
+
+      th,
+      td {
+        padding: 13px 15px;
+        border: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        background: #eff6ff;
+        font-size: 13px;
+        text-transform: uppercase;
+      }
+
+      td {
+        color: var(--muted);
+      }
+
+      td:first-child {
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      .footer {
+        position: absolute;
+        right: 56px;
+        bottom: 30px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .resource {
+        padding: 18px 22px;
+        background: #f0fdfa;
+        border: 1px solid #99f6e4;
+        color: var(--teal);
+        font-size: 18px;
+        font-weight: 700;
+      }
+
+      @media print {
+        body {
+          background: var(--white);
+        }
+
+        main {
+          gap: 0;
+          padding: 0;
+        }
+
+        section {
+          width: 100vw;
+          min-height: 100vh;
+          border: 0;
+          box-shadow: none;
+          break-after: page;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="cover">
+        <div class="cover-grid">
+          <div class="cover-copy">
+            <div>
+              <p class="kicker">Super Parent UI Review</p>
+              <h1>Super Parent UI Review</h1>
+            </div>
+            <p>Screenshots, model coverage, JTBD, and iteration gaps for the implemented Super Parent flow.</p>
+            <div class="cards">
+              <div class="card blue"><strong>Scope</strong><span>Observed from a local fixture parent run and linked child run.</span></div>
+              <div class="card"><strong>Purpose</strong><span>Create a focused resource for future UI/UX iteration.</span></div>
+              <div class="card amber"><strong>Output</strong><span>Markdown resources, screenshots, and this HTML review deck.</span></div>
+              <div class="card green"><strong>Status</strong><span>Observational review, not a UI implementation pass.</span></div>
+            </div>
+          </div>
+          <div class="content">
+            <img class="tall-shot" src="../screenshots/parent-detail-oversight.png" alt="Parent detail oversight screenshot" />
+            <img src="../screenshots/dashboard-flat-list.png" alt="Dashboard screenshot" />
+          </div>
+        </div>
+        <div class="footer">1</div>
+      </section>
+
+      <section>
+        <p class="kicker">Super Parent UI Review</p>
+        <h2>What Was Inspected</h2>
+        <div class="shot-grid">
+          <figure>
+            <figcaption>Dashboard</figcaption>
+            <img src="../screenshots/dashboard-flat-list.png" alt="Dashboard flat list" />
+          </figure>
+          <figure>
+            <figcaption>Parent Detail</figcaption>
+            <img src="../screenshots/parent-detail-oversight.png" alt="Parent detail" />
+          </figure>
+          <figure>
+            <figcaption>Expanded Parent</figcaption>
+            <img src="../screenshots/dashboard-parent-expanded.png" alt="Dashboard parent expanded" />
+          </figure>
+          <figure>
+            <figcaption>Child Detail</figcaption>
+            <img src="../screenshots/child-detail.png" alt="Child detail" />
+          </figure>
+        </div>
+        <div class="footer">2</div>
+      </section>
+
+      <section>
+        <p class="kicker">Super Parent UI Review</p>
+        <h2>What The UI Currently Conveys</h2>
+        <div class="content">
+          <div class="three-cards">
+            <div class="card blue"><strong>Run-list model</strong><span>Parent and child runs use the same standard card. Status, routine, branch, progress, cost, and task metadata are visible.</span></div>
+            <div class="card"><strong>Parent oversight</strong><span>The detail page shows child count, next action, terminal blocked/clear, child counts, blockers, attention, and child summaries.</span></div>
+            <div class="card green"><strong>Child context</strong><span>Child detail shows a compact parent link and slice ID, then reuses normal run review and diff surfaces.</span></div>
+          </div>
+          <div class="split">
+            <img class="tall-shot" src="../screenshots/parent-detail-oversight.png" alt="Parent oversight panel" />
+            <ul>
+              <li>The UI confirms hierarchy exists, but mainly after opening detail pages.</li>
+              <li>The parent panel is useful as a compact status widget.</li>
+              <li>The child page remains optimized for normal run review instead of parent mission review.</li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer">3</div>
+      </section>
+
+      <section>
+        <p class="kicker">Super Parent UI Review</p>
+        <h2>What The Model Already Knows</h2>
+        <div class="content">
+          <table>
+            <thead>
+              <tr><th>Area</th><th>Available fields</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Mission</td><td><code>current_understanding</code>, <code>decisions</code>, <code>next_parent_action</code></td></tr>
+              <tr><td>Scope</td><td><code>target_inventory</code>, <code>slices</code>, <code>final_validation</code></td></tr>
+              <tr><td>Children</td><td><code>child_summaries</code>, <code>child_counts</code>, <code>active_child_run_ids</code></td></tr>
+              <tr><td>Attention</td><td><code>attention_items</code>, <code>stalled_slices</code>, <code>illegal_state_reasons</code></td></tr>
+              <tr><td>Completion</td><td><code>terminal_guard</code>, <code>merge_queue</code>, accepted/rejected/abandoned children</td></tr>
+            </tbody>
+          </table>
+          <div class="resource">Most missing UI is presentation and workflow framing. The backend already carries enough structure for hierarchy, mission state, inventory coverage, evidence readiness, and completion blockers.</div>
+        </div>
+        <div class="footer">4</div>
+      </section>
+
+      <section>
+        <p class="kicker">Super Parent UI Review</p>
+        <h2>Primary Jobs To Be Done</h2>
+        <div class="content">
+          <div class="five-cards">
+            <div class="card blue"><strong>Start</strong><span>Give the system a large goal, artifacts, and child-run budget.</span></div>
+            <div class="card"><strong>Understand</strong><span>See what the parent believes about scope, risks, ready slices, and blockers.</span></div>
+            <div class="card green"><strong>Monitor</strong><span>Track child runs in the context of the parent mission.</span></div>
+            <div class="card amber"><strong>Decide</strong><span>Accept, reject, retry, or abandon child evidence.</span></div>
+            <div class="card red"><strong>Validate</strong><span>Know why completion is blocked and review final proof.</span></div>
+          </div>
+          <ul>
+            <li>The current flow supports these jobs mechanically, but several jobs require users to infer state from normal run surfaces.</li>
+            <li>The strongest opportunity is turning parent orchestration into an explicit workspace instead of a normal run with an added panel.</li>
+          </ul>
+        </div>
+        <div class="footer">5</div>
+      </section>
+
+      <section>
+        <p class="kicker">Super Parent UI Review</p>
+        <h2>Main Gaps</h2>
+        <div class="content">
+          <div class="cards">
+            <div class="card blue"><strong>1. Hierarchy is hidden</strong><span>Parent and child runs are flat on the dashboard. The relationship is visible only after opening details.</span></div>
+            <div class="card"><strong>2. Mission state is hidden</strong><span>Current understanding, target inventory, decisions, slices, attempts, and final validation are not rendered.</span></div>
+            <div class="card amber"><strong>3. Attention is incomplete</strong><span>Needs Input ignores oversight attention, stalled slices, illegal states, and terminal guard blockers.</span></div>
+            <div class="card red"><strong>4. Acceptance is evidence-light</strong><span>The accept path does not consolidate test evidence, files changed, uncertainties, inventory impact, and merge risk.</span></div>
+          </div>
+          <div class="split">
+            <img src="../screenshots/dashboard-flat-list.png" alt="Flat dashboard list" />
+            <img src="../screenshots/child-detail.png" alt="Child detail" />
+          </div>
+        </div>
+        <div class="footer">6</div>
+      </section>
+
+      <section>
+        <p class="kicker">Super Parent UI Review</p>
+        <h2>Workflow Opportunity</h2>
+        <div class="content workflow">
+          <div class="card blue"><strong>Intake</strong><span>Mission, artifacts, budget, evidence policy.</span></div>
+          <div class="card"><strong>Plan</strong><span>Inventory and candidate slices.</span></div>
+          <div class="card green"><strong>Dispatch</strong><span>Launch child with expected evidence.</span></div>
+          <div class="card amber"><strong>Monitor</strong><span>Grouped child progress and attention.</span></div>
+          <div class="card red"><strong>Decide</strong><span>Evidence review and accept/reject/retry.</span></div>
+          <div class="card"><strong>Validate</strong><span>Terminal guard and final report.</span></div>
+        </div>
+        <p style="margin-top: 42px; text-align: center;">The goal is to make the parent workflow visible as a product flow, while preserving normal run review where it already works.</p>
+        <div class="footer">7</div>
+      </section>
+
+      <section>
+        <p class="kicker">Super Parent UI Review</p>
+        <h2>Iteration Focus</h2>
+        <div class="split">
+          <ul>
+            <li>Add parent/child grouping and oversight attention to the dashboard.</li>
+            <li>Create a parent workspace with Understanding, Inventory, Children, Decisions, Evidence, and Validation sections.</li>
+            <li>Add parent context to child detail: slice goal, affected inventory, expected evidence, and acceptance consequences.</li>
+            <li>Replace evidence-light accept actions with a decision modal explaining evidence, merge impact, and unresolved questions.</li>
+            <li>Expose oversight freshness and final validation/report state.</li>
+          </ul>
+          <div class="content">
+            <div class="card amber"><strong>Open questions</strong><span>Who is the primary operator? Should users approve each slice launch? What evidence standard should block acceptance? Can unresolved inventory be waived?</span></div>
+            <div class="card"><strong>Resource folder</strong><span><code>docs/super-parent/ui-review</code> contains screenshots, model mapping, JTBD notes, gap analysis, and this deck.</span></div>
+          </div>
+        </div>
+        <div class="footer">8</div>
+      </section>
+    </main>
+  </body>
+</html>
