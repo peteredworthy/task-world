@@ -50,8 +50,8 @@ VALID_TRANSITIONS: dict[TaskStatus, set[TaskStatus]] = {
     TaskStatus.BUILDING: {TaskStatus.VERIFYING, TaskStatus.PENDING_USER_ACTION, TaskStatus.FAILED},
     TaskStatus.PENDING_USER_ACTION: {
         TaskStatus.BUILDING,
-        TaskStatus.VERIFYING,
         TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
     },
     TaskStatus.VERIFYING: {
         TaskStatus.COMPLETED,
@@ -113,12 +113,12 @@ def transition_to_building(task: TaskState, now: datetime) -> TransitionResult:
 
 
 def transition_to_verifying(task: TaskState) -> TransitionResult:
-    """Move to verification from BUILDING or PENDING_USER_ACTION (requires checklist gate pass).
+    """Move to verification from BUILDING (requires checklist gate pass).
 
     Raises:
         GateBlockedError: If the checklist gate does not pass.
     """
-    if task.status not in (TaskStatus.BUILDING, TaskStatus.PENDING_USER_ACTION):
+    if task.status != TaskStatus.BUILDING:
         return TransitionResult(
             success=False,
             new_status=task.status,
@@ -129,6 +129,8 @@ def transition_to_verifying(task: TaskState) -> TransitionResult:
     if not gate_result.passed:
         raise GateBlockedError("checklist", gate_result.blocking_items)
 
+    task.pending_action_type = None
+    task.pending_clarification_id = None
     task.status = TaskStatus.VERIFYING
     return TransitionResult(success=True, new_status=TaskStatus.VERIFYING, gate_result=gate_result)
 
@@ -364,6 +366,8 @@ def transition_after_verification(task: TaskState, now: datetime) -> TransitionR
             task.attempts[-1].verifier_comment = "\n".join(lines)
 
     if grade_result.passed:
+        task.pending_action_type = None
+        task.pending_clarification_id = None
         task.status = TaskStatus.COMPLETED
         return TransitionResult(
             success=True, new_status=TaskStatus.COMPLETED, grade_result=grade_result
@@ -371,6 +375,8 @@ def transition_after_verification(task: TaskState, now: datetime) -> TransitionR
 
     # Check retry limit
     if task.current_attempt >= task.max_attempts:
+        task.pending_action_type = None
+        task.pending_clarification_id = None
         task.status = TaskStatus.FAILED
         if task.attempts:
             task.attempts[-1].outcome = "failed"
@@ -404,6 +410,8 @@ def transition_force_accept(task: TaskState, now: datetime) -> TransitionResult:
             error=f"Cannot force-accept from {task.status.value}",
         )
 
+    task.pending_action_type = None
+    task.pending_clarification_id = None
     task.status = TaskStatus.COMPLETED
     if task.attempts:
         last = task.attempts[-1]

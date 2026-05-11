@@ -191,14 +191,14 @@ def test_verifier_prompt_contains_submit_tool() -> None:
     assert "submit" in result
 
 
-def test_verifier_prompt_contains_update_checklist_tool() -> None:
+def test_verifier_prompt_does_not_contain_update_checklist_tool() -> None:
     result = build_codex_server_prompt(_ctx(), is_verifier=True)
-    assert "update_checklist" in result
+    assert "update_checklist" not in result
 
 
-def test_verifier_prompt_contains_request_clarification_tool() -> None:
+def test_verifier_prompt_does_not_contain_request_clarification_tool() -> None:
     result = build_codex_server_prompt(_ctx(), is_verifier=True)
-    assert "request_clarification" in result
+    assert "request_clarification" not in result
 
 
 def test_verifier_prompt_contains_grading_workflow() -> None:
@@ -562,15 +562,25 @@ def test_verifier_has_grade_tool() -> None:
     assert "grade" in names
 
 
-def test_common_tools_always_present() -> None:
-    """Common tools are present regardless of phase."""
-    for is_verifier in [True, False]:
-        specs = build_dynamic_tool_specs(is_verifier=is_verifier)
-        names = {s["name"] for s in specs}
-        assert "update_checklist" in names
-        assert "submit" in names
-        assert "request_clarification" in names
-        assert "complete_recovery" in names
+def test_builder_tools_are_present() -> None:
+    """Builder phase exposes progress and clarification tools."""
+    specs = build_dynamic_tool_specs(is_verifier=False)
+    names = {s["name"] for s in specs}
+    assert "update_checklist" in names
+    assert "submit" in names
+    assert "request_clarification" in names
+    assert "complete_recovery" not in names
+
+
+def test_verifier_tools_are_present() -> None:
+    """Verifier phase exposes grading and recovery tools."""
+    specs = build_dynamic_tool_specs(is_verifier=True)
+    names = {s["name"] for s in specs}
+    assert "grade" in names
+    assert "submit" in names
+    assert "complete_recovery" in names
+    assert "update_checklist" not in names
+    assert "request_clarification" not in names
 
 
 # ---------------------------------------------------------------------------

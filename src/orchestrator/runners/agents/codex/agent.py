@@ -54,6 +54,10 @@ from orchestrator.runners.errors import (
     AgentNotAvailableError,
     AgentTimeoutError,
 )
+from orchestrator.runners.mcp_scope import (
+    resolve_mcp_server_cwd,
+    scope_mcp_servers_to_available_tools,
+)
 from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 from orchestrator.runners.types import (
     AgentRunnerInfo,
@@ -478,9 +482,14 @@ class CodexServerAgent:
                 thread_params["model"] = model
 
             # Add external MCP servers to thread params
-            if context.mcp_servers:
+            scoped_mcp_servers = scope_mcp_servers_to_available_tools(
+                context.mcp_servers,
+                context.available_tools,
+                phase="verifying" if is_verifier else "building",
+            )
+            if scoped_mcp_servers:
                 mcp_configs: list[dict[str, Any]] = []
-                for mcp in context.mcp_servers:
+                for mcp in scoped_mcp_servers:
                     mcp_entry: dict[str, Any] = {"name": mcp.name}
                     if mcp.url:
                         mcp_entry["url"] = mcp.url
@@ -488,6 +497,9 @@ class CodexServerAgent:
                         mcp_entry["command"] = mcp.command
                         if mcp.args:
                             mcp_entry["args"] = mcp.args
+                        resolved_cwd = resolve_mcp_server_cwd(mcp, context.working_dir)
+                        if resolved_cwd:
+                            mcp_entry["cwd"] = resolved_cwd
                     if mcp.env:
                         mcp_entry["env"] = mcp.env
                     mcp_configs.append(mcp_entry)

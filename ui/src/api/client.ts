@@ -2,6 +2,7 @@ import type {
   ActivityResponse,
   AgentLogsResponse,
   AgentRunnerOption,
+  AttemptSchema,
   ApproveTaskRequest,
   ForceAcceptTaskRequest,
   ArchiveRoutineResponse,
@@ -34,6 +35,7 @@ import type {
   RoutineListResponse,
   RunListResponse,
   RunResponse,
+  RunTraceResponse,
   AgentRunnerModelDefaults,
   SetGradeRequest,
   TaskDetailResponse,
@@ -288,6 +290,59 @@ function normalizeEnvDefaultTarget(value: unknown): EnvDefaultTarget {
   return { target_path: '' };
 }
 
+interface RawRunTraceAttempt {
+  step_id: string;
+  step_config_id: string;
+  step_title?: string;
+  step_index: number;
+  task_id: string;
+  task_config_id: string;
+  task_title?: string;
+  task_status: RunTraceResponse['attempts'][number]['task_status'];
+  task_index?: number;
+  attempt: AttemptSchema;
+  phases?: RunTraceResponse['attempts'][number]['phases'];
+  action_log: RunTraceResponse['attempts'][number]['action_log'];
+}
+
+interface RawRunTraceResponse {
+  run_id: string;
+  attempts: RawRunTraceAttempt[];
+}
+
+function normalizeRunTrace(response: RawRunTraceResponse): RunTraceResponse {
+  return {
+    run_id: response.run_id,
+    attempts: response.attempts.map((row) => ({
+      step_id: row.step_id,
+      step_config_id: row.step_config_id,
+      step_title: row.step_title ?? '',
+      step_index: row.step_index,
+      task_id: row.task_id,
+      task_config_id: row.task_config_id,
+      task_title: row.task_title ?? '',
+      task_status: row.task_status,
+      task_index: row.task_index ?? 0,
+      attempt_id: row.attempt.id,
+      attempt_num: row.attempt.attempt_num,
+      started_at: row.attempt.started_at,
+      completed_at: row.attempt.completed_at,
+      outcome: row.attempt.outcome,
+      metrics: row.attempt.metrics,
+      token_usage_by_model: row.attempt.token_usage_by_model,
+      agent_runner_type: row.attempt.agent_runner_type,
+      agent_model: row.attempt.agent_model,
+      agent_settings: row.attempt.agent_settings,
+      builder_prompt: row.attempt.builder_prompt,
+      verifier_prompt: row.attempt.verifier_prompt,
+      verifier_comment: row.attempt.verifier_comment,
+      error: row.attempt.error,
+      phases: row.phases ?? [],
+      action_log: row.action_log,
+    })),
+  };
+}
+
 export const api = {
   getConfig(): Promise<GlobalConfig> {
     return fetchApi('/api/config');
@@ -486,6 +541,11 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/activity' + (qs ? '?' + qs : ''));
   },
 
+  async getRunTrace(runId: string): Promise<RunTraceResponse> {
+    const response = await fetchApi<RawRunTraceResponse>('/api/runs/' + runId + '/trace');
+    return normalizeRunTrace(response);
+  },
+
   getAttemptLogs(runId: string, taskId: string, attemptNum: number): Promise<AgentLogsResponse> {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/attempts/' + attemptNum + '/logs');
   },
@@ -495,7 +555,7 @@ export const api = {
   },
 
   getPendingClarification(runId: string, taskId: string): Promise<ClarificationRequest | null> {
-    return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/pending-clarification');
+    return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/clarifications/pending');
   },
 
   async getEnvFiles(runId: string): Promise<EnvFile[]> {

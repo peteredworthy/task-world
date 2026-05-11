@@ -588,6 +588,7 @@ class DockerOpenHandsAgent:
             loop,
             on_grade=on_grade,
         )
+        is_verifier = on_grade is not None
 
         docker_workspace = None
         try:
@@ -628,15 +629,7 @@ class DockerOpenHandsAgent:
                     params={"requirements": context.requirements},
                 ),
                 _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
-                    name="DockerOrcUpdateChecklistTool",
-                    params={"registry_key": registry_key},
-                ),
-                _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
                     name="DockerOrcSubmitTool",
-                    params={"registry_key": registry_key},
-                ),
-                _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
-                    name="DockerOrcSetGradeTool",
                     params={"registry_key": registry_key},
                 ),
                 _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
@@ -644,14 +637,25 @@ class DockerOpenHandsAgent:
                     params={"worktree_path": context.working_dir},
                 ),
             ]
+            if is_verifier:
+                tools.append(
+                    _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
+                        name="DockerOrcSetGradeTool",
+                        params={"registry_key": registry_key},
+                    )
+                )
+            else:
+                tools.append(
+                    _OHTool(  # pyright: ignore[reportPossiblyUnboundVariable]
+                        name="DockerOrcUpdateChecklistTool",
+                        params={"registry_key": registry_key},
+                    )
+                )
 
             agent = _OHAgent(  # pyright: ignore[reportPossiblyUnboundVariable]
                 llm=llm,
                 tools=tools,
             )
-
-            # Build prompt (with verifier flag if on_grade is provided)
-            is_verifier = on_grade is not None
 
             # NOTE: end_commit checkout is handled by the executor on the host
             # worktree before this method is called.  Since Docker uses a bind

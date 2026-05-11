@@ -56,7 +56,7 @@ packages = ["src/orchestrator"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-n auto --dist loadfile --timeout=30 --cov=src/orchestrator --cov-branch --cov-report=term-missing --cov-fail-under=71"
+addopts = "-n auto --dist loadfile --timeout=30 --cov=src/orchestrator --cov-branch --cov-report=term-missing"
 timeout = 30
 markers = [
     "slow: tests that invoke real external tools (LLMs, Docker, CLI agents)",

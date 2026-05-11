@@ -64,6 +64,8 @@ def test_create_worktree_writes_git_metadata_writable_roots(git_repo: tuple[Path
     allow_read = set(fs_settings["allowRead"])
     allowed_domains = settings["sandbox"]["network"]["allowedDomains"]
 
+    assert settings["autoMemoryEnabled"] is False
+
     gitdir_file = wt.path / ".git"
     gitdir_raw = gitdir_file.read_text().strip().removeprefix("gitdir: ")
     gitdir = Path(gitdir_raw)

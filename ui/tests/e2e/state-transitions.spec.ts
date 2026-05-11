@@ -55,6 +55,8 @@ const BASE_RUN = {
   total_tokens_write: 0,
   total_tokens_cache: 0,
   total_duration_ms: 0,
+  total_num_actions: 0,
+  token_usage_by_model: [],
   estimated_cost_usd: null,
   cost_disclaimer: null,
 };
@@ -139,6 +141,10 @@ async function setupRoutes(
 
   await page.route(`**/api/runs/${RUN_ID}/activity**`, (route) =>
     route.fulfill({ json: { run_id: RUN_ID, events: [], has_more: false } }),
+  );
+
+  await page.route(`**/api/runs/${RUN_ID}/trace`, (route) =>
+    route.fulfill({ json: { run_id: RUN_ID, attempts: [] } }),
   );
 
   await page.route(`**/api/runs/${RUN_ID}/branch-status`, (route) =>

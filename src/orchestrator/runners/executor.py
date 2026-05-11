@@ -745,8 +745,14 @@ class AgentRunnerExecutor:
                     task_config = task
                     step_context = step.step_context
                     step_id = step.id
-                    available_tools = step.available_tools
-                    mcp_servers = step.mcp_servers
+                    available_tools = (
+                        task.available_tools
+                        if task.available_tools is not None
+                        else step.available_tools
+                    )
+                    mcp_servers = (
+                        task.mcp_servers if task.mcp_servers is not None else step.mcp_servers
+                    )
                     break
             if task_config is not None:
                 break

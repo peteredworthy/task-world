@@ -1,8 +1,12 @@
 """FastAPI application for the orchestrator."""
 
+from importlib import import_module
+from typing import Any, Callable, cast
+
 from orchestrator.api.app import create_app
 from orchestrator.api.deps import get_connection_manager, get_runner_executor
 from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
+from orchestrator.api.mcp.clarification_tools import validate_clarification_question_payloads
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.api.schemas.envfiles import CopyBackRequest, RevertEnvFileRequest
 from orchestrator.api.schemas.repos import AddRepoRequest
@@ -24,12 +28,16 @@ from orchestrator.api.schemas.runs import (
     ResolveChildRunRequest,
     ResolveChildRunResponse,
     ResumeRunRequest,
+    RunTracePhase,
+    RunTraceResponse,
     get_agent_runner_display_name,
     get_agent_runner_icon,
 )
 from orchestrator.api.schemas.tasks import (
+    ActionLogSchema,
     CallbackInstructions,
     SetGradeRequest,
+    TurnMetricsSchema,
     UpdateChecklistRequest,
 )
 
@@ -37,6 +45,7 @@ __all__ = [
     "AddRepoRequest",
     "AcceptChildRunResponse",
     "ApiModel",
+    "ActionLogSchema",
     "BackwardTransitionRequest",
     "CallbackInstructions",
     "ChildRunListResponse",
@@ -58,16 +67,21 @@ __all__ = [
     "ResolveChildRunResponse",
     "ResumeRunRequest",
     "RunEvidenceResponse",
+    "RunTracePhase",
+    "RunTraceResponse",
     "RevertEnvFileRequest",
     "RevertFileRequest",
     "SetGradeRequest",
+    "TurnMetricsSchema",
     "UpdateChecklistRequest",
+    "_run_to_trace_response",
     "create_app",
     "estimate_cost",
     "get_agent_runner_display_name",
     "get_agent_runner_icon",
     "get_connection_manager",
     "get_runner_executor",
+    "validate_clarification_question_payloads",
 ]
 
 # Symbols in this dict are lazy-loaded from routers.tasks to avoid circular
@@ -79,9 +93,16 @@ _TASKS_ROUTER_SYMBOLS = {
     "_looks_like_ndjson_agent_stream",
     "_parse_action_log_from_raw",
 }
+_RUNS_ROUTER_SYMBOLS = {"_run_to_trace_response"}
 
 _MCP_SYMBOLS = {"ORCHESTRATOR_TOOLS", "ToolHandler"}
 _MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer", "ALL_TOOLS"}
+
+
+def _run_to_trace_response(*args: Any, **kwargs: Any) -> Any:
+    runs_module = import_module("orchestrator.api.routers.runs")
+    _impl = cast(Callable[..., Any], getattr(runs_module, "_run_to_trace_response"))
+    return _impl(*args, **kwargs)
 
 
 def __getattr__(name: str) -> object:
@@ -89,6 +110,10 @@ def __getattr__(name: str) -> object:
         import orchestrator.api.routers.tasks as _tasks  # noqa: PLC0415
 
         return getattr(_tasks, name)
+    if name in _RUNS_ROUTER_SYMBOLS:
+        import orchestrator.api.routers.runs as _runs  # noqa: PLC0415
+
+        return getattr(_runs, name)
     if name in _MCP_SYMBOLS:
         import orchestrator.api.mcp.tools as _mcp_tools  # noqa: PLC0415
 

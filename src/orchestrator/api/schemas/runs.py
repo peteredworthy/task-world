@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from orchestrator.api.schemas.base import ApiModel
-from orchestrator.api.schemas.tasks import ModelTokenUsageSchema
+from orchestrator.api.schemas.tasks import ActionLogSchema, AttemptSchema, ModelTokenUsageSchema
 
 from orchestrator.config.enums import AgentRunnerType, MergeStrategy
 
@@ -357,6 +357,42 @@ class RunResponse(ApiModel):
 
 class RunListResponse(ApiModel):
     runs: list[RunResponse]
+
+
+class RunTracePhase(ApiModel):
+    phase: Literal["builder", "verifier"]
+    prompt: str | None = None
+    note: str | None = None
+    message_count: int = 0
+    action_sequence_start: int | None = None
+    action_sequence_end: int | None = None
+
+
+class RunTraceAttempt(ApiModel):
+    step_index: int
+    step_id: str
+    step_config_id: str
+    step_title: str = ""
+    task_id: str
+    task_config_id: str
+    task_title: str = ""
+    task_status: str
+    task_current_attempt: int
+    task_max_attempts: int
+    attempt: AttemptSchema
+    phases: list[RunTracePhase] = []
+    action_log: ActionLogSchema | None = None
+
+
+class RunTraceResponse(ApiModel):
+    run_id: str
+    total_tokens_read: int = 0
+    total_tokens_write: int = 0
+    total_tokens_cache: int = 0
+    total_duration_ms: int = 0
+    total_num_actions: int = 0
+    token_usage_by_model: list[ModelTokenUsageSchema] = []
+    attempts: list[RunTraceAttempt]
 
 
 class GuidanceResponse(ApiModel):

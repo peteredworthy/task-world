@@ -49,11 +49,12 @@ def create_cli_agent(
     model = agent_runner_config.get("model")
     callback_channel = agent_runner_config.get("callback_channel", "rest")
     poll_interval = agent_runner_config.get("poll_interval", 5.0)
+    bare = bool(agent_runner_config.get("bare", False))
 
     # Build args based on command
     args = agent_runner_config.get("args", [])
     parser = None
-    max_turns = agent_runner_config.get("max_turns")
+    max_turns = agent_runner_config.get("max_turns", 50)
     if command == "claude" and not args:
         args = [
             "-p",
@@ -84,4 +85,5 @@ def create_cli_agent(
         runner_monitor=runner_monitor,
         run_id=run_id,
         phase=phase,
+        bare=bare,
     )

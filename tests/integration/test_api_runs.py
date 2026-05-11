@@ -116,6 +116,33 @@ async def test_get_run(client: AsyncClient) -> None:
     assert data["repo_name"] == "proj-1"
 
 
+async def test_get_run_trace_lists_attempts(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+    client, drain = client_and_drain
+    created = await _create_run(client)
+    run_id = created["id"]
+    task_id = created["steps"][0]["tasks"][0]["id"]
+
+    response = await client.post(f"/api/runs/{run_id}/start")
+    assert response.status_code == 202
+    await drain(run_id)
+
+    response = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+    assert response.status_code == 200
+
+    response = await client.get(f"/api/runs/{run_id}/trace")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["run_id"] == run_id
+    assert len(data["attempts"]) == 1
+    trace_attempt = data["attempts"][0]
+    assert trace_attempt["step_config_id"] == "S-01"
+    assert trace_attempt["task_id"] == task_id
+    assert trace_attempt["task_config_id"] == "T-01"
+    assert trace_attempt["attempt"]["attempt_num"] == 1
+    assert trace_attempt["attempt"]["metrics"]["num_actions"] == 0
+    assert trace_attempt["action_log"] is None
+
+
 async def test_get_run_not_found(client: AsyncClient) -> None:
     response = await client.get("/api/runs/nonexistent")
     assert response.status_code == 404

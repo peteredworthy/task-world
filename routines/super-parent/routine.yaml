@@ -30,18 +30,27 @@ routine:
       step_context: |
         Build a durable target inventory from the instruction and source artifacts. Keep IDs stable
         because child slices and evidence refer back to them.
-      mcp_servers:
-        - name: "orchestrator"
-          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Create Target Inventory"
+          mcp_servers:
+            - name: "orchestrator"
+              url: "http://127.0.0.1:8000/mcp/sse"
+            - name: "codesight"
+              command: "npx"
+              args: ["-y", "codesight", "--mcp"]
+              cwd: "worktree"
+              timeout_seconds: 60
+          available_tools:
+            - "orchestrator_update_parent_oversight"
           task_context: |
             Read the user instruction and source artifacts. Write `docs/super-parent/current-understanding.md`
             with the original instruction, assumptions, target inventory, out-of-scope items, and initial
             risks. Call `orchestrator_update_parent_oversight` with matching `target_inventory` and
-            `current_understanding` payloads. Separate concrete bugs, missing tests, design improvements,
-            policy gaps, reproduction targets, and clarification needs. Assign stable IDs such as `INV-001`.
+            `current_understanding` payloads. Keep the persisted `current_understanding` compact and
+            structured; the Markdown file is a human-readable rollup, not the machine source of truth for
+            later steps. Separate concrete bugs, missing tests, design improvements, policy gaps,
+            reproduction targets, and clarification needs. Assign stable IDs such as `INV-001`.
           requirements:
             - id: "R1"
               desc: "Inventory contains stable IDs for every in-scope target and separates target classes."
@@ -68,16 +77,28 @@ routine:
       step_context: |
         Choose the next bounded child slice using the current inventory and evidence. Do not decompose the
         whole job before evidence justifies the expansion.
-      mcp_servers:
-        - name: "orchestrator"
-          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Write Slice Brief"
+          mcp_servers:
+            - name: "orchestrator"
+              url: "http://127.0.0.1:8000/mcp/sse"
+            - name: "codesight"
+              command: "npx"
+              args: ["-y", "codesight", "--mcp"]
+              cwd: "worktree"
+              timeout_seconds: 60
+          available_tools:
+            - "orchestrator_get_parent_oversight"
           task_context: |
-            Select one next child slice. Write `docs/super-parent/next-slice.md` with the assumption under test,
-            target IDs, expected files or subsystems, verifiable requirements, stop/replan conditions, and
-            evidence artifacts. Prefer slices that reduce uncertainty and exercise a real execution surface.
+            Read the persisted oversight snapshot with `orchestrator_get_parent_oversight` before selecting
+            work. Select one next child slice. Write `docs/super-parent/next-slice.md` with the assumption
+            under test, target IDs, expected files or subsystems, verifiable requirements, stop/replan
+            conditions, evidence artifacts, and the child workflow template that should execute it. Prefer
+            slices that reduce uncertainty and exercise a real execution surface. Treat
+            `scripts/run_child_evidence.py` as the standard child evidence-capture tool: slices with
+            verification commands should expect the generated child to run those commands through the
+            helper so command logs and `run.evidence.v1` stay synchronized without manual log reads.
           requirements:
             - id: "R1"
               desc: "Slice is bounded to one assumption or one coherent group of related requirements."
@@ -104,31 +125,36 @@ routine:
       step_context: |
         Convert the selected slice into an embedded child routine and create a linked child run through the
         orchestrator API or MCP tools. Child creation enqueues the child start automatically.
-      mcp_servers:
-        - name: "orchestrator"
-          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Create Embedded Child Routine"
+          mcp_servers:
+            - name: "orchestrator"
+              url: "http://127.0.0.1:8000/mcp/sse"
+            - name: "codesight"
+              command: "npx"
+              args: ["-y", "codesight", "--mcp"]
+              cwd: "worktree"
+              timeout_seconds: 60
+          available_tools:
+            - "orchestrator_get_parent_oversight"
+            - "orchestrator_create_child_from_template"
           task_context: |
-            Generate one embedded child routine for the selected slice. The child routine must include stable
-            requirement IDs, auto-verify commands where possible, verifier rubric IDs matching requirement IDs,
-            retry limits, stop/replan conditions, and a required `run.evidence.v1` bundle. The child evidence
-            bundle must use the exact service schema fields: `schema_version`, `slice_id`, `routine_id`,
-            `assumption_tested`, `summary`, `commands_run`, `test_results`, `target_bug_reproduced`,
-            `real_frontend_path_exercised`, `real_execution_surface`, `files_changed`, `evidence_files`,
-            `open_uncertainties`, `next_recommendation`, and `outcome`. `commands_run` entries are objects
-            with `command`, `exit_code`, `stdout_excerpt`, and `stderr_excerpt`; `test_results` entries are
-            objects with `name`, `status`, and `details`, where status is only `passed`, `failed`, `skipped`,
-            or `not_run`. `target_bug_reproduced` is only `reproduced`, `not_reproduced`, `not_targeted`,
-            or `unknown` and must never be a boolean. `next_recommendation` is only `proceed`, `replan`,
-            `stop`, or `environment_blocked`. `slice_id` must match the child `parent_slice_id`, and
-            `routine_id` must match the child routine id. Create the child run using
-            `orchestrator_create_child_run` or `POST /api/runs/{parent}/children`; do not try to pass a
-            `start` flag.
+            Read the persisted oversight snapshot and selected slice brief, then create a compact child
+            slice spec and call `orchestrator_create_child_from_template`. Do not hand-author embedded child
+            YAML when one of the server templates fits; the server compiles the spec into a child routine
+            with stable requirement IDs, auto-verify, retry limits, stop/replan guidance, and exact
+            `run.evidence.v1` validation. The slice spec must include `template_id`, `slice_id`, `goal`,
+            target inventory IDs, allowed paths, expected files, verification commands, evidence
+            expectations, stop conditions, and real execution surface. Do not call the raw embedded-routine
+            child creation tool unless this routine is explicitly changed to grant it; if no template fits,
+            record a replan or clarification instead. Do not pass a `start` flag; child creation enqueues
+            start automatically. The server-provided child template makes `scripts/run_child_evidence.py`
+            available to the child and includes a ready-to-run helper command; do not ask children to
+            redirect command output by hand and then read logs back unless the helper itself is blocked.
           requirements:
             - id: "R1"
-              desc: "Child routine is embedded on the child run and is not written to `routines/` unless promoted by a human."
+              desc: "Child run is created from `orchestrator_create_child_from_template`; raw embedded-routine child creation is not used by default."
               priority: critical
             - id: "R2"
               desc: "Child run is linked to the parent with `parent_run_id` and `parent_slice_id`."
@@ -147,20 +173,39 @@ routine:
       step_context: |
         Wait for child terminal or paused state, refresh deterministic oversight state, and integrate only
         accepted child work into the parent branch.
-      mcp_servers:
-        - name: "orchestrator"
-          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Evaluate Child Evidence"
           work_mode: "oversight"
+          mcp_servers:
+            - name: "orchestrator"
+              url: "http://127.0.0.1:8000/mcp/sse"
+            - name: "codesight"
+              command: "npx"
+              args: ["-y", "codesight", "--mcp"]
+              cwd: "worktree"
+              timeout_seconds: 60
+          available_tools:
+            - "orchestrator_wait_for_run"
+            - "orchestrator_get_run_evidence"
+            - "orchestrator_refresh_parent_oversight"
+            - "orchestrator_get_parent_oversight"
+            - "orchestrator_update_parent_oversight"
+            - "orchestrator_resolve_child_run"
+            - "orchestrator_request_clarification"
+            - "orchestrator_escalate_requirement"
           task_context: |
             Wait for the child run with `orchestrator_wait_for_run`, then collect evidence with
             `orchestrator_get_run_evidence` and refresh parent oversight with
-            `orchestrator_refresh_parent_oversight`. Use a long enough wait window for normal child
-            execution and treat paused children as meaningful states. Update only
-            `docs/super-parent/current-understanding.md` and call `orchestrator_update_parent_oversight`
-            before asking for human input, accepting a child, or stopping. This is an orchestration-only
+            `orchestrator_refresh_parent_oversight`. Use at most one bounded wait call per attempt
+            (`timeout_seconds` no higher than 300). If the child is still active after that wait,
+            record the active child state in parent oversight and submit rather than repeatedly
+            polling from the LLM context. Treat paused children as meaningful states. Update only
+            `docs/super-parent/current-understanding.md` as a concise human rollup and call
+            `orchestrator_update_parent_oversight` with compact structured state before asking for human
+            input, accepting a child, or stopping. Do not append raw evidence dumps to the Markdown file;
+            use the persisted oversight snapshot and validated evidence payloads as the machine state.
+            This is an orchestration-only
             task: do not edit source code, tests, dependency files, lockfiles, migrations, UI files,
             routine files, generated child work, or child worktree files. If evidence exposes missing
             service behavior, record it as target inventory, a replan input, or a human action instead
@@ -169,7 +214,12 @@ routine:
             `reject` or `abandon` before launching a replacement child when the oversight state clearly
             supports an autonomous replan and that replan is recorded. Use
             `orchestrator_request_clarification` or `orchestrator_escalate_requirement` only when the
-            parent cannot make that decision from available evidence.
+            parent cannot make that decision from available evidence. Clarification questions must be
+            human-facing and concise: explain what the parent needed from the child, what the child did,
+            what the parent needs the human to decide, and the actual options. Translate target inventory
+            IDs into plain-language labels from the oversight state or slice brief; do not rely on IDs
+            alone. For finite decisions, use `question_type: single_select` or `multi_select` with
+            explicit `options`; do not embed a/b/c choices in a `free_text` question.
           requirements:
             - id: "R1"
               desc: "Evidence is collected from the child worktree and validated against the standard schema."
@@ -183,6 +233,9 @@ routine:
             - id: "R4"
               desc: "Three failed or revision attempts for the same slice are declared stalled."
               priority: critical
+            - id: "R5"
+              desc: "Human clarification requests are concise, explain parent need and child result in plain language, and use select options for finite decisions."
+              priority: critical
           artifacts:
             - path: "docs/super-parent/current-understanding.md"
               required: true
@@ -191,6 +244,19 @@ routine:
         - id: "T-02"
           title: "Accept And Merge Child"
           work_mode: "oversight"
+          mcp_servers:
+            - name: "orchestrator"
+              url: "http://127.0.0.1:8000/mcp/sse"
+            - name: "codesight"
+              command: "npx"
+              args: ["-y", "codesight", "--mcp"]
+              cwd: "worktree"
+              timeout_seconds: 60
+          available_tools:
+            - "orchestrator_get_parent_oversight"
+            - "orchestrator_update_parent_oversight"
+            - "orchestrator_accept_child_run"
+            - "orchestrator_resolve_child_run"
           task_context: |
             Read the current parent oversight state first with `orchestrator_get_parent_oversight`. If child
             evidence supports acceptance and the child appears in the merge queue, call
@@ -225,12 +291,19 @@ routine:
       title: "Parent Validation And Report"
       step_context: |
         Validate the original instruction on the integrated parent branch and write the final report.
-      mcp_servers:
-        - name: "orchestrator"
-          url: "http://127.0.0.1:8000/mcp/sse"
       tasks:
         - id: "T-01"
           title: "Run Integrated Validation"
+          mcp_servers:
+            - name: "orchestrator"
+              url: "http://127.0.0.1:8000/mcp/sse"
+            - name: "codesight"
+              command: "npx"
+              args: ["-y", "codesight", "--mcp"]
+              cwd: "worktree"
+              timeout_seconds: 60
+          available_tools:
+            - "orchestrator_update_parent_oversight"
           task_context: |
             Run the work-specific validation surface and broad regression commands needed for the job. Validation
             must run on the integrated parent branch, not only on isolated child worktrees. Record the result
@@ -249,6 +322,12 @@ routine:
             max_attempts: 1
         - id: "T-02"
           title: "Write Final Report"
+          mcp_servers:
+            - name: "codesight"
+              command: "npx"
+              args: ["-y", "codesight", "--mcp"]
+              cwd: "worktree"
+              timeout_seconds: 60
           task_context: |
             Write `docs/super-parent/final-report.md` with original instruction, final target inventory status,
             child runs, evidence consumed, files changed, final validation commands, remaining risks, human

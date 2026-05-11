@@ -670,7 +670,7 @@ async def get_task_prompt(
             if task.id == task_state.config_id:
                 task_config = task
                 step_context = step.step_context
-                mcp_servers = step.mcp_servers
+                mcp_servers = task.mcp_servers if task.mcp_servers is not None else step.mcp_servers
                 step_builder_agent = step.builder_agent
                 step_verifier_agent = step.verifier_agent
                 break
@@ -837,6 +837,7 @@ async def get_attempt_logs(
                         input_tokens=e.metrics.input_tokens,
                         output_tokens=e.metrics.output_tokens,
                         cache_read_tokens=e.metrics.cache_read_tokens,
+                        cache_creation_tokens=e.metrics.cache_creation_tokens,
                         cost_usd=e.metrics.cost_usd,
                     )
                     if e.metrics
@@ -853,6 +854,8 @@ async def get_attempt_logs(
             total_duration_ms=al.total_duration_ms,
             total_input_tokens=al.total_input_tokens,
             total_output_tokens=al.total_output_tokens,
+            total_cache_read_tokens=al.total_cache_read_tokens,
+            total_cache_creation_tokens=al.total_cache_creation_tokens,
         )
 
     return AgentLogsResponse(

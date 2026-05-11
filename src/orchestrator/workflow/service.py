@@ -3536,11 +3536,26 @@ class WorkflowService:
                     skip_reason = a.skip_reason
                     break
 
-        # Transition back to building
+        # Transition back to building. Older runs may have a pending
+        # clarification request on a task that already advanced because a later
+        # submit bypassed PENDING_USER_ACTION. Record the answer and clear the
+        # stale pending marker without reopening a completed/verifying task.
         old_status = task.status
-        result = transition_from_clarification(task)
-        if not result.success:
-            raise InvalidTransitionError(old_status.value, result.new_status.value)
+        if task.status == TaskStatus.PENDING_USER_ACTION:
+            result = transition_from_clarification(task)
+            if not result.success:
+                raise InvalidTransitionError(old_status.value, result.new_status.value)
+        elif (
+            task.pending_action_type == "clarification"
+            or task.pending_clarification_id == request_id
+        ):
+            task.pending_action_type = None
+            task.pending_clarification_id = None
+            result = TransitionResult(success=True, new_status=task.status)
+        else:
+            result = transition_from_clarification(task)
+            if not result.success:
+                raise InvalidTransitionError(old_status.value, result.new_status.value)
 
         await self._repo.save(run)
 

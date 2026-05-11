@@ -13,6 +13,50 @@ from orchestrator.workflow import WorkflowEvent
 # (e.g. os.getenv("OPENAI_API_KEY")) see the values.
 load_dotenv()
 
+_COVERAGE_FAIL_UNDER = 71
+
+
+def _is_full_suite_run(config: pytest.Config) -> bool:
+    """Return true when pytest is collecting the configured full test suite."""
+    if config.option.collectonly:
+        return False
+    if getattr(config.option, "keyword", ""):
+        return False
+    if getattr(config.option, "markexpr", ""):
+        return False
+    for option_name in ("lf", "failedfirst", "newfirst", "stepwise"):
+        if getattr(config.option, option_name, False):
+            return False
+
+    root = Path(str(config.rootpath)).resolve()
+    tests_root = (root / "tests").resolve()
+    collection_args = [Path(arg).resolve() for arg in config.args]
+    return not collection_args or collection_args == [tests_root]
+
+
+@pytest.hookimpl(wrapper=True, tryfirst=True)
+def pytest_runtestloop(session: pytest.Session):
+    """Enforce coverage percentage only for the configured full test suite."""
+    result = yield
+    config = session.config
+    if getattr(config, "workerinput", None) is not None or not _is_full_suite_run(config):
+        return result
+
+    cov_plugin = config.pluginmanager.get_plugin("_cov")
+    cov_total = getattr(cov_plugin, "cov_total", None)
+    if cov_total is None:
+        return result
+    if cov_total < _COVERAGE_FAIL_UNDER:
+        terminal = config.pluginmanager.get_plugin("terminalreporter")
+        terminal.write(
+            f"\nERROR: Coverage failure: total of {cov_total:.0f} "
+            f"is less than fail-under={_COVERAGE_FAIL_UNDER}\n",
+            red=True,
+            bold=True,
+        )
+        session.testsfailed += 1
+    return result
+
 
 def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
     """Return optimal worker count for this machine.

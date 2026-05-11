@@ -13,3 +13,4 @@ export type * from './envFiles';
 export type * from './config';
 export type * from './review';
 export type * from './modelProfiles';
+export type * from './trace';

@@ -16,6 +16,8 @@ from pathlib import Path
 GIT_RUN_WORKTREE_ENV = "ORCHESTRATOR_RUN_WORKTREE"
 GIT_RUN_BRANCH_ENV = "ORCHESTRATOR_RUN_BRANCH"
 GIT_WRAPPER_NAME = "git-wrapper.sh"
+_DEFAULT_GIT_AUTHOR_NAME = "Orchestrator Agent"
+_DEFAULT_GIT_AUTHOR_EMAIL = "orchestrator@local"
 _WRAPPER_CACHE_DIR = "orchestrator-git-wrapper-bin"
 
 
@@ -81,6 +83,16 @@ def _prepend_to_path(env: dict[str, str], wrapper_dir: str) -> None:
     env["PATH"] = path_sep.join([wrapper_dir, *path_entries])
 
 
+def _isolate_git_config(env: dict[str, str]) -> None:
+    """Keep agent git calls from reading host-level config files."""
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env.setdefault("GIT_AUTHOR_NAME", _DEFAULT_GIT_AUTHOR_NAME)
+    env.setdefault("GIT_AUTHOR_EMAIL", _DEFAULT_GIT_AUTHOR_EMAIL)
+    env.setdefault("GIT_COMMITTER_NAME", env["GIT_AUTHOR_NAME"])
+    env.setdefault("GIT_COMMITTER_EMAIL", env["GIT_AUTHOR_EMAIL"])
+
+
 def build_agent_subprocess_env(
     base_env: Mapping[str, str] | None = None,
     *,
@@ -109,6 +121,8 @@ def build_agent_subprocess_env(
         # hard-failing. The runner still gets the expected PATH behavior when
         # the wrapper is present.
         pass
+
+    _isolate_git_config(env)
 
     if run_worktree is not None:
         env[GIT_RUN_WORKTREE_ENV] = run_worktree

@@ -29,6 +29,10 @@ from orchestrator.runners.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
+from orchestrator.runners.mcp_scope import (
+    resolve_mcp_server_cwd,
+    scope_mcp_servers_to_available_tools,
+)
 from orchestrator.workflow import GateBlockedError
 from orchestrator.runners.runtime.repetition_detector import (
     ActionBudget,
@@ -364,6 +368,10 @@ def _register_sdk_tools(tool_names: list[str] | None = None) -> None:
 
 def _build_openhands_mcp_config(
     mcp_servers: list[Any] | None,
+    available_tools: list[str] | None = None,
+    working_dir: str | None = None,
+    *,
+    is_verifier: bool = False,
 ) -> dict[str, Any] | None:
     """Convert MCPServerConfig list to OpenHands mcp_config format.
 
@@ -373,8 +381,13 @@ def _build_openhands_mcp_config(
     if not mcp_servers:
         return None
 
+    scoped_mcp_servers = scope_mcp_servers_to_available_tools(
+        mcp_servers,
+        available_tools,
+        phase="verifying" if is_verifier else "building",
+    )
     servers: dict[str, dict[str, Any]] = {}
-    for mcp in mcp_servers:
+    for mcp in scoped_mcp_servers or []:
         entry: dict[str, Any] = {}
 
         # Add transport: either url or command
@@ -384,6 +397,9 @@ def _build_openhands_mcp_config(
             entry["command"] = mcp.command
             if mcp.args:
                 entry["args"] = mcp.args
+            resolved_cwd = resolve_mcp_server_cwd(mcp, working_dir)
+            if resolved_cwd:
+                entry["cwd"] = resolved_cwd
 
         # Add environment variables
         if mcp.env:
@@ -562,6 +578,7 @@ class OpenHandsAgent:
             loop,
             on_grade=on_grade,
         )
+        is_verifier = on_grade is not None
 
         try:
             # Build LLM — api_key is optional when using a local server
@@ -625,21 +642,32 @@ class OpenHandsAgent:
                     params={"requirements": context.requirements},
                 ),
                 OHTool(
-                    name="OrcUpdateChecklistTool",
-                    params={"registry_key": registry_key},
-                ),
-                OHTool(
                     name="OrcSubmitTool",
                     params={"registry_key": registry_key},
                 ),
-                OHTool(
-                    name="OrcSetGradeTool",
-                    params={"registry_key": registry_key},
-                ),
             ]
+            if is_verifier:
+                orchestrator_tools.append(
+                    OHTool(
+                        name="OrcSetGradeTool",
+                        params={"registry_key": registry_key},
+                    )
+                )
+            else:
+                orchestrator_tools.append(
+                    OHTool(
+                        name="OrcUpdateChecklistTool",
+                        params={"registry_key": registry_key},
+                    )
+                )
 
             # Build MCP config if servers are available
-            mcp_config = _build_openhands_mcp_config(context.mcp_servers)
+            mcp_config = _build_openhands_mcp_config(
+                context.mcp_servers,
+                context.available_tools,
+                context.working_dir,
+                is_verifier=is_verifier,
+            )
 
             # Create agent with MCP config if supported by this SDK version
             agent_kwargs: dict[str, Any] = {
@@ -666,9 +694,6 @@ class OpenHandsAgent:
                     )
                 else:
                     raise
-
-            # Build prompt (with verifier flag if on_grade is provided)
-            is_verifier = on_grade is not None
 
             # No checkout needed for verifier mode — the worktree is already
             # at end_commit (submit_for_verification auto-commits and captures HEAD).

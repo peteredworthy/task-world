@@ -12,6 +12,7 @@ Design documentation lives in `docs/intent/`. Implementation follows the phased 
 
 - Each run executes in its own git worktree under `worktrees/run-<run-id>/`.
 - The selected agent backend (OpenHands, Claude Code via CLI agent, Codex CLI agent, or external MCP/user-managed) operates inside that run worktree, not the main checkout.
+- Routine-declared orchestrator MCP access is scoped per task. Runners should use the scoped MCP config generated from `available_tools` instead of exposing the full `/mcp/sse` tool set by default.
 - Artifacts created by agents are written inside the run worktree first (for example `worktrees/run-<run-id>/docs/<feature>/...`).
 - Auto-verify and verification steps run against the run worktree path.
 - Run commits (`start_commit`/`end_commit`) are recorded from the worktree branch (`orchestrator/run-<run-id>`), then merged back according to completion actions.

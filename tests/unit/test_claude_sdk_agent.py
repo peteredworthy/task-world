@@ -683,11 +683,17 @@ class TestBuildMcpServers:
 
     def test_stdio_server_included(self) -> None:
         """stdio-transport MCP server is included with command config."""
-        mcp = MCPServerConfig(name="local", command="context7-mcp", args=["--port", "3000"])
-        result = build_mcp_servers("orch", mcp_servers=[mcp])
+        mcp = MCPServerConfig(
+            name="local",
+            command="context7-mcp",
+            args=["--port", "3000"],
+            cwd="worktree",
+        )
+        result = build_mcp_servers("orch", mcp_servers=[mcp], working_dir="/tmp/work")
         assert "local" in result
         assert result["local"]["command"] == "context7-mcp"
         assert result["local"]["args"] == ["--port", "3000"]
+        assert result["local"]["cwd"] == "/tmp/work"
 
     def test_url_server_included(self) -> None:
         """URL-based (SSE) MCP server is included with url config."""

@@ -33,12 +33,17 @@ class TestCodexPhaseFiltering:
         # grade or set_grade should be present
         assert "grade" in names or "set_grade" in names
 
-    def test_common_tools_always_present(self):
-        for is_verifier in [True, False]:
-            specs = build_dynamic_tool_specs(is_verifier=is_verifier)
-            names = {s["name"] for s in specs}
-            assert "update_checklist" in names
-            assert "submit" in names
+    def test_builder_has_builder_workflow_tools(self):
+        specs = build_dynamic_tool_specs(is_verifier=False)
+        names = {s["name"] for s in specs}
+
+        assert names == {"update_checklist", "submit", "request_clarification"}
+
+    def test_verifier_has_verifier_workflow_tools(self):
+        specs = build_dynamic_tool_specs(is_verifier=True)
+        names = {s["name"] for s in specs}
+
+        assert names == {"grade", "submit", "complete_recovery"}
 
 
 class TestCodexStepTools:

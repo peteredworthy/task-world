@@ -3,7 +3,7 @@
 Tests the full data flow: YAML → StepConfig → Executor → ExecutionContext → Agent.
 """
 
-from orchestrator.config.models import StepConfig
+from orchestrator.config.models import StepConfig, TaskConfig
 
 
 class TestStepLevelAvailableTools:
@@ -84,6 +84,33 @@ class TestStepLevelMCPServers:
             mcp_servers=[{"name": "ctx7", "url": "https://ctx7.example.com"}],
         )
         assert step1.mcp_servers[0].name != step2.mcp_servers[0].name
+
+
+class TestTaskLevelToolControl:
+    def test_task_with_available_tools_and_mcp_servers_parsed(self):
+        task = TaskConfig(
+            id="t1",
+            title="Task with explicit tools",
+            task_context="Do something",
+            requirements=[],
+            available_tools=["orchestrator_get_parent_oversight"],
+            mcp_servers=[{"name": "orchestrator", "url": "http://127.0.0.1:8000/mcp/sse"}],
+        )
+
+        assert task.available_tools == ["orchestrator_get_parent_oversight"]
+        assert task.mcp_servers is not None
+        assert task.mcp_servers[0].name == "orchestrator"
+
+    def test_task_without_tool_config_defaults_none(self):
+        task = TaskConfig(
+            id="t1",
+            title="Task without tools",
+            task_context="Do something",
+            requirements=[],
+        )
+
+        assert task.available_tools is None
+        assert task.mcp_servers is None
 
 
 class TestBackwardCompatibility:

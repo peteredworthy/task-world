@@ -28,8 +28,11 @@ done
 IFS=$_IFS
 
 _real_git=$(PATH="$_filtered_path" command -v git 2>/dev/null || true)
+if [ "$_real_git" = "/usr/bin/git" ] && [ -x /Library/Developer/CommandLineTools/usr/bin/git ]; then
+  _real_git=/Library/Developer/CommandLineTools/usr/bin/git
+fi
 if [ -z "$_real_git" ]; then
-  for _candidate in /usr/bin/git /bin/git /usr/local/bin/git; do
+  for _candidate in /Library/Developer/CommandLineTools/usr/bin/git /usr/bin/git /bin/git /usr/local/bin/git; do
     if [ -x "$_candidate" ]; then
       _real_git="$_candidate"
       break
@@ -44,33 +47,54 @@ fi
 _worktree="${ORCHESTRATOR_RUN_WORKTREE-}"
 _expected_branch="${ORCHESTRATOR_RUN_BRANCH-}"
 
+explain_security_restriction() {
+  _message="$1"
+  printf 'git-wrapper: %s\\n' "$_message" >&2
+  printf 'git-wrapper: this wrapper protects orchestrator run worktrees by keeping git operations scoped to the current run branch/worktree and blocking options that can escape the sandbox, override git metadata, invoke host tools, write outside allowed paths, or bypass review hooks.\\n' >&2
+  printf 'git-wrapper: use ordinary read-only commands inside the worktree, pathspecs after "--", "git restore" for reverting files, and normal "git commit" without --amend/--no-verify. Do not bypass the wrapper; adjust the task or ask for human guidance if a legitimate command is blocked.\\n' >&2
+  exit 1
+}
+
 # reject explicit git environment overrides
 if [ -n "${GIT_DIR+x}" ]; then
-  printf 'git-wrapper: blocking GIT_DIR override\\n' >&2
-  exit 1
+  explain_security_restriction "blocking GIT_DIR override"
 fi
 if [ -n "${GIT_WORK_TREE+x}" ]; then
-  printf 'git-wrapper: blocking GIT_WORK_TREE override\\n' >&2
-  exit 1
+  explain_security_restriction "blocking GIT_WORK_TREE override"
 fi
 if [ -n "${GIT_INDEX_FILE+x}" ]; then
-  printf 'git-wrapper: blocking GIT_INDEX_FILE override\\n' >&2
-  exit 1
+  explain_security_restriction "blocking GIT_INDEX_FILE override"
 fi
 if [ -n "${GIT_OBJECT_DIRECTORY+x}" ]; then
-  printf 'git-wrapper: blocking GIT_OBJECT_DIRECTORY override\\n' >&2
-  exit 1
+  explain_security_restriction "blocking GIT_OBJECT_DIRECTORY override"
 fi
 if [ -n "${GIT_ALTERNATE_OBJECT_DIRECTORIES+x}" ]; then
-  printf 'git-wrapper: blocking GIT_ALTERNATE_OBJECT_DIRECTORIES override\\n' >&2
-  exit 1
+  explain_security_restriction "blocking GIT_ALTERNATE_OBJECT_DIRECTORIES override"
 fi
 if [ -n "${GIT_COMMON_DIR+x}" ]; then
-  printf 'git-wrapper: blocking GIT_COMMON_DIR override\\n' >&2
-  exit 1
+  explain_security_restriction "blocking GIT_COMMON_DIR override"
 fi
+unset GIT_EXTERNAL_DIFF
 
-export DEVELOPER_DIR=""
+if [ -d /Library/Developer/CommandLineTools ]; then
+  export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+else
+  unset DEVELOPER_DIR
+fi
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+if [ -z "${GIT_AUTHOR_NAME-}" ]; then
+  export GIT_AUTHOR_NAME="Orchestrator Agent"
+fi
+if [ -z "${GIT_AUTHOR_EMAIL-}" ]; then
+  export GIT_AUTHOR_EMAIL="orchestrator@local"
+fi
+if [ -z "${GIT_COMMITTER_NAME-}" ]; then
+  export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME"
+fi
+if [ -z "${GIT_COMMITTER_EMAIL-}" ]; then
+  export GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+fi
 
 _global_no_pager=0
 
@@ -80,8 +104,7 @@ require_current_worktree() {
   fi
 
   if [ ! -d "$_worktree" ]; then
-    printf 'git-wrapper: configured worktree does not exist: %s\\n' "$_worktree" >&2
-    exit 1
+    explain_security_restriction "configured worktree does not exist: $_worktree"
   fi
 
   _resolved_worktree=$(cd "$_worktree" && pwd -P)
@@ -90,8 +113,7 @@ require_current_worktree() {
     "$_resolved_worktree" | "$_resolved_worktree"/*)
       ;;
     *)
-      printf 'git-wrapper: command must run inside worktree %s\\n' "$_resolved_worktree" >&2
-      exit 1
+      explain_security_restriction "command must run inside worktree $_resolved_worktree"
       ;;
   esac
 }
@@ -102,14 +124,12 @@ check_expected_branch() {
   fi
 
   if [ -z "$_worktree" ]; then
-    printf 'git-wrapper: ORCHESTRATOR_RUN_BRANCH set but ORCHESTRATOR_RUN_WORKTREE is not set\\n' >&2
-    exit 1
+    explain_security_restriction "ORCHESTRATOR_RUN_BRANCH set but ORCHESTRATOR_RUN_WORKTREE is not set"
   fi
 
   _current_branch=$("$_real_git" -C "$_worktree" rev-parse --abbrev-ref HEAD)
   if [ "$_current_branch" != "$_expected_branch" ]; then
-    printf 'git-wrapper: expected branch %s but current branch is %s\\n' "$_expected_branch" "$_current_branch" >&2
-    exit 1
+    explain_security_restriction "expected branch $_expected_branch but current branch is $_current_branch"
   fi
 }
 
@@ -117,30 +137,47 @@ reject_path_arg() {
   _path="$1"
   case "$_path" in
     /*)
-      printf 'git-wrapper: absolute path arguments are blocked: %s\\n' "$_path" >&2
-      exit 1
+      explain_security_restriction "absolute path arguments are blocked: $_path"
       ;;
     ../*|*/../*|*'/../'*)
-      printf 'git-wrapper: path arguments may not escape the worktree: %s\\n' "$_path" >&2
-      exit 1
+      explain_security_restriction "path arguments may not escape the worktree: $_path"
       ;;
     ..)
-      printf 'git-wrapper: path argument is outside the worktree: %s\\n' "$_path" >&2
-      exit 1
+      explain_security_restriction "path argument is outside the worktree: $_path"
       ;;
     ~*)
-      printf 'git-wrapper: path arguments may not use ~: %s\\n' "$_path" >&2
-      exit 1
+      explain_security_restriction "path arguments may not use ~: $_path"
       ;;
   esac
 }
 
-validate_status() {
+reject_read_only_option() {
+  _cmd="$1"
+  _option="$2"
+  case "$_option" in
+    --git-dir|--git-dir=*|--work-tree|--work-tree=*|--output|--output=*|--config|--config=*|--config-env|--config-env=*)
+      explain_security_restriction "blocked option for git $_cmd: $_option"
+      ;;
+    --ext-diff|--textconv|--external-diff)
+      explain_security_restriction "blocked option for git $_cmd: $_option"
+      ;;
+    --exclude-from|--exclude-from=*|--recurse-submodules|--recurse-submodules=*)
+      explain_security_restriction "blocked option for git $_cmd: $_option"
+      ;;
+    --git-path|--git-path=*|--git-common-dir|--absolute-git-dir|--resolve-git-dir|--resolve-git-dir=*|--shared-index-path)
+      explain_security_restriction "blocked option for git $_cmd: $_option"
+      ;;
+    --path-format|--path-format=absolute)
+      explain_security_restriction "blocked option for git $_cmd: $_option"
+      ;;
+  esac
+}
+
+validate_read_only_args() {
+  _cmd="$1"
+  shift
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --short|-s|--branch|-b|--untracked-files|--untracked-files=*|--verbose|-v|-vv)
-        shift
-        ;;
       --)
         shift
         while [ "$#" -gt 0 ]; do
@@ -149,53 +186,25 @@ validate_status() {
         done
         break
         ;;
-      --output=*|--output|-o|--work-tree|--work-tree=*|--git-dir|--git-dir=*)
-        printf 'git-wrapper: option is blocked for git status: %s\\n' "$1" >&2
-        exit 1
-        ;;
       -*)
-        printf 'git-wrapper: unknown git status option: %s\\n' "$1" >&2
-        exit 1
+        reject_read_only_option "$_cmd" "$1"
+        shift
         ;;
       *)
-        reject_path_arg "$1"
+        # Read-only commands accept revisions and pathspecs in the same position.
+        # Only pathspecs after `--` are treated as filesystem paths.
         shift
         ;;
     esac
   done
 }
 
+validate_status() {
+  validate_read_only_args status "$@"
+}
+
 validate_diff() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --stat|--name-only|--name-status|--cached|--patch|--no-patch|--color|--no-color)
-        shift
-        ;;
-      -U*|--unified=*)
-        shift
-        ;;
-      --output|--output=*)
-        printf 'git-wrapper: blocked option for git diff: %s\\n' "$1" >&2
-        exit 1
-        ;;
-      --)
-        shift
-        while [ "$#" -gt 0 ]; do
-          reject_path_arg "$1"
-          shift
-        done
-        break
-        ;;
-      -*)
-        printf 'git-wrapper: unknown git diff option: %s\\n' "$1" >&2
-        exit 1
-        ;;
-      *)
-        reject_path_arg "$1"
-        shift
-        ;;
-    esac
-  done
+  validate_read_only_args diff "$@"
 }
 
 validate_add() {
@@ -213,8 +222,7 @@ validate_add() {
         break
         ;;
       -*)
-        printf 'git-wrapper: unknown git add option: %s\\n' "$1" >&2
-        exit 1
+        explain_security_restriction "unknown git add option: $1"
         ;;
       *)
         reject_path_arg "$1"
@@ -239,8 +247,7 @@ validate_restore() {
         shift
         ;;
       -*)
-        printf 'git-wrapper: unknown git restore option: %s\\n' "$1" >&2
-        exit 1
+        explain_security_restriction "unknown git restore option: $1"
         ;;
       *)
         reject_path_arg "$1"
@@ -254,8 +261,7 @@ validate_commit() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --amend)
-        printf 'git-wrapper: blocked git commit option: --amend\\n' >&2
-        exit 1
+        explain_security_restriction "blocked git commit option: --amend"
         ;;
       -m|--message)
         if [ "$#" -lt 2 ]; then
@@ -265,10 +271,12 @@ validate_commit() {
         shift 2
         ;;
       --no-verify)
-        printf 'git-wrapper: blocked git commit option: --no-verify\\n' >&2
-        exit 1
+        explain_security_restriction "blocked git commit option: --no-verify"
         ;;
-      --message=*|-a|--all|--no-edit|--allow-empty|--allow-empty-message|--dry-run|-n)
+      -n)
+        explain_security_restriction "blocked git commit option: -n"
+        ;;
+      --message=*|-a|--all|--no-edit|--allow-empty|--allow-empty-message|--dry-run)
         shift
         ;;
       --)
@@ -280,8 +288,7 @@ validate_commit() {
         break
         ;;
       -*)
-        printf 'git-wrapper: unknown git commit option: %s\\n' "$1" >&2
-        exit 1
+        explain_security_restriction "unknown git commit option: $1"
         ;;
       *)
         reject_path_arg "$1"
@@ -292,117 +299,19 @@ validate_commit() {
 }
 
 validate_log() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --oneline|--graph|--decorate|--no-pager|--date=*|--pretty=*|--max-count=*|--author=*|--name-only|--name-status)
-        shift
-        ;;
-      -n)
-        if [ "$#" -lt 2 ]; then
-          printf 'git-wrapper: git log %s requires a value\\n' "$1" >&2
-          exit 1
-        fi
-        shift 2
-        ;;
-      -n* )
-        shift
-        ;;
-      --)
-        shift
-        while [ "$#" -gt 0 ]; do
-          reject_path_arg "$1"
-          shift
-        done
-        break
-        ;;
-      -*)
-        printf 'git-wrapper: unknown git log option: %s\\n' "$1" >&2
-        exit 1
-        ;;
-      *)
-        # Log references are not required to resolve to files.
-        shift
-        ;;
-    esac
-  done
+  validate_read_only_args log "$@"
 }
 
 validate_show() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --stat|--name-only|--name-status|--patch|--no-patch|--pretty=*|--no-color|--color)
-        shift
-        ;;
-      --)
-        shift
-        while [ "$#" -gt 0 ]; do
-          reject_path_arg "$1"
-          shift
-        done
-        break
-        ;;
-      -*)
-        printf 'git-wrapper: unknown git show option: %s\\n' "$1" >&2
-        exit 1
-        ;;
-      *)
-        reject_path_arg "$1"
-        shift
-        ;;
-    esac
-  done
+  validate_read_only_args show "$@"
 }
 
 validate_rev_parse() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --abbrev-ref|--verify|--short|--is-inside-work-tree|--show-toplevel)
-        shift
-        ;;
-      --)
-        shift
-        while [ "$#" -gt 0 ]; do
-          reject_path_arg "$1"
-          shift
-        done
-        break
-        ;;
-      -*)
-        printf 'git-wrapper: unknown git rev-parse option: %s\\n' "$1" >&2
-        exit 1
-        ;;
-      *)
-        reject_path_arg "$1"
-        shift
-        ;;
-    esac
-  done
+  validate_read_only_args rev-parse "$@"
 }
 
 validate_ls_files() {
-  while [ "$#" -gt 0 ]; do
-    case "$1" in
-      --stage|--cached|--modified|--others|--deleted|-s|-m|-c|-d|--)
-        if [ "$1" = -- ]; then
-          shift
-          while [ "$#" -gt 0 ]; do
-            reject_path_arg "$1"
-            shift
-          done
-          break
-        fi
-        shift
-        ;;
-      -*)
-        printf 'git-wrapper: unknown git ls-files option: %s\\n' "$1" >&2
-        exit 1
-        ;;
-      *)
-        reject_path_arg "$1"
-        shift
-        ;;
-    esac
-  done
+  validate_read_only_args ls-files "$@"
 }
 
 if [ "$#" -eq 0 ]; then
@@ -416,16 +325,13 @@ while [ "$#" -gt 0 ]; do
       shift
       ;;
     --git-dir|--git-dir=*|--work-tree|--work-tree=*)
-      printf 'git-wrapper: blocked global git option: %s\\n' "$1" >&2
-      exit 1
+      explain_security_restriction "blocked global git option: $1"
       ;;
     --*)
-      printf 'git-wrapper: unsupported global option: %s\\n' "$1" >&2
-      exit 1
+      explain_security_restriction "unsupported global option: $1"
       ;;
     -*)
-      printf 'git-wrapper: unsupported global option: %s\\n' "$1" >&2
-      exit 1
+      explain_security_restriction "unsupported global option: $1"
       ;;
     *)
       _cmd=$1
@@ -472,8 +378,7 @@ case "$_cmd" in
     validate_ls_files "$@"
     ;;
   *)
-    printf 'git-wrapper: blocked git subcommand: %s\\n' "$_cmd" >&2
-    exit 1
+    explain_security_restriction "blocked git subcommand: $_cmd"
     ;;
 esac
 

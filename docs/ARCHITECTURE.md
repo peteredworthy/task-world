@@ -28,6 +28,7 @@ npm run dev   # starts on port 5173
 | Health Check | http://localhost:8000/health | Server health endpoint |
 | WebSocket | ws://localhost:8000/ws/runs/{run_id} | Real-time run updates |
 | MCP SSE | http://localhost:8000/mcp/sse | MCP server-sent events |
+| Scoped MCP SSE | http://localhost:8000/mcp-scoped/{tools}/sse | MCP endpoint limited to comma-separated orchestrator tool names |
 | API Docs | http://localhost:8000/docs | OpenAPI/Swagger docs |
 
 ### Environment Setup
@@ -587,6 +588,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/children` | List oversight child runs |
 | POST | `/api/runs/{id}/children/{child_id}/resolve` | Reject or abandon an oversight child run |
 | GET | `/api/runs/{id}/evidence` | Return structured `run.evidence.v1` bundles from the run worktree |
+| GET | `/api/runs/{id}/trace` | Run trace data with attempts, phases, action logs, and token usage |
 | GET | `/api/runs/{id}/activity` | Activity log (paginated) |
 | GET | `/api/runs/{id}/activity/stream` | Activity SSE stream |
 | GET | `/api/runs/{id}/guidance` | Aggregate guidance for agents |
@@ -662,6 +664,8 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | WebSocket | `/ws/runs/{id}` | Real-time run updates |
 | SSE | `/mcp/sse` | MCP server-sent events |
 | HTTP | `/mcp/messages` | MCP message endpoint |
+| SSE | `/mcp-scoped/{tools}/sse` | MCP server-sent events with a comma-separated orchestrator tool allowlist |
+| HTTP | `/mcp-scoped/{tools}/messages` | MCP message endpoint for the scoped MCP server |
 
 ---
 

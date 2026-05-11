@@ -343,16 +343,15 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
     )
     git_section = (
         "## Git Workflow\n"
-        "Before submitting, commit only allowed oversight artifacts:\n"
+        "Do not run `git commit` manually; the orchestrator auto-commits allowed changes when you submit.\n"
         "- Allowed paths are task-requested documentation/metadata such as "
-        "`docs/super-parent/` and `.mcp.json`\n"
-        "- Do not edit or commit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
+        "`docs/super-parent/`\n"
+        "- Do not edit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
         "- Always use `git --no-pager` for git commands.\n"
         if context.work_mode == "oversight"
         else "## Git Workflow\n"
-        "Before submitting, commit your changes to git:\n"
-        "- Stage changes: `git add <files>`\n"
-        "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
+        "Do not run `git commit` manually; the orchestrator auto-commits uncommitted changes when you submit.\n"
+        "- Use git status and diff only to inspect your changes before submitting.\n"
         "- Always use `git --no-pager` for git commands.\n"
     )
 
@@ -364,7 +363,7 @@ def build_openhands_prompt(context: ExecutionContext, is_verifier: bool = False)
             else "Review the code changes made by the builder."
         )
         verifier_terminal_tip = (
-            "- To view oversight artifacts: `git --no-pager show HEAD -- docs/super-parent .mcp.json`\n"
+            "- To view oversight artifacts: `git --no-pager show HEAD -- docs/super-parent`\n"
             "- Do not require source, test, dependency, lockfile, migration, or UI edits for oversight tasks.\n"
             if context.work_mode == "oversight"
             else "- To view the builder's changes:\n"

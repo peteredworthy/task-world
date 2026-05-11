@@ -1,4 +1,5 @@
 import type { ChecklistStatus, Priority, TaskStatus } from './enums';
+import type { ModelTokenUsage } from './runs';
 
 export interface ChecklistItemSchema {
   req_id: string;
@@ -90,6 +91,7 @@ export interface AttemptSchema {
   metrics: Record<string, unknown>;
   grade_snapshot: GradeSnapshotItem[];
   auto_verify_results: Record<string, unknown>[] | null;
+  token_usage_by_model: ModelTokenUsage[];
   agent_runner_type: string | null;
   agent_model: string | null;
   agent_settings: Record<string, unknown>;

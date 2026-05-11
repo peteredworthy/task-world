@@ -659,53 +659,51 @@ def test_required_sections_still_in_shared_prompt() -> None:
     assert "submit" in prompt.system.lower()
 
 
-def test_git_commit_instructions_not_in_shared_prompt() -> None:
-    """Git commit instructions must NOT appear in the shared builder system prompt.
-
-    They have been moved to each agent's individual prompt builder.
-    """
+def test_manual_git_commit_prohibition_in_shared_prompt() -> None:
+    """The shared builder prompt tells agents to let submission commit changes."""
     config = _task_config()
     state = _task_state()
     prompt = generate_builder_prompt(config, state, {"feature": "auth"})
     assert "git add" not in prompt.system
-    assert "git commit" not in prompt.system
+    assert "Do not run `git commit` manually" in prompt.system
+    assert "auto-commits on submit" in prompt.system
 
 
-def test_git_commit_instructions_in_cli_agent_prompt() -> None:
-    """CLIAgent.build_prompt explicitly adds git commit instructions for builder phase."""
+def test_manual_git_commit_prohibition_in_cli_agent_prompt() -> None:
+    """CLIAgent.build_prompt explicitly adds no-manual-commit instructions."""
     shared_prompt = _shared_system_prompt()
     context = _make_context(shared_prompt)
     # Without api_base_url, build_prompt adds git workflow section for builder phase
     result = CLIAgent.build_prompt(shared_prompt, context)
-    assert "git add" in result
-    assert "git commit" in result
+    assert "Do not run `git commit` manually" in result
+    assert "auto-commits uncommitted changes" in result
 
 
-def test_git_commit_instructions_in_claude_sdk_prompt() -> None:
-    """build_claude_sdk_prompt explicitly adds git commit instructions."""
+def test_manual_git_commit_prohibition_in_claude_sdk_prompt() -> None:
+    """build_claude_sdk_prompt explicitly adds no-manual-commit instructions."""
     shared_prompt = _shared_system_prompt()
     context = _make_context(shared_prompt)
     result = build_claude_sdk_prompt(context, is_verifier=False)
-    assert "git add" in result
-    assert "git commit" in result
+    assert "Do not run `git commit` manually" in result
+    assert "auto-commits uncommitted changes" in result
 
 
-def test_git_commit_instructions_in_codex_server_prompt() -> None:
-    """build_codex_server_prompt explicitly adds git commit instructions."""
+def test_manual_git_commit_prohibition_in_codex_server_prompt() -> None:
+    """build_codex_server_prompt explicitly adds no-manual-commit instructions."""
     shared_prompt = _shared_system_prompt()
     context = _make_context(shared_prompt)
     result = build_codex_server_prompt(context, is_verifier=False)
-    assert "git add" in result
-    assert "git commit" in result
+    assert "Do not run `git commit` manually" in result
+    assert "auto-commits uncommitted changes" in result
 
 
-def test_git_commit_instructions_in_openhands_prompt() -> None:
-    """build_openhands_prompt explicitly adds git commit instructions."""
+def test_manual_git_commit_prohibition_in_openhands_prompt() -> None:
+    """build_openhands_prompt explicitly adds no-manual-commit instructions."""
     shared_prompt = _shared_system_prompt()
     context = _make_context(shared_prompt)
     result = build_openhands_prompt(context, is_verifier=False)
-    assert "git add" in result
-    assert "git commit" in result
+    assert "Do not run `git commit` manually" in result
+    assert "auto-commits uncommitted changes" in result
 
 
 def test_avoiding_loops_removed_from_openhands_builder_prompt() -> None:
@@ -734,15 +732,15 @@ def test_cli_agent_includes_git_workflow_section() -> None:
     result = CLIAgent.build_prompt(shared_prompt, context)
     assert "## Git Workflow" in result
     assert "git --no-pager" in result
-    assert "Commit conventions" in result
+    assert "Do not run `git commit` manually" in result
 
 
 def test_cli_agent_oversight_prompt_limits_git_workflow() -> None:
     context = _make_context("Task prompt", work_mode="oversight")
     result = CLIAgent.build_prompt("Task prompt", context)
 
-    assert "commit only allowed oversight artifacts" in result
-    assert "Do not edit or commit source code, tests, dependency files" in result
+    assert "auto-commits allowed changes" in result
+    assert "Do not edit source code, tests, dependency files" in result
     assert "commit your changes to git" not in result
 
 
@@ -795,7 +793,7 @@ def test_openhands_prompt_oversight_mode_blocks_implementation_work() -> None:
     result = build_openhands_prompt(context, is_verifier=False)
 
     assert "Perform only oversight/documentation/API operations" in result
-    assert "commit only allowed oversight artifacts" in result
+    assert "auto-commits allowed changes" in result
     assert "Implement each requirement." not in result
     assert "commit your changes to git" not in result
 
@@ -837,7 +835,7 @@ def test_codex_prompt_oversight_mode_blocks_implementation_work() -> None:
     result = build_codex_server_prompt(context, is_verifier=False)
 
     assert "Perform only oversight/documentation/API operations" in result
-    assert "commit only allowed oversight artifacts" in result
+    assert "auto-commits allowed changes" in result
     assert "Implement each requirement." not in result
     assert "commit your changes to git" not in result
 
@@ -877,7 +875,7 @@ def test_claude_sdk_prompt_oversight_mode_blocks_implementation_work() -> None:
     result = build_claude_sdk_prompt(context, is_verifier=False)
 
     assert "Perform only oversight/documentation/API operations" in result
-    assert "commit only allowed oversight artifacts" in result
+    assert "auto-commits allowed changes" in result
     assert "Implement each requirement." not in result
     assert "commit your changes to git" not in result
 

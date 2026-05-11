@@ -238,6 +238,8 @@ class TaskConfig(BaseModel):
     profile: ModelProfile | None = None
     builder_agent: str | None = None
     verifier_agent: str | None = None
+    available_tools: list[str] | None = None
+    mcp_servers: list["MCPServerConfig"] | None = None
     model_overrides: dict[str, dict[str, str]] | None = None
     requirements: list[RequirementConfig] = Field(default_factory=lambda: [])
     auto_verify: AutoVerifyConfig = Field(default_factory=AutoVerifyConfig)
@@ -358,6 +360,7 @@ class MCPServerConfig(BaseModel):
     args: list[str] | None = None
     env: dict[str, str] | None = None
     auth_token_env: str | None = None
+    cwd: Literal["worktree"] | None = None
     timeout_seconds: int = 30
 
     @model_validator(mode="after")
@@ -370,6 +373,8 @@ class MCPServerConfig(BaseModel):
             )
         if not has_url and not has_cmd:
             raise ValueError("MCPServerConfig must have exactly one of 'url' or 'command'")
+        if self.cwd is not None and not has_cmd:
+            raise ValueError("MCPServerConfig 'cwd' is only valid for command-based servers")
         return self
 
 

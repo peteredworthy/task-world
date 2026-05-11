@@ -679,7 +679,7 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
     from starlette.types import ASGIApp, Receive, Scope, Send
 
     from orchestrator.api.auth import InvalidTokenError, validate_token
-    from orchestrator.api.mcp.server import OrchestratorMCPServer
+    from orchestrator.api.mcp.server import ALL_TOOLS, OrchestratorMCPServer
 
     handler = _SessionPerCallHandler(app)
     mcp_server = OrchestratorMCPServer(handler=handler)  # type: ignore[arg-type]
@@ -687,8 +687,69 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
 
     mcp_asgi = mcp_server.sse_app
 
+    class _ScopedMcpDispatcher:
+        """Serve per-tool-allowlist orchestrator MCP servers under /mcp-scoped."""
+
+        def __init__(self, inner_handler: _SessionPerCallHandler) -> None:
+            self._handler = inner_handler
+            self._apps: dict[str, ASGIApp] = {}
+
+        async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+            if scope["type"] != "http":
+                response = JSONResponse(
+                    status_code=404,
+                    content={"detail": "Scoped MCP only supports HTTP transport"},
+                )
+                await response(scope, receive, send)
+                return
+
+            from urllib.parse import unquote
+
+            raw_path = str(scope.get("path", "")).strip("/")
+            if raw_path.startswith("mcp-scoped/"):
+                raw_path = raw_path.removeprefix("mcp-scoped/")
+            scope_key, _, rest = raw_path.partition("/")
+            decoded_scope_key = unquote(scope_key)
+            tool_names = {name for name in decoded_scope_key.split(",") if name}
+            if not rest or not tool_names or not tool_names.issubset(ALL_TOOLS):
+                response = JSONResponse(
+                    status_code=404,
+                    content={"detail": "Unknown scoped MCP tool set"},
+                )
+                await response(scope, receive, send)
+                return
+
+            scoped_app = self._apps.get(decoded_scope_key)
+            if scoped_app is None:
+                scoped_server = OrchestratorMCPServer(
+                    handler=self._handler,  # type: ignore[arg-type]
+                    allowed_tools=tool_names,
+                )
+                scoped_app = scoped_server.mcp.sse_app(mount_path="/")
+                self._apps[decoded_scope_key] = scoped_app
+
+            root_path = str(scope.get("root_path") or "").rstrip("/")
+            if root_path.endswith("/mcp-scoped"):
+                scoped_root_path = f"{root_path}/{decoded_scope_key}"
+            else:
+                scoped_root_path = f"{root_path}/mcp-scoped/{decoded_scope_key}"
+            scoped_scope = dict(scope)
+            if rest == "messages":
+                scoped_scope["root_path"] = ""
+                scoped_scope["path"] = "/messages/"
+            elif rest.startswith("messages/"):
+                scoped_scope["root_path"] = ""
+                scoped_scope["path"] = f"/{rest}"
+            else:
+                scoped_scope["root_path"] = scoped_root_path
+                scoped_scope["path"] = f"{scoped_root_path}/{rest}"
+            await scoped_app(scoped_scope, receive, send)
+
+    scoped_mcp_asgi = _ScopedMcpDispatcher(handler)
+
     if auth_config.auth_disabled:
         app.mount("/mcp", mcp_asgi)  # type: ignore[arg-type]
+        app.mount("/mcp-scoped", scoped_mcp_asgi)  # type: ignore[arg-type]
     else:
 
         class _McpAuthMiddleware:
@@ -722,6 +783,7 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
                 await self.app(scope, receive, send)
 
         app.mount("/mcp", _McpAuthMiddleware(mcp_asgi))  # type: ignore[arg-type]
+        app.mount("/mcp-scoped", _McpAuthMiddleware(scoped_mcp_asgi))  # type: ignore[arg-type]
 
     # Serve architecture documentation site as static files
     _docs_dir = Path(__file__).resolve().parent.parent.parent.parent / "docs" / "architecture-site"

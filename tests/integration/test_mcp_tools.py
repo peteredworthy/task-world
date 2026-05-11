@@ -5,6 +5,7 @@ import subprocess
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -192,6 +193,35 @@ async def test_unknown_tool(handler: ToolHandler) -> None:
         await handler.handle("nonexistent_tool", {})
 
 
+async def test_request_clarification_rejects_free_text_finite_choice(
+    handler: ToolHandler,
+    service: WorkflowService,
+) -> None:
+    run = _make_run()
+    await service.create_run(run)
+    await service.apply_start_run("run-1")
+    await service.start_task("run-1", "task-1")
+
+    with pytest.raises(ValueError, match="finite choice"):
+        await handler.handle(
+            "orchestrator_request_clarification",
+            {
+                "run_id": "run-1",
+                "task_id": "task-1",
+                "questions": [
+                    {
+                        "question": "Pick: (a) accept it; (b) retry it; or (c) abandon it.",
+                        "context": (
+                            "Parent needed: decide. Child did: stopped. Decision needed: choose."
+                        ),
+                        "question_type": "free_text",
+                        "options": [],
+                    }
+                ],
+            },
+        )
+
+
 async def test_oversight_child_run_tools(
     handler: ToolHandler,
     service: WorkflowService,
@@ -311,6 +341,47 @@ async def test_oversight_child_run_tools(
     assert updated_state["final_validation"]["passed"] is True
     assert updated_state["final_validation"]["service_verified"] is True
     assert updated_state["decisions"][0]["kind"] == "mcp_update"
+
+
+async def test_create_child_from_template_tool(
+    handler: ToolHandler,
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    parent = _make_run()
+    parent.status = RunStatus.ACTIVE
+    parent_worktree = tmp_path / "parent-worktree"
+    parent_worktree.mkdir()
+    _init_repo(parent_worktree)
+    parent.worktree_path = str(parent_worktree)
+    await service.create_run(parent)
+
+    result = await handler.handle(
+        "orchestrator_create_child_from_template",
+        {
+            "parent_run_id": "run-1",
+            "slice_spec": {
+                "template_id": "test_coverage_gap",
+                "slice_id": "slice-template",
+                "goal": "Add missing coverage for child template compilation.",
+                "verification_commands": [
+                    "uv run pytest tests/unit/test_child_workflow_templates.py -q"
+                ],
+            },
+        },
+    )
+
+    child = await service.get_run(cast(str, result["child_run_id"]))
+    assert result["template_id"] == "test_coverage_gap"
+    assert result["routine_id"] == "child-slice-template"
+    assert child.parent_slice_id == "slice-template"
+    assert child.routine_id == "child-slice-template"
+    routine = cast(dict[str, Any], child.routine_embedded)
+    steps = cast(list[dict[str, Any]], routine["steps"])
+    task = cast(dict[str, Any], steps[0]["tasks"][0])
+    assert task["artifacts"] == [
+        {"path": "docs/run-evidence/slice-template-evidence.json", "required": True}
+    ]
 
 
 async def test_resolve_child_run_tool_records_parent_decision(

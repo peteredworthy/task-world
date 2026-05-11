@@ -1,6 +1,11 @@
 """Workflow engine and orchestration - all public symbols exhaustively re-exported."""
 
 from orchestrator.workflow.artifacts import Artifact, ArtifactRegistry
+from orchestrator.workflow.child_templates import (
+    ChildSliceSpec,
+    ChildWorkflowTemplateId,
+    compile_child_routine_from_spec,
+)
 from orchestrator.workflow.engine import (
     Clock,
     ConditionEvalError,
@@ -196,6 +201,8 @@ __all__ = [
     "Artifact",
     "ArtifactRegistry",
     # Engine (errors, gates, grades, transitions, condition evaluation)
+    "ChildSliceSpec",
+    "ChildWorkflowTemplateId",
     "_build_step_outcomes",
     "_create_repeat_step_copies",
     "_find_step_config",
@@ -223,6 +230,7 @@ __all__ = [
     "WorkflowError",
     "check_run_completion",
     "check_step_progression",
+    "compile_child_routine_from_spec",
     "evaluate_checklist_gate",
     "evaluate_condition",
     "evaluate_gate",

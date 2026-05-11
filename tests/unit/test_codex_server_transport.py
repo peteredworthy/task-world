@@ -23,6 +23,7 @@ from orchestrator.runners import CodexServerAgent
 from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import ChecklistStatus
+from orchestrator.config.models import MCPServerConfig
 
 # ---------------------------------------------------------------------------
 # Fake transport
@@ -73,13 +74,14 @@ class _FailingStdioTransport:
 # ---------------------------------------------------------------------------
 
 
-def _ctx() -> ExecutionContext:
+def _ctx(mcp_servers: list[MCPServerConfig] | None = None) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-transport-test",
         task_id="task-transport-test",
         working_dir="/tmp/transport-test",
         prompt="Test the transport.",
         requirements=["R-01: implement polling", "R-02: route events"],
+        mcp_servers=mcp_servers,
     )
 
 
@@ -556,6 +558,34 @@ async def test_execute_posts_to_sessions_endpoint() -> None:
     params = thread_starts[0].get("params", {})
     assert params.get("approvalPolicy") == "never"
     assert params.get("cwd") == "/tmp/transport-test"
+
+
+async def test_execute_passes_worktree_cwd_to_stdio_mcp_server() -> None:
+    """Command MCP servers with cwd='worktree' start from the task worktree."""
+    agent, transport = _make_agent([_turn_completed()])
+    mcp = MCPServerConfig(
+        name="codesight",
+        command="npx",
+        args=["-y", "codesight", "--mcp"],
+        cwd="worktree",
+    )
+
+    await agent.execute(
+        context=_ctx(mcp_servers=[mcp]),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    thread_starts = [m for m in transport.sent if m.get("method") == "thread/start"]
+    params = thread_starts[0].get("params", {})
+    assert params["mcpServers"] == [
+        {
+            "name": "codesight",
+            "command": "npx",
+            "args": ["-y", "codesight", "--mcp"],
+            "cwd": "/tmp/transport-test",
+        }
+    ]
 
 
 async def test_execute_routes_update_checklist_tool_call() -> None:

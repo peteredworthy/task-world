@@ -15,11 +15,18 @@ from orchestrator.config import RoutineConfig
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RoutineSource
 from orchestrator.git import get_repo, list_branches, list_repos
 from orchestrator.git.repos import RepoNotFoundError
-from orchestrator.api.mcp.clarification_tools import CLARIFICATION_TOOL
+from orchestrator.api.mcp.clarification_tools import (
+    CLARIFICATION_TOOL,
+    validate_clarification_question_payloads,
+)
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state import Run
 from orchestrator.time_utils import format_utc_datetime
-from orchestrator.workflow import ClarificationQuestion
+from orchestrator.workflow import (
+    ChildSliceSpec,
+    ClarificationQuestion,
+    compile_child_routine_from_spec,
+)
 from orchestrator.workflow.service import WorkflowService
 
 
@@ -222,6 +229,88 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
+        "name": "orchestrator_create_child_from_template",
+        "description": (
+            "Create an oversight child run by compiling a compact slice spec through a "
+            "server-owned child workflow template."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "parent_run_id": {"type": "string", "description": "Parent oversight run ID"},
+                "slice_spec": {
+                    "type": "object",
+                    "description": "Compact child slice spec compiled by the server",
+                    "properties": {
+                        "template_id": {
+                            "type": "string",
+                            "enum": [
+                                "bug_fix_with_regression_test",
+                                "test_coverage_gap",
+                                "frontend_behavior_fix",
+                                "investigation_only",
+                                "cleanup_refactor",
+                                "environment_blocker_repro",
+                            ],
+                        },
+                        "slice_id": {"type": "string"},
+                        "goal": {"type": "string"},
+                        "routine_id": {"type": "string"},
+                        "title": {"type": "string"},
+                        "target_inventory_ids": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "allowed_paths": {"type": "array", "items": {"type": "string"}},
+                        "expected_files_changed": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "verification_commands": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "Commands the generated child should run through "
+                                "scripts/run_child_evidence.py so logs and run.evidence.v1 "
+                                "are produced together."
+                            ),
+                        },
+                        "evidence_expectations": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "stop_conditions": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "real_execution_surface": {"type": "string"},
+                        "real_frontend_path_required": {"type": "boolean"},
+                        "notes": {"type": "string"},
+                        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 4},
+                    },
+                    "required": ["template_id", "slice_id", "goal"],
+                },
+                "repo_name": {"type": "string", "description": "Optional child repo name"},
+                "branch": {"type": "string", "description": "Optional child source branch"},
+                "config": {"type": "object", "description": "Optional child run config"},
+                "agent_runner_type": {
+                    "type": "string",
+                    "description": "Optional child runner type",
+                },
+                "agent_runner_config": {
+                    "type": "object",
+                    "description": "Optional child runner config",
+                },
+                "next_action_decision": {
+                    "type": "string",
+                    "enum": ["continue", "replan", "stop", "environment_blocked"],
+                    "description": "Parent oversight decision that led to this child",
+                },
+            },
+            "required": ["parent_run_id", "slice_spec"],
+        },
+    },
+    {
         "name": "orchestrator_list_child_runs",
         "description": "List child runs linked to an oversight parent run.",
         "inputSchema": {
@@ -267,7 +356,10 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "orchestrator_wait_for_run",
-        "description": "Wait for a run to complete, fail, or pause, then return its current status.",
+        "description": (
+            "Wait for a run to complete, fail, or pause, then return its current status. "
+            "If timed_out is true, do not poll repeatedly in the same LLM turn."
+        ),
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -440,6 +532,8 @@ class ToolHandler:
             return await self._list_branches(arguments)
         elif tool_name == "orchestrator_create_child_run":
             return await self._create_child_run(arguments)
+        elif tool_name == "orchestrator_create_child_from_template":
+            return await self._create_child_from_template(arguments)
         elif tool_name == "orchestrator_list_child_runs":
             return await self._list_child_runs(arguments)
         elif tool_name == "orchestrator_accept_child_run":
@@ -559,6 +653,8 @@ class ToolHandler:
         run_id: str = args["run_id"]
         task_id: str = args["task_id"]
         questions_data: list[dict[str, Any]] = args["questions"]
+
+        validate_clarification_question_payloads(questions_data)
 
         # Convert dict questions to ClarificationQuestion objects
         questions = [
@@ -720,6 +816,18 @@ class ToolHandler:
             "start_enqueued": True,
         }
 
+    async def _create_child_from_template(self, args: dict[str, Any]) -> dict[str, Any]:
+        spec = ChildSliceSpec.model_validate(args["slice_spec"])
+        routine_embedded = compile_child_routine_from_spec(spec)
+        create_args = dict(args)
+        create_args.pop("slice_spec")
+        create_args["parent_slice_id"] = spec.slice_id
+        create_args["routine_embedded"] = routine_embedded
+        result = await self._create_child_run(create_args)
+        result["template_id"] = spec.template_id
+        result["routine_id"] = routine_embedded["id"]
+        return result
+
     async def _list_child_runs(self, args: dict[str, Any]) -> dict[str, Any]:
         parent_run_id: str = args["parent_run_id"]
         children = await self._service.list_child_runs(parent_run_id)
@@ -783,7 +891,8 @@ class ToolHandler:
 
     async def _wait_for_run(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
-        timeout_seconds = min(float(args.get("timeout_seconds", 0)), 300.0)
+        requested_timeout_seconds = float(args.get("timeout_seconds", 0))
+        timeout_seconds = min(requested_timeout_seconds, 300.0)
         initial_run = await self._service.get_run(run_id)
         parent_run_id = initial_run.parent_run_id
         if parent_run_id:
@@ -804,11 +913,15 @@ class ToolHandler:
                 timeout_seconds=timeout_seconds,
             )
         terminal = run.status.value in ("completed", "failed")
+        meaningful_state = terminal or run.status.value == "paused"
         return {
             "run_id": run.id,
             "status": run.status.value,
             "terminal": terminal,
-            "meaningful_state": terminal or run.status.value == "paused",
+            "meaningful_state": meaningful_state,
+            "timed_out": timeout_seconds > 0 and not meaningful_state,
+            "timeout_seconds": timeout_seconds,
+            "requested_timeout_seconds": requested_timeout_seconds,
             "pause_reason": run.pause_reason,
             "last_error": run.last_error,
         }

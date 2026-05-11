@@ -13,6 +13,7 @@ from orchestrator.runners.agents import discover as discover_agents
 
 # Concrete agent implementations
 from orchestrator.runners.agents.claude_cli.agent import CLIAgent, ClaudeCliQuotaAgent
+from orchestrator.runners.agents.claude_cli.factory import create_cli_agent
 from orchestrator.runners.agents.claude_sdk.agent import (
     ClaudeSDKAgent,
     build_claude_sdk_prompt,
@@ -201,6 +202,7 @@ __all__ = [
     "CLIAgent",
     "ClaudeCliQuotaAgent",
     "ClaudeSDKAgent",
+    "create_cli_agent",
     "CodexServerAgent",
     "DockerOpenHandsAgent",
     "MockAgent",

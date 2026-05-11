@@ -49,3 +49,27 @@ def test_all_tools_registered() -> None:
     server = OrchestratorMCPServer(handler=_NoOpHandler())
 
     assert set(server.tool_names()) == ALL_TOOLS
+
+
+def test_allowed_tools_registers_subset() -> None:
+    """Scoped MCP servers expose only the explicitly requested tools."""
+    allowed_tools = {
+        "orchestrator_get_parent_oversight",
+        "orchestrator_update_parent_oversight",
+    }
+    server = OrchestratorMCPServer(handler=_NoOpHandler(), allowed_tools=allowed_tools)
+
+    assert set(server.tool_names()) == allowed_tools
+
+
+def test_empty_allowed_tools_registers_no_tools() -> None:
+    """An empty scoped allowlist must not fall back to all tools."""
+    server = OrchestratorMCPServer(handler=_NoOpHandler(), allowed_tools=set())
+
+    assert server.tool_names() == []
+
+
+def test_unknown_allowed_tool_raises_value_error() -> None:
+    """Scoped MCP server construction fails closed on unknown tool names."""
+    with pytest.raises(ValueError, match="Unknown MCP tools"):
+        OrchestratorMCPServer(handler=_NoOpHandler(), allowed_tools={"not_a_tool"})

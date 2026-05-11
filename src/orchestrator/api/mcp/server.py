@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from mcp.server import FastMCP
 
+from orchestrator.api.mcp.clarification_tools import CLARIFICATION_AUTHORING_GUIDE
 from orchestrator.api.mcp.tools import ORCHESTRATOR_TOOLS, ToolHandler
 from orchestrator.workflow.service import WorkflowService
 
@@ -25,6 +26,7 @@ BUILDER_TOOLS = {
     "orchestrator_list_repos",
     "orchestrator_list_branches",
     "orchestrator_create_child_run",
+    "orchestrator_create_child_from_template",
     "orchestrator_list_child_runs",
     "orchestrator_accept_child_run",
     "orchestrator_resolve_child_run",
@@ -59,6 +61,7 @@ class OrchestratorMCPServer:
         handler: ToolHandler | None = None,
         repos_dir: Path | None = None,
         phase: Literal["building", "verifying"] = "building",
+        allowed_tools: set[str] | None = None,
     ) -> None:
         if handler is not None:
             self._handler = handler
@@ -68,9 +71,13 @@ class OrchestratorMCPServer:
             raise ValueError("Either service or handler must be provided")
         if phase not in ("building", "verifying"):
             raise ValueError("phase must be one of: building, verifying")
+        if allowed_tools is not None:
+            unknown_tools = allowed_tools - ALL_TOOLS
+            if unknown_tools:
+                raise ValueError(f"Unknown MCP tools: {sorted(unknown_tools)}")
 
         self.phase: Literal["building", "verifying"] = phase
-        self._allowed_tools = ALL_TOOLS
+        self._allowed_tools = ALL_TOOLS if allowed_tools is None else allowed_tools
         self._repos_dir = repos_dir
         self._mcp = FastMCP(
             name="orchestrator",
@@ -88,6 +95,15 @@ class OrchestratorMCPServer:
         introspect the signature correctly.
         """
         handler = self._handler
+
+        def add_tool_if_allowed(
+            fn: Any,
+            *,
+            name: str,
+            description: str,
+        ) -> None:
+            if name in self._allowed_tools:
+                self._mcp.add_tool(fn, name=name, description=description)
 
         async def orchestrator_get_requirements(run_id: str, task_id: str) -> str:
             """Get the list of requirements (checklist items) for a task."""
@@ -147,6 +163,8 @@ class OrchestratorMCPServer:
 
             The task will pause until the human answers.
             Answers will be appended to the clarifications artifact file.
+            Use select question types with options for finite choices; use free_text
+            only for genuinely open-ended answers.
             """
             result = await handler.handle(
                 "orchestrator_request_clarification",
@@ -155,33 +173,34 @@ class OrchestratorMCPServer:
             return json.dumps(result)
 
         # Register all tools regardless of phase; runtime validation prevents phase-inappropriate calls
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_get_requirements,
             name="orchestrator_get_requirements",
             description="Get the list of requirements (checklist items) for a task.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_update_checklist,
             name="orchestrator_update_checklist",
             description="Mark a requirement as done, not applicable, or blocked.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_submit,
             name="orchestrator_submit",
             description="Submit the task for verification after completing requirements.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_set_grade,
             name="orchestrator_set_grade",
             description="Set a grade for a requirement (used by verifier).",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_request_clarification,
             name="orchestrator_request_clarification",
             description=(
                 "Request clarification from the human. "
                 "The task will pause until the human answers. "
-                "Answers will be appended to the clarifications artifact file."
+                "Answers will be appended to the clarifications artifact file. "
+                + CLARIFICATION_AUTHORING_GUIDE
             ),
         )
 
@@ -216,7 +235,7 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_complete_recovery,
             name="orchestrator_complete_recovery",
             description=(
@@ -224,7 +243,7 @@ class OrchestratorMCPServer:
                 "Choose an outcome: retry, skip, or abandon."
             ),
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_escalate_requirement,
             name="orchestrator_escalate_requirement",
             description="Flag a requirement as unfulfillable and pause the run for human review.",
@@ -253,12 +272,12 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_list_repos,
             name="orchestrator_list_repos",
             description="List available repositories in the repos directory.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_list_branches,
             name="orchestrator_list_branches",
             description="List branches in a repository with optional glob pattern filter.",
@@ -293,6 +312,35 @@ class OrchestratorMCPServer:
             if agent_runner_config is not None:
                 args["agent_runner_config"] = agent_runner_config
             result = await handler.handle("orchestrator_create_child_run", args)
+            return json.dumps(result)
+
+        async def orchestrator_create_child_from_template(
+            parent_run_id: str,
+            slice_spec: dict[str, object],
+            repo_name: str = "",
+            branch: str = "",
+            config: dict[str, object] | None = None,
+            agent_runner_type: str = "",
+            agent_runner_config: dict[str, object] | None = None,
+            next_action_decision: str = "continue",
+        ) -> str:
+            """Create an oversight child run from a compact template slice spec."""
+            args: dict[str, object] = {
+                "parent_run_id": parent_run_id,
+                "slice_spec": slice_spec,
+                "next_action_decision": next_action_decision,
+            }
+            if repo_name:
+                args["repo_name"] = repo_name
+            if branch:
+                args["branch"] = branch
+            if config is not None:
+                args["config"] = config
+            if agent_runner_type:
+                args["agent_runner_type"] = agent_runner_type
+            if agent_runner_config is not None:
+                args["agent_runner_config"] = agent_runner_config
+            result = await handler.handle("orchestrator_create_child_from_template", args)
             return json.dumps(result)
 
         async def orchestrator_list_child_runs(parent_run_id: str) -> str:
@@ -381,47 +429,52 @@ class OrchestratorMCPServer:
             )
             return json.dumps(result)
 
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_create_child_run,
             name="orchestrator_create_child_run",
             description="Create an oversight child run from an embedded routine.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
+            orchestrator_create_child_from_template,
+            name="orchestrator_create_child_from_template",
+            description="Create an oversight child run from a compact template slice spec.",
+        )
+        add_tool_if_allowed(
             orchestrator_list_child_runs,
             name="orchestrator_list_child_runs",
             description="List child runs linked to an oversight parent run.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_accept_child_run,
             name="orchestrator_accept_child_run",
             description="Merge an accepted child run into its parent run branch.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_resolve_child_run,
             name="orchestrator_resolve_child_run",
             description="Reject or abandon a child run so the parent can continue iterating.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_wait_for_run,
             name="orchestrator_wait_for_run",
             description="Wait for a run to complete, fail, or pause, then return current status.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_get_run_evidence,
             name="orchestrator_get_run_evidence",
             description="Return structured run.evidence.v1 bundles from a run worktree.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_get_parent_oversight,
             name="orchestrator_get_parent_oversight",
             description="Return the persisted super-parent oversight snapshot.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_update_parent_oversight,
             name="orchestrator_update_parent_oversight",
             description="Persist parent-authored super-parent oversight facts.",
         )
-        self._mcp.add_tool(
+        add_tool_if_allowed(
             orchestrator_refresh_parent_oversight,
             name="orchestrator_refresh_parent_oversight",
             description="Recompute and persist the super-parent oversight snapshot.",

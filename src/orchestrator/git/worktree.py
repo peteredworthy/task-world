@@ -196,6 +196,7 @@ class WorktreeManager:
         ]
 
         settings = {
+            "autoMemoryEnabled": False,
             "permissions": {
                 "allow": [
                     f"Read({wt_abs}/**)",

@@ -8,7 +8,7 @@ from collections.abc import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config import Priority, RoutineSource, RunStatus, TaskStatus
-from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import (
@@ -153,6 +153,90 @@ async def test_full_clarification_cycle(
     assert task.status == TaskStatus.BUILDING
     assert task.pending_action_type is None
     assert task.pending_clarification_id is None
+
+
+async def test_pending_clarification_blocks_submit(
+    service: WorkflowService,
+) -> None:
+    """A later submit callback cannot bypass an unanswered clarification."""
+    run = _make_simple_run()
+    await service.create_run(run)
+
+    request = await service.request_clarification(
+        run_id="run-1",
+        task_id="task-1",
+        questions=[
+            ClarificationQuestion(
+                id="q1",
+                question="Which direction?",
+                context="The agent needs a human decision.",
+                options=[],
+                question_type="free_text",
+            )
+        ],
+    )
+
+    result = await service.submit_for_verification("run-1", "task-1")
+
+    assert result.success is False
+    assert result.error == "Cannot verify from pending_user_action"
+
+    task = await service.get_task("run-1", "task-1")
+    assert task.status == TaskStatus.PENDING_USER_ACTION
+    assert task.pending_action_type == "clarification"
+    assert task.pending_clarification_id == request.id
+    assert await service.get_pending_clarification("run-1", "task-1") is not None
+
+
+async def test_respond_to_legacy_stale_clarification_does_not_reopen_completed_task(
+    service: WorkflowService,
+    session: AsyncSession,
+) -> None:
+    """Legacy stale pending markers can be answered without regressing task state."""
+    run = _make_simple_run()
+    await service.create_run(run)
+
+    request = await service.request_clarification(
+        run_id="run-1",
+        task_id="task-1",
+        questions=[
+            ClarificationQuestion(
+                id="q1",
+                question="Accept evidence?",
+                context="Legacy run advanced after asking.",
+                options=[],
+                question_type="free_text",
+            )
+        ],
+    )
+
+    legacy_run = await service.get_run("run-1")
+    legacy_task = legacy_run.steps[0].tasks[0]
+    legacy_task.status = TaskStatus.COMPLETED
+    await RunRepository(session).save(legacy_run)
+
+    result = await service.respond_to_clarification(
+        run_id="run-1",
+        task_id="task-1",
+        request_id=request.id,
+        answers=[
+            ClarificationAnswer(
+                question_id="q1",
+                free_text="b - require cleaner evidence",
+                answered_by="user@example.com",
+                answered_at=datetime.now(timezone.utc),
+            )
+        ],
+        responded_by="user@example.com",
+    )
+
+    assert result.success is True
+    assert result.new_status == TaskStatus.COMPLETED
+    task = await service.get_task("run-1", "task-1")
+    assert task.status == TaskStatus.COMPLETED
+    assert task.pending_action_type is None
+    assert task.pending_clarification_id is None
+    assert await service.get_pending_clarification("run-1", "task-1") is None
 
 
 async def test_clarification_requested_event_emitted(

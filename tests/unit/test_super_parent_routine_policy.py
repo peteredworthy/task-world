@@ -28,6 +28,15 @@ def test_evaluate_child_evidence_is_orchestration_only() -> None:
     assert "orchestrator_request_clarification" in normalized
     assert "orchestrator_escalate_requirement" in normalized
     assert "paused, failed without schema-valid evidence" in normalized
+    assert "what the parent needed from the child" in normalized
+    assert "what the child did" in normalized
+    assert "what the parent needs the human to decide" in normalized
+    assert "question_type: single_select" in normalized
+    assert "do not embed a/b/c choices in a `free_text` question" in normalized
+
+    r5 = next(req for req in task.requirements if req.id == "R5")
+    assert "Human clarification requests are concise" in r5.desc
+    assert "select options for finite decisions" in r5.desc
 
 
 def test_accept_and_merge_child_refuses_unacceptable_children() -> None:

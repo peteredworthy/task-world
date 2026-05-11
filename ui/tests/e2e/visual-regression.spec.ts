@@ -57,8 +57,141 @@ const MOCK_RUN = {
   total_tokens_write: 567,
   total_tokens_cache: 89,
   total_duration_ms: 45000,
+  total_num_actions: 2,
+  token_usage_by_model: [],
   estimated_cost_usd: 0.012,
   cost_disclaimer: null,
+};
+
+const MOCK_TRACE = {
+  run_id: RUN_ID,
+  attempts: [
+    {
+      step_index: 0,
+      step_id: 'step-1',
+      step_config_id: 'S-01',
+      step_title: 'Build',
+      task_id: 'task-1',
+      task_config_id: 'T-01',
+      task_title: 'Implement trace',
+      task_status: 'completed',
+      task_current_attempt: 1,
+      task_max_attempts: 2,
+      attempt: {
+        id: 'attempt-1',
+        attempt_num: 1,
+        started_at: '2026-01-01T00:00:00Z',
+        completed_at: '2026-01-01T00:01:00Z',
+        builder_prompt: 'Build the feature',
+        verifier_prompt: 'Verify the feature',
+        verifier_comment: 'Looks good',
+        outcome: 'passed',
+        metrics: {
+          tokens_read: 120,
+          tokens_write: 40,
+          tokens_cache: 300,
+          duration_ms: 60000,
+          num_actions: 2,
+        },
+        grade_snapshot: [],
+        auto_verify_results: [],
+        token_usage_by_model: [],
+        agent_runner_type: 'cli_subprocess',
+        agent_model: 'claude-test',
+        agent_settings: { command: 'claude' },
+        error: null,
+        has_output: true,
+        has_action_log: true,
+        start_commit: null,
+        end_commit: null,
+      },
+      phases: [
+        {
+          phase: 'builder',
+          prompt: 'Build the feature',
+          note: null,
+          message_count: 3,
+          action_sequence_start: 1,
+          action_sequence_end: 3,
+        },
+        {
+          phase: 'verifier',
+          prompt: 'Verify the feature',
+          note: 'Looks good',
+          message_count: 0,
+          action_sequence_start: null,
+          action_sequence_end: null,
+        },
+      ],
+      action_log: {
+        entries: [
+          {
+            sequence_num: 1,
+            kind: 'assistant_text',
+            timestamp: '2026-01-01T00:00:10Z',
+            text: 'I will inspect the code.',
+            tool_use: null,
+            tool_result: null,
+            metrics: {
+              input_tokens: 20,
+              output_tokens: 8,
+              cache_read_tokens: 100,
+              cache_creation_tokens: 40,
+              cost_usd: 0.001,
+            },
+            raw_type: 'assistant.text',
+          },
+          {
+            sequence_num: 2,
+            kind: 'tool_use',
+            timestamp: '2026-01-01T00:00:20Z',
+            text: null,
+            tool_use: {
+              tool_use_id: 'tool-1',
+              tool_name: 'Read',
+              arguments: { file_path: 'src/example.ts' },
+              summary: 'Read src/example.ts',
+            },
+            tool_result: null,
+            metrics: {
+              input_tokens: 30,
+              output_tokens: 10,
+              cache_read_tokens: 140,
+              cache_creation_tokens: 20,
+              cost_usd: 0.001,
+            },
+            raw_type: 'assistant.tool_use',
+          },
+          {
+            sequence_num: 3,
+            kind: 'tool_result',
+            timestamp: '2026-01-01T00:00:21Z',
+            text: null,
+            tool_use: null,
+            tool_result: {
+              tool_use_id: 'tool-1',
+              output: 'file contents',
+              exit_code: null,
+              success: true,
+              output_length: 13,
+            },
+            metrics: null,
+            raw_type: 'tool_result',
+          },
+        ],
+        session_id: 'session-1',
+        agent_model: 'claude-test',
+        tools_available: ['Read'],
+        total_turns: 1,
+        total_cost_usd: 0.002,
+        total_duration_ms: 60000,
+        total_input_tokens: 50,
+        total_output_tokens: 18,
+        total_cache_read_tokens: 240,
+        total_cache_creation_tokens: 60,
+      },
+    },
+  ],
 };
 
 const MOCK_BRANCH_STATUS = {
@@ -211,6 +344,10 @@ async function setupRoutes(page: Page, overrides: RouteOverrides = {}) {
     route.fulfill({
       json: { run_id: RUN_ID, events: [], has_more: false },
     }),
+  );
+
+  await page.route(`**/api/runs/${RUN_ID}/trace`, (route) =>
+    route.fulfill({ json: MOCK_TRACE }),
   );
 
   // Pending actions — MUST be a plain array (PendingAction[]), not an object.

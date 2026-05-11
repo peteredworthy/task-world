@@ -18,6 +18,10 @@ class TestMCPServerConfig:
         assert cfg.args == ["--verbose"]
         assert cfg.url is None
 
+    def test_command_transport_allows_worktree_cwd(self):
+        cfg = MCPServerConfig(name="local", command="codesight", cwd="worktree")
+        assert cfg.cwd == "worktree"
+
     def test_both_transports_rejected(self):
         with pytest.raises(ValidationError, match="exactly one"):
             MCPServerConfig(name="bad", url="https://x", command="y")
@@ -33,6 +37,10 @@ class TestMCPServerConfig:
     def test_auth_token_env_is_string_reference(self):
         cfg = MCPServerConfig(name="auth", url="https://x", auth_token_env="MY_TOKEN_VAR")
         assert cfg.auth_token_env == "MY_TOKEN_VAR"
+
+    def test_cwd_rejected_for_url_transport(self):
+        with pytest.raises(ValidationError, match="cwd"):
+            MCPServerConfig(name="remote", url="https://x", cwd="worktree")
 
     def test_env_vars(self):
         cfg = MCPServerConfig(name="e", command="cmd", env={"KEY": "val"})

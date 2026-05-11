@@ -211,6 +211,23 @@ _CLI_SUBPROCESS_CONFIG: list[AgentConfigField] = [
         field_type="string",
         description="Override CLI args list (JSON array). Replaces all defaults including -p and --output-format.",
     ),
+    AgentConfigField(
+        name="max_turns",
+        field_type="number",
+        default=50,
+        description="Maximum Claude Code agentic turns per subprocess task",
+    ),
+    AgentConfigField(
+        name="bare",
+        field_type="boolean",
+        default=False,
+        description=(
+            "Run Claude with --bare to reduce startup context by skipping auto-memory, "
+            "CLAUDE.md discovery, hooks, plugins, LSP, background prefetches, and "
+            "keychain reads. Requires ANTHROPIC_API_KEY or an explicit apiKeyHelper; "
+            "Claude subscription OAuth/keychain auth is not available in bare mode."
+        ),
+    ),
 ]
 
 _USER_MANAGED_CONFIG: list[AgentConfigField] = [

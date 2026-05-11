@@ -155,6 +155,15 @@
   background: color-mix(in srgb, var(--color-text-muted) 70%, black);
 }
 
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 /* Skeleton shimmer loader */
 @keyframes shimmer {
   from { background-position: -200% 0; }

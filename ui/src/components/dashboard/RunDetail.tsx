@@ -3,6 +3,7 @@ import { useParams, Link, useSearchParams } from 'react-router-dom';
 import { useRun, useRoutine, usePauseRun, useCancelRun, useMergeBack, useResumeRun, useSkipStep, useParentOversight, useRefreshParentOversight, useAcceptChildRun } from '../../hooks/useApi';
 import { useBranchStatus } from '../../hooks/useReview';
 import { useActivityStream } from '../../hooks/useActivityStream';
+import { usePendingClarification } from '../../hooks/useClarifications';
 import { usePendingActions } from '../../hooks/usePendingActions';
 import { WebSocketProvider } from '../../context/WebSocketContext';
 import { ReviewMergeProvider } from '../../context/ReviewMergeContext';
@@ -25,6 +26,7 @@ import { isRunStuck } from '../../lib/runStuck';
 import { ApiError } from '../../api/client';
 import { ReviewMergeTab } from '../review/ReviewMergeTab';
 import { ModelCostBreakdown } from '../detail/ModelCostBreakdown';
+import { RunTraceExplorer } from '../detail/RunTraceExplorer';
 import type { ChildOversightSummary, ParentOversightState, RunResponse } from '../../types';
 import type { PendingAction } from '../../types/clarifications';
 
@@ -231,6 +233,8 @@ function ParentOversightPanel({
 
 function RunDetailInner({ runId }: { runId: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
+  const requestedAction = searchParams.get('action');
+  const requestedTaskId = searchParams.get('task_id') ?? undefined;
   const { data: run, isLoading, error } = useRun(runId);
   // Skip standalone routine fetch when the routine is embedded in the run
   const { data: routine } = useRoutine(
@@ -238,6 +242,10 @@ function RunDetailInner({ runId }: { runId: string }) {
   );
   const { data: activityData } = useActivityStream(runId);
   const { data: pendingActionsData } = usePendingActions(runId);
+  const { data: requestedClarification } = usePendingClarification(
+    runId,
+    requestedAction === 'clarification' ? requestedTaskId : undefined,
+  );
   const taskPendingActions = useMemo(() => pendingActionsData?.pendingActions ?? [], [pendingActionsData]);
   const pendingActionsCount = pendingActionsData?.badgeCount ?? 0;
   const pendingClarificationAction =
@@ -279,10 +287,10 @@ function RunDetailInner({ runId }: { runId: string }) {
   }, []);
 
   useEffect(() => {
-    if (taskPendingActions.length === 0 || selectedPendingAction) return;
+    if (selectedPendingAction) return;
 
-    const action = searchParams.get('action');
-    const taskId = searchParams.get('task_id');
+    const action = requestedAction;
+    const taskId = requestedTaskId;
     if (!action) return;
 
     let match: PendingAction | undefined;
@@ -307,8 +315,38 @@ function RunDetailInner({ runId }: { runId: string }) {
       next.delete('action');
       next.delete('task_id');
       setSearchParams(next, { replace: true });
+      return;
     }
-  }, [searchParams, setSearchParams, selectedPendingAction, taskPendingActions]);
+
+    if (action === 'clarification' && taskId && requestedClarification) {
+      const stepId =
+        run?.steps.find((step) =>
+          step.tasks.some((task) => task.id === requestedClarification.task_id),
+        )?.id ?? '';
+      setSelectedPendingAction({
+        task_id: requestedClarification.task_id,
+        step_id: stepId,
+        action_type: 'clarification',
+        clarification_request: requestedClarification,
+        summary_artifact: null,
+        approval_prompt: null,
+        is_gate_approval: false,
+      });
+      const next = new URLSearchParams(searchParams);
+      next.delete('action');
+      next.delete('task_id');
+      setSearchParams(next, { replace: true });
+    }
+  }, [
+    requestedAction,
+    requestedTaskId,
+    requestedClarification,
+    run,
+    searchParams,
+    setSearchParams,
+    selectedPendingAction,
+    taskPendingActions,
+  ]);
 
   // Auto-open pending action modal when a new pending action arrives (when no URL action param)
   useEffect(() => {
@@ -753,6 +791,8 @@ function RunDetailInner({ runId }: { runId: string }) {
               <ModelCostBreakdown run={run} />
             </div>
           )}
+
+          <RunTraceExplorer runId={run.id} />
 
           {/* View Changes */}
           <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path ?? null} />

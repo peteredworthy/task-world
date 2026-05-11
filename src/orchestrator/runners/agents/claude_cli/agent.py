@@ -25,6 +25,10 @@ from orchestrator.runners.errors import (
     AgentNotAvailableError,
     AgentRateLimitError,
 )
+from orchestrator.runners.mcp_scope import (
+    resolve_mcp_server_cwd,
+    scope_mcp_servers_to_available_tools,
+)
 from orchestrator.workflow import GateBlockedError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
 from orchestrator.runners.environment import build_agent_subprocess_env
@@ -49,6 +53,69 @@ if TYPE_CHECKING:
     from orchestrator.runners.parsers.base import StreamParser
 
 logger = logging.getLogger(__name__)
+
+_CLAUDE_CODE_BASE_TOOLS = (
+    "Bash",
+    "Edit",
+    "MultiEdit",
+    "Read",
+    "Write",
+    "Glob",
+    "Grep",
+    "LS",
+    "TodoWrite",
+)
+_CLAUDE_CODE_READ_ONLY_TOOLS = (
+    "Bash",
+    "Read",
+    "Glob",
+    "Grep",
+    "LS",
+)
+_CLAUDE_CODE_KNOWN_BUILTIN_TOOLS = frozenset(
+    {
+        *_CLAUDE_CODE_BASE_TOOLS,
+        *_CLAUDE_CODE_READ_ONLY_TOOLS,
+        "AskUserQuestion",
+        "BashOutput",
+        "CronCreate",
+        "CronDelete",
+        "CronList",
+        "EnterPlanMode",
+        "Exit",
+        "ExitPlanMode",
+        "KillBash",
+        "NotebookEdit",
+        "NotebookRead",
+        "PushNotification",
+        "RemoteTrigger",
+        "ScheduleWakeup",
+        "Task",
+        "TodoRead",
+        "ToolSearch",
+        "WebFetch",
+        "WebSearch",
+    }
+)
+
+
+def _has_flag(args: list[str], flag: str) -> bool:
+    """Return whether a CLI flag appears as ``--flag`` or ``--flag=value``."""
+    return any(arg == flag or arg.startswith(f"{flag}=") for arg in args)
+
+
+def _claude_tools_arg(
+    available_tools: list[str] | None = None,
+    *,
+    read_only: bool = False,
+) -> str:
+    """Build the Claude Code built-in tool allowlist for subprocess runs."""
+    base_tools = _CLAUDE_CODE_READ_ONLY_TOOLS if read_only else _CLAUDE_CODE_BASE_TOOLS
+    tools: list[str] = list(base_tools)
+    for tool_name in available_tools or []:
+        if tool_name in _CLAUDE_CODE_KNOWN_BUILTIN_TOOLS and tool_name not in tools:
+            tools.append(tool_name)
+    return ",".join(tools)
 
 
 class _DefaultTimeProvider:
@@ -91,6 +158,7 @@ class CLIAgent:
         parser: StreamParser | None = None,
         runner_monitor: AgentRunnerMonitor | None = None,
         run_id: str | None = None,
+        bare: bool = False,
     ) -> None:
         self._command = command
         base_args = args or []
@@ -108,6 +176,7 @@ class CLIAgent:
         self._parser = parser
         self._runner_monitor = runner_monitor
         self._run_id = run_id
+        self._bare = bare
 
     @property
     def info(self) -> AgentRunnerInfo:
@@ -133,17 +202,18 @@ class CLIAgent:
             phase: ``"building"`` for builder instructions, ``"verifying"``
                 for verifier instructions.
         """
-        # Git workflow instructions for builder phase — added to every CLI agent prompt
-        # because the CLI agent is responsible for committing work before submitting.
+        # Git workflow instructions for builder phase. The orchestrator commits
+        # on submit, so agents should inspect git state but not make commits.
         git_section = ""
         if phase == "building":
             if context.work_mode == "oversight":
                 git_section = (
                     "\n\n## Git Workflow\n"
-                    "Before submitting, commit only allowed oversight artifacts:\n"
+                    "Do not run `git commit` manually; the orchestrator auto-commits "
+                    "allowed changes when you submit.\n"
                     "- Allowed paths are task-requested documentation/metadata such as "
-                    "`docs/super-parent/` and `.mcp.json`\n"
-                    "- Do not edit or commit source code, tests, dependency files, lockfiles, "
+                    "`docs/super-parent/`\n"
+                    "- Do not edit source code, tests, dependency files, lockfiles, "
                     "migrations, or UI files during oversight tasks\n"
                     "- If implementation changes seem required, record the need in oversight "
                     "state, request clarification, or escalate instead\n"
@@ -155,13 +225,11 @@ class CLIAgent:
             else:
                 git_section = (
                     "\n\n## Git Workflow\n"
-                    "Before submitting, commit your changes to git:\n"
-                    "- Stage all relevant changes: `git add <files>`\n"
-                    "- Commit with a descriptive message: `git commit -m 'Description'`\n"
-                    "- Example: `git commit -m 'Implement authentication system with login and signup'`\n"
+                    "Do not run `git commit` manually; the orchestrator auto-commits "
+                    "uncommitted changes when you submit.\n"
+                    "- Use `git status` and `git diff` only to inspect your changes before submitting\n"
                     "- ALWAYS use `git --no-pager` for git commands that produce output\n"
                     "  (e.g. `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`)\n"
-                    "- Commit conventions: use imperative mood, e.g. 'Add feature' not 'Added feature'\n"
                 )
 
         if context.api_base_url is None:
@@ -206,8 +274,21 @@ class CLIAgent:
                 f"'{context.task_id}', 'R1', 'done')\n"
                 f"- **orchestrator_request_clarification**(run_id, task_id, questions)\n"
                 f"  Request clarification from the human. Task will pause until answered.\n"
+                f"  Each question must be clear to someone who cannot see planning artifacts:\n"
+                f"  context should say 'Parent needed:', 'Child did:', and "
+                f"'Decision needed:'. Explain internal IDs in human terms.\n"
+                f"  For finite choices, use question_type='single_select' or 'multi_select' "
+                f"and put the actual choices in options. Do not put a/b/c choices in "
+                f"a free_text question.\n"
                 f"  Example: orchestrator_request_clarification('{context.run_id}', "
-                f'\'{context.task_id}\', [{{"id": "Q1", "question": "...", "required": true}}])\n'
+                f'\'{context.task_id}\', [{{"question": "How should the parent handle '
+                f'the child result?", "context": "Parent needed: decide whether to '
+                f"accept a child slice. Child did: produced valid evidence but did not "
+                f"reproduce the reported bug. Decision needed: choose the next parent "
+                f'action.", "question_type": "single_select", "options": ['
+                f'"Accept the child evidence and resolve the target", '
+                f'"Require more reproduction paths before resolving it", '
+                f'"Reject this child and replan the slice"], "required": true}}])\n'
                 f"- **orchestrator_escalate_requirement**(run_id, task_id, requirement_id, reason)\n"
                 f"  Flag a requirement as unfulfillable. Pauses run for human review.\n"
                 f"- **orchestrator_submit**(run_id, task_id)\n"
@@ -259,6 +340,14 @@ class CLIAgent:
 
         # Add external MCP server info
         if context.mcp_servers:
+            display_mcp_servers = (
+                scope_mcp_servers_to_available_tools(
+                    context.mcp_servers,
+                    context.available_tools,
+                    phase="building",
+                )
+                or context.mcp_servers
+            )
             mcp_section = (
                 "\n\n## External MCP Servers\n"
                 "The following external MCP servers are configured for this Claude session. "
@@ -266,7 +355,7 @@ class CLIAgent:
                 "not call raw MCP SSE/message endpoints with curl unless no MCP tool is "
                 "registered.\n"
             )
-            for mcp in context.mcp_servers:
+            for mcp in display_mcp_servers:
                 if mcp.url:
                     mcp_section += f"- **{mcp.name}**: {mcp.url}\n"
                 elif mcp.command:
@@ -289,7 +378,7 @@ class CLIAgent:
                 "\n\n## Reviewing Oversight Artifacts\n"
                 "Use these commands only to inspect committed oversight documentation or metadata:\n"
                 "- `git --no-pager show HEAD --stat` — which files changed\n"
-                "- `git --no-pager show HEAD -- docs/super-parent .mcp.json` — oversight artifacts\n"
+                "- `git --no-pager show HEAD -- docs/super-parent` — oversight artifacts\n"
                 "Do not require source, test, dependency, lockfile, migration, or UI edits for "
                 "oversight tasks. Grade the recorded decision, escalation, or replan path.\n"
                 "Never run bare `git diff` or `git show` without --no-pager.\n"
@@ -372,6 +461,14 @@ class CLIAgent:
 
         # Add external MCP server info
         if context.mcp_servers:
+            display_mcp_servers = (
+                scope_mcp_servers_to_available_tools(
+                    context.mcp_servers,
+                    context.available_tools,
+                    phase="verifying",
+                )
+                or context.mcp_servers
+            )
             mcp_section = (
                 "\n\n## External MCP Servers\n"
                 "The following external MCP servers are configured for this Claude session. "
@@ -379,7 +476,7 @@ class CLIAgent:
                 "not call raw MCP SSE/message endpoints with curl unless no MCP tool is "
                 "registered.\n"
             )
-            for mcp in context.mcp_servers:
+            for mcp in display_mcp_servers:
                 if mcp.url:
                     mcp_section += f"- **{mcp.name}**: {mcp.url}\n"
                 elif mcp.command:
@@ -389,15 +486,26 @@ class CLIAgent:
 
         return prompt + git_review_section + api_section
 
-    def _write_mcp_json(self, working_dir: str, mcp_servers: list[Any]) -> Path:
-        """Write .mcp.json to working dir for Claude Code auto-discovery.
+    def _write_mcp_json(
+        self,
+        working_dir: str,
+        mcp_servers: list[Any],
+        available_tools: list[str] | None = None,
+    ) -> Path:
+        """Write a generated MCP config for Claude Code subprocesses.
 
         Args:
-            working_dir: Directory path where .mcp.json will be written.
+            working_dir: Directory path where `.orchestrator/mcp.json` will be written.
             mcp_servers: List of MCPServerConfig objects.
+            available_tools: Explicit task tools used to scope orchestrator MCP exposure.
         """
+        scoped_mcp_servers = scope_mcp_servers_to_available_tools(
+            mcp_servers,
+            available_tools,
+            phase="verifying" if self._phase == "verifying" else "building",
+        )
         mcp_config: dict[str, Any] = {"mcpServers": {}}
-        for mcp in mcp_servers:
+        for mcp in scoped_mcp_servers or []:
             server_entry: dict[str, Any] = {}
             if mcp.url:
                 server_entry["type"] = "sse"
@@ -406,6 +514,9 @@ class CLIAgent:
                 server_entry["command"] = mcp.command
                 if mcp.args:
                     server_entry["args"] = mcp.args
+                resolved_cwd = resolve_mcp_server_cwd(mcp, working_dir)
+                if resolved_cwd:
+                    server_entry["cwd"] = resolved_cwd
             if mcp.env:
                 server_entry["env"] = dict(mcp.env)
             if mcp.auth_token_env:
@@ -415,21 +526,53 @@ class CLIAgent:
             mcp_config["mcpServers"][mcp.name] = server_entry
 
         mcp_json_path = self._mcp_json_path(working_dir)
+        mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
         mcp_json_path.write_text(json.dumps(mcp_config, indent=2))
         return mcp_json_path
 
     @staticmethod
     def _mcp_json_path(working_dir: str) -> Path:
         """Return the MCP config path used for Claude CLI subprocesses."""
-        return Path(working_dir) / ".mcp.json"
+        return Path(working_dir) / ".orchestrator" / "mcp.json"
 
-    def _args_with_mcp_config(self, mcp_json_path: Path | None) -> list[str]:
-        """Return CLI args with explicit MCP config for Claude subprocesses."""
-        if mcp_json_path is None or Path(self._command).name != "claude":
+    def _args_with_mcp_config(
+        self,
+        mcp_json_path: Path | None,
+        available_tools: list[str] | None = None,
+    ) -> list[str]:
+        """Return Claude CLI args with explicit tool and MCP scoping."""
+        if Path(self._command).name != "claude":
             return list(self._args)
-        if any(arg == "--mcp-config" or arg.startswith("--mcp-config=") for arg in self._args):
-            return list(self._args)
-        return [*self._args, "--mcp-config", str(mcp_json_path)]
+
+        args = list(self._args)
+
+        if self._bare and not _has_flag(args, "--bare"):
+            args.append("--bare")
+        if not _has_flag(args, "--tools"):
+            args.extend(
+                [
+                    "--tools",
+                    _claude_tools_arg(
+                        available_tools,
+                        read_only=self._phase == "verifying",
+                    ),
+                ]
+            )
+        if not _has_flag(args, "--disable-slash-commands"):
+            args.append("--disable-slash-commands")
+        if not self._bare and not _has_flag(args, "--setting-sources"):
+            args.extend(["--setting-sources", "project,local"])
+        if not _has_flag(args, "--chrome") and not _has_flag(args, "--no-chrome"):
+            args.append("--no-chrome")
+
+        has_mcp_config = _has_flag(args, "--mcp-config")
+        if mcp_json_path is not None and not has_mcp_config:
+            args.extend(["--mcp-config", str(mcp_json_path)])
+            has_mcp_config = True
+        if has_mcp_config and not _has_flag(args, "--strict-mcp-config"):
+            args.append("--strict-mcp-config")
+
+        return args
 
     async def execute(
         self,
@@ -474,13 +617,18 @@ class CLIAgent:
             if context.auth_token:
                 child_env["ORCHESTRATOR_AUTH_TOKEN"] = context.auth_token
 
-            # Write .mcp.json and pass it explicitly. Claude auto-discovery is not
-            # reliable for non-interactive subprocesses in all environments.
+            # Write a generated MCP config and pass it explicitly. Keep it under
+            # .orchestrator/ so project/user MCP discovery does not treat it as
+            # repository configuration.
             mcp_json_path: Path | None = None
-            if context.mcp_servers:
-                mcp_json_path = self._write_mcp_json(context.working_dir, context.mcp_servers)
+            if Path(self._command).name == "claude" or context.mcp_servers:
+                mcp_json_path = self._write_mcp_json(
+                    context.working_dir,
+                    context.mcp_servers or [],
+                    context.available_tools,
+                )
 
-            cmd = [path, *self._args_with_mcp_config(mcp_json_path)]
+            cmd = [path, *self._args_with_mcp_config(mcp_json_path, context.available_tools)]
 
             self._process = await asyncio.create_subprocess_exec(
                 *cmd,

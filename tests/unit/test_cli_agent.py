@@ -6,7 +6,7 @@ from typing import Literal
 
 from orchestrator.config.models import NudgerConfig
 from orchestrator.config import AgentRunnerType
-from orchestrator.runners import CLIAgent
+from orchestrator.runners import CLIAgent, create_cli_agent
 from orchestrator.runners.types import ExecutionContext
 
 
@@ -94,14 +94,26 @@ def test_model_parameter_no_args() -> None:
     assert agent._args == ["--model", "gpt-5-mini"]  # pyright: ignore[reportPrivateUsage]
 
 
+def test_create_cli_agent_defaults_claude_max_turns() -> None:
+    agent = create_cli_agent({"command": "claude"})
+    assert "--max-turns" in agent._args  # pyright: ignore[reportPrivateUsage]
+    assert agent._args[agent._args.index("--max-turns") + 1] == "50"  # pyright: ignore[reportPrivateUsage]
+
+
+def test_create_cli_agent_uses_configured_claude_max_turns() -> None:
+    agent = create_cli_agent({"command": "claude", "max_turns": 12})
+    assert "--max-turns" in agent._args  # pyright: ignore[reportPrivateUsage]
+    assert agent._args[agent._args.index("--max-turns") + 1] == "12"  # pyright: ignore[reportPrivateUsage]
+
+
 def test_build_prompt_without_api_url() -> None:
     """Without api_base_url, builder phase adds git workflow section to prompt."""
     ctx = _make_context(api_base_url=None, prompt="Original prompt")
     result = CLIAgent.build_prompt("Original prompt", ctx)
     assert "Original prompt" in result
     assert "## Git Workflow" in result
-    assert "git add" in result
-    assert "git commit" in result
+    assert "Do not run `git commit` manually" in result
+    assert "auto-commits uncommitted changes" in result
 
 
 def test_build_prompt_without_api_url_oversight_mode_limits_git_workflow() -> None:
@@ -110,8 +122,8 @@ def test_build_prompt_without_api_url_oversight_mode_limits_git_workflow() -> No
     result = CLIAgent.build_prompt("Original prompt", ctx)
 
     assert "Original prompt" in result
-    assert "commit only allowed oversight artifacts" in result
-    assert "Do not edit or commit source code, tests, dependency files" in result
+    assert "auto-commits allowed changes" in result
+    assert "Do not edit source code, tests, dependency files" in result
     assert "commit your changes to git" not in result
 
 
@@ -275,6 +287,7 @@ def test_mcp_prompt_tool_names_match_registered_tools() -> None:
         "orchestrator_list_repos",
         "orchestrator_list_branches",
         "orchestrator_create_child_run",
+        "orchestrator_create_child_from_template",
         "orchestrator_list_child_runs",
         "orchestrator_accept_child_run",
         "orchestrator_resolve_child_run",

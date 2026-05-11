@@ -34,6 +34,10 @@ from orchestrator.runners.errors import (
     AgentExecutionError,
     AgentNotAvailableError,
 )
+from orchestrator.runners.mcp_scope import (
+    resolve_mcp_server_cwd,
+    scope_mcp_servers_to_available_tools,
+)
 from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
@@ -210,9 +214,11 @@ def build_orchestrator_mcp_server(
         logger.info("ClaudeSDKAgent: request_clarification — question=%r", question)
         return {"content": [{"type": "text", "text": f"Clarification requested: {question}"}]}
 
-    tools_list = [update_checklist, submit, request_clarification]
+    tools_list = [submit]
 
-    if on_grade is not None:
+    if on_grade is None:
+        tools_list.extend([update_checklist, request_clarification])
+    else:
 
         @tool(
             "grade",
@@ -247,6 +253,10 @@ def build_orchestrator_mcp_server(
 def build_mcp_servers(
     orchestrator_server: Any,
     mcp_servers: list[Any] | None,
+    available_tools: list[str] | None = None,
+    working_dir: str | None = None,
+    *,
+    is_verifier: bool = False,
 ) -> dict[str, Any]:
     """Build MCP servers dict for ClaudeAgentOptions."""
     servers: dict[str, Any] = {"orchestrator": orchestrator_server}
@@ -254,12 +264,20 @@ def build_mcp_servers(
     if not mcp_servers:
         return servers
 
-    for mcp in mcp_servers:
+    scoped_mcp_servers = scope_mcp_servers_to_available_tools(
+        mcp_servers,
+        available_tools,
+        phase="verifying" if is_verifier else "building",
+    )
+    for mcp in scoped_mcp_servers or []:
         if mcp.command:
             # stdio transport
             server_config: dict[str, Any] = {"command": mcp.command}
             if mcp.args:
                 server_config["args"] = mcp.args
+            resolved_cwd = resolve_mcp_server_cwd(mcp, working_dir)
+            if resolved_cwd:
+                server_config["cwd"] = resolved_cwd
             env: dict[str, str] = {}
             if mcp.auth_token_env:
                 token = os.environ.get(mcp.auth_token_env)
@@ -310,15 +328,14 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
     )
     git_section = (
         "## Git Workflow\n"
-        "Before submitting, commit only allowed oversight artifacts:\n"
-        "- Stage only task-requested documentation/metadata such as `docs/super-parent/` and `.mcp.json`\n"
-        "- Do not edit or commit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
+        "Do not run `git commit` manually; the orchestrator auto-commits allowed changes when you submit.\n"
+        "- Leave only task-requested documentation/metadata changed, such as `docs/super-parent/`.\n"
+        "- Do not edit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
         "- Always use `git --no-pager` for git commands.\n"
         if context.work_mode == "oversight"
         else "## Git Workflow\n"
-        "Before submitting, commit your changes to git:\n"
-        "- Stage changes: `git add <files>`\n"
-        "- Commit with a descriptive message: `git commit -m 'Description of changes'`\n"
+        "Do not run `git commit` manually; the orchestrator auto-commits uncommitted changes when you submit.\n"
+        "- Use git status and diff only to inspect your changes before submitting.\n"
         "- Always use `git --no-pager` for git commands.\n"
     )
 
@@ -344,9 +361,7 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
             "3. After grading ALL requirements, call **submit** to complete verification.\n\n"
             "### Available Tools\n"
             "- **grade**(req_id, grade, grade_reason?) — Grade a requirement\n"
-            "- **update_checklist**(req_id, status, note?) — Mark a requirement's status\n"
             "- **submit**() — Complete verification after grading all requirements\n"
-            "- **request_clarification**(question) — Ask for clarification if needed\n"
         )
     else:
         phase_section = (
@@ -523,7 +538,13 @@ class ClaudeSDKAgent:
             orchestrator_server = build_orchestrator_mcp_server(
                 on_checklist_update, on_submit, on_grade
             )
-            mcp_servers = build_mcp_servers(orchestrator_server, context.mcp_servers)
+            mcp_servers = build_mcp_servers(
+                orchestrator_server,
+                context.mcp_servers,
+                context.available_tools,
+                context.working_dir,
+                is_verifier=is_verifier,
+            )
 
             full_prompt = build_claude_sdk_prompt(context, is_verifier=is_verifier)
 

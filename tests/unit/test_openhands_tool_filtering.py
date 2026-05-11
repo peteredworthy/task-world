@@ -3,10 +3,17 @@
 import os
 
 from orchestrator.config.models import MCPServerConfig
+from orchestrator.runners.mcp_scope import BUILDER_WORKFLOW_MCP_TOOLS, VERIFIER_WORKFLOW_MCP_TOOLS
 
 
 # Import the conversion function
 from orchestrator.runners import _build_openhands_mcp_config  # pyright: ignore[reportPrivateUsage]
+
+
+def _scoped_orchestrator_url(*tool_names: str, is_verifier: bool = False) -> str:
+    workflow_tools = VERIFIER_WORKFLOW_MCP_TOOLS if is_verifier else BUILDER_WORKFLOW_MCP_TOOLS
+    scoped_tools = ",".join(sorted(workflow_tools | set(tool_names)))
+    return f"http://localhost:8000/mcp-scoped/{scoped_tools}/sse"
 
 
 class TestOpenHandsMCPConfig:
@@ -23,13 +30,14 @@ class TestOpenHandsMCPConfig:
 
     def test_stdio_transport(self) -> None:
         """Test stdio transport with command and args."""
-        mcp = MCPServerConfig(name="local", command="ctx7", args=["--verbose"])
-        config = _build_openhands_mcp_config([mcp])
+        mcp = MCPServerConfig(name="local", command="ctx7", args=["--verbose"], cwd="worktree")
+        config = _build_openhands_mcp_config([mcp], working_dir="/tmp/work")
         assert config is not None
         assert "mcpServers" in config
         assert "local" in config["mcpServers"]
         assert config["mcpServers"]["local"]["command"] == "ctx7"
         assert config["mcpServers"]["local"]["args"] == ["--verbose"]
+        assert config["mcpServers"]["local"]["cwd"] == "/tmp/work"
 
     def test_stdio_transport_no_args(self) -> None:
         """Test stdio transport without args."""
@@ -62,6 +70,29 @@ class TestOpenHandsMCPConfig:
         assert "b" in config["mcpServers"]
         assert config["mcpServers"]["a"]["url"] == "https://a.com"
         assert config["mcpServers"]["b"]["command"] == "b-cmd"
+
+    def test_orchestrator_url_scoped_to_available_tools(self) -> None:
+        """Orchestrator MCP URLs are scoped before being passed to OpenHands."""
+        server = MCPServerConfig(name="orchestrator", url="http://localhost:8000/mcp/sse")
+        config = _build_openhands_mcp_config(
+            [server],
+            available_tools=["orchestrator_get_parent_oversight"],
+        )
+        assert config is not None
+        assert config["mcpServers"]["orchestrator"]["url"] == _scoped_orchestrator_url(
+            "orchestrator_get_parent_oversight"
+        )
+
+    def test_orchestrator_url_verifier_scoped_to_verifier_tools(self) -> None:
+        """Verifier MCP URLs use the verifier workflow tools."""
+        server = MCPServerConfig(name="orchestrator", url="http://localhost:8000/mcp/sse")
+        config = _build_openhands_mcp_config([server], is_verifier=True)
+
+        assert config is not None
+        url = config["mcpServers"]["orchestrator"]["url"]
+        assert url == _scoped_orchestrator_url(is_verifier=True)
+        assert "orchestrator_set_grade" in url
+        assert "orchestrator_update_checklist" not in url
 
     def test_env_variables(self) -> None:
         """Test environment variables are included in config."""

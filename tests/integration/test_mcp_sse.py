@@ -76,6 +76,83 @@ async def test_mcp_messages_endpoint_exists(client: AsyncClient) -> None:
     assert response.status_code != 404
 
 
+async def test_scoped_mcp_sse_endpoint_exists_with_encoded_commas(
+    app: FastAPI,
+) -> None:
+    """Scoped MCP SSE accepts comma-separated tool names encoded by clients."""
+    import anyio
+
+    scoped_path = "/mcp-scoped/orchestrator_get_requirements%2Corchestrator_submit/sse"
+    sent_messages: list[dict[str, object]] = []
+    endpoint_seen = anyio.Event()
+
+    async def receive() -> dict[str, object]:
+        await endpoint_seen.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message: dict[str, object]) -> None:
+        sent_messages.append(message)
+        body = message.get("body")
+        if isinstance(body, bytes) and b"data: " in body:
+            endpoint_seen.set()
+
+    with anyio.fail_after(1):
+        await app(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": scoped_path,
+                "raw_path": scoped_path.encode(),
+                "root_path": "",
+                "query_string": b"",
+                "headers": [(b"host", b"localhost:8000")],
+                "client": ("127.0.0.1", 12345),
+                "server": ("localhost", 8000),
+            },
+            receive,
+            send,
+        )
+
+    expected_prefix = (
+        "/mcp-scoped/orchestrator_get_requirements%2Corchestrator_submit/messages/?session_id="
+    )
+    response_start = next(
+        message for message in sent_messages if message["type"] == "http.response.start"
+    )
+    response_body = b"".join(
+        message.get("body", b"")
+        for message in sent_messages
+        if message["type"] == "http.response.body"
+    )
+    data_line = next(
+        line.removeprefix("data: ")
+        for line in response_body.decode("utf-8").splitlines()
+        if line.startswith("data: ")
+    )
+    assert response_start["status"] == 200
+    assert data_line is not None
+    assert data_line.startswith(expected_prefix)
+    assert data_line.count("/mcp-scoped/") == 1
+
+
+async def test_scoped_mcp_messages_endpoint_stays_under_scope(
+    client: AsyncClient,
+) -> None:
+    """Scoped MCP message POSTs are handled under /mcp-scoped, not redirected away."""
+    response = await client.post(
+        "/mcp-scoped/"
+        "orchestrator_get_requirements%2Corchestrator_submit"
+        "/messages/?session_id=00000000000000000000000000000000",
+        content=b"{}",
+    )
+
+    assert response.status_code != 307
+    assert response.headers.get("location") is None
+
+
 async def test_health_still_works_with_mcp_mounted(client: AsyncClient) -> None:
     """Health endpoint still works after MCP mount."""
     response = await client.get("/health")

@@ -134,6 +134,23 @@ def test_verifying_from_invalid_state() -> None:
     assert result.error is not None
 
 
+def test_pending_clarification_cannot_submit_for_verification() -> None:
+    task = _task(
+        status=TaskStatus.PENDING_USER_ACTION,
+        checklist=_done_checklist(),
+    )
+    task.pending_action_type = "clarification"
+    task.pending_clarification_id = "clarification-123"
+
+    result = transition_to_verifying(task)
+
+    assert result.success is False
+    assert result.error == "Cannot verify from pending_user_action"
+    assert task.status == TaskStatus.PENDING_USER_ACTION
+    assert task.pending_action_type == "clarification"
+    assert task.pending_clarification_id == "clarification-123"
+
+
 # --- transition_after_verification ---
 
 

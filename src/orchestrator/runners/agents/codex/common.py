@@ -192,84 +192,93 @@ def build_dynamic_tool_specs(
     Returns:
         List of tool spec dicts suitable for ``thread/start.dynamicTools``.
     """
-    specs: list[dict[str, Any]] = [
-        {
-            "name": "update_checklist",
-            "description": "Mark a requirement as done, blocked, or not_applicable.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["req_id", "status"],
-                "properties": {
-                    "req_id": {"type": "string", "description": "Requirement ID (e.g. 'R-01')"},
-                    "status": {
-                        "type": "string",
-                        "enum": ["done", "blocked", "not_applicable"],
-                    },
-                    "note": {"type": "string", "description": "Optional explanation"},
+    submit_spec: dict[str, Any] = {
+        "name": "submit",
+        "description": "Submit work for verification or complete the verification.",
+        "inputSchema": {"type": "object", "properties": {}},
+    }
+    update_checklist_spec: dict[str, Any] = {
+        "name": "update_checklist",
+        "description": "Mark a requirement as done, blocked, or not_applicable.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["req_id", "status"],
+            "properties": {
+                "req_id": {"type": "string", "description": "Requirement ID (e.g. 'R-01')"},
+                "status": {
+                    "type": "string",
+                    "enum": ["done", "blocked", "not_applicable"],
+                },
+                "note": {"type": "string", "description": "Optional explanation"},
+            },
+        },
+    }
+    request_clarification_spec: dict[str, Any] = {
+        "name": "request_clarification",
+        "description": "Request clarification on ambiguous requirements.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["question"],
+            "properties": {
+                "question": {"type": "string", "description": "The clarification question"},
+            },
+        },
+    }
+    complete_recovery_spec: dict[str, Any] = {
+        "name": "complete_recovery",
+        "description": (
+            "Finalize recovery for a failed task. "
+            "Call this after diagnosing the failure. "
+            "outcome='retry' to retry the task, "
+            "outcome='skip' to skip it (non-critical tasks only), "
+            "outcome='abandon' to permanently fail it."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "required": ["outcome"],
+            "properties": {
+                "outcome": {
+                    "type": "string",
+                    "enum": ["retry", "skip", "abandon"],
+                    "description": "Recovery decision: retry, skip, or abandon the task",
+                },
+                "notes": {
+                    "type": "string",
+                    "description": "Explanation of the recovery decision",
                 },
             },
         },
-        {
-            "name": "submit",
-            "description": "Submit work for verification or complete the verification.",
-            "inputSchema": {"type": "object", "properties": {}},
-        },
-        {
-            "name": "request_clarification",
-            "description": "Request clarification on ambiguous requirements.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["question"],
-                "properties": {
-                    "question": {"type": "string", "description": "The clarification question"},
+    }
+    grade_spec: dict[str, Any] = {
+        "name": "grade",
+        "description": "Set a grade on a requirement (verifier phase only).",
+        "inputSchema": {
+            "type": "object",
+            "required": ["req_id", "grade"],
+            "properties": {
+                "req_id": {"type": "string"},
+                "grade": {
+                    "type": "string",
+                    "enum": ["A", "B", "C", "D", "F"],
                 },
+                "grade_reason": {"type": "string", "description": "Optional explanation"},
             },
         },
-        {
-            "name": "complete_recovery",
-            "description": (
-                "Finalize recovery for a failed task. "
-                "Call this after diagnosing the failure. "
-                "outcome='retry' to retry the task, "
-                "outcome='skip' to skip it (non-critical tasks only), "
-                "outcome='abandon' to permanently fail it."
-            ),
-            "inputSchema": {
-                "type": "object",
-                "required": ["outcome"],
-                "properties": {
-                    "outcome": {
-                        "type": "string",
-                        "enum": ["retry", "skip", "abandon"],
-                        "description": "Recovery decision: retry, skip, or abandon the task",
-                    },
-                    "notes": {
-                        "type": "string",
-                        "description": "Explanation of the recovery decision",
-                    },
-                },
-            },
-        },
-    ]
+    }
 
-    if is_verifier:
-        grade_spec: dict[str, Any] = {
-            "name": "grade",
-            "description": "Set a grade on a requirement (verifier phase only).",
-            "inputSchema": {
-                "type": "object",
-                "required": ["req_id", "grade"],
-                "properties": {
-                    "req_id": {"type": "string"},
-                    "grade": {
-                        "type": "string",
-                        "enum": ["A", "B", "C", "D", "F"],
-                    },
-                    "grade_reason": {"type": "string", "description": "Optional explanation"},
-                },
-            },
-        }
-        specs.append(grade_spec)
+    specs: list[dict[str, Any]] = (
+        [
+            submit_spec,
+            grade_spec,
+            complete_recovery_spec,
+        ]
+        if is_verifier
+        else [
+            update_checklist_spec,
+            submit_spec,
+            request_clarification_spec,
+        ]
+    )
 
     # Add step-level tools from context.available_tools
     if context and context.available_tools:
@@ -461,16 +470,15 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
     )
     git_section = (
         "## Git Workflow\n"
-        "Before calling submit, commit only allowed oversight artifacts:\n"
-        "- `git add <files>` — stage only task-requested documentation/metadata such as "
-        "`docs/super-parent/` and `.mcp.json`\n"
-        "- Do not edit or commit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
+        "Do not run `git commit` manually; the orchestrator auto-commits allowed changes when you submit.\n"
+        "- Leave only task-requested documentation/metadata changed, such as "
+        "`docs/super-parent/`\n"
+        "- Do not edit source code, tests, dependency files, lockfiles, migrations, or UI files.\n"
         "- Always use `git --no-pager` for git commands.\n"
         if context.work_mode == "oversight"
         else "## Git Workflow\n"
-        "Before calling submit, commit your changes to git:\n"
-        "- `git add <files>` — stage relevant changes\n"
-        "- `git commit -m 'Description of changes'` — commit with descriptive message\n"
+        "Do not run `git commit` manually; the orchestrator auto-commits uncommitted changes when you submit.\n"
+        "- Use git status and diff only to inspect your changes before submitting.\n"
         "- Always use `git --no-pager` for git commands.\n"
     )
 
@@ -490,8 +498,6 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
             "3. After grading all requirements, call **submit** to complete verification.\n"
             "4. Grades: A (excellent), B (good), C (adequate), D (poor), F (failing)\n\n"
             "### Available Callback Tools\n"
-            "- **update_checklist**(req_id, status, note?)\n"
-            "  Mark a requirement as done, blocked, or not_applicable.\n\n"
             "- **grade**(req_id, grade, grade_reason?)\n"
             "  Set a grade on a requirement.\n"
             "  - req_id: The requirement ID (e.g. 'R-01', 'R-02')\n"
@@ -499,8 +505,8 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
             "  - grade_reason: Optional explanation for the grade\n\n"
             "- **submit**()\n"
             "  Complete the verification after grading all requirements.\n\n"
-            "- **request_clarification**(question)\n"
-            "  Request clarification on ambiguous requirements or grading criteria."
+            "- **complete_recovery**(outcome, notes?)\n"
+            "  Finalize recovery for a failed task only when this verifier phase is handling recovery."
         )
     else:
         tool_section = (

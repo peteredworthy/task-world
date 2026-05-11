@@ -181,6 +181,15 @@ export function useActivity(runId: string | undefined, runStatus?: string) {
   });
 }
 
+export function useRunTrace(runId: string | undefined) {
+  return useQuery({
+    queryKey: ['run-trace', runId],
+    queryFn: () => api.getRunTrace(runId!),
+    enabled: !!runId,
+    staleTime: 30000,
+  });
+}
+
 export function useTaskPrompt(runId: string, taskId: string | undefined) {
   return useQuery({
     queryKey: ['task-prompt', runId, taskId],

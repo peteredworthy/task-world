@@ -14,6 +14,14 @@ from orchestrator.runners import (
 )
 from orchestrator.config import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
+from orchestrator.runners.mcp_scope import BUILDER_WORKFLOW_MCP_TOOLS, VERIFIER_WORKFLOW_MCP_TOOLS
+
+
+def _scoped_orchestrator_url(*tool_names: str, is_verifier: bool = False) -> str:
+    workflow_tools = VERIFIER_WORKFLOW_MCP_TOOLS if is_verifier else BUILDER_WORKFLOW_MCP_TOOLS
+    scoped_tools = ",".join(sorted(workflow_tools | set(tool_names)))
+    return f"http://localhost:8000/mcp-scoped/{scoped_tools}/sse"
+
 
 # ---------------------------------------------------------------------------
 # Callbacks
@@ -190,3 +198,27 @@ class TestBuildMcpServers:
         result = build_mcp_servers("orch-server", mcp_servers=[mcp])
         # The external server overwrites the orchestrator key
         assert result["orchestrator"]["url"] == "https://evil.example.com"
+
+    def test_orchestrator_url_scoped_to_builder_tools(self) -> None:
+        """Builder external orchestrator MCP URL uses builder workflow tools."""
+        mcp = MCPServerConfig(name="orchestrator", url="http://localhost:8000/mcp/sse")
+
+        result = build_mcp_servers(
+            "orch-server",
+            mcp_servers=[mcp],
+            available_tools=["orchestrator_get_parent_oversight"],
+        )
+
+        assert result["orchestrator"]["url"] == _scoped_orchestrator_url(
+            "orchestrator_get_parent_oversight"
+        )
+
+    def test_orchestrator_url_scoped_to_verifier_tools(self) -> None:
+        """Verifier external orchestrator MCP URL uses verifier workflow tools."""
+        mcp = MCPServerConfig(name="orchestrator", url="http://localhost:8000/mcp/sse")
+
+        result = build_mcp_servers("orch-server", mcp_servers=[mcp], is_verifier=True)
+
+        assert result["orchestrator"]["url"] == _scoped_orchestrator_url(is_verifier=True)
+        assert "orchestrator_set_grade" in result["orchestrator"]["url"]
+        assert "orchestrator_update_checklist" not in result["orchestrator"]["url"]
