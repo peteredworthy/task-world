@@ -77,6 +77,9 @@ from orchestrator.config.enums import AgentRunnerType
 
 logger = logging.getLogger(__name__)
 
+_RECV_CHUNK_SIZE = 64 * 1024  # 64KB per read from process stdout.
+_MAX_JSON_RPC_LINE_BYTES = 16 * 1024 * 1024  # 16MB soft cap before dropping an oversized line.
+
 
 def _build_workspace_write_config_toml(
     writable_roots: list[Path],
@@ -111,6 +114,7 @@ class RealStdioTransport:
 
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self._proc = proc
+        self._buffer = bytearray()
 
     async def send(self, message: dict[str, Any]) -> None:
         """Write one JSON-RPC message to the subprocess stdin."""
@@ -129,16 +133,53 @@ class RealStdioTransport:
         """
         assert self._proc.stdout is not None
         while True:
-            line_bytes = await self._proc.stdout.readline()
-            if not line_bytes:
+            newline = self._buffer.find(b"\n")
+            if newline != -1:
+                line_bytes = bytes(self._buffer[:newline])
+                del self._buffer[: newline + 1]
+                line = line_bytes.decode(errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    return json.loads(line)
+                except json.JSONDecodeError:
+                    logger.debug("CodexServerAgent: skipping non-JSON line: %r", line[:120])
+
+            chunk = await self._proc.stdout.read(_RECV_CHUNK_SIZE)
+            if not chunk:
+                if self._buffer:
+                    line = self._buffer.decode(errors="replace").strip()
+                    self._buffer.clear()
+                    if line:
+                        try:
+                            return json.loads(line)
+                        except json.JSONDecodeError:
+                            logger.debug(
+                                "CodexServerAgent: skipping non-JSON final line: %r",
+                                line[:120],
+                            )
+                    raise EOFError(
+                        "codex app-server process stdout closed before JSON line completion"
+                    )
+
                 raise EOFError("codex app-server process stdout closed unexpectedly")
-            line = line_bytes.decode().strip()
-            if not line:
-                continue  # skip blank lines
-            try:
-                return json.loads(line)
-            except json.JSONDecodeError:
-                logger.debug("CodexServerAgent: skipping non-JSON line: %r", line[:120])
+
+            self._buffer.extend(chunk)
+
+            if len(self._buffer) > _MAX_JSON_RPC_LINE_BYTES:
+                drop_at = self._buffer.find(b"\n")
+                if drop_at == -1:
+                    logger.warning(
+                        "CodexServerAgent: oversized JSON-RPC line (%d bytes) with no delimiter; discarding",
+                        len(self._buffer),
+                    )
+                    self._buffer.clear()
+                else:
+                    logger.warning(
+                        "CodexServerAgent: oversized JSON-RPC line (%d bytes); discarding until newline",
+                        len(self._buffer),
+                    )
+                    del self._buffer[: drop_at + 1]
 
     async def close(self) -> None:
         """Terminate the subprocess and close its stdin."""

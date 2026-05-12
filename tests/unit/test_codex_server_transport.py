@@ -15,11 +15,12 @@ in docs/codex-server-transport/api-contract.md:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import json
+from typing import Any, cast
 
 import pytest
 
-from orchestrator.runners import CodexServerAgent
+from orchestrator.runners import CodexServerAgent, RealStdioTransport
 from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import ChecklistStatus
@@ -67,6 +68,30 @@ class _FailingStdioTransport:
 
     async def close(self) -> None:
         pass
+
+
+class _ChunkedFakeStdout:
+    """In-memory async stream that returns bytes in fixed-size chunks."""
+
+    def __init__(self, payload: bytes, chunk_size: int = 1024) -> None:
+        self._payload = payload
+        self._chunk_size = chunk_size
+        self._offset = 0
+
+    async def read(self, n: int = 1024) -> bytes:
+        if self._offset >= len(self._payload):
+            return b""
+        read_size = max(1, min(n, self._chunk_size))
+        chunk = self._payload[self._offset : self._offset + read_size]
+        self._offset += len(chunk)
+        return chunk
+
+
+class _ChunkedFakeProcess:
+    """Process shim exposing only ``stdout`` for transport recv-path tests."""
+
+    def __init__(self, payload: bytes, chunk_size: int = 1024) -> None:
+        self.stdout = _ChunkedFakeStdout(payload, chunk_size=chunk_size)
 
 
 # ---------------------------------------------------------------------------
@@ -766,6 +791,47 @@ async def test_execute_combined_metrics() -> None:
     assert result.metrics.tokens_write == 2500
     assert result.metrics.tokens_cache == 1000
     assert result.metrics.duration_ms >= 0
+
+
+async def test_real_stdio_transport_reads_large_ndjson_lines_without_limit_overrun() -> None:
+    """recv() reads large JSON-RPC messages split into small stdout chunks."""
+    payload = (
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"text": "x" * (2 * 1024 * 1024)},
+            }
+        ).encode()
+        + b"\n"
+        + json.dumps({"jsonrpc": "2.0", "id": 2, "method": "ping"}).encode()
+        + b"\n"
+    )
+    transport = RealStdioTransport(cast(Any, _ChunkedFakeProcess(payload=payload, chunk_size=1024)))
+
+    first = await transport.recv()
+    second = await transport.recv()
+
+    assert first["id"] == 1
+    assert second["method"] == "ping"
+
+
+async def test_real_stdio_transport_discards_oversized_lines_and_recovers() -> None:
+    """recv() drops oversized non-delimited lines and continues with following frames."""
+    payload = (
+        json.dumps(
+            {"jsonrpc": "2.0", "id": 1, "result": {"text": "x" * (17 * 1024 * 1024)}}
+        ).encode()
+        + b"\n"
+        + json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"ok": True}}).encode()
+        + b"\n"
+    )
+    transport = RealStdioTransport(cast(Any, _ChunkedFakeProcess(payload=payload, chunk_size=1024)))
+
+    second = await transport.recv()
+
+    assert second["id"] == 2
+    assert second["result"]["ok"] is True
 
 
 async def test_execute_builds_structured_action_log_from_notifications() -> None:
