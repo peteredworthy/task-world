@@ -9,8 +9,8 @@ from orchestrator.api import EvidenceBundleSchema
 from orchestrator.config import RunStatus
 from orchestrator.state import Run
 from orchestrator.workflow import (
-    OversightProjectionService,
     extract_parent_oversight_facts,
+    project_parent_oversight,
     reduce_parent_oversight,
     reduce_parent_oversight_state,
 )
@@ -138,7 +138,7 @@ def test_oversight_projection_matches_reducer_without_mutating_parent() -> None:
     )
     evidence = {"child": [_evidence("verified_fix")]}
 
-    projected = OversightProjectionService().project_parent(
+    projected = project_parent_oversight(
         parent,
         [child],
         evidence,
@@ -172,7 +172,7 @@ def test_projection_ignores_corrupted_stored_computed_fields() -> None:
         parent_slice_id="slice-1",
     )
 
-    projected = OversightProjectionService().project_parent(
+    projected = project_parent_oversight(
         parent,
         [child],
         {"child": [_evidence("verified_fix")]},
@@ -211,7 +211,7 @@ def test_projection_reconciles_delegated_work_with_live_child_state() -> None:
         offset_minutes=5,
     )
 
-    projected = OversightProjectionService().project_parent(
+    projected = project_parent_oversight(
         parent,
         [child],
         {"child": [_evidence("verified_fix")]},

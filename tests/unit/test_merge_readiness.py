@@ -2,7 +2,7 @@
 
 import pytest
 
-from orchestrator.api import evaluate_merge_readiness_gates
+from orchestrator.workflow import evaluate_merge_readiness_gates
 
 
 def _gate_statuses(**overrides: object) -> dict[str, str]:

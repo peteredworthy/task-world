@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from orchestrator.workflow import Gate as Gate, MergeReadiness as MergeReadiness
+
 
 class TestRunRequest(BaseModel):
     """Request to start a test run."""
@@ -156,21 +158,6 @@ class BackMergeResponse(BaseModel):
     merge_commit_sha: str | None = None
     conflict_files: list[str] = []
     conflict_count: int = 0
-
-
-class Gate(BaseModel):
-    """A single readiness gate with pass/fail/pending status."""
-
-    name: str
-    status: str  # "pass" | "fail" | "pending"
-    description: str
-
-
-class MergeReadiness(BaseModel):
-    """Aggregate merge readiness computed from all gates."""
-
-    ready: bool
-    gates: list[Gate]
 
 
 class RevertFileRequest(BaseModel):

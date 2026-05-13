@@ -1,7 +1,6 @@
 """Reusable delegated-work coordination primitives."""
 
 from orchestrator.workflow.delegation.coordinator import (
-    DelegationCoordinator,
     DelegationRecord,
     DelegationResultRecord,
     DelegationReviewStateRecord,
@@ -41,7 +40,6 @@ __all__ = [
     "DelegatedWorkStatus",
     "DelegationDecision",
     "DelegationDecisionKind",
-    "DelegationCoordinator",
     "DelegationPolicy",
     "DelegationRecord",
     "DelegationResultRecord",

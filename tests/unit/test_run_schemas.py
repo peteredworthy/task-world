@@ -7,9 +7,9 @@ from orchestrator.api import (
     ActionLogSchema,
     CreateRunRequest,
     TurnMetricsSchema,
-    _run_to_trace_response,
     get_agent_runner_display_name,
     get_agent_runner_icon,
+    run_to_trace_response,
 )
 from orchestrator.config import AgentRunnerType
 from orchestrator.config.enums import RunStatus, TaskStatus
@@ -253,7 +253,7 @@ def test_run_trace_response_includes_attempt_metadata_and_action_log() -> None:
         ],
     )
 
-    trace = _run_to_trace_response(run)
+    trace = run_to_trace_response(run)
 
     assert trace.run_id == "run-1"
     assert trace.token_usage_by_model[0].cache_creation_tokens == 7

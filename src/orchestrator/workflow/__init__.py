@@ -181,7 +181,6 @@ from orchestrator.workflow.delegation import (
     DelegatedWorkStatus,
     DelegationDecision,
     DelegationDecisionKind,
-    DelegationCoordinator,
     DelegationPolicy,
     DelegationRecord,
     DelegationResultRecord,
@@ -222,8 +221,14 @@ from orchestrator.workflow.oversight import (
     validate_run_evidence_items,
 )
 from orchestrator.workflow.oversight_projection import (
-    OversightProjectionService,
     extract_parent_oversight_facts,
+    project_parent_oversight,
+)
+from orchestrator.workflow.parent_oversight import ParentOversightService
+from orchestrator.workflow.merge_readiness import (
+    Gate,
+    MergeReadiness,
+    evaluate_merge_readiness_gates,
 )
 
 __all__ = [
@@ -244,12 +249,14 @@ __all__ = [
     "DEFAULT_GRADE_ORDER",
     "DefaultClock",
     "EventEmitter",
+    "Gate",
     "GateBlockedError",
     "GateResult",
     "GradeResult",
     "InvalidTransitionError",
     "NoOpEmitter",
     "Parser",
+    "ParentOversightService",
     "StepOutcome",
     "Token",
     "Tokenizer",
@@ -265,6 +272,7 @@ __all__ = [
     "evaluate_condition",
     "evaluate_gate",
     "evaluate_grades",
+    "evaluate_merge_readiness_gates",
     "evaluate_transition_conditions",
     "grade_meets_threshold",
     "is_step_complete",
@@ -282,6 +290,7 @@ __all__ = [
     "InMemoryLockManager",
     "LockManager",
     "LockTimeoutError",
+    "MergeReadiness",
     "TaskLockedError",
     # Events
     "AgentChangedEvent",
@@ -388,7 +397,6 @@ __all__ = [
     "DelegatedWorkStatus",
     "DelegationDecision",
     "DelegationDecisionKind",
-    "DelegationCoordinator",
     "DelegationPolicy",
     "DelegationRecord",
     "DelegationResultRecord",
@@ -422,8 +430,8 @@ __all__ = [
     "RunEvidenceCommand",
     "RunEvidenceTestResult",
     "TargetInventoryItem",
-    "OversightProjectionService",
     "extract_parent_oversight_facts",
+    "project_parent_oversight",
     "reduce_parent_oversight",
     "reduce_parent_oversight_state",
     "validate_run_evidence_item",

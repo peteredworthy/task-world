@@ -48,31 +48,14 @@ RAW_OVERSIGHT_ALLOWED_SUFFIXES = {
     "src/orchestrator/workflow/delegation/coordinator.py",
     "src/orchestrator/workflow/oversight.py",
     "src/orchestrator/workflow/oversight_projection.py",
+    "src/orchestrator/workflow/parent_oversight.py",
 }
 
 DELEGATION_KEY_ASSIGNMENT_ALLOWED_SUFFIXES = {
     "src/orchestrator/db/access/repositories.py",
     "src/orchestrator/workflow/oversight.py",
     "src/orchestrator/workflow/oversight_projection.py",
-}
-
-SERVICE_COORDINATION_ASSIGNMENT_FUNCTIONS = {
-    "_record_child_acceptance",
-    "_record_child_merge_conflict",
-    "accept_child_run",
-    "resolve_child_run",
-    "create_child_run",
-    "record_child_wait_observation",
-}
-
-SERVICE_OVERSIGHT_ASSIGNMENT_FUNCTIONS = SERVICE_COORDINATION_ASSIGNMENT_FUNCTIONS | {
-    "_apply_oversight_terminal_guard",
-    "_hydrate_parent_oversight_state",
-    "_persist",
-    "_persist_parent_oversight_state",
-    "_record_fan_out_decision_on_run",
-    "_with_current_oversight",
-    "update_parent_oversight",
+    "src/orchestrator/workflow/parent_oversight.py",
 }
 
 
@@ -133,26 +116,18 @@ def dict_literal_coordination_keys(node: ast.AST) -> set[str]:
     return keys
 
 
-def is_allowed_coordination_assignment(rel: str, function_name: str | None) -> bool:
+def is_allowed_coordination_assignment(rel: str) -> bool:
     return (
         rel.startswith("src/orchestrator/workflow/delegation/")
         or rel in DELEGATION_KEY_ASSIGNMENT_ALLOWED_SUFFIXES
-        or (
-            rel == "src/orchestrator/workflow/service.py"
-            and function_name in SERVICE_COORDINATION_ASSIGNMENT_FUNCTIONS
-        )
     )
 
 
-def is_allowed_oversight_assignment(rel: str, function_name: str | None) -> bool:
+def is_allowed_oversight_assignment(rel: str) -> bool:
     return (
         rel.startswith("src/orchestrator/workflow/delegation/")
         or rel in RAW_OVERSIGHT_ALLOWED_SUFFIXES
         or rel in DELEGATION_KEY_ASSIGNMENT_ALLOWED_SUFFIXES
-        or (
-            rel == "src/orchestrator/workflow/service.py"
-            and function_name in SERVICE_OVERSIGHT_ASSIGNMENT_FUNCTIONS
-        )
     )
 
 
@@ -221,10 +196,7 @@ class DelegationBoundaryVisitor(ast.NodeVisitor):
                         "fan-out child paths must not write run.oversight_state; "
                         "parent aggregation owns delegated-state writes",
                     )
-                elif not is_allowed_oversight_assignment(
-                    self.rel,
-                    current_function(self.function_stack),
-                ):
+                elif not is_allowed_oversight_assignment(self.rel):
                     self._violate(
                         node,
                         "run.oversight_state assignments may only occur inside approved "
@@ -233,10 +205,7 @@ class DelegationBoundaryVisitor(ast.NodeVisitor):
             if (
                 isinstance(target, ast.Subscript)
                 and is_coordination_key_subscript(target)
-                and not is_allowed_coordination_assignment(
-                    self.rel,
-                    current_function(self.function_stack),
-                )
+                and not is_allowed_coordination_assignment(self.rel)
             ):
                 self._violate(
                     node,
@@ -244,8 +213,7 @@ class DelegationBoundaryVisitor(ast.NodeVisitor):
                 )
 
     def _check_coordination_mutation_call(self, node: ast.Call) -> None:
-        function_name = current_function(self.function_stack)
-        if is_allowed_coordination_assignment(self.rel, function_name):
+        if is_allowed_coordination_assignment(self.rel):
             return
         func = node.func
         if isinstance(func, ast.Attribute) and func.attr == "update":

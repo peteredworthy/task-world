@@ -10,7 +10,6 @@ from orchestrator.state import Run
 from orchestrator.workflow import (
     DelegateCommand,
     DelegateResultEnvelope,
-    DelegationCoordinator,
     DelegationDecision,
     DelegationState,
     DelegatedWork,
@@ -238,8 +237,7 @@ def test_integrate_already_integrated_work_with_new_key_is_semantic_noop() -> No
     assert decision.reason == "integrate_already_integrated"
 
 
-def test_delegation_coordinator_records_command_decisions() -> None:
-    coordinator = DelegationCoordinator()
+def test_delegation_state_records_command_decisions() -> None:
     fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
     work = DelegatedWork(
         id="child-1",
@@ -258,12 +256,12 @@ def test_delegation_coordinator_records_command_decisions() -> None:
         expected_generation=0,
     )
 
-    state, updated_work, decision = coordinator.apply_command(
-        {},
+    updated_state, updated_work, decision = DelegationState().apply_command(
         work,
         command,
         recorded_at=fixed_time,
     )
+    state = updated_state.merge_into({})
 
     assert updated_work is not None
     assert updated_work.status == "running"
@@ -272,17 +270,19 @@ def test_delegation_coordinator_records_command_decisions() -> None:
     assert state["delegation_decisions"][-1]["idempotency_key"] == "launch-child-1"
 
 
-def test_delegation_coordinator_records_review_state() -> None:
-    coordinator = DelegationCoordinator()
+def test_delegation_state_records_review_state() -> None:
     fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
 
-    state = coordinator.record_review_state(
-        {},
-        work_id="child-1",
-        stable_state="InvalidEvidence",
-        reason="child_evidence_invalid",
-        payload={"path": "docs/evidence.json"},
-        recorded_at=fixed_time,
+    state = (
+        DelegationState()
+        .with_review_state(
+            work_id="child-1",
+            stable_state="InvalidEvidence",
+            reason="child_evidence_invalid",
+            payload={"path": "docs/evidence.json"},
+            recorded_at=fixed_time,
+        )
+        .merge_into({})
     )
 
     assert state["delegation_review_states"] == [
@@ -298,10 +298,8 @@ def test_delegation_coordinator_records_review_state() -> None:
 
 
 def test_record_result_clears_review_state_on_successful_integration() -> None:
-    coordinator = DelegationCoordinator()
     fixed_time = datetime(2026, 1, 1, tzinfo=UTC)
-    state = coordinator.record_review_state(
-        {},
+    state = DelegationState().with_review_state(
         work_id="child-1",
         stable_state="InvalidEvidence",
         reason="child_evidence_invalid",
@@ -309,8 +307,7 @@ def test_record_result_clears_review_state_on_successful_integration() -> None:
         recorded_at=fixed_time,
     )
 
-    state = coordinator.record_result(
-        state,
+    state = state.with_result(
         DelegateResultEnvelope(
             work_id="child-1",
             generation=1,
@@ -323,7 +320,7 @@ def test_record_result_clears_review_state_on_successful_integration() -> None:
         recorded_at=fixed_time,
     )
 
-    assert state["delegation_review_states"] == []
+    assert state.to_oversight_patch()["delegation_review_states"] == []
 
 
 def test_delegation_state_is_immutable_value_object() -> None:
