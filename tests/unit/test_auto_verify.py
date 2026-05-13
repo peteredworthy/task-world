@@ -1,4 +1,4 @@
-"""Tests for auto-verify command execution and evaluation."""
+"""Tests for auto-verify command evaluation and orchestration."""
 
 from pathlib import Path
 
@@ -7,7 +7,6 @@ import pytest
 from orchestrator.config.models import AutoVerifyConfig, AutoVerifyItemConfig
 from orchestrator.workflow import (
     AutoVerifyResult,
-    LocalAutoVerifyRunner,
     evaluate_auto_verify,
     run_auto_verify,
 )
@@ -90,48 +89,14 @@ class TestEvaluateAutoVerify:
         assert failures == ["check1", "check2"]
 
 
-# --- Integration tests with real subprocess ---
+class FakeAutoVerifyRunner:
+    def __init__(self, results: dict[str, tuple[int | None, str]]) -> None:
+        self.results = results
+        self.calls: list[tuple[str, Path, int]] = []
 
-
-class TestLocalAutoVerifyRunner:
-    @pytest.mark.asyncio
-    async def test_successful_command(self, tmp_path: Path) -> None:
-        runner = LocalAutoVerifyRunner()
-        exit_code, output = await runner.run_command("echo hello", tmp_path, tail_lines=20)
-        assert exit_code == 0
-        assert "hello" in output
-
-    @pytest.mark.asyncio
-    async def test_failing_command(self, tmp_path: Path) -> None:
-        runner = LocalAutoVerifyRunner()
-        exit_code, _output = await runner.run_command("false", tmp_path, tail_lines=20)
-        assert exit_code != 0
-
-    @pytest.mark.asyncio
-    async def test_tail_lines(self, tmp_path: Path) -> None:
-        # Generate more than 3 lines of output
-        runner = LocalAutoVerifyRunner()
-        exit_code, output = await runner.run_command(
-            "for i in 1 2 3 4 5; do echo line$i; done", tmp_path, tail_lines=2
-        )
-        assert exit_code == 0
-        lines = output.strip().splitlines()
-        assert len(lines) == 2
-        assert "line4" in lines[0]
-        assert "line5" in lines[1]
-
-    @pytest.mark.asyncio
-    async def test_cwd_is_respected(self, tmp_path: Path) -> None:
-        runner = LocalAutoVerifyRunner()
-        exit_code, output = await runner.run_command("pwd", tmp_path, tail_lines=20)
-        assert exit_code == 0
-        assert str(tmp_path) in output
-
-    @pytest.mark.asyncio
-    async def test_stderr_captured_in_output(self, tmp_path: Path) -> None:
-        runner = LocalAutoVerifyRunner()
-        _exit_code, output = await runner.run_command("echo error_msg >&2", tmp_path, tail_lines=20)
-        assert "error_msg" in output
+    async def run_command(self, cmd: str, cwd: Path, tail_lines: int) -> tuple[int | None, str]:
+        self.calls.append((cmd, cwd, tail_lines))
+        return self.results[cmd]
 
 
 class TestRunAutoVerify:
@@ -143,10 +108,19 @@ class TestRunAutoVerify:
                 AutoVerifyItemConfig(id="check2", cmd="echo also_ok"),
             ]
         )
-        runner = LocalAutoVerifyRunner()
+        runner = FakeAutoVerifyRunner(
+            {
+                "echo ok": (0, "ok"),
+                "echo also_ok": (0, "also_ok"),
+            }
+        )
         results = await run_auto_verify(config, runner, tmp_path)
         assert len(results) == 2
         assert all(r.passed for r in results)
+        assert runner.calls == [
+            ("echo ok", tmp_path, config.tail_lines),
+            ("echo also_ok", tmp_path, config.tail_lines),
+        ]
 
     @pytest.mark.asyncio
     async def test_mixed_results(self, tmp_path: Path) -> None:
@@ -156,7 +130,12 @@ class TestRunAutoVerify:
                 AutoVerifyItemConfig(id="fail", cmd="false"),
             ]
         )
-        runner = LocalAutoVerifyRunner()
+        runner = FakeAutoVerifyRunner(
+            {
+                "echo ok": (0, "ok"),
+                "false": (1, ""),
+            }
+        )
         results = await run_auto_verify(config, runner, tmp_path)
         assert results[0].passed is True
         assert results[1].passed is False
@@ -168,7 +147,7 @@ class TestRunAutoVerify:
                 AutoVerifyItemConfig(id="check1", cmd="echo test_output"),
             ]
         )
-        runner = LocalAutoVerifyRunner()
+        runner = FakeAutoVerifyRunner({"echo test_output": (0, "test_output")})
         results = await run_auto_verify(config, runner, tmp_path)
         assert len(results) == 1
         assert "test_output" in results[0].output
@@ -176,9 +155,10 @@ class TestRunAutoVerify:
     @pytest.mark.asyncio
     async def test_empty_config(self, tmp_path: Path) -> None:
         config = AutoVerifyConfig(items=[])
-        runner = LocalAutoVerifyRunner()
+        runner = FakeAutoVerifyRunner({})
         results = await run_auto_verify(config, runner, tmp_path)
         assert results == []
+        assert runner.calls == []
 
     @pytest.mark.asyncio
     async def test_result_serialization(self, tmp_path: Path) -> None:
@@ -188,7 +168,7 @@ class TestRunAutoVerify:
                 AutoVerifyItemConfig(id="check1", cmd="echo ok"),
             ]
         )
-        runner = LocalAutoVerifyRunner()
+        runner = FakeAutoVerifyRunner({"echo ok": (0, "ok")})
         results = await run_auto_verify(config, runner, tmp_path)
         # Convert to dict (as stored in Attempt.auto_verify_results)
         result_dict = results[0].model_dump()
@@ -198,3 +178,39 @@ class TestRunAutoVerify:
         # Round-trip back to model
         restored = AutoVerifyResult.model_validate(result_dict)
         assert restored == results[0]
+
+    @pytest.mark.asyncio
+    async def test_command_crash_is_reported(self, tmp_path: Path) -> None:
+        config = AutoVerifyConfig(items=[AutoVerifyItemConfig(id="check1", cmd="boom")])
+        runner = FakeAutoVerifyRunner({"boom": (None, "Command crashed: OSError: boom")})
+
+        results = await run_auto_verify(config, runner, tmp_path)
+
+        assert results == [
+            AutoVerifyResult(
+                item_id="check1",
+                cmd="boom",
+                passed=False,
+                exit_code=0,
+                output="Command crashed: OSError: boom",
+                crashed=True,
+                crash_error="Command crashed: OSError: boom",
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_variables_are_resolved_before_runner_call(self, tmp_path: Path) -> None:
+        config = AutoVerifyConfig(
+            items=[AutoVerifyItemConfig(id="check1", cmd="test {{output_path}}")]
+        )
+        runner = FakeAutoVerifyRunner({"test docs/out.md": (0, "ok")})
+
+        results = await run_auto_verify(
+            config,
+            runner,
+            tmp_path,
+            variables={"output_path": "docs/out.md"},
+        )
+
+        assert results[0].cmd == "test docs/out.md"
+        assert runner.calls == [("test docs/out.md", tmp_path, config.tail_lines)]

@@ -1,4 +1,4 @@
-"""Tests for SummaryCache — no mocks, patch, or MagicMock.
+"""Tests for SummaryCache with dependency-injected fakes.
 
 Uses test-specific subclasses to control API responses via dependency injection.
 """

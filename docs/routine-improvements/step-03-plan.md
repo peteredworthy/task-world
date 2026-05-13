@@ -7,7 +7,7 @@ M1: Gate Fixes & Safety
 Before the first task attempt in a run, execute the project's test suite. If tests fail before any builder work begins, any subsequent failures are pre-existing — not regressions. This replaces complex baseline comparison with a simple pass/fail gate.
 
 ## Prerequisites / Dependencies
-- None directly, though this pairs well with Step 9 (test count regression guard) from M3.
+- None directly.
 
 ## Functional Contract
 

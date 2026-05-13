@@ -1,4 +1,26 @@
-"""Shared fixtures for integration tests."""
+"""Shared fixtures for integration tests.
+
+# Isolation model for the shared-app pattern
+
+Tests that share a module-scoped FastAPI app + in-memory DB must not interfere
+with each other, even when one dies mid-execution. The guarantees:
+
+1. **Unique repo names per test** — ``git_repo`` uses ``uuid.uuid4().hex[:8]``,
+   so filesystem paths and ``repo_name`` API keys never collide across tests
+   or xdist workers.
+2. **Server-generated run IDs** — every ``POST /api/runs`` returns a fresh
+   UUID. No test can reference another test's run.
+3. **Per-test cleanup** — ``client_with_repo``'s teardown lists runs by this
+   test's unique ``repo_name`` and cancels any non-terminal ones. Background
+   executor tasks from a failing test cannot leak CPU/DB-pool work into
+   subsequent tests in the same module.
+4. **Module-scoped, not session-scoped** — a poisoned app instance is bounded
+   to one test file, never the whole suite.
+
+The shared base repo (``_base_repo``) is session-scoped and read-only:
+``git_repo`` copies it with ``shutil.copytree``. Reads from the shared base
+cannot mutate it.
+"""
 
 import shutil
 import uuid
@@ -21,6 +43,9 @@ __all__ = ["_git", "_init_repo", "_commit_file", "_setup_conflict", "DrainFn"]
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
+# Statuses considered "in flight" for teardown cleanup.
+_NON_TERMINAL_RUN_STATUSES = frozenset({"active", "paused", "draft", "queued"})
+
 
 # ---------------------------------------------------------------------------
 # Shared git + app fixtures
@@ -29,7 +54,11 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 @pytest.fixture(scope="session")
 def _base_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Create a fully-initialized git repo ONCE per worker session to use as a clone source."""
+    """Read-only base git repo, initialised ONCE per xdist worker session.
+
+    Per-test ``git_repo`` instances ``shutil.copytree`` from this; nothing
+    writes to ``_base_repo`` directly, so it's safe to share.
+    """
     base = tmp_path_factory.mktemp("base_repo")
     repo = base / "repo"
     repo.mkdir()
@@ -37,14 +66,18 @@ def _base_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return repo
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 async def _shared_app_fixture(
     tmp_path_factory: pytest.TempPathFactory,
 ) -> AsyncGenerator[tuple[AsyncClient, DrainFn, Path, Path, Any], None]:
-    """Shared FastAPI app + in-memory DB for all tests in a module.
+    """Module-scoped FastAPI app + in-memory DB.
 
-    Yields (client, drain, repos_dir, worktrees_dir, app).
-    Tests that don't need ``app`` can simply ignore the last element.
+    One app instance per test file (module scope, NOT session). A bad test
+    in file A cannot poison the app used by file B. Within a module,
+    isolation comes from unique repo names + server-generated run UUIDs +
+    per-test teardown cleanup in ``client_with_repo``.
+
+    Yields ``(client, drain, repos_dir, worktrees_dir, app)``.
     """
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
 
@@ -80,16 +113,60 @@ def git_repo(
     _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
     _base_repo: Path,
 ) -> Path:
-    """Copy the base repo to get a uniquely-named git repo in the shared repos_dir.
+    """Per-test git repo with a UUID-suffixed name inside the shared repos_dir.
 
-    Uses shutil.copytree instead of git clone + config calls (~80 ms/test saved).
-    The base repo's .git/config already includes user.email/user.name so no
-    extra git config subprocess calls are needed.
+    UUID (not a counter) so the name is unique even if the same fixture is
+    used across xdist workers or files. Copy-from-base avoids ~150 ms of
+    ``git init`` + config + commit subprocesses per test.
     """
     _, _, repos_dir, _, _ = _shared_app_fixture
     repo = repos_dir / f"project_{uuid.uuid4().hex[:8]}"
     shutil.copytree(str(_base_repo), str(repo))
     return repo
+
+
+@pytest.fixture
+def repo_name() -> str:
+    """Per-test unique repo name.
+
+    Use this fixture in tests that share a module-scoped app and DB to avoid
+    cross-test collisions on the ``repo_name`` API key. The UUID suffix
+    guarantees uniqueness across tests and xdist workers.
+    """
+    return f"proj_{uuid.uuid4().hex[:8]}"
+
+
+async def cleanup_runs_for_repo(client: AsyncClient, repo_name: str) -> None:
+    """Cancel any non-terminal runs for ``repo_name`` (best-effort).
+
+    Use in test fixture teardowns when sharing an app across tests, to keep a
+    failing test from leaking background executor work into siblings. Scoped
+    to ``repo_name``, which is unique per test (see ``git_repo``).
+    """
+    try:
+        resp = await client.get("/api/runs", params={"repo_name": repo_name})
+        if resp.status_code == 200:
+            for run in resp.json().get("runs", []):
+                if run.get("status") in _NON_TERMINAL_RUN_STATUSES:
+                    await client.post(f"/api/runs/{run['id']}/cancel")
+    except Exception:
+        pass
+
+
+@pytest.fixture
+async def client_with_repo(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    git_repo: Path,
+) -> AsyncGenerator[tuple[AsyncClient, Path, DrainFn], None]:
+    """Yield ``(client, git_repo, drain)`` and cancel this test's runs on teardown.
+
+    Cleanup is best-effort and scoped to ``git_repo.name`` (unique per test):
+    listing by ``repo_name`` cannot see other tests' runs, so even a crashing
+    cleanup cannot affect anyone else.
+    """
+    client, drain, _, _, _ = _shared_app_fixture
+    yield client, git_repo, drain
+    await cleanup_runs_for_repo(client, git_repo.name)
 
 
 # ---------------------------------------------------------------------------

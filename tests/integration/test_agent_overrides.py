@@ -185,13 +185,13 @@ class TestCascadingResolution:
         """Task-level agent overrides both step and routine-level agents for builder."""
         client, drain = client_and_drain
         routine_agent = await _create_agent(
-            client, "E2E-RoutineBuilder", "ROUTINE-BUILDER system prompt", "architect"
+            client, "Integration-RoutineBuilder", "ROUTINE-BUILDER system prompt", "architect"
         )
         step_agent = await _create_agent(
-            client, "E2E-StepBuilder", "STEP-BUILDER system prompt", "designer"
+            client, "Integration-StepBuilder", "STEP-BUILDER system prompt", "designer"
         )
         task_agent = await _create_agent(
-            client, "E2E-TaskBuilder", "TASK-BUILDER system prompt", "coder"
+            client, "Integration-TaskBuilder", "TASK-BUILDER system prompt", "coder"
         )
 
         # Verify model profiles stored correctly
@@ -200,10 +200,10 @@ class TestCascadingResolution:
         assert task_agent["model_profile"] == "coder"
 
         routine = _make_routine(
-            "e2e-all-levels-task-wins",
-            routine_builder_agent="E2E-RoutineBuilder",
-            step_builder_agent="E2E-StepBuilder",
-            task_builder_agent="E2E-TaskBuilder",
+            "integration-all-levels-task-wins",
+            routine_builder_agent="Integration-RoutineBuilder",
+            step_builder_agent="Integration-StepBuilder",
+            task_builder_agent="Integration-TaskBuilder",
         )
         run_id, task_id = await _setup_run(client, routine, drain)
 
@@ -225,13 +225,15 @@ class TestCascadingResolution:
     ) -> None:
         """Step-level agent overrides routine-level when task has no builder_agent."""
         client, drain = client_and_drain
-        await _create_agent(client, "E2E-RoutineBuilder2", "ROUTINE2 system prompt", "architect")
-        await _create_agent(client, "E2E-StepBuilder2", "STEP2 system prompt", "coder")
+        await _create_agent(
+            client, "Integration-RoutineBuilder2", "ROUTINE2 system prompt", "architect"
+        )
+        await _create_agent(client, "Integration-StepBuilder2", "STEP2 system prompt", "coder")
 
         routine = _make_routine(
-            "e2e-step-over-routine",
-            routine_builder_agent="E2E-RoutineBuilder2",
-            step_builder_agent="E2E-StepBuilder2",
+            "integration-step-over-routine",
+            routine_builder_agent="Integration-RoutineBuilder2",
+            step_builder_agent="Integration-StepBuilder2",
         )
         run_id, task_id = await _setup_run(client, routine, drain)
 
@@ -248,11 +250,13 @@ class TestCascadingResolution:
     ) -> None:
         """Routine-level agent is used when neither step nor task override is set."""
         client, drain = client_and_drain
-        await _create_agent(client, "E2E-RoutineBuilder3", "ROUTINE3 system prompt", "summarizer")
+        await _create_agent(
+            client, "Integration-RoutineBuilder3", "ROUTINE3 system prompt", "summarizer"
+        )
 
         routine = _make_routine(
-            "e2e-routine-level-only",
-            routine_builder_agent="E2E-RoutineBuilder3",
+            "integration-routine-level-only",
+            routine_builder_agent="Integration-RoutineBuilder3",
         )
         run_id, task_id = await _setup_run(client, routine, drain)
 
@@ -347,10 +351,10 @@ class TestAgentModelProfiles:
     async def test_model_profiles_roundtrip_per_agent(self, client: AsyncClient) -> None:
         """Each agent's model_profile is stored and returned correctly via GET /api/agents."""
         profiles: list[tuple[str, str]] = [
-            ("E2E-ArchAgent", "architect"),
-            ("E2E-DesignAgent", "designer"),
-            ("E2E-CodeAgent", "coder"),
-            ("E2E-SummAgent", "summarizer"),
+            ("Integration-ArchAgent", "architect"),
+            ("Integration-DesignAgent", "designer"),
+            ("Integration-CodeAgent", "coder"),
+            ("Integration-SummAgent", "summarizer"),
         ]
         created: dict[str, str] = {}
         for name, profile in profiles:
@@ -384,18 +388,20 @@ class TestVerifierPhaseOverrides:
     ) -> None:
         """Task-level verifier_agent overrides step and routine for verifier prompt."""
         client, drain = client_and_drain
-        await _create_agent(client, "E2E-RoutineVerifier", "ROUTINE-VERIFIER prompt", "architect")
-        await _create_agent(client, "E2E-StepVerifier", "STEP-VERIFIER prompt", "designer")
+        await _create_agent(
+            client, "Integration-RoutineVerifier", "ROUTINE-VERIFIER prompt", "architect"
+        )
+        await _create_agent(client, "Integration-StepVerifier", "STEP-VERIFIER prompt", "designer")
         verifier_agent = await _create_agent(
-            client, "E2E-TaskVerifier", "TASK-VERIFIER prompt", "coder"
+            client, "Integration-TaskVerifier", "TASK-VERIFIER prompt", "coder"
         )
         assert verifier_agent["model_profile"] == "coder"
 
         routine = _make_routine(
-            "e2e-verifier-all-levels",
-            routine_verifier_agent="E2E-RoutineVerifier",
-            step_verifier_agent="E2E-StepVerifier",
-            task_verifier_agent="E2E-TaskVerifier",
+            "integration-verifier-all-levels",
+            routine_verifier_agent="Integration-RoutineVerifier",
+            step_verifier_agent="Integration-StepVerifier",
+            task_verifier_agent="Integration-TaskVerifier",
         )
         run_id, task_id = await _setup_run(client, routine, drain)
 
@@ -486,12 +492,14 @@ class TestPromptStructure:
     ) -> None:
         """Agent system prompt is prepended; task content follows after separator."""
         client, drain = client_and_drain
-        agent_data = await _create_agent(client, "E2E-PrefixCheck", "PREFIX system prompt", "coder")
+        agent_data = await _create_agent(
+            client, "Integration-PrefixCheck", "PREFIX system prompt", "coder"
+        )
         assert agent_data["model_profile"] == "coder"
 
         routine = _make_routine(
-            "e2e-prefix-check",
-            task_builder_agent="E2E-PrefixCheck",
+            "integration-prefix-check",
+            task_builder_agent="Integration-PrefixCheck",
         )
         run_id, task_id = await _setup_run(client, routine, drain)
 
@@ -685,7 +693,7 @@ class TestBackwardCompatibleRoutineWithDefaults:
         client, drain = client_and_drain
         custom_agent = await _create_agent(
             client,
-            "E2E-CompatUpgrade",
+            "Integration-CompatUpgrade",
             "UPGRADE prompt",
             "coder",
         )
@@ -693,7 +701,7 @@ class TestBackwardCompatibleRoutineWithDefaults:
 
         routine = _make_routine(
             "compat-upgrade",
-            routine_builder_agent="E2E-CompatUpgrade",
+            routine_builder_agent="Integration-CompatUpgrade",
         )
         run_id, task_id = await _setup_run(client, routine, drain)
 

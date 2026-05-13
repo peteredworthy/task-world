@@ -1,7 +1,7 @@
 id: routine-improvements
 name: Routine System Effectiveness Improvements
 description: |
-  Implements 16 actions (A1-A2, A4-A14, A16-A18) from the routine effectiveness review.
+  Implements 14 actions (A1-A2, A5-A14, A16-A18) from the routine effectiveness review.
   Raises execution fidelity with independent verification on every task, leaner prompts,
   and failure-mode defenses. M1 and M2 run in parallel; M3-M5 follow sequentially.
 
@@ -466,65 +466,6 @@ steps:
           max_attempts: 2
 
   # ── Milestone 3: Safety Guards ──
-
-  - id: S-09
-    title: "Test count regression guard (A4)"
-    step_context: |
-      Create scripts/check_test_count.sh that captures test names before/after
-      builder work and exits non-zero if tests were removed. Opt-in auto_verify
-      command for routine authors.
-    tasks:
-      - id: T-01
-        title: "Create test count regression guard script"
-        task_context: |
-          Create scripts/check_test_count.sh with two modes:
-          1. --snapshot <file>: capture test names via pytest --collect-only -q, save to file
-          2. --compare <file>: capture current tests, compare with snapshot, exit non-zero if any removed
-
-          Exit codes: 0 = no tests removed, non-zero = tests removed (list on stderr).
-          If pytest --collect-only fails, exit non-zero with the pytest error.
-
-          Document usage for routine authors as an opt-in auto_verify command.
-        requirements:
-          - id: R1
-            desc: Script detects removed tests and exits non-zero
-            priority: critical
-          - id: R2
-            desc: Script handles test additions without false positives
-            priority: critical
-        auto_verify:
-          items:
-            - id: script_exists
-              cmd: test -f scripts/check_test_count.sh && test -x scripts/check_test_count.sh
-              must: true
-            - id: script_has_modes
-              cmd: grep -q "snapshot" scripts/check_test_count.sh && grep -q "compare" scripts/check_test_count.sh
-              must: true
-        retry:
-          max_attempts: 2
-
-      - id: T-02
-        title: "Test the regression guard script"
-        task_context: |
-          Write tests for check_test_count.sh:
-          1. Snapshot mode captures test names correctly
-          2. Compare with no changes -> exit 0
-          3. Compare after adding a test -> exit 0
-          4. Compare after removing a test -> exit non-zero with removed test listed
-          5. Handle project with no tests gracefully
-
-          Tests can be shell-based or Python subprocess tests.
-        requirements:
-          - id: R1
-            desc: Tests verify script behavior for additions, removals, and no-change scenarios
-            priority: critical
-        auto_verify:
-          items:
-            - id: tests_pass
-              cmd: uv run pytest tests/ -x -q --tb=short -k "test_count or check_test or regression_guard"
-              must: true
-        retry:
-          max_attempts: 2
 
   - id: S-10
     title: "Agent escalation for unfulfillable requirements (A11)"

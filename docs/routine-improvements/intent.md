@@ -4,7 +4,7 @@
 
 Raise the orchestrator's routine execution fidelity from its current ~70% gate accuracy and undefended auto-grade paths to a system where every task has independent verification, prompts are lean, and failure modes are caught before they cascade.
 
-This work implements 16 actions (A1-A2, A4-A14, A16-A18) identified in the routine effectiveness review, targeting the structural weaknesses that allowed 30.4% false-positive gate passes, 2.1-hour death spirals, and destructive tasks that deleted test coverage undetected.
+This work implements 14 actions (A1-A2, A5-A14, A16-A18) identified in the routine effectiveness review, targeting the structural weaknesses that allowed 30.4% false-positive gate passes and 2.1-hour death spirals.
 
 ## Scope
 
@@ -24,8 +24,7 @@ This work implements 16 actions (A1-A2, A4-A14, A16-A18) identified in the routi
 - Context summarization with critical-aspect preservation for `context_from`; model is configurable with a sensible cheap default (A13)
 - Add guidance for keeping step_context compact (A14)
 
-**Safety & regression guards (A4, A11):**
-- Reusable test count regression guard script (A4)
+**Safety guards (A11):**
 - Agent escalation callback for unfulfillable requirements (A11)
 
 **Schema & architecture extensions (A16, A17):**
@@ -51,13 +50,12 @@ This work implements 16 actions (A1-A2, A4-A14, A16-A18) identified in the routi
 3. **Test health gate** — task start is blocked if the test suite has pre-existing failures
 4. **Verifier model pinned** — model is recorded at run creation and enforced on all verifier invocations within that run
 5. **Prompt reduction** — identified dead-weight sections (including "Avoiding Loops") removed from shared system prompt; agent-specific instructions moved to respective runners
-6. **Test regression guard** — reusable script that captures test list pre-builder and flags removals post-builder; documented for routine authors
-7. **Agent escalation** — new callback type allowing agents to flag requirements as unfulfillable; API endpoint surfaces escalation to human
-8. **Step-level auto_verify** — new `step_auto_verify` field on StepConfig; executed after all tasks in a step complete; failure halts the run (no auto-advance)
-9. **Context summarization** — `context_from` supports `summarize: true` and `critical` fields; summaries cached per step; uses configurable model with cheap default (e.g. Haiku)
-10. **Clarification compression** — resolved Q&A summarized into decisions; downstream tasks receive decisions only
-11. **Multi-file routines** — loader resolves step-XX.yaml references from root routine.yaml; validation fails if a step specifies both `file` and other step fields
-12. **Task complexity field** — `complexity: simple | standard` available in task config schema
+6. **Agent escalation** — new callback type allowing agents to flag requirements as unfulfillable; API endpoint surfaces escalation to human
+7. **Step-level auto_verify** — new `step_auto_verify` field on StepConfig; executed after all tasks in a step complete; failure halts the run (no auto-advance)
+8. **Context summarization** — `context_from` supports `summarize: true` and `critical` fields; summaries cached per step; uses configurable model with cheap default (e.g. Haiku)
+9. **Clarification compression** — resolved Q&A summarized into decisions; downstream tasks receive decisions only
+10. **Multi-file routines** — loader resolves step-XX.yaml references from root routine.yaml; validation fails if a step specifies both `file` and other step fields
+11. **Task complexity field** — `complexity: simple | standard` available in task config schema
 13. **Planning docs updated** — step_context guidance and failure mode analysis reflected in planner documentation
 14. **All existing tests pass** — no regressions in the 786+ test baseline
 15. **New tests cover new functionality** — each new feature has unit and/or integration tests

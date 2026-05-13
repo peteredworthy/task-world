@@ -8,7 +8,12 @@ import pytest
 from orchestrator.api import EvidenceBundleSchema
 from orchestrator.config import RunStatus
 from orchestrator.state import Run
-from orchestrator.workflow import reduce_parent_oversight, reduce_parent_oversight_state
+from orchestrator.workflow import (
+    OversightProjectionService,
+    extract_parent_oversight_facts,
+    reduce_parent_oversight,
+    reduce_parent_oversight_state,
+)
 
 
 def _run(
@@ -96,6 +101,152 @@ def test_reduce_parent_oversight_is_deterministic() -> None:
     assert first == second
     assert first["merge_queue"] == ["child"]
     assert first["next_parent_action"] == "accept_child"
+
+
+def test_oversight_projection_matches_reducer_without_mutating_parent() -> None:
+    parent_state = {
+        "accepted_child_run_ids": ["child"],
+        "delegation_decisions": [
+            {
+                "kind": "integrate",
+                "work_id": "child",
+                "recorded_at": "2026-01-01T00:00:00+00:00",
+            }
+        ],
+        "delegation_review_states": [
+            {
+                "work_id": "other-child",
+                "stable_state": "InvalidEvidence",
+                "reason": "child_evidence_invalid",
+                "payload": {},
+                "recorded_at": "2026-01-01T00:00:00+00:00",
+            }
+        ],
+        "target_inventory": [{"id": "bug-1", "in_scope": True, "resolved": True}],
+        "final_validation": _final_validation(passed=True),
+    }
+    parent = _run(
+        "parent",
+        status=RunStatus.ACTIVE,
+        oversight_state=parent_state,
+    )
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-1",
+    )
+    evidence = {"child": [_evidence("verified_fix")]}
+
+    projected = OversightProjectionService().project_parent(
+        parent,
+        [child],
+        evidence,
+        max_child_runs=20,
+    )
+
+    assert projected == reduce_parent_oversight_state(parent, [child], evidence)
+    assert projected["delegation_decisions"] == parent_state["delegation_decisions"]
+    assert projected["delegation_review_states"] == parent_state["delegation_review_states"]
+    assert parent.oversight_state == parent_state
+
+
+def test_projection_ignores_corrupted_stored_computed_fields() -> None:
+    parent = _run(
+        "parent",
+        status=RunStatus.ACTIVE,
+        oversight_state={
+            "child_count": 999,
+            "merge_queue": ["ghost-child"],
+            "terminal_guard": {
+                "can_complete": True,
+                "blocking_reasons": [],
+                "blocking_child_run_ids": [],
+            },
+        },
+    )
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-1",
+    )
+
+    projected = OversightProjectionService().project_parent(
+        parent,
+        [child],
+        {"child": [_evidence("verified_fix")]},
+        max_child_runs=20,
+    )
+
+    assert projected["child_count"] == 1
+    assert projected["merge_queue"] == ["child"]
+    assert projected["terminal_guard"]["can_complete"] is False
+    assert "child: accepted_child_not_merged" in projected["terminal_guard"]["blocking_reasons"]
+
+
+def test_projection_reconciles_delegated_work_with_live_child_state() -> None:
+    parent = _run(
+        "parent",
+        status=RunStatus.ACTIVE,
+        oversight_state={
+            "delegated_work": {
+                "child": {
+                    "id": "child",
+                    "owner_id": "parent",
+                    "owner_kind": "run",
+                    "delegate_kind": "run",
+                    "generation": 0,
+                    "status": "running",
+                    "output_contract": "run.evidence.v1",
+                }
+            }
+        },
+    )
+    child = _run(
+        "child",
+        status=RunStatus.COMPLETED,
+        parent_run_id="parent",
+        parent_slice_id="slice-1",
+        offset_minutes=5,
+    )
+
+    projected = OversightProjectionService().project_parent(
+        parent,
+        [child],
+        {"child": [_evidence("verified_fix")]},
+        max_child_runs=20,
+    )
+
+    assert projected["child_summaries"][0]["status"] == "completed"
+    assert projected["next_parent_action"] == "accept_child"
+    assert projected["merge_queue"] == ["child"]
+    assert projected["delegated_work"]["child"]["status"] == "terminal"
+    assert projected["delegated_work"]["child"]["generation"] == int(
+        child.updated_at.timestamp() * 1_000_000
+    )
+
+
+def test_extract_parent_oversight_facts_drops_computed_fields() -> None:
+    facts = extract_parent_oversight_facts(
+        {
+            "current_understanding": {"summary": "durable"},
+            "delegation_owner_token": "owner-token",
+            "accepted_child_run_ids": ["child"],
+            "child_count": 99,
+            "child_summaries": [{"run_id": "ghost"}],
+            "merge_queue": ["ghost"],
+            "terminal_guard": {"can_complete": True},
+            "next_parent_action": "complete_parent",
+            "attention_items": [{"kind": "child"}],
+        }
+    )
+
+    assert facts == {
+        "current_understanding": {"summary": "durable"},
+        "delegation_owner_token": "owner-token",
+        "accepted_child_run_ids": ["child"],
+    }
 
 
 def test_active_parent_with_two_active_children_is_illegal() -> None:

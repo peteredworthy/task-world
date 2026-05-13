@@ -415,6 +415,10 @@ function coreFileEntry(page: Page) {
   return page.getByTitle('src/orchestrator/core.py').first();
 }
 
+async function anchorReviewFooter(page: Page) {
+  await page.getByRole('button', { name: 'Commit Merge Back' }).scrollIntoViewIfNeeded();
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -472,6 +476,7 @@ test.describe('Review & Merge workbench – visual regression', () => {
 
     // Switch to inline mode.
     await page.getByRole('button', { name: 'Inline' }).click();
+    await anchorReviewFooter(page);
 
     await expect(page).toHaveScreenshot('visual-diff-dialog-inline.png');
   });

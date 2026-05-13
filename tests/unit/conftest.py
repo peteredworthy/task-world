@@ -19,9 +19,28 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
+
+_collection_start: float = 0.0
+_files_checked = 0
+_files_parsed = 0
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    global _collection_start
+    _collection_start = time.perf_counter()
+
+
+def pytest_collection_finish(session: pytest.Session) -> None:
+    elapsed = time.perf_counter() - _collection_start
+    print(
+        f"\n[boundary-check] {elapsed:.3f}s"
+        f" | files_checked={_files_checked} ast_parsed={_files_parsed}",
+        flush=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -72,16 +91,22 @@ _FORBIDDEN: list[tuple[str, str]] = [
 _FORBIDDEN_NAMES = {"create_app"}
 
 
+_FAST_KEYWORDS = frozenset(["testclient", "StaticPool", "create_app"])
+
+
 def _check_unit_test_file(path: Path) -> list[str]:
     """Return a list of violation messages for *path*, empty if clean.
 
     All unit-test files are checked — there are no exceptions.
     """
+    global _files_checked, _files_parsed
+    _files_checked += 1
     try:
         source = path.read_text(encoding="utf-8")
-        # Allow explicit opt-out for a file with a special marker comment
-        if "# unit-test-boundary: ignore" in source:
+        # Fast path: skip AST parse if no forbidden keyword appears in source.
+        if not any(kw in source for kw in _FAST_KEYWORDS):
             return []
+        _files_parsed += 1
         tree = ast.parse(source, filename=str(path))
     except (OSError, SyntaxError):
         return []
@@ -121,6 +146,9 @@ def pytest_collect_file(parent: pytest.Collector, file_path: Path) -> None:
 
     if file_path.name == "conftest.py":
         return  # conftest files are exempt
+
+    if file_path.suffix != ".py":
+        return
 
     if not file_path.name.startswith("test_"):
         return

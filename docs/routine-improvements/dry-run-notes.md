@@ -133,28 +133,6 @@ Simulated execution of all 15 steps (26 tasks) with gap analysis and failure mod
 - **Blockers:** None
 - **Mitigation:** None needed
 
-### Step 9: Test count regression guard (A4)
-
-**Task 9.1: Create check_test_count.sh script**
-
-- **Assumption:** `pytest --collect-only -q` produces a stable, parseable output
-- **Expected output:** Shell script that diffs test lists
-- **Blockers:**
-  - pytest output format varies by version and plugins
-  - Script needs to run both "before" (snapshot) and "after" (compare) — how is the snapshot stored?
-  - Different platforms may have different `diff` behavior
-- **Mitigation:**
-  - Task should specify: snapshot saved to a temp file, script accepts `--snapshot` and `--compare` modes
-  - Use `comm` or simple grep-based comparison instead of relying on diff formatting
-  - Add `set -euo pipefail` and handle pytest failure (exit code != 0 from collect-only)
-
-**Task 9.2: Document test regression guard**
-
-- **Assumption:** Documentation task only
-- **Expected output:** Usage guide for routine authors
-- **Blockers:** None
-- **Mitigation:** None needed
-
 ### Step 10: Agent escalation for unfulfillable requirements (A11)
 
 **Task 10.1: Add EscalationCallback protocol and engine handling**

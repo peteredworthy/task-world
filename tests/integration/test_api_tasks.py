@@ -1,35 +1,51 @@
-"""Integration tests for task API endpoints."""
+"""Integration tests for task API endpoints.
+
+WARNING — shared fixture:
+    The ``client_and_drain`` / ``client`` fixtures in this module reuse a
+    single FastAPI app + in-memory DB across every test in the file (module
+    scope). Isolation is the test author's responsibility:
+
+    - Pass the ``repo_name`` fixture to ``_setup_active_run`` (and any direct
+      ``POST /api/runs``). It returns a unique per-test value (UUID-suffixed).
+    - Don't assert on global ``/api/runs`` counts — filter by ``repo_name``.
+    - Run/task IDs returned from the API are server-generated UUIDs and
+      cannot collide across tests.
+    - Teardown cancels non-terminal runs for this test's ``repo_name`` so a
+      mid-test failure cannot leak executor work into siblings.
+
+    ``db_backed_client_and_consumer`` is a separate per-test fixture (only
+    one test uses it); it builds its own ``SignalConsumer`` and is isolated
+    from the shared app on purpose.
+"""
 
 from pathlib import Path
 
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
-from orchestrator.workflow import InMemorySignalTransport
-from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from orchestrator.workflow import SignalConsumer, WorkflowService
+from tests.integration.conftest import cleanup_runs_for_repo
+from tests.integration.signal_helpers import DrainFn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
-    app = create_app(
-        db_path=":memory:",
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-    )
-    await init_db(app.state.engine)
-    transport_obj = InMemorySignalTransport()
-    app.state.signal_transport = transport_obj
-    drain = make_drain_fn(app, transport_obj)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, drain
-    await app.state.engine.dispose()
+async def client_and_drain(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    repo_name: str,
+) -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    """Shared module-scoped client + drain. Cancels this test's runs on teardown."""
+    client, drain, _, _, _ = _shared_app_fixture
+    yield client, drain
+    await cleanup_runs_for_repo(client, repo_name)
 
 
 @pytest.fixture
@@ -37,11 +53,40 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
     return client_and_drain[0]
 
 
-async def _setup_active_run(client: AsyncClient, drain: DrainFn | None = None) -> tuple[str, str]:
-    """Create a run and start it, returning (run_id, task_id)."""
+@pytest.fixture
+async def db_backed_client_and_consumer() -> AsyncGenerator[
+    tuple[AsyncClient, SignalConsumer], None
+]:
+    """Per-test fixture (NOT shared) for the SignalConsumer-backed test only."""
+    app = create_app(
+        db_path=":memory:",
+        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+    )
+    await init_db(app.state.engine)
+
+    async def create_service(session: AsyncSession) -> WorkflowService:
+        return WorkflowService(session)
+
+    consumer = SignalConsumer(app.state.session_factory, create_service)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c, consumer
+    await app.state.engine.dispose()
+
+
+async def _setup_active_run(
+    client: AsyncClient,
+    repo_name: str,
+    drain: DrainFn | None = None,
+) -> tuple[str, str]:
+    """Create a run and start it, returning (run_id, task_id).
+
+    Pass the per-test ``repo_name`` fixture so the created run is isolated
+    from other tests sharing this module's app/DB.
+    """
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
@@ -53,8 +98,8 @@ async def _setup_active_run(client: AsyncClient, drain: DrainFn | None = None) -
     return run_id, task_id
 
 
-async def test_get_task(client: AsyncClient) -> None:
-    run_id, task_id = await _setup_active_run(client)
+async def test_get_task(client: AsyncClient, repo_name: str) -> None:
+    run_id, task_id = await _setup_active_run(client, repo_name)
 
     response = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
     assert response.status_code == 200
@@ -66,16 +111,18 @@ async def test_get_task(client: AsyncClient) -> None:
     assert data["max_attempts"] == 3
 
 
-async def test_get_task_not_found(client: AsyncClient) -> None:
-    run_id, _ = await _setup_active_run(client)
+async def test_get_task_not_found(client: AsyncClient, repo_name: str) -> None:
+    run_id, _ = await _setup_active_run(client, repo_name)
     response = await client.get(f"/api/runs/{run_id}/tasks/nonexistent")
     assert response.status_code == 404
 
 
-async def test_full_task_lifecycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_full_task_lifecycle(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     """Full lifecycle: start -> checklist update -> submit -> grade -> complete."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
 
     # Start task
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -124,10 +171,56 @@ async def test_full_task_lifecycle(client_and_drain: tuple[AsyncClient, DrainFn]
     assert resp.json()["status"] == "completed"
 
 
-async def test_gate_failure_response(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_db_backed_activity_signals_are_persisted(
+    db_backed_client_and_consumer: tuple[AsyncClient, SignalConsumer],
+    repo_name: str,
+) -> None:
+    """Task activity signals must survive the request session for the DB consumer."""
+    client, consumer = db_backed_client_and_consumer
+
+    run_id, task_id = await _setup_active_run(client, repo_name)
+    await consumer._process_run(run_id)
+
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
+    assert resp.status_code == 200
+
+    resp = await client.patch(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
+        json={"status": "done", "note": "Completed"},
+    )
+    assert resp.status_code == 200
+
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+    assert resp.status_code == 200
+    assert resp.json()["new_status"] == "building"
+
+    await consumer._process_run(run_id)
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "verifying"
+
+    resp = await client.put(
+        f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
+        json={"grade": "A", "grade_reason": "Well done"},
+    )
+    assert resp.status_code == 200
+
+    resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/complete-verification")
+    assert resp.status_code == 200
+    assert resp.json()["new_status"] == "verifying"
+
+    await consumer._process_run(run_id)
+    resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "completed"
+
+
+async def test_gate_failure_response(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     """Submit with open checklist item: returns 409 directly (synchronous gate check)."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
 
     # Start task
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -141,10 +234,12 @@ async def test_gate_failure_response(client_and_drain: tuple[AsyncClient, DrainF
     assert run_resp.json()["status"] == "active"
 
 
-async def test_revision_cycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_revision_cycle(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     """Fail verification with bad grade, then retry and pass."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
 
     # Attempt 1: start, submit, fail verification
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -189,9 +284,11 @@ async def test_revision_cycle(client_and_drain: tuple[AsyncClient, DrainFn]) -> 
     assert task_resp.json()["status"] == "completed"
 
 
-async def test_checklist_not_found(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_checklist_not_found(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
     resp = await client.patch(
         f"/api/runs/{run_id}/tasks/{task_id}/checklist/NONEXISTENT",
         json={"status": "done"},
@@ -199,9 +296,11 @@ async def test_checklist_not_found(client_and_drain: tuple[AsyncClient, DrainFn]
     assert resp.status_code == 404
 
 
-async def test_grade_not_found(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_grade_not_found(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
     # Advance task to VERIFYING so set_grade guard passes
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
     await client.patch(
@@ -219,11 +318,11 @@ async def test_grade_not_found(client_and_drain: tuple[AsyncClient, DrainFn]) ->
 
 
 async def test_flexible_req_id_formats_in_api(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     """API should accept numeric req_id variants for checklist/grade endpoints."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
 
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
@@ -254,11 +353,11 @@ async def test_run_not_found_for_task(client: AsyncClient) -> None:
 
 
 async def test_prompt_returns_builder_when_building(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     """Prompt endpoint returns builder prompt when task is in BUILDING state."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
 
     # Start task -> BUILDING
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -273,11 +372,11 @@ async def test_prompt_returns_builder_when_building(
 
 
 async def test_prompt_returns_verifier_when_verifying(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     """Prompt endpoint returns verifier prompt when task is in VERIFYING state."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
 
     # Start task -> BUILDING
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -299,9 +398,9 @@ async def test_prompt_returns_verifier_when_verifying(
     assert "## Requirements to Verify" in data["user"]
 
 
-async def test_prompt_rejects_pending_task(client: AsyncClient) -> None:
+async def test_prompt_rejects_pending_task(client: AsyncClient, repo_name: str) -> None:
     """Prompt endpoint returns 409 when task is in PENDING state."""
-    run_id, task_id = await _setup_active_run(client)
+    run_id, task_id = await _setup_active_run(client, repo_name)
 
     # Task is still PENDING (not started)
     resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}/prompt")
@@ -311,10 +410,12 @@ async def test_prompt_rejects_pending_task(client: AsyncClient) -> None:
     assert data["from_status"] == "pending"
 
 
-async def test_prompt_rejects_completed_task(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_prompt_rejects_completed_task(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     """Prompt endpoint returns 409 when task is in COMPLETED state."""
     client, drain = client_and_drain
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
 
     # Full lifecycle to reach COMPLETED
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
@@ -342,12 +443,12 @@ async def test_prompt_rejects_completed_task(client_and_drain: tuple[AsyncClient
 
 
 async def test_submit_with_unfinished_checklist_returns_409(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     """Submit task when checklist gate fails: returns 409 directly (synchronous gate check)."""
     client, drain = client_and_drain
     # 1. Create and start a run
-    run_id, task_id = await _setup_active_run(client, drain)
+    run_id, task_id = await _setup_active_run(client, repo_name, drain)
 
     # 2. Start the first task (status becomes BUILDING)
     resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")

@@ -1,41 +1,14 @@
 """Integration tests for CLIAgent with real subprocesses."""
 
-import asyncio
-import shutil
-import socket
-import textwrap
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
-import uvicorn
-from httpx import AsyncClient
 
 from orchestrator.config.models import NudgerConfig
-from orchestrator.config import ChecklistStatus, RoutineSource
-from orchestrator.api.app import create_app
-from orchestrator.db import init_db
+from orchestrator.config import ChecklistStatus
 from orchestrator.runners import CLIAgent
 from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
 from orchestrator.runners.types import ChecklistUpdateCallback, ExecutionContext, SubmitCallback
-
-FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
-_needs_claude = pytest.mark.skipif(shutil.which("claude") is None, reason="claude CLI not found")
-_needs_codex = pytest.mark.skipif(shutil.which("codex") is None, reason="codex CLI not found")
-
-
-def _can_bind_socket() -> bool:
-    """Check if we can bind a socket (may be blocked by sandbox)."""
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind(("127.0.0.1", 0))
-            return True
-    except PermissionError:
-        return False
-
-
-_needs_socket = pytest.mark.skipif(not _can_bind_socket(), reason="socket.bind blocked (sandbox)")
 
 
 def _make_context(
@@ -176,7 +149,6 @@ async def test_on_submit_not_called_after_stuck_kill() -> None:
 
 async def test_prompt_enrichment_reaches_subprocess() -> None:
     """When api_base_url is set, the enriched prompt (with REST endpoints) is sent to stdin."""
-    # Use `cat` to echo stdin back to stdout, so we can verify the enriched prompt
     agent = CLIAgent(command="cat")
     on_update, on_submit = _noop_callbacks()
 
@@ -186,9 +158,12 @@ async def test_prompt_enrichment_reaches_subprocess() -> None:
     )
     result = await agent.execute(ctx, on_update, on_submit)
     assert result.success is True
-    # The subprocess (cat) received the enriched prompt — if it didn't crash,
-    # the enriched prompt was sent correctly. We can't easily read stdout from
-    # the result, but the success confirms the enriched prompt was valid.
+    output = "\n".join(result.output_lines)
+    assert "Build the feature" in output
+    assert "Base URL: http://localhost:8000" in output
+    assert "Run ID: run-1, Task ID: task-1" in output
+    assert "PATCH http://localhost:8000/api/runs/run-1/tasks/task-1/checklist/{req_id}" in output
+    assert "POST http://localhost:8000/api/runs/run-1/tasks/task-1/submit" in output
 
 
 async def test_prompt_enrichment_mcp_channel() -> None:
@@ -202,6 +177,12 @@ async def test_prompt_enrichment_mcp_channel() -> None:
     )
     result = await agent.execute(ctx, on_update, on_submit)
     assert result.success is True
+    output = "\n".join(result.output_lines)
+    assert "Build the feature" in output
+    assert "MCP Server Connection" in output
+    assert "Connect to: http://localhost:8000/mcp/sse" in output
+    assert "orchestrator_update_checklist('run-1', 'task-1', 'R1', 'done')" in output
+    assert "orchestrator_submit" in output
 
 
 async def test_model_flag_in_subprocess() -> None:
@@ -256,228 +237,3 @@ async def test_stuck_subprocess_triggers_kill() -> None:
 
     with pytest.raises(AgentExecutionError, match="stuck"):
         await agent.execute(_make_context(), on_update, on_submit)
-
-
-# --- Real CLI agent tests (require claude / codex in PATH) ---
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-@_needs_claude
-async def test_claude_creates_file(tmp_path: Path) -> None:
-    """Claude CLI creates a file when asked."""
-    agent = CLIAgent(
-        command="claude",
-        model="claude-haiku-4-5-20251001",
-        args=[
-            "-p",
-            "--dangerously-skip-permissions",
-            f"Create a file called hello.txt in {tmp_path} with the content 'hello from claude'. "
-            "Do not output anything else.",
-        ],
-        nudger_config=NudgerConfig(output_timeout=timedelta(seconds=120)),
-    )
-    on_update, on_submit = _noop_callbacks()
-
-    ctx = _make_context(working_dir=str(tmp_path))
-    result = await agent.execute(ctx, on_update, on_submit)
-
-    assert result.success is True
-    assert (tmp_path / "hello.txt").exists()
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-@_needs_codex
-async def test_codex_creates_file(tmp_path: Path) -> None:
-    """Codex CLI creates a file when asked."""
-    agent = CLIAgent(
-        command="codex",
-        model="gpt-5.2-codex",
-        args=[
-            "exec",
-            "--dangerously-bypass-approvals-and-sandbox",
-            f"Create a file called hello.txt in {tmp_path} with the content 'hello from codex'. "
-            "Do not output anything else.",
-        ],
-        nudger_config=NudgerConfig(output_timeout=timedelta(seconds=120)),
-    )
-    on_update, on_submit = _noop_callbacks()
-
-    ctx = _make_context(working_dir=str(tmp_path))
-    result = await agent.execute(ctx, on_update, on_submit)
-
-    assert result.success is True
-    assert (tmp_path / "hello.txt").exists()
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-@_needs_claude
-async def test_claude_simple_output(tmp_path: Path) -> None:
-    """Claude CLI prints a specific string when asked."""
-    agent = CLIAgent(
-        command="claude",
-        model="claude-haiku-4-5-20251001",
-        args=[
-            "-p",
-            "--dangerously-skip-permissions",
-            "Print exactly the text 'ORCHESTRATOR_TEST_OK' and nothing else.",
-        ],
-        nudger_config=NudgerConfig(output_timeout=timedelta(seconds=120)),
-    )
-    on_update, on_submit = _noop_callbacks()
-
-    ctx = _make_context(working_dir=str(tmp_path))
-    result = await agent.execute(ctx, on_update, on_submit)
-
-    assert result.success is True
-
-
-# --- CLIAgent ↔ Workflow integration (real HTTP server) ---
-
-
-@_needs_socket
-async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state(
-    tmp_path: Path,
-) -> None:
-    """Full integration: CLIAgent subprocess parses enriched prompt, calls REST API,
-    workflow state transitions from BUILDING to VERIFYING.
-
-    This test starts a real uvicorn server so the subprocess can make real HTTP
-    requests.  The subprocess script reads stdin, extracts the API base URL and
-    IDs from the enriched prompt, then calls PATCH /checklist and POST /submit.
-    After the agent returns, we verify the task state in the database.
-    """
-    # Find a free port
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-
-    from orchestrator.workflow import InMemorySignalTransport
-
-    db_path = tmp_path / "orchestrator.db"
-    app = create_app(
-        db_path=str(db_path),
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-    )
-    await init_db(app.state.engine)
-    # Use InMemorySignalTransport so signals are retained in-process for drain
-    signal_transport = InMemorySignalTransport()
-    app.state.signal_transport = signal_transport
-
-    config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error")
-    server = uvicorn.Server(config)
-    server_task = asyncio.create_task(server.serve())
-
-    try:
-        base_url = f"http://127.0.0.1:{port}"
-        async with AsyncClient(base_url=base_url) as client:
-            # Wait for server to start
-            for _ in range(50):
-                try:
-                    resp = await client.get("/health")
-                    if resp.status_code == 200:
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(0.1)
-            else:
-                pytest.fail("Server did not start")
-
-            # Create and set up run via REST API
-            resp = await client.post(
-                "/api/runs",
-                json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
-            )
-            assert resp.status_code == 201
-            run_id = resp.json()["id"]
-            task_id = resp.json()["steps"][0]["tasks"][0]["id"]
-
-            resp = await client.post(f"/api/runs/{run_id}/start")
-            assert resp.status_code == 202
-            # Manually drain RUN_START signal (InMemorySignalTransport, not DB-backed)
-            from tests.integration.signal_helpers import drain_signals
-            from orchestrator.workflow.service import WorkflowService
-
-            async with app.state.session_factory() as drain_session:
-                drain_service = WorkflowService(drain_session, signal_transport=signal_transport)
-                await drain_signals(run_id, signal_transport, drain_session, drain_service)
-                await drain_session.commit()
-            resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
-            assert resp.status_code == 200
-
-            # Verify task is BUILDING
-            resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
-            assert resp.json()["status"] == "building"
-
-            # Python script that reads the enriched prompt from stdin,
-            # extracts the API URLs, and makes real HTTP calls.
-            # Uses only stdlib (urllib.request) so no extra deps needed.
-            script = textwrap.dedent("""\
-                import json, re, sys, urllib.request
-                prompt = sys.stdin.read()
-                m = re.search(r'Base URL: (\\S+)', prompt)
-                if not m:
-                    print('ERROR: No Base URL in prompt', file=sys.stderr)
-                    sys.exit(1)
-                base = m.group(1)
-                m = re.search(r'Run ID: (\\S+), Task ID: (\\S+)', prompt)
-                if not m:
-                    print('ERROR: No Run/Task ID in prompt', file=sys.stderr)
-                    sys.exit(1)
-                run_id, task_id = m.group(1), m.group(2)
-                # PATCH checklist R1 -> done
-                url = f'{base}/api/runs/{run_id}/tasks/{task_id}/checklist/R1'
-                data = json.dumps({'status': 'done'}).encode()
-                req = urllib.request.Request(
-                    url, data=data,
-                    headers={'Content-Type': 'application/json'},
-                    method='PATCH',
-                )
-                urllib.request.urlopen(req)
-                # POST submit
-                url = f'{base}/api/runs/{run_id}/tasks/{task_id}/submit'
-                req = urllib.request.Request(
-                    url, data=b'',
-                    headers={'Content-Type': 'application/json'},
-                    method='POST',
-                )
-                urllib.request.urlopen(req)
-                print('OK')
-            """)
-
-            agent = CLIAgent(command="python3", args=["-c", script])
-
-            ctx = ExecutionContext(
-                run_id=run_id,
-                task_id=task_id,
-                working_dir="/tmp",
-                prompt="Complete the work",
-                requirements=["R1"],
-                api_base_url=base_url,
-            )
-
-            on_update, on_submit = _noop_callbacks()
-            result = await agent.execute(ctx, on_update, on_submit)
-
-            assert result.success is True
-
-            # Drain the pending signals so the state transition fires.
-            from tests.integration.signal_helpers import drain_signals
-            from orchestrator.workflow.service import WorkflowService
-
-            async with app.state.session_factory() as drain_session:
-                service = WorkflowService(drain_session)
-                await drain_signals(run_id, signal_transport, drain_session, service)
-                await drain_session.commit()
-
-            # Verify workflow state changed: task should be VERIFYING
-            resp = await client.get(f"/api/runs/{run_id}/tasks/{task_id}")
-            assert resp.json()["status"] == "verifying"
-            assert resp.json()["checklist"][0]["status"] == "done"
-
-    finally:
-        server.should_exit = True
-        await server_task
-        await app.state.engine.dispose()

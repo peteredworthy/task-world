@@ -12,7 +12,7 @@ import logging
 import subprocess
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -35,12 +35,17 @@ from orchestrator.workflow import (
 from orchestrator.runners.execution.attempt_store import AttemptStore
 from orchestrator.runners.execution.event_broadcaster import EventBroadcaster
 from orchestrator.runners.execution.phase_handler import PhaseHandler
+from orchestrator.runners.health_check import (
+    DEFAULT_HEALTH_CHECK_COMMAND,
+    HealthCheckCommandResult,
+    format_health_check_failure,
+    format_health_check_timeout,
+    parse_health_check_command,
+)
 from orchestrator.workflow import InvalidTransitionError
 from orchestrator.workflow import generate_builder_prompt, SummaryCache
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
-
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from orchestrator.runners.runtime.monitor import AgentRunnerMonitor
@@ -54,9 +59,16 @@ logger = logging.getLogger(__name__)
 # Re-exports for backward compatibility
 __all__ = [
     "AgentRunnerExecutor",
+    "DEFAULT_HEALTH_CHECK_COMMAND",
+    "HealthCheckCommandResult",
     "NoTaskReason",
+    "format_health_check_failure",
+    "format_health_check_timeout",
+    "parse_health_check_command",
     "resolve_no_task_action",
 ]
+
+HealthCheckRunner = Callable[[str, str], Awaitable[HealthCheckCommandResult]]
 
 
 def resolve_verifier_config(
@@ -74,6 +86,29 @@ def resolve_verifier_config(
     if verifier_model is not None:
         config["model"] = verifier_model
     return config
+
+
+async def _subprocess_health_check_runner(
+    command: str,
+    project_dir: str,
+) -> HealthCheckCommandResult:
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: subprocess.run(
+            command,
+            shell=True,
+            cwd=project_dir,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        ),
+    )
+    return HealthCheckCommandResult(
+        returncode=result.returncode,
+        stdout=result.stdout,
+        stderr=result.stderr,
+    )
 
 
 class AgentRunnerExecutor:
@@ -95,6 +130,7 @@ class AgentRunnerExecutor:
         connection_manager: BroadcastCallback | None = None,
         api_base_url: str | None = None,
         service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]] | None = None,
+        health_check_runner: HealthCheckRunner | None = None,
         *,
         spawn_agents: bool = True,
     ) -> None:
@@ -119,6 +155,7 @@ class AgentRunnerExecutor:
         self._lazy_runner_monitor_init = runner_monitor is None
 
         self._service_factory = service_factory
+        self._health_check_runner = health_check_runner or _subprocess_health_check_runner
 
         # Extracted sub-components
         self._attempt_store = AttemptStore(session_factory)
@@ -232,18 +269,13 @@ class AgentRunnerExecutor:
                             config_path = candidate
                 except Exception:
                     pass  # Fall through to default
-        test_command: str | None = "uv run pytest --tb=no -q"
+        test_command: str | None = DEFAULT_HEALTH_CHECK_COMMAND
 
         if config_path.exists():
             try:
                 with open(config_path) as f:
                     config_data = yaml.safe_load(f)
-                if isinstance(config_data, dict) and "test_command" in config_data:
-                    from typing import cast
-
-                    cfg: dict[str, Any] = cast(dict[str, Any], config_data)
-                    raw = cfg["test_command"]
-                    test_command = str(raw) if raw is not None else None
+                test_command = parse_health_check_command(config_data)
             except Exception as e:
                 logger.warning(f"Health check: failed to read {config_path}: {e}")
 
@@ -253,30 +285,18 @@ class AgentRunnerExecutor:
 
         logger.info(f"Health check: running '{test_command}' in {project_dir}")
         try:
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: subprocess.run(
-                    test_command,
-                    shell=True,
-                    cwd=project_dir,
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                ),
-            )
+            result = await self._health_check_runner(test_command, project_dir)
             if result.returncode != 0:
-                output = (result.stdout + result.stderr).strip()
-                return (
-                    f"Pre-run health check failed.\n"
-                    f"Command: {test_command}\n"
-                    f"Exit code: {result.returncode}\n"
-                    f"Output:\n{output}"
+                return format_health_check_failure(
+                    test_command,
+                    result.returncode,
+                    result.stdout,
+                    result.stderr,
                 )
             logger.info("Health check: tests passed")
             return None
         except subprocess.TimeoutExpired:
-            return f"Pre-run health check timed out.\nCommand: {test_command}"
+            return format_health_check_timeout(test_command)
         except Exception as e:
             logger.warning(f"Health check: unexpected error: {e}")
             return f"Pre-run health check error: {e}\nCommand: {test_command}"

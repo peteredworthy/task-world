@@ -1,92 +1,111 @@
-"""Tests for the pre-run health check in AgentRunnerExecutor.
-
-All four scenarios call ``_run_project_health_check`` directly — no background
-executor loop, no polling, no sleeps.  The method is a pure
-"config → subprocess → result" function, so we only need to verify its return
-value for each config variant.
-
-Covers four scenarios:
-1. Failing test_command → returns error string with command, exit code, output
-2. Passing test_command → returns None (success)
-3. test_command: null → returns None (skipped)
-4. No .task-world/config.yaml → falls back to default command
-"""
+"""Unit tests for pre-run health-check parsing and executor wiring."""
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
+from typing import Any, cast
 
-import pytest
-
+from orchestrator.runners import (
+    DEFAULT_HEALTH_CHECK_COMMAND,
+    HealthCheckCommandResult,
+    format_health_check_failure,
+    format_health_check_timeout,
+    parse_health_check_command,
+)
 from orchestrator.runners.executor import AgentRunnerExecutor
 
 
-@pytest.fixture
-def executor() -> AgentRunnerExecutor:
-    # _run_project_health_check doesn't touch the DB, so a mock session_factory suffices.
-    return AgentRunnerExecutor(session_factory=MagicMock(), spawn_agents=False)
+class RecordingHealthRunner:
+    def __init__(self, result: HealthCheckCommandResult | BaseException) -> None:
+        self.result = result
+        self.calls: list[tuple[str, str]] = []
+
+    async def __call__(self, command: str, project_dir: str) -> HealthCheckCommandResult:
+        self.calls.append((command, project_dir))
+        if isinstance(self.result, BaseException):
+            raise self.result
+        return self.result
 
 
-# ---------------------------------------------------------------------------
-# Scenario 1: Failing test_command returns error details
-# ---------------------------------------------------------------------------
+def _executor(runner: RecordingHealthRunner) -> AgentRunnerExecutor:
+    return AgentRunnerExecutor(
+        session_factory=cast(Any, object()),
+        health_check_runner=runner,
+        spawn_agents=False,
+    )
 
 
-async def test_failing_tests_block_task_start(
-    executor: AgentRunnerExecutor,
-    tmp_path: Path,
-) -> None:
-    """When test_command exits non-zero, _run_project_health_check returns an error."""
+def test_parse_health_check_command_defaults_for_missing_or_invalid_config() -> None:
+    assert parse_health_check_command(None) == DEFAULT_HEALTH_CHECK_COMMAND
+    assert parse_health_check_command([]) == DEFAULT_HEALTH_CHECK_COMMAND
+    assert parse_health_check_command({}) == DEFAULT_HEALTH_CHECK_COMMAND
+
+
+def test_parse_health_check_command_accepts_string_and_null() -> None:
+    assert parse_health_check_command({"test_command": "uv run pytest tests/unit"}) == (
+        "uv run pytest tests/unit"
+    )
+    assert parse_health_check_command({"test_command": None}) is None
+    assert parse_health_check_command({"test_command": 123}) == "123"
+
+
+def test_format_health_check_failure_includes_command_exit_code_and_output() -> None:
+    result = format_health_check_failure("exit 7", 7, "stdout\n", "stderr\n")
+    assert "Pre-run health check failed." in result
+    assert "Command: exit 7" in result
+    assert "Exit code: 7" in result
+    assert "stdout" in result
+    assert "stderr" in result
+
+
+def test_format_health_check_timeout_includes_command() -> None:
+    assert format_health_check_timeout("slow-test") == (
+        "Pre-run health check timed out.\nCommand: slow-test"
+    )
+
+
+async def test_executor_uses_configured_command_with_injected_runner(tmp_path: Path) -> None:
     task_world = tmp_path / ".task-world"
     task_world.mkdir()
-    (task_world / "config.yaml").write_text("test_command: 'exit 1'\n")
+    (task_world / "config.yaml").write_text("test_command: 'custom check'\n")
+    runner = RecordingHealthRunner(HealthCheckCommandResult(returncode=0))
 
-    result = await executor._run_project_health_check(str(tmp_path))
+    result = await _executor(runner)._run_project_health_check(str(tmp_path))
 
-    assert result is not None, "Expected error string when test_command fails"
-    assert "health check failed" in result.lower()
-    assert "exit 1" in result
-
-
-# ---------------------------------------------------------------------------
-# Scenario 3: test_command: null skips the health check
-# ---------------------------------------------------------------------------
+    assert result is None
+    assert runner.calls == [("custom check", str(tmp_path))]
 
 
-async def test_null_test_command_skips_health_check(
-    executor: AgentRunnerExecutor,
-    tmp_path: Path,
-) -> None:
-    """When test_command is null the health check is skipped entirely."""
+async def test_executor_skips_when_command_is_null(tmp_path: Path) -> None:
     task_world = tmp_path / ".task-world"
     task_world.mkdir()
     (task_world / "config.yaml").write_text("test_command: null\n")
+    runner = RecordingHealthRunner(HealthCheckCommandResult(returncode=0))
 
-    result = await executor._run_project_health_check(str(tmp_path))
+    result = await _executor(runner)._run_project_health_check(str(tmp_path))
 
-    assert result is None, (
-        f"Expected None (health check skipped) when test_command is null, got: {result!r}"
+    assert result is None
+    assert runner.calls == []
+
+
+async def test_executor_formats_runner_failure(tmp_path: Path) -> None:
+    runner = RecordingHealthRunner(
+        HealthCheckCommandResult(returncode=1, stdout="bad\n", stderr="worse\n")
     )
 
+    result = await _executor(runner)._run_project_health_check(str(tmp_path))
 
-# ---------------------------------------------------------------------------
-# Scenario 4: No .task-world/config.yaml → default convention command used
-# ---------------------------------------------------------------------------
+    assert result is not None
+    assert "uv run pytest" in result
+    assert "Exit code: 1" in result
+    assert "bad" in result
+    assert "worse" in result
 
 
-async def test_no_config_file_uses_default_command(
-    executor: AgentRunnerExecutor,
-    tmp_path: Path,
-) -> None:
-    """When .task-world/config.yaml is absent the default 'uv run pytest --tb=no -q' is used."""
-    assert not (tmp_path / ".task-world" / "config.yaml").exists()
+async def test_executor_formats_timeout(tmp_path: Path) -> None:
+    runner = RecordingHealthRunner(subprocess.TimeoutExpired(cmd="slow", timeout=300))
 
-    result = await executor._run_project_health_check(str(tmp_path))
+    result = await _executor(runner)._run_project_health_check(str(tmp_path))
 
-    assert result is not None, (
-        "Expected a non-None error when default pytest fails on empty directory"
-    )
-    assert "uv run pytest" in result, (
-        f"Error message should include the default command 'uv run pytest', got: {result!r}"
-    )
+    assert result == f"Pre-run health check timed out.\nCommand: {DEFAULT_HEALTH_CHECK_COMMAND}"

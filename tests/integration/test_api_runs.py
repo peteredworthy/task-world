@@ -1,38 +1,48 @@
-"""Integration tests for run API endpoints."""
+"""Integration tests for run API endpoints.
+
+WARNING — shared fixture:
+    The ``client_and_drain`` / ``client`` fixtures in this module reuse a
+    single FastAPI app + in-memory DB across every test in the file (module
+    scope). Isolation is the test author's responsibility:
+
+    - Use the ``repo_name`` fixture for *every* ``repo_name`` field you send.
+      It returns a unique per-test value (UUID-suffixed); hardcoded names
+      collide across tests.
+    - For tests that list runs, filter by your own ``repo_name`` — never
+      assert on global counts. Other tests' runs are visible in the same DB.
+    - Run IDs returned from ``POST /api/runs`` are server-generated UUIDs and
+      cannot collide; reference your run only by the ``id`` you received.
+    - On teardown, non-terminal runs for this test's ``repo_name`` are
+      cancelled (see ``cleanup_runs_for_repo``), so a mid-test failure
+      cannot leak executor work into siblings.
+"""
 
 from pathlib import Path
 
-from collections.abc import AsyncGenerator
 from typing import Any, cast
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.api.app import create_app
-from orchestrator.config import RoutineSource
-from orchestrator.db import init_db
-from orchestrator.workflow import InMemorySignalTransport
-from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from collections.abc import AsyncGenerator
+
+from tests.integration.conftest import cleanup_runs_for_repo
+from tests.integration.signal_helpers import DrainFn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
-async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
-    app = create_app(
-        db_path=":memory:",
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-    )
-    await init_db(app.state.engine)
-    transport_obj = InMemorySignalTransport()
-    app.state.signal_transport = transport_obj
-    drain = make_drain_fn(app, transport_obj)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, drain
-    await app.state.engine.dispose()
+async def client_and_drain(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    repo_name: str,
+) -> AsyncGenerator[tuple[AsyncClient, DrainFn], None]:
+    """Shared module-scoped client + drain. Cancels this test's runs on teardown."""
+    client, drain, _, _, _ = _shared_app_fixture
+    yield client, drain
+    await cleanup_runs_for_repo(client, repo_name)
 
 
 @pytest.fixture
@@ -40,85 +50,95 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
     return client_and_drain[0]
 
 
-async def _create_run(client: AsyncClient) -> dict[str, Any]:
-    """Helper: create a run and return the response data."""
+async def _create_run(client: AsyncClient, repo_name: str) -> dict[str, Any]:
+    """Helper: create a run and return the response data.
+
+    Pass the per-test ``repo_name`` fixture so the created run is isolated
+    from other tests sharing this module's app/DB.
+    """
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
     )
     assert response.status_code == 201
     return response.json()
 
 
-async def test_create_run(client: AsyncClient) -> None:
-    data = await _create_run(client)
-    assert data["repo_name"] == "proj-1"
+async def test_create_run(client: AsyncClient, repo_name: str) -> None:
+    data = await _create_run(client, repo_name)
+    assert data["repo_name"] == repo_name
     assert data["routine_id"] == "simple-routine"
     assert data["status"] == "draft"
     assert len(data["steps"]) == 1
     assert len(data["steps"][0]["tasks"]) == 1
 
 
-async def test_create_run_routine_not_found(client: AsyncClient) -> None:
+async def test_create_run_routine_not_found(client: AsyncClient, repo_name: str) -> None:
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "nonexistent", "repo_name": "proj-1", "branch": "main"},
+        json={"routine_id": "nonexistent", "repo_name": repo_name, "branch": "main"},
     )
     assert response.status_code == 404
 
 
-async def test_list_runs_empty(client: AsyncClient) -> None:
-    response = await client.get("/api/runs")
+async def test_list_runs_empty(client: AsyncClient, repo_name: str) -> None:
+    # Filter by our unique repo_name — global state may contain other tests' runs.
+    response = await client.get("/api/runs", params={"repo_name": repo_name})
     assert response.status_code == 200
     assert response.json() == {"runs": []}
 
 
-async def test_list_runs(client: AsyncClient) -> None:
-    await _create_run(client)
-    response = await client.get("/api/runs")
+async def test_list_runs(client: AsyncClient, repo_name: str) -> None:
+    await _create_run(client, repo_name)
+    # Filter by our unique repo_name — other tests share this app's DB.
+    response = await client.get("/api/runs", params={"repo_name": repo_name})
     assert response.status_code == 200
     data = response.json()
     assert len(data["runs"]) == 1
 
 
-async def test_list_runs_filter_by_project(client: AsyncClient) -> None:
-    await _create_run(client)
+async def test_list_runs_filter_by_project(client: AsyncClient, repo_name: str) -> None:
+    await _create_run(client, repo_name)
 
-    response = await client.get("/api/runs?repo_name=proj-1")
+    response = await client.get("/api/runs", params={"repo_name": repo_name})
     assert response.status_code == 200
     assert len(response.json()["runs"]) == 1
 
-    response = await client.get("/api/runs?repo_name=other-project")
+    # A repo_name we never used returns []; uuid suffix makes a guaranteed-miss key.
+    response = await client.get("/api/runs", params={"repo_name": f"other-project-{repo_name}"})
     assert response.status_code == 200
     assert len(response.json()["runs"]) == 0
 
 
-async def test_list_runs_filter_by_status(client: AsyncClient) -> None:
-    await _create_run(client)
+async def test_list_runs_filter_by_status(client: AsyncClient, repo_name: str) -> None:
+    await _create_run(client, repo_name)
 
-    response = await client.get("/api/runs?status=draft")
+    # Combined repo_name + status filter scopes counts to this test's run.
+    response = await client.get("/api/runs", params={"repo_name": repo_name, "status": "draft"})
     assert response.status_code == 200
     assert len(response.json()["runs"]) == 1
 
-    response = await client.get("/api/runs?status=active")
+    response = await client.get("/api/runs", params={"repo_name": repo_name, "status": "active"})
     assert response.status_code == 200
     assert len(response.json()["runs"]) == 0
 
 
-async def test_get_run(client: AsyncClient) -> None:
-    created = await _create_run(client)
+async def test_get_run(client: AsyncClient, repo_name: str) -> None:
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     response = await client.get(f"/api/runs/{run_id}")
     assert response.status_code == 200
     data = response.json()
     assert data["id"] == run_id
-    assert data["repo_name"] == "proj-1"
+    assert data["repo_name"] == repo_name
 
 
-async def test_get_run_trace_lists_attempts(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_get_run_trace_lists_attempts(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
 
@@ -148,9 +168,9 @@ async def test_get_run_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_start_run(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_start_run(client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str) -> None:
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     response = await client.post(f"/api/runs/{run_id}/start")
@@ -161,9 +181,11 @@ async def test_start_run(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     assert data["started_at"] is not None
 
 
-async def test_start_run_invalid_state(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_start_run_invalid_state(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     # Start it first
@@ -176,8 +198,8 @@ async def test_start_run_invalid_state(client_and_drain: tuple[AsyncClient, Drai
     assert response.status_code == 409
 
 
-async def test_delete_run(client: AsyncClient) -> None:
-    created = await _create_run(client)
+async def test_delete_run(client: AsyncClient, repo_name: str) -> None:
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     response = await client.delete(f"/api/runs/{run_id}")
@@ -192,9 +214,9 @@ async def test_delete_run_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_pause_run(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_pause_run(client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str) -> None:
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     # Start the run first
@@ -210,9 +232,9 @@ async def test_pause_run(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
     assert data["status"] == "paused"
 
 
-async def test_resume_run(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_resume_run(client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str) -> None:
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     # Start, then pause, then resume
@@ -240,8 +262,8 @@ async def test_resume_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_pause_invalid_state(client: AsyncClient) -> None:
-    created = await _create_run(client)
+async def test_pause_invalid_state(client: AsyncClient, repo_name: str) -> None:
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     # Try to pause a DRAFT run -> 409
@@ -249,9 +271,11 @@ async def test_pause_invalid_state(client: AsyncClient) -> None:
     assert response.status_code == 409
 
 
-async def test_resume_invalid_state(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_resume_invalid_state(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     # Start the run (ACTIVE), then try to resume without pausing -> 409
@@ -262,9 +286,11 @@ async def test_resume_invalid_state(client_and_drain: tuple[AsyncClient, DrainFn
     assert response.status_code == 409
 
 
-async def _drive_run_to_failed(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
+async def _drive_run_to_failed(
+    client: AsyncClient, drain: DrainFn, repo_name: str
+) -> tuple[str, str]:
     """Create a run and fail it by exhausting 3 verification attempts."""
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
 
@@ -292,9 +318,11 @@ async def _drive_run_to_failed(client: AsyncClient, drain: DrainFn) -> tuple[str
     return run_id, task_id
 
 
-async def _drive_run_to_completed(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
+async def _drive_run_to_completed(
+    client: AsyncClient, drain: DrainFn, repo_name: str
+) -> tuple[str, str]:
     """Create a run and complete it successfully."""
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
 
@@ -320,10 +348,10 @@ async def _drive_run_to_completed(client: AsyncClient, drain: DrainFn) -> tuple[
 
 
 async def test_recover_run_success_from_failed(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     client, drain = client_and_drain
-    run_id, task_id = await _drive_run_to_failed(client, drain)
+    run_id, task_id = await _drive_run_to_failed(client, drain, repo_name)
     run_before = await client.get(f"/api/runs/{run_id}")
     assert run_before.status_code == 200
     assert run_before.json()["status"] == "failed"
@@ -340,10 +368,10 @@ async def test_recover_run_success_from_failed(
 
 
 async def test_recover_run_conflict_when_active(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
     resp = await client.post(f"/api/runs/{run_id}/start")
@@ -355,11 +383,11 @@ async def test_recover_run_conflict_when_active(
 
 
 async def test_recover_run_succeeds_when_paused(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     """Recovery is allowed on PAUSED runs (e.g., a task failed while the run was paused)."""
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
     task_id = created["steps"][0]["tasks"][0]["id"]
     resp = await client.post(f"/api/runs/{run_id}/start")
@@ -377,10 +405,10 @@ async def test_recover_run_succeeds_when_paused(
 
 
 async def test_recover_run_conflict_when_completed(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     client, drain = client_and_drain
-    run_id, task_id = await _drive_run_to_completed(client, drain)
+    run_id, task_id = await _drive_run_to_completed(client, drain, repo_name)
     run_before = await client.get(f"/api/runs/{run_id}")
     assert run_before.status_code == 200
     assert run_before.json()["status"] == "completed"
@@ -398,10 +426,10 @@ async def test_recover_run_not_found_when_run_missing(client: AsyncClient) -> No
 
 
 async def test_recover_run_not_found_when_target_task_missing(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     client, drain = client_and_drain
-    run_id, _task_id = await _drive_run_to_failed(client, drain)
+    run_id, _task_id = await _drive_run_to_failed(client, drain, repo_name)
 
     response = await client.post(
         f"/api/runs/{run_id}/recover",
@@ -410,18 +438,19 @@ async def test_recover_run_not_found_when_target_task_missing(
     assert response.status_code == 404
 
 
-async def test_resume_with_agent_change(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_resume_with_agent_change(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     """Resume a paused run while changing the agent runner type and config."""
     client, drain = client_and_drain
-    created = await _create_run(client)
-    run_id = created["id"]
 
-    # Set initial agent
+    # Set initial agent (this is the run we actually exercise; the earlier
+    # _create_run call from the original test was unused).
     response = await client.post(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "repo_name": "proj-2",
+            "repo_name": repo_name,
             "branch": "main",
             "agent_runner_type": "cli_subprocess",
             "agent_runner_config": {"callback_channel": "mcp"},
@@ -470,18 +499,19 @@ async def test_resume_with_agent_change(client_and_drain: tuple[AsyncClient, Dra
     assert event["payload"]["new_agent_runner_config"] == {"timeout_minutes": 30}
 
 
-async def test_resume_without_agent_change(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_resume_without_agent_change(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     """Resume a paused run without changing the agent (no body or empty body)."""
     client, drain = client_and_drain
-    created = await _create_run(client)
-    run_id = created["id"]
 
-    # Set initial agent
+    # Set initial agent (this is the run we actually exercise; the earlier
+    # _create_run call from the original test was unused).
     response = await client.post(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "repo_name": "proj-3",
+            "repo_name": repo_name,
             "branch": "main",
             "agent_runner_type": "cli_subprocess",
             "agent_runner_config": {"stdin_mode": "open"},
@@ -518,7 +548,7 @@ async def test_resume_without_agent_change(client_and_drain: tuple[AsyncClient, 
 
 
 async def test_resume_with_config_only_change(
-    client_and_drain: tuple[AsyncClient, DrainFn],
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
     """Resume a paused run while changing only the agent runner config (not the type)."""
     client, drain = client_and_drain
@@ -527,7 +557,7 @@ async def test_resume_with_config_only_change(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "repo_name": "proj-4",
+            "repo_name": repo_name,
             "branch": "main",
             "agent_runner_type": "cli_subprocess",
             "agent_runner_config": {"stdin_mode": "close", "model": "gpt-4"},
@@ -578,13 +608,13 @@ async def test_resume_with_config_only_change(
     }
 
 
-async def test_create_run_with_agent_runner_config(client: AsyncClient) -> None:
+async def test_create_run_with_agent_runner_config(client: AsyncClient, repo_name: str) -> None:
     """agent_runner_config is stored and returned in the response."""
     response = await client.post(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "repo_name": "proj-1",
+            "repo_name": repo_name,
             "branch": "main",
             "agent_runner_type": "cli_subprocess",
             "agent_runner_config": {"model": "claude-4", "callback_channel": "mcp"},
@@ -597,19 +627,23 @@ async def test_create_run_with_agent_runner_config(client: AsyncClient) -> None:
     assert data["agent_runner_config"]["callback_channel"] == "mcp"
 
 
-async def test_create_run_agent_runner_config_defaults_to_empty(client: AsyncClient) -> None:
+async def test_create_run_agent_runner_config_defaults_to_empty(
+    client: AsyncClient, repo_name: str
+) -> None:
     """agent_runner_config defaults to empty dict when not provided."""
-    data = await _create_run(client)
+    data = await _create_run(client, repo_name)
     assert data["agent_runner_config"] == {}
 
 
 # --- B2: cancel_run and recent_hours tests ---
 
 
-async def test_cancel_run_from_active(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_cancel_run_from_active(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     """Cancel an active run -> FAILED."""
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     resp = await client.post(f"/api/runs/{run_id}/start")
@@ -624,10 +658,12 @@ async def test_cancel_run_from_active(client_and_drain: tuple[AsyncClient, Drain
     assert data["completed_at"] is not None
 
 
-async def test_cancel_run_from_paused(client_and_drain: tuple[AsyncClient, DrainFn]) -> None:
+async def test_cancel_run_from_paused(
+    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+) -> None:
     """Cancel a paused run -> FAILED."""
     client, drain = client_and_drain
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     resp = await client.post(f"/api/runs/{run_id}/start")
@@ -645,9 +681,9 @@ async def test_cancel_run_from_paused(client_and_drain: tuple[AsyncClient, Drain
     assert data["completed_at"] is not None
 
 
-async def test_cancel_run_from_draft_invalid(client: AsyncClient) -> None:
+async def test_cancel_run_from_draft_invalid(client: AsyncClient, repo_name: str) -> None:
     """Cancel from DRAFT returns 409."""
-    created = await _create_run(client)
+    created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     response = await client.post(f"/api/runs/{run_id}/cancel")
@@ -660,20 +696,23 @@ async def test_cancel_run_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
-async def test_list_runs_recent_hours(client: AsyncClient) -> None:
-    """recent_hours filter returns recently created runs."""
-    await _create_run(client)
+async def test_list_runs_recent_hours(client: AsyncClient, repo_name: str) -> None:
+    """recent_hours filter returns recently created runs.
 
-    # All runs were just created, so recent_hours=1 should return them
+    Other tests share this app's DB, so the global list can contain many
+    runs. We assert that *our* run appears, not on the global count.
+    """
+    await _create_run(client, repo_name)
+
     response = await client.get("/api/runs?recent_hours=1")
     assert response.status_code == 200
-    assert len(response.json()["runs"]) == 1
+    runs_for_me = [r for r in response.json()["runs"] if r["repo_name"] == repo_name]
+    assert len(runs_for_me) == 1
 
-    # recent_hours=0 might return nothing (cutoff is exactly now)
-    # but we can't control time precisely, so just verify the param is accepted
     response = await client.get("/api/runs?recent_hours=24")
     assert response.status_code == 200
-    assert len(response.json()["runs"]) >= 1
+    runs_for_me = [r for r in response.json()["runs"] if r["repo_name"] == repo_name]
+    assert len(runs_for_me) == 1
 
 
 # --- E1: Embedded routine tests ---
@@ -698,19 +737,19 @@ EMBEDDED_ROUTINE: dict[str, Any] = {
 }
 
 
-async def test_create_run_with_embedded_routine(client: AsyncClient) -> None:
+async def test_create_run_with_embedded_routine(client: AsyncClient, repo_name: str) -> None:
     """Create a run using an inline embedded routine dict."""
     response = await client.post(
         "/api/runs",
         json={
-            "repo_name": "proj-embedded",
+            "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
         },
     )
     assert response.status_code == 201
     data = response.json()
-    assert data["repo_name"] == "proj-embedded"
+    assert data["repo_name"] == repo_name
     assert data["routine_id"] == "embedded-test"
     assert data["routine_source"] == "embedded"
     assert data["routine_embedded"] == EMBEDDED_ROUTINE
@@ -721,12 +760,12 @@ async def test_create_run_with_embedded_routine(client: AsyncClient) -> None:
     assert data["steps"][0]["tasks"][0]["config_id"] == "T-01"
 
 
-async def test_create_run_embedded_routine_persisted(client: AsyncClient) -> None:
+async def test_create_run_embedded_routine_persisted(client: AsyncClient, repo_name: str) -> None:
     """Embedded routine is persisted and returned on GET."""
     create_resp = await client.post(
         "/api/runs",
         json={
-            "repo_name": "proj-embedded",
+            "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
         },
@@ -741,13 +780,15 @@ async def test_create_run_embedded_routine_persisted(client: AsyncClient) -> Non
     assert data["routine_source"] == "embedded"
 
 
-async def test_create_run_both_routine_id_and_embedded_fails(client: AsyncClient) -> None:
+async def test_create_run_both_routine_id_and_embedded_fails(
+    client: AsyncClient, repo_name: str
+) -> None:
     """Providing both routine_id and routine_embedded returns 422."""
     response = await client.post(
         "/api/runs",
         json={
             "routine_id": "simple-routine",
-            "repo_name": "proj-1",
+            "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
         },
@@ -755,21 +796,25 @@ async def test_create_run_both_routine_id_and_embedded_fails(client: AsyncClient
     assert response.status_code == 422
 
 
-async def test_create_run_neither_routine_id_nor_embedded_fails(client: AsyncClient) -> None:
+async def test_create_run_neither_routine_id_nor_embedded_fails(
+    client: AsyncClient, repo_name: str
+) -> None:
     """Providing neither routine_id nor routine_embedded returns 422."""
     response = await client.post(
         "/api/runs",
-        json={"repo_name": "proj-1", "branch": "main"},
+        json={"repo_name": repo_name, "branch": "main"},
     )
     assert response.status_code == 422
 
 
-async def test_create_run_embedded_routine_invalid_schema(client: AsyncClient) -> None:
+async def test_create_run_embedded_routine_invalid_schema(
+    client: AsyncClient, repo_name: str
+) -> None:
     """Embedded routine with invalid schema returns 422."""
     response = await client.post(
         "/api/runs",
         json={
-            "repo_name": "proj-1",
+            "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": {"id": "bad", "name": "Bad"},
             # Missing required 'steps' field
@@ -778,12 +823,14 @@ async def test_create_run_embedded_routine_invalid_schema(client: AsyncClient) -
     assert response.status_code == 422
 
 
-async def test_create_run_embedded_routine_with_ref_rejected(client: AsyncClient) -> None:
+async def test_create_run_embedded_routine_with_ref_rejected(
+    client: AsyncClient, repo_name: str
+) -> None:
     """Embedded routine containing 'ref' key is rejected by RoutineConfig validator."""
     response = await client.post(
         "/api/runs",
         json={
-            "repo_name": "proj-1",
+            "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": {
                 "id": "bad-ref",
@@ -808,7 +855,7 @@ async def test_create_run_embedded_routine_with_ref_rejected(client: AsyncClient
     assert response.status_code == 422
 
 
-async def test_create_run_embedded_with_config(client: AsyncClient) -> None:
+async def test_create_run_embedded_with_config(client: AsyncClient, repo_name: str) -> None:
     """Embedded routine run can include runtime config."""
     routine_with_inputs: dict[str, Any] = {
         "id": "with-inputs",
@@ -834,7 +881,7 @@ async def test_create_run_embedded_with_config(client: AsyncClient) -> None:
     response = await client.post(
         "/api/runs",
         json={
-            "repo_name": "proj-1",
+            "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": routine_with_inputs,
             "config": {"target_branch": "main"},
@@ -845,7 +892,9 @@ async def test_create_run_embedded_with_config(client: AsyncClient) -> None:
     assert data["config"]["target_branch"] == "main"
 
 
-async def test_create_run_embedded_missing_required_input(client: AsyncClient) -> None:
+async def test_create_run_embedded_missing_required_input(
+    client: AsyncClient, repo_name: str
+) -> None:
     """Embedded routine with missing required input returns 422."""
     routine_with_inputs: dict[str, Any] = {
         "id": "with-inputs",
@@ -870,7 +919,7 @@ async def test_create_run_embedded_missing_required_input(client: AsyncClient) -
     response = await client.post(
         "/api/runs",
         json={
-            "repo_name": "proj-1",
+            "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": routine_with_inputs,
             # No config with target_branch
@@ -879,9 +928,9 @@ async def test_create_run_embedded_missing_required_input(client: AsyncClient) -
     assert response.status_code == 422
 
 
-async def test_run_response_includes_cost_estimation(client: AsyncClient) -> None:
+async def test_run_response_includes_cost_estimation(client: AsyncClient, repo_name: str) -> None:
     """Test that cost estimation is populated when token data exists."""
-    data = await _create_run(client)
+    data = await _create_run(client, repo_name)
     run_id = data["id"]
 
     # Initially, no tokens, so no cost estimate
@@ -948,10 +997,10 @@ async def _inject_run_token_usage(
 
 
 async def test_get_run_returns_token_usage_by_model_with_all_fields(
-    client: AsyncClient,
+    client: AsyncClient, repo_name: str
 ) -> None:
     """R6: GET /api/runs/{id} returns token_usage_by_model with all expected fields."""
-    data = await _create_run(client)
+    data = await _create_run(client, repo_name)
     run_id = data["id"]
 
     # Inject per-model token data
@@ -991,7 +1040,7 @@ async def test_get_run_returns_token_usage_by_model_with_all_fields(
 
 
 async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
-    client: AsyncClient,
+    client: AsyncClient, repo_name: str
 ) -> None:
     """R7: Old runs with no token_usage_by_model return [] without error.
 
@@ -1001,7 +1050,7 @@ async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
     app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
     session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
 
-    data = await _create_run(client)
+    data = await _create_run(client, repo_name)
     run_id = data["id"]
 
     # Simulate old run: no per-model data, but has legacy token counts
@@ -1031,10 +1080,10 @@ async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
 
 
 async def test_get_run_estimated_cost_equals_sum_of_per_model_costs(
-    client: AsyncClient,
+    client: AsyncClient, repo_name: str
 ) -> None:
     """R8: estimated_cost_usd equals the sum of per-model total_cost_usd values."""
-    data = await _create_run(client)
+    data = await _create_run(client, repo_name)
     run_id = data["id"]
 
     usage_records = [

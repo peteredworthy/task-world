@@ -86,22 +86,9 @@ Add guidance to planner documentation about keeping `step_context` compact and b
 
 ---
 
-## Milestone 3: Safety Guards (A4, A11)
+## Milestone 3: Safety Guards (A11)
 
-**Goal:** Detect regressions and allow agents to escalate unfulfillable work.
-
-### Step 9: Test count regression guard (A4)
-
-Create a reusable script (`scripts/check_test_count.sh`) that:
-1. Captures the list of test names (via `pytest --collect-only -q`) before the builder starts
-2. Compares after the builder finishes
-3. Exits non-zero if any tests were removed
-
-Document for routine authors as an opt-in auto_verify command. Not suitable for cleanup/renaming tasks.
-
-**Files:** `scripts/check_test_count.sh` (new), documentation
-**Tests:** Script test with known test additions/removals.
-**Risk:** Low — opt-in, no impact on existing routines.
+**Goal:** Allow agents to escalate unfulfillable work.
 
 ### Step 10: Agent escalation for unfulfillable requirements (A11)
 
@@ -176,7 +163,7 @@ Update planner documentation to reflect that the dry-run stage should include fa
 ```
 M1 (Gate Fixes) ← no dependencies, start immediately
 M2 (Prompt)     ← no hard dependencies, runs in PARALLEL with M1
-M3 (Guards)     ← A4 script may be used as auto_verify in M1's new validation
+M3 (Guards)     ← follows M1/M2
 M4 (Schema)     ← A12 depends on step completion logic touched in M1
                 ← A13 depends on prompt changes in M2
                 ← A17 depends on loader, independent of M1-M3

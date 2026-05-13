@@ -61,6 +61,7 @@ from orchestrator.runners.agents.codex.common import (
     build_jsonrpc_request,
     enforce_tool_allowlist,
     extract_agent_message_delta,
+    extract_codex_model_ids,
     extract_dynamic_tool_call,
     extract_tool_call_from_notification,
     extract_turn_usage,
@@ -98,6 +99,13 @@ from orchestrator.runners.costs import get_model_costs, load_cost_table
 
 # Execution infrastructure
 from orchestrator.runners.execution import AttemptStore, EventBroadcaster, PhaseHandler
+from orchestrator.runners.health_check import (
+    DEFAULT_HEALTH_CHECK_COMMAND,
+    HealthCheckCommandResult,
+    format_health_check_failure,
+    format_health_check_timeout,
+    parse_health_check_command,
+)
 
 # Detection
 from orchestrator.runners.agent_detector import AGENT_CONFIG_FIELDS, ToolDetector
@@ -242,6 +250,7 @@ __all__ = [
     "build_jsonrpc_request",
     "enforce_tool_allowlist",
     "extract_agent_message_delta",
+    "extract_codex_model_ids",
     "extract_dynamic_tool_call",
     "extract_tool_call_from_notification",
     "extract_turn_usage",
@@ -271,8 +280,13 @@ __all__ = [
     "load_cost_table",
     # Execution
     "AttemptStore",
+    "DEFAULT_HEALTH_CHECK_COMMAND",
     "EventBroadcaster",
+    "HealthCheckCommandResult",
     "PhaseHandler",
+    "format_health_check_failure",
+    "format_health_check_timeout",
+    "parse_health_check_command",
     # Detection
     "AGENT_CONFIG_FIELDS",
     "ToolDetector",

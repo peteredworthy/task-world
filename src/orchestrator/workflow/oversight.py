@@ -192,6 +192,10 @@ class ParentOversightSnapshot(BaseModel):
     target_inventory: list[TargetInventoryItem] = Field(default_factory=list[TargetInventoryItem])
     final_validation: FinalValidationMarker | None = None
     decisions: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    delegated_work: dict[str, dict[str, Any]] = Field(default_factory=dict[str, dict[str, Any]])
+    delegation_decisions: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    delegation_results: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    delegation_review_states: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
     slices: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
     last_child_run_id: str | None = None
     last_decision: str | None = None
@@ -439,6 +443,16 @@ def reduce_parent_oversight(
         target_inventory=target_inventory,
         final_validation=final_validation,
         decisions=_list_of_dicts(existing_state.get("decisions")),
+        delegated_work=_project_delegated_work(
+            existing_state.get("delegated_work"),
+            sorted_children,
+            accepted_child_run_ids=accepted_child_run_ids,
+            rejected_child_run_ids=rejected_child_run_ids,
+            abandoned_child_run_ids=abandoned_child_run_ids,
+        ),
+        delegation_decisions=_list_of_dicts(existing_state.get("delegation_decisions")),
+        delegation_results=_list_of_dicts(existing_state.get("delegation_results")),
+        delegation_review_states=_list_of_dicts(existing_state.get("delegation_review_states")),
         slices=_list_of_dicts(existing_state.get("slices")),
         last_child_run_id=existing_state.get("last_child_run_id")
         if isinstance(existing_state.get("last_child_run_id"), str)
@@ -700,6 +714,82 @@ def _list_of_dicts(value: Any) -> list[dict[str, Any]]:
         for item in cast(Sequence[Any], value)
         if isinstance(item, Mapping)
     ]
+
+
+def _dict_of_dicts(value: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, Mapping):
+        return {}
+    return {
+        str(key): dict(cast(Mapping[str, Any], item))
+        for key, item in cast(Mapping[str, Any], value).items()
+        if isinstance(item, Mapping)
+    }
+
+
+def _project_delegated_work(
+    value: Any,
+    children: Sequence[Run],
+    *,
+    accepted_child_run_ids: set[str],
+    rejected_child_run_ids: set[str],
+    abandoned_child_run_ids: set[str],
+) -> dict[str, dict[str, Any]]:
+    delegated_work = _dict_of_dicts(value)
+    for child in children:
+        existing = dict(delegated_work.get(child.id, {}))
+        raw_metadata = existing.get("policy_metadata")
+        metadata = (
+            dict(cast(Mapping[str, Any], raw_metadata)) if isinstance(raw_metadata, Mapping) else {}
+        )
+        metadata.update(
+            {
+                "parent_slice_id": child.parent_slice_id,
+                "run_status": child.status.value,
+                "routine_id": child.routine_id,
+            }
+        )
+        existing.update(
+            {
+                "id": child.id,
+                "owner_id": child.parent_run_id or "",
+                "owner_kind": "run",
+                "delegate_kind": "run",
+                "goal": child.parent_slice_id or "",
+                "generation": max(0, int(child.updated_at.timestamp() * 1_000_000)),
+                "status": _project_delegated_child_status(
+                    child,
+                    accepted_child_run_ids=accepted_child_run_ids,
+                    rejected_child_run_ids=rejected_child_run_ids,
+                    abandoned_child_run_ids=abandoned_child_run_ids,
+                ),
+                "output_contract": existing.get("output_contract", "run.evidence.v1"),
+                "policy_metadata": metadata,
+            }
+        )
+        delegated_work[child.id] = existing
+    return delegated_work
+
+
+def _project_delegated_child_status(
+    child: Run,
+    *,
+    accepted_child_run_ids: set[str],
+    rejected_child_run_ids: set[str],
+    abandoned_child_run_ids: set[str],
+) -> str:
+    if child.id in accepted_child_run_ids:
+        return "integrated"
+    if child.id in rejected_child_run_ids:
+        return "rejected"
+    if child.id in abandoned_child_run_ids:
+        return "abandoned"
+    if child.status in (RunStatus.ACTIVE, RunStatus.STOPPING):
+        return "running"
+    if child.status == RunStatus.PAUSED:
+        return "waiting"
+    if child.status in (RunStatus.COMPLETED, RunStatus.FAILED):
+        return "terminal"
+    return "review"
 
 
 def _parse_target_inventory(

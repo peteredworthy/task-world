@@ -1,4 +1,4 @@
-"""E2E integration tests for database backup, restore, and journal replay recovery."""
+"""Integration tests for database backup, restore, and journal replay recovery."""
 
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone

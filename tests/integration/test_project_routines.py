@@ -8,7 +8,13 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
-from orchestrator.config import RoutineSource, discover_routines_in_repo, get_routine_from_repo
+from orchestrator.config import (
+    GlobalConfig,
+    PathsConfig,
+    RoutineSource,
+    discover_routines_in_repo,
+    get_routine_from_repo,
+)
 from orchestrator.db import init_db
 
 from tests.integration.git_helpers import _git
@@ -230,23 +236,17 @@ def repos_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def app_with_repos(repos_dir: Path, repo_with_routines: Path, monkeypatch: pytest.MonkeyPatch):
+def app_with_repos(repos_dir: Path, repo_with_routines: Path):
     """Create an app with a custom repos directory containing our test repo."""
-    import shutil
-
-    from orchestrator.config import global_config
-
     # Copy repo into repos_dir
     target = repos_dir / "test-project"
     shutil.copytree(repo_with_routines, target)
 
-    # Monkeypatch to use our repos directory
-    def patched_get_repos_path(self, base=None):
-        return repos_dir
-
-    monkeypatch.setattr(global_config.PathsConfig, "get_repos_path", patched_get_repos_path)
-
-    app = create_app(db_path=":memory:", auth_disabled=True)
+    app = create_app(
+        db_path=":memory:",
+        auth_disabled=True,
+        global_config=GlobalConfig(paths=PathsConfig(repos_dir=str(repos_dir))),
+    )
     return app, target
 
 

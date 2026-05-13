@@ -1,4 +1,4 @@
-"""Integration tests for review API input validation (scope, prune mode, revert-file)."""
+"""Integration tests for review API router-level query validation."""
 
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -51,42 +51,3 @@ async def test_diff_files_invalid_scope_returns_422(client: AsyncClient) -> None
     resp = await client.get(f"/api/runs/{run_id}/review/diff/files", params={"scope": "commit"})
     assert resp.status_code == 422
     assert "Invalid scope" in resp.json()["detail"]
-
-
-# --- Prune mode validation ---
-
-
-async def test_prune_preview_invalid_mode_returns_422(client: AsyncClient) -> None:
-    """Invalid prune mode should return 422."""
-    run_id = await _create_run(client)
-    resp = await client.post(
-        f"/api/runs/{run_id}/review/prune/preview",
-        json={
-            "scope": "aggregate",
-            "files": [{"path": "foo.txt", "mode": "invalid"}],
-        },
-    )
-    assert resp.status_code == 422
-
-
-async def test_prune_invalid_scope_returns_422(client: AsyncClient) -> None:
-    """Invalid prune scope should return 422."""
-    run_id = await _create_run(client)
-    resp = await client.post(
-        f"/api/runs/{run_id}/review/prune/preview",
-        json={
-            "scope": "invalid_scope",
-            "files": [{"path": "foo.txt", "mode": "file"}],
-        },
-    )
-    assert resp.status_code == 422
-
-
-# --- Revert-file schema validation ---
-
-
-async def test_revert_file_missing_path_returns_422(client: AsyncClient) -> None:
-    """Missing file_path in revert-file should return 422."""
-    run_id = await _create_run(client)
-    resp = await client.post(f"/api/runs/{run_id}/review/revert-file", json={})
-    assert resp.status_code == 422

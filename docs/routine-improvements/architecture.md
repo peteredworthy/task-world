@@ -139,7 +139,6 @@ Before executing the first task attempt in a run, run the test command (default:
 
 | File | Purpose |
 |------|---------|
-| `scripts/check_test_count.sh` | Reusable test regression guard (A4) |
 | `src/orchestrator/workflow/summary_cache.py` | Context summary caching (A13) |
 | Documentation in `docs/` | Step context guidance (A14), failure mode analysis (A18) |
 
@@ -176,9 +175,6 @@ Before executing the first task attempt in a run, run the test command (default:
 - Unit: `TaskConfig` validation rejects task with no auto_verify and no verifier.
 - Unit: `transition_after_verification()` blocks auto-grade when no verification configured.
 - Integration: Routine load with undefended task → validation error.
-
-**A4 (test regression guard):**
-- Script test: run against a repo with known test list, remove a test, verify non-zero exit.
 
 **A5 (pre-run health check):**
 - Integration: executor with failing test suite → task start blocked.

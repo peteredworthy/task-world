@@ -1,6 +1,6 @@
 """Unit tests for CachedDiffOps.
 
-Uses a real StubDiffOps (no MagicMock) together with a real LRUCache instance.
+Uses a real StubDiffOps together with a real LRUCache instance.
 """
 
 from pathlib import Path

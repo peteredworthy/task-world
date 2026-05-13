@@ -1,67 +1,37 @@
-"""Integration tests for review test-runner endpoints (POST/GET /review/test)."""
+"""Integration tests for review test-runner endpoints (POST/GET /review/test).
 
-import asyncio
+WARNING — shared fixture:
+    The ``client_with_auto_verify`` adapter below wraps the module-scoped
+    ``_shared_app_fixture`` (from ``tests/integration/conftest.py``) so every
+    test in this file reuses one FastAPI app + in-memory DB. Isolation relies
+    on: (1) ``git_repo`` having a UUID-suffixed name unique per test,
+    (2) server-generated run UUIDs, (3) per-test teardown cancelling runs
+    scoped to ``git_repo.name``. ``app.state.test_runner`` is shared across
+    tests but keyed by UUID ``test_run_id`` so entries cannot collide.
+"""
+
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 
-from orchestrator.api.app import create_app
-from orchestrator.config import RoutineSource
-from orchestrator.db import init_db
-from orchestrator.workflow import InMemorySignalTransport
-from tests.integration.git_helpers import _init_repo
-from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from tests.integration.conftest import cleanup_runs_for_repo
+from tests.integration.signal_helpers import DrainFn
 
-FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def git_repo(tmp_path: Path) -> Path:
-    repo = tmp_path / "project"
-    repo.mkdir()
-    _init_repo(repo)
-    return repo
+# Shared app + git_repo come from tests/integration/conftest.py.
 
 
 @pytest.fixture
 async def client_with_auto_verify(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
     git_repo: Path,
 ) -> AsyncGenerator[tuple[AsyncClient, Path, Any, DrainFn], None]:
-    """Test client wired to a routine that has auto_verify commands."""
-    from orchestrator.config.global_config import GlobalConfig, PathsConfig
-
-    repos_dir = git_repo.parent
-    worktrees_dir = repos_dir / "worktrees"
-    worktrees_dir.mkdir(exist_ok=True)
-
-    global_config = GlobalConfig(
-        paths=PathsConfig(
-            repos_dir=str(repos_dir),
-            worktrees_dir=str(worktrees_dir),
-        )
-    )
-
-    signal_transport = InMemorySignalTransport()
-    app = create_app(
-        db_path=":memory:",
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-        global_config=global_config,
-    )
-    app.state.signal_transport = signal_transport
-    await init_db(app.state.engine)
-    drain = make_drain_fn(app, signal_transport)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo, app, drain
-    await app.state.engine.dispose()
+    """Adapter: (client, git_repo, app, drain) shape. Cancels test's runs on teardown."""
+    client, drain, _, _, app = _shared_app_fixture
+    yield client, git_repo, app, drain
+    await cleanup_runs_for_repo(client, git_repo.name)
 
 
 async def _create_and_start_run(
@@ -159,20 +129,21 @@ class TestStartTestRun:
         client, repo, app, drain = client_with_auto_verify
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
-        worktree_path = run_data["worktree_path"]
 
-        from orchestrator.git import TestRunner
+        from datetime import datetime, timezone
+
+        from orchestrator.git import TestRunner, TestRunResult
 
         test_runner: TestRunner = app.state.test_runner
 
-        # Start a slow test run directly (sleep keeps it in "running" state)
-        await test_runner.start_test_run(
-            run_id=run_id,
-            worktree_path=worktree_path,
-            commands=["sleep 10"],
+        active_id = "already-running"
+        test_runner._results[active_id] = TestRunResult(  # pyright: ignore[reportPrivateUsage]
+            test_run_id=active_id,
+            status="running",
+            started_at=datetime.now(timezone.utc),
         )
+        test_runner._active_runs[run_id] = active_id  # pyright: ignore[reportPrivateUsage]
 
-        # Attempt to start another via the API — should be rejected with 409
         resp = await client.post(f"/api/runs/{run_id}/review/test", json={})
         assert resp.status_code == 409, resp.text
         assert "already in progress" in resp.json()["detail"].lower()
@@ -188,7 +159,7 @@ class TestGetTestRun:
         self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """GET immediately after POST returns 'running' or completed status."""
-        client, repo, _app, drain = client_with_auto_verify
+        client, repo, app, drain = client_with_auto_verify
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
@@ -201,12 +172,13 @@ class TestGetTestRun:
         data = get_resp.json()
         assert data["test_run_id"] == test_run_id
         assert data["status"] in {"running", "passed", "failed", "error"}
+        await app.state.test_runner.wait_for_test_run(test_run_id)
 
     async def test_test_run_completes_with_results(
         self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """After completion, GET returns final status with log_output."""
-        client, repo, _app, drain = client_with_auto_verify
+        client, repo, app, drain = client_with_auto_verify
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
@@ -214,14 +186,10 @@ class TestGetTestRun:
         assert post_resp.status_code == 202
         test_run_id = post_resp.json()["test_run_id"]
 
-        # Poll until completed (commands are fast in tests)
-        for _ in range(20):
-            await asyncio.sleep(0.2)
-            get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
-            assert get_resp.status_code == 200
-            data = get_resp.json()
-            if data["status"] != "running":
-                break
+        await app.state.test_runner.wait_for_test_run(test_run_id)
+        get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
+        assert get_resp.status_code == 200
+        data = get_resp.json()
 
         assert data["status"] in {"passed", "failed", "error"}
         assert "started_at" in data
@@ -231,7 +199,7 @@ class TestGetTestRun:
         self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """log_output contains actual stdout from the test command."""
-        client, repo, _app, drain = client_with_auto_verify
+        client, repo, app, drain = client_with_auto_verify
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
@@ -239,14 +207,10 @@ class TestGetTestRun:
         assert post_resp.status_code == 202
         test_run_id = post_resp.json()["test_run_id"]
 
-        # Wait for completion
-        data: dict[str, Any] = {}
-        for _ in range(20):
-            await asyncio.sleep(0.2)
-            get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
-            data = get_resp.json()
-            if data["status"] != "running":
-                break
+        await app.state.test_runner.wait_for_test_run(test_run_id)
+        get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
+        assert get_resp.status_code == 200
+        data = get_resp.json()
 
         # The routine's auto_verify command is `echo "tests passed"`
         assert "tests passed" in data["log_output"]
@@ -272,14 +236,10 @@ class TestGetTestRun:
             commands=["exit 1"],
         )
 
-        # Wait for completion
-        data: dict[str, Any] = {}
-        for _ in range(20):
-            await asyncio.sleep(0.2)
-            get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
-            data = get_resp.json()
-            if data["status"] != "running":
-                break
+        await test_runner.wait_for_test_run(test_run_id)
+        get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
+        assert get_resp.status_code == 200
+        data = get_resp.json()
 
         assert data["status"] == "failed"
 
@@ -298,7 +258,7 @@ class TestGetTestRun:
         self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:
         """TestRunResult response contains all required schema fields."""
-        client, repo, _app, drain = client_with_auto_verify
+        client, repo, app, drain = client_with_auto_verify
         run_data = await _create_and_start_run(client, repo, drain)
         run_id = run_data["id"]
 
@@ -306,14 +266,10 @@ class TestGetTestRun:
         assert post_resp.status_code == 202
         test_run_id = post_resp.json()["test_run_id"]
 
-        # Wait for completion
-        data: dict[str, Any] = {}
-        for _ in range(20):
-            await asyncio.sleep(0.2)
-            get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
-            data = get_resp.json()
-            if data["status"] != "running":
-                break
+        await app.state.test_runner.wait_for_test_run(test_run_id)
+        get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
+        assert get_resp.status_code == 200
+        data = get_resp.json()
 
         required_fields = {"test_run_id", "status", "log_output", "started_at"}
         assert required_fields.issubset(set(data.keys()))

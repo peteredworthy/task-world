@@ -1,16 +1,13 @@
 """Integration tests for DockerOpenHandsAgent.
 
-These tests require Docker daemon and/or OPENAI_API_KEY.
-Tests are skipped when prerequisites are not met.
+These tests avoid starting agent-server containers. Container lifecycle checks
+live in tests/slow because they require Docker I/O and are expensive to collect
+and run in the default suite.
 """
 
-import os
 import shutil
 import subprocess
-from collections.abc import Generator
-from typing import Any
 
-import httpx
 import pytest
 
 from orchestrator.runners.errors import AgentNotAvailableError
@@ -29,144 +26,13 @@ def _docker_available() -> bool:
         return False
 
 
-def _kill_orphan_agent_containers() -> None:
-    """Kill and remove any leftover agent-server-* containers.
-
-    Uses ``docker kill`` (immediate SIGKILL) instead of ``docker stop``
-    (which waits for a grace period) for fast cleanup in tests.
-    DockerWorkspace creates containers with ``--rm``, so killing also
-    removes them.  We also attempt ``docker rm -f`` as a safety net.
-    """
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=agent-server-", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return
-        containers = [name.strip() for name in result.stdout.splitlines() if name.strip()]
-        for name in containers:
-            subprocess.run(["docker", "kill", name], capture_output=True, timeout=10)
-            subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=10)
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
+@pytest.fixture
+def require_docker() -> None:
+    if not _docker_available():
+        pytest.skip("Docker daemon not available")
 
 
-def _running_agent_container_names() -> list[str]:
-    """Return names of currently running agent-server-* containers."""
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "--filter", "name=agent-server-", "--format", "{{.Names}}"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if result.returncode != 0:
-            return []
-        return [name.strip() for name in result.stdout.splitlines() if name.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        return []
-
-
-_needs_docker = pytest.mark.skipif(not _docker_available(), reason="Docker daemon not available")
-_needs_api_key = pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="No OPENAI_API_KEY")
-_needs_workspace_pkg = pytest.mark.skipif(
-    not _DOCKER_WORKSPACE_AVAILABLE, reason="openhands-workspace not installed"
-)
-
-
-@pytest.fixture(autouse=True)
-def _cleanup_containers() -> Generator[None, None, None]:  # pyright: ignore[reportUnusedFunction]
-    """Remove orphan agent-server containers before and after every test.
-
-    Runs before (to handle leftovers from a previously crashed run) and after
-    (to guarantee cleanup even if the test itself raises).
-    """
-    _kill_orphan_agent_containers()
-    yield
-    _kill_orphan_agent_containers()
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-@_needs_docker
-@_needs_workspace_pkg
-def test_docker_workspace_lifecycle() -> None:
-    """DockerWorkspace starts a container, serves health, and cleans up."""
-    from openhands.workspace import DockerWorkspace  # pyright: ignore[reportMissingImports]
-
-    from orchestrator.runners import _detect_platform  # pyright: ignore[reportPrivateUsage]
-
-    platform = _detect_platform()
-    kwargs: dict[str, Any] = {}
-    if platform is not None:
-        kwargs["platform"] = platform
-
-    with DockerWorkspace(
-        server_image="ghcr.io/openhands/agent-server:latest-python", **kwargs
-    ) as ws:
-        # Container is running — host is set to http://localhost:<port>
-        assert ws.host.startswith("http://localhost:")
-
-        # Health endpoint responds
-        response = httpx.get(f"{ws.host}/health", timeout=5)
-        assert response.status_code == 200
-
-        # Exactly one agent-server container should be running
-        running = _running_agent_container_names()
-        assert len(running) == 1
-
-        # Force-kill the container before context manager exit to avoid
-        # the ~7s docker stop grace period.  The --rm flag on docker run
-        # auto-removes the container, so cleanup() becomes a no-op.
-        cid = ws._container_id  # pyright: ignore[reportPrivateUsage]
-        assert cid is not None
-        subprocess.run(
-            ["docker", "kill", cid],
-            capture_output=True,
-            timeout=10,
-        )
-
-    # After context manager exit, container is cleaned up
-    running_after = _running_agent_container_names()
-    assert len(running_after) == 0
-
-
-@pytest.mark.slow
-@pytest.mark.timeout(120)
-@_needs_docker
-@_needs_workspace_pkg
-def test_docker_workspace_cleanup_on_exception() -> None:
-    """Container is cleaned up even when an exception occurs inside the block."""
-    from openhands.workspace import DockerWorkspace  # pyright: ignore[reportMissingImports]
-
-    from orchestrator.runners import _detect_platform  # pyright: ignore[reportPrivateUsage]
-
-    platform = _detect_platform()
-    kwargs: dict[str, Any] = {}
-    if platform is not None:
-        kwargs["platform"] = platform
-
-    with pytest.raises(RuntimeError, match="deliberate"):
-        with DockerWorkspace(
-            server_image="ghcr.io/openhands/agent-server:latest-python", **kwargs
-        ) as ws:
-            # Force-kill the container before raising the exception to avoid
-            # the ~7s docker stop grace period during cleanup().
-            cid = ws._container_id  # pyright: ignore[reportPrivateUsage]
-            assert cid is not None
-            subprocess.run(["docker", "kill", cid], capture_output=True, timeout=10)
-            raise RuntimeError("deliberate")
-
-    # Container should be gone despite the exception
-    running = _running_agent_container_names()
-    assert len(running) == 0
-
-
-@_needs_docker
-async def test_docker_openhands_health_check() -> None:
+async def test_docker_openhands_health_check(require_docker: None) -> None:
     """check_health() returns True when Docker daemon is running."""
     agent = DockerOpenHandsAgent()
     assert await agent.check_health() is True

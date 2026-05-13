@@ -83,14 +83,32 @@ from orchestrator.workflow.engine.transitions import (
     transition_to_recovering,
 )
 from orchestrator.workflow.completion import handle_run_completion
+from orchestrator.workflow.delegation import (
+    DelegateCommand,
+    DelegateResultEnvelope,
+    DelegatedWork,
+    DelegationCoordinator,
+    DelegationDecision,
+    FanOutDelegationPolicy,
+    SuperParentDelegationPolicy,
+    apply_delegate_command,
+    build_fan_out_facts,
+    build_super_parent_facts,
+    result_from_child_evidence,
+    work_from_child_run,
+    work_from_fan_out_child,
+)
 from orchestrator.workflow.oversight import (
     ACCEPTANCE_OUTCOMES,
     FinalValidationMarker,
     RunEvidenceBundle,
     REVISION_OUTCOMES,
     TargetInventoryItem,
-    reduce_parent_oversight_state,
     validate_run_evidence_items,
+)
+from orchestrator.workflow.oversight_projection import (
+    OversightProjectionService,
+    extract_parent_oversight_facts,
 )
 from orchestrator.git import ParentChildMergeResult, merge_child_into_parent
 from orchestrator.git.worktree import WorktreeManager
@@ -270,6 +288,10 @@ class WorkflowService:
         global_config: GlobalConfig | None = None,
         env_lifecycle: EnvFileLifecycle | None = None,
         signal_transport: SignalTransport | None = None,
+        oversight_projection: OversightProjectionService | None = None,
+        super_parent_policy: SuperParentDelegationPolicy | None = None,
+        fan_out_policy: FanOutDelegationPolicy | None = None,
+        delegation_coordinator: DelegationCoordinator | None = None,
     ) -> None:
         self._session = session
         self._repo = repo or RunRepository(session)
@@ -282,6 +304,10 @@ class WorkflowService:
         self._global_config = global_config
         self._env_lifecycle = env_lifecycle
         self._signal_transport = signal_transport
+        self._oversight_projection = oversight_projection or OversightProjectionService()
+        self._super_parent_policy = super_parent_policy or SuperParentDelegationPolicy()
+        self._fan_out_policy = fan_out_policy or FanOutDelegationPolicy()
+        self._delegation_coordinator = delegation_coordinator or DelegationCoordinator()
 
     def _build_engine(
         self, run: Run
@@ -304,6 +330,8 @@ class WorkflowService:
     ) -> Run:
         """Save state and events, then commit."""
         run = state.get_run(run_id)
+        if self._is_oversight_parent_run(run):
+            run.oversight_state = extract_parent_oversight_facts(run.oversight_state)
         await self._repo.save(run)
         if run.parent_run_id is not None:
             await self._refresh_parent_oversight_without_commit(run.parent_run_id)
@@ -1108,6 +1136,15 @@ class WorkflowService:
         if parent_task is None or parent_step is None:
             raise TaskNotFoundError(run_id, task_id)
 
+        existing_children = self._fan_out_children_for_parent(run, parent_task.id)
+        if existing_children:
+            facts, works = build_fan_out_facts(parent_task, existing_children)
+            duplicate_decision = self._fan_out_policy.reduce(facts.model_dump(), works, {})
+            self._record_fan_out_decision_on_run(run, duplicate_decision)
+            await self._repo.update_parent_oversight_facts(run.id, run.oversight_state)
+            await self._session.commit()
+            return existing_children
+
         # Find the task config with fan_out
         task_config = find_task_config(routine_config, parent_task.config_id, step_config_id)
         if task_config is None or task_config.fan_out is None:
@@ -1170,6 +1207,22 @@ class WorkflowService:
         )
         if not children:
             await self._repo.update_task_status(parent_task.id, TaskStatus.FAN_OUT_RUNNING)
+        await self._session.commit()
+
+        refreshed_run = await self._repo.get(run_id)
+        refreshed_parent = self._find_task(refreshed_run, task_id)
+        refreshed_children = self._fan_out_children_for_parent(refreshed_run, task_id)
+        facts, works = build_fan_out_facts(refreshed_parent, refreshed_children)
+        oversight_state = self._delegation_coordinator.record_decision(
+            refreshed_run.oversight_state,
+            self._fan_out_policy.reduce(facts.model_dump(), works, {}),
+            recorded_at=self._clock.now(),
+        )
+        oversight_state = self._record_fan_out_child_launches(
+            oversight_state,
+            refreshed_children,
+        )
+        await self._repo.update_parent_oversight_facts(run_id, oversight_state)
         await self._session.commit()
 
         # Emit FanOutSpawned parent aggregation event + ChildSpawned per-child events.
@@ -1254,17 +1307,64 @@ class WorkflowService:
         task_model = await self._repo.get_task_model(task_id)
 
         old_status_value = task_model.status
-        if old_status_value != TaskStatus.FAN_OUT_RUNNING.value:
-            if old_status_value in (TaskStatus.COMPLETED.value, TaskStatus.VERIFYING.value):
-                logger.info(
-                    f"Run {run_id}: fan-out parent {task_id} already "
-                    f"{old_status_value}, skipping complete_fan_out_parent"
-                )
-                return
+        completion_decision = self._fan_out_policy.decision_for_parent_completion(
+            old_status_value,
+            all_passed=all_passed,
+            to_verifying=to_verifying,
+        )
+        if completion_decision.kind == "stale_command_ignored":
+            logger.info(
+                f"Run {run_id}: fan-out parent {task_id} already "
+                f"{old_status_value}, skipping complete_fan_out_parent"
+            )
+            return
+        if completion_decision.kind == "review":
             raise InvalidTransitionError(
                 old_status_value,
                 "complete_fan_out_parent (requires FAN_OUT_RUNNING)",
             )
+
+        run_snapshot = await self._repo.get(run_id)
+        parent_snapshot = self._find_task(run_snapshot, task_id)
+        child_snapshots = self._fan_out_children_for_parent(run_snapshot, task_id)
+        facts, works = build_fan_out_facts(parent_snapshot, child_snapshots)
+        aggregation_decision = self._fan_out_policy.reduce(facts.model_dump(), works, {})
+        run_oversight_state = self._delegation_coordinator.record_decision(
+            task_model.step.run.oversight_state or {},
+            aggregation_decision,
+            recorded_at=self._clock.now(),
+        )
+        if aggregation_decision.kind == "wait":
+            await self._repo.update_parent_oversight_facts(run_id, run_oversight_state)
+            await self._session.commit()
+            return
+        if aggregation_decision.kind == "review":
+            await self._repo.update_parent_oversight_facts(run_id, run_oversight_state)
+            await self._session.commit()
+            raise InvalidTransitionError(
+                old_status_value,
+                "complete_fan_out_parent (fan-out state requires review)",
+            )
+        for child_snapshot in child_snapshots:
+            run_oversight_state = self._record_fan_out_child_terminal_result(
+                run_oversight_state,
+                child_snapshot,
+            )
+        run_oversight_state = self._delegation_coordinator.record_result(
+            run_oversight_state,
+            DelegateResultEnvelope(
+                work_id=task_id,
+                generation=parent_snapshot.current_attempt,
+                terminal_status="completed" if all_passed else "failed",
+                outcome=completion_decision.reason,
+                validation_status="valid",
+                integration_ready=all_passed,
+                reasons=() if all_passed else ("fan_out_child_failed",),
+            ),
+            completion_decision,
+            recorded_at=self._clock.now(),
+        )
+        await self._repo.update_parent_oversight_facts(run_id, run_oversight_state)
 
         step_id = task_model.step.id
         step_order_index = task_model.step.order_index
@@ -1343,7 +1443,19 @@ class WorkflowService:
 
         Also sets the parent task status to FAN_OUT_RUNNING.
         """
+        run_before = await self._repo.get(run_id)
+        retry_children = [
+            child
+            for child in self._fan_out_children_for_parent(run_before, parent_task_id)
+            if child.status == TaskStatus.FAILED
+        ]
         await self._repo.reset_fan_out_children(parent_task_id)
+        if retry_children:
+            run_after = await self._repo.get(run_id)
+            state = dict(run_after.oversight_state)
+            for child in retry_children:
+                state = self._record_fan_out_child_retry(state, child)
+            await self._repo.update_parent_oversight_facts(run_id, state)
         await self._session.commit()
 
     async def retry_fan_out_child(self, run_id: str, child_task_id: str) -> Run:
@@ -1359,6 +1471,8 @@ class WorkflowService:
 
         Returns the updated run.
         """
+        run_before_retry = await self._repo.get(run_id)
+        child_before_retry = self._find_task(run_before_retry, child_task_id)
         # retry_fan_out_child does targeted updates on child, parent, and step
         run_id_from_db, step_order_index = await self._repo.retry_fan_out_child(child_task_id)
         assert run_id_from_db == run_id
@@ -1368,6 +1482,11 @@ class WorkflowService:
 
         # Pause the run if active so the executor restarts from the right step
         run = await self._repo.get(run_id)
+        oversight_state = self._record_fan_out_child_retry(
+            run.oversight_state,
+            child_before_retry,
+        )
+        await self._repo.update_parent_oversight_facts(run_id, oversight_state)
         if run.status == RunStatus.ACTIVE:
             queue = self._get_signal_queue()
             await queue.enqueue(run_id, WorkflowSignal.PAUSE, {"reason": "fan_out_child_retry"})
@@ -1393,24 +1512,36 @@ class WorkflowService:
     async def start_fan_out_parent(self, run_id: str, task_id: str) -> TaskState:
         """Ensure a fan-out parent has an active attempt and FAN_OUT_RUNNING status."""
         run = await self._repo.get(run_id)
-        if run.status != RunStatus.ACTIVE:
-            raise InvalidTransitionError(
-                run.status.value, "start_fan_out_parent (requires ACTIVE run)"
-            )
-
         task = self._find_task(run, task_id)
-        if task.parent_task_id is not None:
-            raise InvalidTransitionError(task.status.value, "start_fan_out_parent (parent only)")
+        start_decision = self._fan_out_policy.decision_for_start_parent(run, task)
+        if start_decision.kind == "review":
+            self._record_fan_out_decision_on_run(run, start_decision)
+            await self._repo.update_parent_oversight_facts(run.id, run.oversight_state)
+            await self._session.commit()
+            if start_decision.reason == "run_not_active":
+                raise InvalidTransitionError(
+                    run.status.value, "start_fan_out_parent (requires ACTIVE run)"
+                )
+            if start_decision.reason == "task_is_fan_out_child":
+                raise InvalidTransitionError(
+                    task.status.value, "start_fan_out_parent (parent only)"
+                )
 
         if task.status == TaskStatus.PENDING:
             await self.start_task(run_id, task_id)
             run = await self._repo.get(run_id)
             task = self._find_task(run, task_id)
 
-        if task.status == TaskStatus.FAN_OUT_RUNNING:
+        if start_decision.kind == "wait" or task.status == TaskStatus.FAN_OUT_RUNNING:
+            self._record_fan_out_decision_on_run(run, start_decision)
+            await self._repo.update_parent_oversight_facts(run.id, run.oversight_state)
+            await self._session.commit()
             return task
 
         if task.status != TaskStatus.BUILDING:
+            self._record_fan_out_decision_on_run(run, start_decision)
+            await self._repo.update_parent_oversight_facts(run.id, run.oversight_state)
+            await self._session.commit()
             raise InvalidTransitionError(
                 task.status.value,
                 "start_fan_out_parent (requires PENDING, BUILDING, or FAN_OUT_RUNNING)",
@@ -1431,6 +1562,9 @@ class WorkflowService:
         )
         await self._session.commit()
         refreshed = await self._repo.get(run_id)
+        self._record_fan_out_decision_on_run(refreshed, start_decision)
+        await self._repo.update_parent_oversight_facts(refreshed.id, refreshed.oversight_state)
+        await self._session.commit()
         return self._find_task(refreshed, task_id)
 
     async def start_fan_out_child_task(self, run_id: str, task_id: str) -> None:
@@ -1444,6 +1578,15 @@ class WorkflowService:
         task = self._find_task(run, task_id)
         if task.parent_task_id is None:
             raise InvalidTransitionError(task.status.value, "start_fan_out_child_task (child only)")
+
+        if task.status == TaskStatus.BUILDING:
+            return
+
+        if task.status != TaskStatus.PENDING:
+            raise InvalidTransitionError(
+                task.status.value,
+                "start_fan_out_child_task (requires PENDING child)",
+            )
 
         next_attempt_num = task.current_attempt + 1
         attempt = Attempt(attempt_num=next_attempt_num, started_at=self._clock.now())
@@ -1509,6 +1652,8 @@ class WorkflowService:
         # contention in concurrent fan-out (all DB writes committed atomically below).
         if parent_task_id is not None and "status" in updates:
             new_status = updates["status"]
+            task_model = await self._repo.get_task_model(task_id)
+            attempt_num = task_model.current_attempt
             if new_status == TaskStatus.COMPLETED:
                 await self._event_store.append(
                     ChildCompleted(
@@ -1519,6 +1664,7 @@ class WorkflowService:
                         child_task_id=task_id,
                         child_id=child_id,
                         fan_out_index=fan_out_index,
+                        attempt_num=attempt_num,
                         fan_out_output=fan_out_output,
                     )
                 )
@@ -1532,6 +1678,7 @@ class WorkflowService:
                         child_task_id=task_id,
                         child_id=child_id,
                         fan_out_index=fan_out_index,
+                        attempt_num=attempt_num,
                         error=updates.get("error"),
                     )
                 )
@@ -2502,12 +2649,12 @@ class WorkflowService:
         if not marker.service_verified:
             return state
         if parent.worktree_path is None:
-            state.pop("final_validation", None)
+            state["final_validation"] = None
             return state
 
         head_commit = get_head_commit(Path(parent.worktree_path))
         if head_commit != marker.integrated_commit_sha:
-            state.pop("final_validation", None)
+            state["final_validation"] = None
         return state
 
     async def refresh_parent_oversight(self, parent_run_id: str) -> Run:
@@ -2524,10 +2671,11 @@ class WorkflowService:
     ) -> Run:
         """Recompute and save parent oversight state without committing."""
         parent = parent or await self._repo.get(parent_run_id)
-        parent.oversight_state = await self._compute_parent_oversight_state(parent)
-        parent.updated_at = self._clock.now()
-        await self._repo.save(parent)
-        return parent
+        return await self._persist_parent_oversight_state(
+            parent,
+            parent.oversight_state,
+            commit=False,
+        )
 
     async def _compute_parent_oversight_state(self, parent: Run) -> dict[str, Any]:
         """Compute parent oversight from persisted parent facts plus current children."""
@@ -2537,21 +2685,320 @@ class WorkflowService:
         parent_for_reduce = parent.model_copy(
             deep=True,
             update={
-                "oversight_state": self._drop_stale_final_validation(
-                    parent,
-                    parent.oversight_state,
+                "oversight_state": extract_parent_oversight_facts(
+                    self._drop_stale_final_validation(
+                        parent,
+                        parent.oversight_state,
+                    )
                 )
             },
         )
-        return reduce_parent_oversight_state(
+        return self._oversight_projection.project_parent(
             parent_for_reduce,
             children,
             evidence_by_run_id,
             max_child_runs=self._max_child_runs_for_parent(parent_for_reduce),
         )
 
+    async def _persist_parent_oversight_state(
+        self,
+        parent: Run,
+        state: dict[str, Any],
+        *,
+        commit: bool,
+    ) -> Run:
+        """Persist durable parent facts and hydrate the computed projection."""
+        durable_facts = extract_parent_oversight_facts(
+            self._drop_stale_final_validation(parent, state)
+        )
+        merged_facts = await self._repo.update_parent_oversight_facts(parent.id, durable_facts)
+        parent.oversight_state = merged_facts
+        children = await self._repo.list_child_runs(parent.id, include_action_logs=False)
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        parent_for_projection = parent.model_copy(
+            deep=True,
+            update={"oversight_state": merged_facts},
+        )
+        projected_state = self._oversight_projection.project_parent(
+            parent_for_projection,
+            children,
+            evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(parent_for_projection),
+        )
+        if commit:
+            await self._session.commit()
+        parent.oversight_state = projected_state
+        return parent
+
+    async def _hydrate_parent_oversight_state(self, parent: Run) -> Run:
+        """Attach a computed projection without saving it as durable state."""
+        children = await self._repo.list_child_runs(parent.id, include_action_logs=False)
+        evidence_by_run_id = await self._collect_child_evidence(children)
+        parent.oversight_state = self._oversight_projection.project_parent(
+            parent,
+            children,
+            evidence_by_run_id,
+            max_child_runs=self._max_child_runs_for_parent(parent),
+        )
+        return parent
+
+    def _delegation_owner_token(self, parent: Run) -> str:
+        token = parent.oversight_state.get("delegation_owner_token")
+        if isinstance(token, str) and token:
+            return token
+        return f"run:{parent.id}"
+
+    def _delegation_command_key(
+        self,
+        parent_run_id: str,
+        child_run_id: str,
+        action: str,
+    ) -> str:
+        return f"{parent_run_id}:{child_run_id}:{action}"
+
+    def _delegation_work_for_child_command(self, parent: Run, child: Run) -> Any:
+        live_work = work_from_child_run(
+            child,
+            resolved=child.id in self._resolved_child_run_ids(parent),
+        ).model_copy(update={"owner_token": self._delegation_owner_token(parent)})
+        raw_work = parent.oversight_state.get("delegated_work")
+        if not isinstance(raw_work, dict):
+            return live_work
+        delegated_work = cast(dict[str, Any], raw_work)
+        raw_child_work = delegated_work.get(child.id)
+        if not isinstance(raw_child_work, dict):
+            return live_work
+        existing = DelegatedWork.model_validate(raw_child_work)
+        status = existing.status
+        if existing.status == "requested" and live_work.status in ("running", "waiting"):
+            status = live_work.status
+        if existing.status in ("requested", "running", "waiting") and live_work.status in (
+            "terminal",
+            "review",
+        ):
+            status = live_work.status
+        return live_work.model_copy(
+            update={
+                "generation": existing.generation,
+                "status": status,
+                "owner_token": existing.owner_token or live_work.owner_token,
+                "idempotency_keys": existing.idempotency_keys,
+            }
+        )
+
+    def _delegate_results_from_child_evidence(
+        self,
+        children: list[Run],
+        evidence_by_run_id: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, DelegateResultEnvelope]:
+        results: dict[str, DelegateResultEnvelope] = {}
+        for child in children:
+            valid_items, invalid_items = validate_run_evidence_items(
+                evidence_by_run_id.get(child.id, []),
+                expected_slice_id=child.parent_slice_id,
+                expected_routine_id=child.routine_id,
+            )
+            outcomes = {
+                RunEvidenceBundle.model_validate(item["bundle"]).outcome
+                for item in valid_items
+                if isinstance(item.get("bundle"), dict)
+            }
+            if outcomes or invalid_items:
+                results[child.id] = result_from_child_evidence(
+                    child.id,
+                    set(outcomes),
+                    generation=work_from_child_run(child).generation,
+                    invalid_reasons=[item.path for item in invalid_items],
+                )
+        return results
+
+    def _fan_out_children_for_parent(
+        self,
+        run: Run,
+        parent_task_id: str,
+    ) -> list[TaskState]:
+        return [
+            task
+            for step in run.steps
+            for task in step.tasks
+            if task.parent_task_id == parent_task_id
+        ]
+
+    def _record_fan_out_decision_on_run(
+        self,
+        run: Run,
+        decision: DelegationDecision,
+    ) -> None:
+        run.oversight_state = self._delegation_coordinator.record_decision(
+            run.oversight_state,
+            decision,
+            recorded_at=self._clock.now(),
+        )
+
+    def _fan_out_command_key(self, parent_task_id: str, child_task_id: str, action: str) -> str:
+        return f"{parent_task_id}:{child_task_id}:fan-out:{action}"
+
+    def _record_fan_out_child_launches(
+        self,
+        owner_state: dict[str, Any],
+        children: list[TaskState],
+    ) -> dict[str, Any]:
+        state = dict(owner_state)
+        for child in children:
+            work = work_from_fan_out_child(child)
+            state, _, _ = self._delegation_coordinator.apply_command(
+                state,
+                work,
+                DelegateCommand(
+                    kind="launch",
+                    work_id=child.id,
+                    owner_id=work.owner_id,
+                    idempotency_key=self._fan_out_command_key(
+                        work.owner_id,
+                        child.id,
+                        "launch",
+                    ),
+                    expected_generation=work.generation,
+                ),
+                recorded_at=self._clock.now(),
+            )
+        return state
+
+    def _record_fan_out_child_retry(
+        self,
+        owner_state: dict[str, Any],
+        child: TaskState,
+    ) -> dict[str, Any]:
+        work = work_from_fan_out_child(child)
+        if work.status == "requested":
+            work = work.model_copy(update={"status": "review"})
+        state, _, _ = self._delegation_coordinator.apply_command(
+            owner_state,
+            work,
+            DelegateCommand(
+                kind="retry",
+                work_id=child.id,
+                owner_id=work.owner_id,
+                idempotency_key=self._fan_out_command_key(
+                    work.owner_id,
+                    child.id,
+                    f"retry:{work.generation}",
+                ),
+                expected_generation=work.generation,
+            ),
+            recorded_at=self._clock.now(),
+        )
+        return state
+
+    def _record_delegate_result_once(
+        self,
+        owner_state: dict[str, Any],
+        result: DelegateResultEnvelope,
+        decision: DelegationDecision,
+    ) -> dict[str, Any]:
+        for item in self._state_dict_list(owner_state.get("delegation_results")):
+            if (
+                item.get("work_id") == result.work_id
+                and item.get("generation") == result.generation
+            ):
+                return owner_state
+        return self._delegation_coordinator.record_result(
+            owner_state,
+            result,
+            decision,
+            recorded_at=self._clock.now(),
+        )
+
+    def _fan_out_work_for_command(
+        self,
+        owner_state: dict[str, Any],
+        child: TaskState,
+    ) -> DelegatedWork:
+        """Build live fan-out work while preserving durable command fences."""
+        work = work_from_fan_out_child(child)
+        raw_work = owner_state.get("delegated_work")
+        if isinstance(raw_work, dict):
+            delegated_work = cast(dict[str, Any], raw_work)
+            raw_child_work = delegated_work.get(child.id)
+            if isinstance(raw_child_work, dict):
+                existing = DelegatedWork.model_validate(raw_child_work)
+                work = work.model_copy(
+                    update={
+                        "idempotency_keys": existing.idempotency_keys,
+                        "owner_token": existing.owner_token,
+                    }
+                )
+        return work
+
+    def _record_fan_out_child_terminal_result(
+        self,
+        owner_state: dict[str, Any],
+        child: TaskState,
+    ) -> dict[str, Any]:
+        if child.status not in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            return owner_state
+        work = self._fan_out_work_for_command(owner_state, child)
+        passed = child.status == TaskStatus.COMPLETED
+        command_kind: Literal["integrate", "reject"] = "integrate" if passed else "reject"
+        state, _, decision = self._delegation_coordinator.apply_command(
+            owner_state,
+            work,
+            DelegateCommand(
+                kind=command_kind,
+                work_id=child.id,
+                owner_id=work.owner_id,
+                idempotency_key=self._fan_out_command_key(
+                    work.owner_id,
+                    child.id,
+                    f"{command_kind}:{work.generation}",
+                ),
+                expected_generation=work.generation,
+            ),
+            recorded_at=self._clock.now(),
+        )
+        if decision.kind == "stale_command_ignored":
+            return state
+        return self._record_delegate_result_once(
+            state,
+            DelegateResultEnvelope(
+                work_id=child.id,
+                generation=work.generation,
+                terminal_status="completed" if passed else "failed",
+                outcome="fan_out_child_completed" if passed else "fan_out_child_failed",
+                validation_status="valid",
+                integration_ready=passed,
+                reasons=() if passed else ("fan_out_child_failed",),
+            ),
+            DelegationDecision(
+                kind="complete" if passed else "reject",
+                work_id=child.id,
+                reason="fan_out_child_completed" if passed else "fan_out_child_failed",
+                stable_state=None if passed else "NeedsRevision",
+            ),
+        )
+
+    def _task_state_from_model(self, task_model: Any) -> TaskState:
+        return TaskState(
+            id=task_model.id,
+            config_id=task_model.config_id,
+            title=task_model.title,
+            status=TaskStatus(task_model.status),
+            current_attempt=task_model.current_attempt,
+            parent_task_id=task_model.parent_task_id,
+            fan_out_index=task_model.fan_out_index,
+            fan_out_input=task_model.fan_out_input,
+            fan_out_output=task_model.fan_out_output,
+            child_id=task_model.child_id,
+        )
+
     async def accept_child_run(
-        self, parent_run_id: str, child_run_id: str
+        self,
+        parent_run_id: str,
+        child_run_id: str,
+        *,
+        expected_generation: int | None = None,
+        idempotency_key: str | None = None,
+        owner_token: str | None = None,
     ) -> ParentChildMergeResult:
         """Accept a completed child by merging it into the parent run branch."""
         parent = await self._repo.get(parent_run_id)
@@ -2574,12 +3021,99 @@ class WorkflowService:
                 "accept_child_run (child missing worktree)",
             )
 
-        child_evidence = await self.collect_run_evidence(child_run_id)
-        child_outcomes = await self._validate_child_evidence_for_acceptance(
-            child,
-            child_evidence,
+        state = dict(parent.oversight_state)
+        work = self._delegation_work_for_child_command(parent, child)
+        command_key = idempotency_key or self._delegation_command_key(
+            parent_run_id,
+            child.id,
+            "integrate",
         )
+        command_owner_token = owner_token or self._delegation_owner_token(parent)
+        integrate_command = DelegateCommand(
+            kind="integrate",
+            work_id=child.id,
+            owner_id=parent.id,
+            idempotency_key=command_key,
+            expected_generation=expected_generation
+            if expected_generation is not None
+            else work.generation,
+            owner_token=command_owner_token,
+        )
+        accepted_ids = set(self._state_str_list(state.get("accepted_child_run_ids")))
+        for item in self._state_dict_list(state.get("accepted_children")):
+            accepted_child_id = item.get("child_run_id") or item.get("run_id")
+            if isinstance(accepted_child_id, str):
+                accepted_ids.add(accepted_child_id)
+        command_work, integrate_decision = apply_delegate_command(work, integrate_command)
+        if child.id in accepted_ids:
+            state = self._delegation_coordinator.record_decision(
+                state,
+                integrate_decision,
+                recorded_at=self._clock.now(),
+                idempotency_key=integrate_command.idempotency_key,
+                expected_generation=integrate_command.expected_generation,
+                owner_token=integrate_command.owner_token,
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            accepted_child = next(
+                (
+                    item
+                    for item in self._state_dict_list(state.get("accepted_children"))
+                    if item.get("child_run_id") == child.id
+                ),
+                None,
+            )
+            merge_commit_sha = (
+                accepted_child.get("merge_commit_sha") if accepted_child is not None else None
+            )
+            return ParentChildMergeResult(
+                status="clean",
+                parent_branch=f"orchestrator/run-{parent_run_id}",
+                child_branch=f"orchestrator/run-{child_run_id}",
+                merge_commit_sha=merge_commit_sha if isinstance(merge_commit_sha, str) else None,
+            )
+        if integrate_decision.kind != "integrate":
+            state = self._delegation_coordinator.record_decision(
+                state,
+                integrate_decision,
+                recorded_at=self._clock.now(),
+                idempotency_key=integrate_command.idempotency_key,
+                expected_generation=integrate_command.expected_generation,
+                owner_token=integrate_command.owner_token,
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            raise InvalidTransitionError(
+                child.status.value,
+                "accept_child_run (stale delegation command)",
+            )
+
+        child_evidence = await self.collect_run_evidence(child_run_id)
+        try:
+            child_outcomes = await self._validate_child_evidence_for_acceptance(
+                child,
+                child_evidence,
+            )
+        except InvalidTransitionError as err:
+            state = self._delegation_coordinator.record_review_state(
+                parent.oversight_state,
+                work_id=child.id,
+                stable_state="InvalidEvidence",
+                reason="child_evidence_invalid",
+                payload={"message": str(err), "evidence_count": len(child_evidence)},
+                recorded_at=self._clock.now(),
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            raise
         if not child_outcomes & ACCEPTANCE_OUTCOMES:
+            state = self._delegation_coordinator.record_review_state(
+                parent.oversight_state,
+                work_id=child.id,
+                stable_state="InvalidEvidence",
+                reason="child_acceptance_evidence_missing",
+                payload={"evidence_count": len(child_evidence)},
+                recorded_at=self._clock.now(),
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
             raise InvalidTransitionError(
                 child.status.value,
                 "accept_child_run (requires verified_fix or behavior_already_correct evidence)",
@@ -2594,24 +3128,56 @@ class WorkflowService:
             abort_on_conflict=False,
         )
 
-        state = dict(parent.oversight_state)
+        result_envelope = result_from_child_evidence(
+            child.id,
+            child_outcomes,
+            generation=expected_generation if expected_generation is not None else work.generation,
+        )
         if result.status == "clean":
+            state, _, _ = self._delegation_coordinator.apply_command(
+                state,
+                work,
+                integrate_command,
+                recorded_at=self._clock.now(),
+            )
             self._record_child_acceptance(parent, child, result, state)
+            state = self._delegation_coordinator.record_result(
+                state,
+                result_envelope,
+                DelegationDecision(kind="integrate", work_id=child.id),
+                recorded_at=self._clock.now(),
+            )
         else:
             self._record_child_merge_conflict(parent, child, result, state)
+            state = self._delegation_coordinator.record_work_state(
+                state,
+                (command_work or work).model_copy(update={"status": "review"}),
+            )
+            state = self._delegation_coordinator.record_result(
+                state,
+                result_envelope.model_copy(
+                    update={
+                        "integration_ready": False,
+                        "reasons": (
+                            "merge_conflict",
+                            *result.conflict_files,
+                        ),
+                    }
+                ),
+                DelegationDecision(
+                    kind="conflict",
+                    work_id=child.id,
+                    reason="child_merge_conflict",
+                    stable_state="MergeConflict",
+                    payload={
+                        "conflict_files": result.conflict_files,
+                        "conflict_count": result.conflict_count,
+                    },
+                ),
+                recorded_at=self._clock.now(),
+            )
 
-        parent.oversight_state = self._drop_stale_final_validation(parent, state)
-        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
-        evidence_by_run_id = await self._collect_child_evidence(children)
-        parent.oversight_state = reduce_parent_oversight_state(
-            parent,
-            children,
-            evidence_by_run_id,
-            max_child_runs=self._max_child_runs_for_parent(parent),
-        )
-        parent.updated_at = self._clock.now()
-        await self._repo.save(parent)
-        await self._session.commit()
+        await self._persist_parent_oversight_state(parent, state, commit=True)
         return result
 
     async def resolve_child_run(
@@ -2658,6 +3224,50 @@ class WorkflowService:
 
         rejected_ids = set(self._state_str_list(state.get("rejected_child_run_ids")))
         abandoned_ids = set(self._state_str_list(state.get("abandoned_child_run_ids")))
+        if child.id in rejected_ids and resolution == "reject":
+            state = self._delegation_coordinator.record_decision(
+                state,
+                DelegationDecision(
+                    kind="stale_command_ignored",
+                    work_id=child.id,
+                    reason="duplicate_child_resolution",
+                    stable_state="StaleCommandIgnored",
+                ),
+                recorded_at=self._clock.now(),
+                idempotency_key=self._delegation_command_key(parent_run_id, child.id, resolution),
+                expected_generation=0,
+                owner_token=self._delegation_owner_token(parent),
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            return ChildRunResolutionResult(
+                parent_run_id=parent_run_id,
+                child_run_id=child.id,
+                resolution=resolution,
+                reason=clean_reason,
+                resolved_at=self._clock.now(),
+            )
+        if child.id in abandoned_ids and resolution == "abandon":
+            state = self._delegation_coordinator.record_decision(
+                state,
+                DelegationDecision(
+                    kind="stale_command_ignored",
+                    work_id=child.id,
+                    reason="duplicate_child_resolution",
+                    stable_state="StaleCommandIgnored",
+                ),
+                recorded_at=self._clock.now(),
+                idempotency_key=self._delegation_command_key(parent_run_id, child.id, resolution),
+                expected_generation=0,
+                owner_token=self._delegation_owner_token(parent),
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            return ChildRunResolutionResult(
+                parent_run_id=parent_run_id,
+                child_run_id=child.id,
+                resolution=resolution,
+                reason=clean_reason,
+                resolved_at=self._clock.now(),
+            )
         if child.id in rejected_ids and resolution == "abandon":
             raise InvalidTransitionError(
                 child.status.value,
@@ -2695,19 +3305,22 @@ class WorkflowService:
             }
         )
         state["decisions"] = decisions
-
-        parent.oversight_state = self._drop_stale_final_validation(parent, state)
-        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
-        evidence_by_run_id = await self._collect_child_evidence(children)
-        parent.oversight_state = reduce_parent_oversight_state(
-            parent,
-            children,
-            evidence_by_run_id,
-            max_child_runs=self._max_child_runs_for_parent(parent),
+        work = self._delegation_work_for_child_command(parent, child)
+        state, _, _ = self._delegation_coordinator.apply_command(
+            state,
+            work,
+            DelegateCommand(
+                kind=resolution,
+                work_id=child.id,
+                owner_id=parent.id,
+                idempotency_key=self._delegation_command_key(parent_run_id, child.id, resolution),
+                expected_generation=work.generation,
+                owner_token=self._delegation_owner_token(parent),
+            ),
+            recorded_at=now,
         )
-        parent.updated_at = now
-        await self._repo.save(parent)
-        await self._session.commit()
+
+        await self._persist_parent_oversight_state(parent, state, commit=True)
         return ChildRunResolutionResult(
             parent_run_id=parent_run_id,
             child_run_id=child.id,
@@ -2725,18 +3338,74 @@ class WorkflowService:
         next_action_decision: str,
     ) -> Run:
         """Persist a child run and record it in the parent's oversight history."""
-        parent = await self._repo.get(parent_run_id)
+        parent = await self._repo.lock_run_for_coordination(parent_run_id)
         if child_run.id == parent_run_id:
             raise InvalidTransitionError(parent.status.value, "create_child_run (self-parent)")
-        if parent.status != RunStatus.ACTIVE:
-            raise InvalidTransitionError(
-                parent.status.value,
-                "create_child_run (requires active parent)",
-            )
 
         existing_children = await self._repo.list_child_runs(
             parent_run_id, include_action_logs=False
         )
+        create_decision = self._super_parent_policy.decision_for_create_child(
+            parent,
+            existing_children,
+            child_run_id=child_run.id,
+            max_child_runs=self._max_child_runs_for_parent(parent),
+            resolved_child_run_ids=self._resolved_child_run_ids(parent),
+        )
+        if create_decision.kind == "stale_command_ignored":
+            state = self._delegation_coordinator.record_decision(
+                parent.oversight_state,
+                create_decision,
+                recorded_at=self._clock.now(),
+                idempotency_key=self._delegation_command_key(parent_run_id, child_run.id, "launch"),
+                expected_generation=0,
+                owner_token=self._delegation_owner_token(parent),
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            existing = next(child for child in existing_children if child.id == child_run.id)
+            return existing
+        if create_decision.reason == "parent_not_active":
+            state = self._delegation_coordinator.record_decision(
+                parent.oversight_state,
+                create_decision,
+                recorded_at=self._clock.now(),
+                idempotency_key=self._delegation_command_key(parent_run_id, child_run.id, "launch"),
+                expected_generation=0,
+                owner_token=self._delegation_owner_token(parent),
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            raise InvalidTransitionError(
+                parent.status.value,
+                "create_child_run (requires active parent)",
+            )
+        if create_decision.reason == "unresolved_child_already_exists":
+            state = self._delegation_coordinator.record_decision(
+                parent.oversight_state,
+                create_decision,
+                recorded_at=self._clock.now(),
+                idempotency_key=self._delegation_command_key(parent_run_id, child_run.id, "launch"),
+                expected_generation=0,
+                owner_token=self._delegation_owner_token(parent),
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            raise InvalidTransitionError(
+                parent.status.value,
+                "create_child_run (unresolved child already exists)",
+            )
+        if create_decision.reason == "max_child_run_limit_reached":
+            state = self._delegation_coordinator.record_decision(
+                parent.oversight_state,
+                create_decision,
+                recorded_at=self._clock.now(),
+                idempotency_key=self._delegation_command_key(parent_run_id, child_run.id, "launch"),
+                expected_generation=0,
+                owner_token=self._delegation_owner_token(parent),
+            )
+            await self._persist_parent_oversight_state(parent, state, commit=True)
+            raise InvalidTransitionError(
+                parent.status.value,
+                "create_child_run (max child run limit reached)",
+            )
         blocking_children = [
             child
             for child in existing_children
@@ -2758,6 +3427,20 @@ class WorkflowService:
         child_run.parent_slice_id = parent_slice_id
 
         state: dict[str, Any] = dict(parent.oversight_state)
+        work = self._delegation_work_for_child_command(parent, child_run)
+        state, _, _ = self._delegation_coordinator.apply_command(
+            state,
+            work,
+            DelegateCommand(
+                kind="launch",
+                work_id=child_run.id,
+                owner_id=parent.id,
+                idempotency_key=self._delegation_command_key(parent_run_id, child_run.id, "launch"),
+                expected_generation=work.generation,
+                owner_token=self._delegation_owner_token(parent),
+            ),
+            recorded_at=self._clock.now(),
+        )
         slices = list(state.get("slices", []))
         now = self._clock.now()
         slices.append(
@@ -2772,12 +3455,8 @@ class WorkflowService:
         state["slices"] = slices
         state["last_child_run_id"] = child_run.id
         state["last_decision"] = next_action_decision
-        parent.oversight_state = state
-        parent.updated_at = now
-
-        await self._repo.save(parent)
         await self._repo.save(child_run)
-        await self._refresh_parent_oversight_without_commit(parent_run_id, parent=parent)
+        await self._repo.update_parent_oversight_facts(parent_run_id, state)
         queue = self._get_signal_queue()
         await queue.enqueue(child_run.id, WorkflowSignal.RUN_START)
         await self._session.commit()
@@ -2909,19 +3588,47 @@ class WorkflowService:
             return
 
         evidence_by_run_id = await self._collect_child_evidence(children)
-        run.oversight_state = self._drop_stale_final_validation(run, run.oversight_state)
-        oversight_state = reduce_parent_oversight_state(
+        fact_state = extract_parent_oversight_facts(
+            self._drop_stale_final_validation(run, run.oversight_state)
+        )
+        run.oversight_state = fact_state
+        oversight_state = self._oversight_projection.project_parent(
             run,
             children,
             evidence_by_run_id,
             max_child_runs=self._max_child_runs_for_parent(run),
         )
-        run.oversight_state = oversight_state
         terminal_guard = oversight_state.get("terminal_guard", {})
         if run.status in (RunStatus.COMPLETED, RunStatus.FAILED) and not terminal_guard.get(
             "can_complete",
             False,
         ):
+            facts, works = build_super_parent_facts(
+                run,
+                children,
+                max_child_runs=self._max_child_runs_for_parent(run),
+                resolved_child_run_ids=self._resolved_child_run_ids(run),
+            )
+            policy_decision = self._super_parent_policy.reduce(
+                facts.model_dump(),
+                works,
+                self._delegate_results_from_child_evidence(children, evidence_by_run_id),
+            )
+            if policy_decision.kind == "launch":
+                policy_decision = DelegationDecision(
+                    kind="review",
+                    reason="terminal_guard_blocked",
+                    stable_state="AwaitingGate",
+                    payload={
+                        "blocking_reasons": terminal_guard.get("blocking_reasons", []),
+                    },
+                )
+            fact_state = self._delegation_coordinator.record_decision(
+                fact_state,
+                policy_decision,
+                recorded_at=self._clock.now(),
+            )
+            run.oversight_state = extract_parent_oversight_facts(fact_state)
             old_status = run.status
             run.status = RunStatus.PAUSED
             run.pause_reason = "oversight_children_unresolved"
@@ -2941,6 +3648,8 @@ class WorkflowService:
                         new_status=RunStatus.PAUSED,
                     )
                 )
+        else:
+            run.oversight_state = fact_state
         state.update_run(run)
 
     async def _resolve_run_completion_transition(
@@ -2992,6 +3701,9 @@ class WorkflowService:
             "final_validation",
             "slices",
             "accepted_child_run_ids",
+            "rejected_child_run_ids",
+            "abandoned_child_run_ids",
+            "closed_child_run_ids",
             "max_child_runs",
         }
         return bool(oversight_keys & set(run.oversight_state.keys()))
@@ -3016,10 +3728,44 @@ class WorkflowService:
         observed_status: RunStatus,
         phase: Literal["started", "observed"],
         timeout_seconds: float,
+        expected_generation: int | None = None,
+        owner_token: str | None = None,
+        idempotency_key: str | None = None,
     ) -> Run:
         """Persist parent wait intent/observation for child-run recovery."""
         parent = await self._repo.get(parent_run_id)
         state = dict(parent.oversight_state)
+        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+        child = next((item for item in children if item.id == child_run_id), None)
+        work = self._delegation_work_for_child_command(parent, child) if child else None
+        generation = (
+            expected_generation
+            if expected_generation is not None
+            else (work.generation if work else 0)
+        )
+        state, _, wait_decision = self._delegation_coordinator.apply_command(
+            state,
+            work,
+            DelegateCommand(
+                kind="observe",
+                work_id=child_run_id,
+                owner_id=parent.id,
+                idempotency_key=idempotency_key
+                or self._delegation_command_key(
+                    parent_run_id,
+                    child_run_id,
+                    f"wait:{phase}:{observed_status.value}",
+                ),
+                expected_generation=generation,
+                owner_token=owner_token or self._delegation_owner_token(parent),
+            ),
+            recorded_at=self._clock.now(),
+        )
+        if (
+            wait_decision.kind == "stale_command_ignored"
+            or wait_decision.reason == "delegated_work_not_found"
+        ):
+            return await self._persist_parent_oversight_state(parent, state, commit=True)
         waits = self._state_dict_list(state.get("child_waits"))
         waits.append(
             {
@@ -3031,19 +3777,7 @@ class WorkflowService:
             }
         )
         state["child_waits"] = waits[-50:]
-        parent.oversight_state = self._drop_stale_final_validation(parent, state)
-        children = await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
-        evidence_by_run_id = await self._collect_child_evidence(children)
-        parent.oversight_state = reduce_parent_oversight_state(
-            parent,
-            children,
-            evidence_by_run_id,
-            max_child_runs=self._max_child_runs_for_parent(parent),
-        )
-        parent.updated_at = self._clock.now()
-        await self._repo.save(parent)
-        await self._session.commit()
-        return parent
+        return await self._persist_parent_oversight_state(parent, state, commit=True)
 
     async def collect_run_evidence(self, run_id: str) -> list[dict[str, Any]]:
         """Collect run.evidence.v1 bundles from a run worktree."""
@@ -3812,7 +4546,16 @@ class WorkflowService:
         run = await self._repo.get(run_id)
 
         actions: list[dict[str, Any]] = []
-        oversight_action = self._pending_oversight_action(run)
+        oversight_run = run
+        if (
+            self._is_oversight_parent_run(run)
+            or run.pause_reason == "oversight_children_unresolved"
+        ):
+            oversight_run = run.model_copy(
+                deep=True,
+                update={"oversight_state": await self._compute_parent_oversight_state(run)},
+            )
+        oversight_action = self._pending_oversight_action(oversight_run)
         if oversight_action is not None:
             actions.append(oversight_action)
         current_step_index = run.current_step_index

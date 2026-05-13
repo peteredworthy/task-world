@@ -1,5 +1,6 @@
 """Integration tests for branch operations using real git repos."""
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -7,16 +8,14 @@ import pytest
 from orchestrator.git import back_merge, get_branch_status, merge_back
 from orchestrator.git.errors import BranchNotFoundError, MergeConflictError
 
-from tests.integration.git_helpers import _commit_file, _git, _init_repo
+from tests.integration.git_helpers import _commit_file, _git
 
 
 @pytest.fixture
-def git_repo(tmp_path: Path) -> Path:
-    """Create a git repo with main branch."""
+def git_repo(tmp_path: Path, _base_repo: Path) -> Path:
+    """Per-test repo copied from session-scoped ``_base_repo`` (~150 ms saved vs ``git init``)."""
     repo = tmp_path / "repo"
-    repo.mkdir()
-    _init_repo(repo)
-    # Ensure we're on main
+    shutil.copytree(str(_base_repo), str(repo))
     _git(["branch", "-M", "main"], cwd=repo)
     return repo
 

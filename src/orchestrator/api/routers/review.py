@@ -861,24 +861,22 @@ async def resolve_conflict_endpoint(
 # ---------------------------------------------------------------------------
 
 
-async def compute_readiness(
-    run: Run,
-    repo_path: Path,
-    test_runner: TestRunner,
-    executor: AgentRunnerExecutor,
+def evaluate_merge_readiness_gates(
+    *,
+    source_branch_configured: bool,
+    can_merge_cleanly: bool | None,
+    predicted_conflict_count: int,
+    worktree_available: bool,
+    unresolved_conflict_count: int | None,
+    auto_verify_configured: bool,
+    tests_running: bool,
+    last_test_status: str | None,
+    agent_running: bool,
 ) -> MergeReadiness:
-    """Evaluate all four merge readiness gates and return aggregate result.
-
-    Gates:
-    - clean_merge: merge prediction is clean (no predicted conflicts)
-    - no_unresolved_conflicts: no unresolved conflict files in worktree
-    - tests_pass: most recent test run passed (or no tests configured)
-    - no_active_jobs: no running agent or test jobs
-    """
+    """Evaluate merge-readiness gates from already-collected facts."""
     gates: list[Gate] = []
 
-    # --- Gate: clean_merge ---
-    if not run.source_branch:
+    if not source_branch_configured:
         gates.append(
             Gate(
                 name="clean_merge",
@@ -886,40 +884,32 @@ async def compute_readiness(
                 description="No source branch configured",
             )
         )
+    elif can_merge_cleanly is None:
+        gates.append(
+            Gate(
+                name="clean_merge",
+                status="pending",
+                description="Unable to compute merge prediction",
+            )
+        )
+    elif can_merge_cleanly:
+        gates.append(
+            Gate(
+                name="clean_merge",
+                status="pass",
+                description="Merge prediction is clean",
+            )
+        )
     else:
-        run_branch = f"orchestrator/run-{run.id}"
-        try:
-            status = await asyncio.to_thread(
-                get_branch_status, repo_path, run_branch, run.source_branch
+        gates.append(
+            Gate(
+                name="clean_merge",
+                status="fail",
+                description=f"Merge conflicts predicted in {predicted_conflict_count} file(s)",
             )
-            if status.can_merge_cleanly:
-                gates.append(
-                    Gate(
-                        name="clean_merge",
-                        status="pass",
-                        description="Merge prediction is clean",
-                    )
-                )
-            else:
-                gates.append(
-                    Gate(
-                        name="clean_merge",
-                        status="fail",
-                        description=f"Merge conflicts predicted in {status.predicted_conflict_count} file(s)",
-                    )
-                )
-        except Exception:
-            gates.append(
-                Gate(
-                    name="clean_merge",
-                    status="pending",
-                    description="Unable to compute merge prediction",
-                )
-            )
+        )
 
-    # --- Gate: no_unresolved_conflicts ---
-    worktree_path: Path | None = Path(run.worktree_path) if run.worktree_path else None
-    if worktree_path is None or not worktree_path.exists():
+    if not worktree_available:
         gates.append(
             Gate(
                 name="no_unresolved_conflicts",
@@ -927,37 +917,32 @@ async def compute_readiness(
                 description="Worktree not available",
             )
         )
-    else:
-        try:
-            conflict_files = await get_conflict_files(worktree_path)
-            if not conflict_files:
-                gates.append(
-                    Gate(
-                        name="no_unresolved_conflicts",
-                        status="pass",
-                        description="No unresolved merge conflicts",
-                    )
-                )
-            else:
-                gates.append(
-                    Gate(
-                        name="no_unresolved_conflicts",
-                        status="fail",
-                        description=f"{len(conflict_files)} file(s) have unresolved merge conflicts",
-                    )
-                )
-        except Exception:
-            gates.append(
-                Gate(
-                    name="no_unresolved_conflicts",
-                    status="pending",
-                    description="Unable to check conflict status",
-                )
+    elif unresolved_conflict_count is None:
+        gates.append(
+            Gate(
+                name="no_unresolved_conflicts",
+                status="pending",
+                description="Unable to check conflict status",
             )
+        )
+    elif unresolved_conflict_count == 0:
+        gates.append(
+            Gate(
+                name="no_unresolved_conflicts",
+                status="pass",
+                description="No unresolved merge conflicts",
+            )
+        )
+    else:
+        gates.append(
+            Gate(
+                name="no_unresolved_conflicts",
+                status="fail",
+                description=f"{unresolved_conflict_count} file(s) have unresolved merge conflicts",
+            )
+        )
 
-    # --- Gate: tests_pass ---
-    commands = _get_auto_verify_commands(run.routine_embedded)
-    if not commands:
+    if not auto_verify_configured:
         gates.append(
             Gate(
                 name="tests_pass",
@@ -965,7 +950,7 @@ async def compute_readiness(
                 description="No tests configured",
             )
         )
-    elif test_runner.is_running(run.id):
+    elif tests_running:
         gates.append(
             Gate(
                 name="tests_pass",
@@ -973,41 +958,36 @@ async def compute_readiness(
                 description="Test run is in progress",
             )
         )
+    elif last_test_status is None:
+        gates.append(
+            Gate(
+                name="tests_pass",
+                status="pending",
+                description="No test run recorded yet",
+            )
+        )
+    elif last_test_status == "passed":
+        gates.append(
+            Gate(
+                name="tests_pass",
+                status="pass",
+                description="Most recent test run passed",
+            )
+        )
     else:
-        last_result = test_runner.get_last_result_for_run(run.id)
-        if last_result is None:
-            gates.append(
-                Gate(
-                    name="tests_pass",
-                    status="pending",
-                    description="No test run recorded yet",
-                )
+        gates.append(
+            Gate(
+                name="tests_pass",
+                status="fail",
+                description=f"Most recent test run {last_test_status}",
             )
-        elif last_result.status == "passed":
-            gates.append(
-                Gate(
-                    name="tests_pass",
-                    status="pass",
-                    description="Most recent test run passed",
-                )
-            )
-        else:
-            gates.append(
-                Gate(
-                    name="tests_pass",
-                    status="fail",
-                    description=f"Most recent test run {last_result.status}",
-                )
-            )
+        )
 
-    # --- Gate: no_active_jobs ---
-    agent_running = executor.is_running(run.id)
-    test_running = test_runner.is_running(run.id)
-    if agent_running or test_running:
+    if agent_running or tests_running:
         reasons: list[str] = []
         if agent_running:
             reasons.append("agent job")
-        if test_running:
+        if tests_running:
             reasons.append("test job")
         gates.append(
             Gate(
@@ -1025,8 +1005,64 @@ async def compute_readiness(
             )
         )
 
-    ready = all(g.status == "pass" for g in gates)
-    return MergeReadiness(ready=ready, gates=gates)
+    return MergeReadiness(ready=all(g.status == "pass" for g in gates), gates=gates)
+
+
+async def compute_readiness(
+    run: Run,
+    repo_path: Path,
+    test_runner: TestRunner,
+    executor: AgentRunnerExecutor,
+) -> MergeReadiness:
+    """Evaluate all four merge readiness gates and return aggregate result.
+
+    Gates:
+    - clean_merge: merge prediction is clean (no predicted conflicts)
+    - no_unresolved_conflicts: no unresolved conflict files in worktree
+    - tests_pass: most recent test run passed (or no tests configured)
+    - no_active_jobs: no running agent or test jobs
+    """
+    can_merge_cleanly: bool | None = None
+    predicted_conflict_count = 0
+    if not run.source_branch:
+        can_merge_cleanly = None
+    else:
+        run_branch = f"orchestrator/run-{run.id}"
+        try:
+            status = await asyncio.to_thread(
+                get_branch_status, repo_path, run_branch, run.source_branch
+            )
+            can_merge_cleanly = status.can_merge_cleanly
+            predicted_conflict_count = status.predicted_conflict_count
+        except Exception:
+            can_merge_cleanly = None
+
+    worktree_path: Path | None = Path(run.worktree_path) if run.worktree_path else None
+    worktree_available = worktree_path is not None and worktree_path.exists()
+    unresolved_conflict_count: int | None = None
+    if worktree_available and worktree_path is not None:
+        try:
+            conflict_files = await get_conflict_files(worktree_path)
+            unresolved_conflict_count = len(conflict_files)
+        except Exception:
+            unresolved_conflict_count = None
+
+    commands = _get_auto_verify_commands(run.routine_embedded)
+    tests_running = test_runner.is_running(run.id)
+    last_result = None if tests_running else test_runner.get_last_result_for_run(run.id)
+    agent_running = executor.is_running(run.id)
+
+    return evaluate_merge_readiness_gates(
+        source_branch_configured=bool(run.source_branch),
+        can_merge_cleanly=can_merge_cleanly,
+        predicted_conflict_count=predicted_conflict_count,
+        worktree_available=worktree_available,
+        unresolved_conflict_count=unresolved_conflict_count,
+        auto_verify_configured=bool(commands),
+        tests_running=tests_running,
+        last_test_status=last_result.status if last_result is not None else None,
+        agent_running=agent_running,
+    )
 
 
 # ---------------------------------------------------------------------------

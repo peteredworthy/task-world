@@ -46,13 +46,13 @@ async def session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def registry() -> SubmitEventRegistry:
+def registry() -> "NotifyingSubmitEventRegistry":
     """Shared submit event registry — the same instance for all services."""
-    return SubmitEventRegistry()
+    return NotifyingSubmitEventRegistry()
 
 
 @pytest.fixture
-def service(session: AsyncSession, registry: SubmitEventRegistry) -> WorkflowService:
+def service(session: AsyncSession, registry: "NotifyingSubmitEventRegistry") -> WorkflowService:
     return WorkflowService(session, submit_event_registry=registry)
 
 
@@ -91,6 +91,25 @@ def _make_run() -> Run:
     )
 
 
+class NotifyingSubmitEventRegistry(SubmitEventRegistry):
+    """Submit registry that lets tests await agent event registration."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._registered: dict[str, asyncio.Event] = {}
+
+    def register(self, task_id: str) -> asyncio.Event:
+        event = super().register(task_id)
+        self._registered.setdefault(task_id, asyncio.Event()).set()
+        return event
+
+    async def wait_for_registered(self, task_id: str) -> None:
+        if task_id in self._events:  # pyright: ignore[reportPrivateUsage]
+            return
+        event = self._registered.setdefault(task_id, asyncio.Event())
+        await event.wait()
+
+
 async def test_submit_notification_fires_event(service: WorkflowService) -> None:
     """When submit_for_verification is called, the registered event fires."""
     run = await service.create_run(_make_run())
@@ -118,7 +137,7 @@ async def test_submit_notification_no_event_registered(service: WorkflowService)
 
 async def test_cross_instance_submit_notification(
     session: AsyncSession,
-    registry: SubmitEventRegistry,
+    registry: NotifyingSubmitEventRegistry,
 ) -> None:
     """Event registered on service A fires when service B calls submit_for_verification.
 
@@ -148,7 +167,7 @@ async def test_cross_instance_submit_notification(
 
 async def test_user_managed_agent_cross_instance(
     session: AsyncSession,
-    registry: SubmitEventRegistry,
+    registry: NotifyingSubmitEventRegistry,
 ) -> None:
     """UserManagedAgent.execute returns when submit comes from a different service instance."""
     service_agent = WorkflowService(session, submit_event_registry=registry)
@@ -175,14 +194,11 @@ async def test_user_managed_agent_cross_instance(
     async def on_submit() -> None:
         pass
 
-    async def submit_via_different_service() -> None:
-        await asyncio.sleep(0.05)
-        # This simulates the REST/MCP handler calling submit on a fresh service
-        await service_api.submit_for_verification(run.id, "task-1")
-
-    task = asyncio.create_task(submit_via_different_service())
-    result = await agent.execute(ctx, on_update, on_submit)
-    await task
+    execute_task = asyncio.create_task(agent.execute(ctx, on_update, on_submit))
+    await registry.wait_for_registered("task-1")
+    # This simulates the REST/MCP handler calling submit on a fresh service
+    await service_api.submit_for_verification(run.id, "task-1")
+    result = await execute_task
 
     assert result.success is True
 
@@ -235,6 +251,8 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
         db_path=":memory:",
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
+    registry = NotifyingSubmitEventRegistry()
+    app.state.submit_event_registry = registry
     app.state.signal_transport = signal_transport
     await init_db(app.state.engine)
     drain = make_drain_fn(app, signal_transport)
@@ -260,7 +278,6 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
         )
 
         # Create agent service that shares the app's SubmitEventRegistry
-        registry = app.state.submit_event_registry
         session_factory = app.state.session_factory
         async with session_factory() as agent_session:
             agent_service = WorkflowService(agent_session, submit_event_registry=registry)
@@ -280,16 +297,13 @@ async def test_user_managed_agent_wakes_from_rest_api_submit() -> None:
             async def on_submit() -> None:
                 pass
 
-            async def submit_via_rest_api_and_drain() -> None:
-                await asyncio.sleep(0.05)
-                resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
-                assert resp.status_code == 200
-                # Drain signals so apply_submission is called and the agent wakes up
-                await drain(run_id)
-
-            bg = asyncio.create_task(submit_via_rest_api_and_drain())
-            result = await agent.execute(ctx, on_update, on_submit)
-            await bg
+            execute_task = asyncio.create_task(agent.execute(ctx, on_update, on_submit))
+            await registry.wait_for_registered(task_id)
+            resp = await client.post(f"/api/runs/{run_id}/tasks/{task_id}/submit")
+            assert resp.status_code == 200
+            # Drain signals so apply_submission is called and the agent wakes up
+            await drain(run_id)
+            result = await execute_task
 
             assert result.success is True
 

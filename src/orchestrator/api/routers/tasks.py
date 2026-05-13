@@ -275,6 +275,7 @@ async def submit_task(
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TransitionResponse:
     """Submit task for verification (BUILDING → VERIFYING).
 
@@ -305,6 +306,7 @@ async def submit_task(
             WorkflowSignal.ACTIVITY_COMPLETED,
             payload={"task_id": task_id},
         )
+        await session.commit()
 
     return TransitionResponse(
         success=result.success,
@@ -322,6 +324,7 @@ async def complete_verification_endpoint(
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TransitionResponse:
     """Complete verification phase and transition task to its outcome state.
 
@@ -352,6 +355,7 @@ async def complete_verification_endpoint(
             WorkflowSignal.ACTIVITY_VERIFIED,
             payload={"task_id": task_id},
         )
+        await session.commit()
 
     return TransitionResponse(
         success=result.success,

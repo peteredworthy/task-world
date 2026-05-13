@@ -18,6 +18,7 @@ import logging
 import select
 import shutil
 import subprocess as _sp
+from collections.abc import Callable
 from typing import Any, cast
 
 from typing_extensions import Protocol
@@ -785,7 +786,67 @@ _CODEX_FALLBACK_MODELS: list[str] = [
 ]
 
 
-def fetch_codex_models() -> list[str]:
+class CodexModelProcess(Protocol):
+    """Minimal process protocol used by Codex model discovery."""
+
+    stdin: Any | None
+    stdout: Any | None
+
+    def terminate(self) -> None: ...
+
+    def wait(self, timeout: float | None = None) -> int: ...
+
+    def kill(self) -> None: ...
+
+
+CodexModelProcessFactory = Callable[..., CodexModelProcess]
+
+
+def extract_codex_model_ids(model_resp: dict[str, Any] | None) -> list[str]:
+    """Extract visible Codex model IDs from a ``model/list`` JSON-RPC response."""
+    if model_resp is None:
+        return []
+
+    result: Any = model_resp.get("result")
+    if result is None:
+        return []
+
+    def _to_model_dicts(src: Any) -> list[dict[str, Any]]:
+        if not isinstance(src, list):
+            return []
+        out: list[dict[str, Any]] = []
+        for item in src:  # type: ignore[reportUnknownVariableType]
+            if isinstance(item, dict):
+                out.append(dict(item))  # type: ignore[arg-type]
+        return out
+
+    if isinstance(result, list):
+        models_raw = _to_model_dicts(result)
+    elif isinstance(result, dict):
+        result_dict = cast(dict[str, Any], result)
+        raw: Any = result_dict.get("data") or result_dict.get("models") or []
+        models_raw = _to_model_dicts(raw)
+    else:
+        models_raw = []
+
+    if not models_raw:
+        return []
+
+    visible = [m for m in models_raw if not m.get("hidden", False)]
+    chosen = visible if visible else models_raw
+    discovered = [str(m["id"]) for m in chosen if "id" in m]
+    return discovered if discovered else list(_CODEX_FALLBACK_MODELS)
+
+
+def _default_codex_model_process_factory(*args: Any, **kwargs: Any) -> CodexModelProcess:
+    return _sp.Popen(*args, **kwargs)
+
+
+def fetch_codex_models(
+    *,
+    codex_path: str | None = "auto",
+    process_factory: CodexModelProcessFactory = _default_codex_model_process_factory,
+) -> list[str]:
     """Fetch the list of available model IDs from a local Codex app server.
 
     Spawns a short-lived ``codex app-server`` subprocess, performs the
@@ -795,22 +856,19 @@ def fetch_codex_models() -> list[str]:
     Only non-hidden models are returned.  If all models are hidden (or the
     ``hidden`` field is absent), all models are returned.
 
-    Falls back to ``_CODEX_FALLBACK_MODELS`` when the binary is present but
-    the API returns no models (e.g. older CLI versions that don't implement
-    ``model/list``).
-
     Returns an empty list when the binary is present but the API returns no
     models (e.g. older CLI versions that don't implement ``model/list``).
 
     Returns:
         Ordered list of model ID strings, or ``[]`` on failure.
     """
-    if shutil.which("codex") is None:
+    resolved_codex_path = shutil.which("codex") if codex_path == "auto" else codex_path
+    if resolved_codex_path is None:
         return []
 
     try:
-        proc = _sp.Popen(
-            ["codex", "app-server"],
+        proc = process_factory(
+            [resolved_codex_path, "app-server"],
             stdin=_sp.PIPE,
             stdout=_sp.PIPE,
             stderr=_sp.DEVNULL,
@@ -900,41 +958,7 @@ def fetch_codex_models() -> list[str]:
             if proc.stdout:
                 proc.stdout.close()
 
-        if model_resp is None:
-            return []
-
-        result: Any = model_resp.get("result")
-        if result is None:
-            return []
-
-        # Handle both {"models": [...]} and a bare list result.
-        def _to_model_dicts(src: Any) -> list[dict[str, Any]]:
-            if not isinstance(src, list):
-                return []
-            out: list[dict[str, Any]] = []
-            for item in src:  # type: ignore[reportUnknownVariableType]
-                if isinstance(item, dict):
-                    out.append(dict(item))  # type: ignore[arg-type]
-            return out
-
-        if isinstance(result, list):
-            models_raw = _to_model_dicts(result)
-        else:
-            # API returns {"data": [...]} — fall back to "models" for older versions.
-            raw: Any = result.get("data") or result.get("models") or []
-            models_raw = _to_model_dicts(raw)
-
-        # If we got a successful response but models list is empty, return empty list.
-        # Fallback models are only used on API failure, not when API explicitly
-        # returns an empty list.
-        if not models_raw:
-            return []
-
-        # Prefer non-hidden models; fall back to all if every entry is hidden.
-        visible = [m for m in models_raw if not m.get("hidden", False)]
-        chosen = visible if visible else models_raw
-        discovered = [str(m["id"]) for m in chosen if "id" in m]
-        return discovered if discovered else list(_CODEX_FALLBACK_MODELS)
+        return extract_codex_model_ids(model_resp)
 
     except Exception:
         return []

@@ -541,7 +541,13 @@ class ToolDetector:
             self._detection_cache = options
             self._detection_cached_at = now
 
-        options = self._detection_cache
+        return await self._attach_quotas(self._detection_cache)
+
+    async def _attach_quotas(
+        self,
+        options: list[AgentRunnerOption],
+    ) -> list[AgentRunnerOption]:
+        """Return copies of *options* with quota data attached."""
         quotas: list[AgentRunnerQuota | None] = list(
             await asyncio.gather(*[self._fetch_quota_for_option(opt) for opt in options])
         )

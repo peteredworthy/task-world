@@ -324,6 +324,7 @@ class ChildCompleted(WorkflowEvent):
     child_task_id: str = ""
     child_id: str = ""  # Stable UUID for this fan-out child
     fan_out_index: int = 0
+    attempt_num: int = 0
     fan_out_output: str | None = None
 
 
@@ -335,6 +336,7 @@ class ChildFailed(WorkflowEvent):
     child_task_id: str = ""
     child_id: str = ""  # Stable UUID for this fan-out child
     fan_out_index: int = 0
+    attempt_num: int = 0
     error: str | None = None
 
 

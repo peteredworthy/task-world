@@ -4,7 +4,7 @@ Uses the _query_fn dependency injection mechanism to stub out the Claude Agent
 SDK while exercising the full agent->callback->WorkflowService->DB path with a
 real in-memory SQLite database and a real WorkflowService.
 
-No mocking (no patch/MagicMock/monkeypatch) — all stubs are plain async
+No mocking framework usage — all stubs are plain async
 generator functions injected via the ClaudeSDKAgent constructor's _query_fn
 kwarg.
 """

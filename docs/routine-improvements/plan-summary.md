@@ -2,11 +2,11 @@
 
 ## Intent Satisfaction
 
-This plan implements 16 actions (A1-A2, A4-A14, A16-A18) from the routine effectiveness review to raise execution fidelity from ~70% gate accuracy to a system with independent verification on every task, leaner prompts, and failure-mode defenses.
+This plan implements 14 actions (A1-A2, A5-A14, A16-A18) from the routine effectiveness review to raise execution fidelity from ~70% gate accuracy to a system with independent verification on every task, leaner prompts, and failure-mode defenses.
 
 Three actions are explicitly out of scope: A3 (per-requirement grading, not observed on passed tasks), A9 (OpenHands sub-agent tool, requires SDK research), and A15 (golden contract tests, high effort/fragility risk).
 
-All 15 completion criteria from the intent are covered by at least one step. Every clarification decision (Q1-Q7) is reflected in the plan and step files.
+All completion criteria from the intent are covered by at least one step. Every clarification decision (Q1-Q7) is reflected in the plan and step files.
 
 ## Ordered Step List
 
@@ -20,20 +20,19 @@ All 15 completion criteria from the intent are covered by at least one step. Eve
 | 6 | A8 | Migrate agent-specific instructions to agent runners | 1 |
 | 7 | A6 | Compress clarifications into decisions on resolution | 1 |
 | 8 | A14 | Step context guidance for planners | 1 |
-| 9 | A4 | Test count regression guard script | 2 |
 | 10 | A11 | Agent escalation for unfulfillable requirements | 3 |
 | 11 | A12 | Step-level integration tests (step_auto_verify) | 2 |
 | 12 | A13 | Context summarization with critical-aspect preservation | 3 |
 | 13 | A16 | Task complexity labeling (simple/standard) | 1 |
 | 14 | A17 | Multi-file routine definitions | 3 |
 | 15 | A18 | Failure mode analysis in planner documentation | 1 |
-| | | **Total** | **27** |
+| | | **Total** | **25** |
 
 ### Milestone Structure
 
 - **M1 (Gate Fixes & Safety):** Steps 1-4 — closes structural holes in gates
 - **M2 (Prompt & Context Efficiency):** Steps 5-8 — reduces prompt waste
-- **M3 (Safety Guards):** Steps 9-10 — regression detection and agent escalation
+- **M3 (Safety Guards):** Step 10 — agent escalation
 - **M4 (Schema & Architecture Extensions):** Steps 11-14 — new config capabilities
 - **M5 (Planning Documentation):** Step 15 — failure mode analysis docs
 

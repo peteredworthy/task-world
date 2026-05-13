@@ -1,6 +1,6 @@
 """Unit tests for OpenHandsAgent.get_quota() using FakeQuotaFetcher.
 
-No MagicMock, no network access. All test cases use FakeQuotaFetcher or
+No mocking framework usage, no network access. All test cases use FakeQuotaFetcher or
 a simple inline stub for the "raises exception" case.
 
 The sixth test confirms UserManagedAgent has no get_quota() override without

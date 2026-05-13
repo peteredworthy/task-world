@@ -22,11 +22,6 @@ Replace composite rubric items (`R1-R3 — A: ...`) with one rubric item per req
 **Evidence:** D7 (4-grade variance), review analysis
 **Scope:** Routine YAML authoring guidance + verifier prompt generation in `src/orchestrator/workflow/prompts.py`.
 
-### A4. Test count regression guard (Automated Check)
-Provide a reusable auto_verify command that captures the test list before the builder starts and compares after. Flag if tests were removed. Opt-in per task — not suitable for cleanup/renaming tasks.
-**Evidence:** D1 (2 tasks deleted 130+ lines of tests undetected)
-**Scope:** New utility script (e.g., `scripts/check_test_count.sh`) + documentation for routine authors.
-
 ### A5. Pre-run test health check (Enforcement)
 Don't start a task if the test suite isn't clean. If CI is green, there are no pre-existing failures. This replaces the "baseline comparison" approach entirely.
 **Evidence:** Run data (death spiral from pre-existing failures)
@@ -114,10 +109,9 @@ Expand the dry-run stage (S-05) in the idea-to-plan routine to include failure m
 
 **Short-term (gate + planning improvements):**
 6. A3 — Per-requirement grading
-7. A4 — Test count regression guard
-8. A11 — Agent escalation for unfulfillable requirements
-9. A12 — Step-level integration tests
-10. A14 — Step context guidance
+7. A11 — Agent escalation for unfulfillable requirements
+8. A12 — Step-level integration tests
+9. A14 — Step context guidance
 
 **Medium-term (context efficiency + architecture):**
 11. A6 — Compress clarifications

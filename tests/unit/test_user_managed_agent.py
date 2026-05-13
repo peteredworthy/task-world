@@ -71,16 +71,10 @@ async def test_user_managed_submit_event_fires() -> None:
     on_update, on_submit = _noop_callbacks()
     ctx = _make_context()
 
-    # Fire the event after a short delay
-    async def fire_event() -> None:
-        await asyncio.sleep(0.1)
-        event = service.registered_events.get("task-1")
-        assert event is not None
-        event.set()
-
-    task = asyncio.create_task(fire_event())
-    result = await agent.execute(ctx, on_update, on_submit)
-    await task
+    execute_task = asyncio.create_task(agent.execute(ctx, on_update, on_submit))
+    event = await service.wait_for_registered("task-1")
+    event.set()
+    result = await execute_task
 
     assert result.success is True
 
@@ -100,11 +94,11 @@ async def test_user_managed_timeout() -> None:
 async def test_user_managed_cancel() -> None:
     """Cancellation raises AgentCancelledError."""
     service = _FakeService()
-    agent = UserManagedAgent(service=service, timeout_minutes=1, poll_interval=0.05)  # type: ignore[arg-type]
+    agent = UserManagedAgent(service=service, timeout_minutes=1, poll_interval=0.001)  # type: ignore[arg-type]
     on_update, on_submit = _noop_callbacks()
 
     async def cancel_soon() -> None:
-        await asyncio.sleep(0.1)
+        await service.wait_for_registered("task-1")
         await agent.cancel()
 
     task = asyncio.create_task(cancel_soon())
@@ -130,15 +124,10 @@ async def test_user_managed_unregisters_on_success() -> None:
     agent = UserManagedAgent(service=service, timeout_minutes=1)  # type: ignore[arg-type]
     on_update, on_submit = _noop_callbacks()
 
-    async def fire_event() -> None:
-        await asyncio.sleep(0.1)
-        event = service.registered_events.get("task-1")
-        assert event is not None
-        event.set()
-
-    task = asyncio.create_task(fire_event())
-    await agent.execute(_make_context(), on_update, on_submit)
-    await task
+    execute_task = asyncio.create_task(agent.execute(_make_context(), on_update, on_submit))
+    event = await service.wait_for_registered("task-1")
+    event.set()
+    await execute_task
 
     assert "task-1" not in service.registered_events
 
@@ -167,6 +156,7 @@ class _FakeService:
 
     def __init__(self) -> None:
         self._registry = SubmitEventRegistry()
+        self._registration_notifications: dict[str, asyncio.Event] = {}
 
     @property
     def registered_events(self) -> dict[str, asyncio.Event]:
@@ -174,7 +164,19 @@ class _FakeService:
         return self._registry._events  # pyright: ignore[reportPrivateUsage]
 
     def register_submit_event(self, task_id: str) -> asyncio.Event:
-        return self._registry.register(task_id)
+        event = self._registry.register(task_id)
+        self._registration_notifications.setdefault(task_id, asyncio.Event()).set()
+        return event
 
     def unregister_submit_event(self, task_id: str) -> None:
         self._registry.unregister(task_id)
+
+    async def wait_for_registered(self, task_id: str) -> asyncio.Event:
+        """Wait until the agent registers the task submit event."""
+        event = self.registered_events.get(task_id)
+        if event is not None:
+            return event
+
+        notification = self._registration_notifications.setdefault(task_id, asyncio.Event())
+        await notification.wait()
+        return self.registered_events[task_id]

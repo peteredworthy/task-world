@@ -77,6 +77,7 @@ __all__ = [
     "_run_to_trace_response",
     "create_app",
     "estimate_cost",
+    "evaluate_merge_readiness_gates",
     "get_agent_runner_display_name",
     "get_agent_runner_icon",
     "get_connection_manager",
@@ -94,6 +95,7 @@ _TASKS_ROUTER_SYMBOLS = {
     "_parse_action_log_from_raw",
 }
 _RUNS_ROUTER_SYMBOLS = {"_run_to_trace_response"}
+_REVIEW_ROUTER_SYMBOLS = {"evaluate_merge_readiness_gates"}
 
 _MCP_SYMBOLS = {"ORCHESTRATOR_TOOLS", "ToolHandler"}
 _MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer", "ALL_TOOLS"}
@@ -102,6 +104,12 @@ _MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer", "ALL_TOOLS"}
 def _run_to_trace_response(*args: Any, **kwargs: Any) -> Any:
     runs_module = import_module("orchestrator.api.routers.runs")
     _impl = cast(Callable[..., Any], getattr(runs_module, "_run_to_trace_response"))
+    return _impl(*args, **kwargs)
+
+
+def evaluate_merge_readiness_gates(*args: Any, **kwargs: Any) -> Any:
+    review_module = import_module("orchestrator.api.routers.review")
+    _impl = cast(Callable[..., Any], getattr(review_module, "evaluate_merge_readiness_gates"))
     return _impl(*args, **kwargs)
 
 
@@ -114,6 +122,10 @@ def __getattr__(name: str) -> object:
         import orchestrator.api.routers.runs as _runs  # noqa: PLC0415
 
         return getattr(_runs, name)
+    if name in _REVIEW_ROUTER_SYMBOLS:
+        import orchestrator.api.routers.review as _review  # noqa: PLC0415
+
+        return getattr(_review, name)
     if name in _MCP_SYMBOLS:
         import orchestrator.api.mcp.tools as _mcp_tools  # noqa: PLC0415
 

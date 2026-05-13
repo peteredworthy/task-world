@@ -5,6 +5,14 @@ Tests POST /api/runs/{run_id}/review/prune/preview,
       POST /api/runs/{run_id}/review/revert-file.
 
 Uses real git repos via tmp_path fixtures; no mocking.
+
+WARNING — shared fixture:
+    The ``_shared_app_fixture`` defined below (module scope) reuses one
+    FastAPI app + in-memory DB across every test in this file. Isolation
+    relies on each test getting a uniquely-named ``git_repo`` (counter
+    suffix) and on server-generated run UUIDs. Don't assert on global
+    ``/api/runs`` counts; reference your run only by the ``id`` you
+    received.
 """
 
 import shutil

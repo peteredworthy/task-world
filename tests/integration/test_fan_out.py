@@ -4,6 +4,7 @@ child task state management, and reset operations.
 Uses real SQLite in-memory DB and real files via tmp_path. No mocking.
 """
 
+import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -218,10 +219,57 @@ class TestExpandFanOut:
         reloaded = await repo.get(run.id)
         parent = reloaded.steps[1].tasks[0]
         assert parent.status == TaskStatus.FAN_OUT_RUNNING
+        delegated_work = reloaded.oversight_state["delegated_work"]
+        assert set(delegated_work) == {child.id for child in children}
+        assert {item["status"] for item in delegated_work.values()} == {"running"}
+        assert {item["generation"] for item in delegated_work.values()} == {0}
+        launch_decisions = [
+            item
+            for item in reloaded.oversight_state["delegation_decisions"]
+            if item.get("kind") == "launch"
+        ]
+        assert {item["work_id"] for item in launch_decisions} == {child.id for child in children}
+        assert {item["expected_generation"] for item in launch_decisions} == {0}
 
         # Children should be in the step's task list
         step_tasks = reloaded.steps[1].tasks
         assert len(step_tasks) == 4  # 1 parent + 3 children
+        assert any(
+            item.get("kind") == "wait" for item in reloaded.oversight_state["delegation_decisions"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_duplicate_expand_fan_out_is_policy_visible_noop(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("Content of step 01")
+
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path))
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await repo.save(run)
+        await session.commit()
+
+        fan_out_task = run.steps[1].tasks[0]
+        first = await service.expand_fan_out_task(run.id, fan_out_task.id)
+        second = await service.expand_fan_out_task(run.id, fan_out_task.id)
+
+        assert [child.id for child in second] == [child.id for child in first]
+        reloaded = await repo.get(run.id)
+        children = [
+            task
+            for step in reloaded.steps
+            for task in step.tasks
+            if task.parent_task_id == fan_out_task.id
+        ]
+        assert len(children) == 1
+        assert reloaded.oversight_state["delegation_decisions"][-1]["kind"] == "wait"
+        assert reloaded.oversight_state["delegation_decisions"][-1]["stable_state"] == (
+            "WaitingOnDelegate"
+        )
 
     @pytest.mark.asyncio
     async def test_expand_fan_out_resolves_template_variables_in_glob(
@@ -519,6 +567,267 @@ class TestChildTaskStateManagement:
         assert updated_child.attempts[0].outcome == "passed"
         assert updated_child.attempts[0].auto_verify_results == auto_verify
         assert updated_child.attempts[0].completed_at == now
+        child_results = [
+            item
+            for item in reloaded.oversight_state.get("delegation_results", [])
+            if item.get("work_id") == child.id
+        ]
+        assert child_results == []
+
+    @pytest.mark.asyncio
+    async def test_parent_aggregation_records_fan_out_child_generation_one(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path))
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("file 1")
+
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await repo.save(run)
+        await session.commit()
+
+        fan_out_task = run.steps[1].tasks[0]
+        children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+        child = children[0]
+
+        await service.start_fan_out_child_task(run.id, child.id)
+        reloaded = await repo.get(run.id)
+        started_child = next(
+            task for step in reloaded.steps for task in step.tasks if task.id == child.id
+        )
+        assert started_child.status == TaskStatus.BUILDING
+        assert started_child.current_attempt == 1
+        launch_decisions = [
+            item
+            for item in reloaded.oversight_state["delegation_decisions"]
+            if item.get("work_id") == child.id and item.get("kind") == "launch"
+        ]
+        assert launch_decisions[-1]["expected_generation"] == 0
+        assert reloaded.oversight_state["delegated_work"][child.id]["generation"] == 0
+
+        await service.update_child_task_state(
+            run.id,
+            child.id,
+            updates={
+                "outcome": "passed",
+                "status": TaskStatus.COMPLETED,
+                "completed_at": datetime.now(timezone.utc),
+            },
+        )
+
+        reloaded = await repo.get(run.id)
+        child_results = [
+            item
+            for item in reloaded.oversight_state.get("delegation_results", [])
+            if item.get("work_id") == child.id
+        ]
+        assert child_results == []
+
+        await service.complete_fan_out_parent(
+            run.id,
+            fan_out_task.id,
+            all_passed=True,
+            to_verifying=True,
+        )
+
+        reloaded = await repo.get(run.id)
+        child_results = [
+            item
+            for item in reloaded.oversight_state["delegation_results"]
+            if item.get("work_id") == child.id
+        ]
+        assert child_results[-1]["generation"] == 1
+        assert child_results[-1]["terminal_status"] == "completed"
+
+    @pytest.mark.asyncio
+    async def test_duplicate_start_fan_out_child_does_not_increment_attempts(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path))
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("file 1")
+
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await repo.save(run)
+        await session.commit()
+
+        fan_out_task = run.steps[1].tasks[0]
+        children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+        child = children[0]
+
+        await service.start_fan_out_child_task(run.id, child.id)
+        await service.start_fan_out_child_task(run.id, child.id)
+
+        reloaded = await repo.get(run.id)
+        started_child = next(
+            task for step in reloaded.steps for task in step.tasks if task.id == child.id
+        )
+        assert started_child.status == TaskStatus.BUILDING
+        assert started_child.current_attempt == 1
+        assert len(started_child.attempts) == 1
+        assert all(
+            item.get("reason") != "fan_out_child_already_building"
+            for item in reloaded.oversight_state["delegation_decisions"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_concurrent_child_completions_record_results_only_at_parent_aggregation(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        tmp_path: Path,
+    ) -> None:
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path), run_id="run-concurrent-completions")
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("file 1")
+        (output_dir / "step-02.md").write_text("file 2")
+
+        async with session_factory() as session:
+            service = WorkflowService(session)
+            repo = RunRepository(session)
+            await repo.save(run)
+            await session.commit()
+
+            fan_out_task = run.steps[1].tasks[0]
+            children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+            for child in children:
+                await service.start_fan_out_child_task(run.id, child.id)
+
+        async def complete_child(child_id: str) -> None:
+            async with session_factory() as child_session:
+                child_service = WorkflowService(child_session)
+                await child_service.update_child_task_state(
+                    run.id,
+                    child_id,
+                    updates={
+                        "outcome": "passed",
+                        "status": TaskStatus.COMPLETED,
+                        "completed_at": datetime.now(timezone.utc),
+                    },
+                )
+
+        await asyncio.gather(*(complete_child(child.id) for child in children))
+
+        async with session_factory() as session:
+            service = WorkflowService(session)
+            repo = RunRepository(session)
+            reloaded = await repo.get(run.id)
+            child_ids = {child.id for child in children}
+            child_results_before_parent = [
+                item
+                for item in reloaded.oversight_state.get("delegation_results", [])
+                if item.get("work_id") in child_ids
+            ]
+            assert child_results_before_parent == []
+
+            await service.complete_fan_out_parent(
+                run.id,
+                fan_out_task.id,
+                all_passed=True,
+                to_verifying=True,
+            )
+
+            reloaded = await repo.get(run.id)
+            child_results_after_parent = [
+                item
+                for item in reloaded.oversight_state["delegation_results"]
+                if item.get("work_id") in child_ids
+            ]
+            assert {item["work_id"] for item in child_results_after_parent} == child_ids
+            assert all(
+                item["terminal_status"] == "completed" for item in child_results_after_parent
+            )
+
+    @pytest.mark.asyncio
+    async def test_complete_fan_out_parent_records_awaiting_gate(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path))
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("file 1")
+
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await repo.save(run)
+        await session.commit()
+
+        fan_out_task = run.steps[1].tasks[0]
+        children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+        await service.update_child_task_state(
+            run.id,
+            children[0].id,
+            updates={"status": TaskStatus.COMPLETED},
+        )
+        await service.complete_fan_out_parent(
+            run.id,
+            fan_out_task.id,
+            all_passed=True,
+            to_verifying=True,
+        )
+
+        reloaded = await repo.get(run.id)
+        parent = next(
+            task for step in reloaded.steps for task in step.tasks if task.id == fan_out_task.id
+        )
+        assert parent.status == TaskStatus.VERIFYING
+        assert reloaded.oversight_state["delegation_decisions"][-1]["stable_state"] == (
+            "AwaitingGate"
+        )
+        assert reloaded.oversight_state["delegation_results"][-1]["work_id"] == fan_out_task.id
+        assert any(
+            item.get("work_id") == children[0].id
+            for item in reloaded.oversight_state["delegation_results"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_complete_fan_out_parent_waits_if_any_child_pending(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path))
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("file 1")
+        (output_dir / "step-02.md").write_text("file 2")
+
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await repo.save(run)
+        await session.commit()
+
+        fan_out_task = run.steps[1].tasks[0]
+        children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+        await service.update_child_task_state(
+            run.id,
+            children[0].id,
+            updates={"status": TaskStatus.COMPLETED},
+        )
+
+        await service.complete_fan_out_parent(
+            run.id,
+            fan_out_task.id,
+            all_passed=True,
+            to_verifying=False,
+        )
+
+        reloaded = await repo.get(run.id)
+        parent = next(
+            task for step in reloaded.steps for task in step.tasks if task.id == fan_out_task.id
+        )
+        assert parent.status == TaskStatus.FAN_OUT_RUNNING
+        assert reloaded.oversight_state["delegation_decisions"][-1]["kind"] == "wait"
+        assert reloaded.oversight_state["delegation_decisions"][-1]["reason"] == (
+            "fan_out_children_still_running"
+        )
 
     @pytest.mark.asyncio
     async def test_reset_fan_out_children_preserves_completed(
@@ -581,6 +890,56 @@ class TestChildTaskStateManagement:
         assert child_status_map[child_ids[0]] == TaskStatus.COMPLETED
         # Second child was FAILED — should be reset to PENDING
         assert child_status_map[child_ids[1]] == TaskStatus.PENDING
+        retry_decisions = [
+            item
+            for item in reloaded.oversight_state["delegation_decisions"]
+            if item.get("work_id") == child_ids[1] and item.get("kind") == "retry"
+        ]
+        assert retry_decisions[-1]["expected_generation"] == 0
+
+    @pytest.mark.asyncio
+    async def test_retry_fan_out_child_records_retry_generation(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path))
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("file 1")
+
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await repo.save(run)
+        await session.commit()
+
+        fan_out_task = run.steps[1].tasks[0]
+        children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+        child = children[0]
+        await service.start_fan_out_child_task(run.id, child.id)
+        await service.update_child_task_state(
+            run.id,
+            child.id,
+            updates={
+                "outcome": "failed",
+                "status": TaskStatus.FAILED,
+                "completed_at": datetime.now(timezone.utc),
+            },
+        )
+
+        await service.retry_fan_out_child(run.id, child.id)
+
+        reloaded = await repo.get(run.id)
+        retried_child = next(
+            task for step in reloaded.steps for task in step.tasks if task.id == child.id
+        )
+        assert retried_child.status == TaskStatus.PENDING
+        retry_decisions = [
+            item
+            for item in reloaded.oversight_state["delegation_decisions"]
+            if item.get("work_id") == child.id and item.get("kind") == "retry"
+        ]
+        assert retry_decisions[-1]["expected_generation"] == 1
+        assert reloaded.oversight_state["delegated_work"][child.id]["generation"] == 2
 
 
 class TestFanOutRegression:

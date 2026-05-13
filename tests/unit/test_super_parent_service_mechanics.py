@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -11,7 +12,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config import RunStatus, TaskStatus
-from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
 from orchestrator.state import Attempt, Run, StepState, TaskState
 from orchestrator.workflow import (
     InMemorySignalTransport,
@@ -19,7 +20,7 @@ from orchestrator.workflow import (
     WorkflowService,
     WorkflowSignal,
 )
-from tests.unit.git_helpers import _git, _init_repo
+from tests.unit.git_helpers import _commit_file, _git, _init_repo
 
 
 @pytest.fixture
@@ -214,6 +215,11 @@ async def test_accept_child_run_rejects_malformed_verified_fix_evidence(
     ):
         await service.accept_child_run("parent", "child")
 
+    parent_after_review = await service.get_run("parent")
+    review_states = parent_after_review.oversight_state["delegation_review_states"]
+    assert review_states[-1]["work_id"] == "child"
+    assert review_states[-1]["stable_state"] == "InvalidEvidence"
+
 
 async def test_accept_child_run_rejects_contradictory_evidence(
     service: WorkflowService,
@@ -313,6 +319,182 @@ async def test_accept_child_run_rejects_missing_evidence(
         match="accept_child_run \\(requires verified_fix or behavior_already_correct evidence\\)",
     ):
         await service.accept_child_run("parent", "child")
+
+    parent_after_review = await service.get_run("parent")
+    review_states = parent_after_review.oversight_state["delegation_review_states"]
+    assert review_states[-1]["work_id"] == "child"
+    assert review_states[-1]["reason"] == "child_acceptance_evidence_missing"
+
+
+async def test_accept_child_run_records_merge_conflict_review_state(
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_file(repo, "shared.txt", "base\n", "Add shared file")
+
+    _git(["checkout", "-b", "orchestrator/run-parent"], cwd=repo)
+    _commit_file(repo, "shared.txt", "parent\n", "Parent edit")
+
+    _git(["checkout", "main"], cwd=repo)
+    _git(["checkout", "-b", "orchestrator/run-child"], cwd=repo)
+    evidence_dir = repo / "docs" / "run-evidence"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "slice-01-evidence.json").write_text(
+        json.dumps(_valid_evidence_bundle("verified_fix")),
+        encoding="utf-8",
+    )
+    _commit_file(repo, "shared.txt", "child\n", "Child edit")
+    _git(["add", "docs/run-evidence/slice-01-evidence.json"], cwd=repo)
+    _git(["commit", "-m", "Add evidence"], cwd=repo)
+
+    child_worktree = tmp_path / "child-wt"
+    _git(["checkout", "orchestrator/run-parent"], cwd=repo)
+    _git(["worktree", "add", str(child_worktree), "orchestrator/run-child"], cwd=repo)
+
+    parent = _parent_run(parent_id="parent")
+    parent.worktree_path = str(repo)
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.COMPLETED,
+        worktree_path=str(child_worktree),
+    )
+    child.routine_id = "child-routine"
+
+    await service.create_run(parent)
+    await service.create_run(child)
+
+    result = await service.accept_child_run("parent", "child")
+
+    assert result.status == "conflicts"
+    parent_after_conflict = await service.get_run("parent")
+    review_states = parent_after_conflict.oversight_state["delegation_review_states"]
+    assert review_states[-1]["stable_state"] == "MergeConflict"
+    assert review_states[-1]["payload"]["conflict_files"] == ["shared.txt"]
+    assert parent_after_conflict.oversight_state["delegation_decisions"][-1]["kind"] == "conflict"
+    assert parent_after_conflict.oversight_state["delegated_work"]["child"]["status"] == "review"
+
+
+async def test_accept_child_run_records_integrate_command_and_generation(
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _init_repo(repo)
+    _commit_file(repo, "base.txt", "base\n", "Add base file")
+
+    _git(["checkout", "-b", "orchestrator/run-parent"], cwd=repo)
+    _commit_file(repo, "parent.txt", "parent\n", "Parent edit")
+
+    _git(["checkout", "main"], cwd=repo)
+    _git(["checkout", "-b", "orchestrator/run-child"], cwd=repo)
+    evidence_dir = repo / "docs" / "run-evidence"
+    evidence_dir.mkdir(parents=True)
+    (evidence_dir / "slice-01-evidence.json").write_text(
+        json.dumps(_valid_evidence_bundle("verified_fix")),
+        encoding="utf-8",
+    )
+    _commit_file(repo, "child.txt", "child\n", "Child edit")
+    _git(["add", "docs/run-evidence/slice-01-evidence.json"], cwd=repo)
+    _git(["commit", "-m", "Add evidence"], cwd=repo)
+
+    child_worktree = tmp_path / "child-wt"
+    _git(["checkout", "orchestrator/run-parent"], cwd=repo)
+    _git(["worktree", "add", str(child_worktree), "orchestrator/run-child"], cwd=repo)
+
+    parent = _parent_run(parent_id="parent")
+    parent.worktree_path = str(repo)
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.COMPLETED,
+        worktree_path=str(child_worktree),
+    )
+    child.routine_id = "child-routine"
+
+    await service.create_run(parent)
+    await service.create_run(child)
+
+    result = await service.accept_child_run("parent", "child")
+
+    assert result.status == "clean"
+    parent_after_accept = await service.get_run("parent")
+    delegated_child = parent_after_accept.oversight_state["delegated_work"]["child"]
+    assert delegated_child["status"] == "integrated"
+    integrate_decisions = [
+        item
+        for item in parent_after_accept.oversight_state["delegation_decisions"]
+        if item.get("work_id") == "child" and item.get("kind") == "integrate"
+    ]
+    assert integrate_decisions
+    assert (
+        parent_after_accept.oversight_state["delegation_results"][-1]["generation"]
+        == (delegated_child["generation"])
+    )
+
+    duplicate = await service.accept_child_run("parent", "child")
+
+    assert duplicate.status == "clean"
+    parent_after_duplicate = await service.get_run("parent")
+    accepted_children = [
+        item
+        for item in parent_after_duplicate.oversight_state["accepted_children"]
+        if item.get("child_run_id") == "child"
+    ]
+    assert len(accepted_children) == 1
+    assert parent_after_duplicate.oversight_state["delegation_decisions"][-1]["kind"] == (
+        "stale_command_ignored"
+    )
+    assert parent_after_duplicate.oversight_state["delegation_decisions"][-1]["reason"] == (
+        "duplicate_command"
+    )
+
+
+async def test_accept_child_run_stale_generation_or_token_prevents_merge_side_effects(
+    service: WorkflowService,
+    tmp_path: Path,
+) -> None:
+    parent = _parent_run(parent_id="parent")
+    parent.worktree_path = str(tmp_path / "parent-wt")
+    (tmp_path / "parent-wt").mkdir()
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.COMPLETED,
+        worktree_path=str(tmp_path / "child-wt"),
+    )
+    (tmp_path / "child-wt").mkdir()
+
+    await service.create_run(parent)
+    await service.create_run(child)
+
+    with pytest.raises(
+        InvalidTransitionError,
+        match="accept_child_run \\(stale delegation command\\)",
+    ):
+        await service.accept_child_run("parent", "child", expected_generation=0)
+
+    parent_after_generation = await service.get_run("parent")
+    assert parent_after_generation.oversight_state["delegation_decisions"][-1]["reason"] == (
+        "generation_mismatch"
+    )
+    assert parent_after_generation.oversight_state.get("accepted_child_run_ids") in (None, [])
+
+    with pytest.raises(
+        InvalidTransitionError,
+        match="accept_child_run \\(stale delegation command\\)",
+    ):
+        await service.accept_child_run("parent", "child", owner_token="wrong-owner")
+
+    parent_after_token = await service.get_run("parent")
+    assert parent_after_token.oversight_state["delegation_decisions"][-1]["reason"] == (
+        "owner_token_mismatch"
+    )
+    assert parent_after_token.oversight_state.get("accepted_child_run_ids") in (None, [])
 
 
 async def test_apply_pause_run_pauses_active_child_and_marks_open_attempts(
@@ -445,6 +627,7 @@ async def test_refresh_parent_oversight_invalidates_stale_final_validation(
 
 async def test_safety_net_save_applies_terminal_guard(
     service: WorkflowService,
+    session: AsyncSession,
     tmp_path: Path,
 ) -> None:
     parent = _parent_run(parent_id="parent", status=RunStatus.COMPLETED)
@@ -464,10 +647,20 @@ async def test_safety_net_save_applies_terminal_guard(
     assert guarded.status == RunStatus.PAUSED
     assert guarded.pause_reason == "oversight_children_unresolved"
     assert guarded.completed_at is None
-    assert (
-        "child: child_not_terminal:active"
-        in guarded.oversight_state["terminal_guard"]["blocking_reasons"]
-    )
+    assert "terminal_guard" not in guarded.oversight_state
+    raw_parent = await RunRepository(session).get("parent")
+    for computed_key in (
+        "child_count",
+        "child_summaries",
+        "terminal_guard",
+        "next_parent_action",
+        "attention_items",
+    ):
+        assert computed_key not in raw_parent.oversight_state
+    projection = await service.get_parent_oversight("parent")
+    assert "child: child_not_terminal:active" in projection["terminal_guard"]["blocking_reasons"]
+    assert projection["delegation_decisions"][-1]["kind"] == "wait"
+    assert projection["delegation_decisions"][-1]["stable_state"] == ("WaitingOnDelegate")
 
 
 async def test_create_child_run_rejects_paused_parent(service: WorkflowService) -> None:
@@ -491,6 +684,11 @@ async def test_create_child_run_rejects_paused_parent(service: WorkflowService) 
             parent_slice_id="slice-01",
             next_action_decision="continue",
         )
+    parent_after_rejection = await service.get_run("parent")
+    assert parent_after_rejection.oversight_state["delegation_decisions"][-1]["kind"] == ("review")
+    assert parent_after_rejection.oversight_state["delegation_decisions"][-1]["reason"] == (
+        "parent_not_active"
+    )
 
 
 async def test_create_child_run_enqueues_child_start(session: AsyncSession) -> None:
@@ -520,6 +718,180 @@ async def test_create_child_run_enqueues_child_start(session: AsyncSession) -> N
     assert (
         "no_child_runs"
         not in parent_after_child.oversight_state["terminal_guard"]["blocking_reasons"]
+    )
+    raw_parent = await RunRepository(session).get("parent")
+    for computed_key in (
+        "child_count",
+        "child_summaries",
+        "merge_queue",
+        "terminal_guard",
+        "next_parent_action",
+        "attention_items",
+    ):
+        assert computed_key not in raw_parent.oversight_state
+    assert raw_parent.oversight_state["last_child_run_id"] == "child"
+
+
+async def test_concurrent_create_child_run_keeps_single_unresolved_child(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(tmp_path / "coordination.sqlite")
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    parent = _parent_run(parent_id="parent")
+
+    async with factory() as setup_session:
+        await WorkflowService(setup_session).create_run(parent)
+
+    async def create_child(child_id: str) -> object:
+        async with factory() as child_session:
+            service = WorkflowService(
+                child_session,
+                signal_transport=InMemorySignalTransport(),
+            )
+            child = _child_run(
+                child_id=child_id,
+                parent_id="parent",
+                status=RunStatus.DRAFT,
+                worktree_path=f"/tmp/{child_id}-worktree",
+            )
+            return await service.create_child_run(
+                "parent",
+                child,
+                parent_slice_id=f"slice-{child_id}",
+                next_action_decision="continue",
+            )
+
+    results = await asyncio.gather(
+        create_child("child-a"),
+        create_child("child-b"),
+        return_exceptions=True,
+    )
+
+    successful = [result for result in results if isinstance(result, Run)]
+    failures = [result for result in results if isinstance(result, InvalidTransitionError)]
+    assert len(successful) == 1
+    assert len(failures) == 1
+
+    async with factory() as verify_session:
+        verify_service = WorkflowService(verify_session)
+        children = await verify_service.list_child_runs("parent")
+        assert [child.id for child in children] == [successful[0].id]
+        raw_parent = await RunRepository(verify_session).get("parent")
+        assert len(raw_parent.oversight_state["slices"]) == 1
+        assert list(raw_parent.oversight_state["delegated_work"]) == [successful[0].id]
+
+    await engine.dispose()
+
+
+async def test_locked_oversight_merge_uses_fresh_state_from_loaded_session(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(tmp_path / "locked-merge.sqlite")
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    parent = _parent_run(parent_id="parent")
+
+    async with factory() as setup_session:
+        await WorkflowService(setup_session).create_run(parent)
+
+    async with factory() as stale_session:
+        stale_repo = RunRepository(stale_session)
+        await stale_repo.get("parent")
+
+        async with factory() as writer_session:
+            writer_repo = RunRepository(writer_session)
+            await writer_repo.update_parent_oversight_facts(
+                "parent",
+                {
+                    "delegation_results": [
+                        {
+                            "work_id": "child-a",
+                            "generation": 0,
+                            "terminal_status": "completed",
+                        }
+                    ]
+                },
+            )
+            await writer_session.commit()
+
+        await stale_repo.update_parent_oversight_facts(
+            "parent",
+            {
+                "delegation_decisions": [
+                    {
+                        "kind": "wait",
+                        "work_id": "child-b",
+                    }
+                ]
+            },
+        )
+        await stale_session.commit()
+
+    async with factory() as verify_session:
+        raw_parent = await RunRepository(verify_session).get("parent")
+        assert raw_parent.oversight_state["delegation_results"] == [
+            {
+                "work_id": "child-a",
+                "generation": 0,
+                "terminal_status": "completed",
+            }
+        ]
+        assert raw_parent.oversight_state["delegation_decisions"] == [
+            {
+                "kind": "wait",
+                "work_id": "child-b",
+            }
+        ]
+
+    await engine.dispose()
+
+
+async def test_duplicate_create_child_run_is_typed_noop(
+    session: AsyncSession,
+) -> None:
+    transport = InMemorySignalTransport()
+    service = WorkflowService(session, signal_transport=transport)
+    parent = _parent_run(parent_id="parent")
+    first_child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.DRAFT,
+        worktree_path="/tmp/child-worktree",
+    )
+    duplicate_child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.DRAFT,
+        worktree_path="/tmp/child-worktree",
+    )
+
+    await service.create_run(parent)
+    created = await service.create_child_run(
+        "parent",
+        first_child,
+        parent_slice_id="slice-01",
+        next_action_decision="continue",
+    )
+    duplicate = await service.create_child_run(
+        "parent",
+        duplicate_child,
+        parent_slice_id="slice-01",
+        next_action_decision="continue",
+    )
+
+    assert duplicate.id == created.id
+    first_signals = await transport.drain("child")
+    assert [signal.signal_type for signal in first_signals] == [WorkflowSignal.RUN_START]
+    assert await transport.drain("child") == []
+    children = await service.list_child_runs("parent")
+    assert [child.id for child in children] == ["child"]
+    parent_after_duplicate = await service.get_run("parent")
+    assert parent_after_duplicate.oversight_state["delegation_decisions"][-1]["kind"] == (
+        "stale_command_ignored"
+    )
+    assert parent_after_duplicate.oversight_state["delegation_decisions"][-1]["reason"] == (
+        "duplicate_child_create"
     )
 
 
@@ -635,6 +1007,156 @@ async def test_resolve_child_run_unblocks_replacement_child(
 
     signals = await transport.drain("next-child")
     assert [signal.signal_type for signal in signals] == [WorkflowSignal.RUN_START]
+
+
+async def test_duplicate_resolve_child_run_is_typed_noop(
+    service: WorkflowService,
+) -> None:
+    parent = _parent_run(parent_id="parent")
+    failed_child = _child_run(
+        child_id="failed-child",
+        parent_id="parent",
+        status=RunStatus.FAILED,
+        worktree_path="/tmp/failed-child-worktree",
+    )
+
+    await service.create_run(parent)
+    await service.create_run(failed_child)
+
+    first = await service.resolve_child_run(
+        "parent",
+        "failed-child",
+        resolution="reject",
+        reason="Attempt failed and replacement slice is required.",
+    )
+    second = await service.resolve_child_run(
+        "parent",
+        "failed-child",
+        resolution="reject",
+        reason="Duplicate callback for the same decision.",
+    )
+
+    assert first.resolution == second.resolution == "reject"
+    parent_after_resolution = await service.get_run("parent")
+    assert parent_after_resolution.oversight_state["rejected_child_run_ids"] == ["failed-child"]
+    decisions = parent_after_resolution.oversight_state["decisions"]
+    child_resolutions = [
+        decision
+        for decision in decisions
+        if decision.get("kind") == "child_resolution"
+        and decision.get("child_run_id") == "failed-child"
+    ]
+    assert len(child_resolutions) == 1
+    assert parent_after_resolution.oversight_state["delegation_decisions"][-1]["kind"] == (
+        "stale_command_ignored"
+    )
+    assert parent_after_resolution.oversight_state["delegation_decisions"][-1]["reason"] == (
+        "duplicate_child_resolution"
+    )
+
+
+async def test_stale_child_wait_observation_is_recorded_without_wait(
+    service: WorkflowService,
+) -> None:
+    parent = _parent_run(parent_id="parent")
+    parent.oversight_state = {"delegation_owner_token": "owner-current"}
+    active_child = _child_run(
+        child_id="active-child",
+        parent_id="parent",
+        status=RunStatus.ACTIVE,
+        worktree_path="/tmp/active-child-worktree",
+    )
+
+    await service.create_run(parent)
+    await service.create_run(active_child)
+
+    updated = await service.record_child_wait_observation(
+        "parent",
+        "active-child",
+        observed_status=RunStatus.ACTIVE,
+        phase="observed",
+        timeout_seconds=1,
+        owner_token="owner-previous",
+        idempotency_key="old-wait-callback",
+    )
+
+    assert updated.oversight_state["child_waits"] == []
+    assert updated.oversight_state["delegation_decisions"][-1]["kind"] == ("stale_command_ignored")
+    assert updated.oversight_state["delegation_decisions"][-1]["reason"] == ("owner_token_mismatch")
+
+
+async def test_observe_running_child_records_wait_observation(
+    service: WorkflowService,
+) -> None:
+    parent = _parent_run(parent_id="parent")
+    active_child = _child_run(
+        child_id="active-child",
+        parent_id="parent",
+        status=RunStatus.ACTIVE,
+        worktree_path="/tmp/active-child-worktree",
+    )
+
+    await service.create_run(parent)
+    await service.create_run(active_child)
+
+    updated = await service.record_child_wait_observation(
+        "parent",
+        "active-child",
+        observed_status=RunStatus.ACTIVE,
+        phase="observed",
+        timeout_seconds=1,
+        idempotency_key="wait-callback",
+    )
+
+    assert updated.oversight_state["child_waits"][-1]["child_run_id"] == "active-child"
+    assert updated.oversight_state["delegation_decisions"][-1]["kind"] == "wait"
+    assert updated.oversight_state["delegation_decisions"][-1]["stable_state"] == (
+        "WaitingOnDelegate"
+    )
+
+    duplicate = await service.record_child_wait_observation(
+        "parent",
+        "active-child",
+        observed_status=RunStatus.ACTIVE,
+        phase="observed",
+        timeout_seconds=1,
+        idempotency_key="wait-callback",
+    )
+
+    assert len(duplicate.oversight_state["child_waits"]) == 1
+    assert duplicate.oversight_state["delegation_decisions"][-1]["kind"] == (
+        "stale_command_ignored"
+    )
+    assert duplicate.oversight_state["delegation_decisions"][-1]["reason"] == ("duplicate_command")
+
+
+async def test_stale_child_wait_generation_is_recorded_without_wait(
+    service: WorkflowService,
+) -> None:
+    parent = _parent_run(parent_id="parent")
+    active_child = _child_run(
+        child_id="active-child",
+        parent_id="parent",
+        status=RunStatus.ACTIVE,
+        worktree_path="/tmp/active-child-worktree",
+    )
+
+    await service.create_run(parent)
+    await service.create_run(active_child)
+
+    updated = await service.record_child_wait_observation(
+        "parent",
+        "active-child",
+        observed_status=RunStatus.ACTIVE,
+        phase="observed",
+        timeout_seconds=1,
+        expected_generation=0,
+        idempotency_key="old-generation-wait-callback",
+    )
+
+    assert updated.oversight_state["child_waits"] == []
+    assert updated.oversight_state["delegation_decisions"][-1]["kind"] == ("stale_command_ignored")
+    assert updated.oversight_state["delegation_decisions"][-1]["reason"] == ("generation_mismatch")
 
 
 async def test_create_child_run_enforces_configured_child_limit(

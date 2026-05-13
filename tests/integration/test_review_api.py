@@ -1,68 +1,25 @@
-"""Integration tests for review API endpoints (diff, diff/files, commits)."""
+"""Integration tests for review API endpoints (diff, diff/files, commits).
 
-from collections.abc import AsyncGenerator
+WARNING — shared fixture:
+    The ``client_with_repo`` / ``git_repo`` / ``_shared_app_fixture`` fixtures
+    come from ``tests/integration/conftest.py`` and reuse a single FastAPI app
+    + in-memory DB across every test in this file (module scope). Isolation
+    relies on: (1) ``git_repo`` having a UUID-suffixed name unique per test,
+    (2) server-generated run UUIDs, (3) per-test teardown cancelling runs
+    scoped to ``git_repo.name``. Don't assert on global ``/api/runs`` counts;
+    reference your run only by the ``id`` you received.
+"""
+
 from pathlib import Path
 from typing import Any
 
-import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 
-from orchestrator.api.app import create_app
-from orchestrator.config import RoutineSource
-from orchestrator.db import init_db
-from orchestrator.workflow import InMemorySignalTransport
+from tests.integration.git_helpers import _commit_file, _git
+from tests.integration.signal_helpers import DrainFn
 
-from tests.integration.git_helpers import _commit_file, _git, _init_repo
-from tests.integration.signal_helpers import DrainFn, make_drain_fn
-
-FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def git_repo(tmp_path: Path) -> Path:
-    """Create a git repo for testing."""
-    repo = tmp_path / "project"
-    repo.mkdir()
-    _init_repo(repo)
-    return repo
-
-
-@pytest.fixture
-async def client_with_repo(
-    git_repo: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, DrainFn], None]:
-    """Test client with a real git repo as project."""
-    from orchestrator.config.global_config import GlobalConfig, PathsConfig
-
-    repos_dir = git_repo.parent
-    worktrees_dir = repos_dir / "worktrees"
-    worktrees_dir.mkdir(exist_ok=True)
-
-    global_config = GlobalConfig(
-        paths=PathsConfig(
-            repos_dir=str(repos_dir),
-            worktrees_dir=str(worktrees_dir),
-        )
-    )
-
-    signal_transport = InMemorySignalTransport()
-    app = create_app(
-        db_path=":memory:",
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-        global_config=global_config,
-    )
-    app.state.signal_transport = signal_transport
-    await init_db(app.state.engine)
-    drain = make_drain_fn(app, signal_transport)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo, drain
-    await app.state.engine.dispose()
+# Fixtures (client_with_repo, git_repo, _shared_app_fixture) come from
+# tests/integration/conftest.py. See that module for isolation guarantees.
 
 
 async def _create_and_start_run(

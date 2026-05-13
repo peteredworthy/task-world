@@ -5,7 +5,7 @@ git-checkout decision tree (needs 2 attempts + worktree + start_commit).
 """
 
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from typing import Any, cast
 
 from orchestrator.config.enums import ChecklistStatus, Priority, TaskStatus
 from orchestrator.state.models import Attempt, ChecklistItem, Run, TaskState
@@ -14,8 +14,23 @@ from orchestrator.workflow.service import WorkflowService
 NOW = datetime(2026, 1, 1, 12, 0, 0)
 
 
-def _service() -> WorkflowService:
-    return WorkflowService(session=AsyncMock())
+class DummySession:
+    def get_bind(self) -> None:
+        return None
+
+
+class RecordingWorkflowService(WorkflowService):
+    def __init__(self) -> None:
+        super().__init__(session=cast(Any, DummySession()))
+        self.checkouts: list[tuple[str, str, str]] = []
+
+    def _checkout_on_branch(self, worktree_path: str, run_id: str, commit_sha: str) -> bool:
+        self.checkouts.append((worktree_path, run_id, commit_sha))
+        return True
+
+
+def _service() -> RecordingWorkflowService:
+    return RecordingWorkflowService()
 
 
 def _run(worktree_path: str | None = None) -> Run:
@@ -85,32 +100,28 @@ class TestRevertBuilding:
         svc = _service()
         task = _task(TaskStatus.BUILDING, n_attempts=1, start_commit="abc123")
         run = _run(worktree_path="/some/worktree")
-        with patch.object(svc, "_checkout_on_branch") as mock_co:
-            svc._revert_task_to_phase_start(task, run, NOW)
-        mock_co.assert_called_once_with("/some/worktree", run.id, "abc123")
+        svc._revert_task_to_phase_start(task, run, NOW)
+        assert svc.checkouts == [("/some/worktree", run.id, "abc123")]
 
     def test_checkout_not_called_without_worktree(self) -> None:
         svc = _service()
         task = _task(TaskStatus.BUILDING, n_attempts=1, start_commit="abc123")
-        with patch.object(svc, "_checkout_on_branch") as mock_co:
-            svc._revert_task_to_phase_start(task, _run(worktree_path=None), NOW)
-        mock_co.assert_not_called()
+        svc._revert_task_to_phase_start(task, _run(worktree_path=None), NOW)
+        assert svc.checkouts == []
 
     def test_checkout_not_called_without_previous_start_commit(self) -> None:
         svc = _service()
         task = _task(TaskStatus.BUILDING, n_attempts=1, start_commit=None)
-        with patch.object(svc, "_checkout_on_branch") as mock_co:
-            svc._revert_task_to_phase_start(task, _run(worktree_path="/some/worktree"), NOW)
-        mock_co.assert_not_called()
+        svc._revert_task_to_phase_start(task, _run(worktree_path="/some/worktree"), NOW)
+        assert svc.checkouts == []
 
     def test_checkout_not_called_on_first_attempt(self) -> None:
         # With 0 existing attempts: transition_to_building creates attempt 1.
         # len(attempts) == 1 < 2, so no "previous" attempt to restore from.
         svc = _service()
         task = _task(TaskStatus.BUILDING, n_attempts=0)
-        with patch.object(svc, "_checkout_on_branch") as mock_co:
-            svc._revert_task_to_phase_start(task, _run(worktree_path="/worktree"), NOW)
-        mock_co.assert_not_called()
+        svc._revert_task_to_phase_start(task, _run(worktree_path="/worktree"), NOW)
+        assert svc.checkouts == []
 
 
 class TestRevertVerifying:
@@ -144,6 +155,5 @@ class TestRevertVerifying:
         # Worktree is already at end_commit from the builder's submit; no revert needed.
         svc = _service()
         task = _task(TaskStatus.VERIFYING, n_attempts=2, start_commit="abc123")
-        with patch.object(svc, "_checkout_on_branch") as mock_co:
-            svc._revert_task_to_phase_start(task, _run(worktree_path="/worktree"), NOW)
-        mock_co.assert_not_called()
+        svc._revert_task_to_phase_start(task, _run(worktree_path="/worktree"), NOW)
+        assert svc.checkouts == []

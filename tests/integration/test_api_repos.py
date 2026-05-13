@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
+from orchestrator.config import GlobalConfig, PathsConfig
 
 
 @pytest.fixture
@@ -56,17 +57,13 @@ def sample_repo(repos_dir: Path, _base_repo: Path) -> Path:
 
 
 @pytest.fixture
-def app_with_repos(repos_dir: Path, monkeypatch: pytest.MonkeyPatch):
+def app_with_repos(repos_dir: Path):
     """Create an app with a custom repos directory."""
-    # Monkeypatch to use our repos directory
-    from orchestrator.config import global_config
-
-    def patched_get_repos_path(self, base=None):
-        return repos_dir
-
-    monkeypatch.setattr(global_config.PathsConfig, "get_repos_path", patched_get_repos_path)
-
-    app = create_app(db_path=":memory:", auth_disabled=True)
+    app = create_app(
+        db_path=":memory:",
+        auth_disabled=True,
+        global_config=GlobalConfig(paths=PathsConfig(repos_dir=str(repos_dir))),
+    )
     return app
 
 

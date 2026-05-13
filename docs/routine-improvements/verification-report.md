@@ -14,7 +14,6 @@ Cross-checked intent, plan, architecture, step plan files (step-01-plan through 
 |-------------|-----------|----------|-------|
 | A1 — auto_verify timing | Step 1 | Yes | |
 | A2 — require verification | Step 2 | Yes | Clarification Q2 (warn by default) reflected in plan |
-| A4 — test regression guard | Step 9 | Yes | |
 | A5 — pre-run test health check | Step 3 | Yes | Clarification Q1 (project-level config) reflected |
 | A6 — clarification compression | Step 7 | Yes | |
 | A7 — prompt dead weight | Step 5 | Yes | Clarification Q6 (informational %) reflected |
@@ -52,7 +51,6 @@ All 15 plan steps have corresponding step-plan files (step-XX-plan.md) and step 
 |---|-----|--------|------------|
 | 5 | Step 3 Task 3.1: `.task-world/config.yaml` format undefined | **ADDRESSED** — step-03-plan.md defines config format; steps/step-03.md includes format details | No action needed |
 | 6 | Step 6 Task 6.1: need to inventory agent-specific sections; `codex_server.py` uses `_build_prompt` | **PARTIALLY ADDRESSED** — architecture.md lists sections per agent; codex method name NOT noted in step files | Add note about `_build_prompt` to step-06 |
-| 7 | Step 9 Task 9.1: script modes (`--snapshot`/`--compare`) undefined | **NOT ADDRESSED** — steps/step-09.md doesn't specify operating modes | Add mode specification |
 | 8 | Step 12 Task 12.3: LLM integration complexity (async, client, fallback) | **PARTIALLY ADDRESSED** — steps/step-12.md specifies fallback behavior but doesn't address async question or which client to use | Add implementation guidance |
 
 ### Medium Priority Gaps (from dry-run notes)
@@ -85,12 +83,6 @@ All 15 plan steps have corresponding step-plan files (step-XX-plan.md) and step 
 - **Impact:** Agent confusion about starting point.
 - **Resolution:** Change verb to "Create" and add guidance to find current loading code.
 
-### Issue C: Script operating modes (Step 9)
-- **Severity:** Low
-- **Description:** `check_test_count.sh` needs defined `--snapshot`/`--compare` interface.
-- **Impact:** Inconsistent implementations across attempts.
-- **Resolution:** Add mode specification to steps/step-09.md.
-
 ## 6. Completion Criteria Coverage
 
 All 15 completion criteria from intent.md map to at least one step:
@@ -102,16 +94,15 @@ All 15 completion criteria from intent.md map to at least one step:
 | 3. Test health gate | Step 3 | Yes |
 | 4. Verifier model pinned | Step 4 | Yes |
 | 5. Prompt reduction | Steps 5, 6 | Yes |
-| 6. Test regression guard | Step 9 | Yes |
-| 7. Agent escalation | Step 10 | Yes |
-| 8. Step-level auto_verify | Step 11 | Yes |
-| 9. Context summarization | Step 12 | Yes |
-| 10. Clarification compression | Step 7 | Yes |
-| 11. Multi-file routines | Step 14 | Yes |
-| 12. Task complexity field | Step 13 | Yes |
-| 13. Planning docs updated | Steps 8, 15 | Yes |
-| 14. All existing tests pass | All steps | Yes (via regression testing) |
-| 15. New tests cover features | All steps | Yes (per-step verification) |
+| 6. Agent escalation | Step 10 | Yes |
+| 7. Step-level auto_verify | Step 11 | Yes |
+| 8. Context summarization | Step 12 | Yes |
+| 9. Clarification compression | Step 7 | Yes |
+| 10. Multi-file routines | Step 14 | Yes |
+| 11. Task complexity field | Step 13 | Yes |
+| 12. Planning docs updated | Steps 8, 15 | Yes |
+| 13. All existing tests pass | All steps | Yes (via regression testing) |
+| 14. New tests cover features | All steps | Yes (per-step verification) |
 
 ## 7. Recommended Actions Before Execution
 
@@ -124,12 +115,11 @@ All 15 completion criteria from intent.md map to at least one step:
 ### Should Fix (High Priority)
 
 4. **Step 6 Task 6.1:** Add note that `codex_server.py` uses `_build_prompt`, not `build_prompt`.
-5. **Step 9 Task 9.1:** Add `--snapshot <file>` and `--compare <file>` mode specification.
-6. **Step 12 Task 12.3:** Add guidance on LLM client to use and whether prompt assembly should be async.
+5. **Step 12 Task 12.3:** Add guidance on LLM client to use and whether prompt assembly should be async.
 
 ### Nice to Fix (Medium Priority)
 
-7. **Step 7 Task 7.1:** Add data flow description for clarifications.
+6. **Step 7 Task 7.1:** Add data flow description for clarifications.
 8. **Step 14 Task 14.1:** List conflicting fields and recommend `model_fields_set`.
 
 ---

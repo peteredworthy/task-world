@@ -99,10 +99,10 @@ The good news: most tests use the `drain()` helper pattern correctly — no wide
 | Behavior | Tested In |
 |----------|-----------|
 | Diff API (aggregate, commit, task scope) | test_review_api |
-| Merge readiness gates | test_review_merge_readiness |
+| Merge readiness gates | test_merge_readiness |
 | Background test execution | test_review_test_api |
 | Back-merge clean/conflict | test_conflict_back_merge |
-| Conflict resolution (ours/theirs/manual) | test_conflict_resolve |
+| Conflict resolution (ours/theirs/manual) | test_conflict_api |
 
 ### Infrastructure
 | Behavior | Tested In |
@@ -179,14 +179,14 @@ These test the same cascading resolution logic at overlapping levels.
 
 **Recommendation:** Merge into one `test_agent_overrides.py`.
 
-#### Cluster E: Conflict/Merge (3 files)
+#### Cluster E: Conflict/Merge
 - `test_conflict_back_merge.py` — clean and conflicting back-merges
-- `test_conflict_resolve.py` — ours/theirs/manual resolution
-- `test_review_merge_readiness.py` — merge readiness gates + accept
+- `test_conflict_api.py` — conflict listing, resolution, and revert API
+- `test_merge_readiness.py` — merge readiness gates + accept
 
 These are closely related and share fixture setup patterns.
 
-**Recommendation:** Keep all three but extract shared fixtures to conftest.py to eliminate boilerplate.
+**Recommendation:** Keep route-level coverage consolidated in these files and move gate matrices toward lower-level functional tests where practical.
 
 #### Cluster F: Clarification vs Approval
 - `test_api_clarifications.py` — clarification via API
@@ -203,7 +203,6 @@ These are closely related and share fixture setup patterns.
 |------|----------|-------|
 | `test_api_websocket.py` | Lines 174, 194, 233, 264, 329, 369, 375, 383 | `asyncio.sleep()` to wait for throttle (0.1s) and batch windows (0.05-0.07s). **Justified** — testing timing-dependent features. But any system slowdown causes false failures. |
 | `test_review_test_api.py` | Line 169 `_wait_for_completion` | Polling loop with `asyncio.sleep(0.2)`. Should use event/callback. |
-| `test_review_merge_readiness.py` | Line 169 `_wait_for_completion` | Same as above (shared helper). |
 | `test_user_managed_agent.py` | Lines 179, 284 | `asyncio.sleep(0.05)` to trigger signal propagation. Should use drain pattern. |
 | `test_cli_agent.py` | Line 366 | `asyncio.sleep(0.1)` polling for subprocess startup. Should use process-ready signaling. |
 | `test_agent_executor.py` | Line 366 | `asyncio.sleep(0.1)` in polling loop for task completion. |
@@ -255,7 +254,7 @@ Extract unit tests from mixed files:
 
 Convert sleep-based polling to event/drain patterns:
 
-1. `test_review_test_api.py` + `test_review_merge_readiness.py` — `_wait_for_completion` should use a mock or inject a callback rather than polling with `asyncio.sleep(0.2)`.
+1. `test_review_test_api.py` — `_wait_for_completion` should use a mock or inject a callback rather than polling with `asyncio.sleep(0.2)`.
 2. `test_user_managed_agent.py` — the `asyncio.sleep(0.05)` calls should use `drain_signals()`.
 3. `test_agent_executor.py` — polling loop at line 366 should await an event rather than sleep.
 

@@ -4,13 +4,20 @@ Tests cover:
 - Auto-commit on clean back-merge (POST /review/back-merge)
 - Conflict detection (POST /review/back-merge with conflicts)
 - Conflict file listing (GET /review/conflicts)
+
+WARNING — shared fixture:
+    The ``client_with_repo`` / ``git_repo`` / ``_shared_app_fixture`` fixtures
+    come from ``tests/integration/conftest.py`` and reuse a single FastAPI app
+    + in-memory DB across every test in this file (module scope). Isolation
+    relies on: (1) ``git_repo`` having a UUID-suffixed name unique per test,
+    (2) server-generated run UUIDs, (3) per-test teardown cancelling runs
+    scoped to ``git_repo.name``. Don't assert on global ``/api/runs`` counts;
+    reference your run only by the ``id`` you received.
 """
 
-from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
-import pytest
 from httpx import AsyncClient
 
 from tests.integration.conftest import (
@@ -20,15 +27,8 @@ from tests.integration.conftest import (
     _setup_conflict,
 )
 
-
-@pytest.fixture
-async def client_with_repo(
-    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
-    git_repo: Path,
-) -> AsyncGenerator[tuple[AsyncClient, Path, DrainFn], None]:
-    """Yield (client, git_repo, drain) using the shared app."""
-    client, drain, _, _, _ = _shared_app_fixture
-    yield client, git_repo, drain
+# Fixtures (client_with_repo, git_repo, _shared_app_fixture) come from
+# tests/integration/conftest.py. See that module for isolation guarantees.
 
 
 async def _create_and_start_run(

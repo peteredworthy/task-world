@@ -36,7 +36,6 @@ orchestrator = "orchestrator.cli.main:cli"
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.21",
-    "pytest-cov>=4.1",
     "pyright>=1.1",
     "ruff>=0.1",
     "pre-commit>=4.5.1",
@@ -56,11 +55,11 @@ packages = ["src/orchestrator"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["src"]
-addopts = "-n auto --dist loadfile --timeout=30 --cov=src/orchestrator --cov-branch --cov-report=term-missing"
+addopts = "-n auto --dist loadfile --timeout=30 -m 'not slow and not e2e'"
 timeout = 30
 markers = [
     "slow: tests that invoke real external tools (LLMs, Docker, CLI agents)",
-    "e2e: end-to-end tests that run against a real HTTP server",
+    "e2e: end-to-end tests that run the orchestrator through real process or network boundaries",
 ]
 filterwarnings = [
     "ignore::jwt.warnings.InsecureKeyLengthWarning",

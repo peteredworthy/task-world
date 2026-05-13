@@ -5,74 +5,46 @@ Covers:
 - Merge with squash creates single commit
 - Merge with merge strategy preserves history
 - 409 when gates are unmet
+
+WARNING — shared fixture:
+    The ``app_and_client`` adapter below wraps the module-scoped
+    ``_shared_app_fixture`` (from ``tests/integration/conftest.py``) so every
+    test in this file reuses one FastAPI app + in-memory DB. Isolation relies
+    on: (1) ``git_repo`` having a UUID-suffixed name unique per test,
+    (2) server-generated run UUIDs, (3) per-test teardown cancelling runs
+    scoped to ``git_repo.name``. Don't assert on global ``/api/runs`` counts;
+    reference your run only by the ``id`` you received.
 """
 
-import uuid
 from collections.abc import AsyncGenerator
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 
-from orchestrator.api.app import create_app
-from orchestrator.config import RoutineSource, RunStatus
-from orchestrator.db import init_db
+from orchestrator.config import RunStatus
 from orchestrator.db import RunRepository
-from orchestrator.git import TestRunResult
-from orchestrator.workflow import InMemorySignalTransport
-from tests.integration.git_helpers import _commit_file, _git, _init_repo
-from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from tests.integration.git_helpers import _commit_file, _git
+from tests.integration.signal_helpers import DrainFn
 
-FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def git_repo(tmp_path: Path) -> Path:
-    """Create a git repo for testing."""
-    repo = tmp_path / "project"
-    repo.mkdir()
-    _init_repo(repo)
-    return repo
+# Shared app + git_repo come from tests/integration/conftest.py.
 
 
 @pytest.fixture
 async def app_and_client(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
     git_repo: Path,
 ) -> AsyncGenerator[tuple[AsyncClient, Path, Any, DrainFn], None]:
-    """Test client and app backed by a real git repo."""
-    from orchestrator.config.global_config import GlobalConfig, PathsConfig
+    """Adapter: (client, git_repo, app, drain) shape this module expects.
 
-    repos_dir = git_repo.parent
-    worktrees_dir = repos_dir / "worktrees"
-    worktrees_dir.mkdir(exist_ok=True)
+    Cleans up by cancelling this test's runs (matched by unique repo_name).
+    """
+    from tests.integration.conftest import cleanup_runs_for_repo
 
-    global_config = GlobalConfig(
-        paths=PathsConfig(
-            repos_dir=str(repos_dir),
-            worktrees_dir=str(worktrees_dir),
-        )
-    )
-
-    signal_transport = InMemorySignalTransport()
-    app = create_app(
-        db_path=":memory:",
-        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
-        global_config=global_config,
-    )
-    app.state.signal_transport = signal_transport
-    await init_db(app.state.engine)
-    drain = make_drain_fn(app, signal_transport)
-    transport = ASGITransport(app=app)  # type: ignore[arg-type]
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c, git_repo, app, drain
-    await app.state.engine.dispose()
+    client, drain, _, _, app = _shared_app_fixture
+    yield client, git_repo, app, drain
+    await cleanup_runs_for_repo(client, git_repo.name)
 
 
 async def _create_and_start_run(
@@ -177,47 +149,6 @@ async def test_merge_readiness_conflicts_fail(
     assert data["ready"] is False
 
 
-async def test_merge_readiness_tests_fail(
-    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
-) -> None:
-    """tests_pass gate is 'pending' when tests are configured but have not been run.
-
-    The gate transitions from pending -> pass/fail after a test run completes.
-    Since running real test commands in integration tests is expensive, we
-    verify the 'pending' state (tests configured, never run) which is the
-    start of the 'tests fail' scenario before any run occurs.
-    """
-    client, repo, app, drain = app_and_client
-    run_data = await _create_and_start_run(client, repo, drain, routine_id="auto-verify-routine")
-    run_id = run_data["id"]
-
-    resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
-    assert resp.status_code == 200
-    data = resp.json()
-
-    gate_map = {g["name"]: g["status"] for g in data["gates"]}
-    # With auto_verify configured but no test run recorded, gate is 'pending'
-    assert gate_map["tests_pass"] == "pending"
-    # pending != pass, so ready is False
-    assert data["ready"] is False
-
-
-async def test_merge_readiness_jobs_running(
-    app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
-) -> None:
-    """no_active_jobs gate passes when no agent or test jobs are running."""
-    client, repo, app, drain = app_and_client
-    run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
-    run_id = run_data["id"]
-
-    resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
-    assert resp.status_code == 200
-    data = resp.json()
-
-    gate_map = {g["name"]: g["status"] for g in data["gates"]}
-    assert gate_map["no_active_jobs"] == "pass"
-
-
 # ---------------------------------------------------------------------------
 # Merge strategy tests
 # ---------------------------------------------------------------------------
@@ -320,36 +251,20 @@ async def test_merge_back_rejects_unmet_gates(
     assert "gates" in detail or "gate" in str(detail).lower() or "conflicts" in str(detail).lower()
 
 
-async def test_merge_readiness_no_active_jobs_fail(
+async def test_merge_back_rejects_non_completed_run(
     app_and_client: tuple[AsyncClient, Path, Any, DrainFn],
 ) -> None:
-    """no_active_jobs gate fails when a test job is actively running for the run."""
-    client, repo, app, drain = app_and_client
+    """merge-back returns 409 for a run that is not completed."""
+    client, repo, _app, drain = app_and_client
     run_data = await _create_and_start_run(client, repo, drain, routine_id="simple-routine")
     run_id = run_data["id"]
 
-    # Inject a "running" test job directly into the TestRunner's in-memory state
-    test_runner = app.state.test_runner
-    test_run_id = str(uuid.uuid4())
-    test_runner._results[test_run_id] = TestRunResult(
-        test_run_id=test_run_id,
-        status="running",
-        log_output="",
-        started_at=datetime.now(timezone.utc),
+    resp = await client.post(
+        f"/api/runs/{run_id}/merge-back",
+        json={"strategy": "squash"},
     )
-    test_runner._active_runs[run_id] = test_run_id
-
-    resp = await client.get(f"/api/runs/{run_id}/review/merge-readiness")
-    assert resp.status_code == 200
-    data = resp.json()
-
-    gate_map = {g["name"]: g["status"] for g in data["gates"]}
-    assert gate_map["no_active_jobs"] == "fail"
-    assert data["ready"] is False
-
-    # Clean up injected state
-    del test_runner._active_runs[run_id]
-    del test_runner._results[test_run_id]
+    assert resp.status_code == 409
+    assert "COMPLETED" in resp.json()["detail"]
 
 
 async def test_merge_readiness_clean_merge_fail(

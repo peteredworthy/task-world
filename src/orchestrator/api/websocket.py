@@ -5,12 +5,13 @@ import dataclasses
 import json
 import logging
 import time
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
 from fastapi import WebSocket
-from orchestrator.workflow import ClarificationRequested, ClarificationResponded
 from orchestrator.time_utils import format_utc_datetime
+from orchestrator.workflow import ClarificationRequested, ClarificationResponded
 
 # Maximum updates per second per client (throttle interval in seconds)
 _THROTTLE_INTERVAL = 0.1  # 10 updates/sec
@@ -36,9 +37,10 @@ class ConnectionManager:
     need guaranteed delivery should read from the event store instead.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self._connections: dict[str, list[WebSocket]] = {}
         self._last_send_time: dict[int, float] = {}
+        self._clock = clock
 
     async def connect(self, run_id: str, websocket: WebSocket) -> None:
         """Accept and register a WebSocket for a run."""
@@ -66,7 +68,7 @@ class ConnectionManager:
         if run_id not in self._connections:
             return
 
-        now = time.monotonic()
+        now = self._clock()
         dead: list[WebSocket] = []
         for ws in self._connections[run_id]:
             ws_id = id(ws)
@@ -129,9 +131,12 @@ class BatchingConnectionManager(ConnectionManager):
     """
 
     def __init__(
-        self, batch_window: float = _DEFAULT_BATCH_WINDOW, batching_enabled: bool = True
+        self,
+        batch_window: float = _DEFAULT_BATCH_WINDOW,
+        batching_enabled: bool = True,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        super().__init__()
+        super().__init__(clock=clock)
         self._batching_enabled = batching_enabled
         self._batch_window = batch_window
         # Per-run event buffers

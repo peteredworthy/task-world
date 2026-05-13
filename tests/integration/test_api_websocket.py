@@ -1,6 +1,5 @@
 """Integration tests for WebSocket support."""
 
-import asyncio
 import json
 from datetime import datetime, timezone
 
@@ -23,6 +22,17 @@ class MockWebSocket:
 
     async def send_text(self, data: str) -> None:
         self.messages.append(data)
+
+
+class FakeClock:
+    def __init__(self, now: float = 1.0) -> None:
+        self._now = now
+
+    def now(self) -> float:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += seconds
 
 
 async def test_connection_manager_broadcast() -> None:
@@ -171,7 +181,8 @@ async def test_multiple_subscribers() -> None:
 
 async def test_per_client_throttle() -> None:
     """Rapid broadcasts are throttled per client — only first and post-interval get through."""
-    manager = ConnectionManager()
+    clock = FakeClock()
+    manager = ConnectionManager(clock=clock.now)
     ws = MockWebSocket()
     await manager.connect("run-1", ws)  # type: ignore[arg-type]
 
@@ -184,8 +195,7 @@ async def test_per_client_throttle() -> None:
     await manager.broadcast_to_run("run-1", {"seq": 2})
     assert len(ws.messages) == 1  # still 1
 
-    # Wait for throttle interval to pass
-    await asyncio.sleep(0.11)
+    clock.advance(0.11)
 
     # Third broadcast should go through after the throttle window
     await manager.broadcast_to_run("run-1", {"seq": 3})
@@ -195,7 +205,8 @@ async def test_per_client_throttle() -> None:
 
 async def test_per_client_throttle_independent() -> None:
     """Two clients on the same run throttle independently."""
-    manager = ConnectionManager()
+    clock = FakeClock()
+    manager = ConnectionManager(clock=clock.now)
     ws1 = MockWebSocket()
     await manager.connect("run-1", ws1)  # type: ignore[arg-type]
 
@@ -204,8 +215,7 @@ async def test_per_client_throttle_independent() -> None:
     assert len(ws1.messages) == 1
     assert json.loads(ws1.messages[0])["seq"] == 1
 
-    # Wait for throttle to pass for ws1
-    await asyncio.sleep(0.11)
+    clock.advance(0.11)
 
     # Now connect ws2 — it has no throttle history
     ws2 = MockWebSocket()
@@ -233,7 +243,7 @@ async def test_batching_manager_disabled_mode() -> None:
 
 async def test_batching_collects_events_within_window() -> None:
     """Events broadcast within the batch window are collected and sent as a batch."""
-    manager = BatchingConnectionManager(batch_window=0.05, batching_enabled=True)
+    manager = BatchingConnectionManager(batch_window=10.0, batching_enabled=True)
 
     ws = MockWebSocket()
     await manager.connect("run-1", ws)  # type: ignore[arg-type]
@@ -243,8 +253,7 @@ async def test_batching_collects_events_within_window() -> None:
     await manager.broadcast_to_run("run-1", {"event": "second", "seq": 2})
     await manager.broadcast_to_run("run-1", {"event": "third", "seq": 3})
 
-    # Wait for batch window to expire
-    await asyncio.sleep(0.07)
+    await manager.flush_all()
 
     # Should have received exactly one batch message
     assert len(ws.messages) == 1
@@ -261,7 +270,7 @@ async def test_batching_collects_events_within_window() -> None:
 
 async def test_batching_multiple_runs_independent() -> None:
     """Events for different runs are batched independently."""
-    manager = BatchingConnectionManager(batch_window=0.05, batching_enabled=True)
+    manager = BatchingConnectionManager(batch_window=10.0, batching_enabled=True)
 
     ws1 = MockWebSocket()
     ws2 = MockWebSocket()
@@ -274,8 +283,7 @@ async def test_batching_multiple_runs_independent() -> None:
     await manager.broadcast_to_run("run-1", {"run": 1, "seq": 2})
     await manager.broadcast_to_run("run-2", {"run": 2, "seq": 2})
 
-    # Wait for batch windows to expire
-    await asyncio.sleep(0.07)
+    await manager.flush_all()
 
     # Each websocket should have received one batch
     assert len(ws1.messages) == 1
@@ -315,7 +323,7 @@ async def test_batching_flush_all() -> None:
 
 async def test_batching_event_broadcast() -> None:
     """broadcast_event works with batching enabled."""
-    manager = BatchingConnectionManager(batch_window=0.05, batching_enabled=True)
+    manager = BatchingConnectionManager(batch_window=10.0, batching_enabled=True)
 
     ws = MockWebSocket()
     await manager.connect("run-1", ws)  # type: ignore[arg-type]
@@ -339,8 +347,7 @@ async def test_batching_event_broadcast() -> None:
     await manager.broadcast_event(event1)
     await manager.broadcast_event(event2)
 
-    # Wait for batch
-    await asyncio.sleep(0.07)
+    await manager.flush_all()
 
     assert len(ws.messages) == 1
     batch = json.loads(ws.messages[0])
@@ -373,28 +380,33 @@ async def test_batching_disconnect_cleans_up() -> None:
 
 async def test_batching_respects_per_client_throttle() -> None:
     """Batched messages still respect the per-client throttle from parent class."""
-    manager = BatchingConnectionManager(batch_window=0.05, batching_enabled=True)
+    clock = FakeClock()
+    manager = BatchingConnectionManager(
+        batch_window=10.0,
+        batching_enabled=True,
+        clock=clock.now,
+    )
 
     ws = MockWebSocket()
     await manager.connect("run-1", ws)  # type: ignore[arg-type]
 
     # First batch
     await manager.broadcast_to_run("run-1", {"batch": 1})
-    await asyncio.sleep(0.06)  # Wait for first batch to send
+    await manager.flush_all()
 
     assert len(ws.messages) == 1
 
     # Second batch immediately after - should be throttled
     await manager.broadcast_to_run("run-1", {"batch": 2})
-    await asyncio.sleep(0.06)  # Wait for batch window
+    await manager.flush_all()
 
     # Should still only have one message (second was throttled)
     assert len(ws.messages) == 1
 
-    # Throttle has already passed (0.12s elapsed since first send > 0.1s throttle)
-    # Third batch should go through
+    clock.advance(0.11)
+
     await manager.broadcast_to_run("run-1", {"batch": 3})
-    await asyncio.sleep(0.06)
+    await manager.flush_all()
 
     # Should now have two messages total
     assert len(ws.messages) == 2

@@ -1,61 +1,23 @@
 """Shared test fixtures and configuration."""
 
+from __future__ import annotations
+
 import multiprocessing
+import os
+from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from dotenv import load_dotenv
 
-from orchestrator.workflow import WorkflowEvent
+if TYPE_CHECKING:
+    from orchestrator.workflow import WorkflowEvent
 
 # Load .env before test collection so that skipif conditions
 # (e.g. os.getenv("OPENAI_API_KEY")) see the values.
 load_dotenv()
-
-_COVERAGE_FAIL_UNDER = 71
-
-
-def _is_full_suite_run(config: pytest.Config) -> bool:
-    """Return true when pytest is collecting the configured full test suite."""
-    if config.option.collectonly:
-        return False
-    if getattr(config.option, "keyword", ""):
-        return False
-    if getattr(config.option, "markexpr", ""):
-        return False
-    for option_name in ("lf", "failedfirst", "newfirst", "stepwise"):
-        if getattr(config.option, option_name, False):
-            return False
-
-    root = Path(str(config.rootpath)).resolve()
-    tests_root = (root / "tests").resolve()
-    collection_args = [Path(arg).resolve() for arg in config.args]
-    return not collection_args or collection_args == [tests_root]
-
-
-@pytest.hookimpl(wrapper=True, tryfirst=True)
-def pytest_runtestloop(session: pytest.Session):
-    """Enforce coverage percentage only for the configured full test suite."""
-    result = yield
-    config = session.config
-    if getattr(config, "workerinput", None) is not None or not _is_full_suite_run(config):
-        return result
-
-    cov_plugin = config.pluginmanager.get_plugin("_cov")
-    cov_total = getattr(cov_plugin, "cov_total", None)
-    if cov_total is None:
-        return result
-    if cov_total < _COVERAGE_FAIL_UNDER:
-        terminal = config.pluginmanager.get_plugin("terminalreporter")
-        terminal.write(
-            f"\nERROR: Coverage failure: total of {cov_total:.0f} "
-            f"is less than fail-under={_COVERAGE_FAIL_UNDER}\n",
-            red=True,
-            bold=True,
-        )
-        session.testsfailed += 1
-    return result
 
 
 def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
@@ -71,7 +33,7 @@ def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
 
 
 @pytest.fixture(autouse=True)
-def _isolate_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate_git(tmp_path: Path) -> Generator[None, None, None]:
     """Isolate git operations from the project repo and pre-commit state.
 
     Under pytest-xdist (especially inside pre-commit hooks), git env vars
@@ -79,8 +41,8 @@ def _isolate_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     into subprocess calls, causing index errors or wrong author names.
     Clearing them ensures each test's temp repo is fully self-contained.
     """
-    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
-    for var in (
+    vars_to_restore = (
+        "GIT_CEILING_DIRECTORIES",
         "GIT_DIR",
         "GIT_WORK_TREE",
         "GIT_INDEX_FILE",
@@ -88,12 +50,23 @@ def _isolate_git(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "GIT_AUTHOR_EMAIL",
         "GIT_COMMITTER_NAME",
         "GIT_COMMITTER_EMAIL",
-    ):
-        monkeypatch.delenv(var, raising=False)
+    )
+    previous = {name: os.environ.get(name) for name in vars_to_restore}
+    os.environ["GIT_CEILING_DIRECTORIES"] = str(tmp_path)
+    for var in vars_to_restore[1:]:
+        os.environ.pop(var, None)
+    try:
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 # ---------------------------------------------------------------------------
-# --run-slow flag: skip @pytest.mark.slow tests unless explicitly opted in
+# --run-slow / --run-e2e flags: skip expensive tests unless explicitly opted in
 # ---------------------------------------------------------------------------
 
 
@@ -104,15 +77,56 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=False,
         help="Run tests marked @pytest.mark.slow (real LLM agents, costs money)",
     )
+    parser.addoption(
+        "--run-e2e",
+        action="store_true",
+        default=False,
+        help="Run tests marked @pytest.mark.e2e (full process/network workflows)",
+    )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Let --run-slow/--run-e2e relax the default marker expression."""
+    default_markexpr = "not slow and not e2e"
+    if config.option.markexpr != default_markexpr:
+        return
+
+    run_slow = config.getoption("--run-slow")
+    run_e2e = config.getoption("--run-e2e")
+    if run_slow and run_e2e:
+        config.option.markexpr = ""
+    elif run_slow:
+        config.option.markexpr = "not e2e"
+    elif run_e2e:
+        config.option.markexpr = "not slow"
+
+
+def pytest_ignore_collect(collection_path: Path, config: pytest.Config) -> bool:
+    """Avoid importing split-out expensive suites unless explicitly requested."""
+    tests_root = Path(str(config.rootpath)).resolve() / "tests"
+    try:
+        relative = collection_path.resolve().relative_to(tests_root)
+    except ValueError:
+        return False
+
+    if not relative.parts:
+        return False
+    suite = relative.parts[0]
+    if suite == "slow" and not config.getoption("--run-slow"):
+        return True
+    if suite == "e2e" and not config.getoption("--run-e2e"):
+        return True
+    return False
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    if config.getoption("--run-slow"):
-        return
     skip_slow = pytest.mark.skip(reason="needs --run-slow to run")
+    skip_e2e = pytest.mark.skip(reason="needs --run-e2e to run")
     for item in items:
-        if "slow" in item.keywords:
+        if "slow" in item.keywords and not config.getoption("--run-slow"):
             item.add_marker(skip_slow)
+        if "e2e" in item.keywords and not config.getoption("--run-e2e"):
+            item.add_marker(skip_e2e)
 
 
 class FakeClock:

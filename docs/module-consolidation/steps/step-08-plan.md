@@ -479,7 +479,7 @@ The test files requiring updates, grouped by import:
 - `tests/integration/test_repeat_for_edge_cases.py`
 - `tests/integration/test_repositories.py`
 - `tests/integration/test_review_api.py`
-- `tests/integration/test_review_merge_readiness.py`
+- `tests/integration/test_merge_readiness.py`
 - `tests/integration/test_review_test_api.py`
 - `tests/integration/test_review_test_runner.py`
 - `tests/integration/test_scaffolding.py`
@@ -498,7 +498,6 @@ The test files requiring updates, grouped by import:
 - `tests/integration/test_parity_fan_out_replay.py`
 - `tests/integration/test_parity_replay.py`
 - `tests/integration/test_repositories.py`
-- `tests/integration/test_review_merge_readiness.py`
 - `tests/integration/test_scaffolding.py`
 - `tests/unit/test_agent_monitor.py`
 - `tests/unit/test_executor_codex_lifecycle.py`
