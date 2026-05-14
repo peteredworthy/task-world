@@ -191,7 +191,7 @@ class WorktreeManager:
             f"{repo_abs}/scripts",
             f"{repo_abs}/ui",
             # Knowledge graph — agents can query it even if the worktree copy
-            # is missing or stale (e.g. when .worktree-setup was skipped).
+            # is missing or stale (e.g. when worktree setup was skipped).
             f"{repo_abs}/graphify-out",
         ]
 
@@ -304,11 +304,11 @@ class WorktreeManager:
     def _run_worktree_setup(self, worktree_path: Path) -> None:
         """Run the project's worktree setup script if it exists.
 
-        Looks for ``.worktree-setup`` in the main repo root and executes it
-        with ``<worktree-path> <main-repo-path>`` as arguments.  Failures are
-        logged but do **not** prevent the worktree from being used.
+        Looks for ``scripts/worktree/setup.sh`` in the main repo and executes
+        it with ``<worktree-path> <main-repo-path>`` as arguments.  Failures
+        are logged but do **not** prevent the worktree from being used.
         """
-        setup_script = self._repo / ".worktree-setup"
+        setup_script = self._repo / "scripts" / "worktree" / "setup.sh"
         if not setup_script.exists():
             return
 

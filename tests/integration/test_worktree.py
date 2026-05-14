@@ -610,11 +610,12 @@ def test_cleanup_expired_refuses_empty_run_set(git_repo: tuple[Path, Path]) -> N
 
 
 def test_worktree_setup_script_runs_on_create(git_repo: tuple[Path, Path]) -> None:
-    """Test that .worktree-setup is executed after worktree creation."""
+    """Test that scripts/worktree/setup.sh is executed after worktree creation."""
     repo, worktrees = git_repo
 
     # Create a setup script that writes a marker file
-    setup_script = repo / ".worktree-setup"
+    setup_script = repo / "scripts" / "worktree" / "setup.sh"
+    setup_script.parent.mkdir(parents=True, exist_ok=True)
     setup_script.write_text(
         '#!/usr/bin/env bash\nset -euo pipefail\necho "setup-ran" > "$1/.setup-marker"\n'
     )
@@ -629,10 +630,11 @@ def test_worktree_setup_script_runs_on_create(git_repo: tuple[Path, Path]) -> No
 
 
 def test_worktree_setup_script_receives_both_args(git_repo: tuple[Path, Path]) -> None:
-    """Test that .worktree-setup receives worktree path and main repo path."""
+    """Test that setup.sh receives worktree path and main repo path."""
     repo, worktrees = git_repo
 
-    setup_script = repo / ".worktree-setup"
+    setup_script = repo / "scripts" / "worktree" / "setup.sh"
+    setup_script.parent.mkdir(parents=True, exist_ok=True)
     setup_script.write_text(
         '#!/usr/bin/env bash\nset -euo pipefail\necho "$1" > "$1/.arg1"\necho "$2" > "$1/.arg2"\n'
     )
@@ -652,7 +654,8 @@ def test_worktree_setup_script_failure_does_not_block(git_repo: tuple[Path, Path
     """Test that a failing setup script doesn't prevent worktree creation."""
     repo, worktrees = git_repo
 
-    setup_script = repo / ".worktree-setup"
+    setup_script = repo / "scripts" / "worktree" / "setup.sh"
+    setup_script.parent.mkdir(parents=True, exist_ok=True)
     setup_script.write_text("#!/usr/bin/env bash\nexit 1\n")
     setup_script.chmod(0o755)
 
@@ -665,7 +668,7 @@ def test_worktree_setup_script_failure_does_not_block(git_repo: tuple[Path, Path
 
 
 def test_worktree_no_setup_script(git_repo: tuple[Path, Path]) -> None:
-    """Test that missing .worktree-setup is handled gracefully."""
+    """Test that missing scripts/worktree/setup.sh is handled gracefully."""
     repo, worktrees = git_repo
 
     # No setup script — should work fine (baseline behavior)
@@ -675,10 +678,11 @@ def test_worktree_no_setup_script(git_repo: tuple[Path, Path]) -> None:
 
 
 def test_worktree_setup_runs_on_ensure_exists(git_repo: tuple[Path, Path]) -> None:
-    """Test that .worktree-setup runs when ensure_exists recreates a worktree."""
+    """Test that setup.sh runs when ensure_exists recreates a worktree."""
     repo, worktrees = git_repo
 
-    setup_script = repo / ".worktree-setup"
+    setup_script = repo / "scripts" / "worktree" / "setup.sh"
+    setup_script.parent.mkdir(parents=True, exist_ok=True)
     setup_script.write_text(
         '#!/usr/bin/env bash\nset -euo pipefail\necho "setup-ran" > "$1/.setup-marker"\n'
     )

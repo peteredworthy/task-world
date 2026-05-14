@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-GIT_WRAPPER = REPO_ROOT / "git-wrapper.sh"
+GIT_WRAPPER = REPO_ROOT / "scripts" / "worktree" / "git-wrapper.sh"
 
 
 def _run(

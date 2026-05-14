@@ -16,6 +16,7 @@ from pathlib import Path
 GIT_RUN_WORKTREE_ENV = "ORCHESTRATOR_RUN_WORKTREE"
 GIT_RUN_BRANCH_ENV = "ORCHESTRATOR_RUN_BRANCH"
 GIT_WRAPPER_NAME = "git-wrapper.sh"
+_GIT_WRAPPER_RELATIVE = Path("scripts") / "worktree" / GIT_WRAPPER_NAME
 _DEFAULT_GIT_AUTHOR_NAME = "Orchestrator Agent"
 _DEFAULT_GIT_AUTHOR_EMAIL = "orchestrator@local"
 _WRAPPER_CACHE_DIR = "orchestrator-git-wrapper-bin"
@@ -61,13 +62,13 @@ def _ensure_git_wrapper_shim() -> str:
 def _find_git_wrapper() -> Path:
     """Locate the repo-level git wrapper script.
 
-    Walk upwards from this file and return the first path named
-    ``git-wrapper.sh``. This keeps the helper resilient in worktrees and
-    tests run from subdirectories.
+    Walk upwards from this file and return the first ancestor that contains
+    ``scripts/worktree/git-wrapper.sh``. Resilient to worktrees and tests run
+    from subdirectories.
     """
     current = Path(__file__).resolve()
     for parent in current.parents:
-        candidate = parent / GIT_WRAPPER_NAME
+        candidate = parent / _GIT_WRAPPER_RELATIVE
         if candidate.is_file():
             return candidate
     raise FileNotFoundError("git wrapper script not found")

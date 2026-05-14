@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Worktree environment setup script.
 # Runs automatically after the orchestrator creates or recreates a worktree.
-# Called with: .worktree-setup <worktree-path> <main-repo-path>
+# Called with: scripts/worktree/setup.sh <worktree-path> <main-repo-path>
 #
 # This script should be fast (< 10s) since it runs on every worktree creation.
 # The npm cache is warm from the main repo, so npm ci --prefer-offline is ~3s.
