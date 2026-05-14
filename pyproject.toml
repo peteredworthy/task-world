@@ -53,6 +53,7 @@ packages = ["src/orchestrator"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "module"
 testpaths = ["tests"]
 pythonpath = ["src"]
 addopts = "-n auto --dist loadfile --timeout=30 -m 'not slow and not e2e'"

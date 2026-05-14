@@ -15,6 +15,7 @@ from orchestrator.workflow import (
     DelegatedWork,
     SuperParentDelegationPolicy,
     apply_delegate_command,
+    delegation_decision_from_parent_snapshot,
 )
 
 
@@ -394,29 +395,19 @@ def test_delegation_state_apply_command_returns_new_state_without_mutating_old_s
     assert updated.delegation_decisions[-1].idempotency_key == "launch-child-1"
 
 
-def test_super_parent_policy_waits_for_active_delegate() -> None:
-    policy = SuperParentDelegationPolicy()
-    work = DelegatedWork(
-        id="child-1",
-        owner_id="parent",
-        owner_kind="run",
-        delegate_kind="run",
-        status="running",
-    )
-
-    decision = policy.reduce(
+def test_parent_snapshot_decision_waits_for_active_delegate() -> None:
+    decision = delegation_decision_from_parent_snapshot(
         {
-            "parent_run_id": "parent",
-            "parent_status": "active",
-            "max_child_runs": 20,
-            "resolved_child_run_ids": set(),
+            "next_parent_action": "wait_for_child",
+            "active_child_run_ids": ["child-1"],
+            "terminal_guard": {"can_complete": False},
             "child_count": 1,
-        },
-        [work],
-        {},
+            "max_child_runs": 20,
+        }
     )
 
     assert decision.kind == "wait"
+    assert decision.work_id == "child-1"
     assert decision.stable_state == "WaitingOnDelegate"
 
 

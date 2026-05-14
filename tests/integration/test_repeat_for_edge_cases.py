@@ -25,7 +25,7 @@ from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.workflow import check_step_progression
+from orchestrator.workflow import _create_repeat_step_copies, check_step_progression
 
 
 @pytest.fixture
@@ -262,22 +262,10 @@ class TestRepeatForConditionPersistence:
         run.config = {"items": ["a", "b", "c"]}
         run.current_step_index = 1
 
-        # Create expanded step copies manually for persistence test
+        # Create expanded step copies with the production helper so nested task
+        # IDs are unique before ORM persistence.
         original_step = run.steps[1]
-        copies = []
-        for i, item in enumerate(["a", "b", "c"]):
-            import copy
-
-            step_copy = copy.deepcopy(original_step)
-            step_copy.id = f"{original_step.id}-{i}"
-            step_copy.title = f"{original_step.title} [{i + 1}/3]"
-            if step_copy.condition is None:
-                step_copy.condition = {}
-            if "injected_vars" not in step_copy.condition:
-                step_copy.condition["injected_vars"] = {}
-            step_copy.condition["injected_vars"]["item"] = item
-            step_copy.condition["injected_vars"]["item_index"] = i
-            copies.append(step_copy)
+        copies = _create_repeat_step_copies(original_step, ["a", "b", "c"], "item")
 
         # Replace step with copies
         run.steps[1 : 1 + 1] = copies

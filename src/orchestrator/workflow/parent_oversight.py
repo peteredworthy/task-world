@@ -23,15 +23,11 @@ from orchestrator.state import Run
 from orchestrator.state.session import SessionStateManager
 from orchestrator.workflow.delegation import (
     DelegateCommand,
-    DelegateResultEnvelope,
     DelegatedWork,
     DelegationDecision,
-    DelegationStableState,
-    DelegationState,
-    FanOutDelegationPolicy,
+    DelegationRecorder,
     SuperParentDelegationPolicy,
     apply_delegate_command,
-    build_super_parent_facts,
     result_from_child_evidence,
     work_from_child_run,
 )
@@ -48,9 +44,10 @@ from orchestrator.workflow.oversight import (
     validate_run_evidence_items,
 )
 from orchestrator.workflow.oversight_projection import (
-    extract_parent_oversight_facts,
+    delegation_decision_from_parent_snapshot,
     project_parent_oversight,
 )
+from orchestrator.workflow.oversight_facts import extract_parent_oversight_facts
 from orchestrator.workflow.signals.signals import (
     DbSignalTransport,
     SignalQueue,
@@ -82,7 +79,6 @@ class ParentOversightService:
         *,
         global_config: GlobalConfig | None = None,
         super_parent_policy: SuperParentDelegationPolicy | None = None,
-        fan_out_policy: FanOutDelegationPolicy | None = None,
         signal_transport: SignalTransport | None = None,
     ) -> None:
         self._session = session
@@ -91,92 +87,13 @@ class ParentOversightService:
         self._clock = clock
         self._global_config = global_config
         self._super_parent_policy = super_parent_policy or SuperParentDelegationPolicy()
-        self._fan_out_policy = fan_out_policy or FanOutDelegationPolicy()
         self._signal_transport = signal_transport
+        self._delegation_recorder = DelegationRecorder(clock)
 
     def _get_signal_queue(self) -> SignalQueue:
         """Return a SignalQueue backed by the injected transport or the default DbSignalTransport."""
         transport = self._signal_transport or DbSignalTransport(self._session)
         return SignalQueue(transport)
-
-    def _record_delegation_work_state(
-        self,
-        owner_state: dict[str, Any],
-        work: DelegatedWork,
-    ) -> dict[str, Any]:
-        return (
-            DelegationState.from_oversight_state(owner_state)
-            .with_work(work)
-            .merge_into(owner_state)
-        )
-
-    def _apply_delegation_command(
-        self,
-        owner_state: dict[str, Any],
-        work: DelegatedWork | None,
-        command: DelegateCommand,
-    ) -> tuple[dict[str, Any], DelegatedWork | None, DelegationDecision]:
-        delegation = DelegationState.from_oversight_state(owner_state)
-        updated, updated_work, decision = delegation.apply_command(
-            work,
-            command,
-            recorded_at=self._clock.now(),
-        )
-        return updated.merge_into(owner_state), updated_work, decision
-
-    def _record_delegation_result(
-        self,
-        owner_state: dict[str, Any],
-        result: DelegateResultEnvelope,
-        decision: DelegationDecision,
-    ) -> dict[str, Any]:
-        return (
-            DelegationState.from_oversight_state(owner_state)
-            .with_result(result, decision, recorded_at=self._clock.now())
-            .merge_into(owner_state)
-        )
-
-    def _record_delegation_decision(
-        self,
-        owner_state: dict[str, Any],
-        decision: DelegationDecision,
-        *,
-        idempotency_key: str | None = None,
-        expected_generation: int | None = None,
-        owner_token: str | None = None,
-    ) -> dict[str, Any]:
-        return (
-            DelegationState.from_oversight_state(owner_state)
-            .with_decision(
-                decision,
-                recorded_at=self._clock.now(),
-                idempotency_key=idempotency_key,
-                expected_generation=expected_generation,
-                owner_token=owner_token,
-            )
-            .merge_into(owner_state)
-        )
-
-    def _record_delegation_review_state(
-        self,
-        owner_state: dict[str, Any],
-        *,
-        work_id: str,
-        stable_state: DelegationStableState,
-        reason: str,
-        payload: dict[str, Any],
-    ) -> dict[str, Any]:
-        return (
-            DelegationState.from_oversight_state(owner_state)
-            .with_review_state(
-                work_id=work_id,
-                stable_state=stable_state,
-                reason=reason,
-                payload=payload,
-                recorded_at=self._clock.now(),
-            )
-            .merge_into(owner_state)
-        )
 
     async def get_parent_oversight(self, parent_run_id: str) -> dict[str, Any]:
         """Return current deterministic oversight state for a parent run."""
@@ -411,18 +328,6 @@ class ParentOversightService:
         parent.oversight_state = projected_state
         return parent
 
-    async def hydrate_parent_oversight_state(self, parent: Run) -> Run:
-        """Attach a computed projection without saving it as durable state."""
-        children = await self._repo.list_child_runs(parent.id, include_action_logs=False)
-        evidence_by_run_id = await self._collect_child_evidence(children)
-        parent.oversight_state = project_parent_oversight(
-            parent,
-            children,
-            evidence_by_run_id,
-            max_child_runs=self.max_child_runs_for_parent(parent),
-        )
-        return parent
-
     def max_child_runs_for_parent(self, parent: Run) -> int:
         """Resolve the configured child-run limit for a parent run."""
         for source in (parent.oversight_state, parent.config):
@@ -571,27 +476,8 @@ class ParentOversightService:
             "can_complete",
             False,
         ):
-            facts, works = build_super_parent_facts(
-                run,
-                children,
-                max_child_runs=self.max_child_runs_for_parent(run),
-                resolved_child_run_ids=self.resolved_child_run_ids(run),
-            )
-            policy_decision = self._super_parent_policy.reduce(
-                facts.model_dump(),
-                works,
-                self.delegate_results_from_child_evidence(children, evidence_by_run_id),
-            )
-            if policy_decision.kind == "launch":
-                policy_decision = DelegationDecision(
-                    kind="review",
-                    reason="terminal_guard_blocked",
-                    stable_state="AwaitingGate",
-                    payload={
-                        "blocking_reasons": terminal_guard.get("blocking_reasons", []),
-                    },
-                )
-            fact_state = self._record_delegation_decision(
+            policy_decision = delegation_decision_from_parent_snapshot(oversight_state)
+            fact_state = self._delegation_recorder.record_decision(
                 fact_state,
                 policy_decision,
             )
@@ -635,32 +521,6 @@ class ParentOversightService:
             if isinstance(child_id, str):
                 resolved.add(child_id)
         return resolved
-
-    def delegate_results_from_child_evidence(
-        self,
-        children: list[Run],
-        evidence_by_run_id: dict[str, list[dict[str, Any]]],
-    ) -> dict[str, DelegateResultEnvelope]:
-        results: dict[str, DelegateResultEnvelope] = {}
-        for child in children:
-            valid_items, invalid_items = validate_run_evidence_items(
-                evidence_by_run_id.get(child.id, []),
-                expected_slice_id=child.parent_slice_id,
-                expected_routine_id=child.routine_id,
-            )
-            outcomes = {
-                RunEvidenceBundle.model_validate(item["bundle"]).outcome
-                for item in valid_items
-                if isinstance(item.get("bundle"), dict)
-            }
-            if outcomes or invalid_items:
-                results[child.id] = result_from_child_evidence(
-                    child.id,
-                    set(outcomes),
-                    generation=work_from_child_run(child).generation,
-                    invalid_reasons=[item.path for item in invalid_items],
-                )
-        return results
 
     def delegation_work_for_child_command(self, parent: Run, child: Run) -> Any:
         live_work = work_from_child_run(
@@ -761,7 +621,7 @@ class ParentOversightService:
                 accepted_ids.add(accepted_child_id)
         command_work, integrate_decision = apply_delegate_command(work, integrate_command)
         if child.id in accepted_ids:
-            state = self._record_delegation_decision(
+            state = self._delegation_recorder.record_decision(
                 state,
                 integrate_decision,
                 idempotency_key=integrate_command.idempotency_key,
@@ -787,7 +647,7 @@ class ParentOversightService:
                 merge_commit_sha=merge_commit_sha if isinstance(merge_commit_sha, str) else None,
             )
         if integrate_decision.kind != "integrate":
-            state = self._record_delegation_decision(
+            state = self._delegation_recorder.record_decision(
                 state,
                 integrate_decision,
                 idempotency_key=integrate_command.idempotency_key,
@@ -807,7 +667,7 @@ class ParentOversightService:
                 child_evidence,
             )
         except InvalidTransitionError as err:
-            state = self._record_delegation_review_state(
+            state = self._delegation_recorder.record_review_state(
                 parent.oversight_state,
                 work_id=child.id,
                 stable_state="InvalidEvidence",
@@ -817,7 +677,7 @@ class ParentOversightService:
             await self.persist_parent_oversight_state(parent, state, commit=True)
             raise
         if not child_outcomes & ACCEPTANCE_OUTCOMES:
-            state = self._record_delegation_review_state(
+            state = self._delegation_recorder.record_review_state(
                 parent.oversight_state,
                 work_id=child.id,
                 stable_state="InvalidEvidence",
@@ -845,24 +705,24 @@ class ParentOversightService:
             generation=expected_generation if expected_generation is not None else work.generation,
         )
         if result.status == "clean":
-            state, _, _ = self._apply_delegation_command(
+            state, _, _ = self._delegation_recorder.apply_command(
                 state,
                 work,
                 integrate_command,
             )
             self._record_child_acceptance(parent, child, result, state)
-            state = self._record_delegation_result(
+            state = self._delegation_recorder.record_result(
                 state,
                 result_envelope,
                 DelegationDecision(kind="integrate", work_id=child.id),
             )
         else:
             self._record_child_merge_conflict(parent, child, result, state)
-            state = self._record_delegation_work_state(
+            state = self._delegation_recorder.record_work(
                 state,
                 (command_work or work).model_copy(update={"status": "review"}),
             )
-            state = self._record_delegation_result(
+            state = self._delegation_recorder.record_result(
                 state,
                 result_envelope.model_copy(
                     update={
@@ -933,7 +793,7 @@ class ParentOversightService:
         rejected_ids = set(self._state_str_list(state.get("rejected_child_run_ids")))
         abandoned_ids = set(self._state_str_list(state.get("abandoned_child_run_ids")))
         if child.id in rejected_ids and resolution == "reject":
-            state = self._record_delegation_decision(
+            state = self._delegation_recorder.record_decision(
                 state,
                 DelegationDecision(
                     kind="stale_command_ignored",
@@ -954,7 +814,7 @@ class ParentOversightService:
                 resolved_at=self._clock.now(),
             )
         if child.id in abandoned_ids and resolution == "abandon":
-            state = self._record_delegation_decision(
+            state = self._delegation_recorder.record_decision(
                 state,
                 DelegationDecision(
                     kind="stale_command_ignored",
@@ -1012,7 +872,7 @@ class ParentOversightService:
         )
         state["decisions"] = decisions
         work = self.delegation_work_for_child_command(parent, child)
-        state, _, _ = self._apply_delegation_command(
+        state, _, _ = self._delegation_recorder.apply_command(
             state,
             work,
             DelegateCommand(
@@ -1058,7 +918,7 @@ class ParentOversightService:
             resolved_child_run_ids=self.resolved_child_run_ids(parent),
         )
         if create_decision.kind == "stale_command_ignored":
-            state = self._record_delegation_decision(
+            state = self._delegation_recorder.record_decision(
                 parent.oversight_state,
                 create_decision,
                 idempotency_key=self.delegation_command_key(parent_run_id, child_run.id, "launch"),
@@ -1069,7 +929,7 @@ class ParentOversightService:
             existing = next(child for child in existing_children if child.id == child_run.id)
             return existing
         if create_decision.reason == "parent_not_active":
-            state = self._record_delegation_decision(
+            state = self._delegation_recorder.record_decision(
                 parent.oversight_state,
                 create_decision,
                 idempotency_key=self.delegation_command_key(parent_run_id, child_run.id, "launch"),
@@ -1082,7 +942,7 @@ class ParentOversightService:
                 "create_child_run (requires active parent)",
             )
         if create_decision.reason == "unresolved_child_already_exists":
-            state = self._record_delegation_decision(
+            state = self._delegation_recorder.record_decision(
                 parent.oversight_state,
                 create_decision,
                 idempotency_key=self.delegation_command_key(parent_run_id, child_run.id, "launch"),
@@ -1095,7 +955,7 @@ class ParentOversightService:
                 "create_child_run (unresolved child already exists)",
             )
         if create_decision.reason == "max_child_run_limit_reached":
-            state = self._record_delegation_decision(
+            state = self._delegation_recorder.record_decision(
                 parent.oversight_state,
                 create_decision,
                 idempotency_key=self.delegation_command_key(parent_run_id, child_run.id, "launch"),
@@ -1129,7 +989,7 @@ class ParentOversightService:
 
         state: dict[str, Any] = dict(parent.oversight_state)
         work = self.delegation_work_for_child_command(parent, child_run)
-        state, _, _ = self._apply_delegation_command(
+        state, _, _ = self._delegation_recorder.apply_command(
             state,
             work,
             DelegateCommand(
@@ -1156,7 +1016,10 @@ class ParentOversightService:
         state["last_child_run_id"] = child_run.id
         state["last_decision"] = next_action_decision
         await self._repo.save(child_run)
-        await self._repo.update_parent_oversight_facts(parent_run_id, state)
+        await self._repo.update_parent_oversight_facts(
+            parent_run_id,
+            extract_parent_oversight_facts(state),
+        )
         queue = self._get_signal_queue()
         await queue.enqueue(child_run.id, WorkflowSignal.RUN_START)
         await self._session.commit()
@@ -1246,7 +1109,7 @@ class ParentOversightService:
             if expected_generation is not None
             else (work.generation if work else 0)
         )
-        state, _, wait_decision = self._apply_delegation_command(
+        state, _, wait_decision = self._delegation_recorder.apply_command(
             state,
             work,
             DelegateCommand(

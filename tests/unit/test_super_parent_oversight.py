@@ -9,6 +9,7 @@ from orchestrator.api import EvidenceBundleSchema
 from orchestrator.config import RunStatus
 from orchestrator.state import Run
 from orchestrator.workflow import (
+    delegation_decision_from_parent_snapshot,
     extract_parent_oversight_facts,
     project_parent_oversight,
     reduce_parent_oversight,
@@ -247,6 +248,69 @@ def test_extract_parent_oversight_facts_drops_computed_fields() -> None:
         "delegation_owner_token": "owner-token",
         "accepted_child_run_ids": ["child"],
     }
+
+
+def test_parent_snapshot_decision_accepts_first_merge_queue_child() -> None:
+    decision = delegation_decision_from_parent_snapshot(
+        {
+            "next_parent_action": "accept_child",
+            "merge_queue": ["child-2", "child-3"],
+            "terminal_guard": {"can_complete": False},
+            "child_count": 2,
+            "max_child_runs": 20,
+        }
+    )
+
+    assert decision.kind == "integrate"
+    assert decision.work_id == "child-2"
+
+
+def test_parent_snapshot_decision_reviews_child_evidence() -> None:
+    decision = delegation_decision_from_parent_snapshot(
+        {
+            "next_parent_action": "review_child_evidence",
+            "attention_items": [{"kind": "child", "run_id": "child-1"}],
+            "terminal_guard": {"can_complete": False},
+            "child_count": 1,
+            "max_child_runs": 20,
+        }
+    )
+
+    assert decision.kind == "review"
+    assert decision.work_id == "child-1"
+    assert decision.stable_state == "ReviewDelegateResult"
+
+
+def test_parent_snapshot_decision_asks_user_at_child_limit() -> None:
+    decision = delegation_decision_from_parent_snapshot(
+        {
+            "next_parent_action": "ask_user",
+            "terminal_guard": {"can_complete": False},
+            "child_count": 20,
+            "max_child_runs": 20,
+        }
+    )
+
+    assert decision.kind == "ask_user"
+    assert decision.reason == "max_delegate_limit_reached"
+
+
+def test_parent_snapshot_decision_blocks_launch_when_terminal_guard_blocks() -> None:
+    decision = delegation_decision_from_parent_snapshot(
+        {
+            "next_parent_action": "launch_child",
+            "terminal_guard": {
+                "can_complete": False,
+                "blocking_reasons": ["no_child_runs"],
+            },
+            "child_count": 0,
+            "max_child_runs": 20,
+        }
+    )
+
+    assert decision.kind == "review"
+    assert decision.reason == "terminal_guard_blocked"
+    assert decision.stable_state == "AwaitingGate"
 
 
 def test_active_parent_with_two_active_children_is_illegal() -> None:

@@ -45,6 +45,10 @@ from orchestrator.workflow import (
     ClarificationRequest,
     ClarificationResponse,
 )
+from orchestrator.workflow.oversight_facts import (
+    APPEND_ONLY_OVERSIGHT_LIST_KEYS,
+    SET_UNION_OVERSIGHT_LIST_KEYS,
+)
 from orchestrator.time_utils import (
     ensure_utc as _core_ensure_utc,
     ensure_utc_optional as _core_ensure_utc_optional,
@@ -80,49 +84,6 @@ def _ensure_utc_optional(dt: datetime | None) -> datetime | None:
 
 
 _UNSET = object()
-_DURABLE_PARENT_OVERSIGHT_FACT_KEYS: frozenset[str] = frozenset(
-    {
-        "current_understanding",
-        "target_inventory",
-        "final_validation",
-        "decisions",
-        "delegated_work",
-        "delegation_decisions",
-        "delegation_results",
-        "delegation_review_states",
-        "slices",
-        "last_child_run_id",
-        "last_decision",
-        "child_waits",
-        "accepted_child_run_ids",
-        "rejected_child_run_ids",
-        "abandoned_child_run_ids",
-        "closed_child_run_ids",
-        "accepted_children",
-        "merge_conflicts",
-        "max_child_runs",
-        "delegation_owner_token",
-    }
-)
-_APPEND_ONLY_OVERSIGHT_LIST_KEYS: frozenset[str] = frozenset(
-    {
-        "decisions",
-        "delegation_decisions",
-        "delegation_results",
-        "child_waits",
-        "accepted_children",
-        "merge_conflicts",
-        "slices",
-    }
-)
-_SET_UNION_OVERSIGHT_LIST_KEYS: frozenset[str] = frozenset(
-    {
-        "accepted_child_run_ids",
-        "rejected_child_run_ids",
-        "abandoned_child_run_ids",
-        "closed_child_run_ids",
-    }
-)
 
 
 def _eager_run_query(*, include_action_logs: bool = True) -> Any:  # noqa: ANN401
@@ -615,59 +576,15 @@ class RunRepository:
         await self._session.merge(new_model)
         await self._session.flush()
 
-    async def append_delegation_decisions(
-        self,
-        run_id: str,
-        decisions: list[dict[str, Any]],
-        *,
-        limit: int = 100,
-    ) -> dict[str, Any]:
-        """Append delegation decision facts under a row lock."""
-        return await self._merge_oversight_patch_locked(
-            run_id,
-            append_lists={"delegation_decisions": decisions},
-            list_limit=limit,
-        )
-
-    async def append_delegation_results(
-        self,
-        run_id: str,
-        results: list[dict[str, Any]],
-        *,
-        limit: int = 100,
-    ) -> dict[str, Any]:
-        """Append delegation result facts under a row lock."""
-        return await self._merge_oversight_patch_locked(
-            run_id,
-            append_lists={"delegation_results": results},
-            list_limit=limit,
-        )
-
-    async def replace_delegated_work(
-        self,
-        run_id: str,
-        work_id: str,
-        work: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Replace one delegated-work fact under a row lock."""
-        return await self._merge_oversight_patch_locked(
-            run_id,
-            replace_delegated_work={work_id: work},
-        )
-
     async def update_parent_oversight_facts(
         self,
         run_id: str,
         patch: dict[str, Any],
     ) -> dict[str, Any]:
-        """Merge parent-authored or coordinator-authored oversight facts under a row lock."""
+        """Merge an already-sanitized oversight fact patch under a row lock."""
         return await self._merge_oversight_patch_locked(
             run_id,
-            replace_values={
-                key: value
-                for key, value in patch.items()
-                if key in _DURABLE_PARENT_OVERSIGHT_FACT_KEYS
-            },
+            replace_values=patch,
         )
 
     async def _merge_oversight_patch_locked(
@@ -675,8 +592,6 @@ class RunRepository:
         run_id: str,
         *,
         replace_values: dict[str, Any] | None = None,
-        append_lists: dict[str, list[dict[str, Any]]] | None = None,
-        replace_delegated_work: dict[str, dict[str, Any]] | None = None,
         list_limit: int = 100,
     ) -> dict[str, Any]:
         await self._session.execute(
@@ -695,7 +610,7 @@ class RunRepository:
         state = dict(run_model.oversight_state or {})
         if replace_values:
             for key, value in replace_values.items():
-                if key in _APPEND_ONLY_OVERSIGHT_LIST_KEYS and isinstance(value, list):
+                if key in APPEND_ONLY_OVERSIGHT_LIST_KEYS and isinstance(value, list):
                     existing = state.get(key)
                     current_items: list[Any] = (
                         list(cast(list[Any], existing)) if isinstance(existing, list) else []
@@ -704,7 +619,7 @@ class RunRepository:
                         if item not in current_items:
                             current_items.append(item)
                     state[key] = current_items[-list_limit:]
-                elif key in _SET_UNION_OVERSIGHT_LIST_KEYS and isinstance(value, list):
+                elif key in SET_UNION_OVERSIGHT_LIST_KEYS and isinstance(value, list):
                     existing = state.get(key)
                     current_strings: set[str] = (
                         {item for item in cast(list[Any], existing) if isinstance(item, str)}
@@ -724,24 +639,6 @@ class RunRepository:
                     state[key] = merged_work
                 else:
                     state[key] = value
-        if append_lists:
-            for key, items in append_lists.items():
-                existing = state.get(key)
-                current: list[dict[str, Any]] = (
-                    list(cast(list[dict[str, Any]], existing)) if isinstance(existing, list) else []
-                )
-                current.extend(items)
-                state[key] = current[-list_limit:]
-        if replace_delegated_work:
-            raw_work = state.get("delegated_work")
-            delegated_work: dict[str, dict[str, Any]] = (
-                dict(cast(dict[str, dict[str, Any]], raw_work))
-                if isinstance(raw_work, dict)
-                else {}
-            )
-            delegated_work.update(replace_delegated_work)
-            state["delegated_work"] = delegated_work
-
         run_model.oversight_state = state
         run_model.updated_at = datetime.now(timezone.utc)
         await self._session.flush()

@@ -6,6 +6,7 @@ from orchestrator.workflow.delegation.coordinator import (
     DelegationReviewStateRecord,
     DelegationState,
 )
+from orchestrator.workflow.delegation.recorder import DelegationRecorder
 from orchestrator.workflow.delegation.models import (
     DelegateCommand,
     DelegateCommandKind,
@@ -26,8 +27,6 @@ from orchestrator.workflow.delegation.fan_out import (
 )
 from orchestrator.workflow.delegation.super_parent import (
     SuperParentDelegationPolicy,
-    SuperParentFacts,
-    build_super_parent_facts,
     result_from_child_evidence,
     work_from_child_run,
 )
@@ -44,15 +43,14 @@ __all__ = [
     "DelegationRecord",
     "DelegationResultRecord",
     "DelegationReviewStateRecord",
+    "DelegationRecorder",
     "DelegationStableState",
     "DelegationState",
     "FanOutDelegationPolicy",
     "FanOutFacts",
     "SuperParentDelegationPolicy",
-    "SuperParentFacts",
     "apply_delegate_command",
     "build_fan_out_facts",
-    "build_super_parent_facts",
     "result_from_child_evidence",
     "work_from_child_run",
     "work_from_fan_out_child",

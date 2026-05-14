@@ -17,6 +17,7 @@ To suppress a line, add:  # noqa: delegation-boundary
 from __future__ import annotations
 
 import ast
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -27,33 +28,35 @@ FORBIDDEN_CHILD_PATH_FUNCTIONS = {
     "_execute_fan_out_child",
 }
 
-COORDINATION_KEYS = {
-    "delegated_work",
-    "delegation_decisions",
-    "delegation_results",
-    "delegation_review_states",
-    "accepted_child_run_ids",
-    "rejected_child_run_ids",
-    "abandoned_child_run_ids",
-    "closed_child_run_ids",
-    "accepted_children",
-    "merge_conflicts",
-    "slices",
-    "last_child_run_id",
-    "last_decision",
-    "child_waits",
-}
-
 RAW_OVERSIGHT_ALLOWED_SUFFIXES = {
     "src/orchestrator/workflow/delegation/coordinator.py",
     "src/orchestrator/workflow/oversight.py",
+    "src/orchestrator/workflow/oversight_facts.py",
     "src/orchestrator/workflow/oversight_projection.py",
     "src/orchestrator/workflow/parent_oversight.py",
 }
 
+
+def load_coordination_keys() -> frozenset[str]:
+    """Load workflow-owned coordination fact keys without importing workflow package APIs."""
+    project_root = Path(__file__).resolve().parent.parent
+    if not (project_root / "pyproject.toml").exists():
+        raise RuntimeError("Could not resolve project root from script location")
+    facts_path = project_root / "src/orchestrator/workflow/oversight_facts.py"
+    spec = importlib.util.spec_from_file_location("_orchestrator_oversight_facts", facts_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load oversight facts from {facts_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return frozenset(module.COORDINATION_OVERSIGHT_FACT_KEYS)
+
+
+COORDINATION_KEYS = load_coordination_keys()
+
 DELEGATION_KEY_ASSIGNMENT_ALLOWED_SUFFIXES = {
     "src/orchestrator/db/access/repositories.py",
     "src/orchestrator/workflow/oversight.py",
+    "src/orchestrator/workflow/oversight_facts.py",
     "src/orchestrator/workflow/oversight_projection.py",
     "src/orchestrator/workflow/parent_oversight.py",
 }

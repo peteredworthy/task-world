@@ -99,7 +99,7 @@ task-world/
 │   │   │   └── models.py      # Run, Step, Task, Attempt, Event, Signal, Lock, RoutineMeta ORM models
 │   │   ├── access/            # Data access layer
 │   │   │   ├── connection.py  # Async engine + session factory
-│   │   │   ├── repositories.py # RunRepository, AttemptRepository, etc.
+│   │   │   ├── repositories.py # RunRepository, locked JSON merge mechanics, etc.
 │   │   │   └── event_store.py # Event persistence + paginated queries
 │   │   ├── recovery/          # Journal + replay + backup
 │   │   │   ├── event_journal.py # JSONL journal (append-only, recovery source)
@@ -179,6 +179,10 @@ task-world/
 │       ├── completion.py      # Run completion logic
 │       ├── dry_run.py         # Dry run execution
 │       ├── locks.py           # Task-level pessimistic locking
+│       ├── parent_oversight.py # Parent/child coordination, evidence collection, persistence
+│       ├── oversight.py       # Pure parent oversight reducer and projection snapshot models
+│       ├── oversight_facts.py # Canonical durable/coordination oversight fact keys and patch extraction
+│       ├── oversight_projection.py # Hydrates projections and maps snapshots to parent decisions
 │       ├── agent/             # Agent interaction layer
 │       │   ├── prompts.py     # Builder/verifier prompt generation
 │       │   ├── templates.py   # Prompt template rendering
@@ -199,6 +203,11 @@ task-world/
 │       ├── events/            # Event dataclasses + persistence
 │       │   ├── types.py       # All WorkflowEvent subclasses
 │       │   └── logger.py      # PersistentEventEmitter: SQLite + JSONL dual write
+│       ├── delegation/        # Delegated-work commands, reducers, and recording helpers
+│       │   ├── coordinator.py # Immutable delegation state value object
+│       │   ├── recorder.py    # Shared DelegationState recording helper
+│       │   ├── fan_out.py     # Fan-out delegation policy and work mapping
+│       │   └── super_parent.py # Super-parent child command validation and work mapping
 │       └── signals/           # Signal transport + executor loop
 │           ├── signals.py     # WorkflowSignal enum, SignalTransport ABC, DbSignalTransport
 │           ├── handlers.py    # Typed signal handler dispatch
@@ -306,6 +315,14 @@ Each task goes through:
 2. **Gates Check** - Verify checklist items are complete
 3. **Verifier Phase** - Agent grades each requirement (fresh LLM context)
 4. **Pass/Fail** - Either proceed to next task or retry with revision
+
+### Parent Oversight and Delegation
+
+Parent/child coordination is owned by `ParentOversightService`. The pure oversight reducer projects durable parent facts, child run state, evidence, terminal guards, attention queues, merge queues, and the next parent action. `oversight_projection.py` maps that projected snapshot to a single delegation decision surface used by terminal guards.
+
+Durable oversight fact keys and delegation coordination keys live in `workflow/oversight_facts.py`. Callers sanitize parent oversight patches before persistence, and boundary checks load their coordination-key vocabulary from the same source. `RunRepository.update_parent_oversight_facts()` only performs locked JSON merge mechanics, including append-only lists, set-union lists, and delegated-work map merging.
+
+Delegation command fencing, idempotency records, result records, and review blockers are recorded through `DelegationRecorder`, which wraps the immutable `DelegationState` value object. `WorkflowService` keeps fan-out-specific behavior such as command keys and task-to-work translation, but shared delegation-state writes go through the recorder.
 
 ---
 
