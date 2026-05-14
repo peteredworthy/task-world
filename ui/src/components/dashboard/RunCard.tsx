@@ -604,7 +604,7 @@ function TaskCard({
       {task.pending_action_type === 'clarification' && (
         <div className="mt-1.5">
           <Link
-            to={`/runs/${runId}?action=clarification&task_id=${task.id}`}
+            to={`/runs/${runId}/history?action=clarification&task_id=${task.id}`}
             onClick={(event) => event.stopPropagation()}
             className="inline-flex items-center rounded border border-status-paused/40 bg-status-paused/10 px-2 py-0.5 text-[10px] font-semibold text-status-paused hover:bg-status-paused/20 transition-colors"
           >
@@ -819,10 +819,10 @@ function CollapsedRow(props: RunCardProps) {
             onPendingClick={() => {
               navigate(
                 clarificationTaskId
-                  ? `/runs/${run.id}?action=clarification&task_id=${clarificationTaskId}`
+                  ? `/runs/${run.id}/history?action=clarification&task_id=${clarificationTaskId}`
                   : approvalTaskId
-                    ? `/runs/${run.id}?action=approval&task_id=${approvalTaskId}`
-                  : `/runs/${run.id}`,
+                    ? `/runs/${run.id}/history?action=approval&task_id=${approvalTaskId}`
+                  : `/runs/${run.id}/history`,
               );
             }}
           />
@@ -838,7 +838,7 @@ function CollapsedRow(props: RunCardProps) {
             onPause={props.onPause}
             onResume={props.onResume}
             onDelete={props.onDelete}
-            onApprove={approvalTaskId ? () => navigate(`/runs/${run.id}?action=approval&task_id=${approvalTaskId}`) : undefined}
+            onApprove={approvalTaskId ? () => navigate(`/runs/${run.id}/history?action=approval&task_id=${approvalTaskId}`) : undefined}
             loading={loading}
           />
         </div>
@@ -917,7 +917,7 @@ function ExpandedView(props: RunCardProps) {
           onPause={props.onPause}
           onResume={props.onResume}
           onDelete={props.onDelete}
-          onApprove={approvalTaskId ? () => navigate(`/runs/${run.id}?action=approval&task_id=${approvalTaskId}`) : undefined}
+          onApprove={approvalTaskId ? () => navigate(`/runs/${run.id}/history?action=approval&task_id=${approvalTaskId}`) : undefined}
           loading={loading}
         />
 
@@ -984,14 +984,20 @@ function ExpandedView(props: RunCardProps) {
       <div className="flex items-center justify-between px-4 py-3 border-t border-border">
         <div className="flex items-center gap-3">
           <Link
-            to={'/runs/' + run.id}
+            to={`/runs/${run.id}/history`}
+            className="text-[11px] font-semibold text-accent-purple hover:text-accent-purple/80 transition-colors"
+          >
+            LLM History
+          </Link>
+          <Link
+            to={`/runs/${run.id}/changes`}
             className="text-[11px] font-semibold text-accent-purple hover:text-accent-purple/80 transition-colors"
           >
             View Changes
           </Link>
           {clarificationTaskId && (
             <Link
-              to={`/runs/${run.id}?action=clarification&task_id=${clarificationTaskId}`}
+              to={`/runs/${run.id}/history?action=clarification&task_id=${clarificationTaskId}`}
               className="text-[11px] font-semibold text-status-paused hover:text-status-paused/80 transition-colors"
             >
               Answer Questions
@@ -999,7 +1005,7 @@ function ExpandedView(props: RunCardProps) {
           )}
           {!clarificationTaskId && approvalTaskId && (
             <Link
-              to={`/runs/${run.id}?action=approval&task_id=${approvalTaskId}`}
+              to={`/runs/${run.id}/history?action=approval&task_id=${approvalTaskId}`}
               className="text-[11px] font-semibold text-status-paused hover:text-status-paused/80 transition-colors"
             >
               Review Approval

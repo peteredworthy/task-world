@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { WheelEvent } from 'react';
-import { useRunTrace } from '../../hooks/useApi';
+import { useAttemptLogs, useRunTrace } from '../../hooks/useApi';
 import { formatDuration, formatTokens } from '../../lib/format';
 import { Spinner } from '../Spinner';
 import type {
@@ -475,11 +475,13 @@ function visibleActionEntries(entries: ActionLogEntry[]): ActionLogEntry[] {
 }
 
 function AttemptDetails({
+  runId,
   row,
   selectedSequence,
   shouldScrollSelected,
   onSelectSequence,
 }: {
+  runId: string;
   row: TraceRow | null;
   selectedSequence: number | null;
   shouldScrollSelected: boolean;
@@ -487,6 +489,11 @@ function AttemptDetails({
 }) {
   const selectedMessageRef = useRef<HTMLDivElement | null>(null);
   const rowKey = row?.key ?? null;
+  const { data: logs, isLoading: logsLoading } = useAttemptLogs(
+    runId,
+    row?.attempt.task_id ?? '',
+    row?.attempt.attempt_num,
+  );
 
   useEffect(() => {
     if (!shouldScrollSelected) return;
@@ -502,31 +509,100 @@ function AttemptDetails({
   }
 
   const entries = row.attempt.action_log?.entries ?? [];
+  const fallbackEntries = logs?.action_log?.entries ?? [];
   const resultMap = buildResultMap(entries);
+  const fallbackResultMap = buildResultMap(fallbackEntries);
   const displayedEntries = visibleActionEntries(entries);
+  const fallbackDisplayedEntries = visibleActionEntries(fallbackEntries);
+  const hasFallbackStructuredMessages = entries.length === 0 && fallbackDisplayedEntries.length > 0;
   const selectedEntry =
     displayedEntries.find((entry) => entry.sequence_num === selectedSequence) ??
+    fallbackDisplayedEntries.find((entry) => entry.sequence_num === selectedSequence) ??
     displayedEntries[0] ??
+    fallbackDisplayedEntries[0] ??
     null;
   const selectedResult =
     selectedEntry?.tool_use?.tool_use_id
-      ? resultMap.get(selectedEntry.tool_use.tool_use_id) ?? null
+      ? resultMap.get(selectedEntry.tool_use.tool_use_id) ??
+        fallbackResultMap.get(selectedEntry.tool_use.tool_use_id) ??
+        null
       : null;
   const durationMs = getAttemptDuration(row.attempt);
+  const rawOutput = logs?.output?.trim() ?? '';
+  const promptSections = [
+    { title: 'Builder Prompt', content: row.attempt.builder_prompt },
+    { title: 'Verifier Prompt', content: row.attempt.verifier_prompt },
+    { title: 'Verifier Feedback', content: row.attempt.verifier_comment },
+  ].filter((section): section is { title: string; content: string } => Boolean(section.content?.trim()));
 
   return (
     <div className="space-y-3">
-      {entries.length === 0 ? (
-        <div className="rounded-md border border-border bg-bg-card px-3 py-4 text-sm text-text-muted">
-          No structured messages are stored for this attempt.
+      {entries.length === 0 && !hasFallbackStructuredMessages ? (
+        <div className="space-y-3 rounded-md border border-border bg-bg-card px-3 py-4">
+          <div>
+            <p className="text-sm font-medium text-text-primary">No structured transcript was captured</p>
+            <p className="mt-1 text-xs text-text-muted">
+              This attempt has no parsed action-log messages, so the history view is showing the stored prompts,
+              verifier feedback, and raw agent output that are available for the attempt.
+            </p>
+          </div>
+          {promptSections.length > 0 && (
+            <div className="grid gap-2 lg:grid-cols-3">
+              {promptSections.map((section) => (
+                <div key={section.title} className="rounded border border-border bg-bg-elevated/50 p-2">
+                  <div className="mb-1 text-[10px] font-semibold uppercase text-text-muted">
+                    {section.title}
+                  </div>
+                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap font-mono text-xs text-text-secondary scrollbar-dark">
+                    {section.content}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
+          {logsLoading && (
+            <div className="flex items-center gap-2 text-xs text-text-muted">
+              <Spinner className="h-3.5 w-3.5" />
+              Loading raw agent output...
+            </div>
+          )}
+          {rawOutput && (
+            <div className="rounded border border-border bg-bg-elevated/50 p-2">
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold uppercase text-text-muted">Raw Agent Output</span>
+                {logs?.line_count ? (
+                  <span className="text-[10px] text-text-muted">
+                    {logs.line_count} line{logs.line_count === 1 ? '' : 's'}
+                  </span>
+                ) : null}
+              </div>
+              <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs text-text-secondary scrollbar-dark">
+                {rawOutput}
+              </pre>
+            </div>
+          )}
+          {!logsLoading && promptSections.length === 0 && !rawOutput && (
+            <p className="text-sm text-text-muted">
+              No prompts, verifier feedback, or raw agent output are stored for this attempt.
+            </p>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
+          {hasFallbackStructuredMessages && (
+            <div className="rounded border border-accent-cyan/30 bg-accent-cyan/10 px-3 py-2 text-xs text-text-secondary">
+              Structured messages were recovered from raw agent output for this attempt.
+            </div>
+          )}
           <div className="max-h-[24rem] space-y-1 overflow-auto rounded-md border border-border bg-bg-card p-2 scrollbar-dark">
-            {displayedEntries.map((entry) => {
+            {(hasFallbackStructuredMessages ? fallbackDisplayedEntries : displayedEntries).map((entry) => {
               const selected = selectedEntry?.sequence_num === entry.sequence_num;
               const result =
-                entry.tool_use?.tool_use_id ? resultMap.get(entry.tool_use.tool_use_id) ?? null : null;
+                entry.tool_use?.tool_use_id
+                  ? resultMap.get(entry.tool_use.tool_use_id) ??
+                    fallbackResultMap.get(entry.tool_use.tool_use_id) ??
+                    null
+                  : null;
               return (
                 <div
                   key={`${row.key}:${entry.sequence_num}`}
@@ -687,7 +763,7 @@ function Hierarchy({
                         }
                       >
                         <span>Attempt #{row.attempt.attempt_num}</span>
-                        <span>{row.blocks.length} calls</span>
+                        <span>{row.blocks.length} structured calls</span>
                       </button>
                     ))}
                   </div>
@@ -839,6 +915,14 @@ export function RunTraceExplorer({ runId }: { runId: string }) {
   }
 
   const contentWidth = `${Math.max(100, zoom * 100)}%`;
+  const storedContextCount = data.attempts.reduce((count, attempt) => {
+    return count + [
+      attempt.builder_prompt,
+      attempt.verifier_prompt,
+      attempt.verifier_comment,
+      attempt.error,
+    ].filter((value) => Boolean(value?.trim())).length;
+  }, 0);
   const hasHorizontalOverflow = scrollbarState.scrollWidth > scrollbarState.clientWidth + 1;
   const thumbWidthPct = hasHorizontalOverflow
     ? Math.max(8, (scrollbarState.clientWidth / scrollbarState.scrollWidth) * 100)
@@ -864,7 +948,7 @@ export function RunTraceExplorer({ runId }: { runId: string }) {
           <div>
             <h2 className="text-sm font-semibold text-text-primary">Run Trace</h2>
             <p className="mt-1 text-xs text-text-muted">
-              {trace.rows.length} attempts / {trace.totalToolCalls} tool calls / {formatTokens(trace.totalTokens)} displayed tokens
+              {trace.rows.length} attempts / {trace.totalToolCalls} structured tool calls / {storedContextCount} stored prompts or feedback / {formatTokens(trace.totalTokens)} displayed tokens
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -969,7 +1053,7 @@ export function RunTraceExplorer({ runId }: { runId: string }) {
                   </div>
                   <div className="mt-0.5 flex items-center gap-2 text-[10px] text-text-muted">
                     <span>#{row.attempt.attempt_num}</span>
-                    <span>{row.blocks.length} calls</span>
+                    <span>{row.blocks.length} structured calls</span>
                     {row.attempt.outcome && <span>{row.attempt.outcome}</span>}
                   </div>
                 </button>
@@ -1008,7 +1092,7 @@ export function RunTraceExplorer({ runId }: { runId: string }) {
                   })()}
                   {row.blocks.length === 0 ? (
                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-xs text-text-muted">
-                      No tool calls recorded
+                      No structured tool calls recorded
                     </span>
                   ) : (
                     row.blocks.map((block) => (
@@ -1070,6 +1154,7 @@ export function RunTraceExplorer({ runId }: { runId: string }) {
       <div className="grid gap-3 p-4 min-[1800px]:grid-cols-[260px_minmax(0,1fr)]">
         <Hierarchy rows={trace.rows} selectedRowKey={selectedRow?.key ?? null} onSelectRow={selectRow} />
         <AttemptDetails
+          runId={runId}
           row={selectedRow}
           selectedSequence={selectedSequence}
           shouldScrollSelected={shouldScrollActionListToSelection}

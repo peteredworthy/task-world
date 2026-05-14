@@ -13,6 +13,7 @@ interface ActivityFeedProps {
   onSelectTask?: (taskId: string) => void;
   selectedTaskId?: string | null;
   run?: RunResponse;
+  expandCompletedSteps?: boolean;
 }
 
 function eventLabel(eventType: string, payload: Record<string, unknown>): string {
@@ -281,13 +282,15 @@ function defaultStepExpanded(step: StepSummary): boolean {
 function StepSection({
   step,
   stepNumber,
+  expandCompleted,
   children,
 }: {
   step: StepSummary;
   stepNumber: number;
+  expandCompleted: boolean;
   children: ReactNode;
 }) {
-  const [expanded, setExpanded] = useState(() => defaultStepExpanded(step));
+  const [expanded, setExpanded] = useState(() => expandCompleted || defaultStepExpanded(step));
 
   const topLevelTasks = step.tasks.filter(t => !t.parent_task_id);
   const totalTasks = topLevelTasks.length;
@@ -339,7 +342,14 @@ function StepSection({
   );
 }
 
-export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId, run }: ActivityFeedProps) {
+export function ActivityFeed({
+  events,
+  activeTasks,
+  onSelectTask,
+  selectedTaskId,
+  run,
+  expandCompletedSteps = false,
+}: ActivityFeedProps) {
   const groups: ActivityGroup[] = groupEventsByTask(events);
 
   // Find active tasks that have NO events (status-only, not in any event group)
@@ -427,7 +437,12 @@ export function ActivityFeed({ events, activeTasks, onSelectTask, selectedTaskId
           if (stepTaskCards.length === 0) return null;
 
           return (
-            <StepSection key={step.id} step={step} stepNumber={stepIdx + 1}>
+            <StepSection
+              key={step.id}
+              step={step}
+              stepNumber={stepIdx + 1}
+              expandCompleted={expandCompletedSteps}
+            >
               {stepTaskCards}
             </StepSection>
           );

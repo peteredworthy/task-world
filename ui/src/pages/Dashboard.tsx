@@ -81,7 +81,10 @@ export function Dashboard() {
   }, [mutationError]);
 
   const runsParams = useMemo(
-    () => statusFilter ? { status: statusFilter, limit: maxRecentRuns } : { limit: maxRecentRuns },
+    () =>
+      statusFilter && statusFilter !== 'needs_input'
+        ? { status: statusFilter, limit: maxRecentRuns }
+        : { limit: maxRecentRuns },
     [statusFilter, maxRecentRuns],
   );
   const { data, isLoading, isPlaceholderData, error, dataUpdatedAt } = useRuns(runsParams);

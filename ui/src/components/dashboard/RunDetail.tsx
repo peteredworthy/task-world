@@ -20,6 +20,7 @@ import { Spinner } from '../Spinner';
 import { RecoveryPanel } from '../detail/RecoveryPanel';
 import { BranchStatusPanel } from '../detail/BranchStatusPanel';
 import { EnvFilesPanel } from '../detail/EnvFilesPanel';
+import { ActivityFeed } from '../detail/ActivityFeed';
 import { getLastAgentError } from '../../lib/activity';
 import { getPauseReasonMessage } from '../../lib/pauseReason';
 import { isRunStuck } from '../../lib/runStuck';
@@ -29,6 +30,8 @@ import { ModelCostBreakdown } from '../detail/ModelCostBreakdown';
 import { RunTraceExplorer } from '../detail/RunTraceExplorer';
 import type { ChildOversightSummary, ParentOversightState, RunResponse } from '../../types';
 import type { PendingAction } from '../../types/clarifications';
+
+type RunDetailPage = 'history' | 'changes';
 
 /** Find the current actionable step (skipping already completed steps). */
 function findActionableStep(run: RunResponse): { step: RunResponse['steps'][0]; index: number } | null {
@@ -70,7 +73,7 @@ function ParentRunBanner({ run }: { run: RunResponse }) {
           </span>
         )}
         <Link
-          to={`/runs/${run.parent_run_id}`}
+          to={`/runs/${run.parent_run_id}/history`}
           className="text-accent-purple hover:text-accent-purple/80"
         >
           Parent {run.parent_run_id}
@@ -185,7 +188,7 @@ function ParentOversightPanel({
                   return (
                     <tr key={child.run_id} className="border-b border-border/70 last:border-0">
                       <td className="py-2 pr-4">
-                        <Link to={`/runs/${child.run_id}`} className="font-mono text-accent-purple hover:text-accent-purple/80">
+                        <Link to={`/runs/${child.run_id}/history`} className="font-mono text-accent-purple hover:text-accent-purple/80">
                           {child.run_id}
                         </Link>
                       </td>
@@ -231,7 +234,32 @@ function ParentOversightPanel({
 }
 
 
-function RunDetailInner({ runId }: { runId: string }) {
+function RunDetailNav({ runId, page }: { runId: string; page: RunDetailPage }) {
+  const baseClass = 'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors';
+  const activeClass = 'border-accent-purple/50 bg-accent-purple/15 text-accent-purple';
+  const inactiveClass = 'border-border text-text-secondary hover:bg-bg-muted hover:text-text-primary';
+
+  return (
+    <nav className="mb-6 flex flex-wrap gap-2" aria-label="Run detail sections">
+      <Link
+        to={`/runs/${runId}/history`}
+        className={`${baseClass} ${page === 'history' ? activeClass : inactiveClass}`}
+        aria-current={page === 'history' ? 'page' : undefined}
+      >
+        LLM History
+      </Link>
+      <Link
+        to={`/runs/${runId}/changes`}
+        className={`${baseClass} ${page === 'changes' ? activeClass : inactiveClass}`}
+        aria-current={page === 'changes' ? 'page' : undefined}
+      >
+        Code Changes
+      </Link>
+    </nav>
+  );
+}
+
+function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const requestedAction = searchParams.get('action');
   const requestedTaskId = searchParams.get('task_id') ?? undefined;
@@ -240,7 +268,7 @@ function RunDetailInner({ runId }: { runId: string }) {
   const { data: routine } = useRoutine(
     run?.routine_source === 'embedded' ? null : run?.routine_id
   );
-  const { data: activityData } = useActivityStream(runId);
+  const { data: activityData } = useActivityStream(runId, run?.status);
   const { data: pendingActionsData } = usePendingActions(runId);
   const { data: requestedClarification } = usePendingClarification(
     runId,
@@ -545,6 +573,8 @@ function RunDetailInner({ runId }: { runId: string }) {
 
 
           <>
+          <RunDetailNav runId={run.id} page={page} />
+
           <ParentRunBanner run={run} />
 
           {showOversight && (
@@ -792,10 +822,22 @@ function RunDetailInner({ runId }: { runId: string }) {
             </div>
           )}
 
-          <RunTraceExplorer runId={run.id} />
-
-          {/* View Changes */}
-          <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path ?? null} />
+          {page === 'history' ? (
+            <>
+              <RunTraceExplorer runId={run.id} />
+              <section className="mb-6 rounded-lg border border-border bg-bg-card p-4">
+                <div className="mb-3">
+                  <h2 className="text-sm font-semibold text-text-primary">Run Activity</h2>
+                  <p className="mt-1 text-xs text-text-muted">
+                    Status changes, task transitions, gates, and other recorded run events.
+                  </p>
+                </div>
+                <ActivityFeed events={events} run={run} expandCompletedSteps />
+              </section>
+            </>
+          ) : (
+            <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path ?? null} />
+          )}
           </>
         </div>
       </div>
@@ -900,13 +942,13 @@ function RunDetailInner({ runId }: { runId: string }) {
   );
 }
 
-export function RunDetail() {
+export function RunDetail({ page = 'history' }: { page?: RunDetailPage }) {
   const { runId } = useParams<{ runId: string }>();
 
   return (
     <WebSocketProvider runId={runId}>
       <ReviewMergeProvider>
-        <RunDetailInner runId={runId!} />
+        <RunDetailInner runId={runId!} page={page} />
       </ReviewMergeProvider>
     </WebSocketProvider>
   );
