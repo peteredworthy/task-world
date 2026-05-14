@@ -1,1 +1,0 @@
-Most of the routines created by idea-to-plan are one time and it would be more convenient to be able to continue to execution within the same worktree and without having to create a new run. It would also be good if they were kept out of the routines directory as they aren't ones that I need to see in the start run options (assuming that it goes into execution on its own).
