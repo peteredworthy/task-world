@@ -215,6 +215,7 @@ class ParentOversightSnapshot(BaseModel):
         default_factory=dict[str, dict[str, int]]
     )
     active_child_run_ids: list[str] = Field(default_factory=list[str])
+    retryable_child_run_ids: list[str] = Field(default_factory=list[str])
     merge_queue: list[str] = Field(default_factory=list[str])
     attention_items: list[OversightAttentionItem] = Field(
         default_factory=list[OversightAttentionItem]
@@ -287,6 +288,7 @@ def reduce_parent_oversight(
     child_summaries: list[ChildOversightSummary] = []
     attention_items: list[OversightAttentionItem] = []
     active_child_run_ids: list[str] = []
+    retryable_child_run_ids: list[str] = []
     merge_queue: list[str] = []
     blocking_child_run_ids: set[str] = set()
     blocking_reasons: list[str] = []
@@ -314,6 +316,7 @@ def reduce_parent_oversight(
         counters["total"] += 1
 
         outcomes = {item.outcome for item in evidence}
+        retryable_runner_pause = _is_retryable_runner_pause(child)
         child_blocking_reasons = _child_blocking_reasons(
             parent_run=parent_run,
             child_run=child,
@@ -323,15 +326,20 @@ def reduce_parent_oversight(
             invalid_evidence_paths=invalid_paths,
             accepted_child_run_ids=accepted_child_run_ids,
             resolved_child_run_ids=resolved_child_run_ids,
+            retryable_runner_pause=retryable_runner_pause,
         )
 
         if status in ACTIVE_CHILD_STATUSES:
             active_child_run_ids.append(child.id)
+        if retryable_runner_pause:
+            retryable_child_run_ids.append(child.id)
         if status == RunStatus.COMPLETED.value and outcomes & ACCEPTANCE_OUTCOMES:
             counters["accepted"] += 1
             if child.id not in accepted_child_run_ids:
                 merge_queue.append(child.id)
-        if status == RunStatus.FAILED.value or outcomes & REVISION_OUTCOMES:
+        if (
+            status == RunStatus.FAILED.value or outcomes & REVISION_OUTCOMES
+        ) and not retryable_runner_pause:
             counters["failed_or_revision"] += 1
         if child_blocking_reasons:
             counters["needs_attention"] += 1
@@ -431,6 +439,7 @@ def reduce_parent_oversight(
         illegal_state_reasons=illegal_state_reasons,
         stalled_slices=stalled_slices,
         active_child_run_ids=active_child_run_ids,
+        retryable_child_run_ids=retryable_child_run_ids,
         merge_queue=merge_queue,
         attention_items=attention_items,
         child_count=len(sorted_children),
@@ -475,6 +484,7 @@ def reduce_parent_oversight(
             for slice_id, counters in sorted(attempt_counts.items())
         },
         active_child_run_ids=sorted(active_child_run_ids),
+        retryable_child_run_ids=sorted(retryable_child_run_ids),
         merge_queue=sorted(dict.fromkeys(merge_queue)),
         attention_items=attention_items,
         stalled_slices=stalled_slices,
@@ -494,6 +504,7 @@ def _child_blocking_reasons(
     invalid_evidence_paths: list[str],
     accepted_child_run_ids: set[str],
     resolved_child_run_ids: set[str],
+    retryable_runner_pause: bool,
 ) -> list[str]:
     if child_run.id in resolved_child_run_ids:
         return []
@@ -507,6 +518,8 @@ def _child_blocking_reasons(
         reasons.append("child_missing_parent_slice_id")
     if invalid_evidence_paths:
         reasons.append("invalid_evidence_bundle")
+    if retryable_runner_pause:
+        reasons.append("child_runner_failure_retryable")
     if status in UNRESOLVED_CHILD_STATUSES:
         reasons.append(f"child_not_terminal:{status}")
     elif status == RunStatus.COMPLETED.value:
@@ -530,6 +543,7 @@ def _next_parent_action(
     illegal_state_reasons: list[str],
     stalled_slices: list[dict[str, Any]],
     active_child_run_ids: list[str],
+    retryable_child_run_ids: list[str],
     merge_queue: list[str],
     attention_items: list[OversightAttentionItem],
     child_count: int,
@@ -543,7 +557,7 @@ def _next_parent_action(
 ]:
     if illegal_state_reasons or stalled_slices:
         return "ask_user"
-    if active_child_run_ids:
+    if active_child_run_ids or retryable_child_run_ids:
         return "wait_for_child"
     if merge_queue:
         return "accept_child"
@@ -552,6 +566,32 @@ def _next_parent_action(
     if terminal_guard.can_complete and child_count > 0:
         return "complete_parent"
     return "launch_child"
+
+
+def _is_retryable_runner_pause(child_run: Run) -> bool:
+    """Return whether a paused child reflects runner infrastructure, not child work."""
+    if _status_value(child_run.status) != RunStatus.PAUSED.value:
+        return False
+    reason = (child_run.pause_reason or "").strip()
+    if reason in {
+        "agent_not_available",
+        "executor_not_started",
+        "no_executor_running",
+        "rate_limit",
+        "server_shutdown",
+    }:
+        return True
+    if reason != "agent_execution_error":
+        return False
+    error = (child_run.last_error or "").lower()
+    if "max-turns" in error or "max turns" in error or "max_turns" in error:
+        return False
+    return (
+        "api error: 529" in error
+        or "overloaded" in error
+        or "process exited with code" in error
+        or not error
+    )
 
 
 def validate_run_evidence_item(

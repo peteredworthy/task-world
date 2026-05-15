@@ -27,7 +27,9 @@ def test_evaluate_child_evidence_is_orchestration_only() -> None:
     assert "orchestrator_resolve_child_run" in normalized
     assert "orchestrator_request_clarification" in normalized
     assert "orchestrator_escalate_requirement" in normalized
-    assert "paused, failed without schema-valid evidence" in normalized
+    assert "failed before child work began" in normalized
+    assert "do not reject or abandon it and do not launch a replacement child" in normalized
+    assert "service-provided synthetic evidence as `partial_progress`" in normalized
     assert "what the parent needed from the child" in normalized
     assert "what the child did" in normalized
     assert "what the parent needs the human to decide" in normalized

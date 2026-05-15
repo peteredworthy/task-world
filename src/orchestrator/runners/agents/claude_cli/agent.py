@@ -54,6 +54,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _first_api_error(lines: list[str]) -> str | None:
+    """Return the first upstream API error line from readable CLI output."""
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("API Error:"):
+            return stripped
+    return None
+
+
 _CLAUDE_CODE_BASE_TOOLS = (
     "Bash",
     "Edit",
@@ -823,7 +833,10 @@ class CLIAgent:
             error: str | None = None
             if self._process.returncode != 0:
                 exit_subtype = action_log.exit_subtype if action_log else ""
-                if exit_subtype and exit_subtype not in ("success", ""):
+                api_error = _first_api_error(final_output_lines)
+                if api_error:
+                    error = api_error
+                elif exit_subtype and exit_subtype not in ("success", ""):
                     # Map well-known subtypes to human-readable messages
                     _SUBTYPE_MESSAGES = {
                         "error_max_turns": "Agent hit the max-turns limit without completing",

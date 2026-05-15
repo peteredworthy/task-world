@@ -360,7 +360,7 @@ class ParentOversightService:
                 "evidence" in part.lower() for part in path.parts
             )
 
-        def changed_evidence_paths() -> list[Path] | None:
+        def changed_paths() -> list[str] | None:
             if not run.source_branch_sha:
                 return None
             try:
@@ -387,15 +387,38 @@ class ParentOversightService:
             except subprocess.CalledProcessError:
                 return None
 
-            rel_paths = {
+            return sorted(
                 line.strip()
                 for output in (diff.stdout, untracked.stdout)
                 for line in output.splitlines()
                 if line.strip()
-            }
+            )
+
+        def status_paths() -> list[str]:
+            try:
+                status = subprocess.run(
+                    ["git", "status", "--porcelain"],
+                    cwd=worktree,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+            except subprocess.CalledProcessError:
+                return []
+            paths: list[str] = []
+            for line in status.stdout.splitlines():
+                if not line.strip():
+                    continue
+                paths.append(line[3:].strip())
+            return sorted(dict.fromkeys(paths))
+
+        def changed_evidence_paths() -> list[Path] | None:
+            rel_paths = changed_paths()
+            if rel_paths is None:
+                return None
             return [
                 worktree / rel_path
-                for rel_path in sorted(rel_paths)
+                for rel_path in rel_paths
                 if is_evidence_json_path(Path(rel_path))
             ]
 
@@ -436,6 +459,13 @@ class ParentOversightService:
                         "bundle": bundle,
                     }
                 )
+            if not bundles:
+                synthetic = _synthetic_evidence_for_run(
+                    run,
+                    changed_files=changed_paths() if run.source_branch_sha else status_paths(),
+                )
+                if synthetic is not None:
+                    bundles.append(synthetic)
             return bundles
 
         return await asyncio.to_thread(scan)
@@ -770,6 +800,11 @@ class ParentOversightService:
             raise InvalidTransitionError(
                 parent.status.value,
                 "resolve_child_run (invalid resolution)",
+            )
+        if await self._child_has_retryable_runner_pause(child):
+            raise InvalidTransitionError(
+                child.status.value,
+                "resolve_child_run (retryable runner failure; resume existing child)",
             )
         clean_reason = reason.strip()
         if not clean_reason:
@@ -1186,6 +1221,13 @@ class ParentOversightService:
             )
         return outcomes
 
+    async def _child_has_retryable_runner_pause(self, child: Run) -> bool:
+        """Return whether child resolution should wait for a resumed child run."""
+        if not _is_retryable_runner_pause_state(child):
+            return False
+        changed_files = await asyncio.to_thread(_changed_files_for_run, child)
+        return not changed_files and not _run_has_agent_tool_use(child)
+
     def is_oversight_parent_run(self, run: Run) -> bool:
         """Return whether a run is meant to use super-parent terminal guards."""
         if run.routine_id == "super-parent":
@@ -1219,3 +1261,186 @@ class ParentOversightService:
         return [
             cast(dict[str, Any], item) for item in cast(list[Any], value) if isinstance(item, dict)
         ]
+
+
+_RETRYABLE_RUNNER_PAUSE_REASONS: frozenset[str] = frozenset(
+    {
+        "agent_not_available",
+        "executor_not_started",
+        "no_executor_running",
+        "rate_limit",
+        "server_shutdown",
+    }
+)
+
+
+def _synthetic_evidence_for_run(
+    run: Run,
+    *,
+    changed_files: list[str] | None,
+) -> dict[str, Any] | None:
+    """Create parent-visible evidence when a child exits before writing a bundle."""
+    status = run.status.value
+    if status not in {RunStatus.PAUSED.value, RunStatus.FAILED.value}:
+        return None
+
+    changed_files = sorted(dict.fromkeys(changed_files or []))
+    last_error = (run.last_error or "").strip()
+    pause_reason = (run.pause_reason or "").strip()
+    if (
+        not changed_files
+        and not last_error
+        and not pause_reason
+        and status != RunStatus.FAILED.value
+    ):
+        return None
+
+    if _is_retryable_runner_pause_state(run) and not changed_files:
+        outcome = "environment_blocked"
+        next_recommendation = "environment_blocked"
+        test_status = "skipped"
+        summary = (
+            "Runner infrastructure stopped before the child produced work or evidence. "
+            "Resume the existing child run instead of counting this as a child attempt."
+        )
+    elif _is_max_turns_error(last_error):
+        outcome = "partial_progress"
+        next_recommendation = "replan"
+        test_status = "failed"
+        summary = (
+            "The child hit the agent turn limit before it could submit or write a "
+            "run.evidence.v1 bundle. Files changed before the limit are listed."
+        )
+    elif changed_files:
+        outcome = "partial_progress"
+        next_recommendation = "replan"
+        test_status = "failed"
+        summary = (
+            "The child paused before writing run.evidence.v1, but the worktree contains "
+            "partial file changes."
+        )
+    else:
+        outcome = "needs_revision" if status == RunStatus.FAILED.value else "environment_blocked"
+        next_recommendation = "replan" if outcome == "needs_revision" else "environment_blocked"
+        test_status = "failed" if outcome == "needs_revision" else "skipped"
+        summary = "The child exited without a run.evidence.v1 bundle."
+
+    details = "; ".join(item for item in (pause_reason, last_error) if item)
+    bundle = {
+        "schema_version": "run.evidence.v1",
+        "slice_id": run.parent_slice_id or "",
+        "routine_id": run.routine_id or "",
+        "assumption_tested": "Synthetic status evidence generated by the orchestrator.",
+        "summary": summary,
+        "commands_run": [],
+        "test_results": [
+            {
+                "name": "agent_execution",
+                "status": test_status,
+                "details": details or f"run status: {status}",
+            }
+        ],
+        "target_bug_reproduced": "unknown",
+        "real_frontend_path_exercised": False,
+        "real_execution_surface": "orchestrator child run status and worktree diff",
+        "files_changed": changed_files,
+        "evidence_files": [],
+        "open_uncertainties": [
+            "No child-authored run.evidence.v1 bundle was written before the run paused."
+        ],
+        "next_recommendation": next_recommendation,
+        "outcome": outcome,
+    }
+    return {
+        "path": f".orchestrator/generated-evidence/{run.id}-status-evidence.json",
+        "bundle": bundle,
+    }
+
+
+def _is_retryable_runner_pause_state(run: Run) -> bool:
+    if run.status != RunStatus.PAUSED:
+        return False
+    reason = (run.pause_reason or "").strip()
+    if reason in _RETRYABLE_RUNNER_PAUSE_REASONS:
+        return True
+    if reason != "agent_execution_error":
+        return False
+    error = (run.last_error or "").lower()
+    if _is_max_turns_error(error):
+        return False
+    return (
+        "api error: 529" in error
+        or "overloaded" in error
+        or "process exited with code" in error
+        or not error
+    )
+
+
+def _is_max_turns_error(error: str) -> bool:
+    normalized = error.lower()
+    return "max-turns" in normalized or "max turns" in normalized or "max_turns" in normalized
+
+
+def _run_has_agent_tool_use(run: Run) -> bool:
+    for step in run.steps:
+        for task in step.tasks:
+            for attempt in task.attempts:
+                action_log = attempt.action_log
+                if action_log is None:
+                    continue
+                if any(entry.tool_use is not None for entry in action_log.entries):
+                    return True
+    return False
+
+
+def _changed_files_for_run(run: Run) -> list[str]:
+    if not run.worktree_path:
+        return []
+    worktree = Path(run.worktree_path).resolve()
+    if not worktree.is_dir():
+        return []
+    if run.source_branch_sha:
+        try:
+            diff = subprocess.run(
+                [
+                    "git",
+                    "diff",
+                    "--name-only",
+                    "--diff-filter=ACMRT",
+                    f"{run.source_branch_sha}..HEAD",
+                ],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            untracked = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=worktree,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            return []
+        return sorted(
+            dict.fromkeys(
+                line.strip()
+                for output in (diff.stdout, untracked.stdout)
+                for line in output.splitlines()
+                if line.strip()
+            )
+        )
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        return []
+    return sorted(
+        dict.fromkeys(line[3:].strip() for line in status.stdout.splitlines() if line.strip())
+    )

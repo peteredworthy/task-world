@@ -16,6 +16,9 @@ ChildWorkflowTemplateId = Literal[
     "test_coverage_gap",
     "frontend_behavior_fix",
     "investigation_only",
+    "implementation_slice",
+    "planning_to_implementation_brief",
+    "partial_progress_recovery",
     "cleanup_refactor",
     "environment_blocker_repro",
 ]
@@ -26,6 +29,9 @@ _TEMPLATE_TITLES: dict[str, str] = {
     "test_coverage_gap": "Test Coverage Gap",
     "frontend_behavior_fix": "Frontend Behavior Fix",
     "investigation_only": "Investigation Only",
+    "implementation_slice": "Narrow Implementation Slice",
+    "planning_to_implementation_brief": "Planning To Implementation Brief",
+    "partial_progress_recovery": "Partial Progress Recovery",
     "cleanup_refactor": "Cleanup Refactor",
     "environment_blocker_repro": "Environment Blocker Reproduction",
 }
@@ -48,6 +54,21 @@ _TEMPLATE_REQUIREMENTS: dict[str, list[str]] = {
     "investigation_only": [
         "Inspect the target area and answer the slice assumption with concrete evidence.",
         "Do not change source behavior unless the slice brief explicitly allows it.",
+    ],
+    "implementation_slice": [
+        "Implement only the bounded behavior named by the slice goal.",
+        "Keep edits inside one subsystem, API surface, or narrow file cluster.",
+        "Run the focused verification surface named by the parent slice.",
+    ],
+    "planning_to_implementation_brief": [
+        "Investigate the broad target enough to split it into one safe implementation slice.",
+        "Write a child-authored implementation brief with scope, files, risks, and verification.",
+        "Do not make production behavior changes while producing the brief.",
+    ],
+    "partial_progress_recovery": [
+        "Inspect the current worktree state and identify what partial work exists.",
+        "Package changed files, completed work, blockers, and recommended next steps for the parent.",
+        "Do not continue broad implementation unless the slice explicitly narrows that recovery work.",
     ],
     "cleanup_refactor": [
         "Make the cleanup or refactor without changing externally visible behavior.",
@@ -100,6 +121,8 @@ def compile_child_routine_from_spec(spec: ChildSliceSpec | dict[str, object]) ->
     routine_id = spec.routine_id or f"child-{spec.slice_id}"
     title = spec.title or _TEMPLATE_TITLES[spec.template_id]
     evidence_path = f"docs/run-evidence/{spec.slice_id}-evidence.json"
+    planning_brief_path = f"docs/run-evidence/{spec.slice_id}-implementation-brief.md"
+    recovery_summary_path = f"docs/run-evidence/{spec.slice_id}-recovery-summary.md"
     validation_code = (
         "import json; "
         "from pathlib import Path; "
@@ -126,7 +149,7 @@ def compile_child_routine_from_spec(spec: ChildSliceSpec | dict[str, object]) ->
         "('passed','failed','skipped','not_run') for t in b['test_results'])"
     )
 
-    auto_verify_items = [
+    auto_verify_items: list[dict[str, object]] = [
         {
             "id": "evidence_bundle_schema",
             "cmd": f'uv run python -c "{validation_code}"',
@@ -143,7 +166,6 @@ def compile_child_routine_from_spec(spec: ChildSliceSpec | dict[str, object]) ->
             }
         )
 
-    requirements = _requirements_for_spec(spec)
     routine: dict[str, object] = {
         "id": routine_id,
         "name": f"{title}: {spec.slice_id}",
@@ -152,32 +174,235 @@ def compile_child_routine_from_spec(spec: ChildSliceSpec | dict[str, object]) ->
             "Do not promote this embedded routine to routines/ without human review."
         ),
         "strict_validation": True,
-        "steps": [
-            {
-                "id": "CH-01",
-                "title": title,
-                "step_context": (
-                    "Complete the bounded child slice and return a compact, schema-valid "
-                    "run.evidence.v1 bundle for the parent."
-                ),
-                "tasks": [
-                    {
-                        "id": "T-01",
-                        "title": f"Execute {spec.slice_id}",
-                        "task_context": _task_context(spec, routine_id, evidence_path),
-                        "requirements": requirements,
-                        "artifacts": [{"path": evidence_path, "required": True}],
-                        "auto_verify": {"items": auto_verify_items},
-                        "retry": {"max_attempts": spec.max_attempts},
-                    }
-                ],
-            }
-        ],
+        "steps": _steps_for_spec(
+            spec,
+            routine_id=routine_id,
+            title=title,
+            evidence_path=evidence_path,
+            planning_brief_path=planning_brief_path,
+            recovery_summary_path=recovery_summary_path,
+            auto_verify_items=auto_verify_items,
+        ),
     }
 
     # Validate before returning so callers cannot create malformed child runs.
     RoutineConfig.model_validate(routine)
     return routine
+
+
+def _steps_for_spec(
+    spec: ChildSliceSpec,
+    *,
+    routine_id: str,
+    title: str,
+    evidence_path: str,
+    planning_brief_path: str,
+    recovery_summary_path: str,
+    auto_verify_items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    if spec.template_id == "planning_to_implementation_brief":
+        return _planning_brief_steps(
+            spec,
+            routine_id=routine_id,
+            evidence_path=evidence_path,
+            planning_brief_path=planning_brief_path,
+            auto_verify_items=auto_verify_items,
+        )
+    if spec.template_id == "partial_progress_recovery":
+        return _partial_progress_recovery_steps(
+            spec,
+            routine_id=routine_id,
+            evidence_path=evidence_path,
+            recovery_summary_path=recovery_summary_path,
+            auto_verify_items=auto_verify_items,
+        )
+    return [
+        {
+            "id": "CH-01",
+            "title": title,
+            "step_context": (
+                "Complete the bounded child slice and return a compact, schema-valid "
+                "run.evidence.v1 bundle for the parent."
+            ),
+            "tasks": [
+                {
+                    "id": "T-01",
+                    "title": f"Execute {spec.slice_id}",
+                    "task_context": _task_context(spec, routine_id, evidence_path),
+                    "requirements": _requirements_for_spec(spec),
+                    "artifacts": [{"path": evidence_path, "required": True}],
+                    "auto_verify": {"items": auto_verify_items},
+                    "retry": {"max_attempts": spec.max_attempts},
+                }
+            ],
+        }
+    ]
+
+
+def _planning_brief_steps(
+    spec: ChildSliceSpec,
+    *,
+    routine_id: str,
+    evidence_path: str,
+    planning_brief_path: str,
+    auto_verify_items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    brief_verify = {
+        "id": "implementation_brief_exists",
+        "cmd": f"test -f {planning_brief_path}",
+        "must": True,
+    }
+    brief_requirements = [
+        {
+            "id": "R1",
+            "desc": "Implementation brief narrows the broad item to one child-sized slice.",
+            "priority": "critical",
+        },
+        {
+            "id": "R2",
+            "desc": "Brief names target files or subsystems, verification commands, risks, and stop conditions.",
+            "priority": "critical",
+        },
+        {
+            "id": "R3",
+            "desc": "No production behavior changes are made while planning the next slice.",
+            "priority": "critical",
+        },
+    ]
+    evidence_requirements = _requirements_for_spec(spec)
+    return [
+        {
+            "id": "CH-01",
+            "title": "Investigate And Draft Brief",
+            "step_context": (
+                "Use this planning pass to shrink broad inventory into one concrete implementation "
+                "slice for a later child."
+            ),
+            "tasks": [
+                {
+                    "id": "T-01",
+                    "title": f"Plan {spec.slice_id}",
+                    "task_context": _planning_brief_context(
+                        spec,
+                        routine_id=routine_id,
+                        planning_brief_path=planning_brief_path,
+                    ),
+                    "requirements": brief_requirements,
+                    "artifacts": [{"path": planning_brief_path, "required": True}],
+                    "auto_verify": {"items": [brief_verify]},
+                    "retry": {"max_attempts": spec.max_attempts},
+                }
+            ],
+        },
+        {
+            "id": "CH-02",
+            "title": "Package Planning Evidence",
+            "step_context": (
+                "Convert the implementation brief into parent-readable run.evidence.v1 evidence."
+            ),
+            "tasks": [
+                {
+                    "id": "T-01",
+                    "title": f"Package {spec.slice_id} planning evidence",
+                    "task_context": _task_context(spec, routine_id, evidence_path)
+                    + (
+                        "\n\nThis is a planning child. Reference "
+                        f"`{planning_brief_path}` in `evidence_files`, set "
+                        "`target_bug_reproduced` to `not_targeted`, and use an acceptance "
+                        "outcome such as `behavior_already_correct` with "
+                        "`next_recommendation` `proceed` when the brief is ready for the parent."
+                    ),
+                    "requirements": evidence_requirements,
+                    "artifacts": [{"path": evidence_path, "required": True}],
+                    "auto_verify": {"items": [brief_verify, *auto_verify_items]},
+                    "retry": {"max_attempts": spec.max_attempts},
+                }
+            ],
+        },
+    ]
+
+
+def _partial_progress_recovery_steps(
+    spec: ChildSliceSpec,
+    *,
+    routine_id: str,
+    evidence_path: str,
+    recovery_summary_path: str,
+    auto_verify_items: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    summary_verify = {
+        "id": "recovery_summary_exists",
+        "cmd": f"test -f {recovery_summary_path}",
+        "must": True,
+    }
+    summary_requirements = [
+        {
+            "id": "R1",
+            "desc": "Recovery summary lists changed files and what each change appears to do.",
+            "priority": "critical",
+        },
+        {
+            "id": "R2",
+            "desc": "Summary separates completed work, unverified work, blockers, and recommended next action.",
+            "priority": "critical",
+        },
+        {
+            "id": "R3",
+            "desc": "Recovery work does not broaden the original child slice.",
+            "priority": "critical",
+        },
+    ]
+    evidence_requirements = _requirements_for_spec(spec)
+    return [
+        {
+            "id": "CH-01",
+            "title": "Inspect Partial Work",
+            "step_context": (
+                "Recover child progress by summarizing the current worktree and blockers before "
+                "the parent decides whether to resume, replan, or stop."
+            ),
+            "tasks": [
+                {
+                    "id": "T-01",
+                    "title": f"Recover {spec.slice_id}",
+                    "task_context": _partial_progress_recovery_context(
+                        spec,
+                        routine_id=routine_id,
+                        recovery_summary_path=recovery_summary_path,
+                    ),
+                    "requirements": summary_requirements,
+                    "artifacts": [{"path": recovery_summary_path, "required": True}],
+                    "auto_verify": {"items": [summary_verify]},
+                    "retry": {"max_attempts": spec.max_attempts},
+                }
+            ],
+        },
+        {
+            "id": "CH-02",
+            "title": "Package Recovery Evidence",
+            "step_context": (
+                "Write run.evidence.v1 evidence that communicates partial progress and next action."
+            ),
+            "tasks": [
+                {
+                    "id": "T-01",
+                    "title": f"Package {spec.slice_id} recovery evidence",
+                    "task_context": _task_context(spec, routine_id, evidence_path)
+                    + (
+                        "\n\nThis is a recovery child. Reference "
+                        f"`{recovery_summary_path}` in `evidence_files`, set "
+                        "`outcome` to `partial_progress` unless the recovery proves there is "
+                        "no useful work, and set `next_recommendation` to `replan`, `stop`, "
+                        "or `environment_blocked` based on the summary."
+                    ),
+                    "requirements": evidence_requirements,
+                    "artifacts": [{"path": evidence_path, "required": True}],
+                    "auto_verify": {"items": [summary_verify, *auto_verify_items]},
+                    "retry": {"max_attempts": spec.max_attempts},
+                }
+            ],
+        },
+    ]
 
 
 def _requirements_for_spec(spec: ChildSliceSpec) -> list[dict[str, object]]:
@@ -237,6 +462,76 @@ def _task_context(spec: ChildSliceSpec, routine_id: str, evidence_path: str) -> 
         "update every satisfied checklist item and submit the child task. Do not keep "
         "investigating after the slice assumption has enough evidence for the parent to review."
     )
+    return "\n\n".join(section for section in sections if section)
+
+
+def _planning_brief_context(
+    spec: ChildSliceSpec,
+    *,
+    routine_id: str,
+    planning_brief_path: str,
+) -> str:
+    allowed_paths = _unique(["scripts/run_child_evidence.py", *spec.allowed_paths])
+    sections = [
+        f"Slice ID: {spec.slice_id}",
+        f"Routine ID: {routine_id}",
+        f"Planning goal: {spec.goal}",
+        _format_list("Target inventory IDs", spec.target_inventory_ids),
+        _format_list("Allowed inspection paths", allowed_paths),
+        _format_list("Evidence expectations", spec.evidence_expectations),
+        _format_list("Stop or replan conditions", spec.stop_conditions),
+        f"Real execution surface to preserve: {spec.real_execution_surface}",
+        (
+            "Write the implementation brief at "
+            f"`{planning_brief_path}` with these exact headings: `Goal`, `Narrow Slice`, "
+            "`Allowed Paths`, `Expected Files Changed`, `Verification Commands`, "
+            "`Risks And Unknowns`, `Stop Conditions`, and `Suggested Child Template`. "
+            "The narrow slice must be small enough for one implementation child and must name "
+            "the recommended template_id for that child."
+        ),
+        (
+            "Do not edit production code, tests, dependency files, lockfiles, migrations, UI files, "
+            "or routine files in this planning task. The only required artifact is the brief."
+        ),
+    ]
+    if spec.notes:
+        sections.append(f"Parent notes: {spec.notes}")
+    return "\n\n".join(section for section in sections if section)
+
+
+def _partial_progress_recovery_context(
+    spec: ChildSliceSpec,
+    *,
+    routine_id: str,
+    recovery_summary_path: str,
+) -> str:
+    allowed_paths = _unique(["scripts/run_child_evidence.py", *spec.allowed_paths])
+    sections = [
+        f"Slice ID: {spec.slice_id}",
+        f"Routine ID: {routine_id}",
+        f"Recovery goal: {spec.goal}",
+        _format_list("Target inventory IDs", spec.target_inventory_ids),
+        _format_list("Allowed inspection paths", allowed_paths),
+        _format_list("Expected files changed", spec.expected_files_changed),
+        _format_list(
+            "Verification commands to run only if still appropriate", spec.verification_commands
+        ),
+        _format_list("Evidence expectations", spec.evidence_expectations),
+        _format_list("Stop or replan conditions", spec.stop_conditions),
+        (
+            "Write the recovery summary at "
+            f"`{recovery_summary_path}` with these exact headings: `Observed Run State`, "
+            "`Changed Files`, `Completed Work`, `Unverified Or Incomplete Work`, "
+            "`Blockers`, `Recommended Next Action`, and `Suggested Follow-Up Slice`. "
+            "Use `git status --porcelain` and targeted file inspection to populate it."
+        ),
+        (
+            "Do not continue broad implementation. Make edits only when they are needed to package "
+            "the recovery summary or when the slice explicitly authorizes a narrow completion step."
+        ),
+    ]
+    if spec.notes:
+        sections.append(f"Parent notes: {spec.notes}")
     return "\n\n".join(section for section in sections if section)
 
 

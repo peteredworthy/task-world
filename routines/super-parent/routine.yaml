@@ -105,13 +105,21 @@ routine:
             launch a child. Write `docs/super-parent/next-slice.md` with the assumption
             under test, target IDs, expected files or subsystems, verifiable requirements, stop/replan
             conditions, evidence artifacts, and the child workflow template that should execute it. Prefer
-            slices that reduce uncertainty and exercise a real execution surface. Treat
+            slices that reduce uncertainty and exercise a real execution surface. Keep implementation
+            slices small enough for one child task to finish: prefer one subsystem, one API surface, or a
+            narrow file cluster with a focused test. If the next inventory item needs broad design,
+            multi-step implementation, or touches more than one subsystem, select an investigation or
+            `planning_to_implementation_brief` child first to produce a smaller implementation brief
+            instead of launching a large one-step coding child. Use `implementation_slice` for generic
+            narrow implementation work when no specialized template fits, and use
+            `partial_progress_recovery` when the next child should package dirty or turn-limited work
+            before the parent decides whether to continue or replan. Treat
             `scripts/run_child_evidence.py` as the standard child evidence-capture tool: slices with
             verification commands should expect the generated child to run those commands through the
             helper so command logs and `run.evidence.v1` stay synchronized without manual log reads.
           requirements:
             - id: "R1"
-              desc: "Slice is bounded to one assumption or one coherent group of related requirements."
+              desc: "Slice is bounded to one assumption, one subsystem, or a planning child that creates a smaller implementation brief."
               priority: critical
             - id: "R2"
               desc: "Slice brief defines success, bug-not-reproduced, environment-blocked, and replan evidence."
@@ -233,8 +241,14 @@ routine:
             task: do not edit source code, tests, dependency files, lockfiles, migrations, UI files,
             routine files, generated child work, or child worktree files. If evidence exposes missing
             service behavior, record it as target inventory, a replan input, or a human action instead
-            of implementing it in this parent task. If a child is paused, failed without schema-valid
-            evidence, or requires a human decision, use `orchestrator_resolve_child_run` with
+            of implementing it in this parent task. If a child is paused because the runner or executor
+            failed before child work began (for example API overload, rate limit, missing executor, or
+            agent-not-available), do not reject or abandon it and do not launch a replacement child.
+            Record that the existing child should be resumed when execution is kicked off again. If a
+            child hit an agent turn limit, treat the service-provided synthetic evidence as
+            `partial_progress` and inspect the listed changed files before deciding whether to continue,
+            replan, or ask the human. If a child failed without schema-valid evidence for reasons tied
+            to the child work, or requires a human decision, use `orchestrator_resolve_child_run` with
             `reject` or `abandon` before launching a replacement child when the oversight state clearly
             supports an autonomous replan and that replan is recorded. Use
             `orchestrator_request_clarification` or `orchestrator_escalate_requirement` only when the

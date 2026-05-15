@@ -11,15 +11,15 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config import AgentRunnerType, RunStatus, TaskStatus
-from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
-from orchestrator.state import Attempt, Run, StepState, TaskState
 from orchestrator.workflow import (
     InMemorySignalTransport,
     InvalidTransitionError,
     WorkflowService,
     WorkflowSignal,
 )
+from orchestrator.config import AgentRunnerType, RunStatus, TaskStatus
+from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
+from orchestrator.state import Attempt, Run, StepState, TaskState
 from tests.unit.git_helpers import _commit_file, _git, _init_repo
 
 
@@ -1034,6 +1034,84 @@ async def test_resolve_child_run_unblocks_replacement_child(
 
     signals = await transport.drain("next-child")
     assert [signal.signal_type for signal in signals] == [WorkflowSignal.RUN_START]
+
+
+async def test_resolve_retryable_runner_failure_keeps_existing_child(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(session)
+    worktree = tmp_path / "retryable-child"
+    worktree.mkdir()
+    _init_repo(worktree)
+    parent = _parent_run(parent_id="parent")
+    paused_child = _child_run(
+        child_id="paused-child",
+        parent_id="parent",
+        status=RunStatus.PAUSED,
+        worktree_path=str(worktree),
+    )
+    paused_child.pause_reason = "agent_execution_error"
+    paused_child.last_error = "API Error: 529 Overloaded"
+
+    await service.create_run(parent)
+    await service.create_run(paused_child)
+
+    with pytest.raises(
+        InvalidTransitionError,
+        match="resolve_child_run \\(retryable runner failure; resume existing child\\)",
+    ):
+        await service.resolve_child_run(
+            "parent",
+            "paused-child",
+            resolution="reject",
+            reason="Runner failed before the child could work.",
+        )
+
+    parent_after = await service.refresh_parent_oversight("parent")
+    assert parent_after.oversight_state["rejected_child_run_ids"] == []
+    assert parent_after.oversight_state["retryable_child_run_ids"] == ["paused-child"]
+    assert parent_after.oversight_state["next_parent_action"] == "wait_for_child"
+
+
+async def test_collect_evidence_synthesizes_turn_limit_partial_progress(
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    service = WorkflowService(session)
+    worktree = tmp_path / "turn-limit-child"
+    worktree.mkdir()
+    _init_repo(worktree)
+    base_sha = _git(["rev-parse", "HEAD"], cwd=worktree)
+    (worktree / "changed.py").write_text("print('partial')\n", encoding="utf-8")
+    parent = _parent_run(parent_id="parent")
+    child = _child_run(
+        child_id="turn-limit-child",
+        parent_id="parent",
+        status=RunStatus.PAUSED,
+        worktree_path=str(worktree),
+    )
+    child.routine_id = "child-slice-01"
+    child.source_branch_sha = base_sha
+    child.pause_reason = "agent_execution_error"
+    child.last_error = "Agent hit the max-turns limit without completing (exit code 1)"
+
+    await service.create_run(parent)
+    await service.create_run(child)
+
+    evidence = await service.collect_validated_run_evidence(
+        "turn-limit-child",
+        expected_slice_id="slice-01",
+        expected_routine_id="child-slice-01",
+    )
+
+    assert evidence["invalid_evidence"] == []
+    assert len(evidence["evidence"]) == 1
+    bundle = evidence["evidence"][0]["bundle"]
+    assert bundle["outcome"] == "partial_progress"
+    assert bundle["next_recommendation"] == "replan"
+    assert bundle["files_changed"] == ["changed.py"]
+    assert "turn limit" in bundle["summary"]
 
 
 async def test_duplicate_resolve_child_run_is_typed_noop(

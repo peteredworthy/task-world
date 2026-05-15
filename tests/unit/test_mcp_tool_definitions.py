@@ -61,6 +61,9 @@ def test_create_child_from_template_has_slice_spec_schema() -> None:
         "test_coverage_gap",
         "frontend_behavior_fix",
         "investigation_only",
+        "implementation_slice",
+        "planning_to_implementation_brief",
+        "partial_progress_recovery",
         "cleanup_refactor",
         "environment_blocker_repro",
     ]

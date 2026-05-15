@@ -9,7 +9,7 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, get_args
 
 from orchestrator.config import RoutineConfig
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RoutineSource
@@ -24,6 +24,7 @@ from orchestrator.state import Run
 from orchestrator.time_utils import format_utc_datetime
 from orchestrator.workflow import (
     ChildSliceSpec,
+    ChildWorkflowTemplateId,
     ClarificationQuestion,
     compile_child_routine_from_spec,
 )
@@ -244,14 +245,7 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
                     "properties": {
                         "template_id": {
                             "type": "string",
-                            "enum": [
-                                "bug_fix_with_regression_test",
-                                "test_coverage_gap",
-                                "frontend_behavior_fix",
-                                "investigation_only",
-                                "cleanup_refactor",
-                                "environment_blocker_repro",
-                            ],
+                            "enum": list(get_args(ChildWorkflowTemplateId)),
                         },
                         "slice_id": {"type": "string"},
                         "goal": {"type": "string"},
