@@ -1360,7 +1360,11 @@ def _synthetic_evidence_for_run(
 def _is_retryable_runner_pause_state(run: Run) -> bool:
     if run.status != RunStatus.PAUSED:
         return False
-    reason = (run.pause_reason or "").strip()
+    raw_reason = (run.pause_reason or "").strip()
+    # Cascade pauses keep a `parent_` prefix that records why the child was
+    # controlled. Retryability follows the underlying cause, so strip the
+    # prefix before checking the allow list.
+    reason = raw_reason.removeprefix("parent_")
     if reason in _RETRYABLE_RUNNER_PAUSE_REASONS:
         return True
     if reason != "agent_execution_error":

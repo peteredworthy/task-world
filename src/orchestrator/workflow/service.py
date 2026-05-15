@@ -103,6 +103,20 @@ from orchestrator.git.utils import commit_uncommitted_changes, get_head_commit
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 
 
+_SELF_PAUSING_REASONS: frozenset[str] = frozenset(
+    {
+        "server_shutdown",
+        "executor_not_started",
+        "executor_exited",
+        "executor_crash",
+        "no_executor_running",
+        "agent_not_running_on_startup",
+        "rate_limit",
+        "recovery_loop",
+    }
+)
+
+
 @dataclass
 class RecoveryResult:
     """Result of a run recovery operation.
@@ -511,6 +525,13 @@ class WorkflowService:
         error_detail: str | None = None,
     ) -> None:
         """Pause/cancel active/suspending child runs when a parent run is controlled."""
+        # System-wide pauses (server shutdown, rate limits, executor crashes) hit
+        # every run's asyncio loop independently; each loop self-pauses with the
+        # correct reason. Cascading from the parent would clobber that with a
+        # `parent_*` prefix that downstream recovery paths do not recognize.
+        if action == "pause" and reason in _SELF_PAUSING_REASONS:
+            return
+
         children = await self._repo.list_child_runs(parent.id, include_action_logs=False)
         control_reason = f"parent_{reason}"
 

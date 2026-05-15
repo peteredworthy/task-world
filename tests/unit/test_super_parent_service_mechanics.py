@@ -528,6 +528,41 @@ async def test_apply_pause_run_pauses_active_child_and_marks_open_attempts(
     assert attempt.outcome == "paused"
 
 
+async def test_apply_pause_run_does_not_cascade_on_server_shutdown(
+    service: WorkflowService,
+) -> None:
+    """Server-shutdown pauses must not cascade to children.
+
+    System-wide pauses are caught by each run's own asyncio loop, so the
+    cascade would clobber the correct ``server_shutdown`` reason with a
+    ``parent_server_shutdown`` prefix that historically skipped auto-resume.
+    """
+    parent = _parent_run(parent_id="parent")
+    parent.worktree_path = "/tmp/parent-worktree"
+
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.ACTIVE,
+        worktree_path="/tmp/child-worktree",
+        include_open_attempt=True,
+    )
+
+    await service.create_run(parent)
+    await service.create_run(child)
+
+    paused_parent = await service.apply_pause_run("parent", reason="server_shutdown")
+
+    assert paused_parent.status == RunStatus.PAUSED
+    assert paused_parent.pause_reason == "server_shutdown"
+
+    untouched_child = await service.get_run("child")
+    # The child's own runtime loop is responsible for self-pausing; the parent
+    # cascade must leave it alone.
+    assert untouched_child.status == RunStatus.ACTIVE
+    assert untouched_child.pause_reason is None
+
+
 async def test_update_parent_oversight_can_satisfy_terminal_guard(
     service: WorkflowService,
     tmp_path: Path,

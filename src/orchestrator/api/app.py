@@ -25,6 +25,7 @@ from orchestrator.api.websocket import BatchingConnectionManager, ConnectionMana
 from orchestrator.config.enums import RoutineSource, RunStatus
 from orchestrator.config.global_config import GlobalConfig, load_global_config
 from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.state.models import Run
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.envfiles.cleanup import EnvFileCleanup
@@ -39,12 +40,215 @@ def _is_startup_recoverable_pause_reason(reason: str | None) -> bool:
     executor loop begins. If the process dies after writing that marker but
     before the first loop iteration clears it, the run is left paused even
     though the correct recovery action is to continue from the current state.
+
+    Cascade reasons (`parent_*`) reflect *why* a child was paused (their parent
+    was being controlled) but recoverability is determined by the underlying
+    reason, so strip the prefix before checking. A child paused as
+    `parent_server_shutdown` is just as recoverable as one paused with
+    `server_shutdown` directly.
     """
-    return reason in (
+    if reason is None:
+        return False
+    canonical = reason.removeprefix("parent_")
+    return canonical in (
         "server_shutdown",
         "agent_not_running_on_startup",
         "executor_not_started",
     )
+
+
+_STARTUP_RECOVERY_RUN_STAGGER_SECONDS = 0.25
+
+
+def _topological_sort_children_first(runs: list[Run]) -> list[Run]:
+    """Order runs so each run appears after every descendant in the input set.
+
+    Uses each run's `parent_run_id` link. Runs whose parent is not in the input
+    set (typical: parent is ACTIVE, terminal, or unrelated) are treated as
+    roots and emitted last among their tree level. Cycles cannot occur given
+    the parent/child invariant but are tolerated defensively.
+    """
+    by_id = {r.id: r for r in runs}
+    children_of: dict[str, list[str]] = {r.id: [] for r in runs}
+    roots: list[str] = []
+    for r in runs:
+        pid = r.parent_run_id
+        if pid in by_id:
+            children_of[pid].append(r.id)
+        else:
+            roots.append(r.id)
+
+    ordered: list[Run] = []
+    visited: set[str] = set()
+
+    def visit(run_id: str) -> None:
+        if run_id in visited:
+            return
+        visited.add(run_id)
+        for child_id in children_of.get(run_id, []):
+            visit(child_id)
+        ordered.append(by_id[run_id])
+
+    for root_id in roots:
+        visit(root_id)
+    # Defensive: any cycle-bound nodes the root walk missed.
+    for r in runs:
+        visit(r.id)
+    return ordered
+
+
+async def _run_startup_recovery(app: FastAPI) -> None:
+    """Recover and resume runs after the HTTP server has finished startup."""
+    import asyncio as _asyncio
+
+    from orchestrator.config.enums import AgentRunnerType as _AT
+    from orchestrator.db import RunRepository
+
+    session_factory = app.state.session_factory
+    global_config = app.state.global_config
+    runner_monitor = getattr(app.state, "runner_monitor", None)
+
+    managed_runner_types = (
+        _AT.CLI_SUBPROCESS,
+        _AT.OPENHANDS_LOCAL,
+        _AT.OPENHANDS_DOCKER,
+        _AT.CODEX_SERVER,
+        _AT.CLAUDE_SDK,
+    )
+
+    try:
+        if runner_monitor is not None:
+            # Check all ACTIVE runs and pause those with dead agents. Each
+            # on_agent_died call creates its own session and commits.
+            paused_runs = await runner_monitor.recover_active_runs_on_startup()
+            if paused_runs:
+                logger.info(
+                    f"Startup recovery: moved {len(paused_runs)} runs to PAUSED (dead agents)"
+                )
+            else:
+                logger.info("Startup recovery: no dead agents found")
+
+        if not hasattr(app.state, "runner_executor"):
+            return
+
+        executor = app.state.runner_executor
+        service_factory = app.state.service_factory
+
+        # Re-spawn executor loops for ACTIVE runs whose agents are still alive.
+        # After a server reload, the asyncio tasks that drive the agent loop are
+        # lost even though the agent subprocess may still be running. Without
+        # re-spawning, these runs are orphaned: the agent finishes but nobody
+        # handles the next phase (verification, next task, run completion).
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            active_runs = await repo.list_by_status(RunStatus.ACTIVE, include_action_logs=False)
+
+        for run in active_runs:
+            if run.agent_runner_type and run.agent_runner_type in managed_runner_types:
+                if not executor.is_running(run.id):
+                    spawned = executor.spawn_for_run(
+                        run.id, run.agent_runner_type, run.agent_runner_config
+                    )
+                    if spawned:
+                        logger.info(
+                            f"Startup recovery: re-spawned executor loop for "
+                            f"active run {run.id} ({run.agent_runner_type.value})"
+                        )
+                        await _asyncio.sleep(_STARTUP_RECOVERY_RUN_STAGGER_SECONDS)
+
+        # Auto-resume runs that were paused by restart-recoverable causes.
+        # When the server reloads, it cancels running executor tasks and marks
+        # those runs as paused with reason "server_shutdown". The executor also
+        # writes a transient "executor_not_started" marker before the first loop
+        # iteration; if a shutdown lands in that window, startup recovery must
+        # continue from current state rather than leaving the run stranded.
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            paused_runs_all = await repo.list_by_status(RunStatus.PAUSED, include_action_logs=False)
+            shutdown_runs = [
+                r
+                for r in paused_runs_all
+                if _is_startup_recoverable_pause_reason(r.pause_reason)
+                and r.agent_runner_type is not None
+                and r.agent_runner_type in managed_runner_types
+            ]
+
+        # Resume children before parents. A super-parent run queries its
+        # children's oversight state immediately on resume; if a child is still
+        # paused, the parent sees a non-terminal blocker and routes to
+        # `review_child_evidence` instead of continuing its workflow. By
+        # bringing children up first, the parent observes them as ACTIVE (or
+        # already terminal) when its own loop restarts.
+        shutdown_runs = _topological_sort_children_first(shutdown_runs)
+
+        for run in shutdown_runs:
+            try:
+                # If worktree is enabled but the directory is missing, recreate
+                # it before resuming. This happens when the server crashed before
+                # cleanup ran or when the directory was removed by the startup
+                # cleanup for an older run.
+                if run.worktree_enabled and run.worktree_path:
+                    wt_path = Path(run.worktree_path)
+                    if not wt_path.exists() or not (wt_path / ".git").exists():
+                        try:
+                            from orchestrator.git.worktree import WorktreeManager as _WTM
+
+                            repos_dir = global_config.paths.get_repos_path()
+                            worktrees_dir = global_config.paths.get_worktrees_path()
+                            repo_path = repos_dir / run.repo_name
+                            if repo_path.is_dir() and run.source_branch:
+                                wt_mgr = _WTM(
+                                    repo_path,
+                                    worktrees_dir,
+                                    server_port=global_config.server.port,
+                                    worktree_base_port=global_config.server.worktree_base_port,
+                                )
+                                wt_mgr.ensure_exists(
+                                    run.id,
+                                    run.source_branch,
+                                    worktree_path=run.worktree_path,
+                                )
+                                logger.info(
+                                    f"Startup recovery: recreated missing worktree for run {run.id}"
+                                )
+                            else:
+                                logger.warning(
+                                    f"Startup recovery: cannot recreate worktree for "
+                                    f"run {run.id} (repo '{run.repo_name}' not found "
+                                    f"or no source_branch); skipping auto-resume"
+                                )
+                                continue
+                        except Exception as wt_err:
+                            logger.warning(
+                                f"Startup recovery: worktree recreation failed for "
+                                f"run {run.id}: {wt_err}; skipping auto-resume"
+                            )
+                            continue
+
+                async with session_factory() as session:
+                    svc = await service_factory(session)
+                    await svc.apply_resume_run(run.id, resume_strategy="continue")
+                    await session.commit()
+
+                agent_runner_type = run.agent_runner_type
+                assert agent_runner_type is not None  # filtered above
+                spawned = executor.spawn_for_run(run.id, agent_runner_type, run.agent_runner_config)
+                if spawned:
+                    logger.info(
+                        f"Startup recovery: auto-resumed run {run.id} "
+                        f"({agent_runner_type.value}) after server shutdown"
+                    )
+                await _asyncio.sleep(_STARTUP_RECOVERY_RUN_STAGGER_SECONDS)
+            except Exception as resume_err:
+                logger.warning(
+                    f"Startup recovery: failed to auto-resume run {run.id}: {resume_err}"
+                )
+    except _asyncio.CancelledError:
+        raise
+    except Exception as e:
+        # If recovery fails (e.g., during first startup with no tables), log but
+        # do not crash the application.
+        logger.warning(f"Startup recovery failed: {e}")
 
 
 @asynccontextmanager
@@ -56,7 +260,6 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await init_db(app.state.engine)
 
-    # Recover active runs on startup - check for dead agents and pause them
     session_factory = app.state.session_factory
 
     # Build and store the shared WorkflowService factory for background tasks
@@ -91,146 +294,6 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         lock_manager=getattr(app.state, "lock_manager", None),
     )
     app.state.runner_monitor = runner_monitor
-
-    try:
-        # Check all ACTIVE runs and pause those with dead agents
-        # Each on_agent_died call creates its own session and commits
-        paused_runs = await runner_monitor.recover_active_runs_on_startup()
-        if paused_runs:
-            logger.info(f"Startup recovery: moved {len(paused_runs)} runs to PAUSED (dead agents)")
-        else:
-            logger.info("Startup recovery: no dead agents found")
-
-        # Re-spawn executor loops for ACTIVE runs whose agents are still alive.
-        # After a server reload, the asyncio tasks that drive the agent loop are
-        # lost even though the agent subprocess may still be running. Without
-        # re-spawning, these runs are orphaned: the agent finishes but nobody
-        # handles the next phase (verification, next task, run completion).
-        if hasattr(app.state, "runner_executor"):
-            from orchestrator.config.enums import AgentRunnerType as _AT
-
-            executor = app.state.runner_executor
-            async with session_factory() as session:
-                from orchestrator.db import RunRepository as _RR
-
-                repo = _RR(session)
-                active_runs = await repo.list_by_status(RunStatus.ACTIVE)
-
-            for run in active_runs:
-                if run.agent_runner_type and run.agent_runner_type in (
-                    _AT.CLI_SUBPROCESS,
-                    _AT.OPENHANDS_LOCAL,
-                    _AT.OPENHANDS_DOCKER,
-                    _AT.CODEX_SERVER,
-                    _AT.CLAUDE_SDK,
-                ):
-                    if not executor.is_running(run.id):
-                        spawned = executor.spawn_for_run(
-                            run.id, run.agent_runner_type, run.agent_runner_config
-                        )
-                        if spawned:
-                            logger.info(
-                                f"Startup recovery: re-spawned executor loop for "
-                                f"active run {run.id} ({run.agent_runner_type.value})"
-                            )
-
-            # Auto-resume runs that were paused by restart-recoverable causes.
-            # When the server reloads, it cancels running executor tasks and
-            # marks those runs as paused with reason "server_shutdown". The
-            # executor also writes a transient "executor_not_started" marker
-            # before the first loop iteration; if a shutdown lands in that
-            # window, startup recovery must treat it as a continue-from-current-
-            # state resume rather than leaving the run stranded in PAUSED.
-            async with session_factory() as session:
-                from orchestrator.db import RunRepository as _RR2
-
-                repo2 = _RR2(session)
-                paused_runs_all = await repo2.list_by_status(RunStatus.PAUSED)
-                shutdown_runs = [
-                    r
-                    for r in paused_runs_all
-                    if _is_startup_recoverable_pause_reason(r.pause_reason)
-                    and r.agent_runner_type is not None
-                    and r.agent_runner_type
-                    in (
-                        _AT.CLI_SUBPROCESS,
-                        _AT.OPENHANDS_LOCAL,
-                        _AT.OPENHANDS_DOCKER,
-                        _AT.CODEX_SERVER,
-                        _AT.CLAUDE_SDK,
-                    )
-                ]
-
-            for run in shutdown_runs:
-                try:
-                    # If worktree is enabled but the directory is missing, recreate it
-                    # before resuming.  This happens when the server crashed before
-                    # cleanup ran or when the directory was removed by the startup
-                    # cleanup for an older run.
-                    if run.worktree_enabled and run.worktree_path:
-                        from pathlib import Path as _Path
-
-                        wt_path = _Path(run.worktree_path)
-                        if not wt_path.exists() or not (wt_path / ".git").exists():
-                            try:
-                                from orchestrator.git.worktree import WorktreeManager as _WTM
-
-                                _repos_dir = global_config.paths.get_repos_path()
-                                _wt_dir = global_config.paths.get_worktrees_path()
-                                _repo_path = _repos_dir / run.repo_name
-                                if _repo_path.is_dir() and run.source_branch:
-                                    _wt_mgr = _WTM(
-                                        _repo_path,
-                                        _wt_dir,
-                                        server_port=global_config.server.port,
-                                        worktree_base_port=global_config.server.worktree_base_port,
-                                    )
-                                    _wt_mgr.ensure_exists(
-                                        run.id,
-                                        run.source_branch,
-                                        worktree_path=run.worktree_path,
-                                    )
-                                    logger.info(
-                                        f"Startup recovery: recreated missing worktree "
-                                        f"for run {run.id}"
-                                    )
-                                else:
-                                    logger.warning(
-                                        f"Startup recovery: cannot recreate worktree for "
-                                        f"run {run.id} (repo '{run.repo_name}' not found "
-                                        f"or no source_branch); skipping auto-resume"
-                                    )
-                                    continue
-                            except Exception as _wt_err:
-                                logger.warning(
-                                    f"Startup recovery: worktree recreation failed for "
-                                    f"run {run.id}: {_wt_err}; skipping auto-resume"
-                                )
-                                continue
-
-                    async with session_factory() as session:
-                        svc = await service_factory(session)
-                        await svc.apply_resume_run(run.id, resume_strategy="continue")
-                        await session.commit()
-
-                    _agent_runner_type = run.agent_runner_type
-                    assert _agent_runner_type is not None  # filtered above
-                    spawned = executor.spawn_for_run(
-                        run.id, _agent_runner_type, run.agent_runner_config
-                    )
-                    if spawned:
-                        logger.info(
-                            f"Startup recovery: auto-resumed run {run.id} "
-                            f"({_agent_runner_type.value}) after server shutdown"
-                        )
-                except Exception as resume_err:
-                    logger.warning(
-                        f"Startup recovery: failed to auto-resume run {run.id}: {resume_err}"
-                    )
-    except Exception as e:
-        # If recovery fails (e.g., during first startup with no tables),
-        # log but don't crash the application
-        logger.warning(f"Startup recovery failed: {e}")
 
     # Clean up orphaned env file snapshots
     if hasattr(app.state, "envfile_store"):
@@ -300,6 +363,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     import asyncio as _asyncio
 
     stale_run_sweeper: _asyncio.Task[None] | None = None
+    startup_recovery_task: _asyncio.Task[None] | None = None
     if hasattr(app.state, "runner_executor"):
 
         async def _sweep_stale_runs() -> None:
@@ -379,7 +443,20 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception:
         pass  # Quota fetching is non-critical
 
+    # Defer run recovery/resume until the lifespan is ready to yield. This lets
+    # the HTTP server become reachable before old runs are reattached or
+    # restarted, and it reduces SQLite contention during the boot path.
+    startup_recovery_task = _asyncio.create_task(_run_startup_recovery(app))
+    app.state.startup_recovery_task = startup_recovery_task
+
     yield
+
+    if not startup_recovery_task.done():
+        startup_recovery_task.cancel()
+        try:
+            await startup_recovery_task
+        except _asyncio.CancelledError:
+            pass
 
     # Stop signal consumer
     await signal_consumer.stop()

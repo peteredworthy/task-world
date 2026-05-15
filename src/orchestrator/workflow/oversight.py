@@ -572,7 +572,11 @@ def _is_retryable_runner_pause(child_run: Run) -> bool:
     """Return whether a paused child reflects runner infrastructure, not child work."""
     if _status_value(child_run.status) != RunStatus.PAUSED.value:
         return False
-    reason = (child_run.pause_reason or "").strip()
+    raw_reason = (child_run.pause_reason or "").strip()
+    # Cascade reasons keep a `parent_` prefix recording why the child was
+    # controlled, but retryability follows the underlying cause. Strip the
+    # prefix so cascaded shutdowns are treated the same as direct ones.
+    reason = raw_reason.removeprefix("parent_")
     if reason in {
         "agent_not_available",
         "executor_not_started",
