@@ -10,8 +10,6 @@ event loop, or running agent process.
 
 from __future__ import annotations
 
-import pytest
-
 from orchestrator.runners import discover_agents
 from orchestrator.runners import CodexServerAgent
 from orchestrator.runners.executor import AgentRunnerExecutor
@@ -100,12 +98,3 @@ def test_executor_codex_create_agent_codex_server_agent_runner_type_is_codex_ser
 
 
 # ===========================================================================
-# Unsupported agent runner type — should raise AgentNotAvailableError
-# ===========================================================================
-
-
-def test_executor_codex_create_agent_user_managed_requires_service() -> None:
-    """_create_agent for USER_MANAGED raises ValueError without service kwarg."""
-    executor = _make_executor()
-    with pytest.raises(ValueError, match="service"):
-        executor._create_agent(AgentRunnerType.USER_MANAGED, {})

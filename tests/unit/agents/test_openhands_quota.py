@@ -3,8 +3,6 @@
 No mocking framework usage, no network access. All test cases use FakeQuotaFetcher or
 a simple inline stub for the "raises exception" case.
 
-The sixth test confirms UserManagedAgent has no get_quota() override without
-constructing the agent (which requires WorkflowService — see GAP-09).
 """
 
 from __future__ import annotations
@@ -14,7 +12,6 @@ from typing import Any
 from orchestrator.runners import OpenHandsAgent
 from orchestrator.runners import FakeQuotaFetcher
 from orchestrator.runners.types import AgentQuota
-from orchestrator.runners import UserManagedAgent
 
 _API_KEY = "sk-test-openhands-quota"  # pragma: allowlist secret
 
@@ -101,12 +98,3 @@ def test_response_missing_total_used_returns_none() -> None:
     result = agent.get_quota(fetcher=fetcher)
 
     assert result is None
-
-
-def test_user_managed_agent_has_no_get_quota_override() -> None:
-    """UserManagedAgent must not define its own get_quota() method.
-
-    We do NOT construct the agent (it requires WorkflowService — GAP-09).
-    Checking __dict__ proves no override exists.
-    """
-    assert "get_quota" not in UserManagedAgent.__dict__

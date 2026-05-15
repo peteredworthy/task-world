@@ -150,7 +150,6 @@ class TestPrepareCodexConfigLocal:
             AgentRunnerType.CLI_SUBPROCESS,
             AgentRunnerType.OPENHANDS_LOCAL,
             AgentRunnerType.OPENHANDS_DOCKER,
-            AgentRunnerType.USER_MANAGED,
         ):
             result_config, stale_reason = executor._prepare_codex_config(agent_runner_type, config)
             assert stale_reason is None

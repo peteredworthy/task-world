@@ -2,7 +2,7 @@
 
 import os
 from collections.abc import AsyncGenerator
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners import AgentRunnerMonitor
 from orchestrator.config import AgentRunnerType, RunStatus, TaskStatus
-from orchestrator.config.global_config import AgentsConfig, GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import EventStore
@@ -251,77 +250,6 @@ async def test_check_agent_alive_openhands_local_returns_true(
 
 
 @pytest.mark.asyncio
-async def test_check_agent_alive_user_managed_within_timeout(
-    db_setup: async_sessionmaker[AsyncSession],
-) -> None:
-    """USER_MANAGED agent with recent activity should be considered alive."""
-    session_factory = db_setup
-
-    # Configure custom timeout (10 minutes)
-    config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentRunnerMonitor(session_factory, global_config=config)
-
-    # Set last_activity_at to 5 minutes ago
-    now = datetime.now(timezone.utc)
-    last_activity = now - timedelta(minutes=5)
-
-    run = _create_test_run(
-        run_id="run7",
-        agent_runner_type=AgentRunnerType.USER_MANAGED,
-        agent_runner_config={"last_activity_at": last_activity.isoformat()},
-    )
-    run.status = RunStatus.ACTIVE
-
-    is_alive = await monitor.check_agent_alive(run)
-    assert is_alive is True
-
-
-@pytest.mark.asyncio
-async def test_check_agent_alive_user_managed_beyond_timeout(
-    db_setup: async_sessionmaker[AsyncSession],
-) -> None:
-    """USER_MANAGED agent with stale activity should be considered dead."""
-    session_factory = db_setup
-
-    # Configure custom timeout (10 minutes)
-    config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentRunnerMonitor(session_factory, global_config=config)
-
-    # Set last_activity_at to 15 minutes ago (beyond timeout)
-    now = datetime.now(timezone.utc)
-    last_activity = now - timedelta(minutes=15)
-
-    run = _create_test_run(
-        run_id="run8",
-        agent_runner_type=AgentRunnerType.USER_MANAGED,
-        agent_runner_config={"last_activity_at": last_activity.isoformat()},
-    )
-    run.status = RunStatus.ACTIVE
-
-    is_alive = await monitor.check_agent_alive(run)
-    assert is_alive is False
-
-
-@pytest.mark.asyncio
-async def test_check_agent_alive_user_managed_without_last_activity(
-    db_setup: async_sessionmaker[AsyncSession],
-) -> None:
-    """USER_MANAGED agent without last_activity_at should be considered dead."""
-    session_factory = db_setup
-    monitor = AgentRunnerMonitor(session_factory)
-
-    run = _create_test_run(
-        run_id="run9",
-        agent_runner_type=AgentRunnerType.USER_MANAGED,
-        agent_runner_config={},  # No last_activity_at
-    )
-    run.status = RunStatus.ACTIVE
-
-    is_alive = await monitor.check_agent_alive(run)
-    assert is_alive is False
-
-
-@pytest.mark.asyncio
 async def test_check_agent_alive_with_no_agent_runner_type(
     db_setup: async_sessionmaker[AsyncSession],
 ) -> None:
@@ -331,27 +259,6 @@ async def test_check_agent_alive_with_no_agent_runner_type(
 
     run = _create_test_run(run_id="run10", agent_runner_type=None)
     run.status = RunStatus.DRAFT
-
-    is_alive = await monitor.check_agent_alive(run)
-    assert is_alive is False
-
-
-@pytest.mark.asyncio
-async def test_check_agent_alive_user_managed_with_malformed_timestamp(
-    db_setup: async_sessionmaker[AsyncSession],
-) -> None:
-    """USER_MANAGED agent with malformed timestamp should be considered dead."""
-    session_factory = db_setup
-
-    config = GlobalConfig(agents=AgentsConfig(user_managed_timeout_minutes=10))
-    monitor = AgentRunnerMonitor(session_factory, global_config=config)
-
-    run = _create_test_run(
-        run_id="run11",
-        agent_runner_type=AgentRunnerType.USER_MANAGED,
-        agent_runner_config={"last_activity_at": "not-a-valid-timestamp"},
-    )
-    run.status = RunStatus.ACTIVE
 
     is_alive = await monitor.check_agent_alive(run)
     assert is_alive is False

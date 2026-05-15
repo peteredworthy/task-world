@@ -321,7 +321,7 @@ describe('TaskDetailCard - Agent Display', () => {
             started_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
             outcome: 'pass',
-            agent_runner_type: 'user_managed',
+            agent_runner_type: 'cli_subprocess',
             agent_model: null,
             grade_snapshot: [],
             builder_prompt: null,
@@ -351,9 +351,8 @@ describe('TaskDetailCard - Agent Display', () => {
 
       // Wait for all attempts to be displayed
       await waitFor(() => {
-        expect(screen.getByText('Cli Subprocess')).toBeInTheDocument();
+        expect(screen.getAllByText('Cli Subprocess').length).toBeGreaterThanOrEqual(2);
         expect(screen.getByText('Openhands Docker')).toBeInTheDocument();
-        expect(screen.getByText('User Managed')).toBeInTheDocument();
       });
     });
   });

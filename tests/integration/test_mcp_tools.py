@@ -10,7 +10,14 @@ from typing import Any, cast
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
+from orchestrator.config import (
+    AgentRunnerType,
+    ChecklistStatus,
+    Priority,
+    RoutineSource,
+    RunStatus,
+    TaskStatus,
+)
 from orchestrator.db import EventStore, create_engine, create_session_factory, init_db
 from orchestrator.api import ToolHandler
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
@@ -46,6 +53,8 @@ def _make_run() -> Run:
         status=RunStatus.DRAFT,
         routine_id="test-routine",
         routine_source=RoutineSource.LOCAL,
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_config={"command": "claude"},
         steps=[
             StepState(
                 id="step-1",
@@ -398,6 +407,8 @@ async def test_resolve_child_run_tool_records_parent_decision(
         parent_run_id=parent.id,
         parent_slice_id="slice-01",
         source_branch="main",
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_config={"command": "claude"},
         created_at=parent.created_at,
         updated_at=parent.updated_at,
     )
@@ -485,6 +496,8 @@ async def test_parent_terminal_guard_pauses_unresolved_child(
         parent_run_id=parent.id,
         parent_slice_id="slice-01",
         source_branch="main",
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_config={"command": "claude"},
         created_at=parent.created_at,
         updated_at=parent.updated_at,
     )

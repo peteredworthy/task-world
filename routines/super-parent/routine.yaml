@@ -7,7 +7,9 @@ routine:
     embedded child routine, waits for child state/evidence, refreshes understanding,
     integrates accepted child work, loops to the next unresolved slice, and writes
     the final report once the target inventory is resolved. V1 runs one child
-    implementation run at a time.
+    implementation run at a time, routes mechanical parent bookkeeping to cheaper
+    model profiles, and keeps compact machine state separate from rich Markdown
+    audit documents.
 
   strict_validation: true
 
@@ -33,6 +35,7 @@ routine:
       tasks:
         - id: "T-01"
           title: "Create Target Inventory"
+          profile: "architect"
           mcp_servers:
             - name: "orchestrator"
               url: "http://127.0.0.1:8000/mcp/sse"
@@ -49,7 +52,10 @@ routine:
             risks. Call `orchestrator_update_parent_oversight` with matching `target_inventory` and
             `current_understanding` payloads. Keep the persisted `current_understanding` compact and
             structured; the Markdown file is a human-readable rollup, not the machine source of truth for
-            later steps. Separate concrete bugs, missing tests, design improvements, policy gaps,
+            later steps. Store a machine ledger under `current_understanding.ledger` with only compact
+            control-flow facts: active child run ID, parent slice ID, child evidence readiness, child
+            terminal status, merge queue size, accepted/rejected/abandoned child IDs, unresolved inventory
+            IDs, next allowed parent action, current blocker, and a short evidence digest. Separate concrete bugs, missing tests, design improvements, policy gaps,
             reproduction targets, and clarification needs. Assign stable IDs such as `INV-001`.
           requirements:
             - id: "R1"
@@ -80,6 +86,7 @@ routine:
       tasks:
         - id: "T-01"
           title: "Write Slice Brief"
+          profile: "architect"
           mcp_servers:
             - name: "orchestrator"
               url: "http://127.0.0.1:8000/mcp/sse"
@@ -92,7 +99,10 @@ routine:
             - "orchestrator_get_parent_oversight"
           task_context: |
             Read the persisted oversight snapshot with `orchestrator_get_parent_oversight` before selecting
-            work. Select one next child slice. Write `docs/super-parent/next-slice.md` with the assumption
+            work. Treat the compact ledger and `next_parent_action` fields as the control-flow source of
+            truth; read rich Markdown only when the current choice needs narrative detail that is absent
+            from the ledger. Select one next child slice only when the legal next parent action is to
+            launch a child. Write `docs/super-parent/next-slice.md` with the assumption
             under test, target IDs, expected files or subsystems, verifiable requirements, stop/replan
             conditions, evidence artifacts, and the child workflow template that should execute it. Prefer
             slices that reduce uncertainty and exercise a real execution surface. Treat
@@ -128,6 +138,7 @@ routine:
       tasks:
         - id: "T-01"
           title: "Create Embedded Child Routine"
+          profile: "coder"
           mcp_servers:
             - name: "orchestrator"
               url: "http://127.0.0.1:8000/mcp/sse"
@@ -148,8 +159,17 @@ routine:
             target inventory IDs, allowed paths, expected files, verification commands, evidence
             expectations, stop conditions, and real execution surface. Do not call the raw embedded-routine
             child creation tool unless this routine is explicitly changed to grant it; if no template fits,
-            record a replan or clarification instead. Do not pass a `start` flag; child creation enqueues
-            start automatically. The server-provided child template makes `scripts/run_child_evidence.py`
+            record a replan or clarification instead. Use the MCP tool schema as the canonical argument
+            contract before calling the creation tool; routine text defines action constraints, not a
+            duplicate schema. Do not pass unsupported fields; child creation enqueues start automatically.
+            Before creating a child, enforce the sequential-child invariant from the oversight snapshot:
+            if any linked child is unresolved (for example `active_child_run_ids` is non-empty,
+            `terminal_guard.blocking_child_run_ids` is non-empty, `attention_items` contains a
+            `child_not_terminal:*` reason, or `next_parent_action` is not `launch_child`), do not call
+            `orchestrator_create_child_from_template`. Record the blocked launch decision, keep the
+            current slice brief for audit, and submit so the parent can return to evidence review or child
+            resolution first. Never try to work around the invariant by creating a parallel child.
+            The server-provided child template makes `scripts/run_child_evidence.py`
             available to the child and includes a ready-to-run helper command; do not ask children to
             redirect command output by hand and then read logs back unless the helper itself is blocked.
           requirements:
@@ -177,6 +197,7 @@ routine:
         - id: "T-01"
           title: "Evaluate Child Evidence"
           work_mode: "oversight"
+          profile: "summarizer"
           mcp_servers:
             - name: "orchestrator"
               url: "http://127.0.0.1:8000/mcp/sse"
@@ -203,8 +224,11 @@ routine:
             polling from the LLM context. Treat paused children as meaningful states. Update only
             `docs/super-parent/current-understanding.md` as a concise human rollup and call
             `orchestrator_update_parent_oversight` with compact structured state before asking for human
-            input, accepting a child, or stopping. Do not append raw evidence dumps to the Markdown file;
-            use the persisted oversight snapshot and validated evidence payloads as the machine state.
+            input, accepting a child, or stopping. Keep `current_understanding.ledger` as the machine
+            source of truth for active child run ID, slice ID, evidence readiness, terminal status, merge
+            queue size, accepted/rejected/abandoned child IDs, unresolved inventory IDs, next allowed
+            parent action, current blocker, and evidence digest. Do not append raw evidence dumps to the
+            Markdown file; use the persisted oversight snapshot and validated evidence payloads as the machine state.
             This is an orchestration-only
             task: do not edit source code, tests, dependency files, lockfiles, migrations, UI files,
             routine files, generated child work, or child worktree files. If evidence exposes missing
@@ -214,12 +238,15 @@ routine:
             `reject` or `abandon` before launching a replacement child when the oversight state clearly
             supports an autonomous replan and that replan is recorded. Use
             `orchestrator_request_clarification` or `orchestrator_escalate_requirement` only when the
-            parent cannot make that decision from available evidence. Clarification questions must be
+            parent cannot make that decision from available evidence. Before high-risk MCP calls such as
+            clarification, escalation, child resolution, or oversight updates, validate required fields,
+            enum values, and allowed actions against the live MCP tool schema; if guidance conflicts, the
+            tool schema is canonical and the routine should record the mismatch for follow-up. Clarification questions must be
             human-facing and concise: explain what the parent needed from the child, what the child did,
             what the parent needs the human to decide, and the actual options. Translate target inventory
             IDs into plain-language labels from the oversight state or slice brief; do not rely on IDs
-            alone. For finite decisions, use `question_type: single_select` or `multi_select` with
-            explicit `options`; do not embed a/b/c choices in a `free_text` question.
+            alone. For finite decisions, use a schema-supported select question with explicit options;
+            do not encode choices inside a free-text question.
           requirements:
             - id: "R1"
               desc: "Evidence is collected from the child worktree and validated against the standard schema."
@@ -244,6 +271,7 @@ routine:
         - id: "T-02"
           title: "Accept And Merge Child"
           work_mode: "oversight"
+          profile: "summarizer"
           mcp_servers:
             - name: "orchestrator"
               url: "http://127.0.0.1:8000/mcp/sse"
@@ -267,7 +295,8 @@ routine:
             This task is orchestration-only. If there is no acceptable child to merge, use
             `orchestrator_resolve_child_run` to reject or abandon a non-accepted child when evidence
             supports that decision; otherwise record the no-op merge decision, keep the child unresolved
-            for audit, and submit.
+            for audit, and submit. Validate merge, resolve, and oversight-update arguments against the
+            live MCP tool schema before calling them.
           requirements:
             - id: "R1"
               desc: "Accepted children merge only into the parent run branch from the parent worktree."
@@ -294,6 +323,7 @@ routine:
       tasks:
         - id: "T-01"
           title: "Run Integrated Validation"
+          profile: "coder"
           mcp_servers:
             - name: "orchestrator"
               url: "http://127.0.0.1:8000/mcp/sse"
@@ -322,6 +352,7 @@ routine:
             max_attempts: 1
         - id: "T-02"
           title: "Write Final Report"
+          profile: "summarizer"
           mcp_servers:
             - name: "codesight"
               command: "npx"
@@ -331,7 +362,9 @@ routine:
           task_context: |
             Write `docs/super-parent/final-report.md` with original instruction, final target inventory status,
             child runs, evidence consumed, files changed, final validation commands, remaining risks, human
-            decisions, and clear success/blocked/failed outcome.
+            decisions, and clear success/blocked/failed outcome. Summarize from the compact oversight
+            ledger and validated evidence first, then cite richer audit Markdown only for human-readable
+            provenance details that are not present in the ledger.
           requirements:
             - id: "R1"
               desc: "Final report includes child run IDs, slice IDs, evidence paths, validation commands, and outcome."

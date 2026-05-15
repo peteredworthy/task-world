@@ -182,7 +182,6 @@ async function setupRoutes(
   // Task detail endpoints — abort to prevent proxy errors
   await page.route(`**/api/runs/${RUN_ID}/tasks/**`, (route) => route.abort());
 
-  await page.route(`**/api/runs/${RUN_ID}/guidance**`, (route) => route.abort());
   await page.route(`**/api/runs/${RUN_ID}/env-files**`, (route) =>
     route.fulfill({ json: [] }),
   );

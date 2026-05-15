@@ -2,8 +2,8 @@
 
 Verifies that the MCP server is accessible via the SSE transport
 at /mcp/sse and /mcp/messages/ when mounted in the FastAPI app.
-Also verifies that MCP tool dispatch through _SessionPerCallHandler
-shares the SubmitEventRegistry and changes database state.
+Also verifies that MCP tool dispatch through _SessionPerCallHandler changes
+database state.
 """
 
 from collections.abc import AsyncGenerator
@@ -17,7 +17,6 @@ from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
 from orchestrator.workflow import InMemorySignalTransport
-from orchestrator.workflow.service import SubmitEventRegistry
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
@@ -187,42 +186,6 @@ async def _setup_building_task(client: AsyncClient, drain: DrainFn) -> tuple[str
         json={"status": "done"},
     )
     return run_id, task_id
-
-
-async def test_mcp_handler_submit_fires_registry_event(
-    app: FastAPI,
-    client: AsyncClient,
-    drain: DrainFn,
-) -> None:
-    """_SessionPerCallHandler creates services sharing the SubmitEventRegistry.
-
-    When orchestrator_submit is called through the MCP handler, the resulting
-    WorkflowService shares the app-level SubmitEventRegistry.  This means a
-    UserManagedAgent waiting on that registry will be woken up.
-    """
-    from orchestrator.api.app import _SessionPerCallHandler  # pyright: ignore[reportPrivateUsage]
-
-    run_id, task_id = await _setup_building_task(client, drain)
-
-    # Register an event on the shared registry (simulating UserManagedAgent)
-    registry: SubmitEventRegistry = app.state.submit_event_registry
-    event = registry.register(task_id)
-    assert not event.is_set()
-
-    # Call submit through the MCP session-per-call handler
-    handler = _SessionPerCallHandler(app)
-    result = await handler.handle(
-        "orchestrator_submit",
-        {"run_id": run_id, "task_id": task_id},
-    )
-
-    assert result["success"] is True
-    assert result["new_status"] == "verifying"
-    # The handler's service shared the registry, so the event fires
-    assert event.is_set()
-
-    # Clean up
-    registry.unregister(task_id)
 
 
 async def test_mcp_handler_updates_database_state(

@@ -983,6 +983,11 @@ class ParentOversightService:
                 parent.status.value,
                 "create_child_run (max child run limit reached)",
             )
+        if child_run.agent_runner_type is None:
+            raise InvalidTransitionError(
+                parent.status.value,
+                "create_child_run (requires managed agent runner)",
+            )
 
         child_run.parent_run_id = parent_run_id
         child_run.parent_slice_id = parent_slice_id

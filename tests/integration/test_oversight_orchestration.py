@@ -6,7 +6,6 @@ from typing import Any
 from httpx import AsyncClient
 
 from orchestrator.api import get_runner_executor
-from orchestrator.workflow.service import WorkflowService
 from tests.integration.git_helpers import _git
 from tests.integration.signal_helpers import DrainFn
 
@@ -43,7 +42,6 @@ class RecordingExecutor:
 async def test_create_list_start_child_run_and_read_evidence(
     _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
     git_repo: Path,
-    tmp_path: Path,
 ) -> None:
     client, drain, _, _, app = _shared_app_fixture
 
@@ -53,7 +51,7 @@ async def test_create_list_start_child_run_and_read_evidence(
             "routine_embedded": EMBEDDED_ROUTINE,
             "repo_name": git_repo.name,
             "branch": "main",
-            "agent_runner_type": "user_managed",
+            "agent_runner_type": "cli_subprocess",
         },
     )
     assert parent_resp.status_code == 201, parent_resp.text
@@ -81,6 +79,9 @@ async def test_create_list_start_child_run_and_read_evidence(
     await drain(child_id)
     child_after_start = (await client.get(f"/api/runs/{child_id}")).json()
     assert child_after_start["status"] == "active"
+    child_worktree = Path(child_after_start["worktree_path"])
+    assert child_worktree.exists()
+    assert child_after_start["source_branch_sha"] is not None
 
     children_resp = await client.get(f"/api/runs/{parent_id}/children")
     assert children_resp.status_code == 200, children_resp.text
@@ -96,8 +97,7 @@ async def test_create_list_start_child_run_and_read_evidence(
     report_path.write_text("# Final validation\n", encoding="utf-8")
     parent_head = _git(["rev-parse", "HEAD"], cwd=parent_worktree)
 
-    worktree = tmp_path / "child-worktree"
-    evidence_dir = worktree / "docs" / "run-evidence"
+    evidence_dir = child_worktree / "docs" / "run-evidence"
     evidence_dir.mkdir(parents=True)
     (evidence_dir / "slice-01-evidence.json").write_text(
         """{
@@ -119,10 +119,6 @@ async def test_create_list_start_child_run_and_read_evidence(
 }""",
         encoding="utf-8",
     )
-
-    async with app.state.session_factory() as session:
-        service = WorkflowService(session)
-        await service.set_worktree_path(child_id, str(worktree))
 
     evidence_resp = await client.get(f"/api/runs/{child_id}/evidence")
     assert evidence_resp.status_code == 200, evidence_resp.text
@@ -200,7 +196,7 @@ async def test_parent_pause_cancels_active_child_executor(
                 "routine_embedded": EMBEDDED_ROUTINE,
                 "repo_name": git_repo.name,
                 "branch": "main",
-                "agent_runner_type": "user_managed",
+                "agent_runner_type": "cli_subprocess",
             },
         )
         assert parent_resp.status_code == 201, parent_resp.text

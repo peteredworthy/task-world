@@ -30,7 +30,6 @@ from orchestrator.git import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
     AcceptChildRunResponse,
-    AgentCancelledRequest,
     AttemptOutcome,
     BackMergeResponse,
     BackwardTransitionRequest,
@@ -40,7 +39,6 @@ from orchestrator.api.schemas.runs import (
     CreateRunRequest,
     EvidenceBundleSchema,
     GradeSummaryItem,
-    GuidanceResponse,
     InvalidEvidenceItem,
     MergeBackRequest,
     MergeBackResponse,
@@ -75,7 +73,6 @@ from orchestrator.config.enums import (
     GateType,
     RoutineSource,
     RunStatus,
-    TaskStatus,
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
@@ -1222,166 +1219,6 @@ async def skip_step(
     else:
         # Just make sure the run is reloaded from the database
         run = await repository.get(run_id)
-
-    return _run_to_response(run)
-
-
-@router.get("/{run_id}/guidance", response_model=GuidanceResponse)
-async def get_guidance(
-    run_id: str,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    repository: Annotated[RunRepository, Depends(get_run_repository)],
-    routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
-) -> GuidanceResponse:
-    """Get aggregate guidance for external agents.
-
-    Returns:
-    - Current task prompt (if a task is in progress)
-    - MCP URL for callbacks
-    - Expected actions list
-    """
-    from orchestrator.workflow import generate_builder_prompt, generate_verifier_prompt
-
-    run = await service.get_run(run_id)
-
-    # Find the current task (first non-terminal task in current step)
-    current_task = None
-    if run.current_step_index < len(run.steps):
-        step = run.steps[run.current_step_index]
-        for task in step.tasks:
-            if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
-                current_task = task
-                break
-
-    prompt_text = None
-    phase = None
-    task_id = None
-
-    if current_task is not None:
-        task_id = current_task.id
-        # Resolve routine config for prompt generation
-        routine_config: RoutineConfig | None = None
-        if run.routine_embedded is not None:
-            routine_config = RoutineConfig.model_validate(run.routine_embedded)
-        else:
-            if run.routine_id is not None:
-                found = discover_routines(routine_dirs)
-                for routine in found:
-                    if routine.config.id == run.routine_id:
-                        routine_config = routine.config
-                        break
-
-        if routine_config is not None:
-            # Find task config
-            # First, find which step contains this task to disambiguate config lookup
-            step_config_id: str | None = None
-            for step in run.steps:
-                for task in step.tasks:
-                    if task.id == current_task.id:
-                        step_config_id = step.config_id
-                        break
-                if step_config_id is not None:
-                    break
-
-            task_config = None
-            step_context: str | None = None
-            for step in routine_config.steps:
-                if step_config_id is not None and step.id != step_config_id:
-                    continue
-                for task in step.tasks:
-                    if task.id == current_task.config_id:
-                        task_config = task
-                        step_context = step.step_context
-                        break
-                if task_config is not None:
-                    break
-
-            if task_config is not None:
-                if current_task.status == TaskStatus.BUILDING:
-                    prompt = generate_builder_prompt(
-                        task_config, current_task, run.config, step_context=step_context
-                    )
-                    phase = "building"
-                    prompt_text = f"{prompt.system}\n\n{prompt.user}"
-                elif current_task.status == TaskStatus.VERIFYING:
-                    prompt = generate_verifier_prompt(
-                        task_config, current_task, step_context=step_context
-                    )
-                    phase = "verifying"
-                    prompt_text = f"{prompt.system}\n\n{prompt.user}"
-
-    # Build MCP URL - in production this would be from the request, but for guidance
-    # we'll use a placeholder that the client can resolve
-    mcp_url = "/mcp/sse"
-
-    # Expected actions based on current state
-    expected_actions = []
-    if current_task is not None:
-        if current_task.status == TaskStatus.BUILDING:
-            expected_actions = [
-                f"Mark requirements as done: PATCH /api/runs/{run_id}/tasks/{task_id}/checklist/{{req_id}}",
-                f"Submit for verification: POST /api/runs/{run_id}/tasks/{task_id}/submit",
-            ]
-        elif current_task.status == TaskStatus.VERIFYING:
-            expected_actions = [
-                f"Set grades: PUT /api/runs/{run_id}/tasks/{task_id}/checklist/{{req_id}}/grade",
-                f"Complete verification: POST /api/runs/{run_id}/tasks/{task_id}/complete-verification",
-            ]
-    else:
-        expected_actions = ["No active task - run may be complete or waiting for step approval"]
-
-    return GuidanceResponse(
-        run_id=run_id,
-        task_id=task_id,
-        prompt=prompt_text,
-        phase=phase,
-        mcp_url=mcp_url,
-        expected_actions=expected_actions,
-    )
-
-
-@router.post("/{run_id}/agent-started", response_model=RunResponse)
-async def agent_started(
-    run_id: str,
-    repository: Annotated[RunRepository, Depends(get_run_repository)],
-    session: Annotated[AsyncSession, Depends(get_session)],
-) -> RunResponse:
-    """Mark that user has started their external agent.
-
-    Sets the agent_runner_started_at timestamp on the run.
-    """
-    from datetime import datetime, timezone
-
-    run = await repository.get(run_id)
-
-    # Set agent_runner_started_at timestamp
-    run.agent_runner_started_at = datetime.now(timezone.utc)
-    run.updated_at = datetime.now(timezone.utc)
-
-    # Save the run (flushes to DB)
-    await repository.save(run)
-
-    # Commit to ensure persistence
-    await session.commit()
-
-    return _run_to_response(run)
-
-
-@router.post("/{run_id}/agent-cancelled", response_model=RunResponse)
-async def agent_cancelled(
-    run_id: str,
-    request: AgentCancelledRequest,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> RunResponse:
-    """Cancel waiting for external agent.
-
-    Transitions the run to FAILED with a cancellation reason.
-    """
-    # Cancel the run (direct apply — synchronous cancellation for agent_cancelled endpoint)
-    run = await service.apply_cancel_run(run_id)
-
-    # Note: The cancellation reason could be stored in a future field like
-    # `cancellation_reason` on the Run model if needed for audit trails
 
     return _run_to_response(run)
 

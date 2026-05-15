@@ -154,7 +154,7 @@ async def test_pause_resume_cancel_via_api(test_app: FastAPI) -> None:
                         }
                     ],
                 },
-                "agent_runner_type": "user_managed",
+                "agent_runner_type": "cli_subprocess",
             },
         )
         assert create_response.status_code == 201
@@ -194,7 +194,7 @@ async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
     drain = make_drain_fn(test_app, signal_transport)
 
     async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as client:
-        # Create a run with user_managed agent
+        # Create a run with cli_subprocess agent
         create_response = await client.post(
             "/api/runs",
             json={
@@ -222,12 +222,12 @@ async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
                         }
                     ],
                 },
-                "agent_runner_type": "user_managed",
+                "agent_runner_type": "cli_subprocess",
             },
         )
         assert create_response.status_code == 201
         run_id = create_response.json()["id"]
-        assert create_response.json()["agent_runner_type"] == "user_managed"
+        assert create_response.json()["agent_runner_type"] == "cli_subprocess"
 
         # Start the run
         start_response = await client.post(f"/api/runs/{run_id}/start")

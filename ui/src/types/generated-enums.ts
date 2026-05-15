@@ -10,7 +10,7 @@ export type ChecklistStatus = 'open' | 'done' | 'not_applicable' | 'blocked' | '
 
 export type Priority = 'critical' | 'expected' | 'nice';
 
-export type AgentRunnerType = 'openhands_local' | 'openhands_docker' | 'cli_subprocess' | 'user_managed' | 'codex_server' | 'claude_sdk';
+export type AgentRunnerType = 'openhands_local' | 'openhands_docker' | 'cli_subprocess' | 'codex_server' | 'claude_sdk';
 
 export type RoutineSource = 'local' | 'embedded' | 'project';
 

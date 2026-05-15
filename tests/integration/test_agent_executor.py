@@ -156,6 +156,64 @@ async def test_executor_pauses_run_on_agent_not_available(
         )
 
 
+async def test_executor_pauses_before_spawn_when_worktree_setup_fails(
+    app: FastAPI,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+) -> None:
+    """Missing source repo should pause before spawning an agent without a worktree."""
+    from orchestrator.config.global_config import GlobalConfig, PathsConfig
+
+    global_config = GlobalConfig(
+        paths=PathsConfig(
+            repos_dir=str(tmp_path / "repos"),
+            worktrees_dir=str(tmp_path / "worktrees"),
+        )
+    )
+    executor = AgentRunnerExecutor(
+        session_factory=session_factory,
+        global_config=global_config,
+        service_factory=app.state.service_factory,
+        spawn_agents=True,
+    )
+
+    async with session_factory() as session:
+        from orchestrator.config import discover_routines
+        from orchestrator.state.factory import create_run_from_routine
+
+        service = WorkflowService(**_make_service_args(session))
+        routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
+        routine = next(r for r in routines if r.config.id == "simple-routine")
+
+        run = create_run_from_routine(
+            routine=routine.config,
+            repo_name="missing-project",
+            source_branch="main",
+            routine_source=RoutineSource.LOCAL,
+        )
+        run.routine_embedded = routine.config.model_dump(mode="json")
+        run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+        run.agent_runner_config = {"command": "false"}
+
+        run = await service.create_run(run)
+        run_id = run.id
+        result = await executor.start_run_with_agent(run_id, service)
+        await session.commit()
+
+        assert result.status == RunStatus.PAUSED
+
+    assert run_id not in executor._running_tasks
+
+    async with session_factory() as session:
+        run = await RunRepository(session).get(run_id)
+        assert run.status == RunStatus.PAUSED
+        assert run.pause_reason == "worktree_setup_failed"
+        assert run.worktree_path is None
+        assert run.last_error is not None
+        assert "Worktree setup failed before agent spawn" in run.last_error
+        assert "repo missing-project not found" in run.last_error
+
+
 async def test_executor_pauses_run_on_agent_execution_error(
     app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
 ) -> None:

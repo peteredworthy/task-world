@@ -230,22 +230,6 @@ _CLI_SUBPROCESS_CONFIG: list[AgentConfigField] = [
     ),
 ]
 
-_USER_MANAGED_CONFIG: list[AgentConfigField] = [
-    AgentConfigField(
-        name="callback_channel",
-        field_type="select",
-        default="mcp",
-        description="How the external agent calls back to the orchestrator",
-        options=["rest", "mcp"],
-    ),
-    AgentConfigField(
-        name="timeout_minutes",
-        field_type="number",
-        default=60,
-        description="Minutes to wait for agent to submit before timing out",
-    ),
-]
-
 _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="model",
@@ -313,7 +297,6 @@ AGENT_CONFIG_FIELDS: dict[AgentRunnerType, set[str]] = {
     AgentRunnerType.OPENHANDS_LOCAL: {f.name for f in _OPENHANDS_LOCAL_CONFIG},
     AgentRunnerType.OPENHANDS_DOCKER: {f.name for f in _OPENHANDS_DOCKER_CONFIG},
     AgentRunnerType.CLI_SUBPROCESS: {f.name for f in _CLI_SUBPROCESS_CONFIG},
-    AgentRunnerType.USER_MANAGED: {f.name for f in _USER_MANAGED_CONFIG},
     AgentRunnerType.CODEX_SERVER: {f.name for f in _CODEX_SERVER_CONFIG},
     AgentRunnerType.CLAUDE_SDK: {f.name for f in _CLAUDE_SDK_CONFIG},
 }
@@ -403,8 +386,6 @@ class ToolDetector:
     OpenHands local detection checks if the SDK is importable.
     OpenHands Docker detection checks DockerWorkspace importable + docker CLI + daemon.
     CLI tools are detected via shutil.which().
-    User Managed is always available.
-
     Optional *agents* may be passed to enable quota fetching. Each entry must
     have a ``name`` attribute matching an ``AgentOption.name`` value and a
     ``get_quota()`` method matching the Agent protocol. Agents without
@@ -537,7 +518,6 @@ class ToolDetector:
             options.extend(self._detect_cli_tools())
             options.append(self._detect_codex_server())
             options.append(self._detect_claude_sdk())
-            options.append(self._detect_user_managed())
             self._detection_cache = options
             self._detection_cached_at = now
 
@@ -826,15 +806,3 @@ class ToolDetector:
                 install_hint="Install with: uv add claude-agent-sdk",
                 config_schema=_CLAUDE_SDK_CONFIG,
             )
-
-    def _detect_user_managed(self) -> AgentRunnerOption:
-        """User Managed is always available for external agent connections."""
-        return AgentRunnerOption(
-            agent_runner_type=AgentRunnerType.USER_MANAGED,
-            name="User Managed",
-            title="User Managed Agent",
-            description="Passive agent that waits for external actors (humans or third-party tools) to complete work via REST API or MCP.",
-            available=True,
-            detail="Always available for external agent connections",
-            config_schema=_USER_MANAGED_CONFIG,
-        )

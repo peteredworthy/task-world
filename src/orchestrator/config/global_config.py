@@ -29,7 +29,6 @@ class AgentsConfig(BaseModel):
     default_type: str | None = None
     openhands_url: str | None = None
     allowed_types: list[str] | None = None
-    user_managed_timeout_minutes: int = 60
     codex_session_timeout_minutes: int = 120
 
 

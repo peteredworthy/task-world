@@ -103,35 +103,6 @@ from orchestrator.git.utils import commit_uncommitted_changes, get_head_commit
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 
 
-class SubmitEventRegistry:
-    """Shared registry of asyncio.Events for submit notifications.
-
-    This must be a singleton per application so that all WorkflowService
-    instances (one per request) share the same events.  A UserManagedAgent
-    registers an event here; when *any* WorkflowService instance calls
-    ``submit_for_verification``, it notifies through this registry.
-    """
-
-    def __init__(self) -> None:
-        self._events: dict[str, asyncio.Event] = {}
-
-    def register(self, task_id: str) -> asyncio.Event:
-        """Register and return an event for *task_id*."""
-        event = asyncio.Event()
-        self._events[task_id] = event
-        return event
-
-    def unregister(self, task_id: str) -> None:
-        """Remove a previously registered event."""
-        self._events.pop(task_id, None)
-
-    def notify(self, task_id: str) -> None:
-        """Set the event for *task_id*, if one is registered."""
-        event = self._events.get(task_id)
-        if event is not None:
-            event.set()
-
-
 @dataclass
 class RecoveryResult:
     """Result of a run recovery operation.
@@ -257,7 +228,6 @@ class WorkflowService:
         repo: RunRepository | None = None,
         event_store: EventStore | None = None,
         event_emitter: PersistentEventEmitter | None = None,
-        submit_event_registry: SubmitEventRegistry | None = None,
         clock: Clock | None = None,
         auto_verify_runner: AutoVerifyRunner | None = None,
         lock_manager: LockManager | None = None,
@@ -272,7 +242,6 @@ class WorkflowService:
         self._event_store = event_store or EventStore(session)
         self._event_emitter = event_emitter or PersistentEventEmitter(self._event_store)
         self._clock = clock or _ServiceClock()
-        self._submit_registry = submit_event_registry or SubmitEventRegistry()
         self._auto_verify_runner = auto_verify_runner
         self._lock_manager = lock_manager
         self._global_config = global_config
@@ -1987,7 +1956,6 @@ class WorkflowService:
                         crash_lines
                     )
                     await self._persist(state, run_id, buffer)
-                    self._notify_submit(task_id)
                     await self.trigger_recovery(run_id, task_id, crash_detail)
                     return TransitionResult(
                         success=True,
@@ -2022,7 +1990,6 @@ class WorkflowService:
                             )
 
                     await self._persist(state, run_id, buffer)
-                    self._notify_submit(task_id)
                     return TransitionResult(
                         success=True,
                         new_status=TaskStatus.BUILDING,
@@ -2059,7 +2026,6 @@ class WorkflowService:
             task.attempts[-1].end_commit = end_commit
 
         await self._persist(state, run_id, buffer)
-        self._notify_submit(task_id)
         return result
 
     async def _run_step_auto_verify(
@@ -2271,7 +2237,6 @@ class WorkflowService:
                         crash_lines
                     )
                     await self._persist(state, run_id, buffer)
-                    self._notify_submit(task_id)
                     await self.trigger_recovery(run_id, task_id, crash_detail)
                     return TransitionResult(
                         success=True,
@@ -2302,7 +2267,6 @@ class WorkflowService:
                             )
 
                     await self._persist(state, run_id, buffer)
-                    self._notify_submit(task_id)
                     return TransitionResult(
                         success=False,
                         new_status=TaskStatus.BUILDING,
@@ -2365,7 +2329,6 @@ class WorkflowService:
             task.attempts[-1].end_commit = end_commit
 
         await self._persist(state, run_id, buffer)
-        self._notify_submit(task_id)
         return result
 
     async def check_verification(self, run_id: str, task_id: str) -> TransitionResult:
@@ -3890,21 +3853,3 @@ class WorkflowService:
             return None
         routine_config = RoutineConfig.model_validate(run.routine_embedded)
         return find_task_config(routine_config, task.config_id)
-
-    # --- Submit notification bridge ---
-
-    def register_submit_event(self, task_id: str) -> asyncio.Event:
-        """Register an asyncio.Event that fires when submit_for_verification is called for this task.
-
-        Used by UserManagedAgent to wait for external submission via REST/MCP.
-        Delegates to the shared :class:`SubmitEventRegistry`.
-        """
-        return self._submit_registry.register(task_id)
-
-    def unregister_submit_event(self, task_id: str) -> None:
-        """Remove a previously registered submit event."""
-        self._submit_registry.unregister(task_id)
-
-    def _notify_submit(self, task_id: str) -> None:
-        """Signal any registered submit event for this task."""
-        self._submit_registry.notify(task_id)

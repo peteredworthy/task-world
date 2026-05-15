@@ -109,7 +109,7 @@ def list_runs(ctx: click.Context, repo: str | None, status: str | None) -> None:
     "--agent",
     "-a",
     "agent",
-    help="Agent runner type (openhands_local, cli_subprocess, user_managed, etc.)",
+    help="Agent runner type (openhands_local, cli_subprocess, codex_server, claude_sdk, etc.)",
 )
 @click.option(
     "--agent-runner-config",
@@ -570,7 +570,7 @@ def pause_run(ctx: click.Context, run_id: str, url: str) -> None:
     "--agent",
     "-a",
     "agent",
-    help="Agent runner type to switch to (openhands_local, cli_subprocess, user_managed, etc.)",
+    help="Agent runner type to switch to (openhands_local, cli_subprocess, codex_server, claude_sdk, etc.)",
 )
 @click.option(
     "--agent-runner-config",

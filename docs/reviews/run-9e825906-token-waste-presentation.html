@@ -1,0 +1,565 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Run 9e825906 Token and Call Waste Review</title>
+  <style>
+    :root {
+      --ink: #172026;
+      --muted: #66727c;
+      --line: #d9e0e5;
+      --paper: #f7f8f8;
+      --panel: #ffffff;
+      --red: #b74232;
+      --amber: #b26a00;
+      --green: #2f7d5c;
+      --blue: #2f6f9f;
+      --violet: #5d527c;
+      --shadow: 0 18px 45px rgba(23, 32, 38, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 16px/1.45 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .deck {
+      height: 100vh;
+      overflow-y: auto;
+      scroll-snap-type: y mandatory;
+    }
+
+    .slide {
+      min-height: 100vh;
+      scroll-snap-align: start;
+      display: flex;
+      align-items: center;
+      padding: 56px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .content {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+    }
+
+    h1, h2, h3, p {
+      margin-top: 0;
+    }
+
+    h1 {
+      font-size: clamp(44px, 6vw, 86px);
+      line-height: 0.95;
+      letter-spacing: 0;
+      margin-bottom: 26px;
+      max-width: 980px;
+    }
+
+    h2 {
+      font-size: clamp(30px, 4vw, 56px);
+      line-height: 1;
+      letter-spacing: 0;
+      margin-bottom: 22px;
+    }
+
+    h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .lead {
+      font-size: 24px;
+      color: var(--muted);
+      max-width: 920px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 30px;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 13px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .cols-2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .cols-3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 22px;
+      box-shadow: var(--shadow);
+    }
+
+    .metric {
+      font-size: 42px;
+      line-height: 1;
+      font-weight: 800;
+      margin-bottom: 8px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .note {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .timeline {
+      position: relative;
+      display: grid;
+      gap: 14px;
+    }
+
+    .event {
+      display: grid;
+      grid-template-columns: 132px 1fr;
+      gap: 18px;
+      align-items: start;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px 18px;
+    }
+
+    .time {
+      color: var(--blue);
+      font-weight: 800;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .event strong {
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+
+    th, td {
+      text-align: left;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+      font-size: 14px;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      background: #eef2f3;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 190px 1fr 110px;
+      gap: 12px;
+      align-items: center;
+      margin: 12px 0;
+    }
+
+    .bar-track {
+      height: 18px;
+      background: #e5ebee;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .bar {
+      height: 100%;
+      border-radius: 999px;
+      background: var(--blue);
+    }
+
+    .bar.red { background: var(--red); }
+    .bar.amber { background: var(--amber); }
+    .bar.green { background: var(--green); }
+    .bar.violet { background: var(--violet); }
+
+    .waste-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .waste {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 14px;
+      padding: 16px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .rank {
+      width: 42px;
+      height: 42px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: #eef2f3;
+      font-weight: 800;
+      color: var(--blue);
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+      background: #eef2f3;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    .nav {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 8px;
+      padding: 9px 12px;
+      box-shadow: 0 8px 20px rgba(23, 32, 38, 0.12);
+      cursor: pointer;
+    }
+
+    @media (max-width: 820px) {
+      .slide {
+        padding: 28px 18px;
+      }
+
+      .cols-2,
+      .cols-3 {
+        grid-template-columns: 1fr;
+      }
+
+      .event {
+        grid-template-columns: 1fr;
+      }
+
+      .bar-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" id="deck">
+    <section class="slide">
+      <div class="content">
+        <h1>Run 9e825906 spent a lot to learn one child had no executor.</h1>
+        <p class="lead">The parent run used about 2.42M token touches, 88 recorded actions, and $3.25 before pausing for human input. The child run itself used zero tokens and performed zero actions.</p>
+        <div class="meta">
+          <span class="pill">Run: 9e825906-ca91-49f9-acf7-e775b75c2571</span>
+          <span class="pill">Status: paused / awaiting_user_input</span>
+          <span class="pill">Parent worktree: worktrees/r171</span>
+          <span class="pill">Child: cb90503e-fd62-41e3-a800-6e40aec59e45</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>Headline Metrics</h2>
+        <div class="grid cols-3">
+          <div class="card">
+            <div class="metric">23.4 min</div>
+            <div class="label">wall clock</div>
+            <p class="note">Started 2026-05-14 22:25:52Z, paused 22:49:16Z.</p>
+          </div>
+          <div class="card">
+            <div class="metric">18.25 min</div>
+            <div class="label">agent duration</div>
+            <p class="note">Aggregate duration reported by the run API.</p>
+          </div>
+          <div class="card">
+            <div class="metric">88</div>
+            <div class="label">recorded actions</div>
+            <p class="note">The event stream contains 125 assistant-emitted tool uses; the run aggregate reports 88 actions.</p>
+          </div>
+          <div class="card">
+            <div class="metric">2.39M</div>
+            <div class="label">cache tokens</div>
+            <p class="note">2,389,773 cache tokens versus 26,393 output tokens.</p>
+          </div>
+          <div class="card">
+            <div class="metric">$3.25</div>
+            <div class="label">estimated cost</div>
+            <p class="note">Per-model cost from embedded rates.</p>
+          </div>
+          <div class="card">
+            <div class="metric">0</div>
+            <div class="label">child actions</div>
+            <p class="note">The child paused with <code>no_executor_running</code> before doing work.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>What Actually Happened</h2>
+        <div class="timeline">
+          <div class="event"><div class="time">22:25:52</div><div><strong>Parent became active.</strong> It immediately entered the super-parent routine using Claude CLI.</div></div>
+          <div class="event"><div class="time">22:26:01</div><div><strong>Brief infrastructure wobble.</strong> Parent paused with <code>executor_not_started</code>, then resumed at 22:26:02.</div></div>
+          <div class="event"><div class="time">22:26:05</div><div><strong>SP-01 started inventory.</strong> It read repository guidance and inferred scope because <code>docs/better-tests/test-strategy-improvements.md</code> was missing.</div></div>
+          <div class="event"><div class="time">22:33:20</div><div><strong>SP-01 completed.</strong> The run produced 14 inventory items, including broad orchestration validation targets and test-improvement targets.</div></div>
+          <div class="event"><div class="time">22:33:22</div><div><strong>SP-02 selected a slice.</strong> It chose MCP test consolidation as the first child slice.</div></div>
+          <div class="event"><div class="time">22:43:00</div><div><strong>SP-02 completed.</strong> Slice brief was accepted after a builder and verifier pass.</div></div>
+          <div class="event"><div class="time">22:43:02</div><div><strong>SP-03 launched child creation.</strong> The parent created child run <code>cb90503e...</code> for <code>mcp-test-consolidation</code>.</div></div>
+          <div class="event"><div class="time">22:45:50</div><div><strong>Child paused.</strong> The child had become active, but stopped with <code>no_executor_running</code>. No task started, no evidence was written, and no tokens were spent by the child.</div></div>
+          <div class="event"><div class="time">22:48:17</div><div><strong>Parent still completed launch verification.</strong> The parent recorded the child as linked and started, but unresolved.</div></div>
+          <div class="event"><div class="time">22:49:06</div><div><strong>SP-04 requested clarification.</strong> The parent asked how to handle the paused child, then the run paused for human input at 22:49:16.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>Token Cost By Model</h2>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>Cost concentration</h3>
+            <div class="bar-row"><span>Claude Opus 4.6</span><div class="bar-track"><div class="bar red" style="width:86.1%"></div></div><strong>$2.80</strong></div>
+            <div class="bar-row"><span>Claude Sonnet 4.6</span><div class="bar-track"><div class="bar amber" style="width:11.9%"></div></div><strong>$0.39</strong></div>
+            <div class="bar-row"><span>Claude Haiku 4.5</span><div class="bar-track"><div class="bar green" style="width:2.0%"></div></div><strong>$0.07</strong></div>
+            <p class="note">Opus produced 86.1% of the cost for routine planning, inventory, slice selection, and at least one verification pass.</p>
+          </div>
+          <div class="card">
+            <h3>Token shape</h3>
+            <div class="bar-row"><span>Cache read</span><div class="bar-track"><div class="bar violet" style="width:91.2%"></div></div><strong>2.20M</strong></div>
+            <div class="bar-row"><span>Cache creation</span><div class="bar-track"><div class="bar blue" style="width:7.7%"></div></div><strong>186k</strong></div>
+            <div class="bar-row"><span>Output</span><div class="bar-track"><div class="bar amber" style="width:1.1%"></div></div><strong>26.4k</strong></div>
+            <div class="bar-row"><span>Fresh input</span><div class="bar-track"><div class="bar green" style="width:0.1%"></div></div><strong>148</strong></div>
+            <p class="note">The run did not burn many fresh input tokens. It repeatedly re-read large cached contexts.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>Cost By Phase</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Phase</th>
+              <th>Role</th>
+              <th>Turns</th>
+              <th>Cache read</th>
+              <th>Cache creation</th>
+              <th>Output</th>
+              <th>Cost</th>
+              <th>Waste signal</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>SP-01 Intake Inventory</td><td>Builder</td><td>42</td><td>1,134,435</td><td>57,366</td><td>10,378</td><td>$1.19</td><td>Large Opus pass to infer inventory from missing/ambiguous source material.</td></tr>
+            <tr><td>SP-01 Intake Inventory</td><td>Verifier</td><td>12</td><td>98,822</td><td>19,974</td><td>2,075</td><td>$0.23</td><td>Second fresh context to grade generated bookkeeping.</td></tr>
+            <tr><td>SP-02 Select Next Slice</td><td>Builder</td><td>22</td><td>505,126</td><td>54,879</td><td>3,456</td><td>$0.75</td><td>Expensive selection of one slice from the inventory.</td></tr>
+            <tr><td>SP-02 Select Next Slice</td><td>Verifier</td><td>14</td><td>88,548</td><td>22,195</td><td>2,760</td><td>$0.25</td><td>Another model pass to approve a Markdown slice brief.</td></tr>
+            <tr><td>SP-03 Launch Child</td><td>Builder</td><td>15</td><td>382,956</td><td>42,116</td><td>7,622</td><td>$0.39</td><td>Reasonable core work, but still much larger than the actual API action.</td></tr>
+            <tr><td>SP-03 Launch Child</td><td>Verifier/wait handling</td><td>24</td><td>458,063</td><td>46,481</td><td>8,684</td><td>$0.44</td><td>Continued spending after the child had no executor.</td></tr>
+            <tr><td>SP-04 Evaluate Evidence</td><td>Builder</td><td>13</td><td>180,982</td><td>31,913</td><td>4,937</td><td>$0.09</td><td>Cheaper model, but still spent context to ask for a human decision.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>Call Breakdown</h2>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>Most common tool uses in agent output</h3>
+            <div class="bar-row"><span>Bash</span><div class="bar-track"><div class="bar red" style="width:100%"></div></div><strong>37</strong></div>
+            <div class="bar-row"><span>Read</span><div class="bar-track"><div class="bar red" style="width:62%"></div></div><strong>23</strong></div>
+            <div class="bar-row"><span>update_checklist</span><div class="bar-track"><div class="bar amber" style="width:41%"></div></div><strong>15</strong></div>
+            <div class="bar-row"><span>get_requirements</span><div class="bar-track"><div class="bar amber" style="width:27%"></div></div><strong>10</strong></div>
+            <div class="bar-row"><span>set_grade</span><div class="bar-track"><div class="bar amber" style="width:27%"></div></div><strong>10</strong></div>
+            <div class="bar-row"><span>Glob</span><div class="bar-track"><div class="bar blue" style="width:27%"></div></div><strong>10</strong></div>
+          </div>
+          <div class="card">
+            <h3>Call pattern diagnosis</h3>
+            <p>The run shows a high ratio of orchestration and inspection calls to useful work. Before any child code ran, the parent had already read files, listed and searched the repository, updated checklists, submitted, verified, and graded three parent tasks.</p>
+            <p>The child execution surface produced no evidence because the child runner was <code>user_managed</code> and no executor picked it up. The parent then spent more calls asking for clarification rather than stopping at the first terminal infrastructure finding.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>Categories Of Waste</h2>
+        <div class="waste-list">
+          <div class="waste"><div class="rank">1</div><div><strong>Oversized context reuse.</strong> 2.39M cache tokens for 26.4k output tokens. The main waste was repeated replay of large routine, repo, and artifact context across fresh builder and verifier sessions.</div></div>
+          <div class="waste"><div class="rank">2</div><div><strong>Premium model on bookkeeping.</strong> Opus accounted for 86.1% of cost while most work was inventory creation, slice writing, and verification of routine artifacts.</div></div>
+          <div class="waste"><div class="rank">3</div><div><strong>Ambiguity expansion.</strong> A missing source document forced the agent to infer scope, create 14 inventory targets, and continue despite clarification needs. That broadened the search and planning surface.</div></div>
+          <div class="waste"><div class="rank">4</div><div><strong>Verifier duplication.</strong> Each parent bookkeeping step launched a fresh verifier context, adding cost to grade documents and state changes that could have been checked mechanically.</div></div>
+          <div class="waste"><div class="rank">5</div><div><strong>Blocked child handling.</strong> The child run did no work, but the parent still spent calls confirming launch, waiting, reading no evidence, updating oversight, and writing a human clarification.</div></div>
+          <div class="waste"><div class="rank">6</div><div><strong>Tool-call churn.</strong> 37 Bash calls, 23 Read calls, repeated requirement fetches, 15 checklist updates, and 10 grade writes indicate too many small loops around the same state.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>Root Causes</h2>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>Prompt and routine shape</h3>
+            <p>The parent routine asks for durable Markdown plus machine oversight state, then uses fresh-context builder and verifier phases. That is rigorous, but it is expensive when the phase is mostly bookkeeping.</p>
+            <p>The task text also told the parent to validate a full orchestration loop and implement phases 5, 6, and gap C. With the named document missing, the agent treated planning and scope recovery as part of the job.</p>
+          </div>
+          <div class="card">
+            <h3>Execution and control flow</h3>
+            <p>The first child was created as <code>user_managed</code>, then paused with <code>no_executor_running</code>. The parent did not short-circuit immediately after that infrastructure state appeared.</p>
+            <p>Because the parent is required to surface defects and request clarification, it converted the missing executor into another LLM task instead of a low-cost deterministic pending action.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>Fixes To Reduce Future Waste</h2>
+        <div class="grid cols-2">
+          <div class="card">
+            <h3>Immediate guardrails</h3>
+            <p>Fail fast when a child starts with <code>user_managed</code> and no executor is attached. This should be a deterministic parent pending action, not a full evidence-evaluation phase.</p>
+            <p>Require source artifact existence during intake. If a named source document is missing, pause before inventory expansion unless the user explicitly approves a substitute.</p>
+          </div>
+          <div class="card">
+            <h3>Model and phase policy</h3>
+            <p>Reserve Opus for true architecture or ambiguity resolution. Use Haiku or deterministic checks for inventory schema validation, slice template validation, checklist updates, and grade recording.</p>
+            <p>Collapse verifier passes for parent bookkeeping into mechanical gates where possible: file exists, oversight state updated, child run linked, child status terminal or pending.</p>
+          </div>
+          <div class="card">
+            <h3>Context compression</h3>
+            <p>Pass compact state snapshots into parent phases instead of rehydrating large routine text, repo guidance, and generated Markdown. The ledger already exists; make agents use it as the default control-plane input.</p>
+          </div>
+          <div class="card">
+            <h3>Call batching</h3>
+            <p>Batch checklist updates and grade writes. Avoid repeated <code>get_requirements</code> calls after the task prompt already contains requirements. Prefer one structured submit payload per phase.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="slide">
+      <div class="content">
+        <h2>Bottom Line</h2>
+        <p class="lead">This run was expensive because the parent did disciplined orchestration work through multiple fresh LLM contexts before the first child could do any useful work. The child failure itself was cheap; the parent response to it was not.</p>
+        <div class="grid cols-3">
+          <div class="card"><div class="metric">High</div><div class="label">avoidable cost</div><p class="note">Most token use happened in planning, verification, and blocked-state handling.</p></div>
+          <div class="card"><div class="metric">Clear</div><div class="label">failure signal</div><p class="note">The child had <code>no_executor_running</code> and zero evidence.</p></div>
+          <div class="card"><div class="metric">Actionable</div><div class="label">next change</div><p class="note">Add deterministic short-circuits before spending more LLM time.</p></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="nav" aria-label="Slide navigation">
+    <button type="button" id="prev" aria-label="Previous slide">Prev</button>
+    <button type="button" id="next" aria-label="Next slide">Next</button>
+  </div>
+
+  <script>
+    const deck = document.getElementById("deck");
+    const slides = Array.from(document.querySelectorAll(".slide"));
+    let index = 0;
+
+    function go(delta) {
+      index = Math.max(0, Math.min(slides.length - 1, index + delta));
+      slides[index].scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    document.getElementById("prev").addEventListener("click", () => go(-1));
+    document.getElementById("next").addEventListener("click", () => go(1));
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ") {
+        event.preventDefault();
+        go(1);
+      }
+      if (event.key === "ArrowUp" || event.key === "ArrowLeft" || event.key === "PageUp") {
+        event.preventDefault();
+        go(-1);
+      }
+      if (event.key === "Home") {
+        event.preventDefault();
+        index = 0;
+        slides[index].scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+      if (event.key === "End") {
+        event.preventDefault();
+        index = slides.length - 1;
+        slides[index].scrollIntoView({ behavior: "smooth", block: "start" });
+      }
+    });
+
+    deck.addEventListener("scroll", () => {
+      const y = deck.scrollTop;
+      let nearest = 0;
+      let best = Infinity;
+      slides.forEach((slide, i) => {
+        const distance = Math.abs(slide.offsetTop - y);
+        if (distance < best) {
+          best = distance;
+          nearest = i;
+        }
+      });
+      index = nearest;
+    }, { passive: true });
+  </script>
+</body>
+</html>

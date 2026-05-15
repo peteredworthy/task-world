@@ -34,6 +34,14 @@ from tests.integration.signal_helpers import DrainFn
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
+class NoopRunnerExecutor:
+    async def setup_and_spawn(self, run_id: str) -> None:
+        pass
+
+    async def cancel_run(self, run_id: str) -> None:
+        pass
+
+
 @pytest.fixture
 async def client_and_drain(
     _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
@@ -439,64 +447,66 @@ async def test_recover_run_not_found_when_target_task_missing(
 
 
 async def test_resume_with_agent_change(
-    client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any], repo_name: str
 ) -> None:
     """Resume a paused run while changing the agent runner type and config."""
-    client, drain = client_and_drain
+    client, drain, _, _, app = _shared_app_fixture
+    original_executor = getattr(app.state, "runner_executor", None)
+    app.state.runner_executor = NoopRunnerExecutor()
+    run_id: str | None = None
 
-    # Set initial agent (this is the run we actually exercise; the earlier
-    # _create_run call from the original test was unused).
-    response = await client.post(
-        "/api/runs",
-        json={
-            "routine_id": "simple-routine",
-            "repo_name": repo_name,
-            "branch": "main",
-            "agent_runner_type": "cli_subprocess",
-            "agent_runner_config": {"callback_channel": "mcp"},
-        },
-    )
-    assert response.status_code == 201
-    run_id = response.json()["id"]
+    try:
+        response = await client.post(
+            "/api/runs",
+            json={
+                "routine_id": "simple-routine",
+                "repo_name": repo_name,
+                "branch": "main",
+                "agent_runner_type": "cli_subprocess",
+                "agent_runner_config": {"callback_channel": "mcp"},
+            },
+        )
+        assert response.status_code == 201
+        run_id = response.json()["id"]
 
-    # Start and pause the run
-    resp = await client.post(f"/api/runs/{run_id}/start")
-    assert resp.status_code == 202
-    await drain(run_id)
-    resp = await client.post(f"/api/runs/{run_id}/pause")
-    assert resp.status_code == 202
-    await drain(run_id)
+        # Drain lifecycle signals without spawning the managed executor so the
+        # run remains active and resumable for this API-level test.
+        resp = await client.post(f"/api/runs/{run_id}/start")
+        assert resp.status_code == 202
+        await drain(run_id)
+        resp = await client.post(f"/api/runs/{run_id}/pause")
+        assert resp.status_code == 202
+        await drain(run_id)
 
-    # Resume with a different agent
-    response = await client.post(
-        f"/api/runs/{run_id}/resume",
-        json={
-            "agent_runner_type": "user_managed",
-            "agent_runner_config": {"timeout_minutes": 30},
-        },
-    )
-    assert response.status_code == 202
-    await drain(run_id)
-    data = (await client.get(f"/api/runs/{run_id}")).json()
+        response = await client.post(
+            f"/api/runs/{run_id}/resume",
+            json={
+                "agent_runner_type": "cli_subprocess",
+                "agent_runner_config": {"stdin_mode": "closed"},
+            },
+        )
+        assert response.status_code == 202
+        await drain(run_id)
+        data = (await client.get(f"/api/runs/{run_id}")).json()
 
-    # Verify the run is active with new agent
-    assert data["status"] == "active"
-    assert data["agent_runner_type"] == "user_managed"
-    assert data["agent_runner_config"] == {"timeout_minutes": 30}
+        assert data["status"] == "active"
+        assert data["agent_runner_type"] == "cli_subprocess"
+        assert data["agent_runner_config"] == {"stdin_mode": "closed"}
 
-    # Verify the agent change event was emitted
-    events_response = await client.get(f"/api/runs/{run_id}/activity")
-    assert events_response.status_code == 200
-    events = events_response.json()["events"]
+        events_response = await client.get(f"/api/runs/{run_id}/activity")
+        assert events_response.status_code == 200
+        events = events_response.json()["events"]
 
-    # Find the agent_changed event
-    agent_changed_events = [e for e in events if e["event_type"] == "agent_changed"]
-    assert len(agent_changed_events) == 1
-    event = agent_changed_events[0]
-    assert event["payload"]["old_agent"] == "cli_subprocess"
-    assert event["payload"]["new_agent"] == "user_managed"
-    assert event["payload"]["old_agent_runner_config"] == {"callback_channel": "mcp"}
-    assert event["payload"]["new_agent_runner_config"] == {"timeout_minutes": 30}
+        agent_changed_events = [e for e in events if e["event_type"] == "agent_changed"]
+        assert len(agent_changed_events) == 1
+        event = agent_changed_events[0]
+        assert event["payload"]["old_agent"] == "cli_subprocess"
+        assert event["payload"]["new_agent"] == "cli_subprocess"
+        assert event["payload"]["old_agent_runner_config"] == {"callback_channel": "mcp"}
+        assert event["payload"]["new_agent_runner_config"] == {"stdin_mode": "closed"}
+    finally:
+        await cleanup_runs_for_repo(client, repo_name)
+        app.state.runner_executor = original_executor
 
 
 async def test_resume_without_agent_change(

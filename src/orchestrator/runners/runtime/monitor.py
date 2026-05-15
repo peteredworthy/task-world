@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
@@ -202,7 +202,6 @@ class AgentRunnerMonitor:
         - CLI_SUBPROCESS: Check if PID from agent_runner_config is alive
         - OPENHANDS_DOCKER: Check if container from agent_runner_config is running
         - OPENHANDS_LOCAL: Always returns False (in-process agent gone after restart)
-        - USER_MANAGED: Check if last_activity_at is within timeout
 
         Args:
             run: The run to check.
@@ -253,31 +252,6 @@ class AgentRunnerMonitor:
             # interfere during normal operation.  On startup recovery,
             # recover_active_runs_on_startup handles orphaned runs separately.
             return True
-
-        elif run.agent_runner_type == AgentRunnerType.USER_MANAGED:
-            # Check if last activity was within timeout
-            last_activity_str = run.agent_runner_config.get("last_activity_at")
-            if last_activity_str is None:
-                return False
-
-            # Parse the timestamp (stored as ISO string)
-            try:
-                if isinstance(last_activity_str, str):
-                    last_activity = datetime.fromisoformat(last_activity_str.replace("Z", "+00:00"))
-                elif isinstance(last_activity_str, datetime):
-                    last_activity = last_activity_str
-                else:
-                    return False
-            except (ValueError, AttributeError):
-                return False
-
-            # Get timeout from global config
-            timeout_minutes = self._global_config.agents.user_managed_timeout_minutes
-            timeout = timedelta(minutes=timeout_minutes)
-
-            # Check if activity is recent enough
-            now = datetime.now(timezone.utc)
-            return now - last_activity < timeout
 
         elif run.agent_runner_type == AgentRunnerType.CLAUDE_SDK:
             # In-process agent — same rationale as OPENHANDS_LOCAL

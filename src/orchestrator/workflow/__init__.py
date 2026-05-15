@@ -159,7 +159,6 @@ from orchestrator.workflow.agent import (
     truncate_to_tokens,
 )
 from orchestrator.workflow.service import (
-    SubmitEventRegistry,
     WorkflowService,
     find_step_config,
     find_task_config,
@@ -386,7 +385,6 @@ __all__ = [
     "truncate_to_tokens",
     # Service & Completion
     "DryRunResult",
-    "SubmitEventRegistry",
     "WorkflowService",
     "build_dry_run_context",
     "build_dry_run_prompt",

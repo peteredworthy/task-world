@@ -63,7 +63,6 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # (signal consumer, stale-run sweeper, startup recovery, MCP handler).
     # Request handlers continue to use get_workflow_service() via Depends().
     service_factory = make_service_factory(
-        submit_event_registry=app.state.submit_event_registry,
         connection_manager=app.state.connection_manager,
         lock_manager=getattr(app.state, "lock_manager", None),
         signal_transport_override=getattr(app.state, "signal_transport", None),
@@ -518,11 +517,6 @@ def create_app(
 
     app.state.tool_detector = ToolDetector()
 
-    # Shared submit event registry (singleton for cross-service notification)
-    from orchestrator.workflow.service import SubmitEventRegistry
-
-    app.state.submit_event_registry = SubmitEventRegistry()
-
     # Shared lock manager (singleton for task-level pessimistic locking)
     from orchestrator.workflow.locks import InMemoryLockManager
 
@@ -550,7 +544,6 @@ def create_app(
     from orchestrator.api.deps import make_service_factory as _make_sf
 
     app.state.service_factory = _make_sf(
-        submit_event_registry=app.state.submit_event_registry,
         connection_manager=app.state.connection_manager,
         lock_manager=app.state.lock_manager,
         global_config=global_cfg,

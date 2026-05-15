@@ -376,12 +376,12 @@ describe('RunCard', () => {
 
     it('renders external agent runner icon and name', () => {
       const run = makeRun({
-        agent_runner_type: 'user_managed',
-        agent_runner_type_display: 'User Managed',
+        agent_runner_type: 'cli_subprocess',
+        agent_runner_type_display: 'CLI subprocess',
         agent_icon: 'external',
       });
       renderCard(run, { expanded: true });
-      expect(screen.getByText('User Managed')).toBeInTheDocument();
+      expect(screen.getByText('CLI subprocess')).toBeInTheDocument();
     });
 
     it('shows fallback agent text when agent_icon is none', () => {

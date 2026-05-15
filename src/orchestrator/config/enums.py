@@ -41,7 +41,6 @@ class AgentRunnerType(str, Enum):
     OPENHANDS_LOCAL = "openhands_local"
     OPENHANDS_DOCKER = "openhands_docker"
     CLI_SUBPROCESS = "cli_subprocess"
-    USER_MANAGED = "user_managed"
     CODEX_SERVER = "codex_server"
     CLAUDE_SDK = "claude_sdk"
 

@@ -39,6 +39,25 @@ def test_compile_child_routine_from_spec_validates_generated_routine() -> None:
         task.task_context
     )
     assert "target_bug_reproduced values are reproduced" in task.task_context
+    assert "submit the child task" in task.task_context
+
+
+def test_compile_child_routine_strips_optional_command_labels_for_auto_verify() -> None:
+    routine = compile_child_routine_from_spec(
+        ChildSliceSpec(
+            template_id="investigation_only",
+            slice_id="INV-002",
+            goal="Run a named smoke command.",
+            verification_commands=["python_version::python -V"],
+            real_execution_surface="python version command",
+        )
+    )
+    validated = RoutineConfig.model_validate(routine)
+    task = validated.steps[0].tasks[0]
+
+    assert task.auto_verify.items[1].cmd == "python -V"
+    assert "--command 'python_version::python -V'" in task.task_context
+    assert "verification_1::python_version::python -V" not in task.task_context
 
 
 def test_compile_child_routine_rejects_unsafe_slice_path() -> None:

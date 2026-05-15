@@ -16,7 +16,6 @@ import type {
   EnvFile,
   EnvSnapshot,
   GlobalConfig,
-  GuidanceResponse,
   ModelProfileInfo,
   PendingAction,
   AcceptChildRunResponse,
@@ -387,14 +386,6 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/cancel', { method: 'POST' });
   },
 
-  agentStarted(runId: string): Promise<void> {
-    return fetchApi('/api/runs/' + runId + '/agent-started', { method: 'POST' });
-  },
-
-  agentCancelled(runId: string): Promise<void> {
-    return fetchApi('/api/runs/' + runId + '/agent-cancelled', { method: 'POST' });
-  },
-
   transitionBack(runId: string, data: { target_step_index: number; reason?: string }): Promise<RunResponse> {
     return fetchApi('/api/runs/' + runId + '/transition-back', {
       method: 'POST',
@@ -406,10 +397,6 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/steps/' + stepId + '/skip', {
       method: 'POST',
     });
-  },
-
-  getGuidance(runId: string): Promise<GuidanceResponse> {
-    return fetchApi('/api/runs/' + runId + '/guidance');
   },
 
   getBranchStatus(runId: string): Promise<BranchStatusResponse> {
@@ -724,20 +711,8 @@ export function approveStep(runId: string, stepId: string, data: { approved_by: 
   return api.approveStep(runId, stepId, data);
 }
 
-export function agentStarted(runId: string): Promise<void> {
-  return api.agentStarted(runId);
-}
-
-export function agentCancelled(runId: string): Promise<void> {
-  return api.agentCancelled(runId);
-}
-
 export function transitionBack(runId: string, data: { target_step_index: number; reason?: string }): Promise<RunResponse> {
   return api.transitionBack(runId, data);
-}
-
-export function getGuidance(runId: string): Promise<GuidanceResponse> {
-  return api.getGuidance(runId);
 }
 
 export function getBranchStatus(runId: string): Promise<BranchStatusResponse> {

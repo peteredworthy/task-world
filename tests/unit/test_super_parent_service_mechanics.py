@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.config import RunStatus, TaskStatus
+from orchestrator.config import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
 from orchestrator.state import Attempt, Run, StepState, TaskState
 from orchestrator.workflow import (
@@ -86,6 +86,7 @@ def _child_run(
         parent_run_id=parent_id,
         parent_slice_id="slice-01",
         source_branch="main",
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
         steps=[
             StepState(
                 id="child-step-1",
@@ -893,6 +894,32 @@ async def test_duplicate_create_child_run_is_typed_noop(
     assert parent_after_duplicate.oversight_state["delegation_decisions"][-1]["reason"] == (
         "duplicate_child_create"
     )
+
+
+async def test_create_child_run_rejects_child_without_executor(
+    service: WorkflowService,
+) -> None:
+    parent = _parent_run(parent_id="parent")
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.DRAFT,
+        worktree_path="/tmp/child-worktree",
+    )
+    child.agent_runner_type = None
+
+    await service.create_run(parent)
+
+    with pytest.raises(
+        InvalidTransitionError,
+        match="create_child_run \\(requires managed agent runner\\)",
+    ):
+        await service.create_child_run(
+            "parent",
+            child,
+            parent_slice_id="slice-01",
+            next_action_decision="continue",
+        )
 
 
 async def test_create_child_run_rejects_second_active_child(

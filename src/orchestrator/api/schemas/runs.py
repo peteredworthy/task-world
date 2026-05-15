@@ -395,23 +395,6 @@ class RunTraceResponse(ApiModel):
     attempts: list[RunTraceAttempt]
 
 
-class GuidanceResponse(ApiModel):
-    """Aggregate guidance for external agents."""
-
-    run_id: str
-    task_id: str | None = None
-    prompt: str | None = None
-    phase: str | None = None  # "building" or "verifying"
-    mcp_url: str
-    expected_actions: list[str]
-
-
-class AgentCancelledRequest(ApiModel):
-    """Request to cancel waiting for external agent."""
-
-    reason: str | None = None
-
-
 class BackwardTransitionRequest(ApiModel):
     """Request to transition backward to an earlier step."""
 
@@ -530,7 +513,6 @@ def get_agent_runner_display_name(
         AgentRunnerType.OPENHANDS_LOCAL: "OpenHands",
         AgentRunnerType.OPENHANDS_DOCKER: "OpenHands Docker",
         AgentRunnerType.CLI_SUBPROCESS: "Claude CLI",
-        AgentRunnerType.USER_MANAGED: "User Managed",
         AgentRunnerType.CODEX_SERVER: "Codex Server",
         AgentRunnerType.CLAUDE_SDK: "Claude SDK",
     }
@@ -558,7 +540,6 @@ def get_agent_runner_icon(agent_runner_type: AgentRunnerType | None) -> str:
         AgentRunnerType.OPENHANDS_LOCAL: "openhands",
         AgentRunnerType.OPENHANDS_DOCKER: "docker",
         AgentRunnerType.CLI_SUBPROCESS: "cli",
-        AgentRunnerType.USER_MANAGED: "external",
         AgentRunnerType.CODEX_SERVER: "codex",
         AgentRunnerType.CLAUDE_SDK: "claude",
     }

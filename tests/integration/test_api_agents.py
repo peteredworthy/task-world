@@ -84,7 +84,7 @@ async def agents_data(client: AsyncClient) -> list[dict[str, Any]]:
 
 async def test_list_agents(agents_data: list[dict[str, Any]]) -> None:
     data = agents_data
-    # OpenHands (local), OpenHands (Docker), claude, codex, User Managed (at minimum)
+    # OpenHands (local), OpenHands (Docker), and CLI runners are present at minimum.
     assert len(data) >= 4
 
     # Verify structure
@@ -101,11 +101,6 @@ async def test_list_agents(agents_data: list[dict[str, Any]]) -> None:
     # OpenHands local should also be present
     oh_local = [a for a in data if a["agent_runner_type"] == "openhands_local"]
     assert len(oh_local) == 1
-
-    # User Managed always available
-    um_list = [a for a in data if a["agent_runner_type"] == "user_managed"]
-    assert len(um_list) == 1
-    assert um_list[0]["available"] is True
 
 
 async def test_list_agents_has_both_openhands_types(agents_data: list[dict[str, Any]]) -> None:

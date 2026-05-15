@@ -123,11 +123,6 @@ def test_get_agent_runner_display_name_cli_subprocess_uses_command_when_present(
     )
 
 
-def test_get_agent_runner_display_name_user_managed() -> None:
-    """User-managed agent runner returns correct display name."""
-    assert get_agent_runner_display_name(AgentRunnerType.USER_MANAGED) == "User Managed"
-
-
 def test_get_agent_runner_display_name_none() -> None:
     """None agent runner type returns 'No Agent Runner'."""
     assert get_agent_runner_display_name(None) == "No Agent Runner"
@@ -146,11 +141,6 @@ def test_get_agent_runner_icon_openhands_docker() -> None:
 def test_get_agent_runner_icon_cli_subprocess() -> None:
     """CLI subprocess agent returns correct icon."""
     assert get_agent_runner_icon(AgentRunnerType.CLI_SUBPROCESS) == "cli"
-
-
-def test_get_agent_runner_icon_user_managed() -> None:
-    """User managed agent returns correct icon."""
-    assert get_agent_runner_icon(AgentRunnerType.USER_MANAGED) == "external"
 
 
 def test_get_agent_runner_icon_none() -> None:

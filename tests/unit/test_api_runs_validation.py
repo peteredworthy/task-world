@@ -27,6 +27,15 @@ def test_invalid_agent_runner_type_rejected() -> None:
     assert "Valid options" in str(exc_info.value)
 
 
+def test_removed_user_managed_agent_runner_type_rejected() -> None:
+    """The removed external runner type is no longer accepted."""
+    with pytest.raises(ValidationError) as exc_info:
+        CreateRunRequest(
+            routine_id="r", repo_name="proj", branch="main", agent_runner_type="user_managed"
+        )
+    assert "Invalid agent_runner_type" in str(exc_info.value)
+
+
 def test_uppercase_agent_runner_type_normalised() -> None:
     """agent_runner_type is accepted and normalised to lowercase."""
     req = CreateRunRequest(
@@ -46,9 +55,9 @@ def test_mixed_case_agent_runner_type_normalised() -> None:
 def test_valid_lowercase_agent_runner_type_accepted() -> None:
     """Standard lowercase agent runner type is accepted unchanged."""
     req = CreateRunRequest(
-        routine_id="r", repo_name="proj", branch="main", agent_runner_type="user_managed"
+        routine_id="r", repo_name="proj", branch="main", agent_runner_type="cli_subprocess"
     )
-    assert req.agent_runner_type == "user_managed"
+    assert req.agent_runner_type == "cli_subprocess"
 
 
 def test_null_agent_runner_type_accepted() -> None:

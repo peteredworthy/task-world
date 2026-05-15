@@ -390,8 +390,7 @@ async function setupRoutes(page: Page, overrides: RouteOverrides = {}) {
     route.fulfill({ json: overrides.readiness ?? MOCK_READINESS_READY }),
   );
 
-  // Guidance / env files / routines — not needed for the review tab
-  await page.route(`**/api/runs/${RUN_ID}/guidance**`, (route) => route.abort());
+  // Env files / routines — not needed for the review tab
   await page.route(`**/api/runs/${RUN_ID}/env-files**`, (route) =>
     route.fulfill({ json: [] }),
   );

@@ -101,21 +101,15 @@ def make_drain_fn(app: FastAPI, transport: InMemorySignalTransport) -> DrainFn:
     Handles all signal types including Phase 3 lifecycle signals (RUN_START,
     PAUSE, RESUME, CANCEL) as well as activity signals.
 
-    If the app has a ``submit_event_registry`` on its state, it is passed to
-    WorkflowService so that ``submit_for_verification`` fires registered events
-    (needed for UserManagedAgent integration tests).
-
     A ``LocalAutoVerifyRunner`` is always included so that auto-verify commands
     execute during drain (matching the production deps.py wiring).
     """
 
     async def _drain(run_id: str) -> None:
-        registry = getattr(app.state, "submit_event_registry", None)
         executor = getattr(app.state, "runner_executor", None)
         async with app.state.session_factory() as session:
             service = WorkflowService(
                 session,
-                submit_event_registry=registry,
                 auto_verify_runner=LocalAutoVerifyRunner(),
                 signal_transport=transport,
             )

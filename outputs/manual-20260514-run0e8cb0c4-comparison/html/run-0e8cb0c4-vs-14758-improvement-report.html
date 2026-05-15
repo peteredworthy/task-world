@@ -1,0 +1,647 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Super-Parent Improvement Report: 0e8cb0c4 vs 14758f82</title>
+  <style>
+    :root {
+      --ink: #17201f;
+      --muted: #61716d;
+      --paper: #f6f1e7;
+      --panel: #fffdf7;
+      --line: #d7ccbc;
+      --teal: #0f6b61;
+      --green: #2e7d55;
+      --amber: #c38628;
+      --red: #ad463f;
+      --navy: #253d52;
+      --soft-green: #e0f1e8;
+      --soft-red: #f6dfdc;
+      --soft-amber: #f6ead2;
+      --shadow: 0 16px 44px rgb(23 32 31 / 10%);
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { background: #eee6d9; color: var(--ink); scroll-behavior: smooth; }
+    body { margin: 0; line-height: 1.4; }
+    .wrap { width: min(1180px, calc(100vw - 32px)); margin: 0 auto; padding: 24px 0 56px; }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 18px;
+      padding: 12px 16px;
+      margin-bottom: 18px;
+      background: rgb(246 241 231 / 92%);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 10px 24px rgb(23 32 31 / 8%);
+      backdrop-filter: blur(8px);
+    }
+    .topbar strong { font-size: 14px; }
+    nav { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+    nav a {
+      display: inline-flex;
+      min-height: 30px;
+      align-items: center;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--ink);
+      font-size: 12px;
+      text-decoration: none;
+    }
+    nav a:hover { color: var(--teal); border-color: var(--teal); }
+
+    section {
+      min-height: 650px;
+      margin: 0 0 26px;
+      padding: 44px 52px 36px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      page-break-after: always;
+    }
+    section.alt { background: var(--panel); }
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--teal);
+      font-size: 12px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+    h1, h2, h3 { margin: 0; letter-spacing: 0; line-height: 1.08; }
+    h1 { max-width: 970px; font-size: clamp(38px, 5vw, 62px); font-weight: 870; }
+    h2 { max-width: 950px; font-size: clamp(30px, 4vw, 44px); font-weight: 850; }
+    h3 { margin-bottom: 12px; font-size: 22px; }
+    p { margin: 0 0 12px; font-size: 18px; }
+    .subhead { max-width: 980px; margin-top: 14px; color: var(--muted); font-size: 17px; }
+    .rule { height: 2px; margin: 20px 0 28px; background: var(--line); }
+    code { font-family: "SFMono-Regular", Consolas, monospace; font-size: .92em; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin: 26px 0 34px;
+    }
+    .metric {
+      min-height: 132px;
+      padding: 18px 18px 16px 22px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 7px solid var(--teal);
+      border-radius: 0 8px 8px 0;
+    }
+    .metric.bad { border-left-color: var(--red); }
+    .metric.mixed { border-left-color: var(--amber); }
+    .metric.good { border-left-color: var(--green); }
+    .metric .value {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--teal);
+      font-size: 30px;
+      font-weight: 870;
+    }
+    .metric.bad .value { color: var(--red); }
+    .metric.mixed .value { color: var(--amber); }
+    .metric.good .value { color: var(--green); }
+    .metric .label { display: block; font-size: 14px; font-weight: 830; }
+    .metric .note { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 42px;
+      margin-top: 28px;
+    }
+    .three-col {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+      margin-top: 24px;
+    }
+    .panel {
+      padding: 22px 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+    .panel.good { background: var(--soft-green); border-color: #b7d9c8; }
+    .panel.bad { background: var(--soft-red); border-color: #e1b3ae; }
+    .panel.mixed { background: var(--soft-amber); border-color: #e1c584; }
+    .panel strong.big { display: block; margin-bottom: 8px; font-size: 34px; line-height: 1; }
+    .panel ul { margin: 0; padding-left: 19px; }
+    .panel li { margin: 8px 0; font-size: 16px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    th, td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    .delta-good { color: var(--green); font-weight: 850; }
+    .delta-bad { color: var(--red); font-weight: 850; }
+    .delta-mixed { color: var(--amber); font-weight: 850; }
+
+    .bar-list { display: grid; gap: 13px; }
+    .bar-row {
+      display: grid;
+      grid-template-columns: 210px 1fr 110px;
+      gap: 14px;
+      align-items: center;
+      font-size: 14px;
+      font-weight: 750;
+    }
+    .bar-track {
+      height: 15px;
+      overflow: hidden;
+      background: #e7dccd;
+      border-radius: 999px;
+    }
+    .bar-fill { height: 100%; background: var(--teal); border-radius: 999px; }
+    .bar-fill.red { background: var(--red); }
+    .bar-fill.amber { background: var(--amber); }
+    .bar-fill.green { background: var(--green); }
+    .bar-row strong { text-align: right; }
+
+    .callout {
+      margin-top: 30px;
+      padding: 24px 28px;
+      background: #142321;
+      color: white;
+      border-radius: 8px;
+    }
+    .callout p { margin: 0; font-size: 23px; font-weight: 830; line-height: 1.22; }
+    .callout small { display: block; margin-top: 10px; color: #a8d8ce; font-size: 13px; }
+
+    .verdict {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+    .verdict.good { background: var(--soft-green); color: var(--green); }
+    .verdict.bad { background: var(--soft-red); color: var(--red); }
+    .verdict.mixed { background: var(--soft-amber); color: #865a13; }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 16px 18px;
+      margin-top: 28px;
+    }
+    .time { color: var(--muted); font-size: 13px; font-weight: 820; }
+    .event {
+      padding: 16px 18px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 6px solid var(--teal);
+      border-radius: 0 8px 8px 0;
+    }
+    .event.bad { border-left-color: var(--red); }
+    .event.mixed { border-left-color: var(--amber); }
+    .event strong { display: block; margin-bottom: 4px; }
+    .event p { margin: 0; color: var(--muted); font-size: 15px; }
+
+    .foot {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      margin-top: 28px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    @media (max-width: 900px) {
+      .metrics, .two-col, .three-col { grid-template-columns: 1fr; }
+      section { padding: 32px 24px; min-height: auto; }
+      .bar-row { grid-template-columns: 1fr; gap: 6px; }
+      .bar-row strong { text-align: left; }
+      .timeline { grid-template-columns: 1fr; }
+      .topbar { position: static; align-items: flex-start; flex-direction: column; }
+      nav { justify-content: flex-start; }
+    }
+
+    @media print {
+      body { background: white; }
+      .topbar { display: none; }
+      .wrap { width: 100%; padding: 0; }
+      section { box-shadow: none; border-radius: 0; margin: 0; min-height: 100vh; }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <div class="topbar">
+      <strong>Super-parent improvement report</strong>
+      <nav>
+        <a href="#summary">Summary</a>
+        <a href="#scorecard">Scorecard</a>
+        <a href="#tokens">Tokens</a>
+        <a href="#calls">Calls</a>
+        <a href="#evidence">Evidence</a>
+        <a href="#causes">Causes</a>
+        <a href="#sources">Sources</a>
+      </nav>
+    </div>
+
+    <section id="summary">
+      <p class="eyebrow">Executive readout</p>
+      <h1>Stage-normalized costs show where the changes helped</h1>
+      <p class="subhead">Compared with baseline run <code>14758f82-82d6-4e20-9d2f-c3c85c65d29f</code>, run <code>0e8cb0c4-cb4b-490c-9905-f135d7314207</code> reached a later parent stage. Total-run comparison is therefore misleading; the useful view is cost per stage reached.</p>
+      <div class="rule"></div>
+
+      <div class="metrics">
+        <div class="metric good">
+          <span class="value">-47%</span>
+          <span class="label">Intake tokens</span>
+          <span class="note">2.27M -> 1.20M for SP-01 build plus verify.</span>
+        </div>
+        <div class="metric good">
+          <span class="value">-82%</span>
+          <span class="label">Evidence/recovery cost</span>
+          <span class="note">$2.00 -> $0.35 for child evidence/recovery plus no-op merge handling.</span>
+        </div>
+        <div class="metric mixed">
+          <span class="value">-15%</span>
+          <span class="label">First launch cost</span>
+          <span class="note">$1.28 -> $1.09 despite more first-launch tokens.</span>
+        </div>
+        <div class="metric bad">
+          <span class="value">3.22M</span>
+          <span class="label">Replacement launch tokens</span>
+          <span class="note">Largest new-stage cost; no clean baseline equivalent.</span>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <h3>What improved by stage</h3>
+          <p>SP-01 intake became much cheaper. The child evidence/recovery stage became dramatically cheaper because later oversight work used lower-cost profiles and the parent made a direct reject decision for the broken child.</p>
+        </div>
+        <div>
+          <h3>What did not improve by stage</h3>
+          <p>SP-02 slice selection and replacement-child launch were still expensive. The replacement launch consumed 3.22M parent tokens before the run paused on child evidence that still required human review.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <p>Bottom line: there is measurable stage-level improvement in intake and evidence recovery. There is not yet a full-loop efficiency win because replacement-child launch and unresolved child lifecycle state consumed the savings.</p>
+        <small>As of 2026-05-14 21:11:12 UTC, the new run is paused awaiting a human decision.</small>
+      </div>
+      <div class="foot"><span>Baseline report: <code>run-14758-token-call-waste-audit.html</code></span><span>01</span></div>
+    </section>
+
+    <section class="alt" id="scorecard">
+      <p class="eyebrow">Stage scorecard</p>
+      <h2>Compare the stages both runs reached before reading totals</h2>
+      <p class="subhead">Each row groups parent build and verifier sessions for the same routine stage. Extra new-run rows are incremental cost for stages the baseline did not successfully reach.</p>
+      <div class="rule"></div>
+
+      <table>
+        <thead>
+          <tr><th>Stage reached</th><th>Baseline tokens / cost</th><th>New tokens / cost</th><th>Delta</th><th>Readout</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>SP-01 Intake inventory</td>
+            <td>2.27M / $2.33</td>
+            <td>1.20M / $1.53</td>
+            <td class="delta-good">-47% tokens, -34% cost</td>
+            <td>Clear stage-level improvement.</td>
+          </tr>
+          <tr>
+            <td>SP-02 First slice selection</td>
+            <td>0.90M / $1.28</td>
+            <td>1.82M / $1.73</td>
+            <td class="delta-bad">+103% tokens, +35% cost</td>
+            <td>New slice was more specific but not cheaper.</td>
+          </tr>
+          <tr>
+            <td>SP-03 First child launch</td>
+            <td>0.87M / $1.28</td>
+            <td>1.75M / $1.09</td>
+            <td class="delta-mixed">+100% tokens, -15% cost</td>
+            <td>Model routing reduced dollar cost, not context volume.</td>
+          </tr>
+          <tr>
+            <td>SP-04 Evidence/recovery plus no-op merge handling</td>
+            <td>1.13M / $2.00</td>
+            <td>0.93M / $0.35</td>
+            <td class="delta-good">-17% tokens, -82% cost</td>
+            <td>Best measured improvement; later oversight was cheaper and more decisive.</td>
+          </tr>
+          <tr>
+            <td>SP-02 Loopback slice selection</td>
+            <td>1.09M / $1.42</td>
+            <td>1.32M / $1.42</td>
+            <td class="delta-mixed">+21% tokens, flat cost</td>
+            <td>Cost held steady only because cheaper routing offset extra context.</td>
+          </tr>
+          <tr>
+            <td>SP-03 Replacement child launch</td>
+            <td>1.14M / $1.23, then pause</td>
+            <td>3.22M / $1.82, child created</td>
+            <td class="delta-bad">+182% tokens, +48% cost</td>
+            <td>New run progressed, but this stage became the dominant parent spend.</td>
+          </tr>
+          <tr>
+            <td>SP-04 Targeted child evidence review</td>
+            <td>Not reached after second launch</td>
+            <td>0.31M / $0.08</td>
+            <td class="delta-good">New stage reached cheaply</td>
+            <td>The final parent review was inexpensive but still ended in user input.</td>
+          </tr>
+          <tr>
+            <td>Final validation/report</td>
+            <td>Not reached</td>
+            <td>Not reached</td>
+            <td class="delta-mixed">No evidence</td>
+            <td>No conclusion about full-loop completion efficiency.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="foot"><span>Run-level values from live API, except baseline audit notes where stated.</span><span>02</span></div>
+    </section>
+
+    <section id="tokens">
+      <p class="eyebrow">Token and cost by stage</p>
+      <h2>Stage-level view separates real savings from extra work</h2>
+      <p class="subhead">Totals say the new run was larger. Stage accounting shows a sharper picture: intake and evidence recovery improved, first-slice selection and replacement launch regressed, and the new run reached one additional evidence-review stage cheaply.</p>
+      <div class="rule"></div>
+
+      <div class="two-col">
+        <div>
+          <h3>Parent stage tokens</h3>
+          <div class="bar-list">
+            <div class="bar-row"><span>Intake baseline</span><div class="bar-track"><div class="bar-fill red" style="width:70%"></div></div><strong>2.27M</strong></div>
+            <div class="bar-row"><span>Intake new</span><div class="bar-track"><div class="bar-fill green" style="width:37%"></div></div><strong>1.20M</strong></div>
+            <div class="bar-row"><span>Evidence baseline</span><div class="bar-track"><div class="bar-fill red" style="width:35%"></div></div><strong>1.13M</strong></div>
+            <div class="bar-row"><span>Evidence new</span><div class="bar-track"><div class="bar-fill green" style="width:29%"></div></div><strong>0.93M</strong></div>
+            <div class="bar-row"><span>Replacement launch new</span><div class="bar-track"><div class="bar-fill red" style="width:100%"></div></div><strong>3.22M</strong></div>
+          </div>
+        </div>
+        <div>
+          <h3>Parent stage cost</h3>
+          <div class="bar-list">
+            <div class="bar-row"><span>Intake baseline</span><div class="bar-track"><div class="bar-fill red" style="width:100%"></div></div><strong>$2.33</strong></div>
+            <div class="bar-row"><span>Intake new</span><div class="bar-track"><div class="bar-fill green" style="width:66%"></div></div><strong>$1.53</strong></div>
+            <div class="bar-row"><span>Evidence baseline</span><div class="bar-track"><div class="bar-fill red" style="width:86%"></div></div><strong>$2.00</strong></div>
+            <div class="bar-row"><span>Evidence new</span><div class="bar-track"><div class="bar-fill green" style="width:15%"></div></div><strong>$0.35</strong></div>
+            <div class="bar-row"><span>Replacement launch new</span><div class="bar-track"><div class="bar-fill amber" style="width:78%"></div></div><strong>$1.82</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="three-col">
+        <div class="panel">
+          <span class="verdict good">Improved</span>
+          <strong class="big">SP-01</strong>
+          <p>Intake cost dropped from $2.33 to $1.53, with 1.07M fewer parent tokens.</p>
+        </div>
+        <div class="panel mixed">
+          <span class="verdict mixed">Mixed</span>
+          <strong class="big">SP-03</strong>
+          <p>First child launch cost fell, but tokens doubled. Replacement launch then dominated the run.</p>
+        </div>
+        <div class="panel bad">
+          <span class="verdict bad">Blocked</span>
+          <strong class="big">SP-05</strong>
+          <p>No final validation/report stage was reached in either run, so full-loop efficiency is still unmeasured.</p>
+        </div>
+      </div>
+
+      <table style="margin-top:28px">
+        <thead><tr><th>Stage bucket</th><th>Baseline sessions included</th><th>New sessions included</th><th>Stage interpretation</th></tr></thead>
+        <tbody>
+          <tr><td>SP-01 Intake</td><td>Inventory build and verifier</td><td>Inventory build and verifier</td><td>Direct improvement: fewer tokens and lower cost.</td></tr>
+          <tr><td>SP-02 First slice</td><td>First slice brief and verifier</td><td>First slice brief and verifier</td><td>Regression: new first slice was more costly.</td></tr>
+          <tr><td>SP-03 First launch</td><td>Initial child creation and verifier</td><td>Initial child creation and verifier</td><td>Mixed: cheaper dollars, larger context.</td></tr>
+          <tr><td>SP-04 Recovery</td><td>Child evidence pass, verifier, no-op merge, verifier</td><td>Reject broken child, verifier, no-op merge, verifier</td><td>Strong improvement in cost and decision quality.</td></tr>
+          <tr><td>SP-02/SP-03 Loopback</td><td>Second slice selection and failed child launch</td><td>Replacement slice selection and successful child launch</td><td>Not apples-to-apples; new run did more useful work but paid heavily for it.</td></tr>
+          <tr><td>SP-04 Targeted review</td><td>Not reached after second launch</td><td>Targeted child evidence review and clarification</td><td>New capability reached cheaply, but still paused.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <p>Use stage cost as the success metric from here: cost per completed parent loop, not total run cost while the run is still blocked before final validation.</p>
+      </div>
+      <div class="foot"><span>Stage tokens include input, cache creation, cache read, and output from result-level session usage.</span><span>03</span></div>
+    </section>
+
+    <section class="alt" id="calls">
+      <p class="eyebrow">Call anatomy</p>
+      <h2>Tool-call volume increased because the run progressed and retried</h2>
+      <p class="subhead">The new run completed more parent workflow, but the extra useful work came with more file probing and more orchestration bookkeeping.</p>
+      <div class="rule"></div>
+
+      <div class="two-col">
+        <div>
+          <h3>Parent tool calls</h3>
+          <div class="bar-list">
+            <div class="bar-row"><span>Baseline</span><div class="bar-track"><div class="bar-fill" style="width:66%"></div></div><strong>222</strong></div>
+            <div class="bar-row"><span>New</span><div class="bar-track"><div class="bar-fill red" style="width:100%"></div></div><strong>336</strong></div>
+          </div>
+        </div>
+        <div>
+          <h3>All linked run calls</h3>
+          <div class="bar-list">
+            <div class="bar-row"><span>Baseline parent + child</span><div class="bar-track"><div class="bar-fill" style="width:70%"></div></div><strong>272</strong></div>
+            <div class="bar-row"><span>New parent + children</span><div class="bar-track"><div class="bar-fill red" style="width:100%"></div></div><strong>386</strong></div>
+          </div>
+        </div>
+      </div>
+
+      <table style="margin-top:34px">
+        <thead><tr><th>Tool family</th><th>Baseline parent</th><th>New parent</th><th>Delta</th><th>Readout</th></tr></thead>
+        <tbody>
+          <tr><td>Bash</td><td>78</td><td>81</td><td class="delta-mixed">+3</td><td>Roughly stable.</td></tr>
+          <tr><td>Read</td><td>20</td><td>65</td><td class="delta-bad">+45</td><td>More file/context inspection in the new run.</td></tr>
+          <tr><td>Grep</td><td>16</td><td>28</td><td class="delta-bad">+12</td><td>More search around slice and evidence handling.</td></tr>
+          <tr><td>Checklist updates</td><td>21</td><td>32</td><td class="delta-bad">+11</td><td>More completed workflow phases and one revision.</td></tr>
+          <tr><td>Grades</td><td>21</td><td>29</td><td class="delta-bad">+8</td><td>More verification cycles.</td></tr>
+          <tr><td>Get requirements</td><td>13</td><td>23</td><td class="delta-bad">+10</td><td>Repeated phase setup remained expensive.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <p>No evidence of call-count improvement. The new routine controls changed what the calls accomplished, not how many calls the workflow needed.</p>
+      </div>
+      <div class="foot"><span>Counts use unique tool-use IDs parsed from API activity events.</span><span>04</span></div>
+    </section>
+
+    <section id="evidence">
+      <p class="eyebrow">Workflow evidence</p>
+      <h2>The new run produced better orchestration evidence</h2>
+      <p class="subhead">This is the main positive result. The system did more than hit the same failure: it exercised rejection, relaunch, child evidence interpretation, and a higher-quality human clarification.</p>
+      <div class="rule"></div>
+
+      <div class="timeline">
+        <div class="time">2026-05-14 20:40 UTC</div>
+        <div class="event bad">
+          <strong>First child exposed a launch defect</strong>
+          <p>Child <code>c7a8e14f</code> paused immediately because the runner had no <code>worktree_path</code>. This produced no child tokens and no evidence.</p>
+        </div>
+        <div class="time">2026-05-14 20:44 UTC</div>
+        <div class="event">
+          <strong>Parent rejected the broken child</strong>
+          <p>The new parent state recorded a child-resolution decision instead of leaving the broken child as an ambiguous blocker.</p>
+        </div>
+        <div class="time">2026-05-14 20:58 UTC</div>
+        <div class="event">
+          <strong>Replacement child launched</strong>
+          <p>Child <code>bf2af598</code> targeted <code>INV-001</code> and <code>INV-021</code>, a real auto-verify workflow slice rather than a generic smoke test.</p>
+        </div>
+        <div class="time">2026-05-14 21:04 UTC</div>
+        <div class="event mixed">
+          <strong>Child paused after max turns but left useful evidence</strong>
+          <p>Evidence outcome was <code>behavior_already_correct</code>; target bug reproduction was <code>not_reproduced</code>; regression tests were added for both submit paths.</p>
+        </div>
+        <div class="time">2026-05-14 21:10 UTC</div>
+        <div class="event">
+          <strong>Parent asked a better human question</strong>
+          <p>The clarification used concrete select options: accept the evidence, require more reproduction, or reject and continue investigation.</p>
+        </div>
+      </div>
+
+      <div class="three-col">
+        <div class="panel good">
+          <span class="verdict good">Improved</span>
+          <strong class="big">Reject</strong>
+          <p>Autonomous handling of a child with fatal configuration error.</p>
+        </div>
+        <div class="panel good">
+          <span class="verdict good">Improved</span>
+          <strong class="big">Targeted</strong>
+          <p>Evidence addressed the auto-verify behavior under review.</p>
+        </div>
+        <div class="panel mixed">
+          <span class="verdict mixed">Still blocked</span>
+          <strong class="big">0</strong>
+          <p>Accepted or merged children in the new run.</p>
+        </div>
+      </div>
+      <div class="foot"><span>Evidence from run oversight_state and linked child run summaries.</span><span>05</span></div>
+    </section>
+
+    <section class="alt" id="causes">
+      <p class="eyebrow">Why the gains did not show up in spend</p>
+      <h2>The changed areas were masked by unresolved lifecycle defects</h2>
+      <p class="subhead">The comparison is not clean because the new run did not reach the same final kind of pause for the same reason. It encountered new child lifecycle failures before acceptance and merge could be tested.</p>
+      <div class="rule"></div>
+
+      <table>
+        <thead><tr><th>Control from baseline report</th><th>New-run result</th><th>Improvement?</th><th>Evidence</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Compact parent state</td>
+            <td>Implemented as a structured ledger in the routine and oversight state.</td>
+            <td class="delta-mixed">Partial</td>
+            <td>Qualitatively clearer state, but parent API tokens rose from 5.88M to 8.95M.</td>
+          </tr>
+          <tr>
+            <td>Sequential child gate</td>
+            <td>Not enough to make comparison clean.</td>
+            <td class="delta-bad">No</td>
+            <td>User notes the parallel-child issue is not fixed; the new run still ended with unresolved child state.</td>
+          </tr>
+          <tr>
+            <td>Model downshift</td>
+            <td>Profiles routed work to Opus, Sonnet, and Haiku.</td>
+            <td class="delta-good">Yes, mechanically</td>
+            <td>Sonnet and Haiku carried more than half of parent model tokens, but overall cost increased.</td>
+          </tr>
+          <tr>
+            <td>Tool schema preflight</td>
+            <td>Clarification request succeeded with select options.</td>
+            <td class="delta-good">Likely</td>
+            <td>The new pause was not caused by the previous boolean <code>required</code> schema retry.</td>
+          </tr>
+          <tr>
+            <td>Evidence readiness vs terminal readiness</td>
+            <td>Still unresolved.</td>
+            <td class="delta-bad">No</td>
+            <td>Replacement child produced useful evidence but remained paused after max turns, blocking terminal progress.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <p>Measurement conclusion: there is demonstrated efficiency improvement in specific stages, especially intake and evidence recovery. There is not yet demonstrated full-loop efficiency improvement because child worktree and terminal-state failures prevented final validation.</p>
+      </div>
+      <div class="foot"><span>Interpretation scoped to the two provided run IDs.</span><span>06</span></div>
+    </section>
+
+    <section id="sources">
+      <p class="eyebrow">Sources and caveats</p>
+      <h2>Method</h2>
+      <p class="subhead">This report used the existing baseline HTML, live orchestrator REST API responses, and linked child run summaries. It did not mutate orchestrator state.</p>
+      <div class="rule"></div>
+
+      <div class="two-col">
+        <div class="panel">
+          <h3>Primary sources</h3>
+          <ul>
+            <li><code>outputs/manual-20260514-run14758-token-audit/html/run-14758-token-call-waste-audit.html</code></li>
+            <li><code>GET /api/runs/14758f82-82d6-4e20-9d2f-c3c85c65d29f</code></li>
+            <li><code>GET /api/runs/0e8cb0c4-cb4b-490c-9905-f135d7314207</code></li>
+            <li><code>GET /api/runs/2ea5fbe8-7b54-449d-9e24-982816c90203</code></li>
+            <li><code>GET /api/runs/c7a8e14f-8ec2-4479-9f2e-76043805b80b</code></li>
+            <li><code>GET /api/runs/bf2af598-2867-4a8a-b3a6-d48be7ddccc1</code></li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Caveats</h3>
+          <ul>
+            <li>The user called the new run completed, but the API reports <code>paused</code> with <code>awaiting_user_input</code>.</li>
+            <li>The baseline HTML headline cost and live API cost use different accounting boundaries; stage comparisons use result-level session usage where possible.</li>
+            <li>The new run did more parent work than the baseline, so total-run tokens are treated as context, not the lead metric.</li>
+            <li>No final validation, acceptance, merge, or final report behavior was reached in the new run.</li>
+          </ul>
+        </div>
+      </div>
+
+      <table style="margin-top:28px">
+        <thead><tr><th>Metric</th><th>Baseline</th><th>New</th></tr></thead>
+        <tbody>
+          <tr><td>Started</td><td>2026-05-14 01:42:59 UTC</td><td>2026-05-14 20:23:52 UTC</td></tr>
+          <tr><td>Last updated</td><td>2026-05-14 02:16:40 UTC</td><td>2026-05-14 21:11:12 UTC</td></tr>
+          <tr><td>Parent worktree</td><td><code>worktrees/r166</code></td><td><code>worktrees/r168</code></td></tr>
+          <tr><td>Linked child worktrees</td><td><code>worktrees/r167</code></td><td>none for <code>c7a8e14f</code>; <code>worktrees/r170</code> for <code>bf2af598</code></td></tr>
+          <tr><td>Run state</td><td><code>paused / awaiting_user_input</code></td><td><code>paused / awaiting_user_input</code></td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <p>Recommended next measurement: rerun after the child lifecycle issue is fixed, then compare cost per completed parent loop from child launch through evidence review, acceptance, merge, and next-slice selection.</p>
+      </div>
+      <div class="foot"><span>Report generated 2026-05-14 from live API and local artifacts.</span><span>07</span></div>
+    </section>
+  </main>
+</body>
+</html>

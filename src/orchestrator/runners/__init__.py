@@ -132,17 +132,12 @@ from orchestrator.runners.runtime import (
 )
 
 if TYPE_CHECKING:
-    from orchestrator.runners.agents.user_managed.agent import UserManagedAgent
     from orchestrator.runners.agents.openhands.agent import OpenHandsAgent
     from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent
     from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
 
 
 def __getattr__(name: str):  # type: ignore[misc]
-    if name == "UserManagedAgent":
-        from orchestrator.runners.agents.user_managed.agent import UserManagedAgent
-
-        return UserManagedAgent
     if name == "OpenHandsAgent":
         from orchestrator.runners.agents.openhands.agent import OpenHandsAgent  # noqa: PLC0415
 
@@ -218,7 +213,6 @@ __all__ = [
     "OpenHandsAgent",
     "OpenHandsEventParser",
     "RealStdioTransport",
-    "UserManagedAgent",
     "build_claude_sdk_prompt",
     "build_mcp_servers",
     "build_orchestrator_mcp_server",

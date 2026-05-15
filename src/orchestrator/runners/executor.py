@@ -360,6 +360,24 @@ class AgentRunnerExecutor:
             # Routine file copy is optional — log but don't fail the run
             logger.warning(f"Run {run_id}: routine files copy failed: {e}")
 
+    async def _pause_for_worktree_setup_failure(
+        self,
+        service: WorkflowService,
+        run_id: str,
+        detail: str,
+    ) -> None:
+        """Pause a run whose worktree could not be prepared for agent execution."""
+        message = f"Worktree setup failed before agent spawn: {detail}"
+        logger.warning("Run %s: %s", run_id, message)
+        try:
+            await service.apply_pause_run(
+                run_id,
+                reason="worktree_setup_failed",
+                error_detail=message,
+            )
+        except Exception:
+            logger.exception("Run %s: failed to pause after worktree setup failure", run_id)
+
     async def start_run_with_agent(self, run_id: str, service: WorkflowService) -> Run:
         """Start a run and spawn the appropriate agent.
 
@@ -380,6 +398,7 @@ class AgentRunnerExecutor:
         run = await service.apply_start_run(run_id)
 
         # Create worktree if enabled and we have config for repo/worktree paths
+        worktree_setup_error: str | None = None
         if run.worktree_enabled and run.source_branch and self._global_config is not None:
             try:
                 from orchestrator.git.worktree import WorktreeManager
@@ -420,21 +439,27 @@ class AgentRunnerExecutor:
                     # Copy routine-adjacent files (scripts, scaffolding, etc.)
                     self._copy_routine_files(run, repo_path, wt_info.path)
                 else:
-                    logger.info(
-                        f"Run {run_id}: repo {run.repo_name} not found at {repo_path}, "
-                        f"skipping worktree creation"
-                    )
+                    worktree_setup_error = f"repo {run.repo_name} not found at {repo_path}"
             except Exception as e:
-                logger.warning(f"Run {run_id}: worktree setup failed: {e}")
+                worktree_setup_error = str(e)
+        elif run.worktree_enabled and run.source_branch and self._global_config is None:
+            worktree_setup_error = "global_config is not available"
 
-        # Skip spawning if disabled (e.g., in tests)
-        if not self._spawn_agents:
-            logger.info(f"Run {run_id}: agent spawning disabled, skipping")
-            return run
-
-        # For user-managed agents, don't spawn anything - external agent will poll
-        if run.agent_runner_type == AgentRunnerType.USER_MANAGED:
-            logger.info(f"Run {run_id}: user-managed agent, waiting for external connection")
+        if run.worktree_enabled and run.source_branch and not run.worktree_path:
+            if not self._spawn_agents:
+                logger.info(
+                    "Run %s: worktree not prepared while agent spawning is disabled; "
+                    "leaving run active (%s)",
+                    run_id,
+                    worktree_setup_error or "worktree_path was not set",
+                )
+                return run
+            await self._pause_for_worktree_setup_failure(
+                service,
+                run_id,
+                worktree_setup_error or "worktree_path was not set",
+            )
+            run = await service.get_run(run_id)
             return run
 
         # For managed agents, spawn in background
@@ -476,6 +501,7 @@ class AgentRunnerExecutor:
 
             # Create worktree only if enabled, source_branch is known, no existing path,
             # and global_config provides the directory layout.
+            worktree_setup_error: str | None = None
             if (
                 run.worktree_enabled
                 and run.source_branch
@@ -527,22 +553,34 @@ class AgentRunnerExecutor:
                             run.routine_source_dir = self._resolve_routine_source_dir(run)
                         self._copy_routine_files(run, repo_path, wt_info.path)
                     else:
-                        logger.info(
-                            f"Run {run_id}: repo {run.repo_name} not found at "
-                            f"{repo_path}, skipping worktree creation"
-                        )
+                        worktree_setup_error = f"repo {run.repo_name} not found at {repo_path}"
                 except Exception as e:
-                    logger.warning(f"Run {run_id}: worktree setup failed: {e}")
+                    worktree_setup_error = str(e)
+            elif (
+                run.worktree_enabled
+                and run.source_branch
+                and run.worktree_path is None
+                and self._global_config is None
+            ):
+                worktree_setup_error = "global_config is not available"
 
-        # Spawn agent loop (no-op when spawn_agents=False or USER_MANAGED)
-        if not self._spawn_agents:
-            logger.info(f"Run {run_id}: agent spawning disabled, skipping")
-            return
+            if run.worktree_enabled and run.source_branch and run.worktree_path is None:
+                if not self._spawn_agents:
+                    logger.info(
+                        "Run %s: worktree not prepared while agent spawning is disabled; "
+                        "leaving run active (%s)",
+                        run_id,
+                        worktree_setup_error or "worktree_path was not set",
+                    )
+                    return
+                await self._pause_for_worktree_setup_failure(
+                    service,
+                    run_id,
+                    worktree_setup_error or "worktree_path was not set",
+                )
+                return
 
-        if run.agent_runner_type == AgentRunnerType.USER_MANAGED:
-            logger.info(f"Run {run_id}: user-managed agent, waiting for external connection")
-            return
-
+        # Spawn agent loop.
         agent_runner_type = run.agent_runner_type
         if agent_runner_type in (
             AgentRunnerType.CLI_SUBPROCESS,

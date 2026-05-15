@@ -47,7 +47,6 @@ routines:
 agents:
   default_type: "cli_subprocess"
   openhands_url: "http://localhost:3001"
-  user_managed_timeout_minutes: 120
 dashboard:
   refresh_interval_seconds: 10
   max_recent_runs: 100
@@ -62,7 +61,6 @@ nudger:
         assert config.database.path == "/tmp/test.db"
         assert len(config.routines.dirs) == 2
         assert config.agents.default_type == "cli_subprocess"
-        assert config.agents.user_managed_timeout_minutes == 120
         assert config.dashboard.max_recent_runs == 100
         assert config.nudger.nudge_after_seconds == 120
 
@@ -83,4 +81,4 @@ nudger:
         assert config.agents.default_type is None
         assert config.agents.openhands_url is None
         assert config.agents.allowed_types is None
-        assert config.agents.user_managed_timeout_minutes == 60
+        assert config.agents.codex_session_timeout_minutes == 120

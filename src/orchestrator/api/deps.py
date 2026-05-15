@@ -17,7 +17,7 @@ from orchestrator.db import RunRepository
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow import PersistentEventEmitter
 from orchestrator.workflow import DbSignalTransport, SignalTransport, WorkflowEvent
-from orchestrator.workflow.service import WorkflowService, SubmitEventRegistry
+from orchestrator.workflow.service import WorkflowService
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
@@ -81,11 +81,6 @@ def get_global_config(request: Request) -> GlobalConfig:
     return request.app.state.global_config  # type: ignore[no-any-return]
 
 
-def get_submit_event_registry(request: Request) -> SubmitEventRegistry:
-    """Get the shared SubmitEventRegistry from app state."""
-    return request.app.state.submit_event_registry  # type: ignore[no-any-return]
-
-
 def get_lock_manager(request: Request) -> Any:
     """Get the shared lock manager from app state."""
     return request.app.state.lock_manager
@@ -99,7 +94,6 @@ async def get_workflow_service(
     global_config: Annotated[GlobalConfig, Depends(get_global_config)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
     connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
-    submit_event_registry: Annotated[SubmitEventRegistry, Depends(get_submit_event_registry)],
     lock_manager: Annotated[Any, Depends(get_lock_manager)],
 ) -> WorkflowService:
     emitter = PersistentEventEmitter(event_store)
@@ -122,7 +116,6 @@ async def get_workflow_service(
         repo=repo,
         event_store=event_store,
         event_emitter=emitter,
-        submit_event_registry=submit_event_registry,
         auto_verify_runner=LocalAutoVerifyRunner(),
         lock_manager=lock_manager,
         global_config=global_config,
@@ -240,7 +233,6 @@ def get_current_user() -> str:
 
 
 def make_service_factory(
-    submit_event_registry: SubmitEventRegistry,
     *,
     connection_manager: ConnectionManager | None = None,
     lock_manager: Any | None = None,
@@ -259,8 +251,6 @@ def make_service_factory(
 
     Parameters
     ----------
-    submit_event_registry:
-        Shared singleton; the same instance used by request handlers.
     connection_manager:
         When provided, emitted events are broadcast to WebSocket clients.
     lock_manager:
@@ -298,7 +288,6 @@ def make_service_factory(
             repo=repo,
             event_store=event_store,
             event_emitter=emitter,
-            submit_event_registry=submit_event_registry,
             auto_verify_runner=LocalAutoVerifyRunner(),
             lock_manager=lock_manager,
             signal_transport=transport,

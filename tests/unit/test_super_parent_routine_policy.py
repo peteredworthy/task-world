@@ -31,8 +31,9 @@ def test_evaluate_child_evidence_is_orchestration_only() -> None:
     assert "what the parent needed from the child" in normalized
     assert "what the child did" in normalized
     assert "what the parent needs the human to decide" in normalized
-    assert "question_type: single_select" in normalized
-    assert "do not embed a/b/c choices in a `free_text` question" in normalized
+    assert "tool schema is canonical" in normalized
+    assert "schema-supported select question with explicit options" in normalized
+    assert "do not encode choices inside a free-text question" in normalized
 
     r5 = next(req for req in task.requirements if req.id == "R5")
     assert "Human clarification requests are concise" in r5.desc
@@ -58,3 +59,32 @@ def test_accept_and_merge_child_refuses_unacceptable_children() -> None:
     r2 = next(req for req in task.requirements if req.id == "R2")
     assert "paused" in r2.desc
     assert "missing-evidence" in r2.desc
+
+
+def test_super_parent_declares_model_profiles() -> None:
+    routine = load_routine_from_path(ROUTINE_PATH)
+    profiles = {
+        f"{step.id}/{task.id}": task.profile.value if task.profile else None
+        for step in routine.steps
+        for task in step.tasks
+    }
+
+    assert profiles == {
+        "SP-01/T-01": "architect",
+        "SP-02/T-01": "architect",
+        "SP-03/T-01": "coder",
+        "SP-04/T-01": "summarizer",
+        "SP-04/T-02": "summarizer",
+        "SP-05/T-01": "coder",
+        "SP-05/T-02": "summarizer",
+    }
+
+
+def test_launch_child_run_declares_sequential_child_guard() -> None:
+    normalized = " ".join(_task_context("SP-03", "T-01").split())
+
+    assert "Before creating a child, enforce the sequential-child invariant" in normalized
+    assert "terminal_guard.blocking_child_run_ids" in normalized
+    assert "next_parent_action" in normalized
+    assert "do not call `orchestrator_create_child_from_template`" in normalized
+    assert "Never try to work around the invariant by creating a parallel child" in normalized

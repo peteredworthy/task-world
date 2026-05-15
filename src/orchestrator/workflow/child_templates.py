@@ -134,10 +134,11 @@ def compile_child_routine_from_spec(spec: ChildSliceSpec | dict[str, object]) ->
         }
     ]
     for index, command in enumerate(spec.verification_commands, start=1):
+        _, shell_command = _command_label_and_shell(command, f"verification_{index}")
         auto_verify_items.append(
             {
                 "id": f"slice_verification_{index}",
-                "cmd": command,
+                "cmd": shell_command,
                 "must": True,
             }
         )
@@ -231,6 +232,11 @@ def _task_context(spec: ChildSliceSpec, routine_id: str, evidence_path: str) -> 
         "verified_fix, bug_not_reproduced, behavior_already_correct, environment_blocked, "
         "needs_revision, partial_progress, and unrelated_failure."
     )
+    sections.append(
+        "After the evidence bundle is current and required verification commands have run, "
+        "update every satisfied checklist item and submit the child task. Do not keep "
+        "investigating after the slice assumption has enough evidence for the parent to review."
+    )
     return "\n\n".join(section for section in sections if section)
 
 
@@ -261,7 +267,8 @@ def _evidence_helper_section(spec: ChildSliceSpec, routine_id: str, evidence_pat
     if spec.real_frontend_path_required:
         parts.append("--real-frontend-path-exercised")
     for index, command in enumerate(spec.verification_commands, start=1):
-        parts.extend(["--command", f"verification_{index}::{command}"])
+        label, shell_command = _command_label_and_shell(command, f"verification_{index}")
+        parts.extend(["--command", f"{label}::{shell_command}"])
 
     command_text = " ".join(shlex.quote(part) for part in parts)
     return (
@@ -283,6 +290,20 @@ def _format_list(label: str, values: list[str]) -> str:
 
 def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def _command_label_and_shell(command: str, default_label: str) -> tuple[str, str]:
+    """Split optional evidence-helper labels from shell commands.
+
+    Parent-authored slice specs sometimes pass commands as ``label::command``.
+    The evidence helper accepts that form, but auto-verify must receive only the
+    executable shell command. Raw commands remain supported and get a generated
+    helper label.
+    """
+    label, separator, shell_command = command.partition("::")
+    if separator and label and shell_command.strip() and re.fullmatch(r"[A-Za-z0-9_.:-]+", label):
+        return label, shell_command.strip()
+    return default_label, command.strip()
 
 
 def _reject_unsafe_path(path: str) -> None:

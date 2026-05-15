@@ -29,7 +29,7 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
 
 
 async def _create_run(client: AsyncClient) -> str:
-    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_runner_type": "user_managed"})
+    resp = await client.post("/api/runs", json={**BASE_BODY, "agent_runner_type": "cli_subprocess"})
     assert resp.status_code == 201
     return resp.json()["id"]
 

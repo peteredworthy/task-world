@@ -34,7 +34,7 @@ describe('getPauseReasonMessage', () => {
     ['all_steps_complete_but_active', 'Paused — all steps complete but run stayed active'],
     ['no_actionable_tasks', 'Paused — no actionable tasks in current step'],
     ['no_executor_running', 'Paused — no executor is running. Resume the run to start a managed runner.', 'claude'],
-    ['no_executor_running', 'Paused — no managed executor is attached. Connect an external agent or resume with a managed runner.', 'user_managed'],
+    ['no_executor_running', 'Paused — no executor is running. Resume the run to start a managed runner.', 'cli_subprocess'],
   ];
 
   for (const [reason, expected, agentType] of CASES) {

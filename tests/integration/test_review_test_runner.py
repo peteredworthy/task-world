@@ -1,37 +1,61 @@
-"""Integration tests for review test-runner endpoints (POST/GET /review/test).
+"""Integration tests for review test-runner endpoints (POST/GET /review/test)."""
 
-WARNING — shared fixture:
-    The ``client_with_auto_verify`` adapter below wraps the module-scoped
-    ``_shared_app_fixture`` (from ``tests/integration/conftest.py``) so every
-    test in this file reuses one FastAPI app + in-memory DB. Isolation relies
-    on: (1) ``git_repo`` having a UUID-suffixed name unique per test,
-    (2) server-generated run UUIDs, (3) per-test teardown cancelling runs
-    scoped to ``git_repo.name``. ``app.state.test_runner`` is shared across
-    tests but keyed by UUID ``test_run_id`` so entries cannot collide.
-"""
-
+import shutil
+import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Any
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 
+from orchestrator.api.app import create_app
+from orchestrator.config import RoutineSource
+from orchestrator.config.global_config import GlobalConfig, PathsConfig
+from orchestrator.db import init_db
+from orchestrator.workflow import InMemorySignalTransport
 from tests.integration.conftest import cleanup_runs_for_repo
 from tests.integration.signal_helpers import DrainFn
+from tests.integration.signal_helpers import make_drain_fn
 
-# Shared app + git_repo come from tests/integration/conftest.py.
+FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
 
 @pytest.fixture
 async def client_with_auto_verify(
-    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
-    git_repo: Path,
+    tmp_path: Path,
+    _base_repo: Path,
 ) -> AsyncGenerator[tuple[AsyncClient, Path, Any, DrainFn], None]:
-    """Adapter: (client, git_repo, app, drain) shape. Cancels test's runs on teardown."""
-    client, drain, _, _, app = _shared_app_fixture
-    yield client, git_repo, app, drain
-    await cleanup_runs_for_repo(client, git_repo.name)
+    """Function-scoped app so background test-run callbacks cannot poison sibling tests."""
+    repos_dir = tmp_path / "repos"
+    worktrees_dir = tmp_path / "worktrees"
+    repos_dir.mkdir()
+    worktrees_dir.mkdir()
+    git_repo = repos_dir / f"project_{uuid.uuid4().hex[:8]}"
+    shutil.copytree(str(_base_repo), str(git_repo))
+
+    global_config = GlobalConfig(
+        paths=PathsConfig(
+            repos_dir=str(repos_dir),
+            worktrees_dir=str(worktrees_dir),
+        )
+    )
+    signal_transport = InMemorySignalTransport()
+    app = create_app(
+        db_path=":memory:",
+        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+        global_config=global_config,
+    )
+    app.state.signal_transport = signal_transport
+    await init_db(app.state.engine)
+    drain = make_drain_fn(app, signal_transport)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client, git_repo, app, drain
+        for test_run_id in list(app.state.test_runner._tasks):  # pyright: ignore[reportPrivateUsage]
+            await app.state.test_runner.wait_for_test_run(test_run_id)
+        await cleanup_runs_for_repo(client, git_repo.name)
+    await app.state.engine.dispose()
 
 
 async def _create_and_start_run(

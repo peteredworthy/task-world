@@ -1,0 +1,885 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Run 14758 Token and Call Waste Audit</title>
+  <style>
+    :root {
+      --ink: #152021;
+      --muted: #5f706b;
+      --paper: #f7f3ea;
+      --panel: #fffdf7;
+      --line: #d8d0c2;
+      --teal: #0e6b61;
+      --teal-soft: #d9eee9;
+      --rust: #b95f32;
+      --rust-soft: #f8e7dc;
+      --gold: #d8a437;
+      --navy: #223b53;
+      --dark: #14222a;
+      --red: #a63f3a;
+      --green: #2c8a5a;
+      --shadow: 0 18px 50px rgb(20 34 42 / 10%);
+      --radius: 8px;
+      color-scheme: light;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+      background: #eee7dc;
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    body {
+      margin: 0;
+      line-height: 1.35;
+    }
+
+    .deck {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 26px 0 64px;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      padding: 12px 18px;
+      margin-bottom: 18px;
+      background: rgb(247 243 234 / 92%);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: 0 10px 26px rgb(20 34 42 / 8%);
+      backdrop-filter: blur(8px);
+    }
+
+    .topbar strong {
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    nav a, .print-link {
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 12px;
+      background: var(--panel);
+    }
+
+    nav a:hover, .print-link:hover {
+      border-color: var(--teal);
+      color: var(--teal);
+    }
+
+    .slide {
+      min-height: 720px;
+      margin: 0 0 26px;
+      padding: 46px 54px 38px;
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      page-break-after: always;
+    }
+
+    .slide.alt { background: var(--panel); }
+
+    .eyebrow {
+      margin: 0 0 12px;
+      color: var(--teal);
+      font-weight: 800;
+      font-size: 12px;
+      text-transform: uppercase;
+    }
+
+    h1, h2 {
+      margin: 0;
+      max-width: 930px;
+      font-weight: 850;
+      letter-spacing: 0;
+      line-height: 1.08;
+    }
+
+    h1 { font-size: clamp(38px, 5vw, 62px); }
+    h2 { font-size: clamp(30px, 4vw, 44px); }
+
+    .subhead {
+      max-width: 980px;
+      margin: 14px 0 18px;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .rule {
+      height: 2px;
+      margin: 18px 0 28px;
+      background: var(--line);
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 18px;
+      margin: 28px 0 48px;
+    }
+
+    .metric {
+      min-height: 118px;
+      padding: 18px 18px 16px 24px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-left: 7px solid var(--teal);
+      border-radius: 0 var(--radius) var(--radius) 0;
+    }
+
+    .metric.rust { border-left-color: var(--rust); }
+    .metric.navy { border-left-color: var(--navy); }
+    .metric.gold { border-left-color: var(--gold); }
+
+    .metric .value {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 30px;
+      font-weight: 850;
+      color: var(--teal);
+    }
+
+    .metric.rust .value { color: var(--rust); }
+    .metric.navy .value { color: var(--navy); }
+    .metric.gold .value { color: var(--gold); }
+    .metric .label { display: block; font-size: 14px; font-weight: 800; }
+    .metric .note { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 70px;
+      margin-top: 28px;
+    }
+
+    h3 {
+      margin: 0 0 14px;
+      font-size: 22px;
+      line-height: 1.15;
+    }
+
+    p { margin: 0 0 12px; font-size: 19px; }
+
+    .callout {
+      margin-top: 34px;
+      padding: 24px 28px;
+      background: var(--dark);
+      color: white;
+      border-radius: var(--radius);
+    }
+
+    .callout .label {
+      display: block;
+      margin-bottom: 10px;
+      color: #8bd0c4;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .callout p { font-size: 24px; font-weight: 800; line-height: 1.2; }
+
+    .timeline {
+      position: relative;
+      display: grid;
+      grid-template-columns: 110px 1fr;
+      gap: 18px;
+      margin-top: 28px;
+    }
+
+    .lane-label {
+      padding-top: 10px;
+      color: var(--teal);
+      font-weight: 850;
+      font-size: 14px;
+    }
+
+    .lane-label.child { color: var(--rust); }
+
+    .lane {
+      position: relative;
+      min-height: 105px;
+      border-top: 3px solid var(--line);
+    }
+
+    .event {
+      position: absolute;
+      top: -8px;
+      width: 150px;
+      transform: translateX(-50%);
+      text-align: center;
+      font-size: 12px;
+    }
+
+    .event::before {
+      content: "";
+      display: block;
+      width: 16px;
+      height: 16px;
+      margin: 0 auto 8px;
+      background: var(--teal);
+      border: 2px solid white;
+      box-shadow: 0 0 0 1px var(--line);
+    }
+
+    .event.child::before { background: var(--gold); }
+    .event.bad::before { background: var(--red); }
+    .event strong { display: block; color: var(--muted); font-size: 11px; }
+
+    .proof-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-top: 36px;
+    }
+
+    .proof {
+      padding: 24px 26px;
+      background: #f4efe6;
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--green);
+      border-radius: var(--radius);
+    }
+
+    .proof.bad { border-left-color: var(--red); }
+    .proof h3 { color: var(--green); }
+    .proof.bad h3 { color: var(--red); }
+    .proof p { font-size: 16px; }
+
+    .bar-list {
+      display: grid;
+      gap: 20px;
+      max-width: 790px;
+    }
+
+    .bar-row {
+      display: grid;
+      grid-template-columns: 230px 1fr 86px;
+      gap: 14px;
+      align-items: center;
+      font-size: 14px;
+    }
+
+    .bar-track {
+      height: 18px;
+      background: #e7dfd2;
+      overflow: hidden;
+    }
+
+    .bar-fill {
+      height: 100%;
+      background: var(--teal);
+    }
+
+    .bar-fill.rust { background: var(--rust); }
+    .bar-fill.gold { background: var(--gold); }
+    .bar-fill.navy { background: var(--navy); }
+    .bar-fill.red { background: var(--red); }
+
+    .chart-and-note {
+      display: grid;
+      grid-template-columns: 1fr 330px;
+      gap: 34px;
+      align-items: start;
+    }
+
+    .dark-note {
+      min-height: 230px;
+      padding: 28px;
+      background: var(--dark);
+      color: white;
+      border-radius: var(--radius);
+    }
+
+    .dark-note h3 { color: #8bd0c4; font-size: 16px; }
+    .dark-note strong { display: block; margin: 18px 0 8px; font-size: 30px; line-height: 1.08; }
+    .dark-note p { color: #e2eeea; font-size: 16px; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      background: rgb(255 253 247 / 72%);
+    }
+
+    th {
+      padding: 12px 10px;
+      background: var(--dark);
+      color: white;
+      text-align: left;
+      font-weight: 850;
+    }
+
+    td {
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    tbody tr:nth-child(even) { background: #f3eee5; }
+
+    .waste-table td:nth-child(1) { width: 20%; font-weight: 800; }
+    .waste-table td:nth-child(2) { width: 31%; }
+    .waste-table td:nth-child(3) { width: 23%; }
+    .waste-table td:nth-child(4) { width: 26%; }
+
+    .flow {
+      display: grid;
+      grid-template-columns: 1fr 96px 1fr 96px 1fr;
+      gap: 18px;
+      align-items: center;
+      margin: 58px 0 74px;
+    }
+
+    .flow-box {
+      min-height: 146px;
+      padding: 24px;
+      background: #f4efe6;
+      border: 2px solid #a6d6ce;
+      border-radius: var(--radius);
+    }
+
+    .flow-box:nth-of-type(3) { border-color: var(--gold); }
+    .flow-box:nth-of-type(5) { border-color: #cc8b86; }
+    .flow-box h3 { color: var(--teal); }
+    .flow-box:nth-of-type(3) h3 { color: var(--rust); }
+    .flow-box:nth-of-type(5) h3 { color: var(--red); }
+
+    .arrow {
+      position: relative;
+      height: 2px;
+      background: var(--muted);
+    }
+
+    .arrow span {
+      position: absolute;
+      top: -28px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .keep-remove {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 34px;
+      margin-top: 40px;
+    }
+
+    .list-panel {
+      min-height: 385px;
+      padding: 30px 34px;
+      border: 2px solid var(--green);
+      background: #eef7f1;
+      border-radius: var(--radius);
+    }
+
+    .list-panel.remove {
+      border-color: var(--rust);
+      background: #fbede6;
+    }
+
+    .list-panel h3 { color: var(--green); font-size: 26px; }
+    .list-panel.remove h3 { color: var(--rust); }
+    .list-panel li { margin: 0 0 22px; font-size: 18px; }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 28px;
+      margin-top: 34px;
+    }
+
+    .control {
+      display: grid;
+      grid-template-columns: 56px 1fr;
+      gap: 20px;
+      min-height: 150px;
+      padding: 24px;
+      background: #eef7f5;
+      border: 2px solid #a6d6ce;
+      border-radius: var(--radius);
+    }
+
+    .control:nth-child(even) {
+      background: #f8efe2;
+      border-color: var(--gold);
+    }
+
+    .num {
+      display: grid;
+      place-items: center;
+      width: 52px;
+      height: 52px;
+      background: var(--teal);
+      color: white;
+      font-size: 24px;
+      font-weight: 850;
+    }
+
+    .control:nth-child(even) .num { background: var(--rust); }
+    .control p { font-size: 16px; }
+
+    .session-table {
+      font-size: 12px;
+    }
+
+    .session-table td, .session-table th {
+      padding: 8px 9px;
+    }
+
+    .sources {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 34px;
+      margin-top: 42px;
+    }
+
+    .source-box {
+      min-height: 310px;
+      padding: 30px;
+      background: #f4efe6;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+    }
+
+    .source-box li { margin: 0 0 14px; font-size: 15px; }
+
+    .footer {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      margin-top: 34px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    code {
+      padding: 0 3px;
+      border-radius: 4px;
+      background: rgb(20 34 42 / 8%);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    @media (max-width: 900px) {
+      .deck { width: min(100vw - 18px, 1180px); padding-top: 10px; }
+      .topbar { position: static; align-items: flex-start; flex-direction: column; }
+      .slide { min-height: 0; padding: 30px 22px; }
+      .metrics, .two-col, .proof-row, .chart-and-note, .keep-remove, .controls, .sources, .flow {
+        grid-template-columns: 1fr;
+      }
+      .flow .arrow { height: 34px; width: 2px; margin-left: 28px; }
+      .bar-row { grid-template-columns: 1fr; gap: 6px; }
+      table { font-size: 12px; }
+      .session-table { display: block; overflow-x: auto; white-space: nowrap; }
+    }
+
+    @media print {
+      html, body { background: white; }
+      .deck { width: 100%; padding: 0; }
+      .topbar { display: none; }
+      .slide {
+        min-height: 7.5in;
+        margin: 0;
+        box-shadow: none;
+        border-radius: 0;
+        border: 0;
+      }
+      a { color: inherit; text-decoration: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <div class="topbar">
+      <strong>Run 14758 Token and Call Waste Audit</strong>
+      <nav aria-label="Report navigation">
+        <a href="#summary">Summary</a>
+        <a href="#timeline">Timeline</a>
+        <a href="#tokens">Tokens</a>
+        <a href="#calls">Calls</a>
+        <a href="#waste">Waste</a>
+        <a href="#controls">Controls</a>
+        <button class="print-link" type="button" onclick="window.print()">Print / PDF</button>
+      </nav>
+    </div>
+
+    <section class="slide" id="summary">
+      <p class="eyebrow">Executive readout</p>
+      <h1>The pause was expensive because the parent kept carrying the whole run</h1>
+      <p class="subhead">The run surfaced a real orchestration contract gap, but most spend came from repeated context ballast and bookkeeping turns.</p>
+      <div class="rule"></div>
+
+      <div class="metrics">
+        <div class="metric">
+          <span class="value">7.4M</span>
+          <span class="label">Parent total tokens</span>
+          <span class="note">6.7M were cache reads</span>
+        </div>
+        <div class="metric rust">
+          <span class="value">222</span>
+          <span class="label">Parent tool calls</span>
+          <span class="note">272 including child</span>
+        </div>
+        <div class="metric navy">
+          <span class="value">235</span>
+          <span class="label">Parent turns</span>
+          <span class="note">286 including child</span>
+        </div>
+        <div class="metric gold">
+          <span class="value">$9.55</span>
+          <span class="label">Parent model cost</span>
+          <span class="note">$11.29 including child</span>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div>
+          <h3>What happened</h3>
+          <p>The parent finished useful setup, launched a child smoke run, observed valid child evidence, then attempted to launch the next child while the prior child was still unresolved. The platform rejected that transition and the agent paused for a human decision.</p>
+        </div>
+        <div>
+          <h3>Why the spend spiked</h3>
+          <p>Every later parent pass carried a large oversight snapshot, long slice briefs, and prior evidence through a high-end model. Mechanical checklist, grading, and retry work then repeated over that enlarged context.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <span class="label">Main finding</span>
+        <p>The waste was structural: the routine assumed parallel children, the platform enforced sequential children, and each phase carried too much parent state.</p>
+      </div>
+      <div class="footer"><span>Persisted journal + worktree evidence</span><span>01</span></div>
+    </section>
+
+    <section class="slide alt" id="timeline">
+      <p class="eyebrow">Timeline</p>
+      <h2>The run spent 34 minutes moving from useful setup to an avoidable pause</h2>
+      <p class="subhead">Parent and child lanes show where useful orchestration evidence ended and where waste began.</p>
+      <div class="rule"></div>
+
+      <div class="timeline">
+        <div class="lane-label">Parent lane</div>
+        <div class="lane">
+          <div class="event" style="left:2%"><strong>01:42-01:43</strong>Parent starts + inventory</div>
+          <div class="event" style="left:40%"><strong>01:56</strong>Parent submits create step</div>
+          <div class="event" style="left:70%"><strong>02:06</strong>No-op merge integration</div>
+          <div class="event" style="left:85%"><strong>02:11</strong>INV-R-002 brief selected</div>
+          <div class="event bad" style="left:100%"><strong>02:16</strong>Second-child conflict; pause</div>
+        </div>
+        <div class="lane-label child">Child lane</div>
+        <div class="lane">
+          <div class="event child" style="left:36%"><strong>01:55</strong>Child created</div>
+          <div class="event child" style="left:59%"><strong>02:02</strong>Evidence observed; child not terminal</div>
+        </div>
+      </div>
+
+      <div class="proof-row">
+        <div class="proof">
+          <h3>Useful evidence produced</h3>
+          <p>Child creation, auto-start enqueue, and schema-valid <code>run.evidence.v1</code> publication were all observed.</p>
+        </div>
+        <div class="proof bad">
+          <h3>Waste pivot</h3>
+          <p>The parent attempted the next child before resolving the first, then paid for a failed create attempt and a clarification retry.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Run timeline reconstructed from journal status and agent result events</span><span>02</span></div>
+    </section>
+
+    <section class="slide" id="tokens">
+      <p class="eyebrow">Token economics</p>
+      <h2>Cache reads, not new prompt input, dominated the bill</h2>
+      <p class="subhead">The parent repeatedly re-read a large working context while doing mostly orchestration bookkeeping.</p>
+      <div class="rule"></div>
+
+      <div class="chart-and-note">
+        <div class="bar-list">
+          <div class="bar-row"><span>Cache read</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><strong>6.7M</strong></div>
+          <div class="bar-row"><span>Cache creation</span><div class="bar-track"><div class="bar-fill gold" style="width:8.6%"></div></div><strong>577.9k</strong></div>
+          <div class="bar-row"><span>Output</span><div class="bar-track"><div class="bar-fill rust" style="width:1.5%"></div></div><strong>102.1k</strong></div>
+          <div class="bar-row"><span>Direct input</span><div class="bar-track"><div class="bar-fill navy" style="width:.1%"></div></div><strong>228</strong></div>
+        </div>
+        <aside class="dark-note">
+          <h3>Parent token mix</h3>
+          <strong>6.7M cache-read tokens</strong>
+          <p>About 91% of parent token volume was spent rehydrating state the agent had already created.</p>
+        </aside>
+      </div>
+
+      <h3 style="margin-top:54px">Largest parent sessions by cache-read tokens</h3>
+      <div class="bar-list">
+        <div class="bar-row"><span>01:49 task f975e109 - 43 turns</span><div class="bar-track"><div class="bar-fill red" style="width:100%"></div></div><strong>2.0M</strong></div>
+        <div class="bar-row"><span>02:16 task 0f6b2382 - 23 turns</span><div class="bar-track"><div class="bar-fill" style="width:54%"></div></div><strong>1.1M</strong></div>
+        <div class="bar-row"><span>02:11 task 3206c0d3 - 25 turns</span><div class="bar-track"><div class="bar-fill" style="width:35%"></div></div><strong>695k</strong></div>
+        <div class="bar-row"><span>01:53 task 3206c0d3 - 20 turns</span><div class="bar-track"><div class="bar-fill" style="width:31%"></div></div><strong>628k</strong></div>
+        <div class="bar-row"><span>01:55 task 0f6b2382 - 22 turns</span><div class="bar-track"><div class="bar-fill" style="width:27%"></div></div><strong>539k</strong></div>
+      </div>
+      <div class="footer"><span>Result-level usage; streaming chunks were not double-counted</span><span>03</span></div>
+    </section>
+
+    <section class="slide alt" id="calls">
+      <p class="eyebrow">Call anatomy</p>
+      <h2>Most calls were file probing and orchestration bookkeeping</h2>
+      <p class="subhead">The tool log shows a system doing meta-work around the run rather than progressing implementation.</p>
+      <div class="rule"></div>
+
+      <div class="chart-and-note">
+        <div class="bar-list">
+          <div class="bar-row"><span>Shell + file inspection</span><div class="bar-track"><div class="bar-fill" style="width:100%"></div></div><strong>175</strong></div>
+          <div class="bar-row"><span>Checklist / grading / submit</span><div class="bar-track"><div class="bar-fill rust" style="width:38%"></div></div><strong>67</strong></div>
+          <div class="bar-row"><span>Oversight / child-control MCP</span><div class="bar-track"><div class="bar-fill navy" style="width:11%"></div></div><strong>20</strong></div>
+          <div class="bar-row"><span>Todo/status planning</span><div class="bar-track"><div class="bar-fill gold" style="width:6%"></div></div><strong>10</strong></div>
+        </div>
+        <aside class="proof bad">
+          <h3>Logged failed/error results</h3>
+          <p style="font-size:44px;font-weight:850;color:var(--red);margin:0 0 8px">28</p>
+          <p>Sandbox/file probes, missing paths, cancelled parallel calls, and one schema-shaped clarification retry.</p>
+        </aside>
+      </div>
+
+      <div class="two-col" style="margin-top:54px">
+        <div>
+          <h3>Top individual tools</h3>
+          <table>
+            <tbody>
+              <tr><td>Bash</td><td><strong>107</strong></td></tr>
+              <tr><td>Read</td><td><strong>27</strong></td></tr>
+              <tr><td>Grep</td><td><strong>24</strong></td></tr>
+              <tr><td>orchestrator_update_checklist</td><td><strong>21</strong></td></tr>
+              <tr><td>orchestrator_set_grade</td><td><strong>21</strong></td></tr>
+              <tr><td>orchestrator_get_requirements</td><td><strong>13</strong></td></tr>
+              <tr><td>orchestrator_submit</td><td><strong>12</strong></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="dark-note">
+          <h3>Readout</h3>
+          <p>A high call count was baked into the routine shape: every phase had fresh context, explicit checklist updates, verifier grades, and parent oversight snapshots. Those controls become waste when repeated over an oversized state object.</p>
+        </div>
+      </div>
+      <div class="footer"><span>Tool calls counted by unique tool_use id</span><span>04</span></div>
+    </section>
+
+    <section class="slide" id="waste">
+      <p class="eyebrow">Waste taxonomy</p>
+      <h2>Five waste categories explain the token and call spike</h2>
+      <p class="subhead">Each category is tied to a journal-observed behavior and a concrete mitigation.</p>
+      <div class="rule"></div>
+
+      <table class="waste-table">
+        <thead><tr><th>Category</th><th>Observed waste signal</th><th>Root cause</th><th>Control</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Context ballast from oversized parent brief</td>
+            <td>Each parent turn repeatedly carried about 55k-70k cache-read tokens after the inventory/brief grew; the final parent session alone read 1.078M cached tokens.</td>
+            <td>A broad target inventory, full failure taxonomy, and long child specs were retained before the first loop completed.</td>
+            <td>Summarize oversight state into a compact machine ledger and pass only active slice contract plus unresolved deltas.</td>
+          </tr>
+          <tr>
+            <td>Polling / wait loop around child evidence</td>
+            <td>The parent recorded schema-valid evidence but still had to reconcile that with a non-terminal child.</td>
+            <td>Evidence readiness and terminal readiness are separate states.</td>
+            <td>Expose a single “evidence ready, terminal pending” state; stop parent routines after one bounded observation.</td>
+          </tr>
+          <tr>
+            <td>Parallelism mismatch created a dead-end attempt</td>
+            <td>INV-R-002 was selected while INV-R-001 remained unresolved; create-child was rejected.</td>
+            <td>Routine intent assumed parallel child slices while the platform allows one unresolved child.</td>
+            <td>Make child concurrency a routine capability flag and gate SP-02 selection accordingly.</td>
+          </tr>
+          <tr>
+            <td>Schema/tool contract retry</td>
+            <td>First clarification request failed because <code>required</code> was sent as boolean <code>true</code>; retry succeeded after omitting it.</td>
+            <td>The agent had stale or incomplete tool-schema knowledge.</td>
+            <td>Surface exact MCP tool schemas or validate tool arguments before dispatch.</td>
+          </tr>
+          <tr>
+            <td>High-end model used for mechanical orchestration</td>
+            <td>Most tokens ran through <code>claude-opus-4-7[1m]</code> while calls were often deterministic checklist updates and status bookkeeping.</td>
+            <td>No model-profile downshift for bookkeeping turns.</td>
+            <td>Reserve frontier model for planning and defects; route checklist/status/tool-retry turns to a cheaper profile.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top:22px;color:var(--teal);font-weight:850">Interpretation: the biggest waste was structural, not a single bad command.</p>
+      <div class="footer"><span>Waste categories derived from session usage and tool event stream</span><span>05</span></div>
+    </section>
+
+    <section class="slide alt">
+      <p class="eyebrow">Root cause</p>
+      <h2>The parent routine and platform state machine disagreed about child concurrency</h2>
+      <p class="subhead">The pause point was a useful defect signal: routine intent said parallel; platform behavior said sequential.</p>
+      <div class="rule"></div>
+
+      <div class="flow">
+        <div class="flow-box">
+          <h3>Routine plan</h3>
+          <p>Select INV-R-002 while INV-R-001 is still in flight, because the brief explicitly described parallel execution.</p>
+        </div>
+        <div class="arrow"><span>mismatch</span></div>
+        <div class="flow-box">
+          <h3>Actual platform rule</h3>
+          <p>Reject <code>create_child_run</code> when another linked child remains unresolved.</p>
+        </div>
+        <div class="arrow"><span>pause</span></div>
+        <div class="flow-box">
+          <h3>Observed result</h3>
+          <p>Failed create attempt, then clarification request asking how to resolve the conflict.</p>
+        </div>
+      </div>
+
+      <div class="callout">
+        <p>The fix is not to train the agent to be more patient. The platform needs to expose the concurrency invariant up front, and the routine needs to encode it before slice selection.</p>
+      </div>
+      <div class="footer"><span>Conflict captured in the final clarification request</span><span>06</span></div>
+    </section>
+
+    <section class="slide">
+      <p class="eyebrow">Evidence ledger</p>
+      <h2>The run was wasteful, but it still proved several orchestration surfaces</h2>
+      <p class="subhead">Separate the good evidence from the process waste so the next run can keep the signal and remove the drag.</p>
+      <div class="rule"></div>
+
+      <div class="keep-remove">
+        <div class="list-panel">
+          <h3>Keep</h3>
+          <ul>
+            <li>Parent created a child from the <code>investigation_only</code> template.</li>
+            <li>Child start was enqueued automatically.</li>
+            <li>Child wrote schema-valid <code>run.evidence.v1</code>.</li>
+            <li>Parent fetched and refreshed evidence from child worktree.</li>
+            <li>Pause surfaced a real state-machine/routine contract gap.</li>
+          </ul>
+        </div>
+        <div class="list-panel remove">
+          <h3>Remove</h3>
+          <ul>
+            <li>Large Markdown state repeated through every fresh phase.</li>
+            <li>Child evidence readiness confused with terminal acceptance readiness.</li>
+            <li>Second-child selection before resolving first child.</li>
+            <li>High-end model used for deterministic MCP bookkeeping.</li>
+            <li>Tool schema error consumed an extra clarification turn.</li>
+          </ul>
+        </div>
+      </div>
+      <p style="margin-top:28px"><strong style="color:var(--teal)">Decision principle:</strong> Treat orchestration evidence as a compact ledger with explicit state flags; keep rich Markdown as human-readable audit material, not as repeated working prompt.</p>
+      <div class="footer"><span>Evidence/waste separation for follow-up implementation</span><span>07</span></div>
+    </section>
+
+    <section class="slide alt" id="controls">
+      <p class="eyebrow">Controls</p>
+      <h2>Four changes would cut most repeat waste in the next run</h2>
+      <p class="subhead">The controls are small relative to the amount of recurring token and call spend they prevent.</p>
+      <div class="rule"></div>
+
+      <div class="controls">
+        <div class="control"><div class="num">1</div><div><h3>Compact parent state</h3><p>Persist active child id, evidence-ready flag, terminal flag, merge queue, unresolved inventory, and next allowed action.</p></div></div>
+        <div class="control"><div class="num">2</div><div><h3>Sequential child gate</h3><p>Block SP-02 from selecting a new child while any linked child is unresolved unless the routine declares supported concurrency.</p></div></div>
+        <div class="control"><div class="num">3</div><div><h3>Model downshift</h3><p>Route checklist, grade, submit, and schema-retry turns to a cheaper profile; reserve frontier model for diagnosis.</p></div></div>
+        <div class="control"><div class="num">4</div><div><h3>Tool schema preflight</h3><p>Generate exact MCP argument schemas into the agent prompt or locally validate tool calls before dispatch.</p></div></div>
+      </div>
+
+      <div class="callout" style="text-align:center;margin-top:48px">
+        <p>Success metric: a parent pass after child evidence should cost hundreds of tokens, not hundreds of thousands.</p>
+      </div>
+      <div class="footer"><span>Controls prioritized by repeated-spend reduction</span><span>08</span></div>
+    </section>
+
+    <section class="slide" id="appendix">
+      <p class="eyebrow">Appendix</p>
+      <h2>Session ledger shows repeated fresh phases over growing context</h2>
+      <p class="subhead">Sorted chronologically; token columns are from result-level usage, not duplicated streaming chunks.</p>
+      <div class="rule"></div>
+
+      <table class="session-table">
+        <thead><tr><th>UTC</th><th>Run</th><th>Task</th><th>Turns</th><th>Cache read</th><th>Create</th><th>Output</th><th>Cost</th><th>Result</th></tr></thead>
+        <tbody>
+          <tr><td>01:49</td><td>parent</td><td>f975e109</td><td>43</td><td>1998k</td><td>83k</td><td>19k</td><td>$2.01</td><td>Submitted for verification; recovered instruction and built inventory.</td></tr>
+          <tr><td>01:49</td><td>parent</td><td>f975e109</td><td>11</td><td>137k</td><td>29k</td><td>3k</td><td>$0.32</td><td>Verification submitted; inventory requirements graded A.</td></tr>
+          <tr><td>01:53</td><td>parent</td><td>3206c0d3</td><td>20</td><td>628k</td><td>53k</td><td>10k</td><td>$0.91</td><td>Slice brief written and submitted.</td></tr>
+          <tr><td>01:54</td><td>parent</td><td>3206c0d3</td><td>13</td><td>170k</td><td>31k</td><td>4k</td><td>$0.38</td><td>Verification complete; slice brief graded A.</td></tr>
+          <tr><td>01:55</td><td>parent</td><td>0f6b2382</td><td>22</td><td>539k</td><td>60k</td><td>6k</td><td>$0.80</td><td>Created child run 2ea5fbe8.</td></tr>
+          <tr><td>01:56</td><td>parent</td><td>0f6b2382</td><td>13</td><td>225k</td><td>39k</td><td>5k</td><td>$0.48</td><td>Child creation requirements graded A.</td></tr>
+          <tr><td>02:04</td><td>parent</td><td>1f58acb1</td><td>16</td><td>343k</td><td>59k</td><td>7k</td><td>$0.71</td><td>Oversight pass recorded child evidence and active state.</td></tr>
+          <tr><td>02:05</td><td>parent</td><td>1f58acb1</td><td>21</td><td>374k</td><td>39k</td><td>5k</td><td>$0.57</td><td>Verification of oversight pass.</td></tr>
+          <tr><td>02:06</td><td>parent</td><td>6f5c2c8f</td><td>8</td><td>140k</td><td>42k</td><td>3k</td><td>$0.42</td><td>No-op merge integration.</td></tr>
+          <tr><td>02:07</td><td>parent</td><td>6f5c2c8f</td><td>7</td><td>79k</td><td>31k</td><td>3k</td><td>$0.30</td><td>Merge integration verification.</td></tr>
+          <tr><td>02:08</td><td>child</td><td>d9363893</td><td>51</td><td>1984k</td><td>62k</td><td>14k</td><td>$1.74</td><td>Child smoke run result.</td></tr>
+          <tr><td>02:11</td><td>parent</td><td>3206c0d3</td><td>25</td><td>695k</td><td>36k</td><td>16k</td><td>$0.97</td><td>Selected and briefed INV-R-002.</td></tr>
+          <tr><td>02:12</td><td>parent</td><td>3206c0d3</td><td>13</td><td>308k</td><td>31k</td><td>4k</td><td>$0.46</td><td>Verification of INV-R-002 brief.</td></tr>
+          <tr><td>02:16</td><td>parent</td><td>0f6b2382</td><td>23</td><td>1078k</td><td>46k</td><td>16k</td><td>$1.23</td><td>Paused awaiting human decision on unresolved-child blocker.</td></tr>
+        </tbody>
+      </table>
+      <p style="margin-top:18px;color:var(--muted);font-size:14px">Largest single parent session: 1.998M cache-read tokens at 01:49 during inventory/build. Final pause session: 1.078M cache-read tokens to reach the human clarification.</p>
+      <div class="footer"><span>Session ledger from result events</span><span>09</span></div>
+    </section>
+
+    <section class="slide alt">
+      <p class="eyebrow">Sources and caveats</p>
+      <h2>This HTML report uses persisted evidence because the live API was unavailable</h2>
+      <p class="subhead">The analysis did not restart the server or mutate orchestrator state.</p>
+      <div class="rule"></div>
+
+      <div class="sources">
+        <div class="source-box">
+          <h3>Primary sources</h3>
+          <ul>
+            <li><code>.orchestrator/state/history.jsonl</code></li>
+            <li><code>worktrees/r166/.worktree-manifest.json</code></li>
+            <li><code>worktrees/r167/.worktree-manifest.json</code></li>
+            <li><code>worktrees/r166/docs/super-parent/current-understanding.md</code></li>
+            <li><code>worktrees/r166/docs/super-parent/next-slice.md</code></li>
+            <li><code>worktrees/r167/docs/run-evidence/INV-R-001-pytest-smoke-evidence.json</code></li>
+          </ul>
+        </div>
+        <div class="source-box">
+          <h3>Method notes</h3>
+          <ul>
+            <li>Result-level usage was used to avoid double-counting streamed assistant chunks.</li>
+            <li>Tool calls were counted by unique <code>tool_use</code> id.</li>
+            <li>Failed/error count includes nonzero probe commands and tool-call validation errors.</li>
+            <li>The child run is included separately because parent behavior caused it and parent evidence depended on it.</li>
+            <li>Parsed 97 journal entries and 742 inner agent events for the two run ids.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout" style="text-align:center">
+        <p>Bottom line: the pause is actionable. Keep the child evidence signal and remove repeated context, concurrency mismatch, and schema-retry waste.</p>
+      </div>
+      <div class="footer"><span>Run 14758f82 token/call audit</span><span>10</span></div>
+    </section>
+  </main>
+</body>
+</html>

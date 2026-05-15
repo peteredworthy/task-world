@@ -596,7 +596,6 @@ def test_claude_sdk_is_distinct_from_other_types() -> None:
         AgentRunnerType.OPENHANDS_LOCAL,
         AgentRunnerType.OPENHANDS_DOCKER,
         AgentRunnerType.CLI_SUBPROCESS,
-        AgentRunnerType.USER_MANAGED,
         AgentRunnerType.CODEX_SERVER,
     }
     assert AgentRunnerType.CLAUDE_SDK not in other_types

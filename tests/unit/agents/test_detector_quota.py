@@ -11,8 +11,8 @@ from orchestrator.runners.types import AgentOption, AgentQuota
 
 _MINIMAL_OPTIONS = [
     AgentOption(
-        agent_runner_type=AgentRunnerType.USER_MANAGED,
-        name="User Managed",
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        name="Quota Agent",
         available=True,
         detail="stub",
         config_schema=[],
@@ -72,12 +72,12 @@ async def test_quota_populated_for_available_agent() -> None:
     quota = AgentQuota(balance_usd=42.0)
     # "claude" is a CLI tool that detect_cli_tools() always returns (available or not).
     # On this test machine claude is installed, so we can use its real name.
-    # We use "User Managed" which is always available and has a stable name.
-    stub = _AgentStub(name="User Managed", quota=quota)
+    # We use "Quota Agent" which is always available and has a stable name.
+    stub = _AgentStub(name="Quota Agent", quota=quota)
     detector = ToolDetector(agents=[stub])
 
     options = await _with_quotas(detector)
-    um = next(o for o in options if o.name == "User Managed")
+    um = next(o for o in options if o.name == "Quota Agent")
 
     assert um.available is True
     assert um.quota is not None
@@ -91,7 +91,7 @@ async def test_quota_none_for_unavailable_agent() -> None:
         detector,
         [
             AgentOption(
-                agent_runner_type=AgentRunnerType.USER_MANAGED,
+                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
                 name="Unavailable",
                 available=False,
             )
@@ -109,11 +109,11 @@ async def test_quota_none_when_get_quota_returns_none() -> None:
     This covers the protocol default: agents that do not override get_quota() return
     None, and quota attachment must propagate that as quota=None (not omit it or error).
     """
-    stub = _AgentStub(name="User Managed", quota=None)
+    stub = _AgentStub(name="Quota Agent", quota=None)
     detector = ToolDetector(agents=[stub])
 
     options = await _with_quotas(detector)
-    um = next(o for o in options if o.name == "User Managed")
+    um = next(o for o in options if o.name == "Quota Agent")
 
     assert um.available is True
     assert um.quota is None
@@ -121,11 +121,11 @@ async def test_quota_none_when_get_quota_returns_none() -> None:
 
 async def test_exception_in_get_quota_yields_none() -> None:
     """Exceptions from get_quota() are swallowed and result in quota=None on first failure (no prior success)."""
-    stub = _RaisingAgentStub(name="User Managed")
+    stub = _RaisingAgentStub(name="Quota Agent")
     detector = ToolDetector(agents=[stub])
 
     options = await _with_quotas(detector)
-    um = next(o for o in options if o.name == "User Managed")
+    um = next(o for o in options if o.name == "Quota Agent")
 
     assert um.available is True
     assert um.quota is None
@@ -137,11 +137,11 @@ async def test_slow_get_quota_times_out_and_yields_none() -> None:
     The stub raises asyncio.TimeoutError directly, exercising the same exception
     handler as a real timeout without blocking any background thread.
     """
-    stub = _SlowAgentStub(name="User Managed")
+    stub = _SlowAgentStub(name="Quota Agent")
     detector = ToolDetector(agents=[stub])
 
     options = await _with_quotas(detector)
-    um = next(o for o in options if o.name == "User Managed")
+    um = next(o for o in options if o.name == "Quota Agent")
 
     assert um.available is True
     assert um.quota is None
@@ -152,7 +152,7 @@ async def test_quota_cached_between_calls() -> None:
     call_count = 0
 
     class _CountingStub:
-        name = "User Managed"
+        name = "Quota Agent"
 
         def get_quota(self) -> AgentQuota | None:
             nonlocal call_count
@@ -178,7 +178,7 @@ async def test_quota_refetched_after_ttl_expiry() -> None:
     call_count = 0
 
     class _CountingStubExpiry:
-        name = "User Managed"
+        name = "Quota Agent"
 
         def get_quota(self) -> AgentQuota | None:
             nonlocal call_count
@@ -193,7 +193,7 @@ async def test_quota_refetched_after_ttl_expiry() -> None:
 
     # Directly manipulate cached_at to simulate TTL expiry.
     # Active-entry TTL is 60s; setting cached_at 400s in the past makes it stale.
-    cache_entry = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry = detector._quota_cache["Quota Agent"]  # pyright: ignore[reportPrivateUsage]
     cache_entry.cached_at = time.monotonic() - 400
 
     # Second call must re-invoke get_quota() because the cache is stale
@@ -217,7 +217,7 @@ async def test_failure_preserves_last_successful_quota() -> None:
     call_count = 0
 
     class _FailSecondTimeStub:
-        name = "User Managed"
+        name = "Quota Agent"
 
         def get_quota(self) -> AgentQuota | None:
             nonlocal call_count
@@ -230,18 +230,18 @@ async def test_failure_preserves_last_successful_quota() -> None:
 
     # First call succeeds
     options1 = await _with_quotas(detector)
-    um1 = next(o for o in options1 if o.name == "User Managed")
+    um1 = next(o for o in options1 if o.name == "Quota Agent")
     assert um1.quota is not None
     assert um1.quota.balance_usd == 42.0
     assert um1.quota.fetched_at is not None
 
     # Expire the cache so second call attempts a fetch
-    cache_entry = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry = detector._quota_cache["Quota Agent"]  # pyright: ignore[reportPrivateUsage]
     cache_entry.cached_at = time.monotonic() - 400
 
     # Second call fails — should return stale quota
     options2 = await _with_quotas(detector)
-    um2 = next(o for o in options2 if o.name == "User Managed")
+    um2 = next(o for o in options2 if o.name == "Quota Agent")
     assert um2.quota is not None
     assert um2.quota.balance_usd == 42.0
     assert um2.quota.fetched_at is not None
@@ -252,7 +252,7 @@ async def test_retry_backoff_after_failure() -> None:
     call_count = 0
 
     class _FailOnceStub:
-        name = "User Managed"
+        name = "Quota Agent"
 
         def get_quota(self) -> AgentQuota | None:
             nonlocal call_count
@@ -268,7 +268,7 @@ async def test_retry_backoff_after_failure() -> None:
     assert call_count == 1
 
     # Expire cache to trigger fetch
-    cache_entry = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry = detector._quota_cache["Quota Agent"]  # pyright: ignore[reportPrivateUsage]
     cache_entry.cached_at = time.monotonic() - 400
 
     # Second call fails, sets retry_after
@@ -276,7 +276,7 @@ async def test_retry_backoff_after_failure() -> None:
     assert call_count == 2
 
     # Third call: cache is stale but within retry_after backoff — should NOT call get_quota
-    cache_entry2 = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry2 = detector._quota_cache["Quota Agent"]  # pyright: ignore[reportPrivateUsage]
     cache_entry2.cached_at = time.monotonic() - 400  # expire cache again
     # retry_after should still be in the future (set ~300s from now)
 
@@ -288,11 +288,11 @@ async def test_fetched_at_set_on_success() -> None:
     """A successful fetch populates fetched_at as an ISO 8601 string."""
     from datetime import datetime
 
-    stub = _AgentStub(name="User Managed", quota=AgentQuota(balance_usd=5.0))
+    stub = _AgentStub(name="Quota Agent", quota=AgentQuota(balance_usd=5.0))
     detector = ToolDetector(agents=[stub])
 
     options = await _with_quotas(detector)
-    um = next(o for o in options if o.name == "User Managed")
+    um = next(o for o in options if o.name == "Quota Agent")
 
     assert um.quota is not None
     assert um.quota.fetched_at is not None
@@ -306,7 +306,7 @@ async def test_fetched_at_preserved_after_failure() -> None:
     call_count = 0
 
     class _TimedFailStub:
-        name = "User Managed"
+        name = "Quota Agent"
 
         def get_quota(self) -> AgentQuota | None:
             nonlocal call_count
@@ -319,18 +319,18 @@ async def test_fetched_at_preserved_after_failure() -> None:
 
     # First call succeeds
     options1 = await _with_quotas(detector)
-    um1 = next(o for o in options1 if o.name == "User Managed")
+    um1 = next(o for o in options1 if o.name == "Quota Agent")
     assert um1.quota is not None
     fetched_at_1 = um1.quota.fetched_at
     assert fetched_at_1 is not None
 
     # Expire cache
-    cache_entry = detector._quota_cache["User Managed"]  # pyright: ignore[reportPrivateUsage]
+    cache_entry = detector._quota_cache["Quota Agent"]  # pyright: ignore[reportPrivateUsage]
     cache_entry.cached_at = time.monotonic() - 400
 
     # Second call fails
     options2 = await _with_quotas(detector)
-    um2 = next(o for o in options2 if o.name == "User Managed")
+    um2 = next(o for o in options2 if o.name == "Quota Agent")
     assert um2.quota is not None
     # fetched_at should be the same as after the first (successful) call
     assert um2.quota.fetched_at == fetched_at_1

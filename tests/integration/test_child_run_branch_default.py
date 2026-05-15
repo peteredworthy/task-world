@@ -8,7 +8,13 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api import ToolHandler
-from orchestrator.config.enums import Priority, RoutineSource, RunStatus, TaskStatus
+from orchestrator.config.enums import (
+    AgentRunnerType,
+    Priority,
+    RoutineSource,
+    RunStatus,
+    TaskStatus,
+)
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import WorkflowService
@@ -61,6 +67,7 @@ def _make_parent_run(*, run_id: str, repo_name: str) -> Run:
         repo_name=repo_name,
         source_branch="main",
         status=RunStatus.DRAFT,
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
         routine_id="test-routine",
         routine_source=RoutineSource.LOCAL,
         steps=[
@@ -99,7 +106,7 @@ async def test_rest_child_run_defaults_to_parent_accumulation_branch(
             "routine_id": "simple-routine",
             "repo_name": git_repo.name,
             "branch": "main",
-            "agent_runner_type": "user_managed",
+            "agent_runner_type": "cli_subprocess",
         },
     )
     assert parent_resp.status_code == 201, parent_resp.text

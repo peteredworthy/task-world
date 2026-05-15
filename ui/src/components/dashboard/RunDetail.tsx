@@ -11,7 +11,6 @@ import { useReviewMerge } from '../../context/useReviewMerge';
 import { useWebSocketStatus } from '../../hooks/useWebSocketStatus';
 import { RunStatusBadge } from '../StatusBadge';
 import { ConnectionIndicator } from '../ConnectionIndicator';
-import { AgentGuidancePanel } from '../guidance/AgentGuidancePanel';
 import { ResumeDialog } from '../run/ResumeDialog';
 import { ClarificationModal } from '../detail/ClarificationModal';
 import { ApprovalModal } from '../detail/ApprovalModal';
@@ -420,12 +419,6 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
     ? getLastAgentError(events)
     : null;
 
-  // Find active task for guidance panel
-  const activeTask = run.agent_runner_type === 'user_managed'
-    ? run.steps.flatMap(s => s.tasks).find(t => t.status === 'building' || t.status === 'verifying')
-    : null;
-
-
   return (
     <div className="flex h-full">
       {/* Main content area */}
@@ -802,13 +795,6 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
                   </p>
                 )}
               </div>
-            </div>
-          )}
-
-          {/* Agent guidance panel for user_managed */}
-          {activeTask && (
-            <div className="mb-6">
-              <AgentGuidancePanel run={run} />
             </div>
           )}
 

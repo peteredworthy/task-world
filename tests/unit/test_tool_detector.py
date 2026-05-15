@@ -7,7 +7,6 @@ coverage here stays deterministic and does not inspect Docker, Codex, or PATH.
 
 from collections.abc import Sequence
 
-from orchestrator.config import AgentRunnerType
 from orchestrator.runners import ToolDetector
 
 
@@ -39,12 +38,3 @@ def test_cli_config_uses_select_model_field_with_discovered_models() -> None:
     assert getattr(model, "field_type") == "select"
     assert getattr(model, "options") == ["gpt-5.3-codex", "gpt-5.2"]
     assert getattr(model, "default") == "gpt-5.3-codex"
-
-
-def test_user_managed_detector_entry_is_always_available() -> None:
-    option = ToolDetector()._detect_user_managed()  # pyright: ignore[reportPrivateUsage]
-
-    assert option.agent_runner_type == AgentRunnerType.USER_MANAGED
-    assert option.name == "User Managed"
-    assert option.available is True
-    assert option.config_schema
