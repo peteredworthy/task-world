@@ -117,6 +117,26 @@ _SELF_PAUSING_REASONS: frozenset[str] = frozenset(
 )
 
 
+# Cascade pause reasons: mirror parent intent. Errors keep the literal
+# `parent_<reason>` so retryability checks remain stable; human-actionable
+# pauses get a clearer label so children + dashboards can distinguish
+# "human is reviewing parent" from "parent crashed".
+_HUMAN_ACTIONABLE_CASCADE_REASONS: dict[str, str] = {
+    "requirement_escalated": "parent_escalated_requirement",
+    "awaiting_clarification": "parent_awaiting_clarification",
+    "manual_pause": "parent_paused_manual",
+    "gate_blocked": "parent_gate_blocked",
+}
+
+
+def _cascade_reason_for(parent_reason: str) -> str:
+    """Map a parent's pause_reason to the child's cascade pause_reason."""
+    mapped = _HUMAN_ACTIONABLE_CASCADE_REASONS.get(parent_reason)
+    if mapped is not None:
+        return mapped
+    return f"parent_{parent_reason}"
+
+
 @dataclass
 class RecoveryResult:
     """Result of a run recovery operation.
@@ -533,7 +553,7 @@ class WorkflowService:
             return
 
         children = await self._repo.list_child_runs(parent.id, include_action_logs=False)
-        control_reason = f"parent_{reason}"
+        control_reason = _cascade_reason_for(reason)
 
         for child in children:
             if child.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
@@ -580,7 +600,16 @@ class WorkflowService:
         reason: str,
         error_detail: str | None = None,
     ) -> None:
-        """Pause a single child run via direct workflow-engine mutation."""
+        """Pause a single child run via direct workflow-engine mutation.
+
+        Also enqueues a PAUSE signal on the child's queue so the child's
+        RunWorkflow can observe the cascade and exit its execution loop on
+        the next iteration. Without the signal the child's loop only
+        notices the cascade when it next reads run state from the DB,
+        which can be a long time if it is mid-subprocess (e.g. waiting on
+        an LLM turn) — a window during which the child's nudger may kill
+        the subprocess for spurious "stuck" reasons.
+        """
         engine, state, buffer = self._build_engine(child)
         managed_child = state.get_run(child.id)
         if managed_child.status == RunStatus.ACTIVE:
@@ -591,6 +620,25 @@ class WorkflowService:
         self._mark_paused_open_attempts(managed_child, now=self._clock.now())
         state.update_run(managed_child)
         await self._persist(state, child.id, buffer)
+
+        # Best-effort PAUSE signal so the child's loop exits cleanly between
+        # iterations. Failures here are non-fatal — the DB state change above
+        # is the source of truth.
+        import logging as _logging
+
+        _cascade_logger = _logging.getLogger(__name__)
+        try:
+            queue = self._get_signal_queue()
+            await queue.enqueue(
+                child.id,
+                WorkflowSignal.PAUSE,
+                {"reason": reason, "cascade_from_parent": True},
+            )
+        except Exception:
+            _cascade_logger.debug(
+                f"Run {child.id}: failed to enqueue cascade PAUSE signal "
+                "(child DB state already paused)"
+            )
 
     async def _cancel_child_run(self, child: Run, reason: str) -> None:
         """Cancel a single child run via direct workflow-engine mutation."""
@@ -2414,13 +2462,17 @@ class WorkflowService:
     async def list_runs(self, limit: int | None = None) -> list[Run]:
         """List all runs, optionally limited to the most recent N runs."""
         return await self._with_current_oversight_for_runs(
-            await self._repo.list_all(limit=limit, include_action_logs=False)
+            await self._repo.list_all(
+                limit=limit, include_action_logs=False, include_routine_embedded=False
+            )
         )
 
     async def list_runs_recent(self, hours: int) -> list[Run]:
         """List runs created within the last N hours."""
         return await self._with_current_oversight_for_runs(
-            await self._repo.list_recent(hours, include_action_logs=False)
+            await self._repo.list_recent(
+                hours, include_action_logs=False, include_routine_embedded=False
+            )
         )
 
     async def list_repo_names(self) -> list[str]:
@@ -2430,25 +2482,36 @@ class WorkflowService:
     async def list_runs_by_repo(self, repo_name: str) -> list[Run]:
         """List runs for a repository."""
         return await self._with_current_oversight_for_runs(
-            await self._repo.list_by_repo(repo_name, include_action_logs=False)
+            await self._repo.list_by_repo(
+                repo_name, include_action_logs=False, include_routine_embedded=False
+            )
         )
 
     async def list_runs_by_status(self, status: RunStatus) -> list[Run]:
         """List runs filtered by status."""
         return await self._with_current_oversight_for_runs(
-            await self._repo.list_by_status(status, include_action_logs=False)
+            await self._repo.list_by_status(
+                status, include_action_logs=False, include_routine_embedded=False
+            )
         )
 
     async def list_runs_by_repo_and_status(self, repo_name: str, status: RunStatus) -> list[Run]:
         """List runs filtered by both repository and status."""
         return await self._with_current_oversight_for_runs(
-            await self._repo.list_by_repo_and_status(repo_name, status, include_action_logs=False)
+            await self._repo.list_by_repo_and_status(
+                repo_name,
+                status,
+                include_action_logs=False,
+                include_routine_embedded=False,
+            )
         )
 
     async def list_child_runs(self, parent_run_id: str) -> list[Run]:
         """List child runs linked to an oversight parent run."""
         await self._repo.get(parent_run_id)
-        return await self._repo.list_child_runs(parent_run_id, include_action_logs=False)
+        return await self._repo.list_child_runs(
+            parent_run_id, include_action_logs=False, include_routine_embedded=False
+        )
 
     async def get_parent_oversight(self, parent_run_id: str) -> dict[str, Any]:
         """Return current deterministic oversight state for a parent run."""

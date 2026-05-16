@@ -212,6 +212,18 @@ class PhaseHandler:
             # flush the same task a second time.
             if session is not None:
                 session.expire_all()
+            # If the run paused mid-attempt (e.g. requirement_escalated,
+            # awaiting_clarification, manual_pause), don't try to submit. The
+            # CLI exited cleanly because the agent acknowledged the pause; a
+            # post-exit submit would only raise InvalidTransitionError.
+            current_run = await service.get_run(run.id)
+            if current_run.status != RunStatus.ACTIVE:
+                logger.info(
+                    f"Run {run.id}: status is {current_run.status.value} "
+                    f"(pause_reason={current_run.pause_reason!r}); skipping "
+                    f"post-exit submit for task {task_state.id}"
+                )
+                return
             current_task = await service.get_task(run.id, task_state.id)
             if current_task.status != TaskStatus.BUILDING:
                 logger.info(

@@ -56,8 +56,8 @@ from orchestrator.time_utils import (
 
 
 def _agent_runner_type(value: str | None) -> AgentRunnerType | None:
-    """Parse persisted runner type, tolerating legacy script markers."""
-    if value is None or value == "script":
+    """Parse persisted runner type, tolerating legacy runner markers."""
+    if value is None or value in {"script", "user_managed"}:
         return None
     try:
         return AgentRunnerType(value)
@@ -86,13 +86,23 @@ def _ensure_utc_optional(dt: datetime | None) -> datetime | None:
 _UNSET = object()
 
 
-def _eager_run_query(*, include_action_logs: bool = True) -> Any:  # noqa: ANN401
+def _eager_run_query(
+    *,
+    include_action_logs: bool = True,
+    include_routine_embedded: bool = True,
+) -> Any:  # noqa: ANN401
     """Build a select query with all relationships eagerly loaded.
 
     Args:
         include_action_logs: If False, defers loading of large text/JSON
-            columns (action_log_json, builder/verifier prompts, agent_output,
-            routine_embedded) that are not needed for list/summary views.
+            columns (action_log_json, builder/verifier prompts, agent_output)
+            that are not needed for list/summary views.
+        include_routine_embedded: If False, defers the routine_embedded
+            column for list/summary endpoints where the full workflow
+            definition is not needed. Must be True for execution paths
+            (startup recovery, executor task lookup) — otherwise the
+            executor raises "Cannot execute task without routine config"
+            on embedded child runs.
     """
     attempt_load = selectinload(TaskModel.attempts)
     if not include_action_logs:
@@ -105,12 +115,17 @@ def _eager_run_query(*, include_action_logs: bool = True) -> Any:  # noqa: ANN40
     query = select(RunModel).options(
         selectinload(RunModel.steps).selectinload(StepModel.tasks).options(attempt_load)
     )
-    if not include_action_logs:
+    if not include_routine_embedded:
         query = query.options(defer(RunModel.routine_embedded))
     return query
 
 
-def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
+def _to_domain(
+    model: RunModel,
+    *,
+    action_logs_loaded: bool = True,
+    routine_embedded_loaded: bool = True,
+) -> Run:
     """Convert ORM model to domain Pydantic model.
 
     When action_logs_loaded is False, deferred columns (action_log_json,
@@ -268,7 +283,7 @@ def _to_domain(model: RunModel, *, action_logs_loaded: bool = True) -> Run:
         routine_id=model.routine_id,
         routine_sha=model.routine_sha,
         routine_source=RoutineSource(model.routine_source) if model.routine_source else None,
-        routine_embedded=model.routine_embedded if action_logs_loaded else None,
+        routine_embedded=model.routine_embedded if routine_embedded_loaded else None,
         routine_path=model.routine_path,
         routine_commit=model.routine_commit,
         parent_run_id=model.parent_run_id,
@@ -487,80 +502,149 @@ class RunRepository:
         return _to_domain(model)
 
     async def list_all(
-        self, limit: int | None = None, *, include_action_logs: bool = True
+        self,
+        limit: int | None = None,
+        *,
+        include_action_logs: bool = True,
+        include_routine_embedded: bool = True,
     ) -> list[Run]:
         """List all runs, optionally limited to the most recent N runs."""
-        query = _eager_run_query(include_action_logs=include_action_logs).order_by(
-            RunModel.created_at.desc()
-        )
+        query = _eager_run_query(
+            include_action_logs=include_action_logs,
+            include_routine_embedded=include_routine_embedded,
+        ).order_by(RunModel.created_at.desc())
         if limit is not None:
             query = query.limit(limit)
         result = await self._session.execute(query)
         return [
-            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+            _to_domain(
+                m,
+                action_logs_loaded=include_action_logs,
+                routine_embedded_loaded=include_routine_embedded,
+            )
+            for m in result.scalars().all()
         ]
 
-    async def list_by_repo(self, repo_name: str, *, include_action_logs: bool = True) -> list[Run]:
+    async def list_by_repo(
+        self,
+        repo_name: str,
+        *,
+        include_action_logs: bool = True,
+        include_routine_embedded: bool = True,
+    ) -> list[Run]:
         """List runs filtered by repository name."""
         result = await self._session.execute(
-            _eager_run_query(include_action_logs=include_action_logs).where(
-                RunModel.repo_name == repo_name
-            )
+            _eager_run_query(
+                include_action_logs=include_action_logs,
+                include_routine_embedded=include_routine_embedded,
+            ).where(RunModel.repo_name == repo_name)
         )
         return [
-            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+            _to_domain(
+                m,
+                action_logs_loaded=include_action_logs,
+                routine_embedded_loaded=include_routine_embedded,
+            )
+            for m in result.scalars().all()
         ]
 
     async def list_by_status(
-        self, status: RunStatus, *, include_action_logs: bool = True
+        self,
+        status: RunStatus,
+        *,
+        include_action_logs: bool = True,
+        include_routine_embedded: bool = True,
     ) -> list[Run]:
         """List runs filtered by status."""
         result = await self._session.execute(
-            _eager_run_query(include_action_logs=include_action_logs).where(
-                RunModel.status == status.value
-            )
+            _eager_run_query(
+                include_action_logs=include_action_logs,
+                include_routine_embedded=include_routine_embedded,
+            ).where(RunModel.status == status.value)
         )
         return [
-            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+            _to_domain(
+                m,
+                action_logs_loaded=include_action_logs,
+                routine_embedded_loaded=include_routine_embedded,
+            )
+            for m in result.scalars().all()
         ]
 
     async def list_child_runs(
-        self, parent_run_id: str, *, include_action_logs: bool = True
+        self,
+        parent_run_id: str,
+        *,
+        include_action_logs: bool = True,
+        include_routine_embedded: bool = True,
     ) -> list[Run]:
         """List child runs for an oversight parent run."""
         result = await self._session.execute(
-            _eager_run_query(include_action_logs=include_action_logs)
+            _eager_run_query(
+                include_action_logs=include_action_logs,
+                include_routine_embedded=include_routine_embedded,
+            )
             .where(RunModel.parent_run_id == parent_run_id)
             .order_by(RunModel.created_at.asc())
         )
         return [
-            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+            _to_domain(
+                m,
+                action_logs_loaded=include_action_logs,
+                routine_embedded_loaded=include_routine_embedded,
+            )
+            for m in result.scalars().all()
         ]
 
     async def list_by_repo_and_status(
-        self, repo_name: str, status: RunStatus, *, include_action_logs: bool = True
+        self,
+        repo_name: str,
+        status: RunStatus,
+        *,
+        include_action_logs: bool = True,
+        include_routine_embedded: bool = True,
     ) -> list[Run]:
         """List runs filtered by both repository name and status."""
         result = await self._session.execute(
-            _eager_run_query(include_action_logs=include_action_logs).where(
+            _eager_run_query(
+                include_action_logs=include_action_logs,
+                include_routine_embedded=include_routine_embedded,
+            ).where(
                 RunModel.repo_name == repo_name,
                 RunModel.status == status.value,
             )
         )
         return [
-            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+            _to_domain(
+                m,
+                action_logs_loaded=include_action_logs,
+                routine_embedded_loaded=include_routine_embedded,
+            )
+            for m in result.scalars().all()
         ]
 
-    async def list_recent(self, hours: int, *, include_action_logs: bool = True) -> list[Run]:
+    async def list_recent(
+        self,
+        hours: int,
+        *,
+        include_action_logs: bool = True,
+        include_routine_embedded: bool = True,
+    ) -> list[Run]:
         """List runs created within the last N hours."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
         result = await self._session.execute(
-            _eager_run_query(include_action_logs=include_action_logs).where(
-                RunModel.created_at >= cutoff
-            )
+            _eager_run_query(
+                include_action_logs=include_action_logs,
+                include_routine_embedded=include_routine_embedded,
+            ).where(RunModel.created_at >= cutoff)
         )
         return [
-            _to_domain(m, action_logs_loaded=include_action_logs) for m in result.scalars().all()
+            _to_domain(
+                m,
+                action_logs_loaded=include_action_logs,
+                routine_embedded_loaded=include_routine_embedded,
+            )
+            for m in result.scalars().all()
         ]
 
     async def list_repo_names(self) -> list[str]:

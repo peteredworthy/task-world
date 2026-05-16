@@ -226,10 +226,15 @@ routine:
           task_context: |
             Wait for the child run with `orchestrator_wait_for_run`, then collect evidence with
             `orchestrator_get_run_evidence` and refresh parent oversight with
-            `orchestrator_refresh_parent_oversight`. Use at most one bounded wait call per attempt
-            (`timeout_seconds` no higher than 300). If the child is still active after that wait,
-            record the active child state in parent oversight and submit rather than repeatedly
-            polling from the LLM context. Treat paused children as meaningful states. Update only
+            `orchestrator_refresh_parent_oversight`. Each wait call may use up to
+            `timeout_seconds: 600`. You may chain up to **3 consecutive bounded waits** on the
+            same child within a single attempt — when a wait times out and the child is still
+            ACTIVE (not paused, not terminal), call wait again. After 3 consecutive timeouts
+            with no terminal state, escalate the requirement (`orchestrator_escalate_requirement`)
+            so a human can decide whether to abandon the stuck child or wait longer; do NOT
+            submit in a blocked state and do NOT poll from the LLM context indefinitely. If the
+            child is PAUSED (any reason), treat that as a meaningful terminal-for-now state and
+            collect/decide on whatever evidence exists. Update only
             `docs/super-parent/current-understanding.md` as a concise human rollup and call
             `orchestrator_update_parent_oversight` with compact structured state before asking for human
             input, accepting a child, or stopping. Keep `current_understanding.ledger` as the machine
@@ -281,7 +286,7 @@ routine:
             - path: "docs/super-parent/current-understanding.md"
               required: true
           retry:
-            max_attempts: 2
+            max_attempts: 4
         - id: "T-02"
           title: "Accept And Merge Child"
           work_mode: "oversight"
@@ -322,7 +327,7 @@ routine:
               desc: "Merge conflicts are recorded as parent attention items rather than hidden."
               priority: critical
           retry:
-            max_attempts: 2
+            max_attempts: 3
       transitions:
         on_condition:
           - condition: "super_parent_has_unresolved_inventory"
@@ -363,7 +368,7 @@ routine:
               desc: "Failures are summarized with impact on the final outcome."
               priority: critical
           retry:
-            max_attempts: 1
+            max_attempts: 2
         - id: "T-02"
           title: "Write Final Report"
           profile: "summarizer"
@@ -395,4 +400,4 @@ routine:
                 cmd: "test -f docs/super-parent/final-report.md"
                 must: true
           retry:
-            max_attempts: 1
+            max_attempts: 2

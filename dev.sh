@@ -5,6 +5,42 @@ set -e
 # Press Ctrl-C to stop both.
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+LOG_ROOT="${TASK_WORLD_LOG_DIR:-$ROOT/.orchestrator/logs/dev}"
+RUN_LOG_DIR="$LOG_ROOT/$(date +%Y%m%d-%H%M%S)"
+COMBINED_LOG="$RUN_LOG_DIR/dev.log"
+BACKEND_LOG="$RUN_LOG_DIR/backend.log"
+FRONTEND_LOG="$RUN_LOG_DIR/frontend.log"
+SCRIPT_LOG="$RUN_LOG_DIR/script.log"
+
+mkdir -p "$RUN_LOG_DIR"
+ln -sfn "$RUN_LOG_DIR" "$LOG_ROOT/latest"
+
+write_log_line() {
+  local line="$1"
+  local component_log="${2:-}"
+
+  printf '%s\n' "$line"
+  printf '%s\n' "$line" >> "$COMBINED_LOG"
+  if [ -n "$component_log" ]; then
+    printf '%s\n' "$line" >> "$component_log"
+  fi
+}
+
+log() {
+  write_log_line "[$(date '+%Y-%m-%dT%H:%M:%S%z')] [dev] $*" "$SCRIPT_LOG"
+}
+
+timestamp_stream() {
+  local component="$1"
+  local component_log="$2"
+  local line
+
+  while IFS= read -r line; do
+    write_log_line "[$(date '+%Y-%m-%dT%H:%M:%S%z')] [$component] $line" "$component_log"
+  done
+}
+
+log "Writing dev logs to $RUN_LOG_DIR"
 
 # --- Worktree startup guard ---
 # If .git is a file (not a directory), we're in a worktree — refuse to run dev.sh
@@ -27,15 +63,17 @@ fi
 
 cleanup() {
   trap - EXIT INT TERM
-  echo ""
-  echo "Shutting down..."
+  log "Shutting down..."
   if [ -n "${FRONTEND_SUPERVISOR_PID:-}" ]; then
+    log "Stopping frontend supervisor PID $FRONTEND_SUPERVISOR_PID"
     kill "$FRONTEND_SUPERVISOR_PID" 2>/dev/null || true
   fi
   if [ -n "${BACKEND_PID:-}" ]; then
+    log "Stopping backend PID $BACKEND_PID"
     kill "$BACKEND_PID" 2>/dev/null || true
   fi
   wait 2>/dev/null || true
+  log "Shutdown complete"
 }
 trap cleanup EXIT INT TERM
 
@@ -53,12 +91,13 @@ run_frontend_supervisor() {
   trap shutdown_frontend INT TERM
 
   while true; do
-    echo "Starting frontend on http://localhost:5173 ..."
+    log "Starting frontend on http://localhost:5173 ..."
     (
       cd "$ROOT/ui"
       npm run dev
-    ) &
+    ) > >(timestamp_stream "frontend" "$FRONTEND_LOG") 2>&1 &
     frontend_pid=$!
+    log "Frontend PID $frontend_pid"
 
     set +e
     wait "$frontend_pid"
@@ -66,7 +105,7 @@ run_frontend_supervisor() {
     set -e
     frontend_pid=""
 
-    echo "Frontend exited with status $status; restarting in 2 seconds..."
+    log "Frontend exited with status $status; restarting in 2 seconds..."
     sleep 2
   done
 }
@@ -76,40 +115,40 @@ run_frontend_supervisor() {
 # requests get load-balanced between them, and one has no executor for the run.
 STALE_PIDS=$(lsof -ti :8000 2>/dev/null || true)
 if [ -n "$STALE_PIDS" ]; then
-  echo "Found existing process(es) on port 8000 (PIDs: $(echo $STALE_PIDS | tr '\n' ' '))"
-  echo "Killing to prevent duplicate-server executor death loop..."
+  log "Found existing process(es) on port 8000 (PIDs: $(echo $STALE_PIDS | tr '\n' ' '))"
+  log "Killing to prevent duplicate-server executor death loop..."
   echo "$STALE_PIDS" | xargs kill 2>/dev/null || true
   # Wait briefly for processes to exit
   sleep 1
   # Force-kill any that didn't respond to SIGTERM
   REMAINING=$(lsof -ti :8000 2>/dev/null || true)
   if [ -n "$REMAINING" ]; then
-    echo "Force-killing remaining processes: $REMAINING"
+    log "Force-killing remaining processes: $REMAINING"
     echo "$REMAINING" | xargs kill -9 2>/dev/null || true
     sleep 1
   fi
-  echo "Port 8000 cleared."
+  log "Port 8000 cleared."
 fi
 
 # --- Kill stale Vite processes on port 5173 ---
 # Same issue: orphaned Vite processes hold the port, then die, leaving the UI unreachable.
 STALE_VITE=$(lsof -ti :5173 2>/dev/null || true)
 if [ -n "$STALE_VITE" ]; then
-  echo "Found existing process(es) on port 5173 (PIDs: $(echo $STALE_VITE | tr '\n' ' '))"
-  echo "Killing stale Vite processes..."
+  log "Found existing process(es) on port 5173 (PIDs: $(echo $STALE_VITE | tr '\n' ' '))"
+  log "Killing stale Vite processes..."
   echo "$STALE_VITE" | xargs kill 2>/dev/null || true
   sleep 1
   REMAINING_VITE=$(lsof -ti :5173 2>/dev/null || true)
   if [ -n "$REMAINING_VITE" ]; then
-    echo "Force-killing remaining: $REMAINING_VITE"
+    log "Force-killing remaining: $REMAINING_VITE"
     echo "$REMAINING_VITE" | xargs kill -9 2>/dev/null || true
     sleep 1
   fi
-  echo "Port 5173 cleared."
+  log "Port 5173 cleared."
 fi
 
 # Backend (FastAPI + uvicorn --reload)
-echo "Starting backend on http://localhost:8000 ..."
+log "Starting backend on http://localhost:8000 ..."
 (
   cd "$ROOT"
   uv run uvicorn scripts.serve:app \
@@ -117,18 +156,20 @@ echo "Starting backend on http://localhost:8000 ..."
     --reload-dir "$ROOT/src" \
     --reload-dir "$ROOT/scripts" \
     --port 8000
-) &
+) > >(timestamp_stream "backend" "$BACKEND_LOG") 2>&1 &
 BACKEND_PID=$!
+log "Backend PID $BACKEND_PID"
 
 # Frontend (Vite HMR, restarted if it exits unexpectedly)
 run_frontend_supervisor &
 FRONTEND_SUPERVISOR_PID=$!
+log "Frontend supervisor PID $FRONTEND_SUPERVISOR_PID"
 
 set +e
 wait "$BACKEND_PID"
 BACKEND_STATUS=$?
 set -e
 
-echo "Backend exited with status $BACKEND_STATUS."
+log "Backend exited with status $BACKEND_STATUS."
 cleanup
 exit "$BACKEND_STATUS"

@@ -232,29 +232,47 @@ async def test_list_all(repo: RunRepository) -> None:
     assert ids == {"run-1", "run-2"}
 
 
-async def test_list_all_tolerates_legacy_script_runner_type(
-    session: AsyncSession, repo: RunRepository
+async def test_list_all_tolerates_legacy_runner_type_markers(
+    session: AsyncSession,
+    repo: RunRepository,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-    session.add(
-        RunModel(
-            id="legacy-script-run",
-            repo_name="proj-1",
-            status="completed",
-            runner_type="script",
-            runner_config={},
-            config={},
-            created_at=now,
-            updated_at=now,
+    session.add_all(
+        (
+            RunModel(
+                id="legacy-script-run",
+                repo_name="proj-1",
+                status="completed",
+                runner_type="script",
+                runner_config={},
+                config={},
+                created_at=now,
+                updated_at=now,
+            ),
+            RunModel(
+                id="legacy-user-managed-run",
+                repo_name="proj-1",
+                status="completed",
+                runner_type="user_managed",
+                runner_config={},
+                config={},
+                created_at=now,
+                updated_at=now,
+            ),
         )
     )
     await session.flush()
 
-    runs = await repo.list_all()
-    loaded = await repo.get("legacy-script-run")
+    with caplog.at_level("WARNING", logger="orchestrator.db.access.repositories"):
+        runs = await repo.list_all()
+        script_run = await repo.get("legacy-script-run")
+        user_managed_run = await repo.get("legacy-user-managed-run")
 
-    assert [run.id for run in runs] == ["legacy-script-run"]
-    assert loaded.agent_runner_type is None
+    assert {run.id for run in runs} == {"legacy-script-run", "legacy-user-managed-run"}
+    assert script_run.agent_runner_type is None
+    assert user_managed_run.agent_runner_type is None
+    assert "Unknown persisted agent runner type" not in caplog.text
 
 
 async def test_list_by_repo(repo: RunRepository) -> None:

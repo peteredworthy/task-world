@@ -1,5 +1,7 @@
 """Workflow engine and orchestration - all public symbols exhaustively re-exported."""
 
+from typing import TYPE_CHECKING, Any
+
 from orchestrator.workflow.artifacts import Artifact, ArtifactRegistry
 from orchestrator.workflow.child_templates import (
     ChildSliceSpec,
@@ -158,11 +160,10 @@ from orchestrator.workflow.agent import (
     resolve_variables,
     truncate_to_tokens,
 )
-from orchestrator.workflow.service import (
-    WorkflowService,
-    find_step_config,
-    find_task_config,
-)
+
+if TYPE_CHECKING:
+    from orchestrator.workflow.parent_oversight import ParentOversightService
+    from orchestrator.workflow.service import WorkflowService, find_step_config, find_task_config
 from orchestrator.workflow.completion import handle_run_completion
 from orchestrator.workflow.dry_run import (
     DryRunResult,
@@ -230,7 +231,6 @@ from orchestrator.workflow.oversight_facts import (
     durable_parent_oversight_patch,
     extract_parent_oversight_facts,
 )
-from orchestrator.workflow.parent_oversight import ParentOversightService
 from orchestrator.workflow.merge_readiness import (
     Gate,
     MergeReadiness,
@@ -447,3 +447,24 @@ __all__ = [
     "validate_run_evidence_item",
     "validate_run_evidence_items",
 ]
+
+
+def __getattr__(name: str) -> Any:  # noqa: ANN401
+    if name == "ParentOversightService":
+        from orchestrator.workflow.parent_oversight import ParentOversightService
+
+        return ParentOversightService
+    if name in {"WorkflowService", "find_step_config", "find_task_config"}:
+        from orchestrator.workflow.service import (
+            WorkflowService,
+            find_step_config,
+            find_task_config,
+        )
+
+        values = {
+            "WorkflowService": WorkflowService,
+            "find_step_config": find_step_config,
+            "find_task_config": find_task_config,
+        }
+        return values[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

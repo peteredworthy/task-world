@@ -522,7 +522,7 @@ async def test_apply_pause_run_pauses_active_child_and_marks_open_attempts(
 
     paused_child = await service.get_run("child")
     assert paused_child.status == RunStatus.PAUSED
-    assert paused_child.pause_reason == "parent_manual_pause"
+    assert paused_child.pause_reason == "parent_paused_manual"
     attempt = paused_child.steps[0].tasks[0].attempts[0]
     assert attempt.paused_at is not None
     assert attempt.outcome == "paused"

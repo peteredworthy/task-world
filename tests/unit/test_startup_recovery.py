@@ -74,6 +74,9 @@ def test_startup_recovery_accepts_parent_prefixed_reasons() -> None:
     assert _is_startup_recoverable_pause_reason("parent_executor_not_started") is True
     assert _is_startup_recoverable_pause_reason("parent_agent_not_running_on_startup") is True
     assert _is_startup_recoverable_pause_reason("parent_manual_pause") is False
+    assert _is_startup_recoverable_pause_reason("parent_paused_manual") is False
+    assert _is_startup_recoverable_pause_reason("parent_escalated_requirement") is False
+    assert _is_startup_recoverable_pause_reason("parent_awaiting_clarification") is False
     assert _is_startup_recoverable_pause_reason("parent_cancel") is False
 
 
@@ -128,6 +131,8 @@ def test_is_retryable_runner_pause_state_strips_parent_prefix() -> None:
     assert _is_retryable_runner_pause_state(make_run("parent_server_shutdown")) is True
     assert _is_retryable_runner_pause_state(make_run("parent_rate_limit")) is True
     assert _is_retryable_runner_pause_state(make_run("parent_manual_pause")) is False
+    assert _is_retryable_runner_pause_state(make_run("parent_paused_manual")) is False
+    assert _is_retryable_runner_pause_state(make_run("parent_escalated_requirement")) is False
     assert _is_retryable_runner_pause_state(make_run("manual_pause")) is False
 
 
@@ -148,6 +153,8 @@ def test_oversight_is_retryable_runner_pause_strips_parent_prefix() -> None:
     assert _is_retryable_runner_pause(make_run("server_shutdown")) is True
     assert _is_retryable_runner_pause(make_run("parent_server_shutdown")) is True
     assert _is_retryable_runner_pause(make_run("parent_manual_pause")) is False
+    assert _is_retryable_runner_pause(make_run("parent_paused_manual")) is False
+    assert _is_retryable_runner_pause(make_run("parent_escalated_requirement")) is False
 
 
 @pytest.mark.asyncio
@@ -232,6 +239,116 @@ async def test_deferred_startup_recovery_resumes_restart_paused_run() -> None:
     assert recovered.status == RunStatus.ACTIVE
     assert recovered.pause_reason is None
     assert executor.spawned == [(run_id, AgentRunnerType.CODEX_SERVER, {"model": "gpt-5.4-mini"})]
+
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_startup_recovery_resumes_cascade_child_before_parent() -> None:
+    """End-to-end: parent paused as server_shutdown, child as parent_server_shutdown.
+
+    Before the fix the child was filtered out of the recovery allow list and
+    the parent woke up to a non-terminal blocking child. After the fix both
+    are recovered, and the child is resumed before the parent so the parent's
+    oversight observes an ACTIVE child rather than a paused one.
+    """
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+
+    routine = RoutineConfig(
+        id="cascade-recovery-routine",
+        name="Cascade Recovery Routine",
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Step 1",
+                tasks=[
+                    TaskConfig(
+                        id="T-01",
+                        title="Task 1",
+                        task_context="Do the work",
+                        requirements=[RequirementConfig(id="R1", desc="Complete the work")],
+                    )
+                ],
+            )
+        ],
+    )
+
+    async def service_factory(session: Any) -> WorkflowService:
+        repo = RunRepository(session)
+        event_store = EventStore(session)
+        emitter = PersistentEventEmitter(event_store)
+        return WorkflowService(
+            session=session,
+            repo=repo,
+            event_store=event_store,
+            event_emitter=emitter,
+            auto_verify_runner=LocalAutoVerifyRunner(),
+        )
+
+    def _build_paused_run(repo_name: str, pause_reason: str) -> Any:
+        run = create_run_from_routine(
+            routine=routine,
+            repo_name=repo_name,
+            source_branch="main",
+        )
+        run.routine_embedded = routine.model_dump(mode="json")
+        run.agent_runner_type = AgentRunnerType.CODEX_SERVER
+        run.agent_runner_config = {"model": "gpt-5.4-mini"}
+        run.status = RunStatus.PAUSED
+        run.pause_reason = pause_reason
+        run.worktree_enabled = False
+        task = run.steps[0].tasks[0]
+        task.status = TaskStatus.BUILDING
+        task.attempts.append(Attempt(attempt_num=1, started_at=datetime.now(timezone.utc)))
+        task.attempts[0].outcome = "paused"
+        task.attempts[0].paused_at = datetime.now(timezone.utc)
+        return run
+
+    async with session_factory() as session:
+        repo = RunRepository(session)
+
+        parent_run = _build_paused_run("parent-repo", "server_shutdown")
+        await repo.save(parent_run)
+
+        child_run = _build_paused_run("child-repo", "parent_server_shutdown")
+        child_run.parent_run_id = parent_run.id
+        await repo.save(child_run)
+
+        await session.commit()
+        parent_id = parent_run.id
+        child_id = child_run.id
+
+    monitor = _NoopStartupMonitor()
+    executor = _RecordingExecutor()
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            session_factory=session_factory,
+            global_config=SimpleNamespace(),
+            runner_monitor=monitor,
+            runner_executor=executor,
+            service_factory=service_factory,
+        )
+    )
+
+    await _run_startup_recovery(cast(Any, app))
+
+    async with session_factory() as session:
+        recovered_parent = await RunRepository(session).get(parent_id)
+        recovered_child = await RunRepository(session).get(child_id)
+
+    assert recovered_parent.status == RunStatus.ACTIVE
+    assert recovered_parent.pause_reason is None
+    assert recovered_child.status == RunStatus.ACTIVE
+    assert recovered_child.pause_reason is None
+
+    spawned_ids = [entry[0] for entry in executor.spawned]
+    assert child_id in spawned_ids
+    assert parent_id in spawned_ids
+    assert spawned_ids.index(child_id) < spawned_ids.index(parent_id), (
+        f"child must be resumed before parent; got order {spawned_ids}"
+    )
 
     await engine.dispose()
 

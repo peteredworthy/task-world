@@ -39,8 +39,11 @@ class DashboardConfig(BaseModel):
 
 class NudgerConfig(BaseModel):
     check_interval_seconds: int = 60
-    nudge_after_seconds: int = 300
-    kill_after_seconds: int = 600
+    # Bumped 300 -> 660 so a 600s `orchestrator_wait_for_run` MCP call cannot
+    # trigger a stuck-nudge while the agent is legitimately blocked on a
+    # bounded wait. Kill window scales accordingly.
+    nudge_after_seconds: int = 660
+    kill_after_seconds: int = 1320
 
     def to_agent_runner_config(self) -> AgentNudgerConfig:
         """Convert to agent NudgerConfig format.

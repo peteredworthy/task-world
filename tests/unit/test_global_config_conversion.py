@@ -29,6 +29,8 @@ def test_nudger_config_to_agent_runner_config_defaults() -> None:
 
     agent_runner_config = config.to_agent_runner_config()
 
-    assert agent_runner_config.output_timeout == timedelta(seconds=300)
+    # Defaults bumped to leave headroom for 600s orchestrator_wait_for_run
+    # MCP calls during oversight tasks (parent waiting on child terminal state).
+    assert agent_runner_config.output_timeout == timedelta(seconds=660)
     assert agent_runner_config.nudge_interval == timedelta(seconds=60)
-    assert agent_runner_config.max_nudges == 2  # 600 / 300
+    assert agent_runner_config.max_nudges == 2  # 1320 / 660

@@ -80,6 +80,33 @@ def test_resolve_does_not_mutate_original() -> None:
     assert original["model"] == "claude-sonnet-4-5"
 
 
+def test_task_profile_overrides_pinned_verifier_model() -> None:
+    """Profile-resolved model wins over run-level verifier_model pin.
+
+    Cheap mechanical-task profiles (e.g. summarizer→haiku) must keep their
+    verifier on the cheap model even when the user pinned a sonnet/opus
+    verifier at run creation. Otherwise oversight tasks pay sonnet rates
+    for trivial grading work.
+    """
+    config = resolve_verifier_config(
+        agent_runner_config={"model": "claude-haiku-4-5", "max_turns": 50},
+        verifier_model="claude-sonnet-4-6",
+        task_has_profile=True,
+    )
+    assert config["model"] == "claude-haiku-4-5"
+    assert config["max_turns"] == 50
+
+
+def test_no_task_profile_still_applies_pinned_verifier_model() -> None:
+    """Without a task profile, the run-level verifier_model pin still applies."""
+    config = resolve_verifier_config(
+        agent_runner_config={"model": "claude-sonnet-4-5"},
+        verifier_model="claude-opus-4-5",
+        task_has_profile=False,
+    )
+    assert config["model"] == "claude-opus-4-5"
+
+
 def test_changing_agent_runner_config_after_creation_does_not_affect_pinned() -> None:
     """Simulates post-creation config change: pinned model wins regardless."""
     run = Run(

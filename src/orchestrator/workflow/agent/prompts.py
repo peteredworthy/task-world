@@ -291,7 +291,19 @@ def generate_verifier_prompt(
             "path instead.\n"
             "- Provide a clear reason for any grade below the passing threshold.\n"
             "- Include specific, actionable remediation guidance for failing items.\n"
-            "- Be thorough but fair. Evaluate the oversight outcome, not implementation style."
+            "- Be thorough but fair. Evaluate the oversight outcome, not implementation style.\n\n"
+            "## Dependency / Blocked Requirement Handling (REQUIRED)\n"
+            "If a requirement cannot be evaluated because it is blocked by an external "
+            "dependency outside the builder's control — for example a child run that has "
+            "not reached a terminal state, an external service that is down, or evidence "
+            "that the builder cannot produce until something else completes — you MUST NOT "
+            "grade it 'A' (which would falsely report success), and you SHOULD NOT grade "
+            "it 'D'/'F' (which would loop the builder on a problem they cannot fix). "
+            "Instead call `orchestrator_escalate_requirement` with a concise reason "
+            "describing the dependency, what was waited on, and what a human can decide. "
+            "Escalating the requirement pauses the run for human review and is the correct "
+            "outcome for genuine dependency failures. Reserve grades A/B/C/D/F for cases "
+            "where the builder's oversight decision itself is what you are judging."
         )
     else:
         system = (
@@ -323,7 +335,15 @@ def generate_verifier_prompt(
             "Do not invent requirements or interpretations beyond what the rubric states.\n"
             "- Provide a clear reason for any grade below the passing threshold.\n"
             "- Include specific, actionable remediation guidance for failing items.\n"
-            "- Be thorough but fair. Evaluate what was actually built, not style preferences."
+            "- Be thorough but fair. Evaluate what was actually built, not style preferences.\n\n"
+            "## Dependency / Blocked Requirement Handling (REQUIRED)\n"
+            "If a requirement cannot be evaluated because it is blocked by an external "
+            "dependency outside the builder's control (e.g. a downstream service down, a "
+            "missing third-party credential, a child run not yet terminal), do NOT grade "
+            "it 'A' and do NOT loop the builder with 'D'/'F'. Call "
+            "`orchestrator_escalate_requirement` with a concise reason describing the "
+            "dependency and what a human can decide. Escalating pauses the run for human "
+            "review and is the correct outcome for genuine dependency failures."
         )
 
     rubric_section = "\n".join(rubric) if rubric else "Evaluate based on requirements only."

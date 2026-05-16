@@ -8,6 +8,10 @@ export function getPauseReasonMessage(run: Pick<RunResponse, 'pause_reason' | 'a
   }
 
   const messages: Record<string, string> = {
+    parent_paused_manual: 'Paused — parent run was paused manually',
+    parent_escalated_requirement: 'Paused — parent run escalated a requirement; awaiting human review',
+    parent_awaiting_clarification: 'Paused — parent run is awaiting human clarification',
+    parent_gate_blocked: 'Paused — parent run is blocked at a checklist gate',
     server_shutdown: 'Paused — server restarted; resume will continue from the current task',
     executor_not_started: 'Paused — executor startup safety marker; this should clear automatically within a few seconds',
     agent_not_available: 'Paused — selected agent runner is not available',

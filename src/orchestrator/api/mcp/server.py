@@ -42,6 +42,12 @@ VERIFIER_TOOLS = {
     "orchestrator_set_grade",
     "orchestrator_submit",
     "orchestrator_complete_recovery",
+    # Verifier may escalate or request human clarification when a requirement
+    # is blocked by an external dependency the builder cannot resolve. Without
+    # these tools the verifier's only options are grade-A (false success) or
+    # grade-D/F (loops the builder on a problem they cannot fix).
+    "orchestrator_escalate_requirement",
+    "orchestrator_request_clarification",
 }
 
 # All tools registered regardless of phase; runtime validation prevents phase-inappropriate calls

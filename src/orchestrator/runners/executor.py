@@ -74,15 +74,23 @@ HealthCheckRunner = Callable[[str, str], Awaitable[HealthCheckCommandResult]]
 def resolve_verifier_config(
     agent_runner_config: dict[str, Any],
     verifier_model: str | None,
+    *,
+    task_has_profile: bool = False,
 ) -> dict[str, Any]:
     """Build the effective agent runner config for the verifier phase.
 
     If *verifier_model* is set (pinned at run creation), it overrides the
-    ``model`` key in *agent_runner_config*.  Otherwise *agent_runner_config* is returned
-    as-is (shallow copy).  This is a pure function so it can be unit-tested
-    without mocking executor internals.
+    ``model`` key in *agent_runner_config*. Profile-resolved models take
+    precedence: when *task_has_profile* is True, *agent_runner_config*
+    already reflects the task's profile→model mapping (resolved upstream)
+    and the run-level *verifier_model* is ignored. This keeps mechanical
+    oversight tasks (e.g. summarizer→haiku) on their cheap model even when
+    the user pinned a larger sonnet/opus verifier at run creation.
+    Otherwise *agent_runner_config* is returned as-is (shallow copy).
     """
     config = dict(agent_runner_config)
+    if task_has_profile:
+        return config
     if verifier_model is not None:
         config["model"] = verifier_model
     return config
@@ -1630,8 +1638,14 @@ class AgentRunnerExecutor:
         logger.info(f"Task {task_state.id}: running verifier agent for rubric evaluation")
         phase = self._phase_for_task_status(task_state.status)
 
-        # Use pinned verifier model from run state (snapshotted at creation time)
-        effective_verifier_config = resolve_verifier_config(agent_runner_config, run.verifier_model)
+        # Use pinned verifier model from run state (snapshotted at creation time).
+        # If the task carries a profile, agent_runner_config already reflects the
+        # profile-resolved model; the run-level verifier_model must not override it.
+        effective_verifier_config = resolve_verifier_config(
+            agent_runner_config,
+            run.verifier_model,
+            task_has_profile=task_config.profile is not None,
+        )
 
         # Create the agent for verification (pass run_id for death detection)
         agent = self._create_agent(

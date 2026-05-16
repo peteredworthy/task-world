@@ -352,7 +352,9 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
         "name": "orchestrator_wait_for_run",
         "description": (
             "Wait for a run to complete, fail, or pause, then return its current status. "
-            "If timed_out is true, do not poll repeatedly in the same LLM turn."
+            "If timed_out is true, you may call again with another bounded wait, but "
+            "after a few consecutive timeouts on the same child, escalate the "
+            "requirement instead of polling indefinitely."
         ),
         "inputSchema": {
             "type": "object",
@@ -360,7 +362,7 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
                 "run_id": {"type": "string", "description": "Run ID to observe"},
                 "timeout_seconds": {
                     "type": "number",
-                    "description": "Maximum seconds to wait, capped at 300",
+                    "description": "Maximum seconds to wait, capped at 600",
                 },
             },
             "required": ["run_id"],
@@ -583,6 +585,28 @@ class ToolHandler:
     async def _submit(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
         task_id: str = args["task_id"]
+        # If the run is already paused for human review (escalation or
+        # clarification), treat submit as a no-op success instead of letting
+        # submit_for_verification raise InvalidTransitionError. Surfacing the
+        # error wraps to AgentExecutionError and falsely marks the attempt
+        # failed even though escalation was the correct outcome.
+        run = await self._service.get_run(run_id)
+        if run.status.value == "paused" and run.pause_reason in (
+            "requirement_escalated",
+            "awaiting_clarification",
+        ):
+            return {
+                "success": True,
+                "new_status": "paused",
+                "error": None,
+                "run_paused": True,
+                "pause_reason": run.pause_reason,
+                "skipped": True,
+                "message": (
+                    "Run is paused for human review; submission deferred. "
+                    "Stop calling tools and exit cleanly."
+                ),
+            }
         result = await self._service.submit_for_verification(run_id, task_id)
         return {
             "success": result.success,
@@ -598,6 +622,26 @@ class ToolHandler:
         req_id: str = args["req_id"]
         grade: str = args["grade"]
         grade_reason: str | None = args.get("grade_reason")
+
+        # If the verifier escalated a requirement earlier in this session, the
+        # run is already PAUSED for human review. Any further set_grade /
+        # submit calls are best-effort tail work — treat them as no-op success
+        # so we don't surface a transition error and trigger the agent's
+        # exception handler. The escalate response already signalled
+        # `next_action: stop`.
+        run = await self._service.get_run(run_id)
+        if run.status.value == "paused" and run.pause_reason == "requirement_escalated":
+            return {
+                "req_id": req_id,
+                "grade": grade,
+                "grade_reason": grade_reason,
+                "run_paused": True,
+                "skipped": True,
+                "message": (
+                    "Run is paused for human review of an escalated requirement; "
+                    "grade not applied. Stop calling tools and exit cleanly."
+                ),
+            }
 
         try:
             item = await self._service.set_grade(run_id, task_id, req_id, grade, grade_reason)
@@ -690,6 +734,15 @@ class ToolHandler:
                 for q in request.questions
             ],
             "created_at": format_utc_datetime(request.created_at),
+            "run_paused": True,
+            "do_not_submit": True,
+            "next_action": "stop",
+            "message": (
+                "Clarification requested. Run is PAUSED awaiting human response. "
+                "STOP NOW: do not call orchestrator_submit, do not continue working. "
+                "Exit cleanly. The orchestrator will resume this attempt with the "
+                "human's answer in the next prompt."
+            ),
         }
 
     async def _escalate_requirement(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -702,9 +755,18 @@ class ToolHandler:
         return {
             "run_id": run.id,
             "status": run.status.value,
+            "pause_reason": run.pause_reason,
             "requirement_id": requirement_id,
             "reason": reason,
-            "message": "Requirement escalated. Run is paused for human review.",
+            "run_paused": True,
+            "do_not_submit": True,
+            "next_action": "stop",
+            "message": (
+                "Requirement escalated. Run is PAUSED for human review. "
+                "STOP NOW: do not call orchestrator_submit, do not continue working. "
+                "Exit cleanly. The orchestrator will resume this attempt after the "
+                "human responds."
+            ),
         }
 
     async def _list_repos(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -886,7 +948,12 @@ class ToolHandler:
     async def _wait_for_run(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
         requested_timeout_seconds = float(args.get("timeout_seconds", 0))
-        timeout_seconds = min(requested_timeout_seconds, 300.0)
+        # Cap raised from 300s -> 600s. Long-running child plan/build phases
+        # routinely exceed 5 minutes; the prior cap forced parents into a
+        # one-wait-then-submit pattern that produced "blocked, no evidence"
+        # verifier failures. Keep the cap below the nudger kill window
+        # (default 600s kill_after_seconds).
+        timeout_seconds = min(requested_timeout_seconds, 600.0)
         initial_run = await self._service.get_run(run_id)
         parent_run_id = initial_run.parent_run_id
         if parent_run_id:
