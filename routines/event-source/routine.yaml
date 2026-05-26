@@ -1,0 +1,905 @@
+id: "event-source"
+name: "Event-Driven Migration"
+description: |
+  Migrate the Orchestrator from dual-write state-mutation-first architecture to a true
+  event-sourced system where the append-only event log is the single source of truth.
+  Six phases: Pydantic event conversion (M0), event store foundation (M1), projection
+  infrastructure (M2), command-event refactor of RunRepository (M3), signal system
+  migration (M4), and output batching + cleanup (M5).
+
+inputs:
+  - name: feature
+    required: false
+    default: "event-source"
+    description: "Feature slug (used for docs/{{feature}}/ artifacts)"
+
+steps:
+  - id: "S-00"
+    title: "Pydantic Event Conversion"
+    step_context: "Convert all WorkflowEvent dataclasses to Pydantic BaseModel and update serialization call sites. All existing tests must pass after this preparatory step."
+    tasks:
+      - id: "T-01"
+        title: "Convert WorkflowEvent subclasses and update serialization call sites"
+        task_context: |
+          Convert WorkflowEvent base class and all ~30 subclasses in
+          src/orchestrator/workflow/events/types.py from @dataclass to Pydantic BaseModel.
+          Also convert the nested GradeDetail dataclass. Key changes per class:
+          - Remove @dataclass decorator; inherit from WorkflowEvent (which now inherits BaseModel)
+          - Replace field(default_factory=...) with Field(default_factory=...)
+          - WorkflowEvent.timestamp: Field(default_factory=lambda: datetime.now(timezone.utc))
+          - Remove custom __init__ from ClarificationRequested and ClarificationResponded
+
+          Update serialization call sites:
+          - src/orchestrator/db/access/event_store.py: replace dataclasses.asdict() with event.model_dump(mode="json")
+          - src/orchestrator/api/websocket.py: replace dataclasses.asdict() with event.model_dump(mode="json")
+
+          Create tests/unit/test_pydantic_events.py covering every concrete event type with
+          construct/serialize/deserialize round-trip assertions. Verify enum fields serialize to
+          their .value strings and datetime fields produce ISO 8601 strings. Preserve every
+          existing event_type string value.
+
+          See docs/event-source/steps/step-00-plan.md for dry-run hardening guidance.
+        context_from:
+          - artifact: "docs/event-source/steps/step-00-plan.md"
+            as: "step_plan"
+            required: true
+          - artifact: "docs/event-source/architecture.md"
+            as: "architecture"
+            required: false
+        requirements:
+          - id: "R1"
+            desc: "All WorkflowEvent subclasses converted to Pydantic BaseModel; no @dataclass decorator remains; mutable defaults use Field(default_factory=...); GradeDetail also converted"
+            priority: critical
+          - id: "R2"
+            desc: "Serialization call sites in event_store.py and websocket.py use model_dump(mode='json'); no dataclasses.asdict calls remain in those files"
+            priority: critical
+          - id: "R3"
+            desc: "tests/unit/test_pydantic_events.py covers every concrete event type with round-trip assertions; all existing unit tests pass"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "pydantic_roundtrip"
+              cmd: "uv run python -c \"from orchestrator.workflow.events.types import RunStatusChanged, AgentOutputEvent; e = RunStatusChanged(run_id='r1', old_status='queued', new_status='active'); j = e.model_dump_json(); r = RunStatusChanged.model_validate_json(j); assert r.run_id == 'r1', 'round-trip failed'\""
+              must: true
+            - id: "no_dataclass_in_types"
+              cmd: "uv run python -c \"import pathlib; src = pathlib.Path('src/orchestrator/workflow/events/types.py').read_text(); assert '@dataclass' not in src, '@dataclass still present in types.py'\""
+              must: true
+            - id: "no_asdict_in_callsites"
+              cmd: "uv run python -c \"import pathlib; es = pathlib.Path('src/orchestrator/db/access/event_store.py').read_text(); ws = pathlib.Path('src/orchestrator/api/websocket.py').read_text(); assert 'asdict' not in es and 'asdict' not in ws, 'dataclasses.asdict still used in serialization call sites'\""
+              must: true
+            - id: "pydantic_tests"
+              cmd: "uv run pytest tests/unit/test_pydantic_events.py -v"
+              must: true
+            - id: "unit_suite"
+              cmd: "uv run pytest tests/unit -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all WorkflowEvent subclasses are Pydantic BaseModel with Field(default_factory=...) for mutable defaults; no @dataclass decorators remain; GradeDetail converted. B: mostly converted but one or two classes still use @dataclass or raw mutable defaults."
+            - id: "R2"
+              text: "R2 — A: event_store.py and websocket.py use model_dump(mode='json') exclusively; no asdict calls remain in those files. B: updated but one legacy path still uses asdict."
+            - id: "R3"
+              text: "R3 — A: test_pydantic_events.py exercises every concrete type with construct/serialize/deserialize; confirms enums serialize to value strings and datetimes to ISO 8601; all unit tests pass. B: test exists but incomplete coverage or one test fails."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+  - id: "S-01"
+    title: "Event Store Foundation"
+    step_context: "Build the unified SQLite event store (events_v2), concurrency strategy, JSONL outbox observer, and wire PersistentEventEmitter to use it. Preserve legacy EventStore during transition."
+    tasks:
+      - id: "T-01"
+        title: "events_v2 ORM model and Alembic migration"
+        task_context: |
+          Add EventV2Model to src/orchestrator/db/orm/models.py and create an Alembic migration
+          that creates the events_v2 table. Schema: position (INTEGER PK autoincrement),
+          aggregate_id (TEXT NOT NULL), event_type (TEXT NOT NULL), payload (TEXT NOT NULL),
+          timestamp (TEXT NOT NULL), version (INTEGER NOT NULL). Add UNIQUE(aggregate_id, version),
+          idx_events_v2_aggregate on (aggregate_id, position), idx_events_v2_type on
+          (event_type, position). Export EventV2Model from src/orchestrator/db/__init__.py.
+          Do not modify any existing migration or ORM class.
+
+          See docs/event-source/steps/step-01-plan.md Task 1.1 for naming conventions.
+        context_from:
+          - artifact: "docs/event-source/steps/step-01-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "EventV2Model ORM class with correct schema; Alembic migration creates events_v2 with UNIQUE(aggregate_id, version) constraint and both indexes; migration is reversible"
+            priority: critical
+          - id: "R2"
+            desc: "EventV2Model exported from orchestrator.db; init_db runs migration cleanly on an empty DB"
+            priority: expected
+        auto_verify:
+          items:
+            - id: "event_v2_import"
+              cmd: "uv run python -c \"from orchestrator.db import EventV2Model; assert EventV2Model.__tablename__ == 'events_v2', 'wrong tablename'\""
+              must: true
+            - id: "migration_runs"
+              cmd: "uv run python -c \"import asyncio; from orchestrator.db.access.connection import init_db; asyncio.run(init_db('sqlite+aiosqlite://'))\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: EventV2Model has all required columns with correct types; migration creates the table with UNIQUE(aggregate_id, version) and both indexes; downgrade drops cleanly. B: schema exists but missing an index or the unique constraint."
+            - id: "R2"
+              text: "R2 — A: EventV2Model importable from orchestrator.db; init_db completes without error on a fresh DB. B: importable but migration has minor issues."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-02"
+        title: "SqliteEventStore, EventStore protocol, and ConcurrencyStrategy"
+        task_context: |
+          Create two new files:
+          1. src/orchestrator/db/access/concurrency.py: ConcurrencyConflictError exception,
+             ConcurrencyStrategy base class, RetryWithBackoff (max_attempts=3, base_delay_ms=10.0).
+             RetryWithBackoff retries only UNIQUE constraint violations; re-raises all other
+             exceptions immediately; raises ConcurrencyConflictError after exhausting attempts.
+          2. src/orchestrator/db/access/event_store_v2.py: StoredEvent frozen dataclass,
+             EventStore Protocol (append, get_stream, get_all), SqliteEventStore implementation.
+             append() fetches current max version per aggregate, assigns next version, flushes
+             to events_v2, notifies listeners. Use TYPE_CHECKING guard for WorkflowEvent import.
+
+          Do not modify the existing event_store.py. Export new symbols from orchestrator.db.
+          Write tests/unit/test_event_store_v2.py (>=5 tests) and
+          tests/unit/test_concurrency_strategy.py (>=4 tests). No mocking — real in-memory SQLite.
+
+          See docs/event-source/steps/step-01-plan.md Tasks 1.2 and 1.5 for implementation details.
+        context_from:
+          - artifact: "docs/event-source/steps/step-01-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "SqliteEventStore implements append/get_stream/get_all; version auto-increments per aggregate; ConcurrencyConflictError raised after max_attempts on version conflict"
+            priority: critical
+          - id: "R2"
+            desc: "RetryWithBackoff re-raises non-conflict exceptions immediately without retrying or wrapping in ConcurrencyConflictError"
+            priority: critical
+          - id: "R3"
+            desc: "Unit tests test_event_store_v2.py and test_concurrency_strategy.py pass with real in-memory SQLite"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "imports"
+              cmd: "uv run python -c \"from orchestrator.db.access.event_store_v2 import SqliteEventStore, EventStore, StoredEvent; from orchestrator.db.access.concurrency import RetryWithBackoff, ConcurrencyConflictError; print('ok')\""
+              must: true
+            - id: "store_tests"
+              cmd: "uv run pytest tests/unit/test_event_store_v2.py -v"
+              must: true
+            - id: "concurrency_tests"
+              cmd: "uv run pytest tests/unit/test_concurrency_strategy.py -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: SqliteEventStore.append() increments version per aggregate, writes to events_v2, get_stream and get_all return events in correct order; listener notified. B: functional but missing one method or version logic is incorrect."
+            - id: "R2"
+              text: "R2 — A: RetryWithBackoff only retries UNIQUE conflict errors; ValueError/other exceptions propagate on the first attempt without wrapping. B: retry logic present but treats all exceptions as conflicts."
+            - id: "R3"
+              text: "R3 — A: all tests in both files pass with real in-memory SQLite; listener-callback test verifies post-append notification; conflict-retry test uses injected callable. B: tests mostly pass but one scenario missing."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-03"
+        title: "JsonlOutboxObserver and wiring into SqliteEventStore"
+        task_context: |
+          Create src/orchestrator/db/access/jsonl_outbox.py with JsonlOutboxObserver. The
+          observer subscribes to SqliteEventStore post-append notifications and writes events
+          to the JSONL file keyed by event position. Re-calling with the same position is a
+          no-op (idempotent). JSONL write failures must be caught and logged at WARNING level
+          without propagating. The __call__ signature is (events: list[StoredEvent]) -> None.
+          JSONL records must include: position, aggregate_id, event_type, timestamp, payload (parsed).
+
+          Update SqliteEventStore._listeners typing to list[Callable[[list[StoredEvent]], Awaitable[None]]].
+
+          Then update src/orchestrator/api/deps.py: add get_event_store_v2() dependency that
+          constructs SqliteEventStore with JsonlOutboxObserver registered as a post-append listener.
+          Update get_workflow_service() to pass the new store to PersistentEventEmitter.
+          Export SqliteEventStore, StoredEvent, ConcurrencyConflictError, RetryWithBackoff from
+          orchestrator.db. Keep legacy EventStore and get_event_store paths untouched.
+
+          Write tests/unit/test_jsonl_outbox.py (>=4 tests: single write, idempotent, multiple,
+          failure-swallowed). Add tests/integration/test_event_store_wiring.py that constructs
+          SqliteEventStore + JsonlOutboxObserver, calls PersistentEventEmitter.emit(event), and
+          asserts both an events_v2 row and a JSONL line are produced.
+
+          See docs/event-source/steps/step-01-plan.md Tasks 1.3, 1.4, 1.5.
+        context_from:
+          - artifact: "docs/event-source/steps/step-01-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "JsonlOutboxObserver writes JSONL keyed by position; re-calling with same position is a no-op; write failures are caught and logged without propagating"
+            priority: critical
+          - id: "R2"
+            desc: "PersistentEventEmitter wired to SqliteEventStore in deps.py; emitting an event writes to events_v2 AND JSONL via JsonlOutboxObserver"
+            priority: critical
+          - id: "R3"
+            desc: "test_jsonl_outbox.py and test_event_store_wiring.py pass; full test suite passes with no regressions"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "jsonl_import"
+              cmd: "uv run python -c \"from orchestrator.db.access.jsonl_outbox import JsonlOutboxObserver; from orchestrator.db import SqliteEventStore, StoredEvent; print('ok')\""
+              must: true
+            - id: "jsonl_tests"
+              cmd: "uv run pytest tests/unit/test_jsonl_outbox.py -v"
+              must: true
+            - id: "wiring_test"
+              cmd: "uv run pytest tests/integration/test_event_store_wiring.py -v"
+              must: true
+            - id: "full_suite"
+              cmd: "uv run pytest -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: observer writes one JSONL line per unique position; calling twice with same position produces exactly one line; __call__ body wrapped in try/except; failure logged at WARNING and not propagated. B: writes correctly but idempotency not enforced or exceptions may propagate."
+            - id: "R2"
+              text: "R2 — A: deps.py get_event_store_v2() wires SqliteEventStore to PersistentEventEmitter with JsonlOutboxObserver registered; emitting produces both a DB row and JSONL line. B: wired but JSONL observer not registered or emit path bypasses new store."
+            - id: "R3"
+              text: "R3 — A: all four test scenarios in test_jsonl_outbox.py pass; integration test constructs wired store and asserts both DB row and JSONL line; full suite passes. B: tests pass but integration wiring test is missing or incomplete."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+  - id: "S-02"
+    title: "Projection Infrastructure"
+    step_context: "Build the projection framework: Projector protocol, ProjectionRegistry, concrete projectors, projection_checkpoints table, and rebuild-projections CLI command."
+    tasks:
+      - id: "T-01"
+        title: "ProjectionCheckpointModel ORM model, Alembic migration, and Projector protocol"
+        task_context: |
+          1. Add ProjectionCheckpointModel to src/orchestrator/db/orm/models.py. Table name:
+             'projection_checkpoints'. Columns: projector_name (TEXT, PK), last_position
+             (INTEGER, NOT NULL, default 0), updated_at (TEXT, NOT NULL). Create Alembic migration.
+             Export from orchestrator.db.
+
+          2. Create src/orchestrator/db/projections/ package with registry.py defining:
+             - Projector Protocol: handle(event, session) -> None, rebuild(events, session) -> None,
+               handled_events: frozenset[type] class attribute
+             - ProjectionRegistry: register(), __call__(stored_events, session, workflow_events),
+               rebuild_all(all_events, session). Projector exceptions during dispatch propagate and
+               abort the append transaction. Per-projector checkpoints advance only when that
+               projector handled at least one event in the batch.
+
+          Export Projector and ProjectionRegistry from orchestrator.db.projections.
+          See docs/event-source/steps/step-02-plan.md Tasks 2.1 and 2.2.
+        context_from:
+          - artifact: "docs/event-source/steps/step-02-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "ProjectionCheckpointModel ORM class with correct schema; Alembic migration creates projection_checkpoints table; Projector protocol and ProjectionRegistry implemented"
+            priority: critical
+          - id: "R2"
+            desc: "Registry dispatches events only to projectors that declare the type in handled_events; projector exceptions propagate; checkpoint advances only for projectors that handled events"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "checkpoint_import"
+              cmd: "uv run python -c \"from orchestrator.db import ProjectionCheckpointModel; assert ProjectionCheckpointModel.__tablename__ == 'projection_checkpoints'\""
+              must: true
+            - id: "registry_import"
+              cmd: "uv run python -c \"from orchestrator.db.projections import Projector, ProjectionRegistry; r = ProjectionRegistry(); print('ok')\""
+              must: true
+            - id: "migration_runs"
+              cmd: "uv run python -c \"import asyncio; from orchestrator.db.access.connection import init_db; asyncio.run(init_db('sqlite+aiosqlite://'))\""
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: ProjectionCheckpointModel has projector_name (PK), last_position (int default 0), updated_at; Projector protocol has handle/rebuild/handled_events; ProjectionRegistry has register/__call__/rebuild_all. B: schema exists but deviates from spec, or one protocol method missing."
+            - id: "R2"
+              text: "R2 — A: registry dispatches only to projectors with matching handled_events; projector exceptions propagate (not swallowed); checkpoints upserted only for projectors that handled at least one event. B: dispatch works but checkpoint logic is incorrect or exceptions are caught."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-02"
+        title: "Concrete projectors, registry wiring, and rebuild-projections CLI"
+        task_context: |
+          1. Create concrete projectors:
+             - src/orchestrator/db/projections/run_state.py: RunStateProjector handling
+               RunStatusChanged, StepCompleted, StepSkipped, RunStepBackward, GradesEvaluated,
+               AutoVerifyCompleted, ChecklistGateEvaluated, HealthCheckEvent. Placeholder
+               case_: pass for RunCreated/TaskCreated (Step 03 fills these in).
+             - src/orchestrator/db/projections/task_state.py: TaskStateProjector handling
+               TaskStatusChanged, ClarificationRequested, ClarificationResponded, ApprovalRequested,
+               ApprovalDecision, TaskReverted, FanOutSpawned, ChildSpawned, ChildCompleted,
+               ChildFailed, FanOutCompleted.
+             Export both from orchestrator.db.projections.
+
+          2. Update SqliteEventStore in event_store_v2.py: add add_projection_listener() method
+             that stores listeners receiving (stored_events, session, workflow_events). In deps.py,
+             create ProjectionRegistry, register both projectors, call store.add_projection_listener(registry).
+
+          3. Add 'orchestrator db rebuild-projections' CLI command to src/orchestrator/cli/db.py:
+             - Check for server lock file (exit 1 if present)
+             - Get all events from SqliteEventStore.get_all()
+             - Add deserialize_event() helper to orchestrator.workflow.events that dispatches
+               on event_type string and calls model_validate_json() on the correct class
+             - Clear projection-owned tables (RunModel, TaskModel, ProjectionCheckpointModel)
+             - Call registry.rebuild_all(events, session)
+
+          Write tests/unit/test_projectors.py (>=7 tests) and test_projection_rebuild.py (>=4 tests).
+          Write tests/integration/test_projection_recovery.py (full lifecycle rebuild test).
+          See docs/event-source/steps/step-02-plan.md Tasks 2.3, 2.4, 2.5.
+        context_from:
+          - artifact: "docs/event-source/steps/step-02-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "RunStateProjector and TaskStateProjector implemented; each handles declared event types and updates correct read-model tables; unknown events silently skipped"
+            priority: critical
+          - id: "R2"
+            desc: "orchestrator db rebuild-projections CLI command exists; exits 1 if server lock file present; clears and replays all events through projectors"
+            priority: critical
+          - id: "R3"
+            desc: "Unit tests test_projectors.py (>=7) and test_projection_rebuild.py (>=4) pass; integration test test_projection_recovery.py passes"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "projectors_import"
+              cmd: "uv run python -c \"from orchestrator.db.projections import RunStateProjector, TaskStateProjector; r = RunStateProjector(); t = TaskStateProjector(); print('ok')\""
+              must: true
+            - id: "cli_help"
+              cmd: "uv run orchestrator db --help"
+              must: true
+            - id: "projector_tests"
+              cmd: "uv run pytest tests/unit/test_projectors.py -v"
+              must: true
+            - id: "rebuild_tests"
+              cmd: "uv run pytest tests/unit/test_projection_rebuild.py -v"
+              must: true
+            - id: "recovery_test"
+              cmd: "uv run pytest tests/integration/test_projection_recovery.py -v"
+              must: true
+            - id: "full_suite"
+              cmd: "uv run pytest -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: RunStateProjector handles RunStatusChanged (updates runs.status), StepCompleted (updates steps.completed), etc.; TaskStateProjector handles TaskStatusChanged, ClarificationRequested; handled_events is frozenset; unknown events use case _: pass. B: projectors exist but one handler is incomplete or handled_events is wrong type."
+            - id: "R2"
+              text: "R2 — A: 'rebuild-projections' appears in orchestrator db --help; command exits 1 if lock file present; clears projection tables before replay; runs rebuild_all. B: command exists but lock check or table-clear logic is incomplete."
+            - id: "R3"
+              text: "R3 — A: test_projectors.py has >=7 tests covering status changes, step completion, clarification handling, and unknown-event no-op; test_projection_rebuild.py has >=4 tests; recovery integration test creates run, corrupts read model, rebuilds, asserts API correct; all pass. B: tests exist but one file has fewer than the minimum count."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+  - id: "S-03"
+    title: "Command-Event Refactor of RunRepository"
+    step_context: "Replace all RunRepository write methods with command handlers that emit events. Make RunRepository read-only. Enable full empty-DB rebuild via RunCreated/TaskCreated events."
+    tasks:
+      - id: "T-01"
+        title: "New event types and command module"
+        task_context: |
+          Add 9 new Pydantic WorkflowEvent subclasses to src/orchestrator/workflow/events/types.py:
+          RunCreated, TaskCreated, TaskAttemptCreated, AttemptUpdated,
+          ParentOversightFactsUpdated, FanOutChildrenCreated, FanOutChildrenReset,
+          FanOutChildRetried, StepIndexRewound.
+          Export all 9 from orchestrator.workflow.events.
+
+          Create src/orchestrator/workflow/commands/ package with three modules:
+          - run_lifecycle.py: CreateRunCommand/handle_create_run, CreateTaskCommand/handle_create_task
+          - status_mutations.py: UpdateRunStatusCommand/handle_update_run_status,
+            UpdateTaskStatusCommand/handle_update_task_status,
+            RewindStepIndexCommand/handle_rewind_step_index
+          - attempt_and_fanout.py: CreateTaskAttemptCommand, UpdateLatestAttemptCommand,
+            UpdateParentOversightFactsCommand, CreateFanOutChildrenCommand,
+            ResetFanOutChildrenCommand, RetryFanOutChildCommand, and their handlers.
+          Export all command classes and handlers from orchestrator.workflow.commands.
+
+          Update RunStateProjector to handle RunCreated (create RunModel row from event fields)
+          and TaskStateProjector to handle TaskCreated (create TaskModel row from event fields).
+
+          Extend tests/unit/test_pydantic_events.py with round-trip tests for all 9 new types.
+
+          See docs/event-source/steps/step-03-plan.md Tasks 3.1, 3.2, 3.3, 3.4.
+        context_from:
+          - artifact: "docs/event-source/steps/step-03-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "All 9 new event types defined as Pydantic BaseModel subclasses; round-trip serialization works for each"
+            priority: critical
+          - id: "R2"
+            desc: "All three command modules created with correct handler signatures; all symbols importable from orchestrator.workflow.commands"
+            priority: critical
+          - id: "R3"
+            desc: "RunStateProjector handles RunCreated (creates RunModel row); TaskStateProjector handles TaskCreated (creates TaskModel row); projector tests confirm"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "new_events_import"
+              cmd: "uv run python -c \"from orchestrator.workflow.events import RunCreated, TaskCreated, TaskAttemptCreated, AttemptUpdated, ParentOversightFactsUpdated, FanOutChildrenCreated, FanOutChildrenReset, FanOutChildRetried, StepIndexRewound; print('ok')\""
+              must: true
+            - id: "commands_import"
+              cmd: "uv run python -c \"from orchestrator.workflow.commands import CreateRunCommand, handle_create_run, CreateTaskCommand, handle_create_task, UpdateRunStatusCommand, handle_update_run_status, UpdateTaskStatusCommand, handle_update_task_status, CreateTaskAttemptCommand, handle_create_task_attempt, UpdateLatestAttemptCommand, handle_update_latest_attempt, UpdateParentOversightFactsCommand, handle_update_parent_oversight_facts, CreateFanOutChildrenCommand, handle_create_fan_out_children, ResetFanOutChildrenCommand, handle_reset_fan_out_children, RetryFanOutChildCommand, handle_retry_fan_out_child; print('ok')\""
+              must: true
+            - id: "pydantic_tests_extended"
+              cmd: "uv run pytest tests/unit/test_pydantic_events.py -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: all 9 new event types inherit WorkflowEvent (Pydantic BaseModel); each has correct fields; round-trip test covers all 9 new types. B: events defined but one or two have incorrect field types or are missing."
+            - id: "R2"
+              text: "R2 — A: all three command modules (run_lifecycle.py, status_mutations.py, attempt_and_fanout.py) exist with correct async handler signatures using TYPE_CHECKING guards; all symbols importable. B: commands exist but one module missing or has import errors."
+            - id: "R3"
+              text: "R3 — A: RunStateProjector.handle(RunCreated) inserts a RunModel row from event fields; TaskStateProjector.handle(TaskCreated) inserts a TaskModel row; unit tests confirm both. B: projectors updated but one does not create the DB row from event fields."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-02"
+        title: "Wire WorkflowService to command handlers"
+        task_context: |
+          Inject SqliteEventStore into WorkflowService in src/orchestrator/workflow/service.py
+          and replace all RunRepository write method calls with command handler invocations:
+          - _repo.save(run) on run creation → handle_create_run
+          - _repo.create_task_attempt() → handle_create_task_attempt
+          - _repo.update_run_status() → handle_update_run_status
+          - _repo.update_task_status() → handle_update_task_status
+          - _repo.rewind_step_index_if_needed() → handle_rewind_step_index
+          - _repo.update_parent_oversight_facts() → handle_update_parent_oversight_facts
+          - _repo.update_latest_attempt() → handle_update_latest_attempt
+          - _repo.create_fan_out_children() → handle_create_fan_out_children
+          - _repo.reset_fan_out_children() → handle_reset_fan_out_children
+          - _repo.retry_fan_out_child() → handle_retry_fan_out_child
+          - All remaining _repo.save(run) update paths → appropriate targeted command handlers
+
+          Update src/orchestrator/api/deps.py to pass SqliteEventStore to WorkflowService.
+          WorkflowEngine must remain pure — do NOT give it access to SqliteEventStore.
+          Keep PersistentEventEmitter wiring untouched (handles AgentOutputEvent separately).
+
+          See docs/event-source/steps/step-03-plan.md Tasks 3.5 and 3.6.
+        context_from:
+          - artifact: "docs/event-source/steps/step-03-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "WorkflowService has no calls to _repo.save, _repo.update_*, _repo.create_task_attempt, _repo.create_fan*, _repo.reset_fan*, _repo.retry_fan*, _repo.rewind_* in service.py"
+            priority: critical
+          - id: "R2"
+            desc: "Full test suite passes; creating a run via API produces RunCreated event in events_v2"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "no_repo_writes_in_service"
+              cmd: "uv run python -c \"import pathlib; t = pathlib.Path('src/orchestrator/workflow/service.py').read_text(); bad = [x for x in ['_repo.save(', '_repo.update_run_status(', '_repo.update_task_status(', '_repo.create_task_attempt(', '_repo.create_fan_out', '_repo.reset_fan_out', '_repo.retry_fan_out', '_repo.rewind_step_index'] if x in t]; assert not bad, f'legacy repo write calls found: {bad}'\""
+              must: true
+            - id: "full_suite"
+              cmd: "uv run pytest -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: service.py has zero calls to _repo write methods; all mutations go through command handlers; grep and code review confirm. B: most methods replaced but one or two _repo write calls remain."
+            - id: "R2"
+              text: "R2 — A: full pytest suite passes; integration test confirms creating a run via API produces a RunCreated event in events_v2. B: suite mostly passes but one or two tests fail due to wiring issues."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-03"
+        title: "Remove RunRepository write methods and add tests"
+        task_context: |
+          Delete all write methods from RunRepository in src/orchestrator/db/access/repositories.py:
+          save, update_parent_oversight_facts, _merge_oversight_patch_locked, create_task_attempt,
+          create_fan_out_children, update_task_status, rewind_step_index_if_needed, update_run_status,
+          reset_fan_out_children, retry_fan_out_child, update_latest_attempt.
+          Keep all read methods. Remove imports only used by deleted methods. Add docstring to
+          RunRepository: "Read-only query layer for run state. All mutations occur via command handlers."
+
+          Write tests/unit/test_command_handlers.py (>=12 test functions, real in-memory SQLite with
+          events_v2 and read-model tables, no mocking). Each test asserts both the emitted event
+          and the resulting read-model state after projectors run.
+
+          Write tests/integration/test_event_sourced_workflow.py:
+          - test_full_workflow_round_trip: API call → RunCreated event → correct API response
+          - test_empty_db_rebuild: emit events, truncate read-model tables, rebuild, API matches
+          - test_parity_run_status_update: command handler + API response agree
+
+          See docs/event-source/steps/step-03-plan.md Tasks 3.7, 3.8, 3.9.
+        context_from:
+          - artifact: "docs/event-source/steps/step-03-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "RunRepository has no write methods; only read methods remain; docstring updated to state read-only"
+            priority: critical
+          - id: "R2"
+            desc: "tests/unit/test_command_handlers.py has >=12 tests with real in-memory SQLite; each asserts both emitted event and read-model state; all pass"
+            priority: critical
+          - id: "R3"
+            desc: "tests/integration/test_event_sourced_workflow.py passes including test_empty_db_rebuild (truncate, rebuild, API matches)"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "no_write_methods_in_repo"
+              cmd: "uv run python -c \"import pathlib; t = pathlib.Path('src/orchestrator/db/access/repositories.py').read_text(); bad = [x for x in ['async def save(', 'async def update_parent_oversight', 'async def create_task_attempt', 'async def create_fan_out', 'async def update_task_status', 'async def rewind_step', 'async def update_run_status', 'async def reset_fan_out', 'async def retry_fan_out', 'async def update_latest_attempt'] if x in t]; assert not bad, f'write methods still in RunRepository: {bad}'\""
+              must: true
+            - id: "command_handler_tests"
+              cmd: "uv run pytest tests/unit/test_command_handlers.py -v"
+              must: true
+            - id: "integration_tests"
+              cmd: "uv run pytest tests/integration/test_event_sourced_workflow.py -v"
+              must: true
+            - id: "full_suite"
+              cmd: "uv run pytest -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: RunRepository has no async def write methods (save/update_*/create_task_attempt/etc.); docstring explicitly states read-only; read methods (get, list_*, lock_run_for_coordination, get_task_model, count_fan_out_children) all remain. B: most write methods removed but one remains."
+            - id: "R2"
+              text: "R2 — A: test_command_handlers.py has >=12 distinct test functions; each asserts both the emitted event in events_v2 and the resulting read-model state; all pass with real in-memory SQLite. B: tests exist but fewer than 12 or some use mocking."
+            - id: "R3"
+              text: "R3 — A: integration tests pass including empty-DB rebuild (truncate read-model, replay events, API response matches pre-truncation snapshot field-by-field). B: round-trip test passes but empty-DB rebuild is incomplete or missing."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+  - id: "S-04"
+    title: "Signal System Migration"
+    step_context: "Replace _active_run_ids process-local set with RunLifecycleProjector. Replace DbSignalTransport with EventSignalTransport. Deprecate pending_signals table."
+    tasks:
+      - id: "T-01"
+        title: "SignalEnqueued/SignalProcessed event types and RunLifecycleProjector"
+        task_context: |
+          Add two new Pydantic event types to src/orchestrator/workflow/events/types.py:
+          - SignalEnqueued: run_id, signal_type (str), payload (dict, optional)
+          - SignalProcessed: run_id, enqueued_position (int — the events_v2.position of the
+            matched SignalEnqueued event)
+          Export both from orchestrator.workflow.events.
+
+          Create src/orchestrator/db/projections/run_lifecycle.py with RunLifecycleProjector:
+          - Handles RunStatusChanged events to maintain in-memory set of active run_ids
+          - Active statuses: QUEUED, ACTIVE, PAUSED (not COMPLETED, FAILED, CANCELLED, STOPPING)
+          - Exposes is_active(run_id: str) -> bool
+          - rebuild(event_stream, session) restores the active set from a full event history
+          - Must rebuild from persisted events on startup before signal redelivery begins
+          Export RunLifecycleProjector from orchestrator.db.projections.
+          Register it in ProjectionRegistry alongside other projectors in deps.py.
+
+          Write tests/unit/test_run_lifecycle_projector.py. Extend test_pydantic_events.py.
+
+          See docs/event-source/steps/step-04-plan.md Tasks 4.1, 4.2.
+        context_from:
+          - artifact: "docs/event-source/steps/step-04-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "SignalEnqueued and SignalProcessed event types defined and round-trip serializable"
+            priority: critical
+          - id: "R2"
+            desc: "RunLifecycleProjector tracks active runs from RunStatusChanged events; is_active() returns correct boolean for all status values; rebuild restores state"
+            priority: critical
+          - id: "R3"
+            desc: "tests/unit/test_run_lifecycle_projector.py passes: active/inactive transitions for all status values, rebuild correctness, stale-signal rejection"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "signal_events_import"
+              cmd: "uv run python -c \"from orchestrator.workflow.events import SignalEnqueued, SignalProcessed; e = SignalEnqueued(run_id='r1', signal_type='pause'); j = e.model_dump_json(); r = SignalEnqueued.model_validate_json(j); assert r.signal_type == 'pause'\""
+              must: true
+            - id: "lifecycle_projector"
+              cmd: "uv run python -c \"from orchestrator.db.projections import RunLifecycleProjector; p = RunLifecycleProjector(); assert not p.is_active('nonexistent')\""
+              must: true
+            - id: "lifecycle_tests"
+              cmd: "uv run pytest tests/unit/test_run_lifecycle_projector.py -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: SignalEnqueued has run_id, signal_type, optional payload; SignalProcessed has run_id and enqueued_position (int); both round-trip correctly. B: events defined but fields are wrong or round-trip fails."
+            - id: "R2"
+              text: "R2 — A: is_active() returns True for ACTIVE/QUEUED/PAUSED and False for COMPLETED/FAILED/CANCELLED; rebuild() restores correct state from RunStatusChanged event stream; in-memory set cleared on rebuild start. B: is_active works for ACTIVE but not all status variants."
+            - id: "R3"
+              text: "R3 — A: tests cover all status transitions, rebuild correctness, and stale-signal rejection; all pass. B: tests pass but one scenario missing."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-02"
+        title: "EventSignalTransport, remove _active_run_ids, wire transport, add migration"
+        task_context: |
+          Implement EventSignalTransport in src/orchestrator/workflow/signals/signals.py:
+          - enqueue(run_id, signal_type, payload): appends SignalEnqueued event to SqliteEventStore;
+            raises domain error if run is not active (checked via RunLifecycleProjector)
+          - drain(run_id): queries events_v2 for SignalEnqueued events with no matching
+            SignalProcessed (by enqueued_position) for the given run_id; appends SignalProcessed
+            events to mark them consumed; returns PendingSignal list in FIFO order. Idempotent.
+          Inject RunLifecycleProjector and SqliteEventStore via constructor.
+
+          In src/orchestrator/workflow/signals/consumer.py:
+          - Remove module-level _active_run_ids set, register_active_run, unregister_active_run,
+            has_active_workflow functions and all their call sites
+          - Inject RunLifecycleProjector via constructor; use is_active() for all active-run checks
+          - Update _redeliver_on_startup to use projector instead of in-memory set
+
+          Update WorkflowService.pause_run/resume_run/cancel_run to use EventSignalTransport.
+          Update default transport in RunWorkflow to EventSignalTransport.
+          Update SignalConsumer._find_pending_run_ids() to query events_v2 instead of pending_signals.
+
+          Add Alembic migration to deprecate pending_signals (add _deprecated column or comment).
+          Write tests/unit/test_event_signal_transport.py and tests/integration/test_signal_events.py.
+
+          See docs/event-source/steps/step-04-plan.md Tasks 4.3, 4.4, 4.5, 4.6, 4.7, 4.8.
+        context_from:
+          - artifact: "docs/event-source/steps/step-04-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "_active_run_ids set, register_active_run, unregister_active_run, has_active_workflow removed from consumer.py; RunLifecycleProjector.is_active() used instead"
+            priority: critical
+          - id: "R2"
+            desc: "EventSignalTransport.enqueue() produces SignalEnqueued event; drain() returns unprocessed signals and marks consumed with SignalProcessed; no writes to pending_signals table"
+            priority: critical
+          - id: "R3"
+            desc: "tests/unit/test_event_signal_transport.py passes (enqueue/drain round-trip, idempotency, inactive-run rejection); tests/integration/test_signal_events.py passes (normal delivery, stale signal no-op, startup recovery)"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "no_active_run_ids"
+              cmd: "uv run python -c \"import pathlib; t = pathlib.Path('src/orchestrator/workflow/signals/consumer.py').read_text(); assert '_active_run_ids' not in t, '_active_run_ids still in consumer.py'; assert 'def register_active_run' not in t, 'register_active_run still defined'\""
+              must: true
+            - id: "signal_transport_tests"
+              cmd: "uv run pytest tests/unit/test_event_signal_transport.py -v"
+              must: true
+            - id: "signal_integration_tests"
+              cmd: "uv run pytest tests/integration/test_signal_events.py -v"
+              must: true
+            - id: "full_suite"
+              cmd: "uv run pytest -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: consumer.py has zero definitions or uses of _active_run_ids, register_active_run, unregister_active_run, has_active_workflow; all active-run checks use RunLifecycleProjector.is_active() via injected dependency. B: most removed but one reference or definition remains."
+            - id: "R2"
+              text: "R2 — A: enqueue() appends SignalEnqueued to events_v2; drain() returns unprocessed signals in FIFO order and appends SignalProcessed; second drain() returns empty list; no INSERT into pending_signals. B: transport works but idempotency not enforced or pending_signals still written in some path."
+            - id: "R3"
+              text: "R3 — A: unit tests cover enqueue/drain round-trip, idempotency, inactive-run rejection, SignalProcessed position correctness; integration tests cover normal delivery, stale signal no-op, startup recovery; all pass. B: most tests pass but one scenario missing."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+  - id: "S-05"
+    title: "Output Batching and Cleanup"
+    step_context: "Implement AgentOutputEvent batching. Add JSONL bootstrap for empty-DB startup. Remove legacy recovery code, pending_signals table. Update ARCHITECTURE.md."
+    tasks:
+      - id: "T-01"
+        title: "OutputBatcher implementation and unit tests"
+        task_context: |
+          Create src/orchestrator/runners/execution/output_batcher.py with OutputBatcher:
+          - Constructor params: event_store (SqliteEventStore), max_lines (default 50),
+            flush_interval_ms (default 100), clock (callable returning float, default time.monotonic)
+          - Buffer keyed by (run_id, task_id, attempt_id)
+          - add_line(run_id, task_id, attempt_id, text): accumulates; auto-flushes when count
+            threshold or time threshold reached
+          - flush(): appends accumulated AgentOutputEvent batches; no-op if buffer empty;
+            clears buffer only AFTER successful event_store append
+          - flush_immediate(): flushes all buffers regardless of thresholds
+          Export OutputBatcher from src/orchestrator/runners/execution/__init__.py.
+
+          Write tests/unit/test_output_batcher.py using FakeClock for time control and a
+          list-based event_store stub. Must cover: count threshold flush, time threshold flush,
+          immediate flush, empty buffer no-op, correct line ordering in batched payloads.
+
+          See docs/event-source/steps/step-05-plan.md Tasks 5.1, 5.2.
+        context_from:
+          - artifact: "docs/event-source/steps/step-05-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "OutputBatcher flushes on count threshold (50 lines) or time threshold (100ms) or flush_immediate(); buffer keyed by (run_id, task_id, attempt_id); clock is injectable; buffer cleared only after successful append"
+            priority: critical
+          - id: "R2"
+            desc: "tests/unit/test_output_batcher.py passes all four flush paths; lines appear in correct order in batched payloads"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "batcher_import"
+              cmd: "uv run python -c \"from orchestrator.runners.execution import OutputBatcher; print('ok')\""
+              must: true
+            - id: "batcher_tests"
+              cmd: "uv run pytest tests/unit/test_output_batcher.py -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: OutputBatcher uses injected clock; flushes when count >= max_lines or elapsed >= flush_interval_ms; flush_immediate() drains all buffers; buffer key is (run_id, task_id, attempt_id) triple. B: batching works but clock injection missing or buffer key is wrong."
+            - id: "R2"
+              text: "R2 — A: all four flush paths tested with FakeClock; line ordering verified in batch payload; all tests pass. B: tests pass but time-based flush not tested via injected clock or ordering not asserted."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-02"
+        title: "Wire OutputBatcher into PhaseHandler and integration tests"
+        task_context: |
+          Update src/orchestrator/runners/execution/phase_handler.py: replace the three
+          per-line emit_log_event() calls for AgentOutputEvent with output_batcher.add_line().
+          Inject OutputBatcher via the PhaseHandler constructor alongside broadcaster.
+          Add flush_immediate() calls at each phase transition point (task completion, run pause,
+          phase end) so no lines are lost on boundaries.
+
+          Write tests/integration/test_output_batching.py:
+          - Use a mock agent that emits 60 lines rapidly
+          - Assert lines arrive via WebSocket as batched AgentOutputEvents (fewer than 60 events)
+          - Assert line_offset values are monotonically increasing with no gaps
+          - Assert all 60 lines present in the correct order
+          - Assert AgentOutputEvent row count in events_v2 is less than 60 (batching confirmed)
+
+          See docs/event-source/steps/step-05-plan.md Tasks 5.3, 5.4.
+        context_from:
+          - artifact: "docs/event-source/steps/step-05-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "PhaseHandler no longer calls emit_log_event() directly for AgentOutputEvent; uses output_batcher.add_line() instead; flush_immediate() called at phase transitions"
+            priority: critical
+          - id: "R2"
+            desc: "Integration test test_output_batching.py passes; AgentOutputEvent row count in events_v2 is less than line count confirming batching occurred"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "no_emit_log_for_output"
+              cmd: "uv run python -c \"import pathlib; t = pathlib.Path('src/orchestrator/runners/execution/phase_handler.py').read_text(); assert 'emit_log_event' not in t, 'emit_log_event still called directly in phase_handler.py'\""
+              must: true
+            - id: "batching_integration_test"
+              cmd: "uv run pytest tests/integration/test_output_batching.py -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: phase_handler.py has zero emit_log_event calls for AgentOutputEvent; OutputBatcher injected via constructor; flush_immediate() called at task completion, pause, and phase-end. B: mostly wired but one emit_log_event call remains or flush_immediate not called at boundaries."
+            - id: "R2"
+              text: "R2 — A: integration test confirms fewer events_v2 rows than lines emitted; monotonic line_offset; all 60 lines present in order. B: test passes but does not assert batching occurred (row count not checked)."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-03"
+        title: "JSONL bootstrap for empty-DB startup and integration tests"
+        task_context: |
+          Create src/orchestrator/db/bootstrap.py with async function:
+          bootstrap_from_jsonl(session, journal_path, projection_registry):
+          - If events_v2 is non-empty: return immediately (no-op)
+          - If journal_path is missing or None: log WARNING and return without error
+          - Read history.jsonl line by line; parse each record; insert into events_v2
+            (idempotent: skip on position conflict)
+          - Call projection_registry.rebuild_all(events, session)
+          Wire bootstrap_from_jsonl into application startup sequence after Alembic migrations
+          and before accepting requests. Export from orchestrator.db.
+
+          Write tests/integration/test_jsonl_bootstrap.py with three test scenarios:
+          1. Known JSONL fixture: events_v2 row count matches, runs table populated, checkpoints set
+          2. Already-populated DB: bootstrap is a no-op
+          3. Missing JSONL: WARNING logged, no exception raised
+
+          See docs/event-source/steps/step-05-plan.md Tasks 5.5, 5.6.
+        context_from:
+          - artifact: "docs/event-source/steps/step-05-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "bootstrap_from_jsonl seeds events_v2 from JSONL and rebuilds projections when DB is empty; no-op if events_v2 non-empty; logs WARNING and returns gracefully if JSONL missing"
+            priority: critical
+          - id: "R2"
+            desc: "Bootstrap wired into application startup sequence; tests/integration/test_jsonl_bootstrap.py passes all three scenarios"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "bootstrap_import"
+              cmd: "uv run python -c \"from orchestrator.db import bootstrap_from_jsonl; print('ok')\""
+              must: true
+            - id: "bootstrap_tests"
+              cmd: "uv run pytest tests/integration/test_jsonl_bootstrap.py -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: bootstrap_from_jsonl checks events_v2 emptiness before seeding; inserts are idempotent on position conflict; missing JSONL logs WARNING and does not raise; rebuild_all called after seeding. B: function exists but idempotency or missing-file handling incorrect."
+            - id: "R2"
+              text: "R2 — A: bootstrap called in startup sequence before accepting requests; all three test scenarios pass (seed, no-op, graceful-miss). B: bootstrap exists but not wired into startup or one test scenario fails."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
+
+      - id: "T-04"
+        title: "Remove legacy recovery code, drop pending_signals, update ARCHITECTURE.md"
+        task_context: |
+          Delete three legacy recovery modules:
+          - src/orchestrator/db/recovery/event_journal.py
+          - src/orchestrator/db/recovery/journal_replay.py
+          - src/orchestrator/db/recovery/recovery.py
+          Remove JsonlEventJournal inline write path from src/orchestrator/db/access/event_store.py
+          (the JsonlOutboxObserver from S-01 is now the live JSONL writer).
+          Remove dead legacy re-exports from orchestrator.db.__init__.py.
+
+          Add Alembic migration to DROP the pending_signals table (deprecated in S-04).
+
+          Update docs/ARCHITECTURE.md: remove references to legacy dual-write path, pending_signals,
+          _active_run_ids, and recovery modules; add concise description of the event-sourced data
+          flow (API → command handler → SqliteEventStore → ProjectionRegistry → read-model tables
+          → JsonlOutboxObserver).
+
+          Confirm full test suite passes. Measure API latency and document that regression is <10%.
+
+          See docs/event-source/steps/step-05-plan.md Tasks 5.7, 5.8.
+        context_from:
+          - artifact: "docs/event-source/steps/step-05-plan.md"
+            as: "step_plan"
+            required: true
+        requirements:
+          - id: "R1"
+            desc: "Legacy recovery modules deleted; no imports of event_journal/journal_replay/recovery from orchestrator.db.recovery in src/; JsonlEventJournal not referenced in event_store.py"
+            priority: critical
+          - id: "R2"
+            desc: "Alembic migration drops pending_signals table; migration runs cleanly on a fresh DB"
+            priority: critical
+          - id: "R3"
+            desc: "Full test suite passes with no regressions; ARCHITECTURE.md updated to describe event-sourced architecture with no references to removed components"
+            priority: critical
+        auto_verify:
+          items:
+            - id: "no_jsonl_event_journal"
+              cmd: "uv run python -c \"import pathlib; t = pathlib.Path('src/orchestrator/db/access/event_store.py').read_text(); assert 'JsonlEventJournal' not in t, 'JsonlEventJournal still referenced in event_store.py'\""
+              must: true
+            - id: "no_recovery_imports_in_src"
+              cmd: "uv run python -c \"import pathlib; files = [f for f in pathlib.Path('src').rglob('*.py') if 'recovery/event_journal' not in str(f) and 'recovery/journal_replay' not in str(f) and 'recovery/recovery' not in str(f)]; text = ''.join(f.read_text() for f in files); assert 'from orchestrator.db.recovery.event_journal' not in text and 'from orchestrator.db.recovery.journal_replay' not in text, 'legacy recovery imports found'\""
+              must: true
+            - id: "migration_runs"
+              cmd: "uv run python -c \"import asyncio; from orchestrator.db.access.connection import init_db; asyncio.run(init_db('sqlite+aiosqlite://'))\""
+              must: true
+            - id: "full_suite"
+              cmd: "uv run pytest -v"
+              must: true
+        verifier:
+          rubric:
+            - id: "R1"
+              text: "R1 — A: event_journal.py, journal_replay.py, recovery.py deleted; grep of src/ shows no imports from orchestrator.db.recovery.event_journal or journal_replay; event_store.py has no JsonlEventJournal reference. B: files deleted but one import reference remains in a non-recovery file."
+            - id: "R2"
+              text: "R2 — A: Alembic migration drops pending_signals; init_db runs cleanly on a fresh DB; schema inspection (sqlite_master) confirms table absent. B: migration exists but does not run cleanly."
+            - id: "R3"
+              text: "R3 — A: full pytest suite passes with zero failures; ARCHITECTURE.md describes the event-sourced data flow with no references to removed components; latency regression documented as <10%. B: suite passes but ARCHITECTURE.md not fully updated."
+          submission_template:
+            grade_scale: [A, B, C, D, F]
+            require_reason_if_below: "B"
+            require_remediation_if_below: "C"
