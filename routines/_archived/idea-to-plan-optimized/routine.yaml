@@ -473,7 +473,7 @@ routine:
               - "{{file:docs/{{feature}}/plan.md}}"
               - "{{file:docs/{{feature}}/architecture.md}}"
             max_concurrent: 4
-            max_turns: 20
+            max_turns: 50
             auto_verify:
               items:
                 - id: "dry_run_notes_exist"
