@@ -13,7 +13,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.api.app import create_app
 from orchestrator.config import ChecklistStatus, Priority, RoutineSource, TaskStatus
 from orchestrator.config.enums import RunStatus
-from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
+from orchestrator.db import (
+    RunRepository,
+    SqliteEventStore,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
 from orchestrator.workflow import WorkflowEngine, InvalidTransitionError
@@ -184,7 +191,7 @@ async def _force_stopping(app: Any, run_id: str) -> None:
         repo = RunRepository(session)
         run = await repo.get(run_id)
         run.status = RunStatus.STOPPING
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
 
@@ -373,6 +380,25 @@ async def test_submit_for_verification_accepted_while_stopping(
 
     assert result.success is True
     assert result.new_status == TaskStatus.VERIFYING
+
+
+@pytest.mark.asyncio
+async def test_apply_stop_run_writes_events_v2_and_projects_stopping(
+    svc_session: tuple[WorkflowService, AsyncSession],
+) -> None:
+    svc, session = svc_session
+    await _setup_building_task(svc)
+
+    stopped = await svc.apply_stop_run("run-1")
+
+    assert stopped.status == RunStatus.STOPPING
+    reloaded = await svc.get_run("run-1")
+    assert reloaded.status == RunStatus.STOPPING
+    events = await SqliteEventStore(session).get_stream("run-1")
+    status_events = [event for event in events if event.event_type == "run_status_changed"]
+    assert status_events[-1].event_type == "run_status_changed"
+    assert '"old_status":"active"' in status_events[-1].payload
+    assert '"new_status":"stopping"' in status_events[-1].payload
 
 
 @pytest.mark.asyncio

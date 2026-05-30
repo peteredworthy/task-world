@@ -34,6 +34,7 @@ from orchestrator.workflow import (
 )
 from orchestrator.runners.execution.attempt_store import AttemptStore
 from orchestrator.runners.execution.event_broadcaster import EventBroadcaster
+from orchestrator.runners.execution.output_batcher import OutputBatcher
 from orchestrator.runners.execution.phase_handler import PhaseHandler
 from orchestrator.runners.health_check import (
     DEFAULT_HEALTH_CHECK_COMMAND,
@@ -44,6 +45,7 @@ from orchestrator.runners.health_check import (
 )
 from orchestrator.workflow import InvalidTransitionError
 from orchestrator.workflow import generate_builder_prompt, SummaryCache
+from orchestrator.git import get_head_commit, reset_worktree_changes
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -168,8 +170,15 @@ class AgentRunnerExecutor:
         # Extracted sub-components
         self._attempt_store = AttemptStore(session_factory)
         self._broadcaster = EventBroadcaster(session_factory, connection_manager)
+        self._output_batcher = OutputBatcher(
+            session_factory=session_factory,
+            connection_manager=connection_manager,
+        )
         self._phase_handler = PhaseHandler(
-            self._attempt_store, self._broadcaster, self._api_base_url
+            self._attempt_store,
+            self._broadcaster,
+            self._api_base_url,
+            self._output_batcher,
         )
 
     def set_service_factory(
@@ -234,20 +243,7 @@ class AgentRunnerExecutor:
     @staticmethod
     def reset_worktree(project_dir: str) -> None:
         """Discard all uncommitted changes in the worktree."""
-        subprocess.run(
-            ["git", "checkout", "."],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        subprocess.run(
-            ["git", "clean", "-fd"],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
+        reset_worktree_changes(project_dir)
 
     async def _run_project_health_check(self, project_dir: str) -> str | None:
         """Run the project test suite before the first task attempt.
@@ -390,8 +386,8 @@ class AgentRunnerExecutor:
         """Start a run and spawn the appropriate agent.
 
         This method:
-        1. Starts the run (changes status to ACTIVE)
-        2. Creates a git worktree if enabled
+        1. Creates or reuses a git worktree if enabled
+        2. Starts the run (changes status to ACTIVE)
         3. Spawns the agent in a background task
         4. Returns immediately while agent works
 
@@ -402,75 +398,174 @@ class AgentRunnerExecutor:
         Returns:
             The started run
         """
-        # First, start the run (changes status to ACTIVE via direct apply)
-        run = await service.apply_start_run(run_id)
+        prepared = await self.prepare_worktree(run_id, service=service)
+        if not prepared:
+            async with self._session_factory() as session:
+                fresh_service = await self._create_service(session)
+                return await fresh_service.get_run(run_id)
 
-        # Create worktree if enabled and we have config for repo/worktree paths
-        worktree_setup_error: str | None = None
-        if run.worktree_enabled and run.source_branch and self._global_config is not None:
-            try:
-                from orchestrator.git.worktree import WorktreeManager
+        await service.apply_start_run(run_id)
+        if self._spawn_agents:
+            await self.setup_and_spawn(run_id)
+        return await service.get_run(run_id)
 
-                repos_dir = self._global_config.paths.get_repos_path()
-                worktrees_dir = self._global_config.paths.get_worktrees_path()
-                repo_path = repos_dir / run.repo_name
-
-                if repo_path.is_dir():
-                    wt_mgr = WorktreeManager(
-                        repo_path,
-                        worktrees_dir,
-                        server_port=self._global_config.server.port,
-                        worktree_base_port=self._global_config.server.worktree_base_port,
-                    )
-                    try:
-                        wt_info = wt_mgr.create(run.id, run.source_branch)
-                    except Exception as e:
-                        logger.warning(f"Run {run_id}: worktree creation failed: {e}")
-                        raise
-
-                    try:
-                        run = await service.set_worktree_path(
-                            run_id, str(wt_info.path), source_branch_sha=wt_info.commit
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Run {run_id}: worktree created at {wt_info.path} but failed "
-                            f"to save worktree_path to DB: {e}"
-                        )
-                        raise
-
-                    logger.info(
-                        f"Run {run_id}: created worktree at {wt_info.path} "
-                        f"(branch={wt_info.branch})"
-                    )
-
-                    # Copy routine-adjacent files (scripts, scaffolding, etc.)
-                    self._copy_routine_files(run, repo_path, wt_info.path)
-                else:
-                    worktree_setup_error = f"repo {run.repo_name} not found at {repo_path}"
-            except Exception as e:
-                worktree_setup_error = str(e)
-        elif run.worktree_enabled and run.source_branch and self._global_config is None:
-            worktree_setup_error = "global_config is not available"
-
-        if run.worktree_enabled and run.source_branch and not run.worktree_path:
-            if not self._spawn_agents:
-                logger.info(
-                    "Run %s: worktree not prepared while agent spawning is disabled; "
-                    "leaving run active (%s)",
-                    run_id,
-                    worktree_setup_error or "worktree_path was not set",
-                )
-                return run
-            await self._pause_for_worktree_setup_failure(
-                service,
+    async def prepare_worktree(
+        self,
+        run_id: str,
+        *,
+        service: WorkflowService | None = None,
+        reset_worktree: bool = False,
+    ) -> bool:
+        """Create or recover a required run worktree before the run becomes ACTIVE."""
+        if service is not None:
+            return await self._prepare_worktree_with_service(
                 run_id,
-                worktree_setup_error or "worktree_path was not set",
+                service,
+                reset_worktree=reset_worktree,
             )
-            run = await service.get_run(run_id)
-            return run
+        async with self._session_factory() as session:
+            service = await self._create_service(session)
+            return await self._prepare_worktree_with_service(
+                run_id,
+                service,
+                reset_worktree=reset_worktree,
+            )
 
-        # For managed agents, spawn in background
+    async def _prepare_worktree_with_service(
+        self,
+        run_id: str,
+        service: WorkflowService,
+        *,
+        reset_worktree: bool = False,
+    ) -> bool:
+        run = await service.get_run(run_id)
+
+        if not run.worktree_enabled or not run.source_branch:
+            return True
+
+        if run.worktree_path:
+            worktree_path = Path(run.worktree_path)
+            if reset_worktree:
+                return await self._reset_existing_worktree_for_resume(
+                    run_id,
+                    service,
+                    reset_worktree=reset_worktree,
+                )
+            if self._global_config is None and worktree_path.exists():
+                return await self._reset_existing_worktree_for_resume(
+                    run_id,
+                    service,
+                    reset_worktree=reset_worktree,
+                )
+            if (worktree_path / ".git").exists():
+                return await self._reset_existing_worktree_for_resume(
+                    run_id,
+                    service,
+                    reset_worktree=reset_worktree,
+                )
+
+        if self._global_config is None:
+            if not self._spawn_agents:
+                return True
+            await service.fail_worktree_creation(run_id, "global_config is not available")
+            return False
+
+        from orchestrator.git.worktree import WorktreeManager
+
+        repos_dir = self._global_config.paths.get_repos_path()
+        worktrees_dir = self._global_config.paths.get_worktrees_path()
+        repo_path = repos_dir / run.repo_name
+
+        if not repo_path.is_dir():
+            if not self._spawn_agents:
+                return True
+            await service.request_worktree_creation(run_id, run.repo_name, run.source_branch)
+            await service.fail_worktree_creation(
+                run_id,
+                f"repo {run.repo_name} not found at {repo_path}",
+            )
+            return False
+
+        await service.request_worktree_creation(run_id, run.repo_name, run.source_branch)
+
+        try:
+            wt_mgr = WorktreeManager(
+                repo_path,
+                worktrees_dir,
+                server_port=self._global_config.server.port,
+                worktree_base_port=self._global_config.server.worktree_base_port,
+            )
+            wt_info = wt_mgr.ensure_exists(run.id, run.source_branch, run.worktree_path)
+            run = await service.set_worktree_path(
+                run_id,
+                str(wt_info.path),
+                source_branch_sha=wt_info.commit,
+            )
+            logger.info(
+                f"Run {run_id}: prepared worktree at {wt_info.path} (branch={wt_info.branch})"
+            )
+
+            if not run.routine_source_dir:
+                run.routine_source_dir = self._resolve_routine_source_dir(run)
+            self._copy_routine_files(run, repo_path, wt_info.path)
+            return await self._reset_existing_worktree_for_resume(
+                run_id,
+                service,
+                reset_worktree=reset_worktree,
+            )
+        except Exception as e:
+            await service.fail_worktree_creation(run_id, str(e))
+            return False
+
+    async def _reset_existing_worktree_for_resume(
+        self,
+        run_id: str,
+        service: WorkflowService,
+        *,
+        reset_worktree: bool,
+    ) -> bool:
+        """Discard uncommitted work for reset-worktree resumes before activation."""
+        if not reset_worktree:
+            return True
+
+        run = await service.get_run(run_id)
+        if not run.worktree_path:
+            return True
+
+        head_before = get_head_commit(Path(run.worktree_path))
+        try:
+            await service.request_worktree_reset(
+                run_id,
+                worktree_path=run.worktree_path,
+                reset_type="resume_uncommitted",
+                head_before=head_before,
+                reason="resume_strategy=reset_worktree",
+            )
+            result = reset_worktree_changes(Path(run.worktree_path))
+            await service.complete_worktree_reset(
+                run_id,
+                worktree_path=run.worktree_path,
+                reset_type="resume_uncommitted",
+                head_before=result.head_before,
+                head_after=result.head_after,
+                reason="resume_strategy=reset_worktree",
+            )
+            logger.info("Run %s: reset uncommitted worktree changes before resume", run_id)
+            return True
+        except Exception as e:
+            await service.fail_worktree_reset(
+                run_id,
+                worktree_path=run.worktree_path,
+                reset_type="resume_uncommitted",
+                error=str(e),
+                head_before=head_before,
+                reason="resume_strategy=reset_worktree",
+            )
+            return False
+
+    async def _spawn_agent_for_run(self, run: Run) -> None:
+        """Spawn the configured managed agent loop for an active run."""
+        run_id = run.id
         agent_runner_type = run.agent_runner_type
         if agent_runner_type in (
             AgentRunnerType.CLI_SUBPROCESS,
@@ -494,111 +589,33 @@ class AgentRunnerExecutor:
             self._running_tasks[run_id] = task
             logger.info(f"Run {run_id}: spawned {agent_runner_type.value} agent in background")
 
-        return run
-
     async def setup_and_spawn(self, run_id: str) -> None:
-        """Create worktree (if not already present) and spawn agent for an ACTIVE run.
+        """Spawn an agent for an ACTIVE run after required worktree setup.
 
         Called by the signal consumer (via workflow_runner) after RUN_START or RESUME
-        has already been applied.  Does NOT perform any state transition.
+        has already been applied. Worktree creation happens before ACTIVE.
         """
-        # Load the run to inspect worktree settings and agent runner config.
         async with self._session_factory() as session:
             service = await self._create_service(session)
             run = await service.get_run(run_id)
-
-            # Create worktree only if enabled, source_branch is known, no existing path,
-            # and global_config provides the directory layout.
-            worktree_setup_error: str | None = None
-            if (
-                run.worktree_enabled
-                and run.source_branch
-                and run.worktree_path is None
-                and self._global_config is not None
-            ):
-                try:
-                    from orchestrator.git.worktree import WorktreeManager
-
-                    repos_dir = self._global_config.paths.get_repos_path()
-                    worktrees_dir = self._global_config.paths.get_worktrees_path()
-                    repo_path = repos_dir / run.repo_name
-
-                    if repo_path.is_dir():
-                        wt_mgr = WorktreeManager(
-                            repo_path,
-                            worktrees_dir,
-                            server_port=self._global_config.server.port,
-                            worktree_base_port=self._global_config.server.worktree_base_port,
-                        )
-                        try:
-                            wt_info = wt_mgr.create(run.id, run.source_branch)
-                        except Exception as e:
-                            logger.warning(f"Run {run_id}: worktree creation failed: {e}")
-                            raise
-
-                        try:
-                            run = await service.set_worktree_path(
-                                run_id,
-                                str(wt_info.path),
-                                source_branch_sha=wt_info.commit,
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"Run {run_id}: worktree created at {wt_info.path} but "
-                                f"failed to save worktree_path to DB: {e}"
-                            )
-                            raise
-
-                        logger.info(
-                            f"Run {run_id}: created worktree at {wt_info.path} "
-                            f"(branch={wt_info.branch})"
-                        )
-
-                        # Copy routine-adjacent files (scripts, scaffolding, etc.)
-                        # routine_source_dir is transient (not in DB), so re-derive
-                        # for the recovery path.
-                        if not run.routine_source_dir:
-                            run.routine_source_dir = self._resolve_routine_source_dir(run)
-                        self._copy_routine_files(run, repo_path, wt_info.path)
-                    else:
-                        worktree_setup_error = f"repo {run.repo_name} not found at {repo_path}"
-                except Exception as e:
-                    worktree_setup_error = str(e)
-            elif (
-                run.worktree_enabled
-                and run.source_branch
-                and run.worktree_path is None
-                and self._global_config is None
-            ):
-                worktree_setup_error = "global_config is not available"
 
             if run.worktree_enabled and run.source_branch and run.worktree_path is None:
                 if not self._spawn_agents:
                     logger.info(
                         "Run %s: worktree not prepared while agent spawning is disabled; "
-                        "leaving run active (%s)",
+                        "leaving run active",
                         run_id,
-                        worktree_setup_error or "worktree_path was not set",
                     )
                     return
                 await self._pause_for_worktree_setup_failure(
                     service,
                     run_id,
-                    worktree_setup_error or "worktree_path was not set",
+                    "required worktree_path was not set before ACTIVE",
                 )
                 return
 
-        # Spawn agent loop.
-        agent_runner_type = run.agent_runner_type
-        if agent_runner_type in (
-            AgentRunnerType.CLI_SUBPROCESS,
-            AgentRunnerType.OPENHANDS_LOCAL,
-            AgentRunnerType.OPENHANDS_DOCKER,
-            AgentRunnerType.CODEX_SERVER,
-            AgentRunnerType.CLAUDE_SDK,
-        ):
-            assert agent_runner_type is not None  # narrowed by membership test above
-            self.spawn_for_run(run_id, agent_runner_type, run.agent_runner_config or {})
+            if self._spawn_agents:
+                await self._spawn_agent_for_run(run)
 
     async def _monitor_agent_health(
         self, run_id: str, agent_runner_type: AgentRunnerType, check_interval: float = 30.0

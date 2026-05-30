@@ -29,6 +29,7 @@ from orchestrator.db import (
     create_session_factory,
     init_db,
 )
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService
@@ -174,7 +175,7 @@ class TestConditionalStepPersistence:
 
         # Update skip reason
         loaded1.steps[1].skip_reason = "cycle_2"
-        await service._repo.save(loaded1)
+        await save_run(service._session, loaded1)
 
         # Load again and verify
         loaded2 = await service._repo.get(run.id)
@@ -343,7 +344,7 @@ class TestSkipReasonContent:
         # Load and clear
         loaded = await service._repo.get(run.id)
         loaded.steps[1].skip_reason = None
-        await service._repo.save(loaded)
+        await save_run(service._session, loaded)
 
         # Verify cleared
         reloaded = await service._repo.get(run.id)
@@ -398,7 +399,7 @@ class TestSkipStateReconstruction:
         loaded = await service._repo.get(run.id)
         loaded.status = RunStatus.ACTIVE
         loaded.started_at = datetime.now(timezone.utc)
-        await service._repo.save(loaded)
+        await save_run(service._session, loaded)
 
         # Verify skip state is unchanged
         reloaded = await service._repo.get(run.id)

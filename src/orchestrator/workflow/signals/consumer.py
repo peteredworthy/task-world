@@ -1,13 +1,12 @@
 """Signal consumer loop for the workflow system.
 
-Polls the pending_signals table every 100ms, dispatching signals to typed
+Polls the events_v2 table every 100ms, dispatching signals to typed
 handlers.  Concurrent across run_ids (one asyncio.Task per run_id); serial
 FIFO processing within each run_id.
 
-Delivery tracking:
-  - ``delivered_at`` is stamped BEFORE the handler is invoked.
-  - ``handled_at`` is stamped AFTER the handler returns successfully.
-  - If the handler raises, ``handled_at`` stays NULL → signal is eligible
+Delivery semantics:
+  - SignalProcessed event is appended AFTER the handler returns successfully.
+  - If the handler raises, no SignalProcessed is committed → signal is eligible
     for redelivery on the next startup.
 
 This module is the single-queue signal consumer, wired into the app lifespan
@@ -19,47 +18,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.workflow.signals.runtime import RunWorkflow
 from orchestrator.workflow.signals.signals import WorkflowSignal
 
 if TYPE_CHECKING:
+    from orchestrator.db import RunLifecycleProjector
     from orchestrator.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Registry of active RunWorkflow instances (consumer-owned)
-#
-# These functions are the sole owners of the active-workflow registry.
-# Only this module (and its test helpers) should import or call them.
-# ---------------------------------------------------------------------------
-
-_active_run_ids: set[str] = set()
-
-
-def register_active_run(run_id: str) -> None:
-    """Mark a run as having an active RunWorkflow driving it."""
-    _active_run_ids.add(run_id)
-
-
-def unregister_active_run(run_id: str) -> None:
-    """Remove a run from the active-workflow registry."""
-    _active_run_ids.discard(run_id)
-
-
-def has_active_workflow(run_id: str) -> bool:
-    """Return True if a RunWorkflow is currently executing for run_id."""
-    return run_id in _active_run_ids
-
-
 class SignalConsumer:
-    """Consumer loop for the pending_signals queue.
+    """Consumer loop for the events_v2 signal queue.
 
     Parameters
     ----------
@@ -74,6 +49,11 @@ class SignalConsumer:
         Optional async callable that is awaited for each new RunWorkflow
         after RUN_START / RESUME.  When None, workflows are created and
         registered but not started (useful in Phase 2 unit tests).
+    workflow_preparer:
+        Optional async callable that prepares required run resources before
+        RUN_START / RESUME transitions the run to ACTIVE.
+    projector:
+        Optional RunLifecycleProjector; a new one is created if not provided.
     """
 
     def __init__(
@@ -83,11 +63,19 @@ class SignalConsumer:
         *,
         poll_interval: float = 0.1,
         workflow_runner: Callable[[RunWorkflow], Awaitable[None]] | None = None,
+        workflow_preparer: Callable[[str, dict[str, Any] | None], Awaitable[bool]] | None = None,
+        projector: RunLifecycleProjector | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._create_service = create_service
         self._poll_interval = poll_interval
         self._workflow_runner = workflow_runner
+        self._workflow_preparer = workflow_preparer
+        if projector is None:
+            from orchestrator.db import RunLifecycleProjector
+
+            projector = RunLifecycleProjector()
+        self._projector = projector
 
         # RunWorkflow instances owned by this consumer (keyed by run_id)
         self._active_workflows: dict[str, RunWorkflow] = {}
@@ -102,7 +90,8 @@ class SignalConsumer:
     # ------------------------------------------------------------------
 
     async def start(self) -> None:
-        """Start the consumer: redeliver crashed signals, then begin polling."""
+        """Start the consumer: rebuild projector, redeliver crashed signals, begin polling."""
+        await self._rebuild_projector()
         await self._redeliver_on_startup()
         self._poll_task = asyncio.create_task(self._poll_loop())
 
@@ -115,6 +104,34 @@ class SignalConsumer:
                 await self._poll_task
             except asyncio.CancelledError:
                 pass
+
+    # ------------------------------------------------------------------
+    # Projector rebuild
+    # ------------------------------------------------------------------
+
+    async def _rebuild_projector(self) -> None:
+        """Rebuild the RunLifecycleProjector from persisted RunStatusChanged events."""
+        from orchestrator.db import EventV2Model
+        from orchestrator.workflow import RunStatusChanged
+
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(EventV2Model)
+                .where(EventV2Model.event_type == "run_status_changed")
+                .order_by(EventV2Model.position)
+            )
+            rows = list(result.scalars())
+
+        events: list[RunStatusChanged] = []
+        for row in rows:
+            try:
+                data = json.loads(row.payload)
+                event = RunStatusChanged.model_validate(data)
+                events.append(event)
+            except Exception:
+                pass
+
+        await self._projector.rebuild(events, session=None)  # type: ignore[arg-type]
 
     # ------------------------------------------------------------------
     # Poll loop
@@ -147,119 +164,156 @@ class SignalConsumer:
                 self._run_tasks[run_id] = asyncio.create_task(self._process_run(run_id))
 
     async def _find_pending_run_ids(self) -> list[str]:
-        """Return distinct run_ids that have unhandled, undelivered signals."""
-        from sqlalchemy import select
-
-        from orchestrator.db import PendingSignalModel
+        """Return distinct run_ids that have unhandled SignalEnqueued events in events_v2."""
+        from orchestrator.db import EventV2Model
 
         async with self._session_factory() as session:
-            stmt = (
-                select(PendingSignalModel.run_id)
-                .where(
-                    PendingSignalModel.handled_at.is_(None),
-                    PendingSignalModel.delivered_at.is_(None),
-                )
-                .order_by(PendingSignalModel.id)
-                .distinct()
+            # Fetch all SignalEnqueued events
+            result = await session.execute(
+                select(EventV2Model.aggregate_id, EventV2Model.position)
+                .where(EventV2Model.event_type == "signal_enqueued")
+                .order_by(EventV2Model.position)
             )
-            result = await session.execute(stmt)
-            return list(result.scalars().all())
+            enqueued_rows = list(result.all())
+
+            if not enqueued_rows:
+                return []
+
+            # Fetch all processed positions
+            result2 = await session.execute(
+                select(EventV2Model.payload).where(EventV2Model.event_type == "signal_processed")
+            )
+            processed_payloads = list(result2.scalars())
+
+        processed_positions: set[int] = set()
+        for p in processed_payloads:
+            try:
+                data = json.loads(p)
+                pos = data.get("enqueued_position")
+                if isinstance(pos, int):
+                    processed_positions.add(pos)
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        pending_run_ids: list[str] = []
+        seen: set[str] = set()
+        for run_id, position in enqueued_rows:
+            if position not in processed_positions and run_id not in seen:
+                pending_run_ids.append(run_id)
+                seen.add(run_id)
+
+        return pending_run_ids
 
     # ------------------------------------------------------------------
     # Per-run serial processing
     # ------------------------------------------------------------------
 
     async def _process_run(self, run_id: str) -> None:
-        """Drain all pending signals for *run_id* serially in FIFO (PK) order."""
+        """Drain all pending signals for *run_id* serially in FIFO (position) order."""
         while True:
-            signal_id = await self._fetch_next_signal_id(run_id)
-            if signal_id is None:
+            signal_data = await self._fetch_next_event_signal(run_id)
+            if signal_data is None:
                 break
-            await self._dispatch_signal_by_id(signal_id)
+            if not await self._dispatch_event_signal(run_id, signal_data):
+                break
 
-    async def _fetch_next_signal_id(self, run_id: str) -> int | None:
-        """Return the PK of the lowest-id unhandled, undelivered signal for *run_id*."""
-        from sqlalchemy import select
-
-        from orchestrator.db import PendingSignalModel
+    async def _fetch_next_event_signal(
+        self, run_id: str
+    ) -> tuple[int, WorkflowSignal, dict[str, Any] | None] | None:
+        """Return (enqueued_position, signal_type, payload) for the next unprocessed signal."""
+        from orchestrator.db import EventV2Model
 
         async with self._session_factory() as session:
-            stmt = (
-                select(PendingSignalModel.id)
+            result = await session.execute(
+                select(EventV2Model.position, EventV2Model.payload)
                 .where(
-                    PendingSignalModel.run_id == run_id,
-                    PendingSignalModel.handled_at.is_(None),
-                    PendingSignalModel.delivered_at.is_(None),
+                    EventV2Model.aggregate_id == run_id,
+                    EventV2Model.event_type == "signal_enqueued",
                 )
-                .order_by(PendingSignalModel.id)
-                .limit(1)
+                .order_by(EventV2Model.position)
             )
-            result = await session.execute(stmt)
-            return result.scalar_one_or_none()
+            enqueued_rows = list(result.all())
+
+            if not enqueued_rows:
+                return None
+
+            result2 = await session.execute(
+                select(EventV2Model.payload).where(
+                    EventV2Model.aggregate_id == run_id,
+                    EventV2Model.event_type == "signal_processed",
+                )
+            )
+            processed_payloads = list(result2.scalars())
+
+        processed_positions: set[int] = set()
+        for p in processed_payloads:
+            try:
+                data = json.loads(p)
+                pos = data.get("enqueued_position")
+                if isinstance(pos, int):
+                    processed_positions.add(pos)
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        for position, payload_str in enqueued_rows:
+            if position in processed_positions:
+                continue
+            try:
+                payload_data = json.loads(payload_str)
+                raw_type = payload_data.get("signal_type", "")
+                signal_type = WorkflowSignal(raw_type)
+                payload: dict[str, Any] | None = payload_data.get("payload")
+                return position, signal_type, payload
+            except (ValueError, KeyError):
+                continue
+
+        return None
 
     # ------------------------------------------------------------------
     # Signal dispatch
     # ------------------------------------------------------------------
 
-    async def _dispatch_signal_by_id(self, signal_id: int) -> None:
-        """Set delivered_at, invoke handler, set handled_at on success.
+    async def _dispatch_event_signal(
+        self,
+        run_id: str,
+        signal_data: tuple[int, WorkflowSignal, dict[str, Any] | None],
+    ) -> bool:
+        """Run handler, then append SignalProcessed only after handler success.
 
-        This is the single dispatch path used by both the normal poll loop
-        and the startup redelivery code, satisfying R3.
-
-        Two separate transactions are used:
-        - Transaction 1: stamp delivered_at and commit — persists regardless of
-          handler outcome, preventing same-process re-polling of this signal.
-        - Transaction 2: re-fetch signal, run handler, stamp handled_at on success.
-          On any exception, rollback discards handler mutations and handled_at,
-          but delivered_at from T1 is already committed and persists.
-          handled_at stays NULL → signal eligible for redelivery on next startup.
+        Handler effects and the processed marker commit atomically. If the
+        handler fails, no SignalProcessed event is appended, leaving the
+        signal eligible for redelivery.
         """
-        from sqlalchemy import select
+        from orchestrator.db import (
+            commit_with_event_outbox,
+            create_wired_event_store_v2,
+            rollback_with_event_outbox,
+        )
+        from orchestrator.workflow import SignalProcessed
 
-        from orchestrator.db import PendingSignalModel
+        enqueued_position, signal_type, payload = signal_data
 
-        # --- Transaction 1: stamp delivered_at and commit immediately ---
         async with self._session_factory() as session:
-            stmt = select(PendingSignalModel).where(PendingSignalModel.id == signal_id)
-            result = await session.execute(stmt)
-            signal_model = result.scalar_one_or_none()
-            if signal_model is None:
-                return
-
-            payload: dict[str, Any] | None = (
-                json.loads(signal_model.payload) if signal_model.payload else None
-            )
-            signal_type = WorkflowSignal(signal_model.signal_type)
-            run_id = signal_model.run_id
-
-            signal_model.delivered_at = datetime.now(timezone.utc)
-            await session.commit()
-
-        # --- Transaction 2: run handler, stamp handled_at on success ---
-        async with self._session_factory() as session:
-            stmt = select(PendingSignalModel).where(PendingSignalModel.id == signal_id)
-            result = await session.execute(stmt)
-            signal_model = result.scalar_one_or_none()
-            if signal_model is None:
-                return
-
             service = await self._create_service(session)
-
             try:
                 await self._handle_signal(run_id, signal_type, payload, session, service)
-                # stamp handled_at AFTER successful handler completion
-                signal_model.handled_at = datetime.now(timezone.utc)
-                await session.commit()
+                store = create_wired_event_store_v2(session)
+                processed_event = SignalProcessed(
+                    run_id=run_id,
+                    event_type="signal_processed",
+                    enqueued_position=enqueued_position,
+                )
+                await store.append([processed_event])
             except Exception:
-                await session.rollback()
+                await rollback_with_event_outbox(session)
                 logger.exception(
-                    "SignalConsumer: error handling %s for run %s — rolled back, signal eligible for redelivery",
+                    "SignalConsumer: error handling %s for run %s — rolled back",
                     signal_type.value,
                     run_id,
                 )
-                # handled_at stays NULL → signal will be redelivered on next startup
-                # All handler mutations rolled back → clean state for redelivery
+                return False
+            await commit_with_event_outbox(session)
+        return True
 
     async def _handle_signal(
         self,
@@ -290,7 +344,7 @@ class SignalConsumer:
             )
 
     # ------------------------------------------------------------------
-    # Typed handlers (R2)
+    # Typed handlers
     # ------------------------------------------------------------------
 
     async def _handle_run_start(
@@ -301,13 +355,21 @@ class SignalConsumer:
         service: WorkflowService,
     ) -> None:
         """RUN_START: DRAFT → ACTIVE, create RunWorkflow, register."""
+        if self._workflow_preparer is not None:
+            prepared = await self._workflow_preparer(run_id, payload)
+            if not prepared:
+                logger.info(
+                    "SignalConsumer: RUN_START for %s did not activate; preparation failed",
+                    run_id,
+                )
+                return
+
         run = await service.apply_start_run(run_id)
         workflow = RunWorkflow(
             run_id=run_id,
             agent_runner_type=run.agent_runner_type,
             agent_runner_config=run.agent_runner_config,
         )
-        register_active_run(run_id)
         self._active_workflows[run_id] = workflow
         logger.info("SignalConsumer: RUN_START for %s — workflow registered", run_id)
 
@@ -333,6 +395,32 @@ class SignalConsumer:
             agent_runner_config = payload.get("agent_runner_config")
             resume_strategy = payload.get("resume_strategy")
 
+        current_run = await service.get_run(run_id)
+        if self._status_value(getattr(current_run, "status", None)) == "active":
+            logger.info(
+                "SignalConsumer: ignoring stale RESUME for already active run %s",
+                run_id,
+            )
+            if run_id not in self._active_workflows:
+                workflow = RunWorkflow(
+                    run_id=run_id,
+                    agent_runner_type=current_run.agent_runner_type,
+                    agent_runner_config=current_run.agent_runner_config,
+                )
+                self._active_workflows[run_id] = workflow
+                if self._workflow_runner is not None:
+                    asyncio.create_task(self._safe_run_workflow(run_id, workflow))
+            return
+
+        if self._workflow_preparer is not None:
+            prepared = await self._workflow_preparer(run_id, payload)
+            if not prepared:
+                logger.info(
+                    "SignalConsumer: RESUME for %s did not activate; preparation failed",
+                    run_id,
+                )
+                return
+
         run = await service.apply_resume_run(
             run_id,
             agent_runner_type=agent_runner_type,
@@ -344,7 +432,6 @@ class SignalConsumer:
             agent_runner_type=run.agent_runner_type,
             agent_runner_config=run.agent_runner_config,
         )
-        register_active_run(run_id)
         self._active_workflows[run_id] = workflow
         logger.info("SignalConsumer: RESUME for %s — workflow registered", run_id)
 
@@ -358,15 +445,13 @@ class SignalConsumer:
         session: AsyncSession,
         service: WorkflowService,
     ) -> None:
-        """PAUSE: with active workflow → unregister, then apply PAUSED directly."""
+        """PAUSE: with active workflow → remove; then apply PAUSED directly."""
         reason: str = (payload.get("reason") if payload else None) or "signal_pause"
         error_detail: str | None = payload.get("error_detail") if payload else None
 
         if run_id in self._active_workflows:
-            # Unregister so the RunWorkflow loop detects status != ACTIVE and exits.
-            unregister_active_run(run_id)
             del self._active_workflows[run_id]
-            logger.info("SignalConsumer: PAUSE for %s with active workflow — unregistered", run_id)
+            logger.info("SignalConsumer: PAUSE for %s with active workflow — removed", run_id)
 
         await service.apply_pause_run(run_id, reason=reason, error_detail=error_detail)
         logger.info("SignalConsumer: PAUSE applied for %s (reason=%s)", run_id, reason)
@@ -378,13 +463,12 @@ class SignalConsumer:
         session: AsyncSession,
         service: WorkflowService,
     ) -> None:
-        """CANCEL: with active workflow → unregister; then apply FAILED."""
+        """CANCEL: with active workflow → remove; then apply FAILED."""
         reason: str | None = payload.get("reason") if payload else None
 
         if run_id in self._active_workflows:
-            unregister_active_run(run_id)
             del self._active_workflows[run_id]
-            logger.info("SignalConsumer: CANCEL for %s with active workflow — unregistered", run_id)
+            logger.info("SignalConsumer: CANCEL for %s with active workflow — removed", run_id)
 
         await service.apply_cancel_run(run_id, reason=reason)
         logger.info("SignalConsumer: CANCEL applied for %s", run_id)
@@ -403,6 +487,12 @@ class SignalConsumer:
         else:
             task_id: str | None = (payload or {}).get("task_id")
             if task_id:
+                if await self._run_is_paused(run_id, service):
+                    logger.info(
+                        "SignalConsumer: ignoring stale ACTIVITY_COMPLETED for paused run %s",
+                        run_id,
+                    )
+                    return
                 await service.apply_submission(run_id, task_id)
             else:
                 logger.warning("SignalConsumer: ACTIVITY_COMPLETED for %s missing task_id", run_id)
@@ -421,9 +511,24 @@ class SignalConsumer:
         else:
             task_id: str | None = (payload or {}).get("task_id")
             if task_id:
+                if await self._run_is_paused(run_id, service):
+                    logger.info(
+                        "SignalConsumer: ignoring stale ACTIVITY_VERIFIED for paused run %s",
+                        run_id,
+                    )
+                    return
                 await service.apply_verification(run_id, task_id)
             else:
                 logger.warning("SignalConsumer: ACTIVITY_VERIFIED for %s missing task_id", run_id)
+
+    async def _run_is_paused(self, run_id: str, service: WorkflowService) -> bool:
+        """Return whether run-delivered activity is stale because the run is paused."""
+        run = await service.get_run(run_id)
+        return self._status_value(getattr(run, "status", None)) == "paused"
+
+    @staticmethod
+    def _status_value(status: Any) -> Any:
+        return getattr(status, "value", status)
 
     # ------------------------------------------------------------------
     # Workflow task wrapper
@@ -440,45 +545,27 @@ class SignalConsumer:
             logger.exception("SignalConsumer: workflow for %s failed", run_id)
         finally:
             self._active_workflows.pop(run_id, None)
-            unregister_active_run(run_id)
 
     # ------------------------------------------------------------------
-    # Startup redelivery (R4)
+    # Startup redelivery
     # ------------------------------------------------------------------
 
     async def _redeliver_on_startup(self) -> None:
-        """Re-dispatch signals that were delivered but never handled (crash recovery).
+        """Re-dispatch signals for runs with no active workflow (crash recovery).
 
-        Query: ``delivered_at IS NOT NULL AND handled_at IS NULL``
-        Filtered to runs with no active RunWorkflow.
-        Re-dispatched through the normal _dispatch_signal_by_id path so that
-        delivered_at is refreshed and handled_at is set on success.
+        Queries events_v2 for run_ids with unprocessed SignalEnqueued events.
+        Filters to runs where is_active() is False (no active RunWorkflow).
+        Re-dispatched through the normal _process_run path.
         """
-        from sqlalchemy import select
+        run_ids = await self._find_pending_run_ids()
 
-        from orchestrator.db import PendingSignalModel
-
-        async with self._session_factory() as session:
-            stmt = (
-                select(PendingSignalModel.id, PendingSignalModel.run_id)
-                .where(
-                    PendingSignalModel.delivered_at.is_not(None),
-                    PendingSignalModel.handled_at.is_(None),
-                )
-                .order_by(PendingSignalModel.id)
-            )
-            result = await session.execute(stmt)
-            rows = list(result.all())
-
-        redelivery_ids: list[int] = [
-            signal_id for signal_id, run_id in rows if not has_active_workflow(run_id)
-        ]
+        redelivery_ids = [run_id for run_id in run_ids if not self._projector.is_active(run_id)]
 
         if redelivery_ids:
             logger.info(
-                "SignalConsumer: startup redelivery — %d signal(s) to re-dispatch",
+                "SignalConsumer: startup redelivery — %d run(s) with pending signals",
                 len(redelivery_ids),
             )
 
-        for signal_id in redelivery_ids:
-            await self._dispatch_signal_by_id(signal_id)
+        for run_id in redelivery_ids:
+            await self._process_run(run_id)

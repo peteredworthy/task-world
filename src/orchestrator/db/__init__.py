@@ -9,14 +9,13 @@ from typing import TYPE_CHECKING
 # Imported here for backward compatibility with existing code that imports from db
 from orchestrator.db.orm.base import Base
 from orchestrator.db.orm.models import (  # noqa: F401
+    AgentRunnerModelProfileDefaultModel,
     AttemptModel,
     ClarificationRequestModel,
     ClarificationResponseModel,
-    EventModel,
-    PendingSignalModel,
-    ReplayCheckpointModel,
+    EventV2Model,
+    ProjectionCheckpointModel,
     RunModel,
-    AgentRunnerModelProfileDefaultModel,
     RoutineMetaModel,
     StepModel,
     TaskModel,
@@ -29,26 +28,20 @@ from orchestrator.db.access.connection import (
     init_db,
 )
 
-# Event journal
-from orchestrator.db.recovery.event_journal import (
-    JsonlEventJournal,
-    make_journal_entry,
-    parse_journal_timestamp,
-    read_journal_entries,
+# JSONL outbox: path helpers + observer
+from orchestrator.db.access.jsonl_outbox import (
+    JsonlOutboxObserver,
     resolve_default_journal_path,
     resolve_default_journal_path_from_session,
 )
-
-# Journal replay
-from orchestrator.db.recovery.journal_replay import (
-    JournalReplaySummary,
-    replay_journal_to_repository,
-)
-
-# Event recovery / replay
-from orchestrator.db.recovery.recovery import (
-    RECOVERY_MATRIX,
-    replay_events,
+from orchestrator.db.access.event_outbox import (
+    EventOutboxBatch,
+    EventOutboxObserver,
+    clear_event_outbox,
+    commit_with_event_outbox,
+    flush_event_outbox,
+    queue_event_outbox,
+    rollback_with_event_outbox,
 )
 
 # Backup utilities
@@ -60,10 +53,34 @@ from orchestrator.db.recovery.backup import (
     scan_max_sequence,
 )
 
+from orchestrator.db.bootstrap import bootstrap_from_jsonl
+
 if TYPE_CHECKING:
     # Lazy imports to avoid circular dependencies with workflow.clarifications
-    from orchestrator.db.access.event_store import EventStore
-    from orchestrator.db.access.repositories import CheckpointRepository, RunRepository
+    from orchestrator.db.access.concurrency import ConcurrencyConflictError, RetryWithBackoff
+    from orchestrator.db.access.event_store_v2 import (
+        SqliteEventStore,
+        StoredEvent,
+        create_wired_event_store_v2,
+    )
+    from orchestrator.db.access.event_outbox import (
+        EventOutboxBatch,
+        EventOutboxObserver,
+    )
+    from orchestrator.db.projections import (
+        ProjectionRegistry,
+        RunLifecycleProjector,
+        RunStateProjector,
+        TaskStateProjector,
+    )
+    from orchestrator.db.access.repositories import (
+        RunRepository,
+    )
+    from orchestrator.db.access.mutations import (
+        create_clarification_request,
+        delete_run,
+        persist_clarification_response,
+    )
 
 
 def __getattr__(name: str):
@@ -72,26 +89,67 @@ def __getattr__(name: str):
         from orchestrator.db.access.repositories import RunRepository
 
         return RunRepository
-    elif name == "CheckpointRepository":
-        from orchestrator.db.access.repositories import CheckpointRepository
+    elif name == "delete_run":
+        from orchestrator.db.access.mutations import delete_run
 
-        return CheckpointRepository
-    elif name == "EventStore":
-        from orchestrator.db.access.event_store import EventStore
+        return delete_run
+    elif name == "create_clarification_request":
+        from orchestrator.db.access.mutations import create_clarification_request
 
-        return EventStore
+        return create_clarification_request
+    elif name == "persist_clarification_response":
+        from orchestrator.db.access.mutations import persist_clarification_response
+
+        return persist_clarification_response
+    elif name == "SqliteEventStore":
+        from orchestrator.db.access.event_store_v2 import SqliteEventStore
+
+        return SqliteEventStore
+    elif name == "StoredEvent":
+        from orchestrator.db.access.event_store_v2 import StoredEvent
+
+        return StoredEvent
+    elif name == "create_wired_event_store_v2":
+        from orchestrator.db.access.event_store_v2 import create_wired_event_store_v2
+
+        return create_wired_event_store_v2
+    elif name == "ConcurrencyConflictError":
+        from orchestrator.db.access.concurrency import ConcurrencyConflictError
+
+        return ConcurrencyConflictError
+    elif name == "RetryWithBackoff":
+        from orchestrator.db.access.concurrency import RetryWithBackoff
+
+        return RetryWithBackoff
+    elif name == "ProjectionRegistry":
+        from orchestrator.db.projections import ProjectionRegistry
+
+        return ProjectionRegistry
+    elif name == "RunStateProjector":
+        from orchestrator.db.projections import RunStateProjector
+
+        return RunStateProjector
+    elif name == "TaskStateProjector":
+        from orchestrator.db.projections import TaskStateProjector
+
+        return TaskStateProjector
+    elif name == "RunLifecycleProjector":
+        from orchestrator.db.projections import RunLifecycleProjector
+
+        return RunLifecycleProjector
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
+    # Bootstrap
+    "bootstrap_from_jsonl",
     # ORM models (backward compat re-exports)
     "AttemptModel",
     "Base",
     "ClarificationRequestModel",
     "ClarificationResponseModel",
-    "EventModel",
-    "PendingSignalModel",
-    "ReplayCheckpointModel",
+    "EventV2Model",
+    "ProjectionCheckpointModel",
     "RunModel",
     "AgentRunnerModelProfileDefaultModel",
     "RoutineMetaModel",
@@ -101,20 +159,31 @@ __all__ = [
     "create_engine",
     "create_session_factory",
     "init_db",
-    "CheckpointRepository",
     "RunRepository",
-    "EventStore",
-    # recovery
-    "JsonlEventJournal",
-    "make_journal_entry",
-    "parse_journal_timestamp",
-    "read_journal_entries",
+    "create_clarification_request",
+    "delete_run",
+    "persist_clarification_response",
+    "SqliteEventStore",
+    "StoredEvent",
+    "create_wired_event_store_v2",
+    "ConcurrencyConflictError",
+    "EventOutboxBatch",
+    "EventOutboxObserver",
+    "RetryWithBackoff",
+    "ProjectionRegistry",
+    "RunLifecycleProjector",
+    "RunStateProjector",
+    "TaskStateProjector",
+    "clear_event_outbox",
+    "commit_with_event_outbox",
+    "flush_event_outbox",
+    "queue_event_outbox",
+    "rollback_with_event_outbox",
+    # JSONL outbox
+    "JsonlOutboxObserver",
     "resolve_default_journal_path",
     "resolve_default_journal_path_from_session",
-    "JournalReplaySummary",
-    "replay_journal_to_repository",
-    "RECOVERY_MATRIX",
-    "replay_events",
+    # backup
     "BackupError",
     "BackupMetadata",
     "create_backup",

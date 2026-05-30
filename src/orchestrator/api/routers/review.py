@@ -8,15 +8,20 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.deps import (
-    get_runner_executor,
+    get_connection_manager,
     get_event_emitter,
     get_global_config,
+    get_runner_executor,
+    get_session,
+    get_session_factory,
     get_test_runner,
     get_workflow_service,
 )
+from orchestrator.api.websocket import ConnectionManager
 from orchestrator.api.schemas.review import (
     AgentResolveConflictsRequest,
     CommitEntry,
@@ -39,6 +44,7 @@ from orchestrator.api.schemas.review import (
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
+from orchestrator.db import commit_with_event_outbox, create_wired_event_store_v2
 from orchestrator.git import (
     BlockResolution as ConflictBlockResolution,
     CachedDiffOps,
@@ -131,6 +137,35 @@ def _get_head_sha_sync(worktree_path: Path) -> str:
         check=True,
     )
     return result.stdout.strip()
+
+
+async def _emit_committed(
+    emitter: PersistentEventEmitter,
+    session: AsyncSession,
+    event: Any,
+) -> None:
+    await emitter.emit(event)
+    await commit_with_event_outbox(session)
+
+
+async def _emit_committed_with_session_factory(
+    session_factory: async_sessionmaker[AsyncSession],
+    connection_manager: ConnectionManager,
+    event: Any,
+) -> None:
+    async with session_factory() as session:
+        store = create_wired_event_store_v2(session)
+        emitter = PersistentEventEmitter(store)
+
+        def _on_event(persisted_event: Any) -> None:
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(connection_manager.broadcast_event(persisted_event))
+            except RuntimeError:
+                pass
+
+        emitter.add_listener(_on_event)
+        await _emit_committed(emitter, session, event)
 
 
 async def _get_base_sha(run: Any, worktree_path: Path) -> str:
@@ -366,6 +401,7 @@ async def prune_preview(
 async def prune_apply(
     run_id: str,
     body: PruneSelection,
+    session: Annotated[AsyncSession, Depends(get_session)],
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
 ) -> PruneApplyResponse:
@@ -438,7 +474,9 @@ async def prune_apply(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     # Log PRUNE_APPLIED event
-    await emitter.emit(
+    await _emit_committed(
+        emitter,
+        session,
         PruneApplied(
             timestamp=datetime.now(timezone.utc),
             run_id=run_id,
@@ -447,7 +485,7 @@ async def prune_apply(
             files_affected=total_files,
             hunks_removed=total_hunks,
             lines_removed=total_lines,
-        )
+        ),
     )
 
     event_id = str(uuid.uuid4())
@@ -542,6 +580,9 @@ def _test_result_to_schema(result: TestRunResult) -> TestRunResultSchema:
 async def start_test_run(
     run_id: str,
     body: TestRunRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+    connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
     test_runner: Annotated[TestRunner, Depends(get_test_runner)],
@@ -571,7 +612,9 @@ async def start_test_run(
 
     # Prepare completion callback to emit TEST_RUN_COMPLETED event
     async def _on_complete(result: TestRunResult) -> None:
-        await emitter.emit(
+        await _emit_committed_with_session_factory(
+            session_factory,
+            connection_manager,
             TestRunCompleted(
                 timestamp=datetime.now(timezone.utc),
                 run_id=run_id,
@@ -579,7 +622,7 @@ async def start_test_run(
                 test_run_id=result.test_run_id,
                 status=result.status,
                 duration_ms=result.duration_ms,
-            )
+            ),
         )
 
     test_run_id = await test_runner.start_test_run(
@@ -590,13 +633,15 @@ async def start_test_run(
     )
 
     # Log TEST_RUN_STARTED event
-    await emitter.emit(
+    await _emit_committed(
+        emitter,
+        session,
         TestRunStarted(
             timestamp=datetime.now(timezone.utc),
             run_id=run_id,
             event_type="test_run_started",
             test_run_id=test_run_id,
-        )
+        ),
     )
 
     return TestRunResponse(test_run_id=test_run_id, status="running")
@@ -715,6 +760,7 @@ async def get_conflicts(
 async def agent_resolve_conflicts(
     run_id: str,
     body: AgentResolveConflictsRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
@@ -753,14 +799,16 @@ async def agent_resolve_conflicts(
     if agent_runner_type is not None:
         executor.spawn_for_run(run.id, agent_runner_type, agent_runner_config)
 
-    await emitter.emit(
+    await _emit_committed(
+        emitter,
+        session,
         AgentFixStarted(
             timestamp=datetime.now(timezone.utc),
             run_id=run_id,
             event_type="agent_fix_started",
             job_id=job_id,
             agent_runner_type=agent_runner_type.value if agent_runner_type else "",
-        )
+        ),
     )
 
     return {"job_id": job_id, "status": "dispatched"}
@@ -779,6 +827,7 @@ async def resolve_conflict_endpoint(
     run_id: str,
     file_path: str,
     body: ConflictResolutionRequest,
+    session: Annotated[AsyncSession, Depends(get_session)],
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
 ) -> ConflictResolutionResponse:
@@ -839,14 +888,16 @@ async def resolve_conflict_endpoint(
 
     remaining_conflicts = len(remaining_files)
 
-    await emitter.emit(
+    await _emit_committed(
+        emitter,
+        session,
         ConflictResolved(
             timestamp=datetime.now(timezone.utc),
             run_id=run_id,
             event_type="conflict_resolved",
             file_path=file_path,
             remaining_conflicts=remaining_conflicts,
-        )
+        ),
     )
 
     return ConflictResolutionResponse(
@@ -947,6 +998,7 @@ async def get_merge_readiness(
 @router.post("/{run_id}/review/revert-back-merge")
 async def revert_back_merge_endpoint(
     run_id: str,
+    session: Annotated[AsyncSession, Depends(get_session)],
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
 ) -> dict[str, str]:
@@ -970,14 +1022,16 @@ async def revert_back_merge_endpoint(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    await emitter.emit(
+    await _emit_committed(
+        emitter,
+        session,
         BackMergeReverted(
             timestamp=datetime.now(timezone.utc),
             run_id=run_id,
             event_type="back_merge_reverted",
             reverted_commit=result.reverted_commit,
             new_head=result.new_head,
-        )
+        ),
     )
 
     return {"reverted_commit": result.reverted_commit, "new_head": result.new_head}

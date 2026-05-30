@@ -7,6 +7,7 @@ checklist items as 'done' when the actual work fails verification.
 
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Any
 
@@ -16,8 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.app import create_app
 from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
-from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.db import EventStore
+from orchestrator.db import SqliteEventStore, create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow.service import WorkflowService
@@ -212,16 +212,18 @@ async def test_failing_auto_verify_never_bounces_through_verifying(
     result = await service.submit_for_verification("run-timing", "task-1")
     assert result.new_status == TaskStatus.BUILDING
 
-    store = EventStore(session)
-    events = await store.get_events_for_run("run-timing")
+    store = SqliteEventStore(session)
+    events = await store.get_stream("run-timing")
     status_events = [
         e
         for e in events
-        if e["type"] == "task_status_changed" and e["payload"].get("task_id") == "task-1"
+        if e.event_type == "task_status_changed"
+        and json.loads(e.payload).get("task_id") == "task-1"
     ]
 
     transitions = [
-        (e["payload"].get("old_status"), e["payload"].get("new_status")) for e in status_events
+        (payload.get("old_status"), payload.get("new_status"))
+        for payload in (json.loads(e.payload) for e in status_events)
     ]
     assert ("building", "verifying") not in transitions
     assert ("verifying", "building") not in transitions

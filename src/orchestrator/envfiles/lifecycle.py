@@ -45,21 +45,16 @@ class EnvFileLifecycle:
             data: Event-specific data to include.
         """
         if self._event_emitter is not None:
-            from dataclasses import dataclass
+            from pydantic import Field
             from orchestrator.workflow import WorkflowEvent
 
-            @dataclass
             class EnvFileSnapshotEvent(WorkflowEvent):
                 """Emitted when an env file snapshot is captured."""
 
                 snapshot_id: str = ""
                 point_type: str = ""
-                files: list[str] | None = None
+                files: list[str] = Field(default_factory=list)
                 task_id: str | None = None
-
-                def __post_init__(self) -> None:
-                    if self.files is None:
-                        self.files = []
 
             event = EnvFileSnapshotEvent(
                 timestamp=datetime.now(timezone.utc),
@@ -67,7 +62,7 @@ class EnvFileLifecycle:
                 event_type=event_type,
                 snapshot_id=data.get("snapshot_id", ""),
                 point_type=data.get("point_type", ""),
-                files=data.get("files", []),
+                files=data.get("files") or [],
                 task_id=data.get("task_id"),
             )
             self._event_emitter.emit(event)

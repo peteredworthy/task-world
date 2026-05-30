@@ -69,6 +69,8 @@ from orchestrator.runners.agents.codex.common import (
     is_allowed_tool,
     normalize_codex_metrics,
     normalize_codex_output_lines,
+    select_preferred_codex_model,
+    validate_codex_model_selection,
 )
 
 # Scaffolding and Profiles
@@ -98,7 +100,12 @@ from orchestrator.runners.profiles.service import seed_default_agents
 from orchestrator.runners.costs import get_model_costs, load_cost_table
 
 # Execution infrastructure
-from orchestrator.runners.execution import AttemptStore, EventBroadcaster, PhaseHandler
+from orchestrator.runners.execution import (
+    AttemptStore,
+    EventBroadcaster,
+    OutputBatcher as OutputBatcher,
+    PhaseHandler,
+)
 from orchestrator.runners.health_check import (
     DEFAULT_HEALTH_CHECK_COMMAND,
     HealthCheckCommandResult,
@@ -132,6 +139,7 @@ from orchestrator.runners.runtime import (
 )
 
 if TYPE_CHECKING:
+    from orchestrator.runners.executor import AgentRunnerExecutor
     from orchestrator.runners.agents.openhands.agent import OpenHandsAgent
     from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent
     from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
@@ -146,6 +154,10 @@ def __getattr__(name: str):  # type: ignore[misc]
         from orchestrator.runners.agents.openhands.docker_agent import DockerOpenHandsAgent  # noqa: PLC0415
 
         return DockerOpenHandsAgent
+    if name == "AgentRunnerExecutor":
+        from orchestrator.runners.executor import AgentRunnerExecutor  # noqa: PLC0415
+
+        return AgentRunnerExecutor
     if name == "OpenHandsEventParser":
         from orchestrator.runners.agents.openhands.parser import OpenHandsEventParser
 
@@ -252,6 +264,8 @@ __all__ = [
     "is_allowed_tool",
     "normalize_codex_metrics",
     "normalize_codex_output_lines",
+    "select_preferred_codex_model",
+    "validate_codex_model_selection",
     # Scaffolding
     "ScaffoldingError",
     "ScaffoldingSpec",
@@ -273,10 +287,12 @@ __all__ = [
     "get_model_costs",
     "load_cost_table",
     # Execution
+    "AgentRunnerExecutor",
     "AttemptStore",
     "DEFAULT_HEALTH_CHECK_COMMAND",
     "EventBroadcaster",
     "HealthCheckCommandResult",
+    "OutputBatcher",
     "PhaseHandler",
     "format_health_check_failure",
     "format_health_check_timeout",

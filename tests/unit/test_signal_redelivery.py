@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -12,13 +11,11 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from orchestrator.db import Base, PendingSignalModel
+from orchestrator.db import Base
+from orchestrator.db import EventV2Model
 from orchestrator.workflow import (
     SignalConsumer,
     WorkflowSignal,
-    has_active_workflow,
-    register_active_run,
-    unregister_active_run,
 )
 
 
@@ -113,55 +110,60 @@ async def session_factory(engine):
     return async_sessionmaker(engine, expire_on_commit=False)
 
 
-async def _insert_signal(
+async def _insert_signal_event(
     session_factory: async_sessionmaker,
     run_id: str,
     signal_type: WorkflowSignal,
     payload: dict | None = None,
-    delivered_at: datetime | None = None,
-    handled_at: datetime | None = None,
 ) -> int:
+    """Insert a SignalEnqueued event into events_v2, return the event position."""
+    from orchestrator.db import SqliteEventStore
+    from orchestrator.workflow import SignalEnqueued
+
     async with session_factory() as session:
-        model = PendingSignalModel(
+        store = SqliteEventStore(session)
+        event = SignalEnqueued(
             run_id=run_id,
+            event_type="signal_enqueued",
             signal_type=signal_type.value,
-            payload=json.dumps(payload) if payload is not None else None,
-            created_at=datetime.now(timezone.utc),
-            delivered_at=delivered_at,
-            handled_at=handled_at,
+            payload=payload,
         )
-        session.add(model)
+        stored = await store.append([event])
         await session.commit()
-        await session.refresh(model)
-        return model.id
+        return stored[0].position
 
 
-async def _get_signal(session_factory: async_sessionmaker, signal_id: int) -> PendingSignalModel:
+async def _get_processed_positions(session_factory: async_sessionmaker, run_id: str) -> set[int]:
+    """Return the set of enqueued_positions that have been processed for a run."""
     async with session_factory() as session:
         result = await session.execute(
-            select(PendingSignalModel).where(PendingSignalModel.id == signal_id)
+            select(EventV2Model.payload).where(
+                EventV2Model.aggregate_id == run_id,
+                EventV2Model.event_type == "signal_processed",
+            )
         )
-        return result.scalar_one()
+        rows = list(result.scalars())
+    positions = set()
+    for p in rows:
+        data = json.loads(p)
+        pos = data.get("enqueued_position")
+        if isinstance(pos, int):
+            positions.add(pos)
+    return positions
 
 
 @pytest.mark.asyncio
-async def test_startup_redelivery_processes_crashed_signal(session_factory) -> None:
+async def test_startup_redelivery_processes_pending_signal(session_factory) -> None:
     service = RecordingWorkflowService()
     consumer = _consumer(session_factory, service)
-    crashed_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    sig_id = await _insert_signal(
-        session_factory,
-        run_id="run-crashed",
-        signal_type=WorkflowSignal.PAUSE,
-        payload={"reason": "manual"},
-        delivered_at=crashed_at,
-        handled_at=None,
+    pos = await _insert_signal_event(
+        session_factory, "run-crashed", WorkflowSignal.PAUSE, {"reason": "manual"}
     )
 
-    assert not has_active_workflow("run-crashed")
     await consumer._redeliver_on_startup()
 
-    assert (await _get_signal(session_factory, sig_id)).handled_at is not None
+    processed = await _get_processed_positions(session_factory, "run-crashed")
+    assert pos in processed
     assert _calls(service, "apply_pause_run") == [
         (("run-crashed",), {"reason": "manual", "error_detail": None})
     ]
@@ -171,103 +173,65 @@ async def test_startup_redelivery_processes_crashed_signal(session_factory) -> N
 async def test_startup_redelivery_skips_active_runs(session_factory) -> None:
     service = RecordingWorkflowService()
     consumer = _consumer(session_factory, service)
-    crashed_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    sig_id = await _insert_signal(
-        session_factory,
-        run_id="run-active",
-        signal_type=WorkflowSignal.PAUSE,
-        payload={"reason": "manual"},
-        delivered_at=crashed_at,
-        handled_at=None,
+    pos = await _insert_signal_event(
+        session_factory, "run-active", WorkflowSignal.PAUSE, {"reason": "manual"}
     )
-    register_active_run("run-active")
 
-    try:
-        await consumer._redeliver_on_startup()
-
-        assert (await _get_signal(session_factory, sig_id)).handled_at is None
-        assert _calls(service, "apply_pause_run") == []
-    finally:
-        unregister_active_run("run-active")
-
-
-@pytest.mark.asyncio
-async def test_startup_redelivery_ignores_already_handled_and_fresh(session_factory) -> None:
-    service = RecordingWorkflowService()
-    consumer = _consumer(session_factory, service)
-    completed_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    handled_id = await _insert_signal(
-        session_factory,
-        run_id="run-done",
-        signal_type=WorkflowSignal.PAUSE,
-        payload={"reason": "handled"},
-        delivered_at=completed_at,
-        handled_at=completed_at,
-    )
-    fresh_id = await _insert_signal(
-        session_factory,
-        run_id="run-fresh",
-        signal_type=WorkflowSignal.PAUSE,
-        payload={"reason": "fresh"},
-        delivered_at=None,
-        handled_at=None,
-    )
+    # Mark run as active in the projector (simulates an in-flight executor)
+    consumer._projector._active.add("run-active")
 
     await consumer._redeliver_on_startup()
 
-    assert (await _get_signal(session_factory, handled_id)).handled_at is not None
-    assert (await _get_signal(session_factory, fresh_id)).handled_at is None
+    processed = await _get_processed_positions(session_factory, "run-active")
+    assert pos not in processed
     assert _calls(service, "apply_pause_run") == []
 
 
 @pytest.mark.asyncio
-async def test_startup_redelivery_multiple_signals_ordered_by_pk(session_factory) -> None:
+async def test_startup_redelivery_ignores_processed_signals(session_factory) -> None:
     service = RecordingWorkflowService()
     consumer = _consumer(session_factory, service)
-    crashed_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    id_a = await _insert_signal(
-        session_factory,
-        "run-A",
-        WorkflowSignal.PAUSE,
-        {"reason": "a"},
-        delivered_at=crashed_at,
+
+    from orchestrator.db import SqliteEventStore
+    from orchestrator.workflow import SignalProcessed
+
+    pos_done = await _insert_signal_event(
+        session_factory, "run-done", WorkflowSignal.PAUSE, {"reason": "handled"}
     )
-    id_b = await _insert_signal(
-        session_factory,
-        "run-B",
-        WorkflowSignal.PAUSE,
-        {"reason": "b"},
-        delivered_at=crashed_at,
-    )
+    async with session_factory() as session:
+        store = SqliteEventStore(session)
+        await store.append(
+            [
+                SignalProcessed(
+                    run_id="run-done",
+                    event_type="signal_processed",
+                    enqueued_position=pos_done,
+                )
+            ]
+        )
+        await session.commit()
 
     await consumer._redeliver_on_startup()
 
-    assert id_a < id_b
-    assert [args[0] for args, _ in _calls(service, "apply_pause_run")] == ["run-A", "run-B"]
+    assert _calls(service, "apply_pause_run") == []
 
 
 @pytest.mark.asyncio
-async def test_startup_redelivery_updates_delivered_at(session_factory) -> None:
+async def test_startup_redelivery_multiple_runs_in_order(session_factory) -> None:
     service = RecordingWorkflowService()
     consumer = _consumer(session_factory, service)
-    old_delivered_at = datetime(2020, 6, 15, 8, 0, 0, tzinfo=timezone.utc)
-    sig_id = await _insert_signal(
-        session_factory,
-        run_id="run-old",
-        signal_type=WorkflowSignal.CANCEL,
-        delivered_at=old_delivered_at,
-        handled_at=None,
+
+    pos_a = await _insert_signal_event(
+        session_factory, "run-A", WorkflowSignal.PAUSE, {"reason": "a"}
+    )
+    pos_b = await _insert_signal_event(
+        session_factory, "run-B", WorkflowSignal.PAUSE, {"reason": "b"}
     )
 
     await consumer._redeliver_on_startup()
 
-    sig = await _get_signal(session_factory, sig_id)
-    assert sig.delivered_at is not None
-    delivered_naive = (
-        sig.delivered_at.replace(tzinfo=None) if sig.delivered_at.tzinfo else sig.delivered_at
-    )
-    assert delivered_naive.year >= 2025
-    assert sig.handled_at is not None
+    assert pos_a < pos_b
+    assert [args[0] for args, _ in _calls(service, "apply_pause_run")] == ["run-A", "run-B"]
 
 
 @pytest.mark.asyncio
@@ -278,20 +242,15 @@ async def test_consumer_start_triggers_redelivery(session_factory) -> None:
         ServiceFactory(service),
         poll_interval=100.0,
     )
-    crashed_at = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    sig_id = await _insert_signal(
-        session_factory,
-        run_id="run-cr",
-        signal_type=WorkflowSignal.PAUSE,
-        payload={"reason": "srv"},
-        delivered_at=crashed_at,
-        handled_at=None,
+    pos = await _insert_signal_event(
+        session_factory, "run-cr", WorkflowSignal.PAUSE, {"reason": "srv"}
     )
 
     await consumer.start()
     await consumer.stop()
 
-    assert (await _get_signal(session_factory, sig_id)).handled_at is not None
+    processed = await _get_processed_positions(session_factory, "run-cr")
+    assert pos in processed
     assert _calls(service, "apply_pause_run") == [
         (("run-cr",), {"reason": "srv", "error_detail": None})
     ]

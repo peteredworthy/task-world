@@ -22,7 +22,10 @@ from typing import Any, Protocol
 
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.runners.agents.claude_sdk.agent import fetch_claude_models
-from orchestrator.runners.agents.codex.common import fetch_codex_models
+from orchestrator.runners.agents.codex.common import (
+    fetch_codex_models,
+    select_preferred_codex_model,
+)
 from orchestrator.runners.types import AgentConfigField, AgentRunnerOption, AgentRunnerQuota
 
 # Backward-compatible aliases
@@ -323,9 +326,11 @@ def _codex_server_config_with_models(models: list[str]) -> list[AgentConfigField
     """Return the Codex Server config schema with the model field populated.
 
     When *models* is non-empty the model field is upgraded to a ``"select"``
-    with the discovered model IDs as options and the first entry as the
-    default.  When empty the field stays as a plain ``"string"`` with no
-    options, preserving the existing behaviour.
+    with the discovered model IDs as options.  The default is chosen via
+    ``select_preferred_codex_model`` so that known-working models are
+    preferred over deprecated ones (e.g. gpt-5.2-codex).  When empty the
+    field stays as a plain ``"string"`` with no options, preserving the
+    existing behaviour.
     """
     config: list[AgentConfigField] = []
     for cfg_field in _CODEX_SERVER_CONFIG:
@@ -335,7 +340,7 @@ def _codex_server_config_with_models(models: list[str]) -> list[AgentConfigField
                     update={
                         "field_type": "select",
                         "options": models,
-                        "default": models[0],
+                        "default": select_preferred_codex_model(models),
                     }
                 )
             )
@@ -695,8 +700,9 @@ class ToolDetector:
         """Return the CLI config schema for ``codex`` with model options populated.
 
         When *models* is non-empty the ``model`` field is upgraded to a
-        ``"select"`` with the discovered IDs as options and the first entry
-        as the default.  When empty the field stays as a plain
+        ``"select"`` with the discovered IDs as options.  The default is chosen
+        via ``select_preferred_codex_model`` so that known-working models are
+        preferred over deprecated ones.  When empty the field stays as a plain
         ``"string"`` — identical to the baseline ``_cli_config_for_command``
         output.
         """
@@ -710,7 +716,7 @@ class ToolDetector:
                         update={
                             "field_type": "select",
                             "options": models,
-                            "default": models[0],
+                            "default": select_preferred_codex_model(models),
                         }
                     )
                 )

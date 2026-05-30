@@ -12,8 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
 from orchestrator.config import AgentRunnerType, GateType, RoutineSource, TaskStatus
-from orchestrator.db import init_db
-from orchestrator.workflow import InMemorySignalTransport
+from orchestrator.db import SqliteEventStore, init_db
+from orchestrator.workflow import (
+    InMemorySignalTransport,
+    StepHumanApprovalRecorded,
+    deserialize_event,
+)
 from orchestrator.config.models import (
     GateConfig,
     RequirementConfig,
@@ -108,6 +112,7 @@ def routine_with_human_gate() -> RoutineConfig:
 
 @pytest.mark.asyncio
 async def test_approve_step_endpoint(
+    app: FastAPI,
     client: AsyncClient,
     routine_with_human_gate: RoutineConfig,
 ) -> None:
@@ -146,6 +151,21 @@ async def test_approve_step_endpoint(
     assert data["human_approval"]["approved_by"] == "user@example.com"
     assert data["human_approval"]["comment"] == "Everything looks good, proceed"
     assert "approved_at" in data["human_approval"]
+
+    async with app.state.session_factory() as session:
+        events = await SqliteEventStore(session).get_stream(run_id)
+    approval_events = [
+        event for event in events if event.event_type == "step_human_approval_recorded"
+    ]
+    assert len(approval_events) == 1
+    approval_event = deserialize_event(
+        approval_events[0].event_type,
+        approval_events[0].payload,
+    )
+    assert isinstance(approval_event, StepHumanApprovalRecorded)
+    assert approval_event.step_id == step_id
+    assert approval_event.approved_by == "user@example.com"
+    assert approval_event.comment == "Everything looks good, proceed"
 
     # Verify persistence via GET
     run_response = await client.get(f"/api/runs/{run_id}")
@@ -403,7 +423,7 @@ async def test_executor_stops_at_human_approval_gate(
     )
 
     async with session_factory() as session:
-        from orchestrator.db import EventStore
+        from orchestrator.db import create_wired_event_store_v2
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.workflow import LocalAutoVerifyRunner
@@ -411,12 +431,12 @@ async def test_executor_stops_at_human_approval_gate(
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
-        event_store = EventStore(session)
+        event_store = create_wired_event_store_v2(session)
         emitter = PersistentEventEmitter(event_store)
         service = WorkflowService(
             session=session,
             repo=repo,
-            event_store=event_store,
+            event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
         )
@@ -489,7 +509,7 @@ async def test_executor_proceeds_after_gate_approved(
     )
 
     async with session_factory() as session:
-        from orchestrator.db import EventStore
+        from orchestrator.db import create_wired_event_store_v2
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.state.models import HumanApproval
@@ -498,12 +518,12 @@ async def test_executor_proceeds_after_gate_approved(
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
-        event_store = EventStore(session)
+        event_store = create_wired_event_store_v2(session)
         emitter = PersistentEventEmitter(event_store)
         service = WorkflowService(
             session=session,
             repo=repo,
-            event_store=event_store,
+            event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
         )
@@ -659,7 +679,7 @@ async def test_step_without_gate_not_blocked(
     )
 
     async with session_factory() as session:
-        from orchestrator.db import EventStore
+        from orchestrator.db import create_wired_event_store_v2
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.workflow import LocalAutoVerifyRunner
@@ -667,12 +687,12 @@ async def test_step_without_gate_not_blocked(
         from orchestrator.workflow.service import WorkflowService
 
         repo = RunRepository(session)
-        event_store = EventStore(session)
+        event_store = create_wired_event_store_v2(session)
         emitter = PersistentEventEmitter(event_store)
         service = WorkflowService(
             session=session,
             repo=repo,
-            event_store=event_store,
+            event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
         )

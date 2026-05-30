@@ -5,8 +5,8 @@ for each active run.  It:
 
   1. Registers itself in the active-workflow registry so WorkflowService can
      route external pause/resume/cancel signals through the signal queue.
-  2. Calls on_signal() at the top of every iteration to drain and apply
-     pending signals before doing any task work.
+  2. Calls on_signal() at the top of every iteration for injected test
+     transports. Event-backed production signals are consumed by SignalConsumer.
   3. Contains the main while-True execution loop (previously in
      AgentRunnerExecutor._run_agent_loop).
 
@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Literal
 
 from orchestrator.config.enums import RunStatus, TaskStatus
+from orchestrator.db import commit_with_event_outbox
 from orchestrator.runners.errors import (
     AgentCancelledError,
     AgentExecutionError,
@@ -31,7 +32,7 @@ from orchestrator.runners.errors import (
 )
 from orchestrator.workflow.signals.handlers import build_registry, signal_handler
 from orchestrator.workflow.signals.signals import (
-    DbSignalTransport,
+    EventSignalTransport,
     SignalQueue,
     SignalTransport,
     WorkflowSignal,
@@ -143,7 +144,7 @@ class RunWorkflow:
         # Executor services grouped in a dataclass
         self._callbacks = callbacks or ExecutorCallbacks()
 
-        # Injectable signal transport — falls back to DbSignalTransport when None
+        # Injectable signal transport — falls back to EventSignalTransport when None.
         self._transport = transport
 
     # ------------------------------------------------------------------
@@ -179,7 +180,7 @@ class RunWorkflow:
             async with self._callbacks.session_factory() as session:
                 service = await self._callbacks.create_service(session)
                 await service.apply_pause_run(run_id, reason="executor_not_started")
-                await session.commit()
+                await commit_with_event_outbox(session)
         except Exception:
             logger.warning(
                 f"Run {run_id}: could not write executor_not_started safety pause "
@@ -196,7 +197,7 @@ class RunWorkflow:
                 async with self._callbacks.session_factory() as session:
                     service = await self._callbacks.create_service(session)
                     await service.apply_pause_run(run_id, reason="server_shutdown")
-                    await session.commit()
+                    await commit_with_event_outbox(session)
             except Exception:
                 # DB/engine might be shutting down too.
                 logger.debug(f"Run {run_id}: could not pause run during shutdown (expected)")
@@ -207,7 +208,7 @@ class RunWorkflow:
                 async with self._callbacks.session_factory() as session:
                     service = await self._callbacks.create_service(session)
                     await service.apply_pause_run(run_id, reason="unexpected_error")
-                    await session.commit()
+                    await commit_with_event_outbox(session)
             except Exception:
                 logger.exception(f"Run {run_id}: failed to pause run after outer error")
         finally:
@@ -234,7 +235,7 @@ class RunWorkflow:
                         )
                         service = await self._callbacks.create_service(session)
                         await service.apply_pause_run(run_id, reason="executor_exited")
-                        await session.commit()
+                        await commit_with_event_outbox(session)
             except Exception:
                 logger.exception(f"Run {run_id}: safety-net pause failed — run may be left ACTIVE")
 
@@ -251,14 +252,14 @@ class RunWorkflow:
         True if the loop should stop (signal was applied that transitions the
         run out of ACTIVE state).
 
-        Signals are processed in FIFO order (by created_at).  Each signal is
-        marked processed_at exactly once — the DbSignalTransport guarantees
-        idempotent consumption.
+        Signals are processed in FIFO order for injected, non-event transports.
+        Event-backed production signals are handled by SignalConsumer so that
+        there is exactly one events_v2 consumer.
         """
-        _transport: SignalTransport = (
-            self._transport if self._transport is not None else DbSignalTransport(session)
-        )
-        queue = SignalQueue(_transport)
+        if self._transport is None or isinstance(self._transport, EventSignalTransport):
+            return False
+
+        queue = SignalQueue(self._transport)
         signals = await queue.drain(self.run_id)
 
         registry = build_registry(self)
@@ -384,7 +385,7 @@ class RunWorkflow:
         pause/cancel calls go through the signal queue.
         """
         from orchestrator.db import RunRepository
-        from orchestrator.workflow.events import ApprovalRequested
+        from orchestrator.workflow import ApprovalRequested
 
         # All executor services must be present when _run_loop() is called.
         assert self._callbacks.session_factory is not None, (
@@ -424,7 +425,7 @@ class RunWorkflow:
                 if run.status == RunStatus.PAUSED and run.pause_reason == "executor_not_started":
                     logger.info(f"Run {run_id}: clearing executor_not_started safety pause")
                     await service.apply_resume_run(run_id)
-                    await session.commit()
+                    await commit_with_event_outbox(session)
                     # Re-fetch to get the updated status
                     run = await repo.get(run_id)
 
@@ -438,7 +439,7 @@ class RunWorkflow:
 
                 # Drain and apply pending signals at the top of each iteration
                 if await self.on_signal(session, service):
-                    await session.commit()
+                    await commit_with_event_outbox(session)
                     break
 
                 # Find the next actionable task
@@ -490,7 +491,7 @@ class RunWorkflow:
                         await service.apply_pause_run(
                             run_id, reason=action.pause_reason or "unknown"
                         )
-                        await session.commit()
+                        await commit_with_event_outbox(session)
                     elif action.kind in ("complete", "fail"):
                         guarded_run = await service.save_run_with_oversight_terminal_guard(run)
                         logger.info(
@@ -522,7 +523,7 @@ class RunWorkflow:
                         "after previous recovery attempt — pausing"
                     )
                     await service.apply_pause_run(run_id, reason="recovery_loop")
-                    await session.commit()
+                    await commit_with_event_outbox(session)
                     break
                 if was_recovering:
                     recovery_attempted.add(task_state.id)
@@ -537,11 +538,11 @@ class RunWorkflow:
                         summary_cache=summary_cache,
                         session=session,
                     )
-                    await session.commit()
+                    await commit_with_event_outbox(session)
                 except AgentCancelledError:
                     logger.info(f"Run {run_id}: agent cancelled — pausing run")
                     await service.apply_pause_run(run_id, reason="agent_cancelled")
-                    await session.commit()
+                    await commit_with_event_outbox(session)
                     break
                 except AgentRateLimitError as e:
                     logger.warning(f"Run {run_id}: rate limit hit: {e}")
@@ -553,7 +554,7 @@ class RunWorkflow:
                         reason="rate_limit",
                         error_detail=str(e),
                     )
-                    await session.commit()
+                    await commit_with_event_outbox(session)
                     break
                 except AgentNotAvailableError as e:
                     logger.error(f"Run {run_id}: agent not available: {e}")
@@ -566,7 +567,7 @@ class RunWorkflow:
                     await service.apply_pause_run(
                         run_id, reason="agent_not_available", error_detail=str(e)
                     )
-                    await session.commit()
+                    await commit_with_event_outbox(session)
                     break
                 except AgentExecutionError as e:
                     logger.error(f"Run {run_id}: agent execution error: {e}")
@@ -579,7 +580,7 @@ class RunWorkflow:
                     await service.apply_pause_run(
                         run_id, reason="agent_execution_error", error_detail=str(e)
                     )
-                    await session.commit()
+                    await commit_with_event_outbox(session)
                     break
                 except Exception as e:
                     logger.exception(f"Run {run_id}: unexpected error: {e}")
@@ -592,7 +593,7 @@ class RunWorkflow:
                             reason="unexpected_error",
                             error_detail=str(e),
                         )
-                        await session.commit()
+                        await commit_with_event_outbox(session)
                     except Exception:
                         logger.exception(f"Run {run_id}: failed to pause run after error")
                     break

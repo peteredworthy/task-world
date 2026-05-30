@@ -111,32 +111,62 @@ describe('Agents page', () => {
     });
   });
 
-  it('calls deleteAgent when Delete is confirmed', async () => {
+  it('calls deleteAgent when Delete is confirmed via modal', async () => {
     const agent = makeAgent({ id: 'del-1', name: 'to-delete' });
     mockFetchAgents.mockResolvedValue([agent]);
-    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderAgents();
 
     const deleteBtn = await screen.findByRole('button', { name: /delete to-delete/i });
     await userEvent.click(deleteBtn);
 
+    const confirmBtn = await screen.findByRole('button', { name: /^delete$/i });
+    await userEvent.click(confirmBtn);
+
     await waitFor(() => {
       expect(mockDeleteAgent).toHaveBeenCalledWith('del-1');
     });
   });
 
-  it('does not call deleteAgent when Delete is cancelled', async () => {
+  it('shows confirmation modal with agent name when Delete is clicked', async () => {
+    const agent = makeAgent({ id: 'del-1', name: 'to-delete' });
+    mockFetchAgents.mockResolvedValue([agent]);
+
+    renderAgents();
+
+    const deleteBtn = await screen.findByRole('button', { name: /delete to-delete/i });
+    await userEvent.click(deleteBtn);
+
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    expect(screen.getByText(/delete agent "to-delete"/i)).toBeInTheDocument();
+  });
+
+  it('does not call deleteAgent when Delete modal is cancelled', async () => {
     const agent = makeAgent({ id: 'del-2', name: 'keep-me' });
     mockFetchAgents.mockResolvedValue([agent]);
-    vi.spyOn(window, 'confirm').mockReturnValue(false);
 
     renderAgents();
 
     const deleteBtn = await screen.findByRole('button', { name: /delete keep-me/i });
     await userEvent.click(deleteBtn);
 
+    const cancelBtn = await screen.findByRole('button', { name: /cancel/i });
+    await userEvent.click(cancelBtn);
+
     expect(mockDeleteAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not delete immediately on card Delete button click', async () => {
+    const agent = makeAgent({ id: 'del-3', name: 'no-immediate-delete' });
+    mockFetchAgents.mockResolvedValue([agent]);
+
+    renderAgents();
+
+    const deleteBtn = await screen.findByRole('button', { name: /delete no-immediate-delete/i });
+    await userEvent.click(deleteBtn);
+
+    expect(mockDeleteAgent).not.toHaveBeenCalled();
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
   it('shows error state when fetch fails', async () => {

@@ -12,15 +12,28 @@ from datetime import datetime
 from typing import Any, Literal, cast
 
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import RunStatus
 from orchestrator.config.global_config import GlobalConfig
-from orchestrator.db import RunRepository
+from orchestrator.db import (
+    RunLifecycleProjector,
+    RunModel,
+    RunRepository,
+    create_wired_event_store_v2,
+)
+from orchestrator.db import commit_with_event_outbox
 from orchestrator.git import ParentChildMergeResult, merge_child_into_parent
 from orchestrator.git.utils import get_head_commit
 from orchestrator.state import Run
 from orchestrator.state.session import SessionStateManager
+from orchestrator.workflow.commands import (
+    UpdateParentOversightFactsCommand,
+    build_create_run_command,
+    handle_create_run,
+    handle_update_parent_oversight_facts,
+)
 from orchestrator.workflow.delegation import (
     DelegateCommand,
     DelegatedWork,
@@ -33,7 +46,11 @@ from orchestrator.workflow.delegation import (
 )
 from orchestrator.workflow.engine import Clock
 from orchestrator.workflow.engine.errors import InvalidTransitionError
-from orchestrator.workflow.events import BufferingEmitter, RunStatusChanged
+from orchestrator.workflow.events import (
+    BufferingEmitter,
+    ParentOversightFactsUpdated,
+    RunStatusChanged,
+)
 from orchestrator.workflow.events.logger import PersistentEventEmitter
 from orchestrator.workflow.oversight import (
     ACCEPTANCE_OUTCOMES,
@@ -49,7 +66,7 @@ from orchestrator.workflow.oversight_projection import (
 )
 from orchestrator.workflow.oversight_facts import extract_parent_oversight_facts
 from orchestrator.workflow.signals.signals import (
-    DbSignalTransport,
+    EventSignalTransport,
     SignalQueue,
     SignalTransport,
     WorkflowSignal,
@@ -91,8 +108,11 @@ class ParentOversightService:
         self._delegation_recorder = DelegationRecorder(clock)
 
     def _get_signal_queue(self) -> SignalQueue:
-        """Return a SignalQueue backed by the injected transport or the default DbSignalTransport."""
-        transport = self._signal_transport or DbSignalTransport(self._session)
+        """Return a SignalQueue backed by the injected transport or events_v2."""
+        transport = self._signal_transport or EventSignalTransport(
+            create_wired_event_store_v2(self._session),
+            RunLifecycleProjector(),
+        )
         return SignalQueue(transport)
 
     async def get_parent_oversight(self, parent_run_id: str) -> dict[str, Any]:
@@ -149,7 +169,7 @@ class ParentOversightService:
 
         parent.oversight_state = self.drop_stale_final_validation(parent, state)
         await self.refresh_parent_oversight_without_commit(parent_run_id, parent=parent)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return parent
 
     def _verify_final_validation_marker(
@@ -258,7 +278,7 @@ class ParentOversightService:
     async def refresh_parent_oversight(self, parent_run_id: str) -> Run:
         """Recompute and persist the parent oversight snapshot from child state."""
         parent = await self.refresh_parent_oversight_without_commit(parent_run_id)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return parent
 
     async def refresh_parent_oversight_without_commit(
@@ -298,6 +318,24 @@ class ParentOversightService:
             max_child_runs=self.max_child_runs_for_parent(parent_for_reduce),
         )
 
+    async def _append_parent_oversight_facts_updated(
+        self,
+        run_id: str,
+        patch: dict[str, Any],
+        *,
+        event_store: Any | None = None,
+    ) -> dict[str, Any]:
+        store = event_store or create_wired_event_store_v2(self._session)
+        await handle_update_parent_oversight_facts(
+            UpdateParentOversightFactsCommand(run_id=run_id, patch=patch),
+            store,
+            self._session,
+        )
+        result = await self._session.execute(
+            select(RunModel.oversight_state).where(RunModel.id == run_id)
+        )
+        return dict(result.scalar_one_or_none() or {})
+
     async def persist_parent_oversight_state(
         self,
         parent: Run,
@@ -309,7 +347,10 @@ class ParentOversightService:
         durable_facts = extract_parent_oversight_facts(
             self.drop_stale_final_validation(parent, state)
         )
-        merged_facts = await self._repo.update_parent_oversight_facts(parent.id, durable_facts)
+        merged_facts = await self._append_parent_oversight_facts_updated(
+            parent.id,
+            durable_facts,
+        )
         parent.oversight_state = merged_facts
         children = await self._repo.list_child_runs(parent.id, include_action_logs=False)
         evidence_by_run_id = await self._collect_child_evidence(children)
@@ -324,7 +365,7 @@ class ParentOversightService:
             max_child_runs=self.max_child_runs_for_parent(parent_for_projection),
         )
         if commit:
-            await self._session.commit()
+            await commit_with_event_outbox(self._session)
         parent.oversight_state = projected_state
         return parent
 
@@ -521,6 +562,14 @@ class ParentOversightService:
                 + "; ".join(str(reason) for reason in blocking_reasons)
             )
             run.completed_at = None
+            buffer.emit(
+                ParentOversightFactsUpdated(
+                    timestamp=self._clock.now(),
+                    run_id=run.id,
+                    event_type="parent_oversight_facts_updated",
+                    patch=run.oversight_state,
+                )
+            )
             if emit_status_change:
                 buffer.emit(
                     RunStatusChanged(
@@ -529,6 +578,8 @@ class ParentOversightService:
                         event_type="run_status_changed",
                         old_status=old_status,
                         new_status=RunStatus.PAUSED,
+                        pause_reason=run.pause_reason,
+                        last_error=run.last_error,
                     )
                 )
         else:
@@ -1055,14 +1106,20 @@ class ParentOversightService:
         state["slices"] = slices
         state["last_child_run_id"] = child_run.id
         state["last_decision"] = next_action_decision
-        await self._repo.save(child_run)
-        await self._repo.update_parent_oversight_facts(
+        event_store = create_wired_event_store_v2(self._session)
+        await handle_create_run(
+            build_create_run_command(child_run),
+            event_store,
+            self._session,
+        )
+        await self._append_parent_oversight_facts_updated(
             parent_run_id,
             extract_parent_oversight_facts(state),
+            event_store=event_store,
         )
         queue = self._get_signal_queue()
         await queue.enqueue(child_run.id, WorkflowSignal.RUN_START)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return child_run
 
     def _record_child_acceptance(

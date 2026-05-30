@@ -9,16 +9,30 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.workflow import (
+    AttemptUpdated,
     InMemorySignalTransport,
     InvalidTransitionError,
+    RunStatusChanged,
     WorkflowService,
     WorkflowSignal,
+    deserialize_event,
 )
 from orchestrator.config import AgentRunnerType, RunStatus, TaskStatus
-from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
+from orchestrator.db import (
+    RunRepository,
+    ProjectionRegistry,
+    RunStateProjector,
+    SqliteEventStore,
+    TaskStateProjector,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
+from orchestrator.db.access.mutations import update_parent_oversight_facts
 from orchestrator.state import Attempt, Run, StepState, TaskState
 from tests.unit.git_helpers import _commit_file, _git, _init_repo
 
@@ -500,6 +514,7 @@ async def test_accept_child_run_stale_generation_or_token_prevents_merge_side_ef
 
 async def test_apply_pause_run_pauses_active_child_and_marks_open_attempts(
     service: WorkflowService,
+    session: AsyncSession,
 ) -> None:
     parent = _parent_run(parent_id="parent")
     parent.worktree_path = "/tmp/parent-worktree"
@@ -526,6 +541,33 @@ async def test_apply_pause_run_pauses_active_child_and_marks_open_attempts(
     attempt = paused_child.steps[0].tasks[0].attempts[0]
     assert attempt.paused_at is not None
     assert attempt.outcome == "paused"
+
+    child_events = await SqliteEventStore(session).get_stream("child")
+    child_status_events = [
+        deserialize_event(stored.event_type, stored.payload)
+        for stored in child_events
+        if stored.event_type == "run_status_changed"
+    ]
+    assert len(child_status_events) == 2
+    assert all(isinstance(event, RunStatusChanged) for event in child_status_events)
+    assert child_status_events[0].old_status == RunStatus.ACTIVE
+    assert child_status_events[0].new_status == RunStatus.STOPPING
+    assert child_status_events[1].old_status == RunStatus.STOPPING
+    assert child_status_events[1].new_status == RunStatus.PAUSED
+    assert child_status_events[1].pause_reason == "parent_paused_manual"
+
+    attempt_events = [
+        deserialize_event(stored.event_type, stored.payload)
+        for stored in child_events
+        if stored.event_type == "attempt_updated"
+    ]
+    assert len(attempt_events) == 1
+    attempt_event = attempt_events[0]
+    assert isinstance(attempt_event, AttemptUpdated)
+    assert attempt_event.task_id == "child-task-1"
+    assert attempt_event.attempt_id == "attempt-1"
+    assert attempt_event.outcome == "paused"
+    assert attempt_event.paused_at is not None
 
 
 async def test_apply_pause_run_does_not_cascade_on_server_shutdown(
@@ -565,6 +607,7 @@ async def test_apply_pause_run_does_not_cascade_on_server_shutdown(
 
 async def test_update_parent_oversight_can_satisfy_terminal_guard(
     service: WorkflowService,
+    session: AsyncSession,
     tmp_path: Path,
 ) -> None:
     worktree, head_commit = _prepare_final_validation_worktree(tmp_path)
@@ -600,6 +643,10 @@ async def test_update_parent_oversight_can_satisfy_terminal_guard(
     assert updated.oversight_state["final_validation"]["service_verified"] is True
     assert updated.oversight_state["terminal_guard"]["can_complete"] is True
     assert updated.oversight_state["next_parent_action"] == "complete_parent"
+    parent_events = await SqliteEventStore(session).get_stream("parent")
+    assert [event.event_type for event in parent_events].count(
+        "parent_oversight_facts_updated"
+    ) == 1
 
 
 async def test_update_parent_oversight_rejects_mismatched_final_validation_commit(
@@ -727,6 +774,41 @@ async def test_create_child_run_rejects_paused_parent(service: WorkflowService) 
     )
 
 
+async def test_parent_cancel_event_sources_active_child_cancellation(
+    service: WorkflowService,
+    session: AsyncSession,
+    tmp_path: Path,
+) -> None:
+    parent = _parent_run(parent_id="parent", status=RunStatus.ACTIVE)
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.ACTIVE,
+        worktree_path=str(tmp_path / "child-worktree"),
+    )
+
+    await service.create_run(parent)
+    await service.create_run(child)
+
+    await service.apply_cancel_run("parent", reason="parent_cancelled")
+
+    cancelled_child = await service.get_run("child")
+    assert cancelled_child.status == RunStatus.FAILED
+
+    stored_child_events = await SqliteEventStore(session).get_stream("child")
+    child_run_status_changed_events = [
+        deserialize_event(stored.event_type, stored.payload)
+        for stored in stored_child_events
+        if stored.event_type == "run_status_changed"
+    ]
+    assert len(child_run_status_changed_events) == 1
+    child_status_event = child_run_status_changed_events[0]
+    assert isinstance(child_status_event, RunStatusChanged)
+    assert child_status_event.run_id == "child"
+    assert child_status_event.old_status == RunStatus.ACTIVE
+    assert child_status_event.new_status == RunStatus.FAILED
+
+
 async def test_create_child_run_enqueues_child_start(session: AsyncSession) -> None:
     transport = InMemorySignalTransport()
     service = WorkflowService(session, signal_transport=transport)
@@ -766,6 +848,90 @@ async def test_create_child_run_enqueues_child_start(session: AsyncSession) -> N
     ):
         assert computed_key not in raw_parent.oversight_state
     assert raw_parent.oversight_state["last_child_run_id"] == "child"
+
+
+async def test_create_child_run_events_rebuild_child_read_model(
+    session: AsyncSession,
+) -> None:
+    transport = InMemorySignalTransport()
+    service = WorkflowService(session, signal_transport=transport)
+    parent = _parent_run(parent_id="parent")
+    child = _child_run(
+        child_id="child",
+        parent_id="parent",
+        status=RunStatus.DRAFT,
+        worktree_path="/tmp/child-worktree",
+    )
+    child.steps[0].tasks = [
+        TaskState(
+            id="child-task-1",
+            config_id="T-01",
+            title="Child Task",
+            max_attempts=4,
+        )
+    ]
+
+    await service.create_run(parent)
+    await service.create_child_run(
+        "parent",
+        child,
+        parent_slice_id="slice-01",
+        next_action_decision="continue",
+    )
+
+    store = SqliteEventStore(session)
+    child_events = await store.get_stream("child")
+    child_event_types = [event.event_type for event in child_events]
+    assert child_event_types[:3] == ["run_created", "step_created", "task_created"]
+    run_created = next(event for event in child_events if event.event_type == "run_created")
+    run_payload = json.loads(run_created.payload)
+    assert run_payload["parent_run_id"] == "parent"
+    assert run_payload["parent_slice_id"] == "slice-01"
+    assert run_payload["run_snapshot"] == {}
+    parent_events = await store.get_stream("parent")
+    parent_fact_event = next(
+        event for event in parent_events if event.event_type == "parent_oversight_facts_updated"
+    )
+    parent_fact_payload = json.loads(parent_fact_event.payload)
+    assert parent_fact_payload["patch"]["last_child_run_id"] == "child"
+    assert parent_fact_payload["patch"]["slices"] == [
+        {
+            "slice_id": "slice-01",
+            "child_run_id": "child",
+            "routine_id": child.routine_id,
+            "decision": "continue",
+            "created_at": parent_fact_payload["patch"]["slices"][0]["created_at"],
+        }
+    ]
+
+    await session.execute(text("DELETE FROM tasks"))
+    await session.execute(text("DELETE FROM runs"))
+    await session.commit()
+
+    workflow_events = [
+        deserialize_event(stored.event_type, stored.payload)
+        for stored in await store.get_all()
+        if stored.event_type
+        in {"run_created", "step_created", "task_created", "parent_oversight_facts_updated"}
+    ]
+    registry = ProjectionRegistry()
+    registry.register(RunStateProjector())
+    registry.register(TaskStateProjector())
+    await registry.rebuild_all(workflow_events, session)
+    await session.commit()
+
+    rebuilt_parent = await RunRepository(session).get("parent")
+    assert rebuilt_parent.oversight_state["last_child_run_id"] == "child"
+    assert rebuilt_parent.oversight_state["slices"][0]["child_run_id"] == "child"
+    assert rebuilt_parent.oversight_state["delegated_work"]["child"]["status"] == "running"
+    rebuilt_child = await RunRepository(session).get("child")
+    assert rebuilt_child.parent_run_id == "parent"
+    assert rebuilt_child.parent_slice_id == "slice-01"
+    assert len(rebuilt_child.steps) == 1
+    assert rebuilt_child.steps[0].id == "child-step-1"
+    assert len(rebuilt_child.steps[0].tasks) == 1
+    assert rebuilt_child.steps[0].tasks[0].id == "child-task-1"
+    assert rebuilt_child.steps[0].tasks[0].max_attempts == 4
 
 
 async def test_concurrent_create_child_run_keeps_single_unresolved_child(
@@ -837,7 +1003,8 @@ async def test_locked_oversight_merge_uses_fresh_state_from_loaded_session(
 
         async with factory() as writer_session:
             writer_repo = RunRepository(writer_session)
-            await writer_repo.update_parent_oversight_facts(
+            await update_parent_oversight_facts(
+                writer_repo.session,
                 "parent",
                 {
                     "delegation_results": [
@@ -851,7 +1018,8 @@ async def test_locked_oversight_merge_uses_fresh_state_from_loaded_session(
             )
             await writer_session.commit()
 
-        await stale_repo.update_parent_oversight_facts(
+        await update_parent_oversight_facts(
+            stale_repo.session,
             "parent",
             {
                 "delegation_decisions": [

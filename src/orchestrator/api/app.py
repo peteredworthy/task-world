@@ -256,11 +256,37 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan: create tables on startup, dispose engine on shutdown."""
     from orchestrator.runners import AgentRunnerMonitor
     from orchestrator.db import RunRepository
-    from orchestrator.api.deps import make_service_factory, make_workflow_runner
+    from orchestrator.api.deps import (
+        make_service_factory,
+        make_workflow_preparer,
+        make_workflow_runner,
+    )
 
     await init_db(app.state.engine)
 
     session_factory = app.state.session_factory
+
+    # JSONL bootstrap for empty-DB startup: seeds events_v2 and rebuilds
+    # projections from history.jsonl if the table is empty.  No-op for
+    # in-memory DBs (journal_path will be None) and on subsequent restarts
+    # (events_v2 non-empty).
+    from orchestrator.db import bootstrap_from_jsonl
+    from orchestrator.db import (
+        ProjectionRegistry,
+        RunLifecycleProjector,
+        RunStateProjector,
+        TaskStateProjector,
+        resolve_default_journal_path,
+    )
+
+    _journal_path = resolve_default_journal_path(getattr(app.state.engine.url, "database", None))
+    async with session_factory() as _boot_session:
+        _boot_registry = ProjectionRegistry()
+        _boot_registry.register(RunStateProjector())
+        _boot_registry.register(TaskStateProjector())
+        _boot_registry.register(RunLifecycleProjector())
+        await bootstrap_from_jsonl(_boot_session, _journal_path, _boot_registry)
+        await _boot_session.commit()
 
     # Build and store the shared WorkflowService factory for background tasks
     # (signal consumer, stale-run sweeper, startup recovery, MCP handler).
@@ -416,6 +442,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         session_factory=session_factory,
         create_service=service_factory,
         workflow_runner=make_workflow_runner(getattr(app.state, "runner_executor", None)),
+        workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
     )
     app.state.signal_consumer = signal_consumer
     await signal_consumer.start()

@@ -345,6 +345,7 @@ class Run(BaseModel):
 
     # Oversight parent/child orchestration
     parent_run_id: str | None = None
+    parent_task_id: str | None = None
     parent_slice_id: str | None = None
     oversight_state: dict[str, Any] = Field(default_factory=lambda: {})
 

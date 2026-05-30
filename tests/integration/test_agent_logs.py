@@ -1,7 +1,9 @@
 """Integration tests for agent log capture and storage."""
 
+import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from typing import Any
 from pathlib import Path
 
 import pytest
@@ -11,9 +13,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.api.app import create_app
 from orchestrator.config import AgentRunnerType, Priority, RoutineSource, RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.db import EventStore
-from orchestrator.db import replay_events
 from orchestrator.db import RunRepository
+from orchestrator.db import SqliteEventStore
+from orchestrator.db import StoredEvent
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.models import (
     Attempt,
     ChecklistItem,
@@ -43,8 +46,8 @@ def repo(session: AsyncSession) -> RunRepository:
 
 
 @pytest.fixture
-def event_store(session: AsyncSession) -> EventStore:
-    return EventStore(session)
+def event_store(session: AsyncSession) -> SqliteEventStore:
+    return SqliteEventStore(session)
 
 
 @pytest.fixture
@@ -61,6 +64,12 @@ async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c, drain
     await app.state.engine.dispose()
+
+
+def _payload(event: StoredEvent) -> dict[str, Any]:
+    payload = json.loads(event.payload)
+    assert isinstance(payload, dict)
+    return payload
 
 
 @pytest.fixture
@@ -125,7 +134,7 @@ async def test_attempt_output_roundtrip(repo: RunRepository, session: AsyncSessi
         agent_output="line 1\nline 2\nline 3",
         error=None,
     )
-    await repo.save(run)
+    await save_run(repo.session, run)
     await session.commit()
 
     loaded = await repo.get("run-log-1")
@@ -140,7 +149,7 @@ async def test_attempt_error_roundtrip(repo: RunRepository, session: AsyncSessio
         agent_output="partial output",
         error="Agent stuck after 3 nudges, killed",
     )
-    await repo.save(run)
+    await save_run(repo.session, run)
     await session.commit()
 
     loaded = await repo.get("run-log-1")
@@ -152,7 +161,7 @@ async def test_attempt_error_roundtrip(repo: RunRepository, session: AsyncSessio
 async def test_attempt_no_output_roundtrip(repo: RunRepository, session: AsyncSession) -> None:
     """Null output/error round-trips correctly."""
     run = _make_run_with_attempt(agent_output=None, error=None)
-    await repo.save(run)
+    await save_run(repo.session, run)
     await session.commit()
 
     loaded = await repo.get("run-log-1")
@@ -161,12 +170,14 @@ async def test_attempt_no_output_roundtrip(repo: RunRepository, session: AsyncSe
     assert attempt.error is None
 
 
-async def test_agent_output_event_stored(event_store: EventStore, session: AsyncSession) -> None:
-    """AgentOutputEvent can be stored and retrieved via EventStore."""
+async def test_agent_output_event_stored(
+    event_store: SqliteEventStore, session: AsyncSession
+) -> None:
+    """AgentOutputEvent can be stored and retrieved via events_v2."""
     # First create a run so the FK constraint is satisfied
     repo = RunRepository(session)
     run = _make_run_with_attempt()
-    await repo.save(run)
+    await save_run(repo.session, run)
     await session.flush()
 
     event = AgentOutputEvent(
@@ -181,18 +192,21 @@ async def test_agent_output_event_stored(event_store: EventStore, session: Async
     await event_store.append(event)
     await session.commit()
 
-    events = await event_store.get_events_for_run("run-log-1")
+    events = await event_store.get_stream("run-log-1")
     assert len(events) == 1
-    assert events[0]["type"] == "agent_output"
-    assert events[0]["payload"]["lines"] == ["building feature...", "running tests..."]
-    assert events[0]["payload"]["line_offset"] == 0
+    assert events[0].event_type == "agent_output"
+    payload = _payload(events[0])
+    assert payload["lines"] == ["building feature...", "running tests..."]
+    assert payload["line_offset"] == 0
 
 
-async def test_agent_error_event_stored(event_store: EventStore, session: AsyncSession) -> None:
-    """AgentErrorEvent can be stored and retrieved via EventStore."""
+async def test_agent_error_event_stored(
+    event_store: SqliteEventStore, session: AsyncSession
+) -> None:
+    """AgentErrorEvent can be stored and retrieved via events_v2."""
     repo = RunRepository(session)
     run = _make_run_with_attempt()
-    await repo.save(run)
+    await save_run(repo.session, run)
     await session.flush()
 
     event = AgentErrorEvent(
@@ -207,58 +221,12 @@ async def test_agent_error_event_stored(event_store: EventStore, session: AsyncS
     await event_store.append(event)
     await session.commit()
 
-    events = await event_store.get_events_for_run("run-log-1")
+    events = await event_store.get_stream("run-log-1")
     assert len(events) == 1
-    assert events[0]["type"] == "agent_error"
-    assert events[0]["payload"]["error_type"] == "AgentExecutionError"
-    assert events[0]["payload"]["error_message"] == "Agent stuck after 3 nudges, killed"
-
-
-async def test_recovery_agent_error_event() -> None:
-    """Recovery replays agent_error event onto attempt."""
-    now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-    run = _make_run_with_attempt(agent_output=None, error=None)
-
-    events = [
-        {
-            "type": "agent_error",
-            "timestamp": now,
-            "payload": {
-                "task_id": "task-1",
-                "attempt_num": 1,
-                "error_type": "AgentExecutionError",
-                "error_message": "Process crashed",
-            },
-        }
-    ]
-
-    replay_events(run, events)
-    attempt = run.steps[0].tasks[0].attempts[0]
-    assert attempt.error == "Process crashed"
-
-
-async def test_recovery_agent_output_event_noop() -> None:
-    """Recovery ignores agent_output events (informational only)."""
-    now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
-    run = _make_run_with_attempt(agent_output=None, error=None)
-
-    events = [
-        {
-            "type": "agent_output",
-            "timestamp": now,
-            "payload": {
-                "task_id": "task-1",
-                "attempt_num": 1,
-                "lines": ["some output"],
-                "line_offset": 0,
-            },
-        }
-    ]
-
-    # Should not raise, and should not modify the run
-    replay_events(run, events)
-    attempt = run.steps[0].tasks[0].attempts[0]
-    assert attempt.agent_output is None  # Not modified by replay
+    assert events[0].event_type == "agent_error"
+    payload = _payload(events[0])
+    assert payload["error_type"] == "AgentExecutionError"
+    assert payload["error_message"] == "Agent stuck after 3 nudges, killed"
 
 
 async def _setup_run_with_logs(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:

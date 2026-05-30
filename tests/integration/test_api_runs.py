@@ -17,6 +17,7 @@ WARNING — shared fixture:
       cannot leak executor work into siblings.
 """
 
+import json
 from pathlib import Path
 
 from typing import Any, cast
@@ -26,6 +27,10 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.config import RunStatus
+from orchestrator.db import RunRepository
+from orchestrator.db import SqliteEventStore
+from orchestrator.db.access.mutations import save_run
 from collections.abc import AsyncGenerator
 
 from tests.integration.conftest import cleanup_runs_for_repo
@@ -72,6 +77,66 @@ async def _create_run(client: AsyncClient, repo_name: str) -> dict[str, Any]:
     return response.json()
 
 
+async def _create_run_paused_at_manual_gate(
+    client: AsyncClient,
+    app: Any,
+    repo_name: str,
+) -> tuple[str, str]:
+    routine_config = {
+        "id": "test-manual-gate",
+        "name": "test-manual-gate",
+        "steps": [
+            {
+                "id": "step1",
+                "title": "Step 1",
+                "tasks": [
+                    {
+                        "id": "task1",
+                        "title": "Task 1",
+                        "instructions": "Build something",
+                    }
+                ],
+            },
+            {
+                "id": "step2",
+                "title": "Step 2",
+                "condition": {"when": "manual"},
+                "tasks": [
+                    {
+                        "id": "task2",
+                        "title": "Task 2",
+                        "instructions": "Build something else",
+                    }
+                ],
+            },
+        ],
+    }
+    create_resp = await client.post(
+        "/api/runs",
+        json={
+            "repo_name": repo_name,
+            "branch": "main",
+            "routine_embedded": routine_config,
+        },
+    )
+    assert create_resp.status_code == 201
+    run = create_resp.json()
+    run_id = run["id"]
+    step2_id = run["steps"][1]["id"]
+
+    async with app.state.session_factory() as session:
+        repo = RunRepository(session)
+        domain_run = await repo.get(run_id)
+        domain_run.steps[0].completed = True
+        domain_run.current_step_index = 1
+        domain_run.status = RunStatus.PAUSED
+        domain_run.pause_reason = "manual_gate"
+        await save_run(session, domain_run)
+        await session.commit()
+
+    return run_id, step2_id
+
+
 async def test_create_run(client: AsyncClient, repo_name: str) -> None:
     data = await _create_run(client, repo_name)
     assert data["repo_name"] == repo_name
@@ -79,6 +144,64 @@ async def test_create_run(client: AsyncClient, repo_name: str) -> None:
     assert data["status"] == "draft"
     assert len(data["steps"]) == 1
     assert len(data["steps"][0]["tasks"]) == 1
+
+
+async def test_skip_step_writes_step_skipped_to_events_v2_and_activity(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    repo_name: str,
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    try:
+        run_id, step_id = await _create_run_paused_at_manual_gate(client, app, repo_name)
+
+        skip_resp = await client.post(f"/api/runs/{run_id}/steps/{step_id}/skip")
+        assert skip_resp.status_code == 200
+        run_data = skip_resp.json()
+        skipped_step = next(step for step in run_data["steps"] if step["id"] == step_id)
+        assert skipped_step["skipped"] is True
+        assert skipped_step["skip_reason"] == "manual_skip"
+        assert skipped_step["completed"] is True
+        assert run_data["current_step_index"] == 2
+        assert run_data["status"] == "active"
+        assert run_data["pause_reason"] is None
+
+        async with app.state.session_factory() as session:
+            repo = RunRepository(session)
+            persisted_run = await repo.get(run_id)
+            assert persisted_run.status == RunStatus.ACTIVE
+            assert persisted_run.pause_reason is None
+            assert persisted_run.current_step_index == 2
+            persisted_step = next(step for step in persisted_run.steps if step.id == step_id)
+            assert persisted_step.skipped is True
+            assert persisted_step.completed is True
+            assert persisted_step.skip_reason == "manual_skip"
+
+            store = SqliteEventStore(session)
+            stored_events = await store.get_stream(run_id)
+
+        step_skipped_events = [
+            event for event in stored_events if event.event_type == "step_skipped"
+        ]
+        assert len(step_skipped_events) == 1
+        status_events = [
+            event for event in stored_events if event.event_type == "run_status_changed"
+        ]
+        assert status_events
+        latest_status_payload = json.loads(status_events[-1].payload)
+        assert latest_status_payload["new_status"] == "active"
+        assert latest_status_payload["pause_reason"] is None
+
+        activity_resp = await client.get(f"/api/runs/{run_id}/activity?event_type=step_skipped")
+        assert activity_resp.status_code == 200
+        activity_events = activity_resp.json()["events"]
+        assert len(activity_events) == 1
+        assert activity_events[0]["event_type"] == "step_skipped"
+        assert activity_events[0]["payload"]["step_id"] == step_id
+        assert activity_events[0]["payload"]["skip_reason"] == "manual_skip"
+        assert activity_events[0]["payload"]["completed"] is True
+        assert activity_events[0]["payload"]["current_step_index_after"] == 2
+    finally:
+        await cleanup_runs_for_repo(client, repo_name)
 
 
 async def test_create_run_routine_not_found(client: AsyncClient, repo_name: str) -> None:
@@ -187,6 +310,11 @@ async def test_start_run(client_and_drain: tuple[AsyncClient, DrainFn], repo_nam
     data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "active"
     assert data["started_at"] is not None
+    activity = (
+        await client.get(f"/api/runs/{run_id}/activity?event_type=run_status_changed")
+    ).json()
+    assert len(activity["events"]) == 1
+    assert activity["events"][0]["event_type"] == "run_status_changed"
 
 
 async def test_start_run_invalid_state(
@@ -206,12 +334,22 @@ async def test_start_run_invalid_state(
     assert response.status_code == 409
 
 
-async def test_delete_run(client: AsyncClient, repo_name: str) -> None:
+async def test_delete_run(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    repo_name: str,
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
     created = await _create_run(client, repo_name)
     run_id = created["id"]
 
     response = await client.delete(f"/api/runs/{run_id}")
     assert response.status_code == 204
+
+    async with app.state.session_factory() as session:
+        store = SqliteEventStore(session)
+        events = await store.get_stream(run_id)
+
+    assert [event.event_type for event in events].count("run_deleted") == 1
 
     response = await client.get(f"/api/runs/{run_id}")
     assert response.status_code == 404
@@ -964,7 +1102,7 @@ async def test_run_response_includes_cost_estimation(client: AsyncClient, repo_n
         run.total_tokens_read = 100000
         run.total_tokens_write = 50000
         run.total_tokens_cache = 10000
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
     # Now fetch the run again
@@ -1172,3 +1310,39 @@ async def test_agent_error_handlers_registered(client: AsyncClient) -> None:
     assert AgentNotAvailableError in error_handlers
     assert AgentExecutionError in error_handlers
     assert AgentCancelledError in error_handlers
+
+
+async def test_create_run_produces_run_created_event_in_events_v2(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    repo_name: str,
+) -> None:
+    """POST /api/runs must produce a RunCreated event in events_v2 for the new run_id."""
+    client, _drain, _, _, app = _shared_app_fixture
+
+    response = await client.post(
+        "/api/runs",
+        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
+    )
+    assert response.status_code == 201
+    run_id = response.json()["id"]
+
+    from orchestrator.db import SqliteEventStore
+
+    session_factory = app.state.session_factory
+    async with session_factory() as session:
+        store = SqliteEventStore(session)
+        events = await store.get_stream(run_id)
+
+    event_types = [e.event_type for e in events]
+    assert event_types.count("run_created") == 1
+    assert event_types.count("step_created") == 1
+    assert event_types.count("task_created") == 1
+
+    run_created = next(e for e in events if e.event_type == "run_created")
+    assert run_created.aggregate_id == run_id
+    payload = json.loads(run_created.payload)
+    assert payload["run_id"] == run_id
+    assert payload["repo_name"] == repo_name
+    assert payload["run_snapshot"] == {}
+
+    await cleanup_runs_for_repo(client, repo_name)

@@ -44,7 +44,8 @@ from orchestrator.api.schemas.tasks import (
 )
 from orchestrator.config.enums import ChecklistStatus, RoutineSource, RunStatus, TaskStatus
 from orchestrator.config.models import MCPServerConfig, RoutineConfig
-from orchestrator.db import RunRepository
+from orchestrator.db import RunRepository, commit_with_event_outbox
+from orchestrator.git import WorktreeCommitError
 from orchestrator.config import discover_routines, RoutineNotFoundError
 from orchestrator.state.errors import ChecklistItemNotFoundError, TaskNotFoundError
 from orchestrator.workflow import (
@@ -292,6 +293,8 @@ async def submit_task(
         raise HTTPException(status_code=409, detail=str(e))
     except GateBlockedError as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except WorktreeCommitError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     if not result.success:
         raise HTTPException(
             status_code=422,
@@ -306,7 +309,7 @@ async def submit_task(
             WorkflowSignal.ACTIVITY_COMPLETED,
             payload={"task_id": task_id},
         )
-        await session.commit()
+        await commit_with_event_outbox(session)
 
     return TransitionResponse(
         success=result.success,
@@ -355,7 +358,7 @@ async def complete_verification_endpoint(
             WorkflowSignal.ACTIVITY_VERIFIED,
             payload={"task_id": task_id},
         )
-        await session.commit()
+        await commit_with_event_outbox(session)
 
     return TransitionResponse(
         success=result.success,

@@ -143,6 +143,18 @@ def test_create_task_state_max_attempts() -> None:
     assert task_state.max_attempts == 5
 
 
+def test_create_task_state_without_verifier_config_keeps_verification_enabled() -> None:
+    task_config = TaskConfig(
+        id="T1",
+        title="Task",
+        task_context="Context",
+    )
+
+    task_state = create_task_state(task_config)
+
+    assert task_state.has_verification is True
+
+
 # --- validate_routine_inputs tests ---
 
 

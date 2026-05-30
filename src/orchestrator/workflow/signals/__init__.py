@@ -1,9 +1,10 @@
 """Workflow signal handling and runtime execution."""
 
 from orchestrator.workflow.signals.signals import (
-    DbSignalTransport,
+    EventSignalTransport,
     InMemorySignalTransport,
     PendingSignal,
+    SignalForInactiveRunError,
     SignalQueue,
     SignalTransport,
     WorkflowSignal,
@@ -25,7 +26,7 @@ from orchestrator.workflow.signals.runtime import (
 from orchestrator.workflow.signals.consumer import SignalConsumer
 
 __all__ = [
-    "DbSignalTransport",
+    "EventSignalTransport",
     "ExecutorCallbacks",
     "InMemorySignalTransport",
     "LoopAction",
@@ -33,6 +34,7 @@ __all__ = [
     "PendingSignal",
     "RunWorkflow",
     "SignalConsumer",
+    "SignalForInactiveRunError",
     "SignalQueue",
     "SignalTransport",
     "WorkflowSignal",

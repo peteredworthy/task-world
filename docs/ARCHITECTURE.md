@@ -93,19 +93,24 @@ task-world/
 │   │       ├── versioning.py  # Git SHA versioning
 │   │       └── errors.py
 │   │
-│   ├── db/                    # Persistence: ORM, repositories, event store, recovery
+│   ├── db/                    # Persistence: ORM, repositories, event store
 │   │   ├── orm/               # SQLAlchemy ORM definitions
 │   │   │   ├── base.py        # SQLAlchemy Base class
-│   │   │   └── models.py      # Run, Step, Task, Attempt, Event, Signal, Lock, RoutineMeta ORM models
+│   │   │   └── models.py      # Run, Step, Task, Attempt, Event, RoutineMeta ORM models
 │   │   ├── access/            # Data access layer
 │   │   │   ├── connection.py  # Async engine + session factory
 │   │   │   ├── repositories.py # RunRepository, locked JSON merge mechanics, etc.
-│   │   │   └── event_store.py # Event persistence + paginated queries
-│   │   ├── recovery/          # Journal + replay + backup
-│   │   │   ├── event_journal.py # JSONL journal (append-only, recovery source)
-│   │   │   ├── journal_replay.py # Replay JSONL journal onto DB snapshots
-│   │   │   ├── recovery.py    # State recovery from event history
-│   │   │   └── backup.py
+│   │   │   ├── event_store.py # Legacy event persistence + paginated queries (events table)
+│   │   │   ├── event_store_v2.py # SqliteEventStore: event sourcing via events_v2
+│   │   │   └── jsonl_outbox.py # JsonlOutboxObserver: post-append JSONL writer
+│   │   ├── projections/       # Read-model projections rebuilt from events_v2
+│   │   │   ├── registry.py    # ProjectionRegistry: fan-out + rebuild_all
+│   │   │   ├── run_state.py   # RunStateProjector → runs projection table
+│   │   │   ├── task_state.py  # TaskStateProjector → tasks projection table
+│   │   │   └── run_lifecycle.py # RunLifecycleProjector → active-run tracking
+│   │   ├── bootstrap.py       # JSONL bootstrap: seeds events_v2 on empty-DB startup
+│   │   ├── recovery/          # Backup utilities
+│   │   │   └── backup.py      # DB backup / restore helpers
 │   │   └── migrations/        # Alembic migrations
 │   │
 │   ├── envfiles/              # Environment file management
@@ -200,16 +205,16 @@ task-world/
 │       │   ├── grades.py      # Grade threshold evaluation
 │       │   ├── transitions.py # State transition functions
 │       │   └── errors.py
-│       ├── events/            # Event dataclasses + persistence
+│       ├── events/            # Event models + persistence
 │       │   ├── types.py       # All WorkflowEvent subclasses
-│       │   └── logger.py      # PersistentEventEmitter: SQLite + JSONL dual write
+│       │   └── logger.py      # PersistentEventEmitter: event persistence + listener fan-out
 │       ├── delegation/        # Delegated-work commands, reducers, and recording helpers
 │       │   ├── coordinator.py # Immutable delegation state value object
 │       │   ├── recorder.py    # Shared DelegationState recording helper
 │       │   ├── fan_out.py     # Fan-out delegation policy and work mapping
 │       │   └── super_parent.py # Super-parent child command validation and work mapping
 │       └── signals/           # Signal transport + executor loop
-│           ├── signals.py     # WorkflowSignal enum, SignalTransport ABC, DbSignalTransport
+│           ├── signals.py     # WorkflowSignal enum, SignalTransport ABC, EventSignalTransport
 │           ├── handlers.py    # Typed signal handler dispatch
 │           └── runtime.py     # RunWorkflow: executor loop, signal dispatch, phase routing
 │
@@ -279,7 +284,8 @@ task-world/
 │   └── plan-runner/           # Plan runner documentation
 ├── scripts/                   # Development scripts
 │   ├── serve.py               # Server entry point
-│   └── seed_db.py             # Database seeding
+│   ├── restore_from_journal.py # Restore empty DBs from JSONL via events_v2
+│   └── seed_db.py             # Obsolete; create seed data through CLI/API lifecycle
 ├── docker/                    # Docker configuration
 │   └── Dockerfile.agent-server
 │
@@ -320,7 +326,7 @@ Each task goes through:
 
 Parent/child coordination is owned by `ParentOversightService`. The pure oversight reducer projects durable parent facts, child run state, evidence, terminal guards, attention queues, merge queues, and the next parent action. `oversight_projection.py` maps that projected snapshot to a single delegation decision surface used by terminal guards.
 
-Durable oversight fact keys and delegation coordination keys live in `workflow/oversight_facts.py`. Callers sanitize parent oversight patches before persistence, and boundary checks load their coordination-key vocabulary from the same source. `RunRepository.update_parent_oversight_facts()` only performs locked JSON merge mechanics, including append-only lists, set-union lists, and delegated-work map merging.
+Durable oversight fact keys and delegation coordination keys live in `workflow/oversight_facts.py`. Callers sanitize parent oversight patches before persistence, and boundary checks load their coordination-key vocabulary from the same source. Oversight persistence applies locked JSON merge mechanics, including append-only lists, set-union lists, and delegated-work map merging.
 
 Delegation command fencing, idempotency records, result records, and review blockers are recorded through `DelegationRecorder`, which wraps the immutable `DelegationState` value object. `WorkflowService` keeps fan-out-specific behavior such as command keys and task-to-work translation, but shared delegation-state writes go through the recorder.
 
@@ -366,25 +372,32 @@ Events record every observable state change. All event types inherit from `Workf
 
 ### How Events Flow
 
+Workflow transitions emit immutable events to `events_v2`, and event-backed read-model updates are applied through projectors. Some read-model tables still have compatibility mutation paths for migration-era utilities and tests, so the system is event-backed but not purely event-sourced.
+
 ```
+API call → command handler (WorkflowService)
+        ↓
 WorkflowEngine.emit(event)          ← pure, synchronous, no I/O
         ↓
 PersistentEventEmitter              (src/orchestrator/workflow/events/logger.py)
         ↓
-EventStore.append()                 ← writes to SQLite `events` table
-        +
-JsonlEventJournal.append()          ← appends to .orchestrator/state/history.jsonl (aiofiles)
+SqliteEventStore.append()           ← writes to events_v2 table (primary store)
         ↓
-Registered listeners notified
+ProjectionRegistry                  ← fan-out to registered projectors
+  ├── RunStateProjector             → updates runs read-model table
+  ├── TaskStateProjector            → updates tasks read-model table
+  └── RunLifecycleProjector         → tracks active-run lifecycle state
+        ↓
+JsonlOutboxObserver                 ← appends to .orchestrator/state/history.jsonl
         ↓
 loop.create_task(manager.broadcast_event(event))   ← WebSocket fan-out to all connected UIs
 ```
 
-**Dual write rationale:** SQLite is the primary store for online queries (`EventStore.get_events_paginated()`). The JSONL journal is a secondary durable log used for recovery when the DB is unavailable or has been corrupted. Journal replay (`db/recovery/journal_replay.py`) can reconstruct DB state from the JSONL file.
+**Empty-DB bootstrap:** On first startup, if `events_v2` is empty, `bootstrap_from_jsonl()` reads `history.jsonl`, seeds `events_v2`, and calls `projection_registry.rebuild_all()` to restore read-model tables from history.
 
 **Buffering emitter:** `WorkflowEngine` uses a `BufferingEmitter` during synchronous state transitions — it collects events in memory. The caller drains them with `emitter.drain()` and persists in a single batch, keeping the engine itself free of I/O.
 
-**High-frequency output:** `AgentOutputEvent` lines (stdout from running agents) are persisted by `EventBroadcaster` (`runners/execution/event_broadcaster.py`), which opens a fresh DB session per call rather than sharing the long-lived executor session. This trades connection overhead for isolation between agent output and workflow state writes.
+**High-frequency output:** `AgentOutputEvent` lines (stdout from running agents) are persisted by `EventBroadcaster` (`runners/execution/event_broadcaster.py`), which opens a fresh DB session per call rather than sharing the long-lived executor session.
 
 ### Signals
 
@@ -401,7 +414,7 @@ Signals are **one-time control commands** sent to an active run's executor loop.
 | `ACTIVITY_VERIFIED` | Notify that an external activity has been verified |
 
 **Transport abstraction:** `SignalTransport` ABC with two implementations:
-- `DbSignalTransport` — reads/writes the `pending_signals` SQLite table; marks each row with `processed_at` for exactly-once delivery
+- `EventSignalTransport` — stores `SignalEnqueued` / `SignalProcessed` events in `events_v2`
 - `InMemorySignalTransport` — for testing
 
 **Signal flow:**
@@ -410,20 +423,15 @@ Signals are **one-time control commands** sent to an active run's executor loop.
 API route (e.g. POST /api/runs/{id}/pause)
         ↓
 WorkflowService.pause_run()
-        ↓  checks _active_run_ids set
-  ┌─────┴──────┐
-  │ run active │ → enqueue signal to pending_signals table
-  │ run idle   │ → update DB state directly (no executor to notify)
-  └────────────┘
+        ↓
+EventSignalTransport.enqueue()      ← writes SignalEnqueued event to events_v2
         ↓  (on next executor loop tick)
 RunWorkflow.on_signal()
         ↓
-drain pending_signals → dispatch to @signal_handler(WorkflowSignal.X)
+EventSignalTransport.drain()        → dispatch to @signal_handler(WorkflowSignal.X)
         ↓
 handler returns True to stop the loop, False to continue
 ```
-
-**Active-run registry:** `_active_run_ids` is a module-level `set[str]` in `signals.py`. This is an intentional, documented exception to the "no global state" design constraint — it must survive across API request/response cycles within a single process. The set is **process-local**: it is lost on server restart and does not survive across multiple workers.
 
 ### Interaction Between Signals and Agent Runners
 
@@ -438,7 +446,7 @@ RunWorkflow._run_loop():
   5. loop back to step 1
 ```
 
-Signals received while an agent is executing (step 3) are **queued** in the `pending_signals` table and processed at the next loop iteration (step 1). A running agent cannot be interrupted mid-stream — cancellation takes effect between phases.
+Signals received while an agent is executing (step 3) are **queued** in `events_v2` via `EventSignalTransport` and processed at the next loop iteration (step 1). A running agent cannot be interrupted mid-stream — cancellation takes effect between phases.
 
 Agent runners communicate completion back to the orchestrator through **async closure callbacks** injected by `PhaseHandler`:
 
@@ -492,17 +500,15 @@ All backward-compat shim files have been removed as part of module consolidation
 
 ---
 
-### TD-03: Process-Local Active-Run Registry
+### ~~TD-03: Process-Local Active-Run Registry~~ — RESOLVED
 
-`_active_run_ids` in `workflow/signals/signals.py` is a module-level `set[str]`. It is lost on server restart and is incompatible with multi-worker deployments. Runs paused by server shutdown are recovered via the `server_shutdown` pause reason, but if a run is mid-transition when the process dies, the registry state is gone.
-
-**Impact today:** Low — single-process, single-worker deployment. Becomes a correctness problem if the deployment model changes.
+`RunLifecycleProjector` now tracks active-run state in the `events_v2` projection layer. Active-run state is derived from `RunStatusChanged` events and survives server restarts through the projection rebuild path.
 
 ---
 
 ### ~~TD-04: `StepSkipped` Dual-Field Inconsistency~~ — RESOLVED
 
-The legacy `reason` alias has been removed from `StepSkipped`; only `skip_reason` remains. Recovery code in `db/recovery/recovery.py` retains a fallback that maps old `reason` fields to `skip_reason` when replaying historical journal events.
+The legacy `reason` alias has been removed from `StepSkipped`; only `skip_reason` remains.
 
 ---
 

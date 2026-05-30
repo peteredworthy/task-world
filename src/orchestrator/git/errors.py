@@ -31,6 +31,20 @@ class GitCommandError(GitError):
         super().__init__(f"Git command failed (exit {returncode}): {command}\n{stderr}")
 
 
+class WorktreeResetError(WorktreeError):
+    def __init__(self, worktree_path: str, message: str) -> None:
+        self.worktree_path = worktree_path
+        self.message = message
+        super().__init__(f"Failed to reset worktree at {worktree_path}: {message}")
+
+
+class WorktreeCommitError(WorktreeError):
+    def __init__(self, worktree_path: str, message: str) -> None:
+        self.worktree_path = worktree_path
+        self.message = message
+        super().__init__(f"Failed to commit worktree changes at {worktree_path}: {message}")
+
+
 class BranchError(GitError):
     """Base class for branch-related errors."""
 

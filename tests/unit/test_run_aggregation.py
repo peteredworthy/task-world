@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from orchestrator.db import Base, AttemptModel, RunModel, RunRepository, StepModel, TaskModel
+from orchestrator.db.access.mutations import update_latest_attempt
 from orchestrator.state.models import ModelTokenUsage, AttemptMetrics
 
 _NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
@@ -90,7 +91,8 @@ async def test_two_different_models_both_appear_in_run(session: AsyncSession) ->
     task_id = "task-1"
 
     # First call — Sonnet
-    await repo.update_latest_attempt(
+    await update_latest_attempt(
+        repo.session,
         task_id,
         token_usage_by_model=[
             ModelTokenUsage(
@@ -104,7 +106,8 @@ async def test_two_different_models_both_appear_in_run(session: AsyncSession) ->
     )
 
     # Second call — Haiku
-    await repo.update_latest_attempt(
+    await update_latest_attempt(
+        repo.session,
         task_id,
         token_usage_by_model=[
             ModelTokenUsage(
@@ -148,7 +151,8 @@ async def test_same_model_tokens_are_summed_rates_preserved(session: AsyncSessio
     task_id = "task-2"
 
     # First call — 1000 input tokens at Sonnet rates
-    await repo.update_latest_attempt(
+    await update_latest_attempt(
+        repo.session,
         task_id,
         token_usage_by_model=[
             ModelTokenUsage(
@@ -162,7 +166,8 @@ async def test_same_model_tokens_are_summed_rates_preserved(session: AsyncSessio
     )
 
     # Second call — 500 more input tokens for the same model (verifier phase)
-    await repo.update_latest_attempt(
+    await update_latest_attempt(
+        repo.session,
         task_id,
         token_usage_by_model=[
             ModelTokenUsage(
@@ -221,7 +226,7 @@ async def test_empty_token_usage_leaves_run_unchanged(session: AsyncSession) -> 
     task_id = "task-3"
 
     # Call with empty list — should be a no-op for token_usage_by_model
-    await repo.update_latest_attempt(task_id, token_usage_by_model=[])
+    await update_latest_attempt(repo.session, task_id, token_usage_by_model=[])
 
     session.expire_all()
     result = await session.execute(select(RunModel).where(RunModel.id == "run-3"))
@@ -255,7 +260,7 @@ async def test_none_token_usage_leaves_run_unchanged(session: AsyncSession) -> N
     repo = RunRepository(session)
 
     # Call with None — default — should be a no-op for token_usage_by_model
-    await repo.update_latest_attempt("task-4", token_usage_by_model=None)
+    await update_latest_attempt(repo.session, "task-4", token_usage_by_model=None)
 
     session.expire_all()
     result = await session.execute(select(RunModel).where(RunModel.id == "run-4"))
@@ -308,7 +313,7 @@ async def test_run_legacy_fields_match_per_model_sum(session: AsyncSession) -> N
             cost_per_m_output=4.0,
         ),
     ]
-    await repo.update_latest_attempt(task_id, metrics=metrics, token_usage_by_model=usage)
+    await update_latest_attempt(repo.session, task_id, metrics=metrics, token_usage_by_model=usage)
 
     session.expire_all()
     result = await session.execute(select(RunModel).where(RunModel.id == "run-5"))

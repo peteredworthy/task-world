@@ -7,8 +7,9 @@ from pathlib import Path
 
 import click
 
-from orchestrator.db import BackupError, create_backup, restore_backup
-from orchestrator.db import resolve_default_journal_path
+from orchestrator.db import BackupError, create_backup, restore_backup, resolve_default_journal_path
+
+_SERVER_LOCK_RELATIVE = Path(".orchestrator") / "server.lock"
 
 
 @click.group()
@@ -128,3 +129,80 @@ def restore_backup_cmd(ctx: click.Context, backup_meta_path: Path, target_db: Pa
                 click.echo(f"Journal path: {metadata.journal_path}")
 
     asyncio.run(_restore_backup())
+
+
+@db.command("rebuild-projections")
+@click.option(
+    "--db",
+    "db_path_override",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Database path (default: from context)",
+)
+@click.pass_context
+def rebuild_projections_cmd(ctx: click.Context, db_path_override: Path | None) -> None:
+    """Rebuild all projections from the event log. Requires server stop."""
+
+    async def _rebuild() -> None:
+        from orchestrator.db import (
+            ProjectionCheckpointModel,
+            ProjectionRegistry,
+            RunModel,
+            RunLifecycleProjector,
+            RunStateProjector,
+            SqliteEventStore,
+            TaskModel,
+            TaskStateProjector,
+            create_engine,
+            create_session_factory,
+        )
+        from orchestrator.workflow import WorkflowEvent, deserialize_event
+        from sqlalchemy import delete
+
+        db_path = db_path_override or Path(ctx.obj["db"])
+
+        lock_file = db_path.parent / _SERVER_LOCK_RELATIVE
+        if lock_file.exists():
+            click.echo(
+                "Error: server lock file found. Stop the server before rebuilding projections.",
+                err=True,
+            )
+            raise SystemExit(1)
+
+        engine = create_engine(db_path)
+        try:
+            factory = create_session_factory(engine)
+            async with factory() as session:
+                store = SqliteEventStore(session)
+                stored_events = await store.get_all()
+
+                workflow_events: list[WorkflowEvent] = []
+                for se in stored_events:
+                    try:
+                        workflow_events.append(deserialize_event(se.event_type, se.payload))
+                    except Exception:
+                        pass
+
+                registry = ProjectionRegistry()
+                registry.register(RunLifecycleProjector())
+                registry.register(RunStateProjector())
+                registry.register(TaskStateProjector())
+
+                click.echo("Clearing projection-owned tables...")
+                await session.execute(delete(ProjectionCheckpointModel))
+                await session.execute(delete(TaskModel))
+                await session.execute(delete(RunModel))
+                await session.flush()
+
+                click.echo(
+                    f"Replaying {len(workflow_events)} events through"
+                    f" {registry.projector_count} projectors..."
+                )
+                await registry.rebuild_all(workflow_events, session)
+                await session.commit()
+        finally:
+            await engine.dispose()
+
+        click.echo("Projection rebuild complete.")
+
+    asyncio.run(_rebuild())

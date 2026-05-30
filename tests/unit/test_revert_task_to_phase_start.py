@@ -1,7 +1,7 @@
 """Tests for WorkflowService._revert_task_to_phase_start.
 
 Covers the two independent code paths (BUILDING vs VERIFYING) and the
-git-checkout decision tree (needs 2 attempts + worktree + start_commit).
+fact that this pure state helper no longer performs git checkout side effects.
 """
 
 from datetime import datetime
@@ -96,12 +96,12 @@ class TestRevertBuilding:
         svc._revert_task_to_phase_start(task, _run(), NOW)
         assert task.attempts[1].start_commit == "abc123"
 
-    def test_checkout_called_when_worktree_and_start_commit_present(self) -> None:
+    def test_checkout_not_called_when_worktree_and_start_commit_present(self) -> None:
         svc = _service()
         task = _task(TaskStatus.BUILDING, n_attempts=1, start_commit="abc123")
         run = _run(worktree_path="/some/worktree")
         svc._revert_task_to_phase_start(task, run, NOW)
-        assert svc.checkouts == [("/some/worktree", run.id, "abc123")]
+        assert svc.checkouts == []
 
     def test_checkout_not_called_without_worktree(self) -> None:
         svc = _service()

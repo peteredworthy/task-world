@@ -3,6 +3,8 @@
 import asyncio
 import logging
 import subprocess
+from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -13,8 +15,10 @@ from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.deps import (
+    get_codex_models_fn,
     get_runner_executor,
-    get_event_store,
+    get_event_emitter,
+    get_event_store_v2,
     get_global_config,
     get_run_repository,
     get_routine_dirs,
@@ -24,7 +28,7 @@ from orchestrator.api.deps import (
     get_workflow_service,
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
-from orchestrator.git import list_branches
+from orchestrator.git import WorktreeResetError, list_branches
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.git import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
@@ -66,7 +70,7 @@ from orchestrator.api.schemas.steps import (
     HumanApprovalResponse,
     StepResponse,
 )
-from orchestrator.api.presenters import run_to_trace_response
+from orchestrator.api.presenters import compute_run_totals_from_attempts, run_to_trace_response
 from orchestrator.api.presenters.runs import token_usage_to_schema
 from orchestrator.config.enums import (
     AgentRunnerType,
@@ -76,20 +80,36 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import EventStore
-from orchestrator.db import RunRepository
+from orchestrator.db import RunRepository, create_wired_event_store_v2
+from orchestrator.db import SqliteEventStore
+from orchestrator.db import commit_with_event_outbox
 from orchestrator.api.metrics import estimate_cost
 from orchestrator.config import discover_routines
 from orchestrator.config import RoutineNotFoundError
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.errors import RunNotFoundError, StepNotFoundError, TaskNotFoundError
-from orchestrator.state.models import HumanApproval, Run
-from orchestrator.workflow import InvalidTransitionError
+from orchestrator.state.models import Run
+from orchestrator.workflow import (
+    InvalidTransitionError,
+    PersistentEventEmitter,
+    RecordStepHumanApprovalCommand,
+    handle_record_step_human_approval,
+)
+from orchestrator.runners import validate_codex_model_selection
 from orchestrator.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+
+def _is_codex_runner(runner_type: AgentRunnerType, config: dict[str, Any]) -> bool:
+    """Return True when the runner type and config identify a Codex runner."""
+    if runner_type == AgentRunnerType.CODEX_SERVER:
+        return True
+    if runner_type == AgentRunnerType.CLI_SUBPROCESS:
+        return str(config.get("command", "")).lower() == "codex"
+    return False
 
 
 def _run_to_response(run: Run) -> RunResponse:
@@ -186,7 +206,25 @@ def _run_to_response(run: Run) -> RunResponse:
             )
         )
 
-    token_usage_schemas = [token_usage_to_schema(u) for u in run.token_usage_by_model]
+    # Use stored run-level totals; fall back to aggregating from attempts when absent
+    eff_tokens_read = run.total_tokens_read
+    eff_tokens_write = run.total_tokens_write
+    eff_tokens_cache = run.total_tokens_cache
+    eff_duration_ms = run.total_duration_ms
+    eff_num_actions = run.total_num_actions
+    eff_usage = run.token_usage_by_model
+
+    if not eff_tokens_read and not eff_tokens_write and not eff_usage:
+        (
+            eff_tokens_read,
+            eff_tokens_write,
+            eff_tokens_cache,
+            eff_duration_ms,
+            eff_num_actions,
+            eff_usage,
+        ) = compute_run_totals_from_attempts(run)
+
+    token_usage_schemas = [token_usage_to_schema(u) for u in eff_usage]
 
     # Compute cost: prefer per-model breakdown, fall back to action log, then estimate
     estimated_cost_usd = None
@@ -219,11 +257,11 @@ def _run_to_response(run: Run) -> RunResponse:
         if actual_cost_usd > 0:
             estimated_cost_usd = round(actual_cost_usd, 6)
             cost_disclaimer = "Actual cost from API response."
-        elif run.total_tokens_read > 0 or run.total_tokens_write > 0 or run.total_tokens_cache > 0:
+        elif eff_tokens_read > 0 or eff_tokens_write > 0 or eff_tokens_cache > 0:
             cost_estimate = estimate_cost(
-                tokens_read=run.total_tokens_read,
-                tokens_write=run.total_tokens_write,
-                tokens_cache=run.total_tokens_cache,
+                tokens_read=eff_tokens_read,
+                tokens_write=eff_tokens_write,
+                tokens_cache=eff_tokens_cache,
                 model=model_hint or "gpt-4o",
             )
             if cost_estimate:
@@ -285,11 +323,11 @@ def _run_to_response(run: Run) -> RunResponse:
         started_at=run.started_at,
         completed_at=run.completed_at,
         agent_runner_started_at=run.agent_runner_started_at,
-        total_tokens_read=run.total_tokens_read,
-        total_tokens_write=run.total_tokens_write,
-        total_tokens_cache=run.total_tokens_cache,
-        total_duration_ms=run.total_duration_ms,
-        total_num_actions=run.total_num_actions,
+        total_tokens_read=eff_tokens_read,
+        total_tokens_write=eff_tokens_write,
+        total_tokens_cache=eff_tokens_cache,
+        total_duration_ms=eff_duration_ms,
+        total_num_actions=eff_num_actions,
         token_usage_by_model=token_usage_schemas,
         estimated_cost_usd=estimated_cost_usd,
         cost_disclaimer=cost_disclaimer,
@@ -427,9 +465,24 @@ async def create_run(
     request: CreateRunRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
+    codex_models_fn: Annotated[Callable[[], list[str]], Depends(get_codex_models_fn)],
 ) -> RunResponse:
     """Create a new run from a routine (by ID or embedded inline)."""
     run, _ = _build_run_from_request(request, routine_dirs)
+
+    # Validate Codex model selection before persisting the run.
+    if run.agent_runner_type is not None and run.agent_runner_config:
+        model = run.agent_runner_config.get("model")
+        if (
+            model
+            and isinstance(model, str)
+            and _is_codex_runner(run.agent_runner_type, run.agent_runner_config)
+        ):
+            available = await asyncio.to_thread(codex_models_fn)
+            err = validate_codex_model_selection(model, available)
+            if err:
+                raise HTTPException(status_code=422, detail=err)
+
     created = await service.create_run(run)
     return _run_to_response(created)
 
@@ -721,8 +774,6 @@ async def _cancel_active_child_executors(
 async def resume_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
-    repository: Annotated[RunRepository, Depends(get_run_repository)],
     request: ResumeRunRequest | None = None,
 ) -> RunResponse:
     """Resume a run (PAUSED -> ACTIVE), optionally changing the agent.
@@ -744,12 +795,6 @@ async def resume_run(
         request.agent_runner_config if request and request.agent_runner_config else None
     )
     resume_strategy = request.resume_strategy if request else None
-
-    # Handle worktree reset before changing run state
-    if resume_strategy == "reset_worktree":
-        if current_run.worktree_path:
-            AgentRunnerExecutor.reset_worktree(current_run.worktree_path)
-            logger.info(f"API: Reset worktree for run {run_id}")
 
     run = await service.resume_run(
         run_id,
@@ -796,6 +841,8 @@ async def recover_run(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InvalidTransitionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except WorktreeResetError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.delete("/{run_id}", status_code=204)
@@ -821,7 +868,7 @@ async def delete_run(
 async def get_activity(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    event_store: Annotated[EventStore, Depends(get_event_store)],
+    event_store: Annotated[SqliteEventStore, Depends(get_event_store_v2)],
     after: int | None = Query(default=None),
     limit: int = Query(default=200, ge=1, le=1000),
     event_type: str | None = Query(default=None),
@@ -936,10 +983,10 @@ async def stream_activity(
                 # connection leak.  The shield lets the session close cleanly;
                 # the pending cancellation is then delivered at the next
                 # unshielded checkpoint (yield / asyncio.sleep below).
-                rows: list[dict[str, Any]] = []
+                rows: list[Any] = []
                 with anyio.CancelScope(shield=True):
                     async with session_factory() as session:
-                        store = EventStore(session)
+                        store = create_wired_event_store_v2(session)
                         rows = await store.get_events_paginated(
                             run_id,
                             after=last_id,
@@ -1007,6 +1054,7 @@ async def approve_step(
     approval: HumanApprovalRequest,
     repository: Annotated[RunRepository, Depends(get_run_repository)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    event_store: Annotated[SqliteEventStore, Depends(get_event_store_v2)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
 ) -> StepResponse:
@@ -1056,21 +1104,19 @@ async def approve_step(
             detail="Step does not have a pending human approval gate",
         )
 
-    # Create approval record
-    from datetime import datetime, timezone
-
-    human_approval = HumanApproval(
-        approved_by=approval.approved_by,
-        approved_at=datetime.now(timezone.utc),
-        comment=approval.comment,
+    approved_at = datetime.now(timezone.utc)
+    await handle_record_step_human_approval(
+        RecordStepHumanApprovalCommand(
+            run_id=run_id,
+            step_id=step_id,
+            approved_by=approval.approved_by,
+            approved_at=approved_at,
+            comment=approval.comment,
+        ),
+        event_store,
+        session,
     )
-
-    # Update step with approval
-    step.human_approval = human_approval
-
-    # Save the run and commit
-    await repository.save(run)
-    await session.commit()
+    await commit_with_event_outbox(session)
 
     # Resume run if it was paused waiting for this approval, then re-spawn agent
     if run.status == RunStatus.PAUSED and run.pause_reason in (
@@ -1078,7 +1124,7 @@ async def approve_step(
         "awaiting_approval",
     ):
         run = await service.resume_run(run_id)
-        await session.commit()
+        await commit_with_event_outbox(session)
         logger.info(f"API: Auto-resumed run {run_id} after step approval")
 
     if (
@@ -1092,14 +1138,11 @@ async def approve_step(
                 f"API: Re-spawned {run.agent_runner_type.value} agent after step approval for run {run_id}"
             )
 
-    # Build response
-    approval_response = None
-    if step.human_approval:
-        approval_response = HumanApprovalResponse(
-            approved_by=step.human_approval.approved_by,
-            approved_at=step.human_approval.approved_at,
-            comment=step.human_approval.comment,
-        )
+    approval_response = HumanApprovalResponse(
+        approved_by=approval.approved_by,
+        approved_at=approved_at,
+        comment=approval.comment,
+    )
 
     return StepResponse(
         id=step.id,
@@ -1116,9 +1159,7 @@ async def skip_step(
     step_id: str,
     repository: Annotated[RunRepository, Depends(get_run_repository)],
     session: Annotated[AsyncSession, Depends(get_session)],
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
-    event_store: Annotated[EventStore, Depends(get_event_store)],
+    event_emitter: Annotated[PersistentEventEmitter, Depends(get_event_emitter)],
 ) -> RunResponse:
     """Skip a manual gate step.
 
@@ -1156,11 +1197,16 @@ async def skip_step(
             detail=f"Step {step_id} is not the current step ({step.id})",
         )
 
-    # Mark the step as skipped
     from datetime import datetime, timezone
     from orchestrator.workflow import check_step_progression
-    from orchestrator.workflow import StepSkipped, BufferingEmitter
+    from orchestrator.workflow import RunStatusChanged, StepSkipped, BufferingEmitter
 
+    class _RouteClock:
+        def now(self) -> datetime:
+            return datetime.now(timezone.utc)
+
+    # Mutate an in-memory copy to derive the event sequence; read-model writes
+    # are handled by events_v2 projection below.
     step.skipped = True
     step.skip_reason = "manual_skip"
     step.completed = True
@@ -1169,15 +1215,37 @@ async def skip_step(
     buffer = BufferingEmitter()
 
     # Emit StepSkipped event
+    now = datetime.now(timezone.utc)
     buffer.emit(
         StepSkipped(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=now,
             run_id=run_id,
             step_index=actionable_index,
             step_id=step.id,
             skip_reason="manual_skip",
+            completed=True,
+            current_step_index_after=actionable_index + 1,
         )
     )
+
+    buffer.emit(
+        RunStatusChanged(
+            timestamp=now,
+            run_id=run_id,
+            event_type="run_status_changed",
+            old_status=RunStatus.PAUSED,
+            new_status=RunStatus.ACTIVE,
+            pause_reason=None,
+            last_error=None,
+        )
+    )
+
+    # Resume the in-memory run before evaluating subsequent progression.
+    # If the next actionable step is another manual gate, check_step_progression
+    # will pause it again and emit the corresponding status event.
+    run.status = RunStatus.ACTIVE
+    run.pause_reason = None
+    run.last_error = None
 
     # Advance to next step (this will handle condition evaluation for subsequent steps)
     run.current_step_index = actionable_index + 1
@@ -1197,28 +1265,20 @@ async def skip_step(
     check_step_progression(
         run,
         routine_config=routine_config,
-        clock=None,
+        clock=_RouteClock(),
         emitter=buffer,
         worktree_path=None,
         run_config=run_config,
     )
 
-    # Save the run
-    await repository.save(run)
-    await session.commit()
-
     # Persist the buffered events
     events = buffer.drain()
     if events:
-        await event_store.append_batch(events)
+        await event_emitter.emit_batch(events)
+        await commit_with_event_outbox(session)
 
-    # If the run is still paused (e.g., at another manual gate), don't resume it
-    # Otherwise, resume the run (direct apply — gate approval is synchronous)
-    if run.status != RunStatus.PAUSED:
-        await service.apply_resume_run(run_id)
-    else:
-        # Just make sure the run is reloaded from the database
-        run = await repository.get(run_id)
+    # Reload the projected read model after event-sourced persistence.
+    run = await repository.get(run_id)
 
     return _run_to_response(run)
 

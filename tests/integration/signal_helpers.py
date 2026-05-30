@@ -42,6 +42,12 @@ async def drain_signals(
 
     for signal in signals:
         if signal.signal_type == WorkflowSignal.RUN_START:
+            if (
+                executor is not None
+                and hasattr(executor, "prepare_worktree")
+                and not await executor.prepare_worktree(run_id)
+            ):
+                continue
             await service.apply_start_run(run_id)
             if executor is not None:
                 await executor.setup_and_spawn(run_id)
@@ -62,6 +68,15 @@ async def drain_signals(
                     agent_runner_type = _AT(signal.payload["agent_runner_type"])
                 agent_runner_config = signal.payload.get("agent_runner_config")
                 resume_strategy = signal.payload.get("resume_strategy")
+            if (
+                executor is not None
+                and hasattr(executor, "prepare_worktree")
+                and not await executor.prepare_worktree(
+                    run_id,
+                    reset_worktree=resume_strategy == "reset_worktree",
+                )
+            ):
+                continue
             await service.apply_resume_run(
                 run_id,
                 agent_runner_type=agent_runner_type,
@@ -108,11 +123,15 @@ def make_drain_fn(app: FastAPI, transport: InMemorySignalTransport) -> DrainFn:
     async def _drain(run_id: str) -> None:
         executor = getattr(app.state, "runner_executor", None)
         async with app.state.session_factory() as session:
-            service = WorkflowService(
-                session,
-                auto_verify_runner=LocalAutoVerifyRunner(),
-                signal_transport=transport,
-            )
+            service_factory = getattr(app.state, "service_factory", None)
+            if service_factory is not None:
+                service = await service_factory(session)
+            else:
+                service = WorkflowService(
+                    session,
+                    auto_verify_runner=LocalAutoVerifyRunner(),
+                    signal_transport=transport,
+                )
             await drain_signals(run_id, transport, session, service, executor=executor)
 
     return _drain

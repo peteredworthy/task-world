@@ -20,6 +20,7 @@ from orchestrator.config import AgentRunnerType, RunStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 
@@ -232,7 +233,7 @@ async def test_on_agent_died_codex_server_transitions_to_paused() -> None:
                 agent_runner_config={"pid": 999999},
             )
             run.status = RunStatus.ACTIVE
-            await repo.save(run)
+            await save_run(repo.session, run)
             await session.commit()
 
         await monitor.on_agent_died(

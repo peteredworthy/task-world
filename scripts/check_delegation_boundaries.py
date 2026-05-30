@@ -11,7 +11,7 @@ coordination unsafe:
 - delegation/parent coordination JSON fields must only be assigned inside
   approved coordination boundaries
 
-To suppress a line, add:  # noqa: delegation-boundary
+To suppress a line, add:  # delegation-boundary: ignore
 """
 
 from __future__ import annotations
@@ -80,7 +80,7 @@ def suppressed_lines(source: str) -> set[int]:
     return {
         lineno
         for lineno, line in enumerate(source.splitlines(), start=1)
-        if "# noqa: delegation-boundary" in line
+        if "# delegation-boundary: ignore" in line
     }
 
 

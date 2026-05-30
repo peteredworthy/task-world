@@ -5,6 +5,7 @@ Uses real SQLite in-memory DB and real files via tmp_path. No mocking.
 """
 
 import asyncio
+import json
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -19,8 +20,10 @@ from orchestrator.api import get_attempt_logs, get_task as get_task_detail
 from orchestrator.config.models import RequirementConfig, StepConfig, TaskConfig
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import Base
+from orchestrator.db import SqliteEventStore
 from orchestrator.db import create_session_factory
 from orchestrator.db import RunRepository
+from orchestrator.db.access.mutations import save_run
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import (
@@ -175,7 +178,7 @@ class _FanOutExecutor(AgentRunnerExecutor):
 # ---------------------------------------------------------------------------
 
 
-class TestExpandFanOut:
+class TestFanOutExpansion:
     @pytest.mark.asyncio
     async def test_expand_fan_out_creates_children(
         self, session: AsyncSession, tmp_path: Path
@@ -195,7 +198,7 @@ class TestExpandFanOut:
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         # Find the fan-out task (T-02 in step S-02)
@@ -237,6 +240,14 @@ class TestExpandFanOut:
         assert any(
             item.get("kind") == "wait" for item in reloaded.oversight_state["delegation_decisions"]
         )
+        events = await SqliteEventStore(session).get_stream(run.id)
+        oversight_events = [
+            event for event in events if event.event_type == "parent_oversight_facts_updated"
+        ]
+        assert len(oversight_events) == 1
+        event_payload = json.loads(oversight_events[0].payload)
+        event_work = event_payload["patch"]["delegated_work"]
+        assert set(event_work) == {child.id for child in children}
 
     @pytest.mark.asyncio
     async def test_duplicate_expand_fan_out_is_policy_visible_noop(
@@ -250,7 +261,7 @@ class TestExpandFanOut:
         run = _make_fan_out_run(routine, str(tmp_path))
         service = WorkflowService(session)
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -318,7 +329,7 @@ class TestExpandFanOut:
 
         service = WorkflowService(session)
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[0].tasks[0]
@@ -346,7 +357,7 @@ class TestExpandFanOut:
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -376,7 +387,7 @@ class TestScriptExecution:
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         task = run.steps[0].tasks[0]
@@ -424,7 +435,7 @@ class TestScriptExecution:
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         task = run.steps[0].tasks[0]
@@ -483,7 +494,7 @@ class TestScriptExecution:
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         task = run.steps[0].tasks[0]
@@ -519,7 +530,7 @@ class TestChildTaskStateManagement:
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -535,7 +546,7 @@ class TestChildTaskStateManagement:
                 if t.id == child.id:
                     t.attempts.append(Attempt(attempt_num=1, started_at=datetime.now(timezone.utc)))
                     break
-        await repo.save(reloaded)
+        await save_run(repo.session, reloaded)
         await session.commit()
 
         # Update child state
@@ -567,6 +578,13 @@ class TestChildTaskStateManagement:
         assert updated_child.attempts[0].outcome == "passed"
         assert updated_child.attempts[0].auto_verify_results == auto_verify
         assert updated_child.attempts[0].completed_at == now
+        events = await SqliteEventStore(session).get_stream(run.id)
+        attempt_events = [event for event in events if event.event_type == "attempt_updated"]
+        assert len(attempt_events) == 1
+        event_payload = json.loads(attempt_events[0].payload)
+        assert event_payload["task_id"] == child.id
+        assert event_payload["auto_verify_results"] == auto_verify
+        assert event_payload["new_task_status"] == "completed"
         child_results = [
             item
             for item in reloaded.oversight_state.get("delegation_results", [])
@@ -586,7 +604,7 @@ class TestChildTaskStateManagement:
 
         service = WorkflowService(session)
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -654,7 +672,7 @@ class TestChildTaskStateManagement:
 
         service = WorkflowService(session)
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -692,7 +710,7 @@ class TestChildTaskStateManagement:
         async with session_factory() as session:
             service = WorkflowService(session)
             repo = RunRepository(session)
-            await repo.save(run)
+            await save_run(repo.session, run)
             await session.commit()
 
             fan_out_task = run.steps[1].tasks[0]
@@ -757,7 +775,7 @@ class TestChildTaskStateManagement:
 
         service = WorkflowService(session)
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -775,10 +793,14 @@ class TestChildTaskStateManagement:
         )
 
         reloaded = await repo.get(run.id)
+        parent_step = next(
+            step for step in reloaded.steps if fan_out_task.id in {t.id for t in step.tasks}
+        )
         parent = next(
             task for step in reloaded.steps for task in step.tasks if task.id == fan_out_task.id
         )
         assert parent.status == TaskStatus.VERIFYING
+        assert parent_step.completed is False
         assert reloaded.oversight_state["delegation_decisions"][-1]["stable_state"] == (
             "AwaitingGate"
         )
@@ -787,6 +809,110 @@ class TestChildTaskStateManagement:
             item.get("work_id") == children[0].id
             for item in reloaded.oversight_state["delegation_results"]
         )
+        events = await SqliteEventStore(session).get_stream(run.id)
+        emitted_types = [event.event_type for event in events]
+        assert "task_status_changed" in emitted_types
+        assert "fan_out_completed" in emitted_types
+        assert "step_completed" not in emitted_types
+
+    @pytest.mark.asyncio
+    async def test_complete_fan_out_parent_terminal_completion_emits_step_completed(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path))
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("file 1")
+
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await save_run(repo.session, run)
+        await session.commit()
+
+        fan_out_task = run.steps[1].tasks[0]
+        children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+        await service.update_child_task_state(
+            run.id,
+            children[0].id,
+            updates={"status": TaskStatus.COMPLETED},
+        )
+        await service.complete_fan_out_parent(
+            run.id,
+            fan_out_task.id,
+            all_passed=True,
+            to_verifying=False,
+        )
+
+        reloaded = await repo.get(run.id)
+        parent_step = next(
+            step for step in reloaded.steps if fan_out_task.id in {t.id for t in step.tasks}
+        )
+        parent = next(
+            task for step in reloaded.steps for task in step.tasks if task.id == fan_out_task.id
+        )
+        assert parent.status == TaskStatus.COMPLETED
+        assert parent_step.completed is True
+
+        events = await SqliteEventStore(session).get_stream(run.id)
+        emitted_types = [event.event_type for event in events]
+        assert "task_status_changed" in emitted_types
+        assert "fan_out_completed" in emitted_types
+        assert "step_completed" in emitted_types
+
+    @pytest.mark.asyncio
+    async def test_complete_fan_out_parent_failure_pauses_with_reason(
+        self, session: AsyncSession, tmp_path: Path
+    ) -> None:
+        routine = _load_routine("fan-out-test")
+        run = _make_fan_out_run(routine, str(tmp_path))
+        output_dir = tmp_path / "output"
+        output_dir.mkdir()
+        (output_dir / "step-01.md").write_text("file 1")
+
+        service = WorkflowService(session)
+        repo = RunRepository(session)
+        await save_run(repo.session, run)
+        await session.commit()
+
+        fan_out_task = run.steps[1].tasks[0]
+        children = await service.expand_fan_out_task(run.id, fan_out_task.id)
+        await service.update_child_task_state(
+            run.id,
+            children[0].id,
+            updates={"status": TaskStatus.FAILED},
+        )
+        await service.complete_fan_out_parent(
+            run.id,
+            fan_out_task.id,
+            all_passed=False,
+            to_verifying=False,
+        )
+
+        reloaded = await repo.get(run.id)
+        parent_step = next(
+            step for step in reloaded.steps if fan_out_task.id in {t.id for t in step.tasks}
+        )
+        parent = next(
+            task for step in reloaded.steps for task in step.tasks if task.id == fan_out_task.id
+        )
+        assert parent.status == TaskStatus.FAILED
+        assert parent_step.completed is True
+        assert reloaded.status == RunStatus.PAUSED
+        assert reloaded.pause_reason == "fan_out_child_failed"
+
+        events = await SqliteEventStore(session).get_stream(run.id)
+        emitted_types = [event.event_type for event in events]
+        assert "task_status_changed" in emitted_types
+        assert "fan_out_completed" in emitted_types
+        assert "step_completed" in emitted_types
+        status_payloads = [
+            json.loads(event.payload)
+            for event in events
+            if event.event_type == "run_status_changed"
+        ]
+        assert status_payloads[-1]["new_status"] == "paused"
+        assert status_payloads[-1]["pause_reason"] == "fan_out_child_failed"
 
     @pytest.mark.asyncio
     async def test_complete_fan_out_parent_waits_if_any_child_pending(
@@ -801,7 +927,7 @@ class TestChildTaskStateManagement:
 
         service = WorkflowService(session)
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -847,7 +973,7 @@ class TestChildTaskStateManagement:
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -866,7 +992,7 @@ class TestChildTaskStateManagement:
                     t.status = TaskStatus.COMPLETED if t.id == child_ids[0] else TaskStatus.FAILED
                 if t.id == fan_out_task.id:
                     t.status = TaskStatus.FAILED
-        await repo.save(reloaded)
+        await save_run(repo.session, reloaded)
         await session.commit()
 
         # Reset children
@@ -909,7 +1035,7 @@ class TestChildTaskStateManagement:
 
         service = WorkflowService(session)
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         fan_out_task = run.steps[1].tasks[0]
@@ -1009,7 +1135,7 @@ class TestFanOutRegression:
 
         async with session_factory() as session:
             repo = RunRepository(session)
-            await repo.save(run)
+            await save_run(repo.session, run)
             await session.commit()
 
         executor = _FanOutExecutor(session_factory)
@@ -1151,7 +1277,7 @@ class TestFanOutRegression:
 
         async with session_factory() as session:
             repo = RunRepository(session)
-            await repo.save(run)
+            await save_run(repo.session, run)
             await session.commit()
 
         executor = _FanOutExecutor(session_factory)
@@ -1234,7 +1360,7 @@ class TestFanOutRegression:
         run.steps[1].tasks[0].status = TaskStatus.COMPLETED
 
         repo = RunRepository(session)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         detail = await get_task_detail(run.id, run.steps[1].tasks[0].id, WorkflowService(session))
@@ -1297,7 +1423,7 @@ class TestFanOutRegression:
 
         async with session_factory() as session:
             repo = RunRepository(session)
-            await repo.save(run)
+            await save_run(repo.session, run)
             await session.commit()
 
         executor = _FanOutExecutor(session_factory)
@@ -1388,7 +1514,7 @@ class TestFanOutRegression:
 
         async with session_factory() as session:
             repo = RunRepository(session)
-            await repo.save(run)
+            await save_run(repo.session, run)
             await session.commit()
 
         # Agent that pauses the run after the first child completes

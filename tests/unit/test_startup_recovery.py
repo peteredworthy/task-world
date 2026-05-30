@@ -22,12 +22,13 @@ from orchestrator.config import (
 )
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import (
-    EventStore,
     RunRepository,
     create_engine,
     create_session_factory,
+    create_wired_event_store_v2,
     init_db,
 )
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state import Attempt
 from orchestrator.workflow import LocalAutoVerifyRunner, PersistentEventEmitter
@@ -184,12 +185,12 @@ async def test_deferred_startup_recovery_resumes_restart_paused_run() -> None:
 
     async def service_factory(session: Any) -> WorkflowService:
         repo = RunRepository(session)
-        event_store = EventStore(session)
+        event_store = create_wired_event_store_v2(session)
         emitter = PersistentEventEmitter(event_store)
         return WorkflowService(
             session=session,
             repo=repo,
-            event_store=event_store,
+            event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
         )
@@ -214,7 +215,7 @@ async def test_deferred_startup_recovery_resumes_restart_paused_run() -> None:
         task.attempts[0].outcome = "paused"
         task.attempts[0].paused_at = datetime.now(timezone.utc)
 
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
         run_id = run.id
 
@@ -277,12 +278,12 @@ async def test_startup_recovery_resumes_cascade_child_before_parent() -> None:
 
     async def service_factory(session: Any) -> WorkflowService:
         repo = RunRepository(session)
-        event_store = EventStore(session)
+        event_store = create_wired_event_store_v2(session)
         emitter = PersistentEventEmitter(event_store)
         return WorkflowService(
             session=session,
             repo=repo,
-            event_store=event_store,
+            event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
         )
@@ -310,11 +311,11 @@ async def test_startup_recovery_resumes_cascade_child_before_parent() -> None:
         repo = RunRepository(session)
 
         parent_run = _build_paused_run("parent-repo", "server_shutdown")
-        await repo.save(parent_run)
+        await save_run(repo.session, parent_run)
 
         child_run = _build_paused_run("child-repo", "parent_server_shutdown")
         child_run.parent_run_id = parent_run.id
-        await repo.save(child_run)
+        await save_run(repo.session, child_run)
 
         await session.commit()
         parent_id = parent_run.id
@@ -380,12 +381,12 @@ async def test_apply_resume_run_continue_preserves_current_phase_state() -> None
 
     async with session_factory() as session:
         repo = RunRepository(session)
-        event_store = EventStore(session)
+        event_store = create_wired_event_store_v2(session)
         emitter = PersistentEventEmitter(event_store)
         service = WorkflowService(
             session=session,
             repo=repo,
-            event_store=event_store,
+            event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
         )
@@ -411,7 +412,7 @@ async def test_apply_resume_run_continue_preserves_current_phase_state() -> None
         attempt.outcome = "paused"
         attempt.paused_at = datetime.now(timezone.utc)
 
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
         resumed = await service.apply_resume_run(run.id, resume_strategy="continue")

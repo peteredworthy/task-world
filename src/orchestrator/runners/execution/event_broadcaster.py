@@ -44,11 +44,11 @@ class EventBroadcaster:
         """Persist a log event and broadcast via WebSocket."""
         try:
             async with self._session_factory() as session:
-                from orchestrator.db import EventStore
+                from orchestrator.db import commit_with_event_outbox, create_wired_event_store_v2
 
-                store = EventStore(session)
-                await store.append(event)
-                await session.commit()
+                store = create_wired_event_store_v2(session)
+                await store.append([event])
+                await commit_with_event_outbox(session)
         except Exception:
             logger.debug(f"Failed to persist log event: {event.event_type}", exc_info=True)
 

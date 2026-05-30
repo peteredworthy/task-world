@@ -89,7 +89,7 @@ async def test_run_start_signal_consumed_draft_to_active(
     """POST /start returns 202; RUN_START signal is consumed by drain; run becomes ACTIVE.
 
     This is the core R4 requirement: the single-queue model routes RUN_START
-    through pending_signals and the consumer applies the DRAFT→ACTIVE transition.
+    through events_v2 and the consumer applies the DRAFT→ACTIVE transition.
     """
     client, drain = client_and_drain
 

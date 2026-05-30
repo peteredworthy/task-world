@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.state.models import Run
-from orchestrator.workflow import AgentDiedEvent, RunStatusChanged
+from orchestrator.workflow import AgentDiedEvent
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -58,8 +58,7 @@ class AgentRunnerMonitor:
     - Check if a run's agent is still alive (check_agent_alive)
     - Recover runs on startup (used by startup recovery logic)
 
-    This class requires RunRepository and EventStore to persist state changes
-    and log events.
+    This class requires database services to persist state changes and log events.
     """
 
     def __init__(
@@ -117,12 +116,16 @@ class AgentRunnerMonitor:
         if self._session_factory is None:
             raise RuntimeError("AgentRunnerMonitor requires a session_factory to use on_agent_died")
 
-        from orchestrator.db import EventStore
-        from orchestrator.db import RunRepository
+        from orchestrator.db import (
+            RunRepository,
+            commit_with_event_outbox,
+            create_wired_event_store_v2,
+        )
+        from orchestrator.workflow import UpdateRunStatusCommand, handle_update_run_status
 
         async with self._session_factory() as session:
             repo = RunRepository(session)
-            event_store = EventStore(session)
+            event_store = create_wired_event_store_v2(session)
 
             run = await repo.get(run_id)
 
@@ -159,30 +162,22 @@ class AgentRunnerMonitor:
                 reason=reason,
                 task_id=task_id,
             )
-            await event_store.append(event)
+            await event_store.append([event])
 
             if pause_run:
-                # Transition run to PAUSED
                 old_status = run.status
-                run.status = RunStatus.PAUSED
-                run.pause_reason = reason
-                run.updated_at = datetime.now(timezone.utc)
-
-                # Log the status change event
-                status_event = RunStatusChanged(
-                    timestamp=datetime.now(timezone.utc),
-                    run_id=run_id,
-                    event_type="run_status_changed",
-                    old_status=old_status,
-                    new_status=RunStatus.PAUSED,
-                    pause_reason=reason,
+                await handle_update_run_status(
+                    UpdateRunStatusCommand(
+                        run_id=run_id,
+                        old_status=old_status,
+                        new_status=RunStatus.PAUSED,
+                        pause_reason=reason,
+                    ),
+                    event_store,
+                    session,
                 )
-                await event_store.append(status_event)
 
-                # Persist the state change
-                await repo.save(run)
-
-            await session.commit()
+            await commit_with_event_outbox(session)
 
         if pause_run:
             logger.warning(

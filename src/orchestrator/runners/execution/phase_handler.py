@@ -10,18 +10,17 @@ and ``_handle_recovery`` -- preserves exact same logic and error handling.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
 from orchestrator.runners.costs import get_model_costs
 from orchestrator.runners.types import ExecutionContext, ExecutionMetrics
 from orchestrator.state.models import ModelTokenUsage
-from orchestrator.workflow import AgentOutputEvent
 
 if TYPE_CHECKING:
     from orchestrator.runners.execution.attempt_store import AttemptStore
     from orchestrator.runners.execution.event_broadcaster import EventBroadcaster
+    from orchestrator.runners.execution.output_batcher import OutputBatcher
     from orchestrator.runners.interface import AgentRunner
     from orchestrator.state.models import Run, TaskState
     from orchestrator.workflow.service import WorkflowService
@@ -34,13 +33,15 @@ class PhaseHandler:
 
     def __init__(
         self,
-        attempt_store: AttemptStore,
-        event_broadcaster: EventBroadcaster,
+        attempt_store: "AttemptStore",
+        event_broadcaster: "EventBroadcaster",
         api_base_url: str = "http://localhost:8000",
+        output_batcher: "OutputBatcher | None" = None,
     ) -> None:
         self._attempt_store = attempt_store
         self._broadcaster = event_broadcaster
         self._api_base_url = api_base_url
+        self._output_batcher = output_batcher
 
     # ------------------------------------------------------------------
     # Metrics helpers
@@ -62,16 +63,31 @@ class PhaseHandler:
 
         if result.action_log is not None:
             al: ActionLog = result.action_log
-            if al.total_input_tokens or al.total_output_tokens:
+            computed_input = al.total_input_tokens
+            computed_output = al.total_output_tokens
+            computed_cache_read = al.total_cache_read_tokens
+            computed_cache_creation = al.total_cache_creation_tokens
+
+            if not computed_input and not computed_output:
+                # Aggregate wasn't populated (e.g. result event reported zero);
+                # recover from per-entry turn metrics instead.
+                for entry in al.entries:
+                    if entry.metrics is not None:
+                        computed_input += entry.metrics.input_tokens
+                        computed_output += entry.metrics.output_tokens
+                        computed_cache_read += entry.metrics.cache_read_tokens
+                        computed_cache_creation += entry.metrics.cache_creation_tokens
+
+            if computed_input or computed_output:
                 # Parent model
                 parent_costs = get_model_costs(al.agent_model)
                 usage_by_model.append(
                     ModelTokenUsage(
                         model=al.agent_model or "unknown",
-                        cache_read_tokens=al.total_cache_read_tokens,
-                        cache_creation_tokens=al.total_cache_creation_tokens,
-                        input_tokens=al.total_input_tokens,
-                        output_tokens=al.total_output_tokens,
+                        cache_read_tokens=computed_cache_read,
+                        cache_creation_tokens=computed_cache_creation,
+                        input_tokens=computed_input,
+                        output_tokens=computed_output,
                         cost_per_m_cache_read=parent_costs["cost_per_m_cache_read"],
                         cost_per_m_cache_creation=parent_costs["cost_per_m_cache_creation"],
                         cost_per_m_input=parent_costs["cost_per_m_input"],
@@ -203,6 +219,9 @@ class PhaseHandler:
         async def on_submit() -> None:
             if service is None:
                 return
+            # Flush buffered output before the task transitions out of BUILDING
+            if self._output_batcher is not None:
+                await self._output_batcher.flush_immediate()
             # The builder agent may have already called submit via REST/MCP
             # during execution (a separate session).  Expire the shared session's
             # identity map so the status check below hits the DB, not a stale
@@ -234,21 +253,14 @@ class PhaseHandler:
             await service.submit_for_verification(run.id, task_state.id)
 
         # Define output streaming callback
-        line_offset = 0
+        attempt_num_building = task_state.current_attempt + 1
 
         async def on_output(lines: list[str]) -> None:
-            nonlocal line_offset
-            event = AgentOutputEvent(
-                timestamp=datetime.now(timezone.utc),
-                run_id=run.id,
-                event_type="agent_output",
-                task_id=task_state.id,
-                attempt_num=task_state.current_attempt + 1,
-                lines=lines,
-                line_offset=line_offset,
-            )
-            await self._broadcaster.emit_log_event(event)
-            line_offset += len(lines)
+            if self._output_batcher is not None:
+                for line in lines:
+                    await self._output_batcher.add_line(
+                        run.id, task_state.id, attempt_num_building, line
+                    )
 
         # Define agent metadata callback
         async def on_agent_metadata(metadata: dict[str, Any]) -> None:
@@ -274,7 +286,13 @@ class PhaseHandler:
             )
         except GateBlockedError:
             logger.warning("Agent submit blocked by gate - task remains BUILDING, will retry")
+            if self._output_batcher is not None:
+                await self._output_batcher.flush_immediate()
             return
+
+        # Flush any remaining buffered output before storing final results
+        if self._output_batcher is not None:
+            await self._output_batcher.flush_immediate()
 
         # Store agent metadata (PID, etc.) in run's agent_runner_config
         if result.agent_metadata:
@@ -328,6 +346,9 @@ class PhaseHandler:
             await service.update_checklist_item(run.id, task_state.id, actual_id, status, note)
 
         async def on_complete() -> None:
+            # Flush buffered output before the task transitions out of VERIFYING
+            if self._output_batcher is not None:
+                await self._output_batcher.flush_immediate()
             # Expire shared session's identity map so status checks below
             # hit the DB rather than a stale cache.  The verifier agent may
             # have already called complete_verification via REST (a separate
@@ -377,21 +398,14 @@ class PhaseHandler:
             await service.set_grade(run.id, task_state.id, actual_id, grade, grade_reason)
 
         # Define output streaming callback
-        line_offset = 0
+        attempt_num_verifying = task_state.current_attempt
 
         async def on_output(lines: list[str]) -> None:
-            nonlocal line_offset
-            event = AgentOutputEvent(
-                timestamp=datetime.now(timezone.utc),
-                run_id=run.id,
-                event_type="agent_output",
-                task_id=task_state.id,
-                attempt_num=task_state.current_attempt,
-                lines=lines,
-                line_offset=line_offset,
-            )
-            await self._broadcaster.emit_log_event(event)
-            line_offset += len(lines)
+            if self._output_batcher is not None:
+                for line in lines:
+                    await self._output_batcher.add_line(
+                        run.id, task_state.id, attempt_num_verifying, line
+                    )
 
         # Define agent metadata callback
         async def on_agent_metadata(metadata: dict[str, Any]) -> None:
@@ -411,6 +425,10 @@ class PhaseHandler:
             on_agent_metadata=on_agent_metadata,
             on_escalation=on_escalation,
         )
+
+        # Flush any remaining buffered output before storing final results
+        if self._output_batcher is not None:
+            await self._output_batcher.flush_immediate()
 
         # Store agent metadata
         if result.agent_metadata:
@@ -451,21 +469,14 @@ class PhaseHandler:
             pass  # Recovery agent uses complete_recovery, not submit
 
         # Define output streaming callback
-        line_offset = 0
+        attempt_num_recovering = task_state.current_attempt
 
         async def on_output(lines: list[str]) -> None:
-            nonlocal line_offset
-            event = AgentOutputEvent(
-                timestamp=datetime.now(timezone.utc),
-                run_id=run.id,
-                event_type="agent_output",
-                task_id=task_state.id,
-                attempt_num=task_state.current_attempt,
-                lines=lines,
-                line_offset=line_offset,
-            )
-            await self._broadcaster.emit_log_event(event)
-            line_offset += len(lines)
+            if self._output_batcher is not None:
+                for line in lines:
+                    await self._output_batcher.add_line(
+                        run.id, task_state.id, attempt_num_recovering, line
+                    )
 
         # Define agent metadata callback
         async def on_agent_metadata(metadata: dict[str, Any]) -> None:
@@ -481,6 +492,10 @@ class PhaseHandler:
             on_grade=None,
             on_agent_metadata=on_agent_metadata,
         )
+
+        # Flush any remaining buffered output before storing final results
+        if self._output_batcher is not None:
+            await self._output_batcher.flush_immediate()
 
         # Store agent metadata
         if result.agent_metadata:

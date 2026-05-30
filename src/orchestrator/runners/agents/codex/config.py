@@ -11,6 +11,7 @@ from typing import Any
 
 from orchestrator.runners.types import AgentConfigField
 from orchestrator.config.enums import AgentRunnerType
+from orchestrator.runners.agents.codex.common import select_preferred_codex_model
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +49,11 @@ def codex_server_config_with_models(models: list[str]) -> list[AgentConfigField]
     """Return the Codex Server config schema with the model field populated.
 
     When *models* is non-empty the model field is upgraded to a ``"select"``
-    with the discovered model IDs as options and the first entry as the
-    default.  When empty the field stays as a plain ``"string"`` with no
-    options, preserving the existing behaviour.
+    with the discovered model IDs as options.  The default is chosen via
+    ``select_preferred_codex_model`` so that known-working models are
+    preferred over deprecated ones (e.g. gpt-5.2-codex).  When empty the
+    field stays as a plain ``"string"`` with no options, preserving the
+    existing behaviour.
 
     Args:
         models: Ordered list of model ID strings returned by
@@ -67,7 +70,7 @@ def codex_server_config_with_models(models: list[str]) -> list[AgentConfigField]
                     update={
                         "field_type": "select",
                         "options": models,
-                        "default": models[0],
+                        "default": select_preferred_codex_model(models),
                     }
                 )
             )

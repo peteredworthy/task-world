@@ -36,6 +36,21 @@ TOP_LEVEL_MODULES = {
     "workflow",
 }
 
+TEST_ONLY_SUBPACKAGE_IMPORTS = {
+    (
+        "orchestrator.db.access.mutations",
+        "save_run",
+    ),
+    (
+        "orchestrator.db.access.mutations",
+        "update_latest_attempt",
+    ),
+    (
+        "orchestrator.db.access.mutations",
+        "update_parent_oversight_facts",
+    ),
+}
+
 
 def get_file_module(filepath: Path) -> str | None:
     """Return the top-level orchestrator module this file belongs to, or None."""
@@ -88,6 +103,17 @@ def goes_through_subpackage(import_parts: list[str], src_root: Path) -> bool:
     return candidate.is_dir() and (candidate / "__init__.py").exists()
 
 
+def is_test_file(filepath: Path) -> bool:
+    return "tests" in filepath.parts
+
+
+def is_allowed_test_only_subpackage_import(filepath: Path, node: ast.ImportFrom) -> bool:
+    if not is_test_file(filepath):
+        return False
+    module = node.module or ""
+    return all((module, alias.name) in TEST_ONLY_SUBPACKAGE_IMPORTS for alias in node.names)
+
+
 def get_type_checking_node_ids(tree: ast.AST) -> set[int]:
     """Return id() of every AST node nested inside an ``if TYPE_CHECKING:`` block.
 
@@ -134,6 +160,8 @@ def check_file(filepath: Path, src_root: Path | None) -> list[str]:
             continue
         # Same top-level module — intra-module import, always allowed
         if file_module == import_module:
+            continue
+        if is_allowed_test_only_subpackage_import(filepath, node):
             continue
         # Only flag if the import goes through a sub-package directory
         if src_root and not goes_through_subpackage(parts, src_root):

@@ -6,6 +6,7 @@ LocalAutoVerifyRunner, and real temporary directories. No mocking.
 
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +14,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
-from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.db import EventStore
+from orchestrator.db import SqliteEventStore, create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import LocalAutoVerifyRunner
 
@@ -491,15 +491,16 @@ async def test_auto_verify_events_emitted(session: AsyncSession, tmp_path: Path)
     await service.submit_for_verification("run-av", "task-1")
 
     # Query persisted events
-    store = EventStore(session)
-    events = await store.get_events_for_run("run-av")
-    event_types = [e["type"] for e in events]
+    store = SqliteEventStore(session)
+    events = await store.get_stream("run-av")
+    event_types = [e.event_type for e in events]
     assert "auto_verify_completed" in event_types
 
     # Find the auto_verify event and check its payload
-    av_event = next(e for e in events if e["type"] == "auto_verify_completed")
-    assert av_event["payload"]["passed"] is True
-    assert av_event["payload"]["task_id"] == "task-1"
+    av_event = next(e for e in events if e.event_type == "auto_verify_completed")
+    av_payload = json.loads(av_event.payload)
+    assert av_payload["passed"] is True
+    assert av_payload["task_id"] == "task-1"
 
 
 async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path) -> None:
@@ -521,22 +522,23 @@ async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path)
     assert result.success is True
     assert result.new_status == TaskStatus.BUILDING
 
-    store = EventStore(session)
-    events = await store.get_events_for_run("run-av")
-    event_types = [e["type"] for e in events]
+    store = SqliteEventStore(session)
+    events = await store.get_stream("run-av")
+    event_types = [e.event_type for e in events]
 
     # auto_verify_completed event must be emitted even though transition was blocked
     assert "auto_verify_completed" in event_types
 
     # Task stays in BUILDING — no BUILDING->VERIFYING transition
-    task_status_events = [e for e in events if e["type"] == "task_status_changed"]
+    task_status_events = [e for e in events if e.event_type == "task_status_changed"]
     # Only: PENDING -> BUILDING (start_task); no further transitions
     assert len(task_status_events) == 1
-    assert task_status_events[0]["payload"]["new_status"] == "building"
+    assert json.loads(task_status_events[0].payload)["new_status"] == "building"
 
-    av_event = next(e for e in events if e["type"] == "auto_verify_completed")
-    assert av_event["payload"]["passed"] is False
-    assert av_event["payload"]["failing_must_items"] == ["check1"]
+    av_event = next(e for e in events if e.event_type == "auto_verify_completed")
+    av_payload = json.loads(av_event.payload)
+    assert av_payload["passed"] is False
+    assert av_payload["failing_must_items"] == ["check1"]
 
 
 async def test_no_runner_skips_auto_verify(session: AsyncSession, tmp_path: Path) -> None:

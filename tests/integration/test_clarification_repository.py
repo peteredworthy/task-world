@@ -8,6 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import RunRepository
+from orchestrator.db import (
+    create_clarification_request,
+    persist_clarification_response,
+)
 from orchestrator.workflow import (
     ClarificationAnswer,
     ClarificationQuestion,
@@ -86,11 +90,11 @@ def _make_clarification_response(
     )
 
 
-async def test_create_clarification_request(repo: RunRepository) -> None:
+async def test_create_clarification_request(repo: RunRepository, session: AsyncSession) -> None:
     """Test creating a clarification request."""
     request = _make_clarification_request()
 
-    created = await repo.create_clarification_request(request)
+    created = await create_clarification_request(session, request)
 
     assert created.id == "req-1"
     assert created.run_id == "run-1"
@@ -103,10 +107,10 @@ async def test_create_clarification_request(repo: RunRepository) -> None:
     assert created.responded_at is None
 
 
-async def test_get_clarification_request(repo: RunRepository) -> None:
+async def test_get_clarification_request(repo: RunRepository, session: AsyncSession) -> None:
     """Test retrieving a clarification request by ID."""
     request = _make_clarification_request()
-    await repo.create_clarification_request(request)
+    await create_clarification_request(session, request)
 
     loaded = await repo.get_clarification_request("req-1")
 
@@ -135,10 +139,10 @@ async def test_get_clarification_request_nonexistent(repo: RunRepository) -> Non
     assert loaded is None
 
 
-async def test_get_pending_clarification(repo: RunRepository) -> None:
+async def test_get_pending_clarification(repo: RunRepository, session: AsyncSession) -> None:
     """Test retrieving a pending clarification for a task."""
     request = _make_clarification_request()
-    await repo.create_clarification_request(request)
+    await create_clarification_request(session, request)
 
     pending = await repo.get_pending_clarification("run-1", "task-1")
 
@@ -148,34 +152,40 @@ async def test_get_pending_clarification(repo: RunRepository) -> None:
     assert len(pending.questions) == 2
 
 
-async def test_get_pending_clarification_wrong_task(repo: RunRepository) -> None:
+async def test_get_pending_clarification_wrong_task(
+    repo: RunRepository, session: AsyncSession
+) -> None:
     """Test that pending clarification is task-specific."""
     request = _make_clarification_request()
-    await repo.create_clarification_request(request)
+    await create_clarification_request(session, request)
 
     pending = await repo.get_pending_clarification("run-1", "task-2")
 
     assert pending is None
 
 
-async def test_get_pending_clarification_wrong_run(repo: RunRepository) -> None:
+async def test_get_pending_clarification_wrong_run(
+    repo: RunRepository, session: AsyncSession
+) -> None:
     """Test that pending clarification is run-specific."""
     request = _make_clarification_request()
-    await repo.create_clarification_request(request)
+    await create_clarification_request(session, request)
 
     pending = await repo.get_pending_clarification("run-2", "task-1")
 
     assert pending is None
 
 
-async def test_get_pending_clarification_after_response(repo: RunRepository) -> None:
+async def test_get_pending_clarification_after_response(
+    repo: RunRepository, session: AsyncSession
+) -> None:
     """Test that responded clarifications are not returned as pending."""
     request = _make_clarification_request()
-    await repo.create_clarification_request(request)
+    await create_clarification_request(session, request)
 
     # Save a response
     response = _make_clarification_response()
-    await repo.save_clarification_response(response)
+    await persist_clarification_response(session, response)
 
     # Should no longer be pending
     pending = await repo.get_pending_clarification("run-1", "task-1")
@@ -183,13 +193,13 @@ async def test_get_pending_clarification_after_response(repo: RunRepository) -> 
     assert pending is None
 
 
-async def test_save_clarification_response(repo: RunRepository) -> None:
+async def test_save_clarification_response(repo: RunRepository, session: AsyncSession) -> None:
     """Test saving a clarification response."""
     request = _make_clarification_request()
-    await repo.create_clarification_request(request)
+    await create_clarification_request(session, request)
 
     response = _make_clarification_response()
-    await repo.save_clarification_response(response)
+    await persist_clarification_response(session, response)
 
     # Verify request is marked as responded
     loaded = await repo.get_clarification_request("req-1")
@@ -199,10 +209,12 @@ async def test_save_clarification_response(repo: RunRepository) -> None:
     assert loaded.responded_at == datetime(2025, 1, 15, 11, 0, 0, tzinfo=timezone.utc)
 
 
-async def test_save_clarification_response_updates_responded_at(repo: RunRepository) -> None:
+async def test_save_clarification_response_updates_responded_at(
+    repo: RunRepository, session: AsyncSession
+) -> None:
     """Test that save_clarification_response updates responded_at timestamp."""
     request = _make_clarification_request()
-    await repo.create_clarification_request(request)
+    await create_clarification_request(session, request)
 
     # Verify initially None
     loaded = await repo.get_clarification_request("req-1")
@@ -223,7 +235,7 @@ async def test_save_clarification_response_updates_responded_at(repo: RunReposit
         ],
         responded_at=response_time,
     )
-    await repo.save_clarification_response(response)
+    await persist_clarification_response(session, response)
 
     # Verify responded_at is updated
     loaded = await repo.get_clarification_request("req-1")
@@ -231,13 +243,15 @@ async def test_save_clarification_response_updates_responded_at(repo: RunReposit
     assert loaded.responded_at == response_time
 
 
-async def test_multiple_clarifications_for_different_tasks(repo: RunRepository) -> None:
+async def test_multiple_clarifications_for_different_tasks(
+    repo: RunRepository, session: AsyncSession
+) -> None:
     """Test multiple clarification requests for different tasks."""
     req1 = _make_clarification_request("req-1", "run-1", "task-1")
     req2 = _make_clarification_request("req-2", "run-1", "task-2")
 
-    await repo.create_clarification_request(req1)
-    await repo.create_clarification_request(req2)
+    await create_clarification_request(session, req1)
+    await create_clarification_request(session, req2)
 
     # Each task should have its own pending clarification
     pending1 = await repo.get_pending_clarification("run-1", "task-1")
@@ -249,13 +263,15 @@ async def test_multiple_clarifications_for_different_tasks(repo: RunRepository) 
     assert pending2.id == "req-2"
 
 
-async def test_multiple_clarifications_for_different_runs(repo: RunRepository) -> None:
+async def test_multiple_clarifications_for_different_runs(
+    repo: RunRepository, session: AsyncSession
+) -> None:
     """Test multiple clarification requests for different runs."""
     req1 = _make_clarification_request("req-1", "run-1", "task-1")
     req2 = _make_clarification_request("req-2", "run-2", "task-1")
 
-    await repo.create_clarification_request(req1)
-    await repo.create_clarification_request(req2)
+    await create_clarification_request(session, req1)
+    await create_clarification_request(session, req2)
 
     # Each run should have its own pending clarification
     pending1 = await repo.get_pending_clarification("run-1", "task-1")
@@ -267,10 +283,12 @@ async def test_multiple_clarifications_for_different_runs(repo: RunRepository) -
     assert pending2.id == "req-2"
 
 
-async def test_clarification_with_free_text_answer(repo: RunRepository) -> None:
+async def test_clarification_with_free_text_answer(
+    repo: RunRepository, session: AsyncSession
+) -> None:
     """Test clarification response with free text answer."""
     request = _make_clarification_request()
-    await repo.create_clarification_request(request)
+    await create_clarification_request(session, request)
 
     response_time = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
     response = ClarificationResponse(
@@ -286,7 +304,7 @@ async def test_clarification_with_free_text_answer(repo: RunRepository) -> None:
         responded_at=response_time,
     )
 
-    await repo.save_clarification_response(response)
+    await persist_clarification_response(session, response)
 
     # Verify request is marked as responded
     loaded = await repo.get_clarification_request("req-1")
@@ -294,10 +312,12 @@ async def test_clarification_with_free_text_answer(repo: RunRepository) -> None:
     assert loaded.responded_at == response_time
 
 
-async def test_clarification_roundtrip_preserves_data(repo: RunRepository) -> None:
+async def test_clarification_roundtrip_preserves_data(
+    repo: RunRepository, session: AsyncSession
+) -> None:
     """Test that clarification data survives save/load cycle."""
     original = _make_clarification_request()
-    await repo.create_clarification_request(original)
+    await create_clarification_request(session, original)
 
     loaded = await repo.get_clarification_request("req-1")
 

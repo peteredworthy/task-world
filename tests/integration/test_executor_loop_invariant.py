@@ -27,6 +27,7 @@ from orchestrator.config import AgentRunnerType, GateType, RoutineSource, RunSta
 from orchestrator.config.models import GateConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import init_db
 from orchestrator.db import RunRepository
+from orchestrator.db.access.mutations import save_run
 from orchestrator.runners.executor import AgentRunnerExecutor, NoTaskReason
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
@@ -57,17 +58,17 @@ async def _await_agent_loop(executor: AgentRunnerExecutor, run_id: str) -> None:
 
 
 def _make_service_args(session: AsyncSession) -> dict:
-    from orchestrator.db import EventStore
+    from orchestrator.db import create_wired_event_store_v2
     from orchestrator.workflow import LocalAutoVerifyRunner
     from orchestrator.workflow import PersistentEventEmitter
 
     repo = RunRepository(session)
-    event_store = EventStore(session)
+    event_store = create_wired_event_store_v2(session)
     emitter = PersistentEventEmitter(event_store)
     return dict(
         session=session,
         repo=repo,
-        event_store=event_store,
+        event_store_v2=event_store,
         event_emitter=emitter,
         auto_verify_runner=LocalAutoVerifyRunner(),
     )
@@ -149,7 +150,7 @@ async def _mutate_run_for_reason(
                 task.status = TaskStatus.COMPLETED
             run.steps[0].completed = False
 
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
 

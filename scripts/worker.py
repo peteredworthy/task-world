@@ -9,9 +9,9 @@ Usage::
     # or
     ORCHESTRATOR_DB=/path/to/orchestrator.db uv run python scripts/worker.py
 
-The worker polls the pending_signals table and drives executor loops for
-active runs.  It writes a periodic heartbeat to the DB to prove liveness.
-On SIGTERM it drains the current signal batch and shuts down gracefully.
+The worker polls active runs and drives executor loops. It writes a periodic
+heartbeat to the DB to prove liveness. On SIGTERM it drains in-flight executor
+tasks and shuts down gracefully.
 """
 
 from __future__ import annotations

@@ -19,6 +19,7 @@ from orchestrator.runners import (
     is_allowed_tool,
     normalize_codex_metrics,
     normalize_codex_output_lines,
+    select_preferred_codex_model,
 )
 from orchestrator.runners.types import ExecutionContext
 
@@ -686,3 +687,50 @@ def test_build_execution_result_defaults_to_zero_tokens() -> None:
     assert result.action_log is not None
     assert result.action_log.total_input_tokens == 0
     assert result.action_log.total_output_tokens == 0
+
+
+# ---------------------------------------------------------------------------
+# select_preferred_codex_model
+# ---------------------------------------------------------------------------
+
+
+def test_select_preferred_returns_none_for_empty_list() -> None:
+    """select_preferred_codex_model returns None when no models are available."""
+    assert select_preferred_codex_model([]) is None
+
+
+def test_select_preferred_picks_gpt53_codex_over_gpt52_codex() -> None:
+    """gpt-5.3-codex is preferred over gpt-5.2-codex (the deprecated model)."""
+    result = select_preferred_codex_model(["gpt-5.2-codex", "gpt-5.3-codex"])
+    assert result == "gpt-5.3-codex"
+
+
+def test_select_preferred_picks_gpt53_when_first() -> None:
+    """gpt-5.3-codex is returned when it appears first in the list."""
+    result = select_preferred_codex_model(["gpt-5.3-codex", "gpt-5.2-codex"])
+    assert result == "gpt-5.3-codex"
+
+
+def test_select_preferred_picks_gpt53_from_mixed_list() -> None:
+    """gpt-5.3-codex is selected from a realistic mixed list regardless of order."""
+    models = ["gpt-5.2-codex", "gpt-5.2", "gpt-5.3-codex", "gpt-5.1-codex-mini"]
+    assert select_preferred_codex_model(models) == "gpt-5.3-codex"
+
+
+def test_select_preferred_falls_back_to_first_when_no_preferred_present() -> None:
+    """Falls back to the first available model when no preferred models are in the list."""
+    models = ["my-custom-model", "another-model"]
+    assert select_preferred_codex_model(models) == "my-custom-model"
+
+
+def test_select_preferred_single_model_list() -> None:
+    """Single-element list with a known-good model returns that model; known-unsupported returns None."""
+    # gpt-5.2-codex is known-unsupported, so no safe default can be offered
+    assert select_preferred_codex_model(["gpt-5.2-codex"]) is None
+    assert select_preferred_codex_model(["gpt-5.3-codex"]) == "gpt-5.3-codex"
+
+
+def test_select_preferred_codex_mini_over_deprecated() -> None:
+    """gpt-5.1-codex-mini is preferred over gpt-5.2-codex when 5.3 is absent."""
+    result = select_preferred_codex_model(["gpt-5.2-codex", "gpt-5.1-codex-mini"])
+    assert result == "gpt-5.1-codex-mini"

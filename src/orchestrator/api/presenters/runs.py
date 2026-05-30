@@ -20,6 +20,107 @@ from orchestrator.api.schemas.tasks import (
     TurnMetricsSchema,
 )
 from orchestrator.state import Run
+from orchestrator.state.models import ModelTokenUsage
+
+
+def compute_run_totals_from_attempts(
+    run: Run,
+) -> tuple[int, int, int, int, int, list[ModelTokenUsage]]:
+    """Aggregate run-level token and timing metrics by summing attempt data.
+
+    Used as a fallback when run-level DB totals were not accumulated (e.g. a bug
+    caused the projector to skip the update, or the result event overwrote real
+    token counts with zeros).
+
+    Priority for token data:
+      1. attempt.token_usage_by_model — has embedded cost rates, most accurate
+      2. attempt.action_log totals — raw counts, no cost rates
+      3. attempt.metrics flat fields — least preferred
+
+    Returns (tokens_read, tokens_write, tokens_cache, duration_ms, num_actions, usage_list).
+    """
+    merged_usage: dict[str, ModelTokenUsage] = {}
+    tokens_read_fallback = 0
+    tokens_write_fallback = 0
+    tokens_cache_fallback = 0
+    duration_ms = 0
+    num_actions = 0
+
+    for step in run.steps:
+        for task in step.tasks:
+            for attempt in task.attempts:
+                has_per_model_data = bool(attempt.token_usage_by_model)
+
+                for usage in attempt.token_usage_by_model:
+                    model = usage.model
+                    if model in merged_usage:
+                        existing = merged_usage[model]
+                        merged_usage[model] = ModelTokenUsage(
+                            model=model,
+                            cache_read_tokens=existing.cache_read_tokens + usage.cache_read_tokens,
+                            cache_creation_tokens=existing.cache_creation_tokens
+                            + usage.cache_creation_tokens,
+                            input_tokens=existing.input_tokens + usage.input_tokens,
+                            output_tokens=existing.output_tokens + usage.output_tokens,
+                            cost_per_m_cache_read=existing.cost_per_m_cache_read
+                            or usage.cost_per_m_cache_read,
+                            cost_per_m_cache_creation=existing.cost_per_m_cache_creation
+                            or usage.cost_per_m_cache_creation,
+                            cost_per_m_input=existing.cost_per_m_input or usage.cost_per_m_input,
+                            cost_per_m_output=existing.cost_per_m_output or usage.cost_per_m_output,
+                        )
+                    else:
+                        merged_usage[model] = ModelTokenUsage(
+                            model=model,
+                            cache_read_tokens=usage.cache_read_tokens,
+                            cache_creation_tokens=usage.cache_creation_tokens,
+                            input_tokens=usage.input_tokens,
+                            output_tokens=usage.output_tokens,
+                            cost_per_m_cache_read=usage.cost_per_m_cache_read,
+                            cost_per_m_cache_creation=usage.cost_per_m_cache_creation,
+                            cost_per_m_input=usage.cost_per_m_input,
+                            cost_per_m_output=usage.cost_per_m_output,
+                        )
+
+                if attempt.action_log is not None:
+                    al = attempt.action_log
+                    duration_ms += al.total_duration_ms
+                    num_actions += sum(1 for e in al.entries if e.kind.value == "tool_use")
+                    if not has_per_model_data:
+                        al_input = al.total_input_tokens
+                        al_output = al.total_output_tokens
+                        al_cache_read = al.total_cache_read_tokens
+                        al_cache_creation = al.total_cache_creation_tokens
+                        if not al_input and not al_output:
+                            # Aggregate wasn't populated; recover from per-entry metrics.
+                            for entry in al.entries:
+                                if entry.metrics is not None:
+                                    al_input += entry.metrics.input_tokens
+                                    al_output += entry.metrics.output_tokens
+                                    al_cache_read += entry.metrics.cache_read_tokens
+                                    al_cache_creation += entry.metrics.cache_creation_tokens
+                        tokens_read_fallback += al_input
+                        tokens_write_fallback += al_output
+                        tokens_cache_fallback += al_cache_read + al_cache_creation
+                else:
+                    duration_ms += attempt.metrics.duration_ms
+                    num_actions += attempt.metrics.num_actions
+                    if not has_per_model_data:
+                        tokens_read_fallback += attempt.metrics.tokens_read
+                        tokens_write_fallback += attempt.metrics.tokens_write
+                        tokens_cache_fallback += attempt.metrics.tokens_cache
+
+    usage_list = list(merged_usage.values())
+    if usage_list:
+        tokens_read = sum(u.input_tokens for u in usage_list)
+        tokens_write = sum(u.output_tokens for u in usage_list)
+        tokens_cache = sum(u.cache_read_tokens + u.cache_creation_tokens for u in usage_list)
+    else:
+        tokens_read = tokens_read_fallback
+        tokens_write = tokens_write_fallback
+        tokens_cache = tokens_cache_fallback
+
+    return tokens_read, tokens_write, tokens_cache, duration_ms, num_actions, usage_list
 
 
 def token_usage_to_schema(usage: Any) -> ModelTokenUsageSchema:
@@ -176,14 +277,26 @@ def run_to_trace_response(run: Run) -> RunTraceResponse:
                     )
                 )
 
+    tokens_read = run.total_tokens_read
+    tokens_write = run.total_tokens_write
+    tokens_cache = run.total_tokens_cache
+    duration_ms = run.total_duration_ms
+    num_actions = run.total_num_actions
+    usage = run.token_usage_by_model
+
+    if not tokens_read and not tokens_write and not usage:
+        tokens_read, tokens_write, tokens_cache, duration_ms, num_actions, usage = (
+            compute_run_totals_from_attempts(run)
+        )
+
     return RunTraceResponse(
         run_id=run.id,
-        total_tokens_read=run.total_tokens_read,
-        total_tokens_write=run.total_tokens_write,
-        total_tokens_cache=run.total_tokens_cache,
-        total_duration_ms=run.total_duration_ms,
-        total_num_actions=run.total_num_actions,
-        token_usage_by_model=[token_usage_to_schema(u) for u in run.token_usage_by_model],
+        total_tokens_read=tokens_read,
+        total_tokens_write=tokens_write,
+        total_tokens_cache=tokens_cache,
+        total_duration_ms=duration_ms,
+        total_num_actions=num_actions,
+        token_usage_by_model=[token_usage_to_schema(u) for u in usage],
         attempts=trace_attempts,
     )
 
@@ -191,6 +304,7 @@ def run_to_trace_response(run: Run) -> RunTraceResponse:
 __all__ = [
     "action_log_to_schema",
     "attempt_to_schema",
+    "compute_run_totals_from_attempts",
     "run_to_trace_response",
     "token_usage_to_schema",
 ]

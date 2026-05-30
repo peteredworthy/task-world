@@ -245,7 +245,7 @@ class TestScaffoldingIntegration:
         from orchestrator.config import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
         from orchestrator.db import create_engine, create_session_factory, init_db
-        from orchestrator.db import EventStore
+        from orchestrator.db import create_wired_event_store_v2
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.workflow import LocalAutoVerifyRunner
@@ -339,12 +339,12 @@ steps:
             run.worktree_enabled = True
 
             repo_db = RunRepository(session)
-            event_store = EventStore(session)
+            event_store = create_wired_event_store_v2(session)
             emitter = PersistentEventEmitter(event_store)
             service = WorkflowService(
                 session=session,
                 repo=repo_db,
-                event_store=event_store,
+                event_store_v2=event_store,
                 event_emitter=emitter,
                 auto_verify_runner=LocalAutoVerifyRunner(),
             )
@@ -392,7 +392,7 @@ steps:
         from orchestrator.config import AgentRunnerType, RoutineSource
         from orchestrator.config.global_config import GlobalConfig, PathsConfig
         from orchestrator.db import create_engine, create_session_factory, init_db
-        from orchestrator.db import EventStore
+        from orchestrator.db import create_wired_event_store_v2
         from orchestrator.db import RunRepository
         from orchestrator.state.factory import create_run_from_routine
         from orchestrator.workflow import LocalAutoVerifyRunner
@@ -480,12 +480,12 @@ steps:
             run.worktree_enabled = True
 
             repo_db = RunRepository(session)
-            event_store = EventStore(session)
+            event_store = create_wired_event_store_v2(session)
             emitter = PersistentEventEmitter(event_store)
             service = WorkflowService(
                 session=session,
                 repo=repo_db,
-                event_store=event_store,
+                event_store_v2=event_store,
                 event_emitter=emitter,
                 auto_verify_runner=LocalAutoVerifyRunner(),
             )

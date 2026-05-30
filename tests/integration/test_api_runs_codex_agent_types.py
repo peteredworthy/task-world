@@ -25,6 +25,9 @@ async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None
         routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
     )
     app.state.signal_transport = signal_transport
+    # Bypass model validation for tests that don't specifically test it.
+    # An empty list causes validate_codex_model_selection to skip validation.
+    app.state.codex_models_fn = lambda: []
     await init_db(app.state.engine)
     drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
@@ -119,3 +122,99 @@ async def test_codex_server_display_name(client: AsyncClient) -> None:
     data = await _create_run_with_agent(client, "codex_server")
     assert data["agent_runner_type_display"] == "Codex Server"
     assert data["agent_icon"] == "codex"
+
+
+# ---------------------------------------------------------------------------
+# Model validation — injected codex_models_fn
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def client_with_known_models() -> AsyncGenerator[AsyncClient, None]:
+    """App client with a deterministic codex_models_fn that reports one supported model."""
+    signal_transport = InMemorySignalTransport()
+    app = create_app(
+        db_path=":memory:",
+        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+    )
+    app.state.signal_transport = signal_transport
+    app.state.codex_models_fn = lambda: ["gpt-5.3-codex"]
+    await init_db(app.state.engine)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+    await app.state.engine.dispose()
+
+
+async def test_create_run_rejects_unsupported_codex_model(
+    client_with_known_models: AsyncClient,
+) -> None:
+    """Creating a codex_server run with gpt-5.2-codex (deprecated) returns 422."""
+    response = await client_with_known_models.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+            "agent_runner_type": "codex_server",
+            "agent_runner_config": {"model": "gpt-5.2-codex"},
+        },
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "gpt-5.2-codex" in detail
+    assert "gpt-5.3-codex" in detail
+
+
+async def test_create_run_rejects_unsupported_codex_cli_model(
+    client_with_known_models: AsyncClient,
+) -> None:
+    """Creating a cli_subprocess (codex) run with an unsupported model returns 422."""
+    response = await client_with_known_models.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+            "agent_runner_type": "cli_subprocess",
+            "agent_runner_config": {"command": "codex", "model": "gpt-5.2-codex"},
+        },
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "gpt-5.2-codex" in detail
+
+
+async def test_create_run_accepts_supported_codex_model(
+    client_with_known_models: AsyncClient,
+) -> None:
+    """Creating a codex_server run with the known-good model succeeds."""
+    response = await client_with_known_models.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+            "agent_runner_type": "codex_server",
+            "agent_runner_config": {"model": "gpt-5.3-codex"},
+        },
+    )
+    assert response.status_code == 201
+    data = response.json()
+    assert data["agent_runner_config"]["model"] == "gpt-5.3-codex"
+
+
+async def test_create_run_without_model_skips_validation(
+    client_with_known_models: AsyncClient,
+) -> None:
+    """Creating a codex_server run without specifying a model skips model validation."""
+    response = await client_with_known_models.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+            "agent_runner_type": "codex_server",
+        },
+    )
+    assert response.status_code == 201

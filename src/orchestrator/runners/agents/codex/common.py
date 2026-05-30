@@ -775,8 +775,9 @@ def normalize_codex_output_lines(raw_output: list[Any]) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-# Well-known Codex models used as a fallback when model/list discovery fails.
-# Reflects the models returned by `codex app-server` model/list as of 2026-02.
+# Historical reference of known Codex model IDs (not used as a runtime fallback).
+# Kept for reference only — do not use as a default when model discovery fails,
+# as these models may be deprecated or unavailable at any time.
 _CODEX_FALLBACK_MODELS: list[str] = [
     "gpt-5.3-codex",
     "gpt-5.2-codex",
@@ -784,6 +785,49 @@ _CODEX_FALLBACK_MODELS: list[str] = [
     "gpt-5.2",
     "gpt-5.1-codex-mini",
 ]
+
+# Preferred Codex models in descending priority order.
+# When multiple models are discovered, the first match here is used as the default.
+# Excludes known-deprecated models (e.g. gpt-5.2-codex) that the Codex server may
+# list but cannot actually execute.
+_PREFERRED_CODEX_MODELS: tuple[str, ...] = (
+    "gpt-5.3-codex",
+    "gpt-5.1-codex-max",
+    "gpt-5.1-codex-mini",
+)
+
+# Models known to be listed by the Codex API but not actually executable.
+# These are never used as defaults and are always rejected at run-creation time.
+_KNOWN_UNSUPPORTED_CODEX_MODELS: frozenset[str] = frozenset({"gpt-5.2-codex"})
+
+
+def select_preferred_codex_model(available_models: list[str]) -> str | None:
+    """Pick the best default model from a list of discovered Codex model IDs.
+
+    Iterates through ``_PREFERRED_CODEX_MODELS`` in priority order and returns
+    the first one present in *available_models*.  Falls back to the first entry
+    in *available_models* that is not in ``_KNOWN_UNSUPPORTED_CODEX_MODELS``.
+    Returns ``None`` when the list is empty or all available models are known
+    to be unsupported, so that the model field keeps no default.
+
+    Args:
+        available_models: Model IDs returned by ``fetch_codex_models()``.
+
+    Returns:
+        Preferred model ID to use as the default, or ``None`` if no safe
+        default can be determined.
+    """
+    if not available_models:
+        return None
+    for preferred in _PREFERRED_CODEX_MODELS:
+        if preferred in available_models:
+            return preferred
+    # Fallback: first model that is not known-unsupported
+    for model in available_models:
+        if model not in _KNOWN_UNSUPPORTED_CODEX_MODELS:
+            return model
+    # All available models are known-unsupported; signal no safe default
+    return None
 
 
 class CodexModelProcess(Protocol):
@@ -835,7 +879,7 @@ def extract_codex_model_ids(model_resp: dict[str, Any] | None) -> list[str]:
     visible = [m for m in models_raw if not m.get("hidden", False)]
     chosen = visible if visible else models_raw
     discovered = [str(m["id"]) for m in chosen if "id" in m]
-    return discovered if discovered else list(_CODEX_FALLBACK_MODELS)
+    return discovered
 
 
 def _default_codex_model_process_factory(*args: Any, **kwargs: Any) -> CodexModelProcess:
@@ -962,6 +1006,51 @@ def fetch_codex_models(
 
     except Exception:
         return []
+
+
+def validate_codex_model_selection(
+    model: str,
+    available_models: list[str],
+) -> str | None:
+    """Validate a Codex model selection against the discovered available models.
+
+    Models in ``_KNOWN_UNSUPPORTED_CODEX_MODELS`` are always rejected even
+    when they appear in *available_models* — they are discoverable but cannot
+    execute.  When *available_models* is empty and the model is not known-
+    unsupported, validation is skipped (discovery failed or Codex not installed).
+
+    Args:
+        model: The model ID the caller intends to use.
+        available_models: The list of model IDs returned by
+            ``fetch_codex_models()``.  An empty list means discovery did not
+            succeed and validation is skipped (unless the model is known-bad).
+
+    Returns:
+        ``None`` when the selection is valid (or when validation cannot be
+        performed).  An error message string when the model is known-unsupported
+        or is not present in *available_models*.
+    """
+    if model in _KNOWN_UNSUPPORTED_CODEX_MODELS:
+        if available_models:
+            safe_models = [m for m in available_models if m not in _KNOWN_UNSUPPORTED_CODEX_MODELS]
+            suggestion = ", ".join(safe_models) if safe_models else "none available"
+        else:
+            suggestion = "none discovered — run GET /api/agent-runners to refresh"
+        return (
+            f"Model '{model}' is not supported by Codex and cannot be used. "
+            f"Supported models: {suggestion}. "
+            "Use GET /api/agent-runners to discover available models."
+        )
+    if not available_models:
+        return None
+    if model in available_models:
+        return None
+    joined = ", ".join(available_models)
+    return (
+        f"Model '{model}' is not available for the selected Codex runner. "
+        f"Available models: {joined}. "
+        "Use GET /api/agent-runners to discover available models."
+    )
 
 
 # Keep extract_events as a deprecated alias so any remaining references don't break

@@ -21,10 +21,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.api.websocket import ConnectionManager
 from orchestrator.config.enums import ChecklistStatus, Priority, RunStatus, TaskStatus
 from orchestrator.db import (
-    EventStore,
     RunRepository,
     create_engine,
     create_session_factory,
+    create_wired_event_store_v2,
     init_db,
 )
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
@@ -119,7 +119,7 @@ def _make_service(
 ) -> WorkflowService:
     """Build a WorkflowService wired to the recording ConnectionManager."""
     repo = RunRepository(session)
-    event_store = EventStore(session)
+    event_store = create_wired_event_store_v2(session)
     emitter = PersistentEventEmitter(event_store)
 
     manager = recording_manager
@@ -136,7 +136,7 @@ def _make_service(
     return WorkflowService(
         session=session,
         repo=repo,
-        event_store=event_store,
+        event_store_v2=event_store,
         event_emitter=emitter,
         auto_verify_runner=LocalAutoVerifyRunner(),
     )
@@ -179,7 +179,9 @@ async def test_ws_clarification_requested(session: AsyncSession) -> None:
     event = clarification_events[0]
     assert event.run_id == "run-test"
     assert event.task_id == "task-1"
+    assert event.attempt_num == 1
     assert event.question_count == 1
+    assert event.questions[0]["question"] == "Need confirmation?"
 
 
 @pytest.mark.asyncio

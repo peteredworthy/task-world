@@ -24,6 +24,8 @@ from orchestrator.git.errors import (
     GitCommandError,
     GitError,
     MergeConflictError,
+    WorktreeCommitError,
+    WorktreeResetError,
     WorktreeError,
 )
 from orchestrator.git.ops import (
@@ -75,6 +77,18 @@ from orchestrator.git.repos import (
     list_repos,
 )
 from orchestrator.git.testing import TestRunResult, TestRunner, TestSummary
+from orchestrator.git.utils import (
+    GIT_ADD_TIMEOUT_SECONDS,
+    GIT_COMMIT_TIMEOUT_SECONDS,
+    GIT_QUICK_TIMEOUT_SECONDS,
+    WorktreeCommitResult,
+    WorktreeResetResult,
+    commit_uncommitted_changes,
+    commit_uncommitted_changes_or_raise,
+    get_head_commit,
+    reset_worktree_changes,
+    reset_worktree_to_ref,
+)
 from orchestrator.git.worktree import (
     WorktreeInfo,
     WorktreeManager,
@@ -109,6 +123,9 @@ __all__ = [
     "GitCommandError",
     "GitDiffOps",
     "GitError",
+    "GIT_ADD_TIMEOUT_SECONDS",
+    "GIT_COMMIT_TIMEOUT_SECONDS",
+    "GIT_QUICK_TIMEOUT_SECONDS",
     "InitializedProject",
     "LRUCache",
     "MergeConflictError",
@@ -123,12 +140,18 @@ __all__ = [
     "WorktreeError",
     "WorktreeInfo",
     "WorktreeManager",
+    "WorktreeCommitError",
+    "WorktreeCommitResult",
+    "WorktreeResetError",
+    "WorktreeResetResult",
     "FileSelectionEntry",
     "Hunk",
     "PruneStats",
     "apply_prune",
     "back_merge",
     "branch_count",
+    "commit_uncommitted_changes",
+    "commit_uncommitted_changes_or_raise",
     "compute_selection_preview",
     "get_branch_diff",
     "get_branch_status",
@@ -137,6 +160,7 @@ __all__ = [
     "get_conflict_blocks",
     "get_conflict_files",
     "get_modified_files",
+    "get_head_commit",
     "get_repo",
     "get_task_diff",
     "get_agent_cache_write_paths",
@@ -153,4 +177,6 @@ __all__ = [
     "resolve_conflict",
     "revert_back_merge",
     "revert_file",
+    "reset_worktree_changes",
+    "reset_worktree_to_ref",
 ]

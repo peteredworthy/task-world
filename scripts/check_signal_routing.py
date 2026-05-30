@@ -1,18 +1,10 @@
 #!/usr/bin/env python3
 """
-Enforce signal registry function isolation.
+Enforce signal routing constraints.
 
-The registry functions register_active_run, unregister_active_run, and
-has_active_workflow are consumer-internal. They must not be imported or called
-from outside the consumer module and its dedicated test files.
-
-WRONG: has_active_workflow(run_id)  # called from service.py
-WRONG: from orchestrator.workflow.signals.consumer import has_active_workflow
-       (in any file other than the allowed set)
-
-RIGHT: Only consumer.py and its test files may import or call these functions.
-       workflow/__init__.py may re-export them as a bridge for test files
-       (required by the module-imports hook).
+Registry functions (register_active_run, unregister_active_run,
+has_active_workflow) were removed in the EventSignalTransport migration.
+This hook is kept as a placeholder for future signal-routing constraints.
 
 To suppress a line, add:  # noqa: signal-routing
 """
@@ -21,27 +13,12 @@ import ast
 import sys
 from pathlib import Path
 
-# Functions that are restricted to consumer.py and its test files
-RESTRICTED_NAMES = {
-    "register_active_run",
-    "unregister_active_run",
-    "has_active_workflow",
-}
+# No restricted names after registry functions were removed in the
+# EventSignalTransport migration (signals now use events_v2).
+RESTRICTED_NAMES: set[str] = set()
 
-# Files that are allowed to import or call the restricted functions.
-# Paths are matched as suffixes (relative to project root).
-#
-# workflow/__init__.py is included because it acts as a bridge re-exporter:
-# the module-imports pre-commit hook requires test files to import via the
-# top-level orchestrator.workflow package rather than reaching directly into
-# sub-packages. The actual enforcement (no calls from business logic) is still
-# provided by excluding all other files.
-ALLOWED_FILE_SUFFIXES = {
-    "src/orchestrator/workflow/signals/consumer.py",
-    "src/orchestrator/workflow/__init__.py",
-    "tests/unit/test_signal_consumer.py",
-    "tests/unit/test_signal_redelivery.py",
-}
+# No files need allowlisting when RESTRICTED_NAMES is empty.
+ALLOWED_FILE_SUFFIXES: set[str] = set()
 
 
 def find_project_root(filepath: Path) -> Path | None:
@@ -166,10 +143,7 @@ def main(paths: list[str]) -> int:
         for v in all_violations:
             print(f"  {v}", file=sys.stderr)
         print(
-            "\nThe registry functions register_active_run, unregister_active_run, and "
-            "has_active_workflow are consumer-internal. "
-            "Only consumer.py and its test files may import or call them. "
-            "To suppress a specific line, add:  # noqa: signal-routing",
+            "\nTo suppress a specific line, add:  # noqa: signal-routing",
             file=sys.stderr,
         )
         return 1

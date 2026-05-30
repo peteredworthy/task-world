@@ -1,5 +1,6 @@
 """Integration tests for MCP ToolHandler with real WorkflowService."""
 
+import json
 import os
 import subprocess
 from collections.abc import AsyncGenerator
@@ -18,7 +19,7 @@ from orchestrator.config import (
     RunStatus,
     TaskStatus,
 )
-from orchestrator.db import EventStore, create_engine, create_session_factory, init_db
+from orchestrator.db import SqliteEventStore, create_engine, create_session_factory, init_db
 from orchestrator.api import ToolHandler
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
@@ -516,9 +517,11 @@ async def test_parent_terminal_guard_pauses_unresolved_child(
     assert updated_parent.pause_reason == "oversight_children_unresolved"
     assert updated_parent.oversight_state["terminal_guard"]["can_complete"] is False
     assert updated_parent.oversight_state["active_child_run_ids"] == ["child-1"]
-    store = EventStore(session)
-    events = await store.get_events_for_run(parent.id)
-    status_events = [event["payload"] for event in events if event["type"] == "run_status_changed"]
+    store = SqliteEventStore(session)
+    events = await store.get_stream(parent.id)
+    status_events = [
+        json.loads(event.payload) for event in events if event.event_type == "run_status_changed"
+    ]
     assert any(event["new_status"] == "paused" for event in status_events)
     assert not any(event["new_status"] == "completed" for event in status_events)
     pending_actions = await service.get_pending_actions(parent.id)

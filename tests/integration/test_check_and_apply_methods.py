@@ -13,6 +13,7 @@ Each method is tested independently so the contract is explicit and regression
 is immediately visible.
 """
 
+import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +23,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunStatus, TaskStatus
-from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import SqliteEventStore, create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.errors import TaskNotFoundError
 from orchestrator.workflow import LocalAutoVerifyRunner
@@ -244,6 +245,18 @@ class TestCheckSubmission:
         # Checklist item should have been auto-marked DONE
         task = await service.get_task("run-1", "task-1")
         assert all(item.status == ChecklistStatus.DONE for item in task.checklist)
+
+        events = await SqliteEventStore(session).get_stream("run-1")
+        task_status_events = [
+            event for event in events if event.event_type == "task_status_changed"
+        ]
+        assert len(task_status_events) == 1
+        auto_verify_event = next(
+            event for event in events if event.event_type == "auto_verify_completed"
+        )
+        payload = json.loads(auto_verify_event.payload)
+        assert payload["checklist"][0]["status"] == "done"
+        assert payload["latest_attempt_snapshot"]["auto_verify_results"][0]["passed"] is True
 
     @pytest.mark.asyncio
     async def test_failing_auto_verify_blocks_even_with_done_checklist(

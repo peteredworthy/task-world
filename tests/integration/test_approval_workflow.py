@@ -1,16 +1,26 @@
 """Integration tests for approval workflow."""
 
+import json
 from datetime import datetime, timezone
 
 import pytest
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config import Priority, RoutineSource, RunStatus, TaskStatus
-from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.db import EventStore
+from orchestrator.db import (
+    RunStateProjector,
+    SqliteEventStore,
+    StoredEvent,
+    TaskStateProjector,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
+from orchestrator.workflow import deserialize_event
 from orchestrator.workflow.service import WorkflowService
 
 
@@ -30,8 +40,8 @@ def service(session: AsyncSession) -> WorkflowService:
 
 
 @pytest.fixture
-def event_store(session: AsyncSession) -> EventStore:
-    return EventStore(session)
+def event_store(session: AsyncSession) -> SqliteEventStore:
+    return SqliteEventStore(session)
 
 
 def _make_run_with_pending_approval() -> Run:
@@ -78,8 +88,66 @@ def _make_run_with_pending_approval() -> Run:
     )
 
 
+def _json_value(value: object) -> object:
+    return json.loads(value) if isinstance(value, str) else value
+
+
+async def _replay_task_projection(
+    events: list[StoredEvent],
+    task_id: str,
+) -> dict[str, object]:
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as replay_session:
+            run_projector = RunStateProjector()
+            task_projector = TaskStateProjector()
+            for stored in events:
+                event = deserialize_event(stored.event_type, stored.payload)
+                await run_projector.handle(event, replay_session)
+                await task_projector.handle(event, replay_session)
+            await replay_session.flush()
+
+            task_result = await replay_session.execute(
+                text(
+                    "SELECT status, pending_action_type, current_attempt, checklist"
+                    " FROM tasks WHERE id = :task_id"
+                ),
+                {"task_id": task_id},
+            )
+            task_row = task_result.fetchone()
+            assert task_row is not None
+
+            attempts_result = await replay_session.execute(
+                text(
+                    "SELECT attempt_num, completed_at, outcome"
+                    " FROM attempts WHERE task_id = :task_id ORDER BY attempt_num"
+                ),
+                {"task_id": task_id},
+            )
+            attempts = [
+                {
+                    "attempt_num": row[0],
+                    "completed_at": row[1],
+                    "outcome": row[2],
+                }
+                for row in attempts_result.fetchall()
+            ]
+            return {
+                "status": task_row[0],
+                "pending_action_type": task_row[1],
+                "current_attempt": task_row[2],
+                "checklist": _json_value(task_row[3]),
+                "attempts": attempts,
+            }
+    finally:
+        await engine.dispose()
+
+
 async def test_approve_task_transitions_to_completed(
     service: WorkflowService,
+    event_store: SqliteEventStore,
 ) -> None:
     """Test approval: task in PENDING_USER_ACTION -> approve -> COMPLETED."""
     run = _make_run_with_pending_approval()
@@ -105,9 +173,19 @@ async def test_approve_task_transitions_to_completed(
     assert task.attempts[-1].completed_at is not None
     assert task.attempts[-1].outcome == "passed"
 
+    replayed = await _replay_task_projection(await event_store.get_stream("run-1"), "task-1")
+    assert replayed["status"] == "completed"
+    assert replayed["pending_action_type"] is None
+    assert replayed["current_attempt"] == 1
+    attempts = replayed["attempts"]
+    assert isinstance(attempts, list)
+    assert attempts[-1]["outcome"] == "passed"
+    assert attempts[-1]["completed_at"] is not None
+
 
 async def test_reject_task_transitions_to_building(
     service: WorkflowService,
+    event_store: SqliteEventStore,
 ) -> None:
     """Test rejection: task in PENDING_USER_ACTION -> reject -> BUILDING (new attempt)."""
     run = _make_run_with_pending_approval()
@@ -135,10 +213,18 @@ async def test_reject_task_transitions_to_building(
     assert task.current_attempt == initial_attempt + 1
     assert len(task.attempts) == initial_attempt + 1
 
+    replayed = await _replay_task_projection(await event_store.get_stream("run-1"), "task-1")
+    assert replayed["status"] == "building"
+    assert replayed["pending_action_type"] is None
+    assert replayed["current_attempt"] == initial_attempt + 1
+    attempts = replayed["attempts"]
+    assert isinstance(attempts, list)
+    assert [attempt["attempt_num"] for attempt in attempts] == [1, 2]
+
 
 async def test_approval_decision_event_emitted_on_approve(
     service: WorkflowService,
-    event_store: EventStore,
+    event_store: SqliteEventStore,
 ) -> None:
     """Test ApprovalDecision event is emitted with correct fields on approval."""
     run = _make_run_with_pending_approval()
@@ -153,25 +239,29 @@ async def test_approval_decision_event_emitted_on_approve(
     )
 
     # Query events
-    events = await event_store.get_events_for_run(run_id="run-1")
+    events = await event_store.get_stream("run-1")
 
     # Find the approval_decision event
-    approval_events = [e for e in events if e.get("type") == "approval_decision"]
+    approval_events = [e for e in events if e.event_type == "approval_decision"]
     assert len(approval_events) == 1
 
-    event = approval_events[0]["payload"]
+    event = json.loads(approval_events[0].payload)
     assert event["run_id"] == "run-1"
     assert event["task_id"] == "task-1"
     assert event["step_id"] == "step-1"
     assert event["approved"] is True
     assert event["comment"] == "Excellent work!"
     assert event["decided_by"] == "reviewer@example.com"
+    assert event["new_status"] == "completed"
+    assert event["current_attempt"] == 1
+    assert event["attempt_snapshots"][-1]["outcome"] == "passed"
+    assert event["attempt_snapshots"][-1]["completed_at"] is not None
     assert "timestamp" in event
 
 
 async def test_approval_decision_event_emitted_on_reject(
     service: WorkflowService,
-    event_store: EventStore,
+    event_store: SqliteEventStore,
 ) -> None:
     """Test ApprovalDecision event is emitted with correct fields on rejection."""
     run = _make_run_with_pending_approval()
@@ -186,19 +276,22 @@ async def test_approval_decision_event_emitted_on_reject(
     )
 
     # Query events
-    events = await event_store.get_events_for_run(run_id="run-1")
+    events = await event_store.get_stream("run-1")
 
     # Find the approval_decision event
-    approval_events = [e for e in events if e.get("type") == "approval_decision"]
+    approval_events = [e for e in events if e.event_type == "approval_decision"]
     assert len(approval_events) == 1
 
-    event = approval_events[0]["payload"]
+    event = json.loads(approval_events[0].payload)
     assert event["run_id"] == "run-1"
     assert event["task_id"] == "task-1"
     assert event["step_id"] == "step-1"
     assert event["approved"] is False
     assert event["comment"] == "Missing test coverage"
     assert event["decided_by"] == "reviewer@example.com"
+    assert event["new_status"] == "building"
+    assert event["current_attempt"] == 2
+    assert len(event["attempt_snapshots"]) == 2
     assert "timestamp" in event
 
 
@@ -254,6 +347,44 @@ async def test_reject_without_reason(
 
     assert result.success is True
     assert result.new_status == TaskStatus.BUILDING
+
+
+async def test_reject_at_max_attempts_transitions_to_failed_and_replays(
+    service: WorkflowService,
+    event_store: SqliteEventStore,
+) -> None:
+    """Rejection at max attempts reaches terminal failure and replays from events_v2."""
+    run = _make_run_with_pending_approval()
+    task = run.steps[0].tasks[0]
+    task.current_attempt = 1
+    task.max_attempts = 1
+    await service.create_run(run)
+
+    result = await service.reject_task(
+        run_id="run-1",
+        task_id="task-1",
+        rejected_by="reviewer@example.com",
+        reason="Still missing required behavior",
+    )
+
+    assert result.success is True
+    assert result.new_status == TaskStatus.FAILED
+
+    task_after = await service.get_task("run-1", "task-1")
+    assert task_after.status == TaskStatus.FAILED
+    assert task_after.pending_action_type is None
+    assert task_after.current_attempt == 1
+    assert task_after.attempts[-1].outcome == "failed"
+    assert task_after.attempts[-1].completed_at is not None
+
+    replayed = await _replay_task_projection(await event_store.get_stream("run-1"), "task-1")
+    assert replayed["status"] == "failed"
+    assert replayed["pending_action_type"] is None
+    assert replayed["current_attempt"] == 1
+    attempts = replayed["attempts"]
+    assert isinstance(attempts, list)
+    assert attempts[-1]["outcome"] == "failed"
+    assert attempts[-1]["completed_at"] is not None
 
 
 async def test_get_pending_actions_excludes_future_steps(

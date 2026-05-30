@@ -8,17 +8,19 @@ dependence.
 """
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
 from fastapi import FastAPI
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.api.app import create_app
 from orchestrator.config import AgentRunnerType, RoutineSource, RunStatus
-from orchestrator.db import init_db
+from orchestrator.db import EventV2Model, init_db
 from orchestrator.db import RunRepository
 from orchestrator.workflow.service import WorkflowService
 
@@ -61,17 +63,17 @@ async def _await_agent_loop(executor: AgentRunnerExecutor, run_id: str) -> None:
 
 def _make_service_args(session: AsyncSession) -> dict:
     """Build the kwargs dict for constructing a WorkflowService."""
-    from orchestrator.db import EventStore
+    from orchestrator.db import create_wired_event_store_v2
     from orchestrator.workflow import LocalAutoVerifyRunner
     from orchestrator.workflow import PersistentEventEmitter
 
     repo = RunRepository(session)
-    event_store = EventStore(session)
+    event_store = create_wired_event_store_v2(session)
     emitter = PersistentEventEmitter(event_store)
     return dict(
         session=session,
         repo=repo,
-        event_store=event_store,
+        event_store_v2=event_store,
         event_emitter=emitter,
         auto_verify_runner=LocalAutoVerifyRunner(),
     )
@@ -212,6 +214,24 @@ async def test_executor_pauses_before_spawn_when_worktree_setup_fails(
         assert run.last_error is not None
         assert "Worktree setup failed before agent spawn" in run.last_error
         assert "repo missing-project not found" in run.last_error
+
+        result = await session.execute(
+            select(EventV2Model.event_type, EventV2Model.payload)
+            .where(EventV2Model.aggregate_id == run_id)
+            .order_by(EventV2Model.position)
+        )
+        events = list(result.all())
+        event_types = [event_type for event_type, _payload in events]
+        assert "run_worktree_creation_requested" in event_types
+        assert "run_worktree_creation_failed" in event_types
+        active_events = []
+        for event_type, payload in events:
+            if event_type != "run_status_changed":
+                continue
+            data = json.loads(payload)
+            if data.get("new_status") == "active":
+                active_events.append(data)
+        assert active_events == []
 
 
 async def test_executor_pauses_run_on_agent_execution_error(

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
+from orchestrator.db.access.mutations import save_run
 from orchestrator.workflow.locks import InMemoryLockManager
 from orchestrator.workflow import InMemorySignalTransport
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
@@ -447,7 +448,7 @@ async def test_cost_estimation_in_response(client_and_drain: tuple[AsyncClient, 
         run.total_tokens_read = 100_000
         run.total_tokens_write = 50_000
         run.total_tokens_cache = 10_000
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
     # 3. GET the run again - should now have cost estimation
@@ -685,7 +686,7 @@ async def test_auto_verify_results_in_response(
         repo = RunRepository(session)
         run = await repo.get(run_id)
         run.worktree_path = str(tmp_path)
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
     # 2. Start the run and task

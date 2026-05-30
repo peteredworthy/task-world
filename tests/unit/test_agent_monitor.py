@@ -1,5 +1,6 @@
 """Unit tests for AgentRunnerMonitor class."""
 
+import json
 import os
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -12,8 +13,9 @@ from orchestrator.runners import AgentRunnerMonitor
 from orchestrator.config import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.config.models import RequirementConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.db import EventStore
 from orchestrator.db import RunRepository
+from orchestrator.db import SqliteEventStore
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.locks import InMemoryLockManager
@@ -87,7 +89,7 @@ async def test_on_agent_died_transitions_run_to_paused(
             agent_runner_config={"pid": 12345},
         )
         run.status = RunStatus.ACTIVE
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
     # Call on_agent_died
@@ -101,21 +103,24 @@ async def test_on_agent_died_transitions_run_to_paused(
     # Verify run is now PAUSED with pause_reason set
     async with session_factory() as session:
         repo = RunRepository(session)
-        event_store = EventStore(session)
+        event_store = SqliteEventStore(session)
         updated_run = await repo.get("run1")
         assert updated_run.status == RunStatus.PAUSED
         assert updated_run.pause_reason == "agent_process_died"
 
         # Verify events were logged
-        events = await event_store.get_events_for_run("run1")
+        events = await event_store.get_stream("run1")
         assert len(events) == 2
-        assert events[0]["type"] == "agent_died"
-        assert events[0]["payload"]["agent_runner_type"] == "cli_subprocess"
-        assert events[0]["payload"]["exit_code"] == 1
-        assert events[0]["payload"]["reason"] == "agent_process_died"
-        assert events[1]["type"] == "run_status_changed"
-        assert events[1]["payload"]["old_status"] == "active"
-        assert events[1]["payload"]["new_status"] == "paused"
+        assert events[0].event_type == "agent_died"
+        agent_died_payload = json.loads(events[0].payload)
+        assert agent_died_payload["agent_runner_type"] == "cli_subprocess"
+        assert agent_died_payload["exit_code"] == 1
+        assert agent_died_payload["reason"] == "agent_process_died"
+        assert events[1].event_type == "run_status_changed"
+        status_payload = json.loads(events[1].payload)
+        assert status_payload["old_status"] == "active"
+        assert status_payload["new_status"] == "paused"
+        assert status_payload["pause_reason"] == "agent_process_died"
 
 
 @pytest.mark.asyncio
@@ -131,7 +136,7 @@ async def test_on_agent_died_ignores_non_active_run(
         repo = RunRepository(session)
         run = _create_test_run(run_id="run2", agent_runner_type=AgentRunnerType.CLI_SUBPROCESS)
         run.status = RunStatus.COMPLETED
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
     # Call on_agent_died
@@ -144,12 +149,12 @@ async def test_on_agent_died_ignores_non_active_run(
     # Verify run status unchanged
     async with session_factory() as session:
         repo = RunRepository(session)
-        event_store = EventStore(session)
+        event_store = SqliteEventStore(session)
         updated_run = await repo.get("run2")
         assert updated_run.status == RunStatus.COMPLETED
 
         # Verify no events were logged
-        events = await event_store.get_events_for_run("run2")
+        events = await event_store.get_stream("run2")
         assert len(events) == 0
 
 
@@ -288,7 +293,7 @@ async def test_on_agent_died_releases_building_task_lock_codex_server(
         # Simulate the task being in BUILDING state (agent started it)
         task_state = run.steps[0].tasks[0]
         task_state.status = TaskStatus.BUILDING
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
     # Pre-acquire the lock as the agent would have done
@@ -327,7 +332,7 @@ async def test_on_agent_died_without_lock_manager_does_not_error(
         run.status = RunStatus.ACTIVE
         task_state = run.steps[0].tasks[0]
         task_state.status = TaskStatus.BUILDING
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
     # Should not raise even without a lock_manager
@@ -364,7 +369,7 @@ async def test_on_agent_died_does_not_release_completed_task_lock(
         # Task is already COMPLETED — no lock should be held or released
         task_state = run.steps[0].tasks[0]
         task_state.status = TaskStatus.COMPLETED
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
     task_id = task_state.id

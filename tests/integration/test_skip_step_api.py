@@ -146,6 +146,8 @@ class TestSkipStepAPI:
         # Verify run is resumed or paused at next manual gate
         run_data = skip_resp.json()
         assert run_data["id"] == run_id
+        assert run_data["status"] == "active"
+        assert run_data["pause_reason"] is None
 
         # Step 2 should be marked as skipped
         assert run_data["steps"][1]["skipped"] is True
@@ -334,3 +336,95 @@ class TestSkipStepAPI:
 
         # Step 4 should be the current step (not skipped)
         assert run_data["steps"][3]["skipped"] is False
+        assert run_data["status"] == "active"
+        assert run_data["pause_reason"] is None
+
+    async def test_skip_pauses_when_cascade_reaches_another_manual_gate(
+        self, client_and_drain: tuple[AsyncClient, DrainFn]
+    ) -> None:
+        """Skip remains paused when progression reaches a later manual gate."""
+        client, drain = client_and_drain
+        routine_config = {
+            "id": "test-cascade-manual-gate",
+            "name": "test-cascade-manual-gate",
+            "steps": [
+                {
+                    "id": "step1",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "task1",
+                            "title": "Task 1",
+                            "instructions": "Build something",
+                        }
+                    ],
+                },
+                {
+                    "id": "step2",
+                    "title": "Step 2",
+                    "condition": {"when": "manual"},
+                    "tasks": [
+                        {
+                            "id": "task2",
+                            "title": "Task 2",
+                            "instructions": "Build second thing",
+                        }
+                    ],
+                },
+                {
+                    "id": "step3",
+                    "title": "Step 3",
+                    "condition": {"when": "manual"},
+                    "tasks": [
+                        {
+                            "id": "task3",
+                            "title": "Task 3",
+                            "instructions": "Build third thing",
+                        }
+                    ],
+                },
+            ],
+        }
+
+        create_resp = await client.post(
+            "/api/runs",
+            json={
+                "repo_name": "test-repo",
+                "branch": "main",
+                "routine_embedded": routine_config,
+            },
+        )
+        run_id = create_resp.json()["id"]
+
+        start_resp = await client.post(f"/api/runs/{run_id}/start")
+        assert start_resp.status_code == 202
+        await drain(run_id)
+
+        task1_id = create_resp.json()["steps"][0]["tasks"][0]["id"]
+        task_start_resp = await client.post(f"/api/runs/{run_id}/tasks/{task1_id}/start")
+        assert task_start_resp.status_code == 200
+        submit_resp = await client.post(
+            f"/api/runs/{run_id}/tasks/{task1_id}/submit",
+            json={"artifacts": [], "completion_reason": "Completed task"},
+        )
+        assert submit_resp.status_code == 200
+        await drain(run_id)
+        complete_resp = await client.post(
+            f"/api/runs/{run_id}/tasks/{task1_id}/complete-verification",
+            json={"passing_grades": []},
+        )
+        assert complete_resp.status_code == 200
+        await drain(run_id)
+
+        run_resp = await client.get(f"/api/runs/{run_id}")
+        step2_id = run_resp.json()["steps"][1]["id"]
+
+        skip_resp = await client.post(f"/api/runs/{run_id}/steps/{step2_id}/skip")
+        assert skip_resp.status_code == 200
+        run_data = skip_resp.json()
+
+        assert run_data["steps"][1]["skipped"] is True
+        assert run_data["steps"][2]["skipped"] is False
+        assert run_data["current_step_index"] == 2
+        assert run_data["status"] == "paused"
+        assert run_data["pause_reason"] == "manual_gate"

@@ -1,7 +1,6 @@
 """WebSocket connection management for real-time event streaming."""
 
 import asyncio
-import dataclasses
 import json
 import logging
 import time
@@ -11,7 +10,7 @@ from typing import Any
 
 from fastapi import WebSocket
 from orchestrator.time_utils import format_utc_datetime
-from orchestrator.workflow import ClarificationRequested, ClarificationResponded
+from orchestrator.workflow import ClarificationRequested, ClarificationResponded, WorkflowEvent
 
 # Maximum updates per second per client (throttle interval in seconds)
 _THROTTLE_INTERVAL = 0.1  # 10 updates/sec
@@ -87,9 +86,9 @@ class ConnectionManager:
 
     async def broadcast_event(self, event: object) -> None:
         """Broadcast a WorkflowEvent to the relevant run's subscribers."""
-        if not dataclasses.is_dataclass(event) or isinstance(event, type):
+        if not isinstance(event, WorkflowEvent):
             logging.getLogger(__name__).debug(
-                "broadcast_event called with non-dataclass event: %s", type(event).__name__
+                "broadcast_event called with non-WorkflowEvent event: %s", type(event).__name__
             )
             return
 
@@ -114,7 +113,7 @@ class ConnectionManager:
             await self.broadcast_to_run(event.run_id, data)
             return
 
-        data: dict[str, Any] = dataclasses.asdict(event)
+        data: dict[str, Any] = event.model_dump(mode="json")
         run_id = data.get("run_id", "")
         if run_id:
             await self.broadcast_to_run(run_id, data)

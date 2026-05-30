@@ -50,6 +50,7 @@ class RunModel(Base):
     parent_run_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("runs.id"), nullable=True, index=True
     )
+    parent_task_id: Mapped[str | None] = mapped_column(String, nullable=True)
     parent_slice_id: Mapped[str | None] = mapped_column(String, nullable=True)
     oversight_state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
@@ -75,6 +76,9 @@ class RunModel(Base):
 
     # Runtime state
     current_step_index: Mapped[int] = mapped_column(Integer, default=0)
+    transition_tracker: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
@@ -102,13 +106,6 @@ class RunModel(Base):
         back_populates="run",
         cascade="all, delete-orphan",
         order_by="StepModel.order_index",
-    )
-
-    events: Mapped[list["EventModel"]] = relationship(
-        "EventModel",
-        back_populates="run",
-        cascade="all, delete-orphan",
-        order_by="EventModel.id",
     )
 
 
@@ -157,6 +154,9 @@ class TaskModel(Base):
     checklist: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     current_attempt: Mapped[int] = mapped_column(Integer, default=0)
     max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    has_verification: Mapped[bool] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
 
     # Pending action tracking
     pending_action_type: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -235,23 +235,28 @@ class AttemptModel(Base):
     task: Mapped["TaskModel"] = relationship("TaskModel", back_populates="attempts")
 
 
-class EventModel(Base):
-    __tablename__ = "events"
+class EventV2Model(Base):
+    __tablename__ = "events_v2"
     __table_args__ = (
-        # Composite index for the common paginated-activity query: WHERE run_id = ? AND event_type = ?
-        Index("ix_events_run_id_event_type", "run_id", "event_type"),
+        UniqueConstraint("aggregate_id", "version", name="uq_events_v2_aggregate_version"),
+        Index("idx_events_v2_aggregate", "aggregate_id", "position"),
+        Index("idx_events_v2_type", "event_type", "position"),
     )
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    run_id: Mapped[str] = mapped_column(
-        String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    event_type: Mapped[str] = mapped_column(String, nullable=False, index=True)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    aggregate_id: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string
+    timestamp: Mapped[str] = mapped_column(String, nullable=False)  # ISO 8601
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
 
-    # Relationships
-    run: Mapped["RunModel"] = relationship("RunModel", back_populates="events")
+
+class ProjectionCheckpointModel(Base):
+    __tablename__ = "projection_checkpoints"
+
+    projector_name: Mapped[str] = mapped_column(String, primary_key=True)
+    last_position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)  # ISO 8601
 
 
 class ClarificationRequestModel(Base):
@@ -286,35 +291,6 @@ class AgentRunnerModelProfileDefaultModel(Base):
     runner_type: Mapped[str] = mapped_column(String, nullable=False)
     profile: Mapped[str] = mapped_column(String, nullable=False)
     model: Mapped[str] = mapped_column(String, nullable=False)
-
-
-class ReplayCheckpointModel(Base):
-    __tablename__ = "replay_checkpoints"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    journal_path: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    last_applied_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    last_applied_timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    backup_snapshot_id: Mapped[str | None] = mapped_column(String, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-
-
-class PendingSignalModel(Base):
-    __tablename__ = "pending_signals"
-    __table_args__ = (
-        # Index for fast drain queries: unprocessed signals for a given run
-        Index("ix_pending_signals_run_id", "run_id"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    run_id: Mapped[str] = mapped_column(
-        String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
-    )
-    signal_type: Mapped[str] = mapped_column(String, nullable=False)
-    payload: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    delivered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    handled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class RoutineMetaModel(Base):

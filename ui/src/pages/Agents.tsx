@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Spinner } from '../components/Spinner';
 import { EmptyState } from '../components/EmptyState';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import {
   fetchAgents,
   createAgent,
@@ -31,6 +32,7 @@ export function Agents() {
 
   const [editing, setEditing] = useState<Agent | null>(null);
   const [creating, setCreating] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Agent | null>(null);
 
   function handleCreated() {
     qc.invalidateQueries({ queryKey: ['agent-configs'] });
@@ -43,10 +45,20 @@ export function Agents() {
   }
 
   function handleDelete(agent: Agent) {
-    if (!confirm(`Delete agent "${agent.name}"?`)) return;
-    deleteAgent(agent.id).then(() => {
+    setPendingDelete(agent);
+  }
+
+  function handleDeleteConfirmed() {
+    if (!pendingDelete) return;
+    const id = pendingDelete.id;
+    setPendingDelete(null);
+    deleteAgent(id).then(() => {
       qc.invalidateQueries({ queryKey: ['agent-configs'] });
     });
+  }
+
+  function handleDeleteCancelled() {
+    setPendingDelete(null);
   }
 
   return (
@@ -148,6 +160,15 @@ export function Agents() {
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={`Delete agent "${pendingDelete?.name}"?`}
+        message="This will permanently remove the agent configuration. Any routines that reference this agent by name will fall back to the system default."
+        confirmLabel="Delete"
+        onConfirm={handleDeleteConfirmed}
+        onCancel={handleDeleteCancelled}
+      />
     </div>
   );
 }

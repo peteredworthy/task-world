@@ -401,7 +401,7 @@ async function setupRoutes(page: Page, overrides: RouteOverrides = {}) {
  * Navigate to the run detail page and wait for the Review & Merge workbench.
  */
 async function openReviewTab(page: Page) {
-  await page.goto(`/runs/${RUN_ID}`);
+  await page.goto(`/runs/${RUN_ID}/changes`);
 
   // Wait for at least one review panel to become visible.
   // Use .first() to avoid strict-mode failure when both headings render together.

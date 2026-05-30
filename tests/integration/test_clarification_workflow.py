@@ -1,20 +1,31 @@
 """Integration tests for clarification workflow."""
 
+import json
 from datetime import datetime, timezone
 
 import pytest
 from collections.abc import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config import Priority, RoutineSource, RunStatus, TaskStatus
-from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
-from orchestrator.db import EventStore
+from orchestrator.db import (
+    RunStateProjector,
+    SqliteEventStore,
+    StoredEvent,
+    TaskStateProjector,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import (
     ClarificationAnswer,
     ClarificationQuestion,
     CompressedDecisions,
+    deserialize_event,
 )
 from orchestrator.workflow.service import WorkflowService
 
@@ -35,8 +46,8 @@ def service(session: AsyncSession) -> WorkflowService:
 
 
 @pytest.fixture
-def event_store(session: AsyncSession) -> EventStore:
-    return EventStore(session)
+def event_store(session: AsyncSession) -> SqliteEventStore:
+    return SqliteEventStore(session)
 
 
 def _make_simple_run() -> Run:
@@ -75,9 +86,78 @@ def _make_simple_run() -> Run:
     )
 
 
+def _json_value(value: object) -> object:
+    return json.loads(value) if isinstance(value, str) else value
+
+
+async def _replay_run_projection(
+    events: list[StoredEvent],
+    run_id: str,
+    task_id: str,
+    request_id: str,
+) -> dict[str, object]:
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as replay_session:
+            run_projector = RunStateProjector()
+            task_projector = TaskStateProjector()
+            for stored in events:
+                event = deserialize_event(stored.event_type, stored.payload)
+                await run_projector.handle(event, replay_session)
+                await task_projector.handle(event, replay_session)
+            await replay_session.flush()
+
+            task_result = await replay_session.execute(
+                text(
+                    "SELECT status, pending_action_type, pending_clarification_id"
+                    " FROM tasks WHERE id = :task_id"
+                ),
+                {"task_id": task_id},
+            )
+            task_row = task_result.fetchone()
+            assert task_row is not None
+
+            request_result = await replay_session.execute(
+                text("SELECT responded_at FROM clarification_requests WHERE id = :request_id"),
+                {"request_id": request_id},
+            )
+            request_row = request_result.fetchone()
+            assert request_row is not None
+
+            response_result = await replay_session.execute(
+                text(
+                    "SELECT answers, responded_by FROM clarification_responses"
+                    " WHERE request_id = :request_id"
+                ),
+                {"request_id": request_id},
+            )
+            response_row = response_result.fetchone()
+            assert response_row is not None
+
+            run_result = await replay_session.execute(
+                text("SELECT config FROM runs WHERE id = :run_id"),
+                {"run_id": run_id},
+            )
+            run_row = run_result.fetchone()
+            assert run_row is not None
+            return {
+                "task_status": task_row[0],
+                "pending_action_type": task_row[1],
+                "pending_clarification_id": task_row[2],
+                "request_responded_at": request_row[0],
+                "response_answers": _json_value(response_row[0]),
+                "response_responded_by": response_row[1],
+                "run_config": _json_value(run_row[0]),
+            }
+    finally:
+        await engine.dispose()
+
+
 async def test_full_clarification_cycle(
     service: WorkflowService,
-    event_store: EventStore,
+    event_store: SqliteEventStore,
 ) -> None:
     """Test full clarification cycle: request -> respond -> verify task back to BUILDING."""
     # Create and save a run with task in BUILDING state
@@ -154,6 +234,23 @@ async def test_full_clarification_cycle(
     assert task.pending_action_type is None
     assert task.pending_clarification_id is None
 
+    replayed = await _replay_run_projection(
+        await event_store.get_stream("run-1"),
+        run_id="run-1",
+        task_id="task-1",
+        request_id=request.id,
+    )
+    assert replayed["task_status"] == "building"
+    assert replayed["pending_action_type"] is None
+    assert replayed["pending_clarification_id"] is None
+    assert replayed["request_responded_at"] is not None
+    assert replayed["response_answers"] == [answer.model_dump(mode="json") for answer in answers]
+    assert replayed["response_responded_by"] == "user@example.com"
+    run_config = replayed["run_config"]
+    assert isinstance(run_config, dict)
+    assert run_config["_compressed_decisions_request_id"] == request.id
+    assert len(run_config["_compressed_decisions"]) == 2
+
 
 async def test_pending_clarification_blocks_submit(
     service: WorkflowService,
@@ -213,7 +310,7 @@ async def test_respond_to_legacy_stale_clarification_does_not_reopen_completed_t
     legacy_run = await service.get_run("run-1")
     legacy_task = legacy_run.steps[0].tasks[0]
     legacy_task.status = TaskStatus.COMPLETED
-    await RunRepository(session).save(legacy_run)
+    await save_run(session, legacy_run)
 
     result = await service.respond_to_clarification(
         run_id="run-1",
@@ -241,7 +338,7 @@ async def test_respond_to_legacy_stale_clarification_does_not_reopen_completed_t
 
 async def test_clarification_requested_event_emitted(
     service: WorkflowService,
-    event_store: EventStore,
+    event_store: SqliteEventStore,
 ) -> None:
     """Test that ClarificationRequested event is emitted."""
     run = _make_simple_run()
@@ -263,22 +360,24 @@ async def test_clarification_requested_event_emitted(
     )
 
     # Query events
-    events = await event_store.get_events_for_run(run_id="run-1")
+    events = await event_store.get_stream("run-1")
 
     # Find the clarification_requested event
-    clarification_events = [e for e in events if e.get("type") == "clarification_requested"]
+    clarification_events = [e for e in events if e.event_type == "clarification_requested"]
     assert len(clarification_events) == 1
 
-    event = clarification_events[0]["payload"]
+    event = json.loads(clarification_events[0].payload)
     assert event["run_id"] == "run-1"
     assert event["task_id"] == "task-1"
     assert event["request_id"] == request.id
+    assert event["attempt_num"] == request.attempt_num
     assert event["question_count"] == 1
+    assert event["questions"][0]["question"] == "Test question?"
 
 
 async def test_clarification_responded_event_emitted(
     service: WorkflowService,
-    event_store: EventStore,
+    event_store: SqliteEventStore,
 ) -> None:
     """Test that ClarificationResponded event is emitted."""
     run = _make_simple_run()
@@ -320,16 +419,22 @@ async def test_clarification_responded_event_emitted(
     )
 
     # Query events
-    events = await event_store.get_events_for_run(run_id="run-1")
+    events = await event_store.get_stream("run-1")
 
     # Find the clarification_responded event
-    responded_events = [e for e in events if e.get("type") == "clarification_responded"]
+    responded_events = [e for e in events if e.event_type == "clarification_responded"]
     assert len(responded_events) == 1
 
-    event = responded_events[0]["payload"]
+    event = json.loads(responded_events[0].payload)
     assert event["run_id"] == "run-1"
     assert event["task_id"] == "task-1"
     assert event["request_id"] == request.id
+    assert event["response_id"]
+    assert event["answers"] == [answer.model_dump(mode="json") for answer in answers]
+    assert event["responded_by"] == "user@example.com"
+    assert event["responded_at"] is not None
+    assert event["new_status"] == "building"
+    assert event["run_config_delta"]["_compressed_decisions_request_id"] == request.id
 
 
 async def test_get_pending_clarification(

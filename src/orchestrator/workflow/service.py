@@ -6,7 +6,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, cast
+from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import (
@@ -18,11 +20,80 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
-from orchestrator.db import EventStore
-from orchestrator.db import RunRepository
+from orchestrator.db import (
+    AttemptModel,
+    RunModel,
+    RunRepository,
+    SqliteEventStore,
+    TaskModel,
+    commit_with_event_outbox,
+    create_wired_event_store_v2,
+)
+from orchestrator.workflow import (
+    CompleteRunWorktreeCommitCommand,
+    CompleteRunWorktreeResetCommand,
+    DeleteRunCommand,
+    FailRunWorktreeCommitCommand,
+    FailRunWorktreeResetCommand,
+    RecordClarificationRequestCommand,
+    RecordTaskRevertedCommand,
+    RequestRunWorktreeCommitCommand,
+    RequestRunWorktreeCreationCommand,
+    RequestRunWorktreeResetCommand,
+    SetChecklistGradeCommand,
+    UpdateChecklistItemCommand,
+    UpdateLatestAttemptCommand,
+    UpdateParentOversightFactsCommand,
+    UpdateRunStatusCommand,
+    UpdateRunWorktreeCommand,
+    durable_parent_oversight_patch,
+    FailRunWorktreeCreationCommand,
+    handle_complete_run_worktree_commit,
+    handle_create_run,
+    handle_complete_run_worktree_reset,
+    handle_delete_run,
+    handle_fail_run_worktree_commit,
+    handle_fail_run_worktree_creation,
+    handle_fail_run_worktree_reset,
+    handle_record_clarification_request,
+    handle_record_task_reverted,
+    handle_request_run_worktree_commit,
+    handle_request_run_worktree_creation,
+    handle_request_run_worktree_reset,
+    handle_set_checklist_grade,
+    handle_update_checklist_item,
+    handle_update_latest_attempt,
+    handle_update_parent_oversight_facts,
+    handle_update_run_status,
+    handle_update_run_worktree,
+)
+from orchestrator.workflow.commands.attempt_and_fanout import (
+    CreateFanOutChildrenCommand,
+    CreateTaskAttemptCommand,
+    ResetFanOutChildrenCommand,
+    RetryFanOutChildCommand,
+    handle_create_fan_out_children,
+    handle_create_task_attempt,
+    handle_reset_fan_out_children,
+    handle_retry_fan_out_child,
+)
+from orchestrator.workflow.commands.status_mutations import (
+    UpdateTaskStatusCommand,
+    handle_update_task_status,
+)
+from orchestrator.workflow.commands.clarifications import (
+    RecordApprovalDecisionCommand,
+    RecordClarificationResponseCommand,
+    handle_record_approval_decision,
+    handle_record_clarification_response,
+)
 from orchestrator.state.models import Attempt, ChecklistItem, Run, StepState, TaskState
 from orchestrator.state.session import SessionStateManager
-from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
+from orchestrator.state.errors import (
+    ChecklistItemNotFoundError,
+    RunNotFoundError,
+    TaskNotFoundError,
+)
 from orchestrator.workflow.agent.auto_verify import (
     AutoVerifyResult,
     AutoVerifyRunner,
@@ -47,27 +118,29 @@ from orchestrator.workflow.agent.templates import resolve_template
 from orchestrator.workflow.engine.errors import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.engine.gates import evaluate_checklist_gate
 from orchestrator.workflow.events.logger import PersistentEventEmitter
-from orchestrator.workflow.signals.signals import (
-    DbSignalTransport,
+from orchestrator.workflow import (
+    EventSignalTransport,
     SignalQueue,
     SignalTransport,
     WorkflowSignal,
+    build_create_run_command,
 )
-from orchestrator.workflow.events import (
+from orchestrator.workflow import (
     AgentChangedEvent,
+    AttemptUpdated,
     ApprovalDecision,
     AutoVerifyCompleted,
     BufferingEmitter,
     ChildCompleted,
     ChildFailed,
     ChildSpawned,
-    ClarificationRequested,
-    ClarificationResponded,
     FanOutCompleted,
     FanOutSpawned,
+    RunStepBackward,
     RunStatusChanged,
     TaskReverted,
     TaskStatusChanged,
+    WorkflowEvent,
 )
 from orchestrator.workflow.locks import LockManager
 from orchestrator.workflow.engine.transitions import (
@@ -92,14 +165,20 @@ from orchestrator.workflow.delegation import (
     work_from_fan_out_child,
 )
 from orchestrator.workflow.oversight import validate_run_evidence_items
-from orchestrator.workflow.oversight_facts import durable_parent_oversight_patch
 from orchestrator.workflow.parent_oversight import (
     ChildRunResolutionResult,
     ParentOversightService,
 )
-from orchestrator.git import ParentChildMergeResult
+from orchestrator.git import (
+    ParentChildMergeResult,
+    WorktreeCommitError,
+    WorktreeResetError,
+    commit_uncommitted_changes_or_raise,
+    get_head_commit,
+    reset_worktree_changes,
+    reset_worktree_to_ref,
+)
 from orchestrator.git.worktree import WorktreeManager
-from orchestrator.git.utils import commit_uncommitted_changes, get_head_commit
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 
 
@@ -247,11 +326,11 @@ class _ServiceClock:
 class WorkflowService:
     """Async service that bridges WorkflowEngine (sync) with persistent storage.
 
-    Pattern for each mutation:
+    Pattern for legacy engine-backed mutations:
     1. Load Run from RunRepository into a temporary SessionStateManager
     2. Create BufferingEmitter, create WorkflowEngine(state, clock, emitter)
     3. Call engine method (sync)
-    4. repo.save() (flushes state)
+    4. Persist the updated projection state
     5. event_emitter.emit_batch(buffered_events) (flushes events)
     6. session.commit() (atomic)
     """
@@ -260,7 +339,6 @@ class WorkflowService:
         self,
         session: AsyncSession,
         repo: RunRepository | None = None,
-        event_store: EventStore | None = None,
         event_emitter: PersistentEventEmitter | None = None,
         clock: Clock | None = None,
         auto_verify_runner: AutoVerifyRunner | None = None,
@@ -270,11 +348,15 @@ class WorkflowService:
         signal_transport: SignalTransport | None = None,
         super_parent_policy: SuperParentDelegationPolicy | None = None,
         fan_out_policy: FanOutDelegationPolicy | None = None,
+        event_store_v2: SqliteEventStore | None = None,
     ) -> None:
         self._session = session
         self._repo = repo or RunRepository(session)
-        self._event_store = event_store or EventStore(session)
-        self._event_emitter = event_emitter or PersistentEventEmitter(self._event_store)
+        if event_store_v2 is None:
+            self._store_v2 = create_wired_event_store_v2(session)
+        else:
+            self._store_v2 = event_store_v2
+        self._event_emitter = event_emitter or PersistentEventEmitter(self._store_v2)
         self._clock = clock or _ServiceClock()
         self._auto_verify_runner = auto_verify_runner
         self._lock_manager = lock_manager
@@ -298,11 +380,13 @@ class WorkflowService:
         self,
         run_id: str,
         state: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> None:
         """Persist only durable workflow-owned oversight facts."""
-        return await self._repo.update_parent_oversight_facts(
-            run_id,
-            durable_parent_oversight_patch(state),
+        patch = durable_parent_oversight_patch(state)
+        await handle_update_parent_oversight_facts(
+            UpdateParentOversightFactsCommand(run_id=run_id, patch=patch),
+            self._store_v2,
+            self._session,
         )
 
     def _build_engine(
@@ -321,24 +405,124 @@ class WorkflowService:
         )
         return engine, state, buffer
 
+    def _attach_task_projection_payloads(
+        self,
+        state: SessionStateManager,
+        run_id: str,
+        events: list[WorkflowEvent],
+    ) -> list[WorkflowEvent]:
+        """Add read-model payloads to core task events emitted by WorkflowEngine."""
+        projected_events: list[WorkflowEvent] = []
+        for event in events:
+            projected_events.append(event)
+            if not isinstance(event, (AutoVerifyCompleted, TaskStatusChanged)) or not event.task_id:
+                continue
+            task = state.get_task(run_id, event.task_id)
+            if isinstance(event, TaskStatusChanged):
+                event.current_attempt = task.current_attempt
+                event.attempt_snapshots = [
+                    attempt.model_dump(mode="json") for attempt in task.attempts
+                ]
+                projected_events.extend(self._explicit_attempt_updates_from_snapshots(event))
+            else:
+                event.current_attempt = task.current_attempt
+                event.checklist = [item.model_dump(mode="json") for item in task.checklist]
+                event.latest_attempt_snapshot = (
+                    task.attempts[-1].model_dump(mode="json") if task.attempts else None
+                )
+                update = self._explicit_attempt_update_from_snapshot(
+                    event.run_id,
+                    event.task_id,
+                    event.timestamp,
+                    event.latest_attempt_snapshot,
+                )
+                if update is not None:
+                    projected_events.append(update)
+        return projected_events
+
+    def _explicit_attempt_updates_from_snapshots(
+        self, event: TaskStatusChanged
+    ) -> list[AttemptUpdated]:
+        """Build focused attempt updates for fields otherwise buried in task snapshots."""
+        updates: list[AttemptUpdated] = []
+        for snapshot in event.attempt_snapshots:
+            update = self._explicit_attempt_update_from_snapshot(
+                event.run_id,
+                event.task_id,
+                event.timestamp,
+                snapshot,
+            )
+            if update is not None:
+                updates.append(update)
+        return updates
+
+    def _explicit_attempt_update_from_snapshot(
+        self,
+        run_id: str,
+        task_id: str,
+        timestamp: datetime,
+        snapshot: dict[str, Any] | None,
+    ) -> AttemptUpdated | None:
+        """Return a focused attempt update when a snapshot has durable fields."""
+        if not snapshot:
+            return None
+        attempt_id = snapshot.get("id")
+        if not attempt_id:
+            return None
+        update = AttemptUpdated(
+            timestamp=timestamp,
+            run_id=run_id,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            verifier_comment=snapshot.get("verifier_comment"),
+            grade_snapshot=snapshot.get("grade_snapshot") or None,
+            agent_runner_type=snapshot.get("agent_runner_type"),
+            agent_model=snapshot.get("agent_model"),
+            agent_settings=snapshot.get("agent_settings") or None,
+            start_commit=snapshot.get("start_commit"),
+            end_commit=snapshot.get("end_commit"),
+        )
+        if (
+            update.verifier_comment is not None
+            or update.grade_snapshot is not None
+            or update.agent_runner_type is not None
+            or update.agent_model is not None
+            or update.agent_settings is not None
+            or update.start_commit is not None
+            or update.end_commit is not None
+        ):
+            return update
+        return None
+
     async def _persist(
         self, state: SessionStateManager, run_id: str, buffer: BufferingEmitter
     ) -> Run:
-        """Save state and events, then commit."""
+        """Append buffered events, let projectors update read models, then commit."""
         run = state.get_run(run_id)
         self._parent_oversight.strip_computed_oversight_for_persist(run)
-        await self._repo.save(run)
-        if run.parent_run_id is not None:
-            await self._refresh_parent_oversight_without_commit(run.parent_run_id)
-        events = buffer.drain()
-        await self._event_emitter.emit_batch(events)
-        await self._session.commit()
-        return run
+        parent_run_id = run.parent_run_id
+        events = self._attach_task_projection_payloads(state, run_id, buffer.drain())
+        if events:
+            await self._store_v2.append(events)
+            self._event_emitter.notify_persisted_batch(events)
+        if parent_run_id is not None:
+            await self._refresh_parent_oversight_without_commit(parent_run_id)
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
 
     async def save_run_with_oversight_terminal_guard(self, run: Run) -> Run:
         """Persist a run after applying any super-parent terminal guard."""
+        persisted_status = await self._session.scalar(
+            select(RunModel.status).where(RunModel.id == run.id)
+        )
+        old_status = RunStatus(persisted_status) if persisted_status is not None else run.status
         _, state, buffer = self._build_engine(run)
-        await self._apply_oversight_terminal_guard(run, state, buffer)
+        await self._resolve_run_completion_transition(
+            run,
+            state,
+            buffer,
+            old_status=old_status,
+        )
         return await self._persist(state, run.id, buffer)
 
     def _sanitize_agent_runner_config(self, agent_runner_config: dict[str, Any]) -> dict[str, Any]:
@@ -389,8 +573,13 @@ class WorkflowService:
         )
 
     def _get_signal_queue(self) -> SignalQueue:
-        """Return a SignalQueue backed by the injected transport or the default DbSignalTransport."""
-        transport = self._signal_transport or DbSignalTransport(self._session)
+        """Return a SignalQueue backed by the injected transport or EventSignalTransport."""
+        if self._signal_transport is not None:
+            return SignalQueue(self._signal_transport)
+        from orchestrator.db import RunLifecycleProjector
+
+        projector = RunLifecycleProjector()
+        transport = EventSignalTransport(self._store_v2, projector)
         return SignalQueue(transport)
 
     # --- Delegating to WorkflowEngine ---
@@ -411,11 +600,11 @@ class WorkflowService:
         queue = self._get_signal_queue()
         payload: dict[str, Any] | None = {"reason": reason} if reason else None
         await queue.enqueue(run_id, WorkflowSignal.CANCEL, payload)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return run
 
     async def apply_cancel_run(self, run_id: str, reason: str | None = None) -> Run:
-        """Cancel a run (ACTIVE/PAUSED -> FAILED) via direct DB mutation.
+        """Cancel a run (ACTIVE/PAUSED -> FAILED) via event append and projection.
 
         Called by the signal consumer and internal executor code.
         Handles worktree cleanup if the run has a worktree configured.
@@ -425,8 +614,8 @@ class WorkflowService:
         # Idempotency: if run is already in a terminal state, return it as-is.
         if run.status in (RunStatus.FAILED, RunStatus.COMPLETED):
             return run
-        engine, state, buffer = self._build_engine(run)
-        engine.cancel_run(run_id, reason)
+        if run.status not in (RunStatus.ACTIVE, RunStatus.PAUSED, RunStatus.STOPPING):
+            raise InvalidTransitionError(run.status.value, RunStatus.FAILED.value)
 
         await self._pause_or_cancel_run_for_parent_control(
             run,
@@ -434,31 +623,42 @@ class WorkflowService:
             reason=reason or "cancel",
         )
 
-        # Get the updated run after engine processing
-        updated_run = state.get_run(run_id)
-
-        result = await self._persist(state, run_id, buffer)
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=run.status,
+                new_status=RunStatus.FAILED,
+                pause_reason=run.pause_reason,
+                last_error=run.last_error,
+                timestamp=self._clock.now(),
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
+        result = await self._repo.get(run_id)
 
         # Call env_lifecycle hook for run_end if run was cancelled
         if (
             self._env_lifecycle is not None
-            and updated_run.status == RunStatus.FAILED
-            and updated_run.worktree_path
-            and updated_run.env_file_specs
+            and result.status == RunStatus.FAILED
+            and result.worktree_path
+            and result.env_file_specs
         ):
-            worktree_path = Path(updated_run.worktree_path)
+            worktree_path = Path(result.worktree_path)
             await self._env_lifecycle.on_run_end(
                 run_id=run_id,
-                repo_name=updated_run.repo_name,
+                repo_name=result.repo_name,
                 worktree_path=worktree_path,
                 success=False,
             )
 
         # Handle completion actions for cancelled (FAILED) runs
-        if updated_run.status == RunStatus.FAILED:
-            worktree_manager = self._create_worktree_manager(updated_run)
+        if result.status == RunStatus.FAILED:
+            worktree_manager = self._create_worktree_manager(result)
             if worktree_manager is not None:
-                handle_run_completion(updated_run, worktree_manager)
+                handle_run_completion(result, worktree_manager)
 
         return result
 
@@ -473,11 +673,11 @@ class WorkflowService:
             raise InvalidTransitionError(run.status.value, "start_run (requires DRAFT)")
         queue = self._get_signal_queue()
         await queue.enqueue(run_id, WorkflowSignal.RUN_START)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return run
 
     async def apply_start_run(self, run_id: str) -> Run:
-        """Start a run (DRAFT -> ACTIVE) via direct DB mutation.
+        """Start a run (DRAFT -> ACTIVE) via event append and projection.
 
         Called by the signal consumer and internal executor code.
         """
@@ -494,22 +694,20 @@ class WorkflowService:
         if run.status != RunStatus.DRAFT:
             raise InvalidTransitionError(run.status.value, RunStatus.ACTIVE.value)
 
-        old_status = run.status
-        run.status = RunStatus.ACTIVE
-        run.started_at = self._clock.now()
-        await self._repo.save(run)
         now = self._clock.now()
-        await self._event_emitter.emit(
-            RunStatusChanged(
-                timestamp=now,
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
                 run_id=run_id,
-                event_type="run_status_changed",
-                old_status=old_status,
+                old_status=run.status,
                 new_status=RunStatus.ACTIVE,
-            )
+                timestamp=now,
+            ),
+            self._store_v2,
+            self._session,
         )
-        await self._session.commit()
-        result = run
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
+        result = await self._repo.get(run_id)
 
         # Call env_lifecycle hook if configured and worktree is available
         if self._env_lifecycle is not None and result.worktree_path and result.env_file_specs:
@@ -526,15 +724,26 @@ class WorkflowService:
         return result
 
     async def apply_stop_run(self, run_id: str) -> Run:
-        """Transition a run from ACTIVE to STOPPING via direct DB mutation.
+        """Transition a run from ACTIVE to STOPPING via the event stream.
 
         Called from pause_run() to make the stop observable before the
         PAUSE signal is processed by the consumer.
         """
         run = await self._repo.get(run_id)
-        engine, state, buffer = self._build_engine(run)
-        engine.stop_run(run_id)
-        return await self._persist(state, run_id, buffer)
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(run.status.value, RunStatus.STOPPING.value)
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=run.status,
+                new_status=RunStatus.STOPPING,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
 
     async def _pause_or_cancel_run_for_parent_control(
         self,
@@ -591,7 +800,7 @@ class WorkflowService:
         if error_detail:
             payload["error_detail"] = error_detail
         await queue.enqueue(run_id, WorkflowSignal.PAUSE, payload)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return stopping_run
 
     async def _pause_child_run(
@@ -600,7 +809,7 @@ class WorkflowService:
         reason: str,
         error_detail: str | None = None,
     ) -> None:
-        """Pause a single child run via direct workflow-engine mutation.
+        """Pause a single child run via event append and projection.
 
         Also enqueues a PAUSE signal on the child's queue so the child's
         RunWorkflow can observe the cascade and exit its execution loop on
@@ -610,16 +819,67 @@ class WorkflowService:
         an LLM turn) — a window during which the child's nudger may kill
         the subprocess for spurious "stuck" reasons.
         """
-        engine, state, buffer = self._build_engine(child)
-        managed_child = state.get_run(child.id)
-        if managed_child.status == RunStatus.ACTIVE:
-            engine.stop_run(child.id)
-        engine.pause_run(child.id, reason=reason, error_detail=error_detail)
+        if child.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
+            raise InvalidTransitionError(child.status.value, RunStatus.PAUSED.value)
 
-        managed_child = state.get_run(child.id)
-        self._mark_paused_open_attempts(managed_child, now=self._clock.now())
-        state.update_run(managed_child)
-        await self._persist(state, child.id, buffer)
+        now = self._clock.now()
+        current_status = child.status
+        if current_status == RunStatus.ACTIVE:
+            events = await handle_update_run_status(
+                UpdateRunStatusCommand(
+                    run_id=child.id,
+                    old_status=RunStatus.ACTIVE,
+                    new_status=RunStatus.STOPPING,
+                    timestamp=now,
+                ),
+                self._store_v2,
+                self._session,
+            )
+            self._event_emitter.notify_persisted(events[0])
+            current_status = RunStatus.STOPPING
+
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=child.id,
+                old_status=current_status,
+                new_status=RunStatus.PAUSED,
+                pause_reason=reason,
+                last_error=error_detail,
+                timestamp=now,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+
+        for step in child.steps:
+            for task in step.tasks:
+                if task.parent_task_id is not None:
+                    continue
+                if task.status not in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                    continue
+                latest_attempt = max(
+                    task.attempts,
+                    key=lambda attempt: attempt.attempt_num,
+                    default=None,
+                )
+                if latest_attempt is None or latest_attempt.completed_at is not None:
+                    continue
+                await handle_update_latest_attempt(
+                    UpdateLatestAttemptCommand(
+                        run_id=child.id,
+                        task_id=task.id,
+                        attempt_id=latest_attempt.id,
+                        outcome="paused",
+                        paused_at=now.isoformat(),
+                    ),
+                    self._store_v2,
+                    self._session,
+                )
+
+        if child.parent_run_id is not None:
+            await self._refresh_parent_oversight_without_commit(child.parent_run_id)
+        await commit_with_event_outbox(self._session)
 
         # Best-effort PAUSE signal so the child's loop exits cleanly between
         # iterations. Failures here are non-fatal — the DB state change above
@@ -641,28 +901,25 @@ class WorkflowService:
             )
 
     async def _cancel_child_run(self, child: Run, reason: str) -> None:
-        """Cancel a single child run via direct workflow-engine mutation."""
-        engine, state, buffer = self._build_engine(child)
-        engine.cancel_run(child.id, reason)
-        await self._persist(state, child.id, buffer)
-
-    def _mark_paused_open_attempts(self, run: Run, *, now: datetime | None = None) -> bool:
-        """Mark open attempts on in-progress non-fanout tasks as paused."""
-        if now is None:
-            now = self._clock.now()
-        modified = False
-        for step in run.steps:
-            for task in step.tasks:
-                if task.parent_task_id is not None:
-                    continue  # fan-out child: skip
-                if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
-                    if task.attempts:
-                        current = task.attempts[-1]
-                        if current.completed_at is None:
-                            current.paused_at = now
-                            current.outcome = "paused"
-                            modified = True
-        return modified
+        """Cancel a single child run via event append and projection."""
+        if child.status not in (RunStatus.ACTIVE, RunStatus.PAUSED, RunStatus.STOPPING):
+            raise InvalidTransitionError(child.status.value, RunStatus.FAILED.value)
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=child.id,
+                old_status=child.status,
+                new_status=RunStatus.FAILED,
+                pause_reason=child.pause_reason,
+                last_error=child.last_error,
+                timestamp=self._clock.now(),
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+        if child.parent_run_id is not None:
+            await self._refresh_parent_oversight_without_commit(child.parent_run_id)
+        await commit_with_event_outbox(self._session)
 
     async def apply_pause_run(
         self,
@@ -670,13 +927,16 @@ class WorkflowService:
         reason: str = "manual_pause",
         error_detail: str | None = None,
     ) -> Run:
-        """Pause a run (ACTIVE -> PAUSED) via direct DB mutation.
+        """Pause a run (ACTIVE/STOPPING -> PAUSED) via event append and projection.
 
         Called by the signal consumer and internal executor code.
         """
         run = await self._repo.get(run_id)
-        engine, state, buffer = self._build_engine(run)
-        engine.pause_run(run_id, reason=reason, error_detail=error_detail)
+        if run.status == RunStatus.PAUSED:
+            return run
+        if run.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
+            raise InvalidTransitionError(run.status.value, RunStatus.PAUSED.value)
+
         await self._pause_or_cancel_run_for_parent_control(
             run,
             action="pause",
@@ -684,13 +944,48 @@ class WorkflowService:
             error_detail=error_detail,
         )
 
-        # Stamp paused_at + outcome=paused on open attempts for in-progress tasks.
-        # Skip fan-out children (parent_task_id is not None) — they are managed
-        # by the executor directly and may have already committed a terminal outcome.
-        self._mark_paused_open_attempts(run, now=self._clock.now())
-        state.update_run(run)
+        now = self._clock.now()
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=run.status,
+                new_status=RunStatus.PAUSED,
+                pause_reason=reason,
+                last_error=error_detail,
+                timestamp=now,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
 
-        return await self._persist(state, run_id, buffer)
+        for step in run.steps:
+            for task in step.tasks:
+                if task.parent_task_id is not None:
+                    continue
+                if task.status not in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                    continue
+                latest_attempt = max(
+                    task.attempts,
+                    key=lambda attempt: attempt.attempt_num,
+                    default=None,
+                )
+                if latest_attempt is None or latest_attempt.completed_at is not None:
+                    continue
+                await handle_update_latest_attempt(
+                    UpdateLatestAttemptCommand(
+                        run_id=run_id,
+                        task_id=task.id,
+                        attempt_id=latest_attempt.id,
+                        outcome="paused",
+                        paused_at=now.isoformat(),
+                    ),
+                    self._store_v2,
+                    self._session,
+                )
+
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
 
     async def resume_run(
         self,
@@ -717,7 +1012,7 @@ class WorkflowService:
         if resume_strategy is not None:
             payload["resume_strategy"] = resume_strategy
         await queue.enqueue(run_id, WorkflowSignal.RESUME, payload or None)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return run
 
     async def apply_resume_run(
@@ -727,7 +1022,7 @@ class WorkflowService:
         agent_runner_config: dict[str, object] | None = None,
         resume_strategy: str | None = None,
     ) -> Run:
-        """Resume a run (PAUSED -> ACTIVE) via direct DB mutation.
+        """Resume a run (PAUSED -> ACTIVE).
 
         Called by the signal consumer and internal executor code.
 
@@ -741,72 +1036,56 @@ class WorkflowService:
             The updated run
         """
         run = await self._repo.get(run_id)
-        engine, state, buffer = self._build_engine(run)
 
         # Apply revert strategy if requested
         if resume_strategy == "revert":
+            if run.status != RunStatus.PAUSED:
+                raise InvalidTransitionError(run.status.value, RunStatus.ACTIVE.value)
             for step in run.steps:
                 for task in step.tasks:
                     if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
                         reverted_from = task.status
-                        self._revert_task_to_phase_start(task, run, self._clock.now())
-                        buffer.emit(
-                            TaskReverted(
-                                timestamp=self._clock.now(),
+                        if (
+                            task.status == TaskStatus.BUILDING
+                            and task.attempts
+                            and task.attempts[-1].start_commit
+                            and run.worktree_path
+                        ):
+                            await self._run_event_sourced_worktree_reset(
                                 run_id=run_id,
-                                event_type="task_reverted",
+                                worktree_path=run.worktree_path,
+                                reset_type="checkout_ref",
+                                target_ref=task.attempts[-1].start_commit,
+                                branch_name=f"orchestrator/run-{run.id}",
+                                reason="resume_revert_phase_start",
+                            )
+                        self._revert_task_to_phase_start(task, run, self._clock.now())
+                        events = await handle_record_task_reverted(
+                            RecordTaskRevertedCommand(
+                                run_id=run_id,
                                 task_id=task.id,
                                 reverted_from_status=reverted_from,
-                            )
+                                task_snapshot=task.model_dump(mode="json"),
+                            ),
+                            self._store_v2,
+                            self._session,
                         )
+                        self._event_emitter.notify_persisted(events[0])
                         break  # Only revert the first active task
                 else:
                     continue
                 break
 
-            # Update the run in the state manager after revert
-            state.update_run(run)
+            if agent_runner_type is not None or agent_runner_config is not None:
+                old_agent = run.agent_runner_type
+                old_config = run.agent_runner_config or {}
 
-        # For continue strategy: clear paused_at/outcome on paused attempts so they
-        # can continue where they left off.
-        # Skip fan-out children — they are managed by the executor directly.
-        if resume_strategy != "revert":
-            tasks_modified = False
-            for step in run.steps:
-                for task in step.tasks:
-                    if task.parent_task_id is not None:
-                        continue  # fan-out child: skip
-                    if task.status in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
-                        if task.attempts:
-                            current = task.attempts[-1]
-                            if current.outcome == "paused":
-                                current.paused_at = None
-                                current.outcome = None
-                                tasks_modified = True
-            # Only persist if tasks were actually modified — avoids bumping task
-            # versions unnecessarily, which would cause StaleDataError in the
-            # executor when it tries to update the same tasks after resume.
-            if tasks_modified:
-                state.update_run(run)
+                # Determine new agent runner type: use provided type or keep existing
+                new_agent = agent_runner_type if agent_runner_type is not None else old_agent
+                new_config = agent_runner_config if agent_runner_config is not None else old_config
 
-        # If agent is being changed (type or config), emit AgentChangedEvent and update run
-        if agent_runner_type is not None or agent_runner_config is not None:
-            old_agent = run.agent_runner_type
-            old_config = run.agent_runner_config or {}
-
-            # Determine new agent runner type: use provided type or keep existing
-            new_agent = agent_runner_type if agent_runner_type is not None else old_agent
-            new_config = agent_runner_config if agent_runner_config is not None else old_config
-
-            # Update the run's agent runner configuration
-            run.agent_runner_type = new_agent
-            run.agent_runner_config = new_config
-
-            # Emit the agent change event only if either type or config actually changed
-            # Only emit if new_agent is not None (required by AgentChangedEvent)
-            if (old_agent != new_agent or old_config != new_config) and new_agent is not None:
-                buffer.emit(
-                    AgentChangedEvent(
+                if (old_agent != new_agent or old_config != new_config) and new_agent is not None:
+                    event = AgentChangedEvent(
                         timestamp=self._clock.now(),
                         run_id=run_id,
                         event_type="agent_changed",
@@ -816,14 +1095,269 @@ class WorkflowService:
                         new_agent_runner_config=new_config,
                         reason="user_changed_on_resume",
                     )
+                    await self._store_v2.append([event])
+                    self._event_emitter.notify_persisted(event)
+
+            events = await handle_update_run_status(
+                UpdateRunStatusCommand(
+                    run_id=run_id,
+                    old_status=run.status,
+                    new_status=RunStatus.ACTIVE,
+                    pause_reason=None,
+                    last_error=None,
+                    timestamp=self._clock.now(),
+                ),
+                self._store_v2,
+                self._session,
+            )
+            self._event_emitter.notify_persisted(events[0])
+            await commit_with_event_outbox(self._session)
+            return await self._repo.get(run_id)
+
+        if run.status != RunStatus.PAUSED:
+            raise InvalidTransitionError(run.status.value, RunStatus.ACTIVE.value)
+
+        # For continue strategy: clear paused_at/outcome on paused attempts so they
+        # can continue where they left off.
+        # Skip fan-out children — they are managed by the executor directly.
+        for step in run.steps:
+            for task in step.tasks:
+                if task.parent_task_id is not None:
+                    continue
+                if task.status not in (TaskStatus.BUILDING, TaskStatus.VERIFYING):
+                    continue
+                latest_attempt = max(
+                    task.attempts,
+                    key=lambda attempt: attempt.attempt_num,
+                    default=None,
+                )
+                if latest_attempt is None or latest_attempt.outcome != "paused":
+                    continue
+                await handle_update_latest_attempt(
+                    UpdateLatestAttemptCommand(
+                        run_id=run_id,
+                        task_id=task.id,
+                        attempt_id=latest_attempt.id,
+                        clear_paused_state=True,
+                    ),
+                    self._store_v2,
+                    self._session,
                 )
 
-            # Update the run in the state manager
-            state.update_run(run)
+        if agent_runner_type is not None or agent_runner_config is not None:
+            old_agent = run.agent_runner_type
+            old_config = run.agent_runner_config or {}
 
-        # Resume the run (PAUSED -> ACTIVE)
-        engine.resume_run(run_id)
-        return await self._persist(state, run_id, buffer)
+            # Determine new agent runner type: use provided type or keep existing
+            new_agent = agent_runner_type if agent_runner_type is not None else old_agent
+            new_config = agent_runner_config if agent_runner_config is not None else old_config
+
+            if (old_agent != new_agent or old_config != new_config) and new_agent is not None:
+                event = AgentChangedEvent(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="agent_changed",
+                    old_agent=old_agent or AgentRunnerType.CLI_SUBPROCESS,
+                    new_agent=new_agent,
+                    old_agent_runner_config=old_config,
+                    new_agent_runner_config=new_config,
+                    reason="user_changed_on_resume",
+                )
+                await self._store_v2.append([event])
+                self._event_emitter.notify_persisted(event)
+
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=run.status,
+                new_status=RunStatus.ACTIVE,
+                pause_reason=None,
+                last_error=None,
+                timestamp=self._clock.now(),
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
+
+    async def _run_event_sourced_worktree_reset(
+        self,
+        *,
+        run_id: str,
+        worktree_path: str | None,
+        reset_type: str,
+        reason: str,
+        target_ref: str | None = None,
+        branch_name: str | None = None,
+    ) -> None:
+        event_worktree_path = worktree_path or ""
+        head_before = get_head_commit(Path(worktree_path)) if worktree_path else None
+        request_events = await handle_request_run_worktree_reset(
+            RequestRunWorktreeResetCommand(
+                run_id=run_id,
+                worktree_path=event_worktree_path,
+                reset_type=reset_type,
+                target_ref=target_ref,
+                branch_name=branch_name,
+                head_before=head_before,
+                reason=reason,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(request_events[0])
+        await commit_with_event_outbox(self._session)
+
+        try:
+            if not worktree_path:
+                raise WorktreeResetError("", "run has no worktree_path")
+            if reset_type == "discard_changes":
+                result = reset_worktree_changes(worktree_path)
+            else:
+                if target_ref is None:
+                    raise WorktreeResetError(worktree_path, "target_ref is required")
+                if branch_name is None:
+                    raise WorktreeResetError(worktree_path, "branch_name is required")
+                result = reset_worktree_to_ref(
+                    worktree_path,
+                    branch_name=branch_name,
+                    target_ref=target_ref,
+                )
+        except WorktreeResetError as exc:
+            failed_events = await handle_fail_run_worktree_reset(
+                FailRunWorktreeResetCommand(
+                    run_id=run_id,
+                    worktree_path=event_worktree_path,
+                    reset_type=reset_type,
+                    error=str(exc),
+                    target_ref=target_ref,
+                    branch_name=branch_name,
+                    head_before=head_before,
+                    reason=reason,
+                ),
+                self._store_v2,
+                self._session,
+            )
+            self._event_emitter.notify_persisted(failed_events[0])
+            await commit_with_event_outbox(self._session)
+            raise
+
+        complete_events = await handle_complete_run_worktree_reset(
+            CompleteRunWorktreeResetCommand(
+                run_id=run_id,
+                worktree_path=event_worktree_path,
+                reset_type=reset_type,
+                target_ref=target_ref,
+                branch_name=branch_name,
+                head_before=result.head_before,
+                head_after=result.head_after,
+                reason=reason,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(complete_events[0])
+        await commit_with_event_outbox(self._session)
+
+    async def _run_event_sourced_worktree_commit(
+        self,
+        *,
+        run_id: str,
+        task_id: str,
+        attempt_id: str | None,
+        worktree_path: str,
+        message: str,
+        commit_type: str,
+        reason: str,
+    ) -> str | None:
+        path = Path(worktree_path)
+        if not path.exists() or not path.is_dir():
+            head_before = None
+        else:
+            head_before = get_head_commit(path)
+        request_events = await handle_request_run_worktree_commit(
+            RequestRunWorktreeCommitCommand(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                worktree_path=worktree_path,
+                commit_type=commit_type,
+                message=message,
+                reason=reason,
+                head_before=head_before,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(request_events[0])
+        await commit_with_event_outbox(self._session)
+
+        if path.exists() and path.is_dir() and head_before is None:
+            complete_events = await handle_complete_run_worktree_commit(
+                CompleteRunWorktreeCommitCommand(
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    worktree_path=worktree_path,
+                    commit_type=commit_type,
+                    message=message,
+                    created_commit=False,
+                    reason=reason,
+                    head_before=None,
+                    head_after=None,
+                    commit_sha=None,
+                ),
+                self._store_v2,
+                self._session,
+            )
+            self._event_emitter.notify_persisted(complete_events[0])
+            await commit_with_event_outbox(self._session)
+            return None
+
+        try:
+            result = commit_uncommitted_changes_or_raise(path, message)
+        except WorktreeCommitError as exc:
+            failed_events = await handle_fail_run_worktree_commit(
+                FailRunWorktreeCommitCommand(
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    worktree_path=worktree_path,
+                    commit_type=commit_type,
+                    message=message,
+                    error=str(exc),
+                    reason=reason,
+                    head_before=head_before,
+                ),
+                self._store_v2,
+                self._session,
+            )
+            self._event_emitter.notify_persisted(failed_events[0])
+            await commit_with_event_outbox(self._session)
+            raise
+
+        complete_events = await handle_complete_run_worktree_commit(
+            CompleteRunWorktreeCommitCommand(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                worktree_path=worktree_path,
+                commit_type=commit_type,
+                message=message,
+                created_commit=result.created_commit,
+                reason=reason,
+                head_before=result.head_before,
+                head_after=result.head_after,
+                commit_sha=result.commit_sha,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(complete_events[0])
+        await commit_with_event_outbox(self._session)
+        return result.head_after
 
     async def recover_run(
         self,
@@ -878,6 +1412,12 @@ class WorkflowService:
             raise TaskNotFoundError(run_id, target_task_id)
 
         downstream = ordered_tasks[target_idx + 1 :]
+        target_original_status = target_task.status
+        downstream_original_status_by_id = {task.id: task.status for _, _, task in downstream}
+        original_status = run.status
+        rewind_from_step_index = max(
+            [target_step_index, *(step_index for step_index, _, _ in downstream)]
+        )
 
         # Capture restore point: the commit immediately before the target task's
         # first attempt ran. Use start_commit of the first attempt when available;
@@ -894,6 +1434,21 @@ class WorkflowService:
                         break
                 if restore_commit:
                     break
+
+        # Restore worktree to the commit before the target task's first attempt,
+        # so the branch is in the same state as when the task was first queued.
+        # When reset_branch=False the branch is left as-is ("carry on" mode).
+        if reset_branch and run.worktree_path:
+            target_ref = restore_commit or run.source_branch
+            if target_ref is not None:
+                await self._run_event_sourced_worktree_reset(
+                    run_id=run_id,
+                    worktree_path=run.worktree_path,
+                    reset_type="checkout_ref",
+                    target_ref=target_ref,
+                    branch_name=f"orchestrator/run-{run.id}",
+                    reason="recovery_reset_branch",
+                )
 
         now = self._clock.now()
 
@@ -949,26 +1504,81 @@ class WorkflowService:
         run.current_step_index = target_step_index
         run.status = RunStatus.PAUSED
         run.pause_reason = "recovered"
+        run.last_error = None
         run.completed_at = None
         run.updated_at = now
 
+        events_to_emit: list[WorkflowEvent] = [
+            RunStepBackward(
+                timestamp=now,
+                run_id=run_id,
+                event_type="run_step_backward",
+                from_step_index=rewind_from_step_index,
+                to_step_index=target_step_index,
+                reason="recovered",
+            ),
+            TaskReverted(
+                timestamp=now,
+                run_id=run_id,
+                event_type="task_reverted",
+                task_id=target_task.id,
+                reverted_from_status=target_original_status,
+                task_snapshot=target_task.model_dump(mode="json"),
+            ),
+        ]
+        for _, _, task in downstream:
+            events_to_emit.append(
+                TaskReverted(
+                    timestamp=now,
+                    run_id=run_id,
+                    event_type="task_reverted",
+                    task_id=task.id,
+                    reverted_from_status=downstream_original_status_by_id[task.id],
+                    task_snapshot=task.model_dump(mode="json"),
+                )
+            )
+
+        old_agent = run.agent_runner_type
+        old_agent_runner_config = run.agent_runner_config or {}
+        new_agent = agent_runner_type if agent_runner_type is not None else old_agent
+        new_agent_runner_config = (
+            agent_runner_config if agent_runner_config is not None else old_agent_runner_config
+        )
         if agent_runner_type is not None:
             run.agent_runner_type = agent_runner_type
         if agent_runner_config is not None:
             run.agent_runner_config = agent_runner_config
 
-        # Restore worktree to the commit before the target task's first attempt,
-        # so the branch is in the same state as when the task was first queued.
-        # When reset_branch=False the branch is left as-is ("carry on" mode).
-        if reset_branch and run.worktree_path:
-            restored = False
-            if restore_commit:
-                restored = self._checkout_on_branch(run.worktree_path, run.id, restore_commit)
-            if not restored and run.source_branch:
-                self._checkout_on_branch(run.worktree_path, run.id, run.source_branch)
+        if (
+            old_agent != new_agent or old_agent_runner_config != new_agent_runner_config
+        ) and new_agent is not None:
+            events_to_emit.append(
+                AgentChangedEvent(
+                    timestamp=now,
+                    run_id=run_id,
+                    event_type="agent_changed",
+                    old_agent=old_agent or AgentRunnerType.CLI_SUBPROCESS,
+                    new_agent=new_agent,
+                    old_agent_runner_config=old_agent_runner_config,
+                    new_agent_runner_config=new_agent_runner_config,
+                    reason="user_changed_on_recovery",
+                )
+            )
 
-        await self._repo.save(run)
-        await self._session.commit()
+        events_to_emit.append(
+            RunStatusChanged(
+                timestamp=now,
+                run_id=run_id,
+                event_type="run_status_changed",
+                old_status=original_status,
+                new_status=RunStatus.PAUSED,
+                pause_reason="recovered",
+                last_error=None,
+            )
+        )
+
+        await self._event_emitter.emit_batch(events_to_emit)
+        await commit_with_event_outbox(self._session)
 
         return RecoveryResult(
             run_id=run.id,
@@ -1016,12 +1626,6 @@ class WorkflowService:
                 if len(task.attempts) >= 2:
                     attempt.start_commit = task.attempts[-2].start_commit
 
-            # Reset worktree to start_commit to undo the failed builder's changes.
-            if len(task.attempts) >= 2:
-                prev_attempt = task.attempts[-2]
-                if prev_attempt.start_commit and run.worktree_path:
-                    self._checkout_on_branch(run.worktree_path, run.id, prev_attempt.start_commit)
-
         elif task.status == TaskStatus.VERIFYING:
             # Clear grades and grade_reasons (keep checklist status from builder)
             for item in task.checklist:
@@ -1046,19 +1650,17 @@ class WorkflowService:
     def _checkout_on_branch(self, worktree_path: str, run_id: str, commit_sha: str) -> bool:
         """Move the run's branch to a commit without detaching HEAD."""
         import logging
-        import subprocess
 
         branch_name = f"orchestrator/run-{run_id}"
-        result = subprocess.run(
-            ["git", "checkout", "-B", branch_name, commit_sha],
-            cwd=worktree_path,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
+        try:
+            reset_worktree_to_ref(
+                worktree_path,
+                branch_name=branch_name,
+                target_ref=commit_sha,
+            )
+        except WorktreeResetError as exc:
             logging.getLogger(__name__).warning(
-                f"Failed to checkout -B {branch_name} {commit_sha} "
-                f"in {worktree_path}: {result.stderr.strip()}"
+                f"Failed to checkout -B {branch_name} {commit_sha} in {worktree_path}: {exc}"
             )
             return False
         return True
@@ -1138,7 +1740,7 @@ class WorkflowService:
                 duplicate_decision,
             )
             await self._update_parent_oversight_facts(run.id, oversight_state)
-            await self._session.commit()
+            await commit_with_event_outbox(self._session)
             return existing_children
 
         # Find the task config with fan_out
@@ -1196,14 +1798,47 @@ class WorkflowService:
             children.append(child)
 
         # Persist children directly so concurrent child updates don't rewrite the full run graph.
-        await self._repo.create_fan_out_children(
-            parent_step.id,
-            children,
-            parent_status=TaskStatus.FAN_OUT_RUNNING,
+        await handle_create_fan_out_children(
+            CreateFanOutChildrenCommand(
+                run_id=run_id,
+                step_id=parent_step.id,
+                parent_task_id=task_id,
+                children=[
+                    {
+                        "id": child.id,
+                        "config_id": child.config_id,
+                        "title": child.title,
+                        "complexity": child.complexity or "standard",
+                        "order_index": child.fan_out_index
+                        if child.fan_out_index is not None
+                        else i,
+                        "checklist": [item.model_dump(mode="json") for item in child.checklist],
+                        "max_attempts": child.max_attempts,
+                        "has_verification": child.has_verification,
+                        "fan_out_index": child.fan_out_index,
+                        "fan_out_input": child.fan_out_input,
+                        "fan_out_output": child.fan_out_output,
+                        "child_id": child.child_id,
+                    }
+                    for i, child in enumerate(children)
+                ],
+                parent_new_status=TaskStatus.FAN_OUT_RUNNING,
+            ),
+            self._store_v2,
+            self._session,
         )
         if not children:
-            await self._repo.update_task_status(parent_task.id, TaskStatus.FAN_OUT_RUNNING)
-        await self._session.commit()
+            await handle_update_task_status(
+                UpdateTaskStatusCommand(
+                    run_id=run_id,
+                    task_id=task_id,
+                    old_status=parent_task.status,
+                    new_status=TaskStatus.FAN_OUT_RUNNING,
+                ),
+                self._store_v2,
+                self._session,
+            )
+        await commit_with_event_outbox(self._session)
 
         refreshed_run = await self._repo.get(run_id)
         refreshed_parent = self._find_task(refreshed_run, task_id)
@@ -1218,7 +1853,7 @@ class WorkflowService:
             refreshed_children,
         )
         await self._update_parent_oversight_facts(run_id, oversight_state)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
         # Emit FanOutSpawned parent aggregation event + ChildSpawned per-child events.
         # Commit immediately so the write transaction is closed before concurrent child execution.
@@ -1245,7 +1880,7 @@ class WorkflowService:
                 for child in children
             ]
             await self._event_emitter.emit_batch(events_to_emit)
-            await self._session.commit()
+            await commit_with_event_outbox(self._session)
 
         logger.info(
             f"Run {run_id}: expanded fan-out task {task_id} into "
@@ -1264,10 +1899,8 @@ class WorkflowService:
     ) -> None:
         """Transition a fan-out parent task after all children finish.
 
-        Uses targeted SQL updates (not a full run merge) to avoid the
-        delete-orphan cascade corruption that occurs when session.merge() is
-        called on the full run graph while concurrent child sessions may still
-        be in flight or have just committed.
+        Uses event-sourced parent status, step completion, and run pause
+        updates to keep events_v2 replay aligned with the live read model.
 
         Args:
             run_id: The run ID
@@ -1276,7 +1909,7 @@ class WorkflowService:
             to_verifying: If True and all_passed, move to VERIFYING (for outer LLM verifier)
         """
         import logging
-        from orchestrator.workflow.events import StepCompleted
+        from orchestrator.workflow import StepCompleted
 
         logger = logging.getLogger(__name__)
 
@@ -1297,11 +1930,11 @@ class WorkflowService:
         # Load just the parent task model with its step and run.
         # Critically: get_task_model does NOT load sibling task rows, so there
         # is no TaskModel.attempts cascade to clobber when we flush.  This avoids
-        # the delete-orphan corruption that the old repo.save(run) / session.merge()
+        # the delete-orphan corruption that the old full-run merge
         # approach caused when concurrent child sessions had just committed.
         task_model = await self._repo.get_task_model(task_id)
 
-        old_status_value = task_model.status
+        old_status_value = str(getattr(task_model, "status"))
         completion_decision = self._fan_out_policy.decision_for_parent_completion(
             old_status_value,
             all_passed=all_passed,
@@ -1320,21 +1953,30 @@ class WorkflowService:
             )
 
         run_snapshot = await self._repo.get(run_id)
+        parent_step_snapshot: StepState | None = None
+        step_order_index = 0
+        for index, step in enumerate(run_snapshot.steps):
+            if any(task.id == task_id for task in step.tasks):
+                parent_step_snapshot = step
+                step_order_index = index
+                break
+        if parent_step_snapshot is None:
+            raise TaskNotFoundError(run_id, task_id)
         parent_snapshot = self._find_task(run_snapshot, task_id)
         child_snapshots = self._fan_out_children_for_parent(run_snapshot, task_id)
         facts, works = build_fan_out_facts(parent_snapshot, child_snapshots)
         aggregation_decision = self._fan_out_policy.reduce(facts.model_dump(), works, {})
         run_oversight_state = self._delegation_recorder.record_decision(
-            task_model.step.run.oversight_state or {},
+            run_snapshot.oversight_state,
             aggregation_decision,
         )
         if aggregation_decision.kind == "wait":
             await self._update_parent_oversight_facts(run_id, run_oversight_state)
-            await self._session.commit()
+            await commit_with_event_outbox(self._session)
             return
         if aggregation_decision.kind == "review":
             await self._update_parent_oversight_facts(run_id, run_oversight_state)
-            await self._session.commit()
+            await commit_with_event_outbox(self._session)
             raise InvalidTransitionError(
                 old_status_value,
                 "complete_fan_out_parent (fan-out state requires review)",
@@ -1359,24 +2001,8 @@ class WorkflowService:
         )
         await self._update_parent_oversight_facts(run_id, run_oversight_state)
 
-        step_id = task_model.step.id
-        step_order_index = task_model.step.order_index
-        old_run_status_value = task_model.step.run.status
-
-        # Apply targeted updates: task status, step completed, run status/pause.
-        task_model.status = new_status.value
-        # Only mark step complete when we reach a terminal status.
-        # VERIFYING is not terminal — the executor must still pick up this task
-        # and run the verifier agent. Prematurely setting completed=True here
-        # caused the executor's task-discovery loop to skip VERIFYING fan-out
-        # parents entirely, silently bypassing verification.
-        if new_status != TaskStatus.VERIFYING:
-            task_model.step.completed = True
-        if pause_run:
-            task_model.step.run.status = RunStatus.PAUSED.value
-            task_model.step.run.pause_reason = pause_reason
-        task_model.step.run.updated_at = self._clock.now()
-        await self._session.flush()
+        step_id = parent_step_snapshot.id
+        old_run_status_value = run_snapshot.status.value
 
         # Fetch child counts for the FanOutCompleted event via a targeted query.
         completed_count, failed_count = await self._repo.count_fan_out_children(task_id)
@@ -1403,14 +2029,18 @@ class WorkflowService:
                 completed_count=completed_count,
                 failed_count=failed_count,
             ),
-            StepCompleted(
-                timestamp=self._clock.now(),
-                run_id=run_id,
-                event_type="step_completed",
-                step_index=step_order_index,
-                step_id=step_id,
-            ),
         ]
+
+        if new_status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
+            events_to_emit.append(
+                StepCompleted(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="step_completed",
+                    step_index=step_order_index,
+                    step_id=step_id,
+                )
+            )
 
         if pause_run:
             events_to_emit.append(
@@ -1420,11 +2050,12 @@ class WorkflowService:
                     event_type="run_status_changed",
                     old_status=old_run_status,
                     new_status=RunStatus.PAUSED,
+                    pause_reason=pause_reason,
                 )
             )
 
         await self._event_emitter.emit_batch(events_to_emit)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
         logger.info(
             f"Run {run_id}: fan-out parent {task_id} transitioned "
@@ -1442,14 +2073,18 @@ class WorkflowService:
             for child in self._fan_out_children_for_parent(run_before, parent_task_id)
             if child.status == TaskStatus.FAILED
         ]
-        await self._repo.reset_fan_out_children(parent_task_id)
+        await handle_reset_fan_out_children(
+            ResetFanOutChildrenCommand(run_id=run_id, parent_task_id=parent_task_id),
+            self._store_v2,
+            self._session,
+        )
         if retry_children:
             run_after = await self._repo.get(run_id)
             state = dict(run_after.oversight_state)
             for child in retry_children:
                 state = self._record_fan_out_child_retry(state, child)
             await self._update_parent_oversight_facts(run_id, state)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
     async def retry_fan_out_child(self, run_id: str, child_task_id: str) -> Run:
         """Retry a single failed fan-out child task.
@@ -1466,12 +2101,17 @@ class WorkflowService:
         """
         run_before_retry = await self._repo.get(run_id)
         child_before_retry = self._find_task(run_before_retry, child_task_id)
-        # retry_fan_out_child does targeted updates on child, parent, and step
-        run_id_from_db, step_order_index = await self._repo.retry_fan_out_child(child_task_id)
-        assert run_id_from_db == run_id
-
-        # Rewind current_step_index if needed — targeted update on run row
-        await self._repo.rewind_step_index_if_needed(run_id, step_order_index)
+        child_model = await self._repo.get_task_model(child_task_id)
+        step_order_index = child_model.step.order_index
+        await handle_retry_fan_out_child(
+            RetryFanOutChildCommand(
+                run_id=run_id,
+                child_task_id=child_task_id,
+                step_order_index=step_order_index,
+            ),
+            self._store_v2,
+            self._session,
+        )
 
         # Pause the run if active so the executor restarts from the right step
         run = await self._repo.get(run_id)
@@ -1498,7 +2138,7 @@ class WorkflowService:
             ]
         )
 
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         # Return fresh run state after all changes committed
         return await self._repo.get(run_id)
 
@@ -1513,7 +2153,7 @@ class WorkflowService:
                 start_decision,
             )
             await self._update_parent_oversight_facts(run.id, oversight_state)
-            await self._session.commit()
+            await commit_with_event_outbox(self._session)
             if start_decision.reason == "run_not_active":
                 raise InvalidTransitionError(
                     run.status.value, "start_fan_out_parent (requires ACTIVE run)"
@@ -1534,7 +2174,7 @@ class WorkflowService:
                 start_decision,
             )
             await self._update_parent_oversight_facts(run.id, oversight_state)
-            await self._session.commit()
+            await commit_with_event_outbox(self._session)
             return task
 
         if task.status != TaskStatus.BUILDING:
@@ -1543,33 +2183,31 @@ class WorkflowService:
                 start_decision,
             )
             await self._update_parent_oversight_facts(run.id, oversight_state)
-            await self._session.commit()
+            await commit_with_event_outbox(self._session)
             raise InvalidTransitionError(
                 task.status.value,
                 "start_fan_out_parent (requires PENDING, BUILDING, or FAN_OUT_RUNNING)",
             )
 
-        await self._repo.update_task_status(task_id, TaskStatus.FAN_OUT_RUNNING)
-        await self._event_emitter.emit_batch(
-            [
-                TaskStatusChanged(
-                    timestamp=self._clock.now(),
-                    run_id=run_id,
-                    event_type="task_status_changed",
-                    task_id=task_id,
-                    old_status=TaskStatus.BUILDING,
-                    new_status=TaskStatus.FAN_OUT_RUNNING,
-                )
-            ]
+        status_events = await handle_update_task_status(
+            UpdateTaskStatusCommand(
+                run_id=run_id,
+                task_id=task_id,
+                old_status=TaskStatus.BUILDING,
+                new_status=TaskStatus.FAN_OUT_RUNNING,
+            ),
+            self._store_v2,
+            self._session,
         )
-        await self._session.commit()
+        self._event_emitter.notify_persisted_batch(status_events)
+        await commit_with_event_outbox(self._session)
         refreshed = await self._repo.get(run_id)
         oversight_state = self._delegation_recorder.record_decision(
             refreshed.oversight_state,
             start_decision,
         )
         await self._update_parent_oversight_facts(refreshed.id, oversight_state)
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return self._find_task(refreshed, task_id)
 
     async def start_fan_out_child_task(self, run_id: str, task_id: str) -> None:
@@ -1599,7 +2237,18 @@ class WorkflowService:
         attempt.agent_model = run.agent_runner_config.get("model")
         attempt.agent_settings = self._sanitize_agent_runner_config(run.agent_runner_config)
 
-        await self._repo.create_task_attempt(task_id, attempt, status=TaskStatus.BUILDING)
+        await handle_create_task_attempt(
+            CreateTaskAttemptCommand(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=attempt.id,
+                attempt_num=attempt.attempt_num,
+                runner_type=attempt.agent_runner_type.value if attempt.agent_runner_type else None,
+                agent_model=attempt.agent_model,
+            ),
+            self._store_v2,
+            self._session,
+        )
         await self._event_emitter.emit_batch(
             [
                 TaskStatusChanged(
@@ -1612,7 +2261,7 @@ class WorkflowService:
                 )
             ]
         )
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
     async def update_child_task_state(
         self,
@@ -1643,52 +2292,76 @@ class WorkflowService:
         # NOTE: Do NOT load the full run here.  Loading via self._repo.get()
         # pulls all child tasks into the session graph; if two children commit
         # concurrently, the second commit can overwrite the first child's
-        # status with stale values.  update_latest_attempt loads only the
-        # target task model, which avoids this clobber.
-        repo_updates: dict[str, Any] = {}
-        for key in ("outcome", "error", "completed_at", "auto_verify_results"):
-            if key in updates:
-                repo_updates[key] = updates[key]
-        if "status" in updates:
-            repo_updates["status"] = updates["status"]
-        await self._repo.update_latest_attempt(task_id, **repo_updates)
+        # status with stale values.  The attempt update command projects only
+        # the target attempt and task status, which avoids this clobber.
+        task_result = await self._session.execute(
+            select(TaskModel.current_attempt).where(TaskModel.id == task_id)
+        )
+        current_attempt = task_result.scalar_one_or_none()
+        if current_attempt is None:
+            raise TaskNotFoundError("unknown", task_id)
+
+        attempt_result = await self._session.execute(
+            select(AttemptModel.id)
+            .where(AttemptModel.task_id == task_id)
+            .order_by(AttemptModel.attempt_num.desc())
+            .limit(1)
+        )
+        latest_attempt_id = attempt_result.scalar_one_or_none()
+        completed_at = updates.get("completed_at")
+        if isinstance(completed_at, datetime):
+            completed_at = completed_at.isoformat()
+        await handle_update_latest_attempt(
+            UpdateLatestAttemptCommand(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=latest_attempt_id or "",
+                error=updates.get("error") if "error" in updates else None,
+                outcome=updates.get("outcome") if "outcome" in updates else None,
+                completed_at=completed_at if "completed_at" in updates else None,
+                auto_verify_results=updates.get("auto_verify_results")
+                if "auto_verify_results" in updates
+                else None,
+                new_task_status=updates.get("status") if "status" in updates else None,
+            ),
+            self._store_v2,
+            self._session,
+        )
 
         # Flush child lifecycle events in the same transaction to avoid extra write
         # contention in concurrent fan-out (all DB writes committed atomically below).
         if parent_task_id is not None and "status" in updates:
             new_status = updates["status"]
-            task_model = await self._repo.get_task_model(task_id)
-            attempt_num = task_model.current_attempt
             if new_status == TaskStatus.COMPLETED:
-                await self._event_store.append(
-                    ChildCompleted(
-                        timestamp=self._clock.now(),
-                        run_id=run_id,
-                        event_type="child_completed",
-                        parent_task_id=parent_task_id,
-                        child_task_id=task_id,
-                        child_id=child_id,
-                        fan_out_index=fan_out_index,
-                        attempt_num=attempt_num,
-                        fan_out_output=fan_out_output,
-                    )
+                event = ChildCompleted(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="child_completed",
+                    parent_task_id=parent_task_id,
+                    child_task_id=task_id,
+                    child_id=child_id,
+                    fan_out_index=fan_out_index,
+                    attempt_num=current_attempt,
+                    fan_out_output=fan_out_output,
                 )
+                await self._store_v2.append([event])
+                self._event_emitter.notify_persisted(event)
             elif new_status == TaskStatus.FAILED:
-                await self._event_store.append(
-                    ChildFailed(
-                        timestamp=self._clock.now(),
-                        run_id=run_id,
-                        event_type="child_failed",
-                        parent_task_id=parent_task_id,
-                        child_task_id=task_id,
-                        child_id=child_id,
-                        fan_out_index=fan_out_index,
-                        attempt_num=attempt_num,
-                        error=updates.get("error"),
-                    )
+                event = ChildFailed(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="child_failed",
+                    parent_task_id=parent_task_id,
+                    child_task_id=task_id,
+                    child_id=child_id,
+                    fan_out_index=fan_out_index,
+                    attempt_num=current_attempt,
+                    error=updates.get("error"),
                 )
+                await self._store_v2.append([event])
+                self._event_emitter.notify_persisted(event)
 
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
     async def start_task(self, run_id: str, task_id: str) -> TransitionResult:
         """Start building a task (PENDING -> BUILDING)."""
@@ -1886,7 +2559,7 @@ class WorkflowService:
             )
 
             if step_changed:
-                from orchestrator.workflow.events import StepCompleted
+                from orchestrator.workflow import StepCompleted
 
                 for i in range(prev_step_index, updated_run.current_step_index + 1):
                     step = updated_run.steps[i]
@@ -1979,9 +2652,14 @@ class WorkflowService:
             if project_path is not None:
                 # Auto-commit any uncommitted changes before running auto-verify
                 if run.worktree_path:
-                    commit_uncommitted_changes(
-                        Path(run.worktree_path),
-                        f"Auto-commit builder changes for task {task_id}",
+                    await self._run_event_sourced_worktree_commit(
+                        run_id=run_id,
+                        task_id=task_id,
+                        attempt_id=task.attempts[-1].id if task.attempts else None,
+                        worktree_path=run.worktree_path,
+                        message=f"Auto-commit builder changes for task {task_id}",
+                        commit_type="builder_submit",
+                        reason="pre_auto_verify",
                     )
 
                 av_results = await run_auto_verify(
@@ -2069,14 +2747,18 @@ class WorkflowService:
         end_commit: str | None = None
         task_pre = state.get_task(run_id, task_id)
         if run.worktree_path and task_pre.attempts:
-            worktree_path_obj = Path(run.worktree_path)
             # Auto-commit any uncommitted changes left by the builder agent.
             # Some CLI agents (e.g. codex) may not commit their work, and the
             # verifier's git checkout of end_commit would destroy those changes.
-            commit_uncommitted_changes(
-                worktree_path_obj, f"Auto-commit builder changes for task {task_id}"
+            end_commit = await self._run_event_sourced_worktree_commit(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=task_pre.attempts[-1].id,
+                worktree_path=run.worktree_path,
+                message=f"Auto-commit builder changes for task {task_id}",
+                commit_type="builder_submit",
+                reason="submit_for_verification",
             )
-            end_commit = get_head_commit(worktree_path_obj)
 
         try:
             result = engine.submit_for_verification(run_id, task_id, end_commit=end_commit)
@@ -2263,9 +2945,14 @@ class WorkflowService:
             project_path = _resolve_working_path(run)
             if project_path is not None:
                 if run.worktree_path:
-                    commit_uncommitted_changes(
-                        Path(run.worktree_path),
-                        f"Auto-commit builder changes for task {task_id}",
+                    await self._run_event_sourced_worktree_commit(
+                        run_id=run_id,
+                        task_id=task_id,
+                        attempt_id=task.attempts[-1].id if task.attempts else None,
+                        worktree_path=run.worktree_path,
+                        message=f"Auto-commit builder changes for task {task_id}",
+                        commit_type="builder_submit",
+                        reason="check_submission_pre_auto_verify",
                     )
 
                 av_results = await run_auto_verify(
@@ -2377,11 +3064,15 @@ class WorkflowService:
 
         end_commit: str | None = None
         if run.worktree_path and task.attempts:
-            worktree_path_obj = Path(run.worktree_path)
-            commit_uncommitted_changes(
-                worktree_path_obj, f"Auto-commit builder changes for task {task_id}"
+            end_commit = await self._run_event_sourced_worktree_commit(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id=task.attempts[-1].id,
+                worktree_path=run.worktree_path,
+                message=f"Auto-commit builder changes for task {task_id}",
+                commit_type="builder_submit",
+                reason="apply_submission",
             )
-            end_commit = get_head_commit(worktree_path_obj)
 
         try:
             result = engine.submit_for_verification(run_id, task_id, end_commit=end_commit)
@@ -2845,6 +3536,8 @@ class WorkflowService:
                     event_type="run_status_changed",
                     old_status=old_status,
                     new_status=run.status,
+                    pause_reason=run.pause_reason,
+                    last_error=run.last_error,
                 )
             )
 
@@ -2921,26 +3614,184 @@ class WorkflowService:
 
     async def create_run(self, run: Run) -> Run:
         """Persist a new run."""
-        await self._repo.save(run)
-        await self._session.commit()
-        return run
+        await handle_create_run(
+            build_create_run_command(run),
+            self._store_v2,
+            self._session,
+        )
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run.id)
 
     async def set_worktree_path(
         self, run_id: str, worktree_path: str, source_branch_sha: str | None = None
     ) -> Run:
         """Set the worktree path on a run after worktree creation."""
+        await handle_update_run_worktree(
+            UpdateRunWorktreeCommand(
+                run_id=run_id,
+                worktree_path=worktree_path,
+                source_branch_sha=source_branch_sha,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
+
+    async def request_worktree_creation(
+        self, run_id: str, repo_name: str, source_branch: str
+    ) -> Run:
+        """Record that worktree setup is being attempted for a run."""
+        await handle_request_run_worktree_creation(
+            RequestRunWorktreeCreationCommand(
+                run_id=run_id,
+                repo_name=repo_name,
+                source_branch=source_branch,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
+
+    async def request_worktree_reset(
+        self,
+        run_id: str,
+        *,
+        worktree_path: str,
+        reset_type: str,
+        target_ref: str | None = None,
+        branch_name: str | None = None,
+        head_before: str | None = None,
+        reason: str | None = None,
+    ) -> Run:
+        """Record that a destructive worktree reset is being attempted."""
+        await handle_request_run_worktree_reset(
+            RequestRunWorktreeResetCommand(
+                run_id=run_id,
+                worktree_path=worktree_path,
+                reset_type=reset_type,
+                target_ref=target_ref,
+                branch_name=branch_name,
+                head_before=head_before,
+                reason=reason,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
+
+    async def complete_worktree_reset(
+        self,
+        run_id: str,
+        *,
+        worktree_path: str,
+        reset_type: str,
+        target_ref: str | None = None,
+        branch_name: str | None = None,
+        head_before: str | None = None,
+        head_after: str | None = None,
+        reason: str | None = None,
+    ) -> Run:
+        """Record that a destructive worktree reset completed."""
+        await handle_complete_run_worktree_reset(
+            CompleteRunWorktreeResetCommand(
+                run_id=run_id,
+                worktree_path=worktree_path,
+                reset_type=reset_type,
+                target_ref=target_ref,
+                branch_name=branch_name,
+                head_before=head_before,
+                head_after=head_after,
+                reason=reason,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
+
+    async def fail_worktree_reset(
+        self,
+        run_id: str,
+        *,
+        worktree_path: str,
+        reset_type: str,
+        error: str,
+        target_ref: str | None = None,
+        branch_name: str | None = None,
+        head_before: str | None = None,
+        reason: str | None = None,
+    ) -> Run:
+        """Record a destructive worktree reset failure and keep the run paused."""
         run = await self._repo.get(run_id)
-        run.worktree_path = worktree_path
-        if source_branch_sha is not None:
-            run.source_branch_sha = source_branch_sha
-        await self._repo.save(run)
-        await self._session.commit()
-        return run
+        message = f"Worktree reset failed: {error}"
+        await handle_fail_run_worktree_reset(
+            FailRunWorktreeResetCommand(
+                run_id=run_id,
+                worktree_path=worktree_path,
+                reset_type=reset_type,
+                error=message,
+                target_ref=target_ref,
+                branch_name=branch_name,
+                head_before=head_before,
+                reason=reason,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        status_events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=run.status,
+                new_status=RunStatus.PAUSED,
+                pause_reason="worktree_reset_failed",
+                last_error=message,
+                timestamp=self._clock.now(),
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(status_events[0])
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
+
+    async def fail_worktree_creation(self, run_id: str, error: str) -> Run:
+        """Record worktree setup failure and keep the run out of ACTIVE."""
+        run = await self._repo.get(run_id)
+        message = f"Worktree setup failed before agent spawn: {error}"
+        await handle_fail_run_worktree_creation(
+            FailRunWorktreeCreationCommand(run_id=run_id, error=message),
+            self._store_v2,
+            self._session,
+        )
+        status_events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=run.status,
+                new_status=RunStatus.PAUSED,
+                pause_reason="worktree_setup_failed",
+                last_error=message,
+                timestamp=self._clock.now(),
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(status_events[0])
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
 
     async def delete_run(self, run_id: str) -> None:
         """Delete a run."""
-        await self._repo.delete(run_id)
-        await self._session.commit()
+        await self._repo.get(run_id)
+        events = await handle_delete_run(
+            DeleteRunCommand(run_id=run_id),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
 
     async def update_checklist_item(
         self,
@@ -2967,10 +3818,24 @@ class WorkflowService:
             )
 
         resolved_req_id = self._resolve_req_id(run_id, task, req_id)
-        item = state.update_checklist_item(run_id, task_id, resolved_req_id, status, note)
-        await self._repo.save(state.get_run(run_id))
-        await self._session.commit()
-        return item
+        await handle_update_checklist_item(
+            UpdateChecklistItemCommand(
+                run_id=run_id,
+                task_id=task_id,
+                req_id=resolved_req_id,
+                status=status,
+                note=note,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        await commit_with_event_outbox(self._session)
+        reloaded = await self._repo.get(run_id)
+        updated_task = self._find_task(reloaded, task_id)
+        for item in updated_task.checklist:
+            if item.req_id == resolved_req_id:
+                return item
+        raise ChecklistItemNotFoundError(run_id, task_id, resolved_req_id)
 
     async def escalate_requirement(
         self,
@@ -3041,16 +3906,27 @@ class WorkflowService:
 
         resolved_req_id = self._resolve_req_id(run_id, task, req_id)
 
-        for item in task.checklist:
-            if item.req_id == resolved_req_id:
-                item.grade = grade
-                if grade_reason is not None:
-                    item.grade_reason = grade_reason
-                await self._repo.save(state.get_run(run_id))
-                await self._session.commit()
-                return item
+        if not any(item.req_id == resolved_req_id for item in task.checklist):
+            raise ChecklistItemNotFoundError(run_id, task_id, req_id)
 
-        raise ChecklistItemNotFoundError(run_id, task_id, req_id)
+        await handle_set_checklist_grade(
+            SetChecklistGradeCommand(
+                run_id=run_id,
+                task_id=task_id,
+                req_id=resolved_req_id,
+                grade=grade,
+                grade_reason=grade_reason,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        await commit_with_event_outbox(self._session)
+        reloaded = await self._repo.get(run_id)
+        updated_task = self._find_task(reloaded, task_id)
+        for item in updated_task.checklist:
+            if item.req_id == resolved_req_id:
+                return item
+        raise ChecklistItemNotFoundError(run_id, task_id, resolved_req_id)
 
     # --- Helper methods ---
 
@@ -3158,23 +4034,21 @@ class WorkflowService:
         if not result.success:
             raise InvalidTransitionError(old_status.value, result.new_status.value)
 
-        # Persist
-        await self._repo.create_clarification_request(request)
-        await self._repo.save(run)
-
-        # Emit event
-        await self._event_emitter.emit(
-            ClarificationRequested(
-                timestamp=self._clock.now(),
+        events = await handle_record_clarification_request(
+            RecordClarificationRequestCommand(
                 run_id=run_id,
-                event_type="clarification_requested",
                 task_id=task_id,
                 request_id=request.id,
-                question_count=len(questions),
-            )
+                attempt_num=request.attempt_num,
+                questions=[q.model_dump(mode="json") for q in questions],
+                requested_at=request.created_at,
+            ),
+            self._store_v2,
+            self._session,
         )
 
-        await self._session.commit()
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
 
         return request
 
@@ -3210,9 +4084,6 @@ class WorkflowService:
             answers=answers,
             responded_at=now,
         )
-
-        # Save response
-        await self._repo.save_clarification_response(response)
 
         # --- Write clarification Q&A to artifact file ---
         # Determine artifact path from routine config
@@ -3307,20 +4178,42 @@ class WorkflowService:
             if not result.success:
                 raise InvalidTransitionError(old_status.value, result.new_status.value)
 
-        await self._repo.save(run)
+        # Compress Q&A into compact decisions (pure function, always available).
+        # Raw Q&A is archived in the artifact file; decisions are the compact form
+        # passed downstream to prompt assembly and persisted as a run config delta.
+        compressed: CompressedDecisions = compress_clarifications(request, response)
+        run_config_delta: dict[str, Any] = {}
+        if compressed.decisions:
+            run_config_delta = {
+                "_compressed_decisions": [
+                    {
+                        "question": d.question,
+                        "decision": d.decision,
+                        "rationale": d.rationale,
+                    }
+                    for d in compressed.decisions
+                ],
+                "_compressed_decisions_request_id": compressed.source_request_id,
+            }
 
-        # Emit event
-        await self._event_emitter.emit(
-            ClarificationResponded(
-                timestamp=self._clock.now(),
+        events = await handle_record_clarification_response(
+            RecordClarificationResponseCommand(
                 run_id=run_id,
-                event_type="clarification_responded",
                 task_id=task_id,
                 request_id=request_id,
-            )
+                response_id=str(uuid4()),
+                answers=[answer.model_dump(mode="json") for answer in answers],
+                responded_by=responded_by,
+                responded_at=now,
+                new_status=result.new_status,
+                run_config_delta=run_config_delta,
+            ),
+            self._store_v2,
+            self._session,
         )
+        self._event_emitter.notify_persisted(events[0])
 
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
         # Build builder prompt with clarification context for downstream use
         task_config_obj: TaskConfig | None = None
@@ -3336,33 +4229,16 @@ class WorkflowService:
                 if task_config_obj is not None:
                     break
 
-        # Compress Q&A into compact decisions (pure function, always available).
-        # Raw Q&A is archived in the artifact file; decisions are the compact form
-        # passed downstream to prompt assembly.
-        compressed: CompressedDecisions = compress_clarifications(request, response)
-
-        # Persist compressed decisions in run.config so executor and prompt
-        # endpoint can reconstruct them without re-querying clarification history.
-        if compressed.decisions:
-            run.config["_compressed_decisions"] = [
-                {
-                    "question": d.question,
-                    "decision": d.decision,
-                    "rationale": d.rationale,
-                }
-                for d in compressed.decisions
-            ]
-            run.config["_compressed_decisions_request_id"] = compressed.source_request_id
-            await self._repo.save(run)
-
         if task_config_obj is not None:
             clarifications_path: str | None = (
                 str(artifact_path) if artifact_path is not None else None
             )
+            prompt_config = dict(run.config)
+            prompt_config.update(run_config_delta)
             generate_builder_prompt(
                 task_config_obj,
                 task,
-                run.config,
+                prompt_config,
                 step_context=step_context_str,
                 clarifications_path=clarifications_path,
                 clarification_line_range=clarification_line_range,
@@ -3411,23 +4287,26 @@ class WorkflowService:
         if not result.success:
             raise InvalidTransitionError(old_status.value, result.new_status.value)
 
-        await self._repo.save(run)
-
-        # Emit event
-        await self._event_emitter.emit(
-            ApprovalDecision(
-                timestamp=self._clock.now(),
+        events = await handle_record_approval_decision(
+            RecordApprovalDecisionCommand(
                 run_id=run_id,
-                event_type="approval_decision",
                 task_id=task_id,
                 step_id=step.id,
                 approved=True,
                 comment=comment,
                 decided_by=approved_by,
-            )
+                decided_at=now,
+                new_status=result.new_status,
+                current_attempt=task.current_attempt,
+                checklist=[item.model_dump(mode="json") for item in task.checklist],
+                attempt_snapshots=[attempt.model_dump(mode="json") for attempt in task.attempts],
+            ),
+            self._store_v2,
+            self._session,
         )
+        self._event_emitter.notify_persisted(events[0])
 
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
         return result
 
@@ -3453,23 +4332,26 @@ class WorkflowService:
         if not result.success:
             raise InvalidTransitionError(old_status.value, result.new_status.value)
 
-        await self._repo.save(run)
-
-        # Emit event
-        await self._event_emitter.emit(
-            ApprovalDecision(
-                timestamp=self._clock.now(),
+        events = await handle_record_approval_decision(
+            RecordApprovalDecisionCommand(
                 run_id=run_id,
-                event_type="approval_decision",
                 task_id=task_id,
                 step_id=step.id,
                 approved=False,
                 comment=reason,
                 decided_by=rejected_by,
-            )
+                decided_at=now,
+                new_status=result.new_status,
+                current_attempt=task.current_attempt,
+                checklist=[item.model_dump(mode="json") for item in task.checklist],
+                attempt_snapshots=[attempt.model_dump(mode="json") for attempt in task.attempts],
+            ),
+            self._store_v2,
+            self._session,
         )
+        self._event_emitter.notify_persisted(events[0])
 
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
         return result
 
@@ -3524,7 +4406,7 @@ class WorkflowService:
             )
         )
 
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
 
         # env_lifecycle hooks (same as complete_verification)
         if (
@@ -3700,36 +4582,37 @@ class WorkflowService:
                 f"[RECOVERY PROMPT]\n\n{recovery_prompt.system}\n\n{recovery_prompt.user}"
             )
 
-        # Pause the run
-        if run.status == RunStatus.ACTIVE:
-            run.status = RunStatus.PAUSED
-            run.pause_reason = "recovery_triggered"
+        old_run_status = run.status
+        should_pause_run = old_run_status == RunStatus.ACTIVE
 
-        run.updated_at = self._clock.now()
-        await self._repo.save(run)
-
-        # Emit events
-        await self._event_emitter.emit(
-            TaskStatusChanged(
-                timestamp=self._clock.now(),
-                run_id=run_id,
-                event_type="task_status_changed",
-                task_id=task_id,
-                old_status=old_status,
-                new_status=TaskStatus.RECOVERING,
-            )
+        task_event = TaskStatusChanged(
+            timestamp=self._clock.now(),
+            run_id=run_id,
+            event_type="task_status_changed",
+            task_id=task_id,
+            old_status=old_status,
+            new_status=TaskStatus.RECOVERING,
+            current_attempt=task.current_attempt,
+            attempt_snapshots=[attempt.model_dump(mode="json") for attempt in task.attempts],
         )
-        await self._event_emitter.emit(
-            RunStatusChanged(
-                timestamp=self._clock.now(),
-                run_id=run_id,
-                event_type="run_status_changed",
-                old_status=RunStatus.ACTIVE,
-                new_status=RunStatus.PAUSED,
+        events_to_emit: list[WorkflowEvent] = [
+            task_event,
+            *self._explicit_attempt_updates_from_snapshots(task_event),
+        ]
+        if should_pause_run:
+            events_to_emit.append(
+                RunStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="run_status_changed",
+                    old_status=old_run_status,
+                    new_status=RunStatus.PAUSED,
+                    pause_reason="recovery_triggered",
+                )
             )
-        )
 
-        await self._session.commit()
+        await self._event_emitter.emit_batch(events_to_emit)
+        await commit_with_event_outbox(self._session)
         logger.info(
             f"Recovery triggered for task {task_id} in run {run_id}: {failure_context[:100]}"
         )
@@ -3777,27 +4660,38 @@ class WorkflowService:
                 if prev_end:
                     attempt.start_commit = prev_end
 
-        # Resume the run if paused
-        if run.status == RunStatus.PAUSED:
-            run.status = RunStatus.ACTIVE
-            run.pause_reason = None
+        old_run_status = run.status
+        should_resume_run = old_run_status == RunStatus.PAUSED
 
-        run.updated_at = self._clock.now()
-        await self._repo.save(run)
-
-        # Emit events
-        await self._event_emitter.emit(
-            TaskStatusChanged(
-                timestamp=self._clock.now(),
-                run_id=run_id,
-                event_type="task_status_changed",
-                task_id=task_id,
-                old_status=old_status,
-                new_status=TaskStatus.BUILDING,
-            )
+        task_event = TaskStatusChanged(
+            timestamp=self._clock.now(),
+            run_id=run_id,
+            event_type="task_status_changed",
+            task_id=task_id,
+            old_status=old_status,
+            new_status=TaskStatus.BUILDING,
+            current_attempt=task.current_attempt,
+            attempt_snapshots=[attempt.model_dump(mode="json") for attempt in task.attempts],
         )
+        events_to_emit: list[WorkflowEvent] = [
+            task_event,
+            *self._explicit_attempt_updates_from_snapshots(task_event),
+        ]
+        if should_resume_run:
+            events_to_emit.append(
+                RunStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="run_status_changed",
+                    old_status=old_run_status,
+                    new_status=RunStatus.ACTIVE,
+                    pause_reason=None,
+                    last_error=None,
+                )
+            )
 
-        await self._session.commit()
+        await self._event_emitter.emit_batch(events_to_emit)
+        await commit_with_event_outbox(self._session)
         return result
 
     async def complete_recovery_skip(
@@ -3823,22 +4717,51 @@ class WorkflowService:
             raise InvalidTransitionError(task.status.value, TaskStatus.COMPLETED.value)
 
         old_status = task.status
+        now = self._clock.now()
         task.status = TaskStatus.COMPLETED
         if task.attempts:
             task.attempts[-1].outcome = "skipped"
             task.attempts[-1].verifier_comment = notes
-            task.attempts[-1].completed_at = self._clock.now()
+            task.attempts[-1].completed_at = now
 
-        # Resume the run if paused
+        task_event = TaskStatusChanged(
+            timestamp=now,
+            run_id=run_id,
+            event_type="task_status_changed",
+            task_id=task_id,
+            old_status=old_status,
+            new_status=TaskStatus.COMPLETED,
+            current_attempt=task.current_attempt,
+            attempt_snapshots=[attempt.model_dump(mode="json") for attempt in task.attempts],
+        )
+        events_to_emit: list[WorkflowEvent] = [
+            task_event,
+            *self._explicit_attempt_updates_from_snapshots(task_event),
+        ]
+
+        old_run_status = run.status
         if run.status == RunStatus.PAUSED:
             run.status = RunStatus.ACTIVE
             run.pause_reason = None
+            run.last_error = None
+            events_to_emit.append(
+                RunStatusChanged(
+                    timestamp=now,
+                    run_id=run_id,
+                    event_type="run_status_changed",
+                    old_status=old_run_status,
+                    new_status=RunStatus.ACTIVE,
+                    pause_reason=None,
+                    last_error=None,
+                )
+            )
 
         # Check step progression to advance to next task
         from orchestrator.workflow.engine.transitions import (
             check_step_progression,
             check_run_completion,
         )
+        from orchestrator.workflow import StepCompleted
 
         # Load routine config if available for condition evaluation
         routine_config = None
@@ -3849,32 +4772,49 @@ class WorkflowService:
                 # If routine config can't be loaded, continue without condition evaluation
                 pass
 
-        check_step_progression(
+        prev_step_index = run.current_step_index
+        buffer = BufferingEmitter()
+        step_changed = check_step_progression(
             run,
             routine_config=routine_config,
             clock=self._clock,
-            emitter=None,  # Async emitter not compatible with sync protocol
+            emitter=buffer,
             worktree_path=None,  # Not available in this context
             run_config=run.config,
         )
-        check_run_completion(run, self._clock.now())
+        events_to_emit.extend(buffer.drain())
+        if step_changed:
+            last_step_index = min(run.current_step_index, len(run.steps) - 1)
+            for i in range(prev_step_index, last_step_index + 1):
+                step = run.steps[i]
+                if step.completed:
+                    events_to_emit.append(
+                        StepCompleted(
+                            timestamp=self._clock.now(),
+                            run_id=run_id,
+                            event_type="step_completed",
+                            step_index=i,
+                            step_id=step.id,
+                        )
+                    )
 
-        run.updated_at = self._clock.now()
-        await self._repo.save(run)
-
-        # Emit events
-        await self._event_emitter.emit(
-            TaskStatusChanged(
-                timestamp=self._clock.now(),
-                run_id=run_id,
-                event_type="task_status_changed",
-                task_id=task_id,
-                old_status=old_status,
-                new_status=TaskStatus.COMPLETED,
+        old_status_for_completion = run.status
+        new_run_status = check_run_completion(run, self._clock.now())
+        if new_run_status is not None:
+            events_to_emit.append(
+                RunStatusChanged(
+                    timestamp=self._clock.now(),
+                    run_id=run_id,
+                    event_type="run_status_changed",
+                    old_status=old_status_for_completion,
+                    new_status=new_run_status,
+                    pause_reason=run.pause_reason,
+                    last_error=run.last_error,
+                )
             )
-        )
 
-        await self._session.commit()
+        await self._event_emitter.emit_batch(events_to_emit)
+        await commit_with_event_outbox(self._session)
         return TransitionResult(success=True, new_status=TaskStatus.COMPLETED)
 
     async def complete_recovery_abandon(
@@ -3899,28 +4839,28 @@ class WorkflowService:
             raise InvalidTransitionError(task.status.value, TaskStatus.FAILED.value)
 
         old_status = task.status
+        now = self._clock.now()
         task.status = TaskStatus.FAILED
         if task.attempts:
             task.attempts[-1].outcome = "failed"
             task.attempts[-1].verifier_comment = notes
-            task.attempts[-1].completed_at = self._clock.now()
+            task.attempts[-1].completed_at = now
 
-        run.updated_at = self._clock.now()
-        await self._repo.save(run)
-
-        # Emit events
-        await self._event_emitter.emit(
-            TaskStatusChanged(
-                timestamp=self._clock.now(),
-                run_id=run_id,
-                event_type="task_status_changed",
-                task_id=task_id,
-                old_status=old_status,
-                new_status=TaskStatus.FAILED,
-            )
+        task_event = TaskStatusChanged(
+            timestamp=now,
+            run_id=run_id,
+            event_type="task_status_changed",
+            task_id=task_id,
+            old_status=old_status,
+            new_status=TaskStatus.FAILED,
+            current_attempt=task.current_attempt,
+            attempt_snapshots=[attempt.model_dump(mode="json") for attempt in task.attempts],
+        )
+        await self._event_emitter.emit_batch(
+            [task_event, *self._explicit_attempt_updates_from_snapshots(task_event)]
         )
 
-        await self._session.commit()
+        await commit_with_event_outbox(self._session)
         return TransitionResult(success=True, new_status=TaskStatus.FAILED)
 
     def _find_task_config_for_task(self, run: Run, task: TaskState) -> TaskConfig | None:

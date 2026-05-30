@@ -12,16 +12,24 @@ from orchestrator.api.auth import AuthConfig
 from orchestrator.api.websocket import ConnectionManager
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.global_config import GlobalConfig
-from orchestrator.db import EventStore
-from orchestrator.db import RunRepository
+from orchestrator.db import (
+    RunRepository,
+    RunLifecycleProjector,
+    SqliteEventStore,
+    create_wired_event_store_v2,
+)
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow import PersistentEventEmitter
-from orchestrator.workflow import DbSignalTransport, SignalTransport, WorkflowEvent
+from orchestrator.workflow import (
+    EventSignalTransport,
+    SignalTransport,
+    WorkflowEvent,
+)
 from orchestrator.workflow.service import WorkflowService
-from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.git import TestRunner
+from orchestrator.runners import AgentRunnerExecutor, fetch_codex_models
 from orchestrator.runners.agent_detector import ToolDetector
 
 
@@ -50,13 +58,15 @@ async def get_signal_transport(
 
     If a transport override is stored in ``app.state.signal_transport`` (e.g.
     an ``InMemorySignalTransport`` injected by tests), that instance is
-    returned directly.  Otherwise a ``DbSignalTransport`` bound to the current
-    session is created and returned.
+    returned directly.  Otherwise an ``EventSignalTransport`` backed by the
+    events_v2 table is returned.
     """
     override: SignalTransport | None = getattr(request.app.state, "signal_transport", None)
     if override is not None:
         return override
-    return DbSignalTransport(session)
+    store = create_wired_event_store_v2(session)
+    projector = RunLifecycleProjector()
+    return EventSignalTransport(store, projector)
 
 
 async def get_run_repository(
@@ -65,10 +75,10 @@ async def get_run_repository(
     return RunRepository(session)
 
 
-async def get_event_store(
+async def get_event_store_v2(
     session: Annotated[AsyncSession, Depends(get_session)],
-) -> EventStore:
-    return EventStore(session)
+) -> SqliteEventStore:
+    return create_wired_event_store_v2(session)
 
 
 def get_env_lifecycle(request: Request) -> EnvFileLifecycle | None:
@@ -89,14 +99,14 @@ def get_lock_manager(request: Request) -> Any:
 async def get_workflow_service(
     session: Annotated[AsyncSession, Depends(get_session)],
     repo: Annotated[RunRepository, Depends(get_run_repository)],
-    event_store: Annotated[EventStore, Depends(get_event_store)],
+    store_v2: Annotated[SqliteEventStore, Depends(get_event_store_v2)],
     env_lifecycle: Annotated[EnvFileLifecycle | None, Depends(get_env_lifecycle)],
     global_config: Annotated[GlobalConfig, Depends(get_global_config)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
     connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     lock_manager: Annotated[Any, Depends(get_lock_manager)],
 ) -> WorkflowService:
-    emitter = PersistentEventEmitter(event_store)
+    emitter = PersistentEventEmitter(store_v2)
 
     # Wire events to WebSocket broadcast
     manager = connection_manager
@@ -114,22 +124,22 @@ async def get_workflow_service(
     return WorkflowService(
         session=session,
         repo=repo,
-        event_store=event_store,
         event_emitter=emitter,
         auto_verify_runner=LocalAutoVerifyRunner(),
         lock_manager=lock_manager,
         global_config=global_config,
         env_lifecycle=env_lifecycle,
         signal_transport=signal_transport,
+        event_store_v2=store_v2,
     )
 
 
 async def get_event_emitter(
-    event_store: Annotated[EventStore, Depends(get_event_store)],
+    store_v2: Annotated[SqliteEventStore, Depends(get_event_store_v2)],
     connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
 ) -> PersistentEventEmitter:
     """Create a PersistentEventEmitter wired to WebSocket broadcast."""
-    emitter = PersistentEventEmitter(event_store)
+    emitter = PersistentEventEmitter(store_v2)
     manager = connection_manager
 
     def _on_event(event: WorkflowEvent) -> None:
@@ -224,6 +234,17 @@ async def _default_git_clone(url: str, dest: Path) -> None:
         raise _HTTPException(status_code=422, detail=f"Failed to clone: {stderr}")
 
 
+def get_codex_models_fn(request: Request) -> "Callable[[], list[str]]":
+    """Return the callable used to fetch available Codex model IDs.
+
+    In production this spawns a short-lived ``codex app-server`` subprocess
+    via ``fetch_codex_models()``.  Tests override by setting
+    ``app.state.codex_models_fn`` to a custom callable, e.g.
+    ``lambda: ["gpt-5.3-codex"]``.
+    """
+    return getattr(request.app.state, "codex_models_fn", fetch_codex_models)  # type: ignore[no-any-return]
+
+
 def get_current_user() -> str:
     """Get current user for human interaction actions.
 
@@ -256,8 +277,8 @@ def make_service_factory(
     lock_manager:
         Shared pessimistic lock manager, or ``None`` to disable locking.
     signal_transport_override:
-        In-memory transport injected by tests.  When ``None`` a
-        ``DbSignalTransport`` bound to the session is used instead.
+        In-memory transport injected by tests.  When ``None`` an
+        ``EventSignalTransport`` bound to the session is used instead.
     global_config:
         Application-wide configuration, forwarded to ``WorkflowService``.
     env_lifecycle:
@@ -266,8 +287,8 @@ def make_service_factory(
 
     async def _create(session: AsyncSession) -> WorkflowService:
         repo = RunRepository(session)
-        event_store = EventStore(session)
-        emitter = PersistentEventEmitter(event_store)
+        store_v2 = create_wired_event_store_v2(session)
+        emitter = PersistentEventEmitter(store_v2)
 
         if connection_manager is not None:
             manager = connection_manager  # narrow type for pyright (closures don't re-check guard)
@@ -281,18 +302,20 @@ def make_service_factory(
 
             emitter.add_listener(_on_event)
 
-        transport: SignalTransport = signal_transport_override or DbSignalTransport(session)
+        transport: SignalTransport = signal_transport_override or EventSignalTransport(
+            store_v2, RunLifecycleProjector()
+        )
 
         return WorkflowService(
             session=session,
             repo=repo,
-            event_store=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
             lock_manager=lock_manager,
             signal_transport=transport,
             global_config=global_config,
             env_lifecycle=env_lifecycle,
+            event_store_v2=store_v2,
         )
 
     return _create
@@ -312,3 +335,17 @@ def make_workflow_runner(
             await executor.setup_and_spawn(workflow.run_id)
 
     return _run
+
+
+def make_workflow_preparer(
+    executor: AgentRunnerExecutor | None,
+) -> Callable[[str, dict[str, Any] | None], Awaitable[bool]]:
+    """Return a callback that prepares run resources before activation."""
+
+    async def _prepare(run_id: str, payload: dict[str, Any] | None = None) -> bool:
+        if executor is None:
+            return True
+        reset_worktree = bool(payload and payload.get("resume_strategy") == "reset_worktree")
+        return await executor.prepare_worktree(run_id, reset_worktree=reset_worktree)
+
+    return _prepare

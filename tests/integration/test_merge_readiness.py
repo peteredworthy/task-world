@@ -25,6 +25,7 @@ from httpx import AsyncClient
 
 from orchestrator.config import RunStatus
 from orchestrator.db import RunRepository
+from orchestrator.db.access.mutations import save_run
 from tests.integration.git_helpers import _commit_file, _git
 from tests.integration.signal_helpers import DrainFn
 
@@ -80,7 +81,7 @@ async def _mark_run_completed(app: Any, run_id: str) -> None:
         repo = RunRepository(session)
         run = await repo.get(run_id)
         run.status = RunStatus.COMPLETED
-        await repo.save(run)
+        await save_run(repo.session, run)
         await session.commit()
 
 

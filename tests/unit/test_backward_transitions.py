@@ -599,6 +599,7 @@ def test_step_progression_applies_configured_loop_transition() -> None:
     assert isinstance(events[0], RunStepBackward)
     assert events[0].from_step_index == 2
     assert events[0].to_step_index == 0
+    assert events[0].transition_tracker_delta == {"SP-04->SP-02": 1}
 
 
 def test_step_progression_allows_conditional_loop_transition_for_failed_step() -> None:
@@ -703,6 +704,7 @@ def test_step_progression_allows_conditional_loop_transition_for_failed_step() -
     assert isinstance(events[0], RunStepBackward)
     assert events[0].from_step_index == 2
     assert events[0].to_step_index == 0
+    assert events[0].transition_tracker_delta == {"SP-04->SP-02": 1}
 
 
 def test_evaluate_transition_conditions_with_worktree(tmp_path: Path) -> None:

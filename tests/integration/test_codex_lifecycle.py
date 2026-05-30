@@ -37,6 +37,7 @@ async def client_and_drain() -> AsyncGenerator[tuple[AsyncClient, DrainFn], None
         spawn_agents=False,
     )
     app.state.signal_transport = signal_transport
+    app.state.codex_models_fn = lambda: []
     await init_db(app.state.engine)
     drain = make_drain_fn(app, signal_transport)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]

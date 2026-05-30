@@ -92,14 +92,23 @@ def _run_alembic_upgrade(connection: Connection) -> None:
     command.upgrade(cfg, "head")
 
 
-async def init_db(engine: AsyncEngine) -> None:
+async def init_db(engine: AsyncEngine | str) -> None:
     """Initialise the database schema.
+
+    Accepts either an ``AsyncEngine`` or a SQLAlchemy URL string.  When a
+    string is passed a temporary engine is created and disposed after use.
 
     For file-based databases, runs Alembic migrations so the schema is always
     up-to-date with the migration history.  For in-memory databases (used in
     tests), falls back to ``metadata.create_all()`` since migration tracking
     is unnecessary.
     """
+    if isinstance(engine, str):
+        tmp_engine = create_engine(engine)
+        await init_db(tmp_engine)
+        await tmp_engine.dispose()
+        return
+
     url_str = str(engine.url)
     is_memory = url_str == "sqlite+aiosqlite://" or ":memory:" in url_str
 

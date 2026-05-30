@@ -1,10 +1,10 @@
 """FastAPI application for the orchestrator."""
 
 from orchestrator.api.app import create_app
-from orchestrator.api.deps import get_connection_manager, get_runner_executor
+from orchestrator.api.deps import get_codex_models_fn, get_connection_manager, get_runner_executor
 from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
 from orchestrator.api.mcp.clarification_tools import validate_clarification_question_payloads
-from orchestrator.api.presenters import run_to_trace_response
+from orchestrator.api.presenters import compute_run_totals_from_attempts, run_to_trace_response
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.api.schemas.envfiles import CopyBackRequest, RevertEnvFileRequest
 from orchestrator.api.schemas.repos import AddRepoRequest
@@ -73,7 +73,9 @@ __all__ = [
     "TurnMetricsSchema",
     "UpdateChecklistRequest",
     "create_app",
+    "compute_run_totals_from_attempts",
     "estimate_cost",
+    "get_codex_models_fn",
     "get_agent_runner_display_name",
     "get_agent_runner_icon",
     "get_connection_manager",

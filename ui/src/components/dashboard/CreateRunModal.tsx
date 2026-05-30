@@ -291,7 +291,16 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                     autoFocus
                     required
                     value={form.repoName}
-                    onChange={e => setForm(prev => ({ ...prev, repoName: e.target.value, targetBranch: 'main', selectedRoutine: '' }))}
+                    onChange={e => {
+                      const clearRoutine = routineSelection?.isProjectRoutine === true;
+                      setForm(prev => ({
+                        ...prev,
+                        repoName: e.target.value,
+                        targetBranch: 'main',
+                        ...(clearRoutine ? { selectedRoutine: '' } : {}),
+                      }));
+                      if (clearRoutine) setRoutineSelection(null);
+                    }}
                     className="w-full rounded-md border border-border bg-bg-card px-3 py-2.5 text-sm text-text-primary shadow-sm focus:border-accent-purple focus:outline-none focus:ring-1 focus:ring-accent-purple/50 appearance-none cursor-pointer"
                   >
                     <option value="">Select a repository...</option>
@@ -314,7 +323,15 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                   <BranchSelector
                     repoName={form.repoName}
                     value={form.targetBranch}
-                    onChange={branch => setForm(prev => ({ ...prev, targetBranch: branch, selectedRoutine: '' }))}
+                    onChange={branch => {
+                      const clearRoutine = routineSelection?.isProjectRoutine === true;
+                      setForm(prev => ({
+                        ...prev,
+                        targetBranch: branch,
+                        ...(clearRoutine ? { selectedRoutine: '' } : {}),
+                      }));
+                      if (clearRoutine) setRoutineSelection(null);
+                    }}
                     includeRemote={false}
                   />
                 </div>
@@ -552,7 +569,11 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
               {/* Error states */}
               {createRun.isError && (
                 <div className="rounded-md bg-status-failed/10 border border-status-failed/20 px-3 py-2">
-                  <p className="text-sm text-status-failed">Failed to create run. Check your inputs.</p>
+                  <p className="text-sm text-status-failed">
+                    {createRun.error instanceof Error && createRun.error.message
+                      ? createRun.error.message
+                      : 'Failed to create run. Check your inputs.'}
+                  </p>
                 </div>
               )}
               {startRun.isError && (

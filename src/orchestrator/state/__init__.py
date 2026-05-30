@@ -14,7 +14,9 @@ from orchestrator.state.models import (
     Run,
     StepState,
     TaskState,
+    TransitionTracker,
 )
+from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.session import SessionStateManager
 
 __all__ = [
@@ -30,4 +32,6 @@ __all__ = [
     "StepState",
     "TaskNotFoundError",
     "TaskState",
+    "TransitionTracker",
+    "create_run_from_routine",
 ]

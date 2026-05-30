@@ -18,6 +18,8 @@ from orchestrator.config import (
 )
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import RunRepository
+from orchestrator.db import delete_run
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.errors import RunNotFoundError
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import (
@@ -85,7 +87,7 @@ def _make_simple_run(run_id: str = "run-1") -> Run:
 
 async def test_save_and_get_simple_run(repo: RunRepository) -> None:
     run = _make_simple_run()
-    await repo.save(run)
+    await save_run(repo.session, run)
     loaded = await repo.get("run-1")
 
     assert loaded.id == "run-1"
@@ -181,7 +183,7 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
         total_duration_ms=15000,
     )
 
-    await repo.save(run)
+    await save_run(repo.session, run)
     loaded = await repo.get("run-complex")
 
     assert loaded.status == RunStatus.ACTIVE
@@ -205,7 +207,7 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
 
 async def test_update_and_resave(repo: RunRepository) -> None:
     run = _make_simple_run()
-    await repo.save(run)
+    await save_run(repo.session, run)
 
     loaded = await repo.get("run-1")
     loaded.status = RunStatus.ACTIVE
@@ -213,7 +215,7 @@ async def test_update_and_resave(repo: RunRepository) -> None:
     loaded.steps[0].tasks[0].status = TaskStatus.BUILDING
     loaded.steps[0].tasks[0].checklist[0].status = ChecklistStatus.DONE
 
-    await repo.save(loaded)
+    await save_run(repo.session, loaded)
     reloaded = await repo.get("run-1")
 
     assert reloaded.status == RunStatus.ACTIVE
@@ -223,8 +225,8 @@ async def test_update_and_resave(repo: RunRepository) -> None:
 
 
 async def test_list_all(repo: RunRepository) -> None:
-    await repo.save(_make_simple_run("run-1"))
-    await repo.save(_make_simple_run("run-2"))
+    await save_run(repo.session, _make_simple_run("run-1"))
+    await save_run(repo.session, _make_simple_run("run-2"))
 
     runs = await repo.list_all()
     assert len(runs) == 2
@@ -236,8 +238,8 @@ async def test_list_by_repo(repo: RunRepository) -> None:
     run1 = _make_simple_run("run-1")
     run2 = _make_simple_run("run-2")
     run2.repo_name = "proj-2"
-    await repo.save(run1)
-    await repo.save(run2)
+    await save_run(repo.session, run1)
+    await save_run(repo.session, run2)
 
     proj1_runs = await repo.list_by_repo("proj-1")
     assert len(proj1_runs) == 1
@@ -248,8 +250,8 @@ async def test_list_by_status(repo: RunRepository) -> None:
     run1 = _make_simple_run("run-1")
     run2 = _make_simple_run("run-2")
     run2.status = RunStatus.ACTIVE
-    await repo.save(run1)
-    await repo.save(run2)
+    await save_run(repo.session, run1)
+    await save_run(repo.session, run2)
 
     draft_runs = await repo.list_by_status(RunStatus.DRAFT)
     assert len(draft_runs) == 1
@@ -257,8 +259,8 @@ async def test_list_by_status(repo: RunRepository) -> None:
 
 
 async def test_delete(repo: RunRepository) -> None:
-    await repo.save(_make_simple_run())
-    await repo.delete("run-1")
+    await save_run(repo.session, _make_simple_run())
+    await delete_run(repo.session, "run-1")
 
     with pytest.raises(RunNotFoundError):
         await repo.get("run-1")
@@ -271,7 +273,7 @@ async def test_get_nonexistent_raises(repo: RunRepository) -> None:
 
 async def test_delete_nonexistent_raises(repo: RunRepository) -> None:
     with pytest.raises(RunNotFoundError):
-        await repo.delete("nonexistent")
+        await delete_run(repo.session, "nonexistent")
 
 
 async def test_factory_created_run_roundtrips(repo: RunRepository) -> None:
@@ -286,7 +288,7 @@ async def test_factory_created_run_roundtrips(repo: RunRepository) -> None:
         routine_sha="deadbeef",
     )
 
-    await repo.save(run)
+    await save_run(repo.session, run)
     loaded = await repo.get(run.id)
 
     assert loaded.repo_name == "proj-1"

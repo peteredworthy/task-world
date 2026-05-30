@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import AsyncGenerator
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -10,8 +11,9 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
-from orchestrator.db import init_db
-from orchestrator.workflow import InMemorySignalTransport
+from orchestrator.db import SqliteEventStore, init_db
+from orchestrator.workflow import AgentOutputEvent, InMemorySignalTransport
+from tests.integration.conftest import cleanup_runs_for_repo
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
@@ -53,8 +55,8 @@ async def _setup_active_run(client: AsyncClient, drain: DrainFn) -> tuple[str, s
     return run_id, task_id
 
 
-async def test_activity_empty_for_new_run(client: AsyncClient) -> None:
-    """A freshly created (not started) run has no events."""
+async def test_activity_for_new_run_includes_run_created_event(client: AsyncClient) -> None:
+    """A freshly created run exposes its events_v2 run_created event."""
     resp = await client.post(
         "/api/runs",
         json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
@@ -65,7 +67,10 @@ async def test_activity_empty_for_new_run(client: AsyncClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["run_id"] == run_id
-    assert data["events"] == []
+    event_types = [event["event_type"] for event in data["events"]]
+    assert event_types[0] == "run_created"
+    assert "step_created" in event_types
+    assert "task_created" in event_types
     assert data["has_more"] is False
 
 
@@ -91,7 +96,7 @@ async def test_activity_after_task_lifecycle(
     data = resp.json()
 
     event_types = [e["event_type"] for e in data["events"]]
-    assert "run_status_changed" in event_types
+    assert "run_created" in event_types
     assert "task_status_changed" in event_types
     assert data["has_more"] is False
 
@@ -117,15 +122,15 @@ async def test_activity_pagination(client_and_drain: tuple[AsyncClient, DrainFn]
     await drain(run_id)
 
     # Fetch with small limit
-    resp = await client.get(f"/api/runs/{run_id}/activity?limit=2")
+    resp = await client.get(f"/api/runs/{run_id}/activity?limit=1")
     assert resp.status_code == 200
     page1 = resp.json()
-    assert len(page1["events"]) == 2
+    assert len(page1["events"]) == 1
     assert page1["has_more"] is True
 
     # Fetch next page using cursor
     last_id = page1["events"][-1]["id"]
-    resp = await client.get(f"/api/runs/{run_id}/activity?after={last_id}&limit=2")
+    resp = await client.get(f"/api/runs/{run_id}/activity?after={last_id}&limit=1")
     assert resp.status_code == 200
     page2 = resp.json()
     assert len(page2["events"]) >= 1
@@ -144,12 +149,69 @@ async def test_activity_event_type_filter(
     run_id, task_id = await _setup_active_run(client, drain)
     await client.post(f"/api/runs/{run_id}/tasks/{task_id}/start")
 
-    # Filter to only run_status_changed events
-    resp = await client.get(f"/api/runs/{run_id}/activity?event_type=run_status_changed")
+    # Filter to only task_status_changed events
+    resp = await client.get(f"/api/runs/{run_id}/activity?event_type=task_status_changed")
     assert resp.status_code == 200
     data = resp.json()
-    assert all(e["event_type"] == "run_status_changed" for e in data["events"])
+    assert all(e["event_type"] == "task_status_changed" for e in data["events"])
     assert len(data["events"]) >= 1
+
+
+async def test_activity_and_stream_read_agent_output_from_events_v2_only(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    repo_name: str,
+) -> None:
+    client, _drain, _repos_dir, _worktrees_dir, app = _shared_app_fixture
+    resp = await client.post(
+        "/api/runs",
+        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
+    )
+    assert resp.status_code == 201
+    run = resp.json()
+    run_id = run["id"]
+    task_id = run["steps"][0]["tasks"][0]["id"]
+
+    async with app.state.session_factory() as session:
+        store = SqliteEventStore(session)
+        stored = await store.append(
+            AgentOutputEvent(
+                timestamp=datetime(2025, 1, 15, 10, 30, tzinfo=timezone.utc),
+                run_id=run_id,
+                event_type="agent_output",
+                task_id=task_id,
+                attempt_num=1,
+                lines=["one", "two"],
+                line_offset=0,
+            )
+        )
+        await session.commit()
+
+    agent_output_position = stored[0].position
+
+    resp = await client.get(f"/api/runs/{run_id}/activity?event_type=agent_output")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["has_more"] is False
+    assert len(data["events"]) == 1
+    event = data["events"][0]
+    assert event["id"] == agent_output_position
+    assert event["event_type"] == "agent_output"
+    assert event["payload"]["lines"] == ["one", "two"]
+    assert event["payload"]["line_offset"] == 0
+
+    events_received: list[dict[str, Any]] = []
+    async with client.stream(
+        "GET", f"/api/runs/{run_id}/activity/stream?event_type=agent_output&once=true"
+    ) as response:
+        assert response.status_code == 200
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                events_received.append(json.loads(line[6:]))
+
+    assert [event["id"] for event in events_received] == [agent_output_position]
+    assert events_received[0]["payload"]["lines"] == ["one", "two"]
+
+    await cleanup_runs_for_repo(client, repo_name)
 
 
 async def test_activity_enrichment(
@@ -210,7 +272,7 @@ async def test_sse_stream_sends_events(
 
     # Should have received events from run start
     assert len(events_received) >= 1
-    assert any(e["event_type"] == "run_status_changed" for e in events_received)
+    assert any(e["event_type"] == "run_created" for e in events_received)
     assert all(e["timestamp"].endswith("Z") for e in events_received)
 
 

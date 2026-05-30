@@ -7,12 +7,10 @@ session-handling semantics (opens its own session unless one is provided).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
-from orchestrator.state.models import ActionLog, ModelTokenUsage
-from orchestrator.db import RunModel
 from orchestrator.runners.types import ExecutionMetrics
+from orchestrator.state.models import ActionLog, ModelTokenUsage
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -30,6 +28,67 @@ class AttemptStore:
     # Public API (names drop the underscore prefix)
     # ------------------------------------------------------------------
 
+    async def _latest_attempt_id(
+        self, session: "AsyncSession", run_id: str, task_id: str
+    ) -> str | None:
+        from orchestrator.db import RunRepository
+
+        run = await RunRepository(session).get(run_id)
+        for step in run.steps:
+            for task in step.tasks:
+                if task.id == task_id:
+                    if task.attempts:
+                        return task.attempts[-1].id
+                    return None
+        return None
+
+    async def _append_attempt_update(
+        self,
+        session: "AsyncSession",
+        *,
+        run_id: str,
+        task_id: str,
+        output_lines: list[str] | None = None,
+        error: str | None = None,
+        action_log: Any = None,
+        builder_prompt: str | None = None,
+        verifier_prompt: str | None = None,
+        tokens_read: int | None = None,
+        tokens_write: int | None = None,
+        tokens_cache: int | None = None,
+        duration_ms: int | None = None,
+        num_actions: int | None = None,
+        token_usage_by_model: list[dict[str, Any]] | None = None,
+    ) -> bool:
+        from orchestrator.db import commit_with_event_outbox, create_wired_event_store_v2
+        from orchestrator.workflow import AttemptUpdated
+
+        attempt_id = await self._latest_attempt_id(session, run_id, task_id)
+        if attempt_id is None:
+            return False
+        await create_wired_event_store_v2(session).append(
+            [
+                AttemptUpdated(
+                    run_id=run_id,
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                    output_lines=output_lines,
+                    error=error,
+                    action_log=self._json_value(action_log) if action_log is not None else None,
+                    builder_prompt=builder_prompt,
+                    verifier_prompt=verifier_prompt,
+                    tokens_read=tokens_read,
+                    tokens_write=tokens_write,
+                    tokens_cache=tokens_cache,
+                    duration_ms=duration_ms,
+                    num_actions=num_actions,
+                    token_usage_by_model=token_usage_by_model,
+                )
+            ]
+        )
+        await commit_with_event_outbox(session)
+        return True
+
     async def store_attempt_output(
         self,
         run_id: str,
@@ -43,10 +102,9 @@ class AttemptStore:
             async with self._session_factory() as session:
                 from orchestrator.db import RunRepository
 
-                repo = RunRepository(session)
+                run = await RunRepository(session).get(run_id)
                 merged_action_log = action_log
                 if action_log is not None:
-                    run = await repo.get(run_id)
                     for step in run.steps:
                         for task in step.tasks:
                             if task.id == task_id and task.attempts:
@@ -56,14 +114,14 @@ class AttemptStore:
                                         action_log,
                                     )
                                 break
-                kwargs: dict[str, Any] = {
-                    "output_lines": output_lines,
-                    "error": error,
-                }
-                if action_log is not None:
-                    kwargs["action_log"] = merged_action_log
-                await repo.update_latest_attempt(task_id, **kwargs)
-                await session.commit()
+                await self._append_attempt_update(
+                    session,
+                    run_id=run_id,
+                    task_id=task_id,
+                    output_lines=output_lines,
+                    error=error,
+                    action_log=merged_action_log if action_log is not None else None,
+                )
                 return
         except Exception:
             logger.debug(f"Failed to store attempt output for {task_id}", exc_info=True)
@@ -85,16 +143,15 @@ class AttemptStore:
         than opening a new one.  This avoids StaticPool concurrency issues in
         tests where all sessions share the same underlying connection.
         """
-        from orchestrator.db import RunRepository
 
         async def _do_store(s: "AsyncSession") -> None:
-            repo = RunRepository(s)
-            await repo.update_latest_attempt(
-                task_id,
+            await self._append_attempt_update(
+                s,
+                run_id=run_id,
+                task_id=task_id,
                 builder_prompt=builder_prompt,
                 verifier_prompt=verifier_prompt,
             )
-            await s.commit()
             return
 
         try:
@@ -117,15 +174,17 @@ class AttemptStore:
         """Store execution metrics on the current attempt and accumulate into run totals."""
         try:
             async with self._session_factory() as session:
-                from orchestrator.db import RunRepository
-
-                repo = RunRepository(session)
-                await repo.update_latest_attempt(
-                    task_id,
-                    metrics=metrics,
-                    token_usage_by_model=token_usage_by_model,
+                await self._append_attempt_update(
+                    session,
+                    run_id=run_id,
+                    task_id=task_id,
+                    tokens_read=metrics.tokens_read,
+                    tokens_write=metrics.tokens_write,
+                    tokens_cache=metrics.tokens_cache,
+                    duration_ms=metrics.duration_ms,
+                    num_actions=metrics.num_actions,
+                    token_usage_by_model=self._dump_token_usage(token_usage_by_model),
                 )
-                await session.commit()
                 return
         except Exception:
             logger.debug(f"Failed to store attempt metrics for {task_id}", exc_info=True)
@@ -146,12 +205,21 @@ class AttemptStore:
 
         try:
             async with self._session_factory() as session:
-                run_model = await session.get(RunModel, run_id)
-                if run_model is None:
-                    return
-                run_model.runner_config = {**(run_model.runner_config or {}), **agent_metadata}
-                run_model.updated_at = datetime.now(timezone.utc)
-                await session.commit()
+                from orchestrator.db import commit_with_event_outbox, create_wired_event_store_v2
+                from orchestrator.workflow import (
+                    UpdateRunMetadataCommand,
+                    handle_update_run_metadata,
+                )
+
+                await handle_update_run_metadata(
+                    UpdateRunMetadataCommand(
+                        run_id=run_id,
+                        runner_config_delta=agent_metadata,
+                    ),
+                    create_wired_event_store_v2(session),
+                    session,
+                )
+                await commit_with_event_outbox(session)
                 logger.info(f"Run {run_id}: persisted agent metadata {list(agent_metadata.keys())}")
         except Exception as e:
             logger.warning(f"Failed to persist agent metadata for {run_id}: {e}")
@@ -159,6 +227,18 @@ class AttemptStore:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _json_value(value: Any) -> Any:
+        return value.model_dump(mode="json") if hasattr(value, "model_dump") else value
+
+    @classmethod
+    def _dump_token_usage(
+        cls, token_usage_by_model: list[ModelTokenUsage] | None
+    ) -> list[dict[str, Any]] | None:
+        if token_usage_by_model is None:
+            return None
+        return [cls._json_value(usage) for usage in token_usage_by_model]
 
     @staticmethod
     def _merge_action_logs(first: ActionLog, second: ActionLog) -> ActionLog:

@@ -17,9 +17,9 @@ from orchestrator.config import (
     TaskStatus,
     load_routine_from_path,
 )
-from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.db import EventStore
+from orchestrator.db import SqliteEventStore, create_engine, create_session_factory, init_db
 from orchestrator.db import RunRepository
+from orchestrator.db.access.mutations import save_run
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import (
     ChecklistItem,
@@ -168,10 +168,10 @@ async def test_events_survive_restart(db_path: Path) -> None:
     factory2 = create_session_factory(engine2)
 
     async with factory2() as session2:
-        store = EventStore(session2)
-        events = await store.get_events_for_run("run-1")
+        store = SqliteEventStore(session2)
+        events = await store.get_stream("run-1")
         assert len(events) >= 2
-        event_types = [e["type"] for e in events]
+        event_types = [e.event_type for e in events]
         assert "run_status_changed" in event_types
         assert "task_status_changed" in event_types
 
@@ -196,8 +196,7 @@ async def test_routine_fixture_roundtrip(db_path: Path) -> None:
     factory1 = create_session_factory(engine1)
 
     async with factory1() as session1:
-        repo1 = RunRepository(session1)
-        await repo1.save(run)
+        await save_run(session1, run)
         await session1.commit()
 
     await engine1.dispose()

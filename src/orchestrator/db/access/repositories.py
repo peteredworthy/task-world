@@ -1,9 +1,8 @@
 """Repository pattern for Run persistence."""
 
 import logging
-import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy import distinct, select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,12 +19,11 @@ from orchestrator.config.enums import (
 from orchestrator.db.orm.models import (
     AttemptModel,
     ClarificationRequestModel,
-    ClarificationResponseModel,
-    ReplayCheckpointModel,
     RunModel,
     StepModel,
     TaskModel,
 )
+from orchestrator.state import TransitionTracker
 from orchestrator.state.errors import RunNotFoundError, TaskNotFoundError
 from orchestrator.state.models import (
     ActionLog,
@@ -45,14 +43,12 @@ from orchestrator.workflow import (
     ClarificationRequest,
     ClarificationResponse,
 )
-from orchestrator.workflow.oversight_facts import (
-    APPEND_ONLY_OVERSIGHT_LIST_KEYS,
-    SET_UNION_OVERSIGHT_LIST_KEYS,
-)
 from orchestrator.time_utils import (
     ensure_utc as _core_ensure_utc,
     ensure_utc_optional as _core_ensure_utc_optional,
 )
+
+_UNSET = object()
 
 
 def _agent_runner_type(value: str | None) -> AgentRunnerType | None:
@@ -81,9 +77,6 @@ def _ensure_utc(dt: datetime) -> datetime:
 def _ensure_utc_optional(dt: datetime | None) -> datetime | None:
     """Like _ensure_utc but accepts and returns None for optional fields."""
     return _core_ensure_utc_optional(dt)
-
-
-_UNSET = object()
 
 
 def _eager_run_query(
@@ -120,7 +113,7 @@ def _eager_run_query(
     return query
 
 
-def _to_domain(
+def run_model_to_domain(
     model: RunModel,
     *,
     action_logs_loaded: bool = True,
@@ -224,6 +217,7 @@ def _to_domain(
                     attempts=attempts,
                     current_attempt=task_model.current_attempt,
                     max_attempts=task_model.max_attempts,
+                    has_verification=bool(task_model.has_verification),
                     pending_action_type=task_model.pending_action_type,
                     pending_clarification_id=task_model.pending_clarification_id,
                     parent_task_id=task_model.parent_task_id,
@@ -287,6 +281,7 @@ def _to_domain(
         routine_path=model.routine_path,
         routine_commit=model.routine_commit,
         parent_run_id=model.parent_run_id,
+        parent_task_id=model.parent_task_id,
         parent_slice_id=model.parent_slice_id,
         oversight_state=model.oversight_state or {},
         agent_runner_type=_agent_runner_type(model.runner_type),
@@ -303,6 +298,9 @@ def _to_domain(
         env_source_dir=model.env_source_dir,
         steps=steps,
         current_step_index=model.current_step_index,
+        transition_tracker=TransitionTracker.model_validate(model.transition_tracker)
+        if model.transition_tracker
+        else TransitionTracker(),
         created_at=_ensure_utc(model.created_at),
         updated_at=_ensure_utc(model.updated_at),
         started_at=_ensure_utc_optional(model.started_at),
@@ -319,7 +317,7 @@ def _to_domain(
     )
 
 
-def _to_model(run: Run) -> RunModel:
+def run_to_model(run: Run) -> RunModel:
     """Convert domain Pydantic model to ORM model."""
     steps: list[StepModel] = []
     for step_idx, step in enumerate(run.steps):
@@ -384,6 +382,7 @@ def _to_model(run: Run) -> RunModel:
                     checklist=checklist_json,
                     current_attempt=task.current_attempt,
                     max_attempts=task.max_attempts,
+                    has_verification=task.has_verification,
                     pending_action_type=task.pending_action_type,
                     pending_clarification_id=task.pending_clarification_id,
                     parent_task_id=task.parent_task_id,
@@ -432,6 +431,7 @@ def _to_model(run: Run) -> RunModel:
         routine_path=run.routine_path,
         routine_commit=run.routine_commit,
         parent_run_id=run.parent_run_id,
+        parent_task_id=run.parent_task_id,
         parent_slice_id=run.parent_slice_id,
         oversight_state=run.oversight_state,
         runner_type=run.agent_runner_type.value if run.agent_runner_type else None,
@@ -448,6 +448,9 @@ def _to_model(run: Run) -> RunModel:
         env_source_dir=run.env_source_dir,
         steps=steps,
         current_step_index=run.current_step_index,
+        transition_tracker=run.transition_tracker.model_dump(mode="json")
+        if run.transition_tracker
+        else None,
         created_at=run.created_at,
         updated_at=run.updated_at,
         started_at=run.started_at,
@@ -467,7 +470,7 @@ def _to_model(run: Run) -> RunModel:
 
 
 class RunRepository:
-    """Repository for Run persistence using SQLAlchemy."""
+    """Read-only query layer for run state. All mutations occur via command handlers in workflow/commands/."""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -479,11 +482,15 @@ class RunRepository:
 
     async def get(self, run_id: str) -> Run:
         """Get a run by ID. Raises RunNotFoundError if not found."""
-        result = await self._session.execute(_eager_run_query().where(RunModel.id == run_id))
+        result = await self._session.execute(
+            _eager_run_query()
+            .where(RunModel.id == run_id)
+            .execution_options(populate_existing=True)
+        )
         model = result.scalar_one_or_none()
         if model is None:
             raise RunNotFoundError(run_id)
-        return _to_domain(model)
+        return run_model_to_domain(model)
 
     async def lock_run_for_coordination(self, run_id: str) -> Run:
         """Load a run after acquiring the parent coordination write lock."""
@@ -499,7 +506,7 @@ class RunRepository:
         model = result.scalar_one_or_none()
         if model is None:
             raise RunNotFoundError(run_id)
-        return _to_domain(model)
+        return run_model_to_domain(model)
 
     async def list_all(
         self,
@@ -517,7 +524,7 @@ class RunRepository:
             query = query.limit(limit)
         result = await self._session.execute(query)
         return [
-            _to_domain(
+            run_model_to_domain(
                 m,
                 action_logs_loaded=include_action_logs,
                 routine_embedded_loaded=include_routine_embedded,
@@ -540,7 +547,7 @@ class RunRepository:
             ).where(RunModel.repo_name == repo_name)
         )
         return [
-            _to_domain(
+            run_model_to_domain(
                 m,
                 action_logs_loaded=include_action_logs,
                 routine_embedded_loaded=include_routine_embedded,
@@ -563,7 +570,7 @@ class RunRepository:
             ).where(RunModel.status == status.value)
         )
         return [
-            _to_domain(
+            run_model_to_domain(
                 m,
                 action_logs_loaded=include_action_logs,
                 routine_embedded_loaded=include_routine_embedded,
@@ -588,7 +595,7 @@ class RunRepository:
             .order_by(RunModel.created_at.asc())
         )
         return [
-            _to_domain(
+            run_model_to_domain(
                 m,
                 action_logs_loaded=include_action_logs,
                 routine_embedded_loaded=include_routine_embedded,
@@ -615,7 +622,7 @@ class RunRepository:
             )
         )
         return [
-            _to_domain(
+            run_model_to_domain(
                 m,
                 action_logs_loaded=include_action_logs,
                 routine_embedded_loaded=include_routine_embedded,
@@ -639,7 +646,7 @@ class RunRepository:
             ).where(RunModel.created_at >= cutoff)
         )
         return [
-            _to_domain(
+            run_model_to_domain(
                 m,
                 action_logs_loaded=include_action_logs,
                 routine_embedded_loaded=include_routine_embedded,
@@ -653,80 +660,6 @@ class RunRepository:
             select(distinct(RunModel.repo_name)).order_by(RunModel.repo_name)
         )
         return [row[0] for row in result.all()]
-
-    async def save(self, run: Run) -> None:
-        """Upsert a run. Calls flush(), not commit()."""
-        new_model = _to_model(run)
-        await self._session.merge(new_model)
-        await self._session.flush()
-
-    async def update_parent_oversight_facts(
-        self,
-        run_id: str,
-        patch: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Merge an already-sanitized oversight fact patch under a row lock."""
-        return await self._merge_oversight_patch_locked(
-            run_id,
-            replace_values=patch,
-        )
-
-    async def _merge_oversight_patch_locked(
-        self,
-        run_id: str,
-        *,
-        replace_values: dict[str, Any] | None = None,
-        list_limit: int = 100,
-    ) -> dict[str, Any]:
-        await self._session.execute(
-            sql_update(RunModel).where(RunModel.id == run_id).values(updated_at=RunModel.updated_at)
-        )
-        result = await self._session.execute(
-            select(RunModel)
-            .where(RunModel.id == run_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
-        run_model = result.scalar_one_or_none()
-        if run_model is None:
-            raise RunNotFoundError(run_id)
-
-        state = dict(run_model.oversight_state or {})
-        if replace_values:
-            for key, value in replace_values.items():
-                if key in APPEND_ONLY_OVERSIGHT_LIST_KEYS and isinstance(value, list):
-                    existing = state.get(key)
-                    current_items: list[Any] = (
-                        list(cast(list[Any], existing)) if isinstance(existing, list) else []
-                    )
-                    for item in cast(list[Any], value):
-                        if item not in current_items:
-                            current_items.append(item)
-                    state[key] = current_items[-list_limit:]
-                elif key in SET_UNION_OVERSIGHT_LIST_KEYS and isinstance(value, list):
-                    existing = state.get(key)
-                    current_strings: set[str] = (
-                        {item for item in cast(list[Any], existing) if isinstance(item, str)}
-                        if isinstance(existing, list)
-                        else set()
-                    )
-                    current_strings.update(
-                        item for item in cast(list[Any], value) if isinstance(item, str)
-                    )
-                    state[key] = sorted(current_strings)
-                elif key == "delegated_work" and isinstance(value, dict):
-                    raw_work = state.get("delegated_work")
-                    merged_work: dict[str, Any] = (
-                        dict(cast(dict[str, Any], raw_work)) if isinstance(raw_work, dict) else {}
-                    )
-                    merged_work.update(cast(dict[str, Any], value))
-                    state[key] = merged_work
-                else:
-                    state[key] = value
-        run_model.oversight_state = state
-        run_model.updated_at = datetime.now(timezone.utc)
-        await self._session.flush()
-        return state
 
     async def get_task_model(self, task_id: str) -> TaskModel:
         """Load a task row with its attempts and owning run."""
@@ -742,136 +675,6 @@ class RunRepository:
         if model is None:
             raise TaskNotFoundError("unknown", task_id)
         return model
-
-    async def create_task_attempt(
-        self,
-        task_id: str,
-        attempt: Attempt,
-        *,
-        status: TaskStatus = TaskStatus.BUILDING,
-    ) -> None:
-        """Append a new attempt to a single task without rewriting the full run."""
-        task_model = await self.get_task_model(task_id)
-        task_model.status = status.value
-        task_model.current_attempt = attempt.attempt_num
-        task_model.attempts.append(
-            AttemptModel(
-                id=attempt.id,
-                task_id=task_id,
-                attempt_num=attempt.attempt_num,
-                attempt_id=attempt.id,  # Stable UUID for Temporal Activity ID mapping
-                started_at=attempt.started_at,
-                completed_at=attempt.completed_at,
-                paused_at=attempt.paused_at,
-                builder_prompt=attempt.builder_prompt,
-                verifier_prompt=attempt.verifier_prompt,
-                verifier_comment=attempt.verifier_comment,
-                outcome=attempt.outcome,
-                tokens_read=attempt.metrics.tokens_read,
-                tokens_write=attempt.metrics.tokens_write,
-                tokens_cache=attempt.metrics.tokens_cache,
-                duration_ms=attempt.metrics.duration_ms,
-                num_actions=attempt.metrics.num_actions,
-                grade_snapshot=None,
-                auto_verify_results=None,
-                runner_type=attempt.agent_runner_type.value if attempt.agent_runner_type else None,
-                agent_model=attempt.agent_model,
-                agent_settings=attempt.agent_settings if attempt.agent_settings else None,
-                agent_output=attempt.agent_output,
-                error=attempt.error,
-                action_log_json=attempt.action_log.model_dump(mode="json")
-                if attempt.action_log
-                else None,
-                start_commit=attempt.start_commit,
-                end_commit=attempt.end_commit,
-            )
-        )
-        task_model.step.run.updated_at = datetime.now(timezone.utc)
-        await self._session.flush()
-
-    async def create_fan_out_children(
-        self,
-        step_id: str,
-        children: list[TaskState],
-        *,
-        parent_status: TaskStatus | None = None,
-    ) -> None:
-        """Persist new fan-out children without rewriting the whole run graph."""
-        result = await self._session.execute(
-            select(StepModel)
-            .where(StepModel.id == step_id)
-            .options(selectinload(StepModel.tasks), selectinload(StepModel.run))
-        )
-        step_model = result.scalar_one_or_none()
-        if step_model is None:
-            raise RunNotFoundError(step_id)
-
-        next_order_index = max((task.order_index for task in step_model.tasks), default=-1) + 1
-        for offset, child in enumerate(children):
-            checklist_json = [item.model_dump(mode="json") for item in child.checklist]
-            step_model.tasks.append(
-                TaskModel(
-                    id=child.id,
-                    step_id=step_id,
-                    config_id=child.config_id,
-                    title=child.title,
-                    complexity=child.complexity,
-                    order_index=next_order_index + offset,
-                    status=child.status.value,
-                    checklist=checklist_json,
-                    current_attempt=child.current_attempt,
-                    max_attempts=child.max_attempts,
-                    pending_action_type=child.pending_action_type,
-                    pending_clarification_id=child.pending_clarification_id,
-                    parent_task_id=child.parent_task_id,
-                    fan_out_index=child.fan_out_index,
-                    fan_out_input=child.fan_out_input,
-                    fan_out_output=child.fan_out_output,
-                    child_id=child.child_id,
-                    attempts=[],
-                )
-            )
-
-        if children and parent_status is not None:
-            parent_id = children[0].parent_task_id
-            for task_model in step_model.tasks:
-                if task_model.id == parent_id:
-                    task_model.status = parent_status.value
-                    break
-
-        step_model.run.updated_at = datetime.now(timezone.utc)
-        await self._session.flush()
-
-    async def update_task_status(self, task_id: str, status: TaskStatus) -> None:
-        """Update one task's status without rewriting sibling tasks."""
-        task_model = await self.get_task_model(task_id)
-        task_model.status = status.value
-        task_model.step.run.updated_at = datetime.now(timezone.utc)
-        await self._session.flush()
-
-    async def rewind_step_index_if_needed(self, run_id: str, target_step_index: int) -> None:
-        """Set current_step_index to target if it's currently higher."""
-        result = await self._session.execute(select(RunModel).where(RunModel.id == run_id))
-        run_model = result.scalar_one()
-        if run_model.current_step_index > target_step_index:
-            run_model.current_step_index = target_step_index
-            run_model.updated_at = datetime.now(timezone.utc)
-            await self._session.flush()
-
-    async def update_run_status(
-        self,
-        run_id: str,
-        status: RunStatus,
-        *,
-        pause_reason: str | None = None,
-    ) -> None:
-        """Update a run's status without rewriting the full run graph."""
-        result = await self._session.execute(select(RunModel).where(RunModel.id == run_id))
-        run_model = result.scalar_one()
-        run_model.status = status.value
-        run_model.pause_reason = pause_reason
-        run_model.updated_at = datetime.now(timezone.utc)
-        await self._session.flush()
 
     async def count_fan_out_children(self, parent_task_id: str) -> tuple[int, int]:
         """Return (completed_count, failed_count) for a fan-out parent's children."""
@@ -890,250 +693,6 @@ class RunRepository:
             elif status_val == TaskStatus.FAILED.value:
                 failed += count
         return completed, failed
-
-    async def reset_fan_out_children(self, parent_task_id: str) -> None:
-        """Reset non-completed fan-out children to PENDING and parent to FAN_OUT_RUNNING.
-
-        Children that already completed successfully are preserved so their work
-        is not lost when resuming a fan-out after a pause.
-        """
-        terminal_statuses = {TaskStatus.COMPLETED.value}
-        result = await self._session.execute(
-            select(TaskModel)
-            .where((TaskModel.id == parent_task_id) | (TaskModel.parent_task_id == parent_task_id))
-            .options(selectinload(TaskModel.step).selectinload(StepModel.run))
-        )
-        tasks = result.scalars().all()
-        run_model = None
-        for task_model in tasks:
-            if task_model.id == parent_task_id:
-                task_model.status = TaskStatus.FAN_OUT_RUNNING.value
-                run_model = task_model.step.run
-            elif task_model.parent_task_id == parent_task_id:
-                if task_model.status not in terminal_statuses:
-                    task_model.status = TaskStatus.PENDING.value
-        if run_model is not None:
-            run_model.updated_at = datetime.now(timezone.utc)
-        await self._session.flush()
-
-    async def retry_fan_out_child(self, child_task_id: str) -> tuple[str, int]:
-        """Reset a single failed fan-out child to PENDING and its parent to FAN_OUT_RUNNING.
-
-        Also marks the parent's step as not completed so the executor will
-        re-enter the fan-out flow.
-
-        Returns (run_id, step_order_index) for the caller to adjust
-        current_step_index if needed.
-        """
-        from orchestrator.workflow import InvalidTransitionError
-
-        # Load child with parent, step, and run
-        result = await self._session.execute(
-            select(TaskModel)
-            .where(TaskModel.id == child_task_id)
-            .options(
-                selectinload(TaskModel.step).selectinload(StepModel.run),
-            )
-        )
-        child_model = result.scalar_one_or_none()
-        if child_model is None:
-            raise TaskNotFoundError("unknown", child_task_id)
-        if child_model.parent_task_id is None:
-            raise InvalidTransitionError(
-                child_model.status, "retry_fan_out_child (not a fan-out child)"
-            )
-        if child_model.status != TaskStatus.FAILED.value:
-            raise InvalidTransitionError(
-                child_model.status, "retry_fan_out_child (requires FAILED)"
-            )
-
-        # Load parent
-        parent_result = await self._session.execute(
-            select(TaskModel)
-            .where(TaskModel.id == child_model.parent_task_id)
-            .options(
-                selectinload(TaskModel.step).selectinload(StepModel.run),
-            )
-        )
-        parent_model = parent_result.scalar_one()
-
-        # Reset child to PENDING
-        child_model.status = TaskStatus.PENDING.value
-        # Reset parent to FAN_OUT_RUNNING so executor re-enters _execute_fan_out
-        parent_model.status = TaskStatus.FAN_OUT_RUNNING.value
-        # Mark step as not completed so it's picked up again
-        parent_model.step.completed = False
-
-        step_order_index = parent_model.step.order_index
-        run_model = parent_model.step.run
-        run_id = run_model.id
-        run_model.updated_at = datetime.now(timezone.utc)
-
-        await self._session.flush()
-        return run_id, step_order_index
-
-    async def update_latest_attempt(
-        self,
-        task_id: str,
-        *,
-        builder_prompt: Any = _UNSET,
-        verifier_prompt: Any = _UNSET,
-        output_lines: list[str] | None = None,
-        error: Any = _UNSET,
-        action_log: Any = _UNSET,
-        metrics: Any = _UNSET,
-        token_usage_by_model: list[ModelTokenUsage] | None = None,
-        outcome: Any = _UNSET,
-        completed_at: Any = _UNSET,
-        auto_verify_results: Any = _UNSET,
-        status: TaskStatus | None = None,
-    ) -> None:
-        """Update a single task's latest attempt in place.
-
-        Completed attempts (those with outcome already set) are immutable.
-        Callers must not attempt to modify a completed attempt — corrections
-        are tracked via append-only events rather than in-place updates.
-        """
-        task_model = await self.get_task_model(task_id)
-        # FK column — always loaded with the step row, no lazy traversal needed.
-        run_id: str = task_model.step.run_id
-        attempt = task_model.attempts[-1] if task_model.attempts else None
-        if attempt is not None and attempt.outcome is not None:
-            # Attempt is already completed (outcome set). Guard against in-place mutation.
-            # Allow only non-state-changing fields (output lines for streaming, action log).
-            _modifying_keys = (
-                outcome is not _UNSET
-                or completed_at is not _UNSET
-                or error is not _UNSET
-                or auto_verify_results is not _UNSET
-                or metrics is not _UNSET
-            )
-            if _modifying_keys:
-                logging.getLogger(__name__).warning(
-                    f"Task {task_id}: attempt {attempt.attempt_num} is already completed "
-                    f"(outcome={attempt.outcome!r}); skipping in-place update. "
-                    "Use an append-only correction event instead."
-                )
-                if status is not None:
-                    task_model.status = status.value
-                    task_model.step.run.updated_at = datetime.now(timezone.utc)
-                    await self._session.flush()
-                return
-        if attempt is not None:
-            if builder_prompt is not _UNSET:
-                attempt.builder_prompt = builder_prompt
-            if verifier_prompt is not _UNSET:
-                attempt.verifier_prompt = verifier_prompt
-            if output_lines:
-                new_text = "\n".join(output_lines)
-                if attempt.agent_output:
-                    combined = f"{attempt.agent_output}\n{new_text}"
-                    attempt.agent_output = "\n".join(combined.splitlines()[-10000:])
-                else:
-                    attempt.agent_output = "\n".join(output_lines[-10000:])
-            if error is not _UNSET:
-                attempt.error = error
-            if action_log is not _UNSET:
-                attempt.action_log_json = (
-                    action_log.model_dump(mode="json") if action_log is not None else None
-                )
-            if metrics is not _UNSET:
-                attempt.tokens_read += metrics.tokens_read
-                attempt.tokens_write += metrics.tokens_write
-                attempt.tokens_cache += metrics.tokens_cache
-                attempt.duration_ms += metrics.duration_ms
-                attempt.num_actions += metrics.num_actions
-                # Run-level scalar totals: direct SQL UPDATE by run_id — no ORM
-                # graph traversal. Walking task_model.step.run in an async session
-                # raises DetachedInstanceError which was silently swallowed, leaving
-                # all run-level token totals at zero.
-                if run_id:
-                    await self._session.execute(
-                        sql_update(RunModel)
-                        .where(RunModel.id == run_id)
-                        .values(
-                            total_tokens_read=RunModel.total_tokens_read + metrics.tokens_read,
-                            total_tokens_write=RunModel.total_tokens_write + metrics.tokens_write,
-                            total_tokens_cache=RunModel.total_tokens_cache + metrics.tokens_cache,
-                            total_duration_ms=RunModel.total_duration_ms + metrics.duration_ms,
-                            total_num_actions=RunModel.total_num_actions + metrics.num_actions,
-                        )
-                    )
-            if token_usage_by_model:
-                # Accumulate into attempt-level per-model breakdown (builder + verifier both contribute)
-                existing_att: list[dict[str, Any]] = attempt.token_usage_by_model or []
-                att_usage: dict[str, dict[str, Any]] = {e["model"]: dict(e) for e in existing_att}
-                for u in token_usage_by_model:
-                    if u.model not in att_usage:
-                        att_usage[u.model] = u.model_dump(mode="json")
-                    else:
-                        entry = att_usage[u.model]
-                        entry["cache_read_tokens"] += u.cache_read_tokens
-                        entry["cache_creation_tokens"] += u.cache_creation_tokens
-                        entry["input_tokens"] += u.input_tokens
-                        entry["output_tokens"] += u.output_tokens
-                attempt.token_usage_by_model = list(att_usage.values())
-                # Run-level per-model JSON: SELECT with lock → merge → UPDATE.
-                # Avoids ORM graph traversal; lock prevents lost-update races
-                # between concurrent fan-out children.
-                if run_id:
-                    row = await self._session.execute(
-                        select(RunModel.token_usage_by_model)
-                        .where(RunModel.id == run_id)
-                        .with_for_update()
-                    )
-                    existing: list[dict[str, Any]] = row.scalar_one_or_none() or []
-                    run_usage: dict[str, dict[str, Any]] = {e["model"]: dict(e) for e in existing}
-                    for u in token_usage_by_model:
-                        if u.model not in run_usage:
-                            run_usage[u.model] = u.model_dump(mode="json")
-                        else:
-                            entry = run_usage[u.model]
-                            entry["cache_read_tokens"] += u.cache_read_tokens
-                            entry["cache_creation_tokens"] += u.cache_creation_tokens
-                            entry["input_tokens"] += u.input_tokens
-                            entry["output_tokens"] += u.output_tokens
-                    await self._session.execute(
-                        sql_update(RunModel)
-                        .where(RunModel.id == run_id)
-                        .values(token_usage_by_model=list(run_usage.values()))
-                    )
-            if outcome is not _UNSET:
-                attempt.outcome = outcome
-            if completed_at is not _UNSET:
-                attempt.completed_at = completed_at
-            if auto_verify_results is not _UNSET:
-                attempt.auto_verify_results = auto_verify_results
-        if status is not None:
-            task_model.status = status.value
-        task_model.step.run.updated_at = datetime.now(timezone.utc)
-        await self._session.flush()
-
-    async def delete(self, run_id: str) -> None:
-        """Delete a run by ID. Raises RunNotFoundError if not found."""
-        result = await self._session.execute(select(RunModel).where(RunModel.id == run_id))
-        model = result.scalar_one_or_none()
-        if model is None:
-            raise RunNotFoundError(run_id)
-        await self._session.delete(model)
-        await self._session.flush()
-
-    async def create_clarification_request(
-        self, request: ClarificationRequest
-    ) -> ClarificationRequest:
-        """Create a new clarification request."""
-        model = ClarificationRequestModel(
-            id=request.id,
-            run_id=request.run_id,
-            task_id=request.task_id,
-            attempt_num=request.attempt_num,
-            questions=[q.model_dump(mode="json") for q in request.questions],
-            created_at=request.created_at,
-            responded_at=request.responded_at,
-        )
-        self._session.add(model)
-        await self._session.flush()
-        return request
 
     async def get_clarification_request(self, request_id: str) -> ClarificationRequest | None:
         """Get a clarification request by ID."""
@@ -1160,30 +719,6 @@ class RunRepository:
         if model is None:
             return None
         return self._clarification_request_from_model(model)
-
-    async def save_clarification_response(self, response: ClarificationResponse) -> None:
-        """Save a clarification response and mark request as responded."""
-        # Create response model
-        model = ClarificationResponseModel(
-            id=str(uuid.uuid4()),
-            request_id=response.request_id,
-            answers=[a.model_dump(mode="json") for a in response.answers],
-            responded_by=response.answers[0].answered_by if response.answers else "unknown",
-            responded_at=response.responded_at,
-        )
-        self._session.add(model)
-
-        # Update request with responded_at
-        result = await self._session.execute(
-            select(ClarificationRequestModel).where(
-                ClarificationRequestModel.id == response.request_id
-            )
-        )
-        request_model = result.scalar_one_or_none()
-        if request_model:
-            request_model.responded_at = response.responded_at
-
-        await self._session.flush()
 
     async def get_clarification_history(
         self,
@@ -1232,75 +767,3 @@ class RunRepository:
             created_at=_ensure_utc(model.created_at),
             responded_at=_ensure_utc_optional(model.responded_at),
         )
-
-
-class CheckpointRepository:
-    """Repository for replay checkpoint persistence."""
-
-    def __init__(self, session: AsyncSession) -> None:
-        self._session = session
-
-    async def get_checkpoint(self, journal_path: str) -> ReplayCheckpointModel | None:
-        """Get the checkpoint for a journal path, or None if not found."""
-        result = await self._session.execute(
-            select(ReplayCheckpointModel).where(ReplayCheckpointModel.journal_path == journal_path)
-        )
-        return result.scalar_one_or_none()
-
-    async def upsert_checkpoint(
-        self,
-        journal_path: str,
-        last_applied_sequence: int,
-        last_applied_timestamp: datetime,
-        backup_snapshot_id: str | None = None,
-    ) -> ReplayCheckpointModel:
-        """Create or update a checkpoint. Calls flush(), not commit()."""
-        result = await self._session.execute(
-            select(ReplayCheckpointModel).where(ReplayCheckpointModel.journal_path == journal_path)
-        )
-        checkpoint = result.scalar_one_or_none()
-        now = datetime.now(timezone.utc)
-        if checkpoint:
-            checkpoint.last_applied_sequence = last_applied_sequence
-            checkpoint.last_applied_timestamp = last_applied_timestamp
-            checkpoint.updated_at = now
-            if backup_snapshot_id is not None:
-                checkpoint.backup_snapshot_id = backup_snapshot_id
-        else:
-            checkpoint = ReplayCheckpointModel(
-                journal_path=journal_path,
-                last_applied_sequence=last_applied_sequence,
-                last_applied_timestamp=last_applied_timestamp,
-                backup_snapshot_id=backup_snapshot_id,
-                updated_at=now,
-            )
-            self._session.add(checkpoint)
-        await self._session.flush()
-        await self._session.refresh(checkpoint)
-        return checkpoint
-
-    @staticmethod
-    async def upsert_checkpoint_in_session(
-        session: AsyncSession,
-        journal_path: str,
-        last_applied_sequence: int,
-        last_applied_timestamp: datetime,
-    ) -> None:
-        """Upsert a checkpoint within an existing session (for atomic batch commits)."""
-        result = await session.execute(
-            select(ReplayCheckpointModel).where(ReplayCheckpointModel.journal_path == journal_path)
-        )
-        checkpoint = result.scalar_one_or_none()
-        now = datetime.now(timezone.utc)
-        if checkpoint:
-            checkpoint.last_applied_sequence = last_applied_sequence
-            checkpoint.last_applied_timestamp = last_applied_timestamp
-            checkpoint.updated_at = now
-        else:
-            checkpoint = ReplayCheckpointModel(
-                journal_path=journal_path,
-                last_applied_sequence=last_applied_sequence,
-                last_applied_timestamp=last_applied_timestamp,
-                updated_at=now,
-            )
-            session.add(checkpoint)

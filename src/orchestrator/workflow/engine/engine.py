@@ -11,6 +11,7 @@ from orchestrator.workflow.engine.errors import GateBlockedError, InvalidTransit
 from orchestrator.workflow.locks import LockManager, TaskLockedError
 from orchestrator.workflow.events import (
     ChecklistGateEvaluated,
+    ChecklistItemUpdated,
     GradeDetail,
     GradesEvaluated,
     RunStepBackward,
@@ -253,6 +254,17 @@ class WorkflowEngine:
 
         self._state.update_checklist_item(
             run_id, task_id, req_id, ChecklistStatus.ESCALATED, note=reason
+        )
+        self._emitter.emit(
+            ChecklistItemUpdated(
+                timestamp=self._clock.now(),
+                run_id=run_id,
+                event_type="checklist_item_updated",
+                task_id=task_id,
+                req_id=req_id,
+                status=ChecklistStatus.ESCALATED,
+                note=reason,
+            )
         )
 
         old_status = run.status

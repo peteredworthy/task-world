@@ -22,7 +22,7 @@
  * ```
  */
 import { useRoutines, useRepoRoutines } from '../hooks/useApi';
-import type { RoutineSummary, ProjectRoutineResponse } from '../types';
+import { groupRoutines } from './routineGrouping';
 
 export interface RoutineSelection {
   routineId: string;
@@ -40,14 +40,6 @@ interface RoutineSelectorProps {
   className?: string;
   autoFocus?: boolean;
   required?: boolean;
-}
-
-interface GroupedRoutine {
-  id: string;
-  name: string;
-  description: string | null;
-  isTemplate: boolean;
-  config?: Record<string, unknown>;
 }
 
 export function RoutineSelector({
@@ -146,30 +138,4 @@ export function RoutineSelector({
       )}
     </select>
   );
-}
-
-/**
- * Group routines into templates and project-specific routines.
- * Templates come from the global routines API.
- * Project routines come from the repo routines API.
- */
-function groupRoutines(
-  templates: RoutineSummary[],
-  projectRoutines: ProjectRoutineResponse[]
-): { templates: GroupedRoutine[]; projectRoutines: GroupedRoutine[] } {
-  return {
-    templates: templates.map((r) => ({
-      id: r.id,
-      name: r.name,
-      description: r.description,
-      isTemplate: true,
-    })),
-    projectRoutines: projectRoutines.map((r) => ({
-      id: r.id,
-      name: r.name,
-      description: r.description,
-      isTemplate: false,
-      config: r.config,
-    })),
-  };
 }

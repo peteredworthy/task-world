@@ -497,6 +497,8 @@ def _pause_for_transition_error(
                 event_type="run_status_changed",
                 old_status=old_status,
                 new_status=RunStatus.PAUSED,
+                pause_reason=run.pause_reason,
+                last_error=run.last_error,
             )
         )
 
@@ -552,6 +554,7 @@ def _apply_configured_transition(
                 from_step_index=current_index,
                 to_step_index=target_index,
                 reason=message or f"Transition condition returned to {target_step_id}",
+                transition_tracker_delta={f"{step_config.id}->{target_step_id}": 1},
             )
         )
     return True
@@ -629,6 +632,8 @@ def check_step_progression(
                                         event_type="run_status_changed",
                                         old_status=RunStatus.ACTIVE,
                                         new_status=RunStatus.PAUSED,
+                                        pause_reason=run.pause_reason,
+                                        last_error=run.last_error,
                                     )
                                 )
                             break
@@ -685,6 +690,8 @@ def check_step_progression(
                                     event_type="run_status_changed",
                                     old_status=RunStatus.ACTIVE,
                                     new_status=RunStatus.PAUSED,
+                                    pause_reason=run.pause_reason,
+                                    last_error=run.last_error,
                                 )
                             )
                         break
@@ -717,6 +724,8 @@ def check_step_progression(
                                     event_type="run_status_changed",
                                     old_status=RunStatus.ACTIVE,
                                     new_status=RunStatus.PAUSED,
+                                    pause_reason=run.pause_reason,
+                                    last_error=run.last_error,
                                 )
                             )
                         break
@@ -773,6 +782,8 @@ def check_step_progression(
                                         event_type="run_status_changed",
                                         old_status=RunStatus.ACTIVE,
                                         new_status=RunStatus.PAUSED,
+                                        pause_reason=run.pause_reason,
+                                        last_error=run.last_error,
                                     )
                                 )
                             break
@@ -791,6 +802,8 @@ def check_step_progression(
                                     event_type="run_status_changed",
                                     old_status=RunStatus.ACTIVE,
                                     new_status=RunStatus.PAUSED,
+                                    pause_reason=run.pause_reason,
+                                    last_error=run.last_error,
                                 )
                             )
                         break
@@ -861,6 +874,8 @@ def check_step_progression(
                                         event_type="run_status_changed",
                                         old_status=RunStatus.ACTIVE,
                                         new_status=RunStatus.PAUSED,
+                                        pause_reason=run.pause_reason,
+                                        last_error=run.last_error,
                                     )
                                 )
                             break
@@ -907,6 +922,8 @@ def check_step_progression(
                                             event_type="run_status_changed",
                                             old_status=RunStatus.ACTIVE,
                                             new_status=RunStatus.PAUSED,
+                                            pause_reason=run.pause_reason,
+                                            last_error=run.last_error,
                                         )
                                     )
                                 break
@@ -925,6 +942,8 @@ def check_step_progression(
                                         event_type="run_status_changed",
                                         old_status=RunStatus.ACTIVE,
                                         new_status=RunStatus.PAUSED,
+                                        pause_reason=run.pause_reason,
+                                        last_error=run.last_error,
                                     )
                                 )
                             break
@@ -959,6 +978,8 @@ def check_step_progression(
                                         event_type="run_status_changed",
                                         old_status=RunStatus.ACTIVE,
                                         new_status=RunStatus.PAUSED,
+                                        pause_reason=run.pause_reason,
+                                        last_error=run.last_error,
                                     )
                                 )
                             break
@@ -1006,6 +1027,8 @@ def check_step_progression(
                                             event_type="run_status_changed",
                                             old_status=RunStatus.ACTIVE,
                                             new_status=RunStatus.PAUSED,
+                                            pause_reason=run.pause_reason,
+                                            last_error=run.last_error,
                                         )
                                     )
                                 break
@@ -1025,6 +1048,8 @@ def check_step_progression(
                                         event_type="run_status_changed",
                                         old_status=RunStatus.ACTIVE,
                                         new_status=RunStatus.PAUSED,
+                                        pause_reason=run.pause_reason,
+                                        last_error=run.last_error,
                                     )
                                 )
                             break
