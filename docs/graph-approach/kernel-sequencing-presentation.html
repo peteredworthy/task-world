@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sequencing the Graph Kernel — Execution Plan</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #181b24;
+    --panel2: #1f2330;
+    --text: #e6e9f0;
+    --muted: #9aa3b5;
+    --accent: #5eb0ff;
+    --loop: #4ade80;
+    --routine: #f0a44a;
+    --audit: #c084fc;
+    --warn: #f87171;
+    --border: #2c3140;
+    font-size: 16px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: "Avenir Next", "Segoe UI", Helvetica, Arial, sans-serif; overflow: hidden; }
+  .deck { height: 100%; position: relative; }
+  .slide {
+    position: absolute; inset: 0; display: none; flex-direction: column;
+    padding: 3.2rem 4.5rem 4rem; overflow-y: auto;
+  }
+  .slide.active { display: flex; }
+  .slide h1 { font-size: 2.6rem; font-weight: 700; margin-bottom: 1rem; letter-spacing: -0.01em; }
+  .slide h2 { font-size: 1.9rem; font-weight: 700; margin-bottom: 1.4rem; letter-spacing: -0.01em; }
+  .slide h3 { font-size: 1.1rem; font-weight: 600; margin: 0.9rem 0 0.4rem; color: var(--accent); }
+  .kicker { color: var(--accent); text-transform: uppercase; letter-spacing: 0.14em;
+    font-size: 0.78rem; font-weight: 700; margin-bottom: 0.7rem; }
+  p, li { line-height: 1.55; color: var(--text); }
+  .muted { color: var(--muted); }
+  ul { margin: 0.4rem 0 0.9rem 1.2rem; }
+  li { margin-bottom: 0.45rem; }
+  .cols { display: flex; gap: 1.6rem; align-items: stretch; }
+  .col { flex: 1; }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 1.1rem 1.3rem; margin-bottom: 1rem; }
+  .panel.tight { padding: 0.8rem 1rem; }
+  .badge { display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.08em;
+    padding: 0.18rem 0.55rem; border-radius: 999px; text-transform: uppercase; vertical-align: middle; }
+  .b-loop { background: rgba(74,222,128,0.16); color: var(--loop); border: 1px solid rgba(74,222,128,0.4); }
+  .b-routine { background: rgba(240,164,74,0.16); color: var(--routine); border: 1px solid rgba(240,164,74,0.4); }
+  .b-audit { background: rgba(192,132,252,0.16); color: var(--audit); border: 1px solid rgba(192,132,252,0.4); }
+  .b-size { background: rgba(94,176,255,0.14); color: var(--accent); border: 1px solid rgba(94,176,255,0.35); }
+  .b-gate { background: rgba(248,113,113,0.14); color: var(--warn); border: 1px solid rgba(248,113,113,0.4); }
+  table { width: 100%; border-collapse: collapse; margin: 0.6rem 0 1rem; font-size: 0.92rem; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 0.78rem;
+    text-transform: uppercase; letter-spacing: 0.08em; padding: 0.45rem 0.7rem;
+    border-bottom: 1px solid var(--border); }
+  td { padding: 0.55rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  td.name { font-weight: 600; white-space: nowrap; }
+  code { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 0.86em;
+    background: var(--panel2); padding: 0.1em 0.35em; border-radius: 4px; color: #b8d4ff; }
+  .flow { display: flex; gap: 0.8rem; align-items: stretch; margin: 1rem 0; flex-wrap: wrap; }
+  .flow .step { flex: 1; min-width: 150px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 0.8rem 0.9rem; position: relative; }
+  .flow .step .num { color: var(--accent); font-weight: 700; font-size: 0.75rem;
+    letter-spacing: 0.1em; text-transform: uppercase; display: block; margin-bottom: 0.3rem; }
+  .flow .step strong { display: block; margin-bottom: 0.25rem; font-size: 0.95rem; }
+  .flow .step span.desc { color: var(--muted); font-size: 0.8rem; line-height: 1.4; display: block; }
+  .arrow { align-self: center; color: var(--muted); font-size: 1.3rem; }
+  .footer-nav { position: fixed; bottom: 0; left: 0; right: 0; display: flex;
+    justify-content: space-between; align-items: center; padding: 0.7rem 1.6rem;
+    background: linear-gradient(transparent, rgba(15,17,23,0.95) 40%); pointer-events: none; }
+  .footer-nav .counter { color: var(--muted); font-size: 0.8rem; pointer-events: auto; }
+  .footer-nav .hint { color: var(--muted); font-size: 0.75rem; }
+  .footer-nav button { pointer-events: auto; background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 0.4rem 0.9rem; cursor: pointer;
+    font-size: 0.85rem; margin-left: 0.5rem; }
+  .footer-nav button:hover { background: var(--panel2); }
+  .progress { position: fixed; top: 0; left: 0; height: 3px; background: var(--accent);
+    transition: width 0.25s ease; z-index: 10; }
+  .big-claim { font-size: 1.3rem; line-height: 1.5; border-left: 4px solid var(--accent);
+    padding: 0.6rem 0 0.6rem 1.1rem; margin: 1rem 0; }
+  .legend { display: flex; gap: 1rem; margin: 0.6rem 0 1rem; flex-wrap: wrap; font-size: 0.85rem; }
+  .center-title { justify-content: center; align-items: flex-start; }
+  .center-title .sub { font-size: 1.25rem; color: var(--muted); max-width: 46rem; margin-top: 0.6rem; }
+  .two-thirds { flex: 2; }
+  .third { flex: 1; }
+  .mini { font-size: 0.84rem; color: var(--muted); line-height: 1.45; }
+  .checklist li::marker { content: "✓ "; color: var(--loop); }
+  .crosslist li::marker { content: "✗ "; color: var(--warn); }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<div class="deck" id="deck">
+
+<!-- 1 — Title -->
+<section class="slide center-title active">
+  <div class="kicker">Task-World · Execution Graph Kernel</div>
+  <h1>Sequencing the Work</h1>
+  <p class="sub">A phased slice plan for building the graph kernel — every slice sized for one of
+  two execution modes, audited by a frontier model, measured from day one, and migrated onto
+  task-world itself as soon as it can carry the load.</p>
+  <p class="muted" style="margin-top:2rem">Source: <code>execution-graph-prd-plus.md</code> +
+  <code>execution-graph-evaluation.md</code> (§6 amendments) · June 2026</p>
+</section>
+
+<!-- 2 — Context -->
+<section class="slide">
+  <div class="kicker">Context</div>
+  <h2>What we're building, and why sequencing is the hard part</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="panel">
+        <h3>The target</h3>
+        <p>The execution-graph kernel from the PRD+, with the agreed amendments: recursive horizon
+        planning, semantic patch revalidation, warn-and-capture file-state with an LLM gatekeeper,
+        git-plumbing snapshots, and carried-over cost/log records.</p>
+      </div>
+      <div class="panel">
+        <h3>The constraint</h3>
+        <p>Each step must be executable by <strong>one of two modes</strong> — a mid-tier model
+        running a builder / verifier / gap-planner sub-agent loop, or the existing idea-to-plan →
+        routine pipeline. Steps too big for either get split until they fit.</p>
+      </div>
+    </div>
+    <div class="col">
+      <div class="panel">
+        <h3>The bet we're testing</h3>
+        <p>The agent-with-sub-agents loop is probably more token-efficient, but needs a frontier
+        model "true pass" at the end to catch laziness and lies. Neither mode strongly wins today —
+        so the plan treats mode choice as a <strong>measured experiment</strong>, not a doctrine.</p>
+      </div>
+      <div class="panel">
+        <h3>The endgame</h3>
+        <p>Tuned graph-based task-world should beat both. To get there, the plan dogfoods
+        task-world along the journey and includes explicit analysis steps to find inefficiencies
+        and gaps in its own output.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 — Two modes -->
+<section class="slide">
+  <div class="kicker">Execution Modes</div>
+  <h2>Two ways to run a slice — plus the audit that both need</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="panel">
+        <h3><span class="badge b-loop">Loop</span>&nbsp; Sub-agent trio</h3>
+        <p class="mini">Mid-tier orchestrator (Sonnet / GPT-5.5 class) drives three sub-agent
+        roles in a cycle until convergence:</p>
+        <ul style="font-size:0.9rem">
+          <li><strong>Builder</strong> — implements against the slice spec</li>
+          <li><strong>Verifier</strong> — runs fixtures/tests, checks acceptance criteria</li>
+          <li><strong>Gap analyst / planner</strong> — diffs delivered vs specified, emits the
+          next work-list</li>
+        </ul>
+        <p class="mini">Exit condition: gap analyst reports <em>zero gaps</em> AND verifier reports
+        all criteria green. Cheap iterations, fast feedback, low ceremony.</p>
+      </div>
+    </div>
+    <div class="col">
+      <div class="panel">
+        <h3><span class="badge b-routine">Routine</span>&nbsp; Idea-to-plan pipeline</h3>
+        <p class="mini">Existing task-world flow: idea-to-plan produces a routine; the routine runs
+        with builder/verifier phases, gates, and auto-verify checks.</p>
+        <ul style="font-size:0.9rem">
+          <li>Front-loaded planning → predictable, traceable</li>
+          <li>Strong boundaries, human gates where wanted</li>
+          <li>Heavier in tokens and ceremony; weak at mid-flight discovery</li>
+        </ul>
+        <p class="mini">Best where shallow tests can pass while the semantics are wrong — the
+        planning pass forces the design questions to be answered first.</p>
+      </div>
+    </div>
+  </div>
+  <div class="panel" style="border-color: rgba(192,132,252,0.45)">
+    <h3 style="color:var(--audit)"><span class="badge b-audit">Audit</span>&nbsp; Frontier-model true pass — required for both modes</h3>
+    <p class="mini">Every slice ends with a frontier-model pass that re-derives the acceptance
+    criteria from the PRD, adversarially reviews the diff, and hunts for laziness and lies (next
+    slide). A slice is <em>done</em> when the audit signs off — not when the loop says it converged
+    or the routine says it completed.</p>
+  </div>
+</section>
+
+<!-- 4 — Rubric -->
+<section class="slide">
+  <div class="kicker">Mode Selection</div>
+  <h2>Rubric: which mode gets which slice</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="panel">
+        <h3><span class="badge b-loop">Loop</span> when…</h3>
+        <ul class="checklist" style="list-style:none; margin-left:0.2rem">
+          <li>The spec is already precise — schemas, transition tables, and fixture formats exist
+          in the PRD (it was written to avoid re-litigating the model)</li>
+          <li>Correctness is mechanically checkable: pure functions, fixtures-first, deterministic
+          outputs</li>
+          <li>Blast radius is bounded to new modules with no cross-cutting wiring</li>
+          <li>The gap analyst can enumerate "done" objectively (e.g. every PRD table row has a
+          fixture)</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col">
+      <div class="panel">
+        <h3><span class="badge b-routine">Routine</span> when…</h3>
+        <ul class="crosslist" style="list-style:none; margin-left:0.2rem">
+          <li>Concurrency or transaction semantics are involved — tests pass easily while the
+          design is subtly wrong</li>
+          <li>The work crosses module boundaries (engine ↔ db ↔ runners ↔ api) and needs an
+          integration map up front</li>
+          <li>Design judgment is part of the deliverable, not just implementation</li>
+          <li>A wrong outcome is expensive to detect late (event-store migration, dispatch
+          atomicity)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <p class="big-claim">Default is <strong>Loop</strong> — the PRD's precision was bought
+  specifically to make that safe. Routine is the exception, reserved for the four or five slices
+  where being subtly wrong is cheap to ship and expensive to discover.</p>
+  <p class="mini">Tie-breaker: if the gap analyst cannot write an objective "no gaps" definition
+  for the slice, it isn't loop-able — either split it until it is, or send it through the routine.</p>
+</section>
+
+<!-- 5 — Audit pass -->
+<section class="slide">
+  <div class="kicker">Quality Control</div>
+  <h2>The audit pass: catching laziness and lies</h2>
+  <p class="muted" style="margin-bottom:1rem">Mid-tier loops fail in characteristic ways. The audit
+  is a checklist-driven adversarial pass by a frontier model, scoped to one slice, with the PRD and
+  evaluation doc as ground truth.</p>
+  <div class="cols">
+    <div class="col">
+      <div class="panel">
+        <h3>Laziness (work avoided)</h3>
+        <ul style="font-size:0.92rem">
+          <li>Stubbed or pass-through implementations behind green tests</li>
+          <li>Fixtures that assert weaker properties than the PRD table they came from</li>
+          <li>Edge rows silently dropped (e.g. 3 of 9 stale-callback cases covered)</li>
+          <li>Error paths that log instead of reject</li>
+          <li>"Deferred to follow-up" notes that were never in scope to defer</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col">
+      <div class="panel">
+        <h3>Lies (claims unsupported by the diff)</h3>
+        <ul style="font-size:0.92rem">
+          <li>Summary claims a behavior no test exercises</li>
+          <li>"All fixtures pass" where fixtures were edited to pass</li>
+          <li>Determinism claims with hidden clock/random/IO in reducers</li>
+          <li>Renamed-but-unchanged code presented as refactor</li>
+          <li>Acceptance criteria checked off without evidence links</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+  <div class="panel tight">
+    <p class="mini"><strong>Audit protocol:</strong> (1) re-derive the slice's acceptance criteria
+    from the PRD section, ignoring the builder's summary; (2) map each criterion to specific code +
+    test evidence; (3) run the fixture suite fresh; (4) adversarially attempt one violation per
+    invariant (§27.2 list); (5) verdict: <em>accept</em>, <em>accept-with-punchlist</em>, or
+    <em>bounce back to the loop with the gap list</em>. Audit findings are recorded — they are the
+    primary metric for comparing the two modes.</p>
+  </div>
+</section>
+
+<!-- 6 — Overview map -->
+<section class="slide">
+  <div class="kicker">The Plan</div>
+  <h2>Five phases, audit-gated, measured throughout</h2>
+  <div class="flow">
+    <div class="step"><span class="num">Phase 0</span><strong>Foundations</strong>
+      <span class="desc">Event-log durability, cost records, git-plumbing snapshots. Prerequisites for everything; also the measurement instruments.</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="num">Phase 1</span><strong>Pure kernel</strong>
+      <span class="desc">Models, fixture harness, reducers, scheduler, leases, patch validator. Fixtures-first, no IO.</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="num">Phase 2</span><strong>Effectful shell</strong>
+      <span class="desc">Event store + outbox, routine compiler, one real builder/verifier cycle, file-state boundary, compat APIs.</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="num">Phase 3</span><strong>Dynamic planning</strong>
+      <span class="desc">Horizon planner, retained planner session, parent/child re-expressed as planner chain.</span></div>
+    <div class="arrow">→</div>
+    <div class="step"><span class="num">Phase 4</span><strong>Converge</strong>
+      <span class="desc">Graph task-world runs its own slices; oversight layer deleted; mode experiment concluded by data.</span></div>
+  </div>
+  <div class="legend">
+    <span><span class="badge b-loop">Loop</span> sub-agent trio</span>
+    <span><span class="badge b-routine">Routine</span> idea-to-plan</span>
+    <span><span class="badge b-audit">Audit</span> frontier true pass — ends every slice</span>
+    <span><span class="badge b-gate">Gate</span> go/no-go decision point</span>
+  </div>
+  <div class="panel tight">
+    <p class="mini"><strong>Standing rules across all phases:</strong> every slice ends with an
+    audit; every phase ends with a measurement slice (token spend, audit-finding counts, rework
+    rate, per-mode comparison); from Phase 2 onward, new slices preferentially run <em>through</em>
+    task-world so the system generates its own evaluation data.</p>
+  </div>
+</section>
+
+<!-- 7 — Phase 0 -->
+<section class="slide">
+  <div class="kicker">Phase 0</div>
+  <h2>Foundations — durability and instruments first</h2>
+  <p class="muted">Nothing here is speculative; all three are prerequisites the evaluation flagged.
+  Crucially, 0.2 is the measurement instrument for the whole mode experiment — it must exist before
+  anything we want to compare.</p>
+  <table>
+    <tr><th>Slice</th><th>Scope</th><th>Mode</th><th>Done when</th></tr>
+    <tr>
+      <td class="name">0.1 Event-log durability</td>
+      <td>Authoritative log fully in DB-backed <code>events_v2</code>; journal file demoted to
+      secondary sink; backup-before-migration policy; <code>history.jsonl</code> out of git
+      tracking.</td>
+      <td><span class="badge b-routine">Routine</span></td>
+      <td>Kill-and-rebuild drill: projections reconstruct from DB log alone; journal loss is
+      non-fatal.</td>
+    </tr>
+    <tr>
+      <td class="name">0.2 Cost &amp; log records</td>
+      <td>Per-execution cost record (tokens in/out, cache read/write, model, wall time) keyed by
+      execution identity; interaction logs as artifact records with stable ids. Carryover of
+      existing task-world metrics into the new shape.</td>
+      <td><span class="badge b-loop">Loop</span></td>
+      <td>Every agent execution in a test run emits a cost record; a report script aggregates
+      per-run and per-mode spend.</td>
+    </tr>
+    <tr>
+      <td class="name">0.3 Snapshot plumbing</td>
+      <td>Git-native snapshot utility: temp index → <code>write-tree</code> →
+      <code>commit-tree</code> → <code>refs/orchestrator/snapshots/&lt;id&gt;</code>; restore path;
+      captures untracked; never fires hooks or touches HEAD/index/worktree.</td>
+      <td><span class="badge b-loop">Loop</span></td>
+      <td>Property tests: snapshot+restore round-trips tracked+untracked state; porcelain state
+      untouched; identical trees dedupe.</td>
+    </tr>
+  </table>
+  <div class="panel tight"><p class="mini"><strong>Why 0.1 is a routine:</strong> it migrates the
+  single point of total loss (the evaluation's §4.10) — being subtly wrong is catastrophic and
+  invisible until a crash. Plan-first, gates, human approval on the cutover. 0.2 and 0.3 are
+  bounded, mechanically verifiable — textbook loop slices.</p></div>
+</section>
+
+<!-- 8 — Phase 1 -->
+<section class="slide">
+  <div class="kicker">Phase 1</div>
+  <h2>Pure kernel — fixtures before reducers</h2>
+  <p class="muted">All pure code, no IO, importable without the app. The PRD's tables become
+  fixtures before any implementation exists; the loop's verifier then has objective ground truth.</p>
+  <table>
+    <tr><th>Slice</th><th>Scope</th><th>Mode</th><th>Done when</th></tr>
+    <tr>
+      <td class="name">1.1 Graph models</td>
+      <td>Pydantic models: node kinds, ports, edges, records, event envelope, lease, callback,
+      patch envelope (PRD §6, §10–§12, §16, §19).</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">S</span></td>
+      <td>Every JSON example in the PRD round-trips through its model.</td>
+    </tr>
+    <tr>
+      <td class="name">1.2 Fixture harness</td>
+      <td>Scenario runner for §27.3 format: <code>given_events / when_command / then_events /
+      then_projection</code>; in-memory event store; injected clock/IDs.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">S</span></td>
+      <td>One hand-written scenario executes end-to-end and fails for the right reason.</td>
+    </tr>
+    <tr>
+      <td class="name">1.3 Fixture corpus</td>
+      <td>Transcribe PRD tables into fixtures: run lifecycle, node lifecycles (§15), stale-callback
+      table (§19), task projection formula (§14), §27.2 invariants. Pressure-test docs become
+      scenarios. <em>No implementation — fixtures only.</em></td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">M</span></td>
+      <td>Gap analyst confirms 1:1 — every PRD table row has a fixture id; audit spot-checks
+      fidelity.</td>
+    </tr>
+    <tr>
+      <td class="name">1.4 Reducers + projections</td>
+      <td><code>reduce_event</code>, run/node/task/lease/ready projections.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">M</span></td>
+      <td>Fixture corpus green; replay-determinism property test passes.</td>
+    </tr>
+    <tr>
+      <td class="name">1.5 Readiness + scheduler</td>
+      <td><code>evaluate_readiness</code>, <code>schedule</code> with tie-break ordering, resource
+      conflict matrix (§17–§18).</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">M</span></td>
+      <td>Scheduler explains every ready/deferred decision in fixture output.</td>
+    </tr>
+    <tr>
+      <td class="name">1.6 Lease &amp; callback validation</td>
+      <td>Generations, idempotency keys, full stale-callback matrix.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">S</span></td>
+      <td>All nine §19 stale cases pass; duplicate-key conflict cases covered.</td>
+    </tr>
+    <tr>
+      <td class="name">1.7 Patch validator</td>
+      <td>Per-op read-sets, invalidating-vs-neutral event classification, structured rejection
+      deltas (evaluation §6.2). The subtle slice of the phase.</td>
+      <td><span class="badge b-routine">Routine</span> <span class="badge b-size">M</span></td>
+      <td>"Stale by N neutral events → accept" and "stale by requirement amendment → reject with
+      delta" fixtures pass; audit attempts authority-escalation patches.</td>
+    </tr>
+  </table>
+</section>
+
+<!-- 9 — Phase 2 -->
+<section class="slide">
+  <div class="kicker">Phase 2</div>
+  <h2>Effectful shell — the kernel meets reality</h2>
+  <table>
+    <tr><th>Slice</th><th>Scope</th><th>Mode</th><th>Done when</th></tr>
+    <tr>
+      <td class="name">2.1 Event store + outbox</td>
+      <td>Transactional append + outbox rows; dispatch worker; crash-point recovery table
+      (PRD §12.3, §13).</td>
+      <td><span class="badge b-routine">Routine</span> <span class="badge b-size">M</span></td>
+      <td>Failure-injection tests for all four crash points; no side effect before commit.</td>
+    </tr>
+    <tr>
+      <td class="name">2.2 Routine compiler</td>
+      <td>Routine YAML → initial graph per §23.2 mapping table. Includes the <strong>minimal-graph
+      requirement</strong>: a single-task routine compiles to the minimum executable graph.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">M</span></td>
+      <td>Existing routines (incl. <code>demo-task.yaml</code>) compile; minimal-graph test passes;
+      per-node controller overhead measured and bounded.</td>
+    </tr>
+    <tr>
+      <td class="name">2.3 Runner integration</td>
+      <td>One real builder/verifier cycle through an existing adapter (Claude SDK or CLI) behind
+      graph callbacks; lease identity in callbacks; reattach-on-restart.</td>
+      <td><span class="badge b-routine">Routine</span> <span class="badge b-size">L</span></td>
+      <td>End-to-end run on a real repo: build → boundary → verify → task projection accepted;
+      server-restart mid-run recovers.</td>
+    </tr>
+    <tr>
+      <td class="name">2.4 File-state boundary</td>
+      <td>Warn-and-capture classifier; residue recorded never rejected (except secret-suspects);
+      snapshot via 0.3 plumbing; classification data accumulates.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">M</span></td>
+      <td>Deterministic outcomes for tracked/untracked/ignored/secret-like fixtures; real-run
+      residue report exists.</td>
+    </tr>
+    <tr>
+      <td class="name">2.5 LLM gatekeeper</td>
+      <td>Small-model classification of unmatched residue; verdict recorded as event (replay never
+      re-asks); metadata-only for secret-suspects; verdicts seed pattern library.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">S</span></td>
+      <td>Gatekeeper hit-rate and pattern-library growth visible in cost reports.</td>
+    </tr>
+    <tr>
+      <td class="name">2.6 Compat API + UI projection</td>
+      <td>Graph/task projections behind existing API shapes; task cards read projections;
+      "explain this state" drill-down to facts.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">M</span></td>
+      <td>Existing UI works against a graph-backed run; projection→fact links navigable.</td>
+    </tr>
+  </table>
+  <div class="panel tight" style="border-color: rgba(248,113,113,0.4)">
+    <p class="mini"><span class="badge b-gate">Gate</span>&nbsp; <strong>Dogfood gate:</strong>
+    after 2.6, task-world can execute a graph run end-to-end. From here, every subsequent slice
+    runs through task-world unless there's a stated reason not to — that's how the tuning data
+    gets generated.</p>
+  </div>
+</section>
+
+<!-- 10 — Phase 3 -->
+<section class="slide">
+  <div class="kicker">Phase 3</div>
+  <h2>Dynamic planning — the payoff features</h2>
+  <table>
+    <tr><th>Slice</th><th>Scope</th><th>Mode</th><th>Done when</th></tr>
+    <tr>
+      <td class="name">3.1 Horizon planner contract</td>
+      <td>Planner node kind; patch = region + successor planner(s) bound to milestone records;
+      planner-generation budget; termination invariant (evaluation §6.1). Design-sensitive: this
+      <em>is</em> the single loop.</td>
+      <td><span class="badge b-routine">Routine</span> <span class="badge b-size">L</span></td>
+      <td>Fixture: three-generation planner chain plans → executes → replans on injected
+      verification failure → terminates with no successor.</td>
+    </tr>
+    <tr>
+      <td class="name">3.2 Retained planner session</td>
+      <td>Planner session resume with new lease generation; compression between generations;
+      session events (<code>session_compressed</code> etc.) reserved in 0.2/1.1 now wired.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">M</span></td>
+      <td>Cost records show resumed planner generations cheaper than fresh-context equivalents.</td>
+    </tr>
+    <tr>
+      <td class="name">3.3 Parent/child as planner chain</td>
+      <td>Re-express one real super-parent scenario as planner chain over horizon regions, run
+      through the fixture format <em>and</em> live.</td>
+      <td><span class="badge b-routine">Routine</span> <span class="badge b-size">M</span></td>
+      <td>The scenario completes with equivalent outcomes and lower token spend than the
+      parent/child baseline.</td>
+    </tr>
+    <tr>
+      <td class="name">3.4 Oversight-layer retirement</td>
+      <td>Migrate remaining parent/child use to planner chains; delete the ~3,400-line
+      oversight/delegation layer.</td>
+      <td><span class="badge b-loop">Loop</span> <span class="badge b-size">M</span></td>
+      <td>Layer deleted; test suite green; largest single simplification in the codebase landed.</td>
+    </tr>
+  </table>
+  <div class="panel tight" style="border-color: rgba(248,113,113,0.4)">
+    <p class="mini"><span class="badge b-gate">Gate</span>&nbsp; <strong>Validation gate before
+    3.4:</strong> if 3.3 shows the graph can't cleanly express what parent/child does, stop and
+    redesign — that finding at this point costs one slice; discovering it after deleting the
+    oversight layer costs the layer back.</p>
+  </div>
+</section>
+
+<!-- 11 — Dogfooding -->
+<section class="slide">
+  <div class="kicker">Phase 2 onward</div>
+  <h2>Dogfooding: task-world builds task-world</h2>
+  <div class="cols">
+    <div class="col two-thirds">
+      <div class="panel">
+        <h3>The ramp</h3>
+        <ul style="font-size:0.95rem">
+          <li><strong>Phases 0–1:</strong> slices run as loop / routine directly (task-world graphs
+          don't exist yet). Cost records from 0.2 instrument both modes from the start.</li>
+          <li><strong>Phase 2 (post-2.3):</strong> at least one slice per week runs as a graph run
+          in task-world, even if a direct loop would be faster — the point is generating real
+          execution traces.</li>
+          <li><strong>Phase 3+:</strong> graph runs are the default carrier. The loop trio maps
+          naturally: builder/verifier are worker/verifier nodes; the gap analyst is a planner node
+          emitting the next horizon. The audit pass becomes an oversight node with a frontier-model
+          profile.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Post-slice analysis (every dogfooded slice)</h3>
+        <ul style="font-size:0.95rem">
+          <li><strong>Inefficiency scan:</strong> from cost records — token spend per node, context
+          re-injection vs packet assembly, gatekeeper call volume, planner replan count, neutral
+          patch rejections (should be ~zero).</li>
+          <li><strong>Gap scan:</strong> audit findings vs slice spec — what the run missed, what
+          boundary checks flagged, where the projection confused a human.</li>
+          <li>Findings file into the backlog as tuning slices — same pipeline, no special process.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col third">
+      <div class="panel">
+        <h3>Why force it</h3>
+        <p class="mini">Tuned graph task-world only wins if it gets tuned, and tuning needs traces
+        of real work — not demos. Building the kernel <em>with</em> the kernel is the cheapest
+        source of honest workload, and every inefficiency found is double value: a fix for the
+        product and a data point for the mode experiment.</p>
+      </div>
+      <div class="panel">
+        <h3>Escape hatch</h3>
+        <p class="mini">If a dogfooded slice stalls on a task-world defect, fall back to direct
+        loop mode for the slice and file the defect as its own slice. Never block kernel progress
+        on kernel bugs.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 — Measurement -->
+<section class="slide">
+  <div class="kicker">The Experiment</div>
+  <h2>Measuring loop vs routine — settling it with data</h2>
+  <div class="cols">
+    <div class="col">
+      <div class="panel">
+        <h3>Protocol</h3>
+        <ul style="font-size:0.93rem">
+          <li>Pair comparable slices (similar size/kind — e.g. 1.4 vs 1.5, 2.4 vs 2.6) and run one
+          in each mode where the rubric permits either.</li>
+          <li>Phase-end measurement slice aggregates: total tokens (split by model tier),
+          wall-clock, audit-finding count and severity, bounce-backs, human interventions.</li>
+          <li>Audit findings are the quality currency: a cheap slice with five audit bounces isn't
+          cheap.</li>
+        </ul>
+      </div>
+      <div class="panel">
+        <h3>Decision points</h3>
+        <ul style="font-size:0.93rem">
+          <li><strong>End of Phase 1:</strong> enough paired data to set the default mode for
+          Phase 2's loop-eligible slices.</li>
+          <li><strong>End of Phase 3:</strong> three-way comparison — loop vs routine vs graph
+          task-world — on dogfooded slices. This is the "has the graph started winning?" check.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="col">
+      <div class="panel">
+        <h3>Hypotheses on record</h3>
+        <table style="font-size:0.85rem">
+          <tr><th></th><th>Tokens</th><th>Quality risk</th></tr>
+          <tr><td class="name">Loop + audit</td>
+            <td>Lower — short cycles, mid-tier pricing, frontier only at the end</td>
+            <td>Laziness/lies; caught by audit, costing bounces</td></tr>
+          <tr><td class="name">Routine</td>
+            <td>Higher — front-loaded planning, fresh context per phase</td>
+            <td>Over-constrained validation; plan staleness</td></tr>
+          <tr><td class="name">Graph (tuned)</td>
+            <td>Lowest eventually — packet context, retained sessions, deterministic checks</td>
+            <td>Untuned: orchestration overhead per node</td></tr>
+        </table>
+        <p class="mini">Expectation: loop wins early on token cost; the audit-bounce rate decides
+        whether it wins overall. Graph task-world should cross over during Phase 3 once retained
+        planner sessions and packet assembly land — if it doesn't, the measurement slices say why.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 13 — Risks -->
+<section class="slide">
+  <div class="kicker">Guardrails</div>
+  <h2>Failure modes this plan is designed against</h2>
+  <table>
+    <tr><th>Risk</th><th>Guardrail</th></tr>
+    <tr><td class="name">Kernel scope creep</td>
+      <td>Slice list is the scope. New node kinds/policies enter as new slices through the same
+      gate — never as silent additions inside a running slice.</td></tr>
+    <tr><td class="name">Loop converges on weak fixtures</td>
+      <td>Fixture corpus (1.3) is its own audited slice <em>before</em> implementation slices —
+      the verifier's ground truth is fixed first; builders can't negotiate it downward.</td></tr>
+    <tr><td class="name">Audit becomes a rubber stamp</td>
+      <td>Audit re-derives criteria from the PRD, never from the builder's summary; bounce rate is
+      tracked per mode — a zero-bounce streak on loop slices is itself a flag to deepen the audit.</td></tr>
+    <tr><td class="name">Dogfooding stalls progress</td>
+      <td>Escape hatch: fall back to direct loop, file the defect as a slice. Dogfood quota is a
+      target, not a blocker.</td></tr>
+    <tr><td class="name">Mode debate continues on vibes</td>
+      <td>Cost records from slice 0.2 onward; decisions scheduled at phase ends, made on the
+      recorded numbers.</td></tr>
+    <tr><td class="name">Oversight layer deleted prematurely</td>
+      <td>3.3 validation gate: live parity run before 3.4 deletes anything.</td></tr>
+    <tr><td class="name">Event-store migration loses history</td>
+      <td>0.1 is routine-mode with human gates; backup before cutover; kill-and-rebuild drill as
+      the acceptance test.</td></tr>
+  </table>
+</section>
+
+<!-- 14 — Summary -->
+<section class="slide">
+  <div class="kicker">Summary</div>
+  <h2>The recommendation in five lines</h2>
+  <div class="panel" style="font-size:1.05rem; line-height:1.7">
+    <ol style="margin-left:1.4rem">
+      <li><strong>Default to the sub-agent loop</strong> for precise, fixture-checkable slices;
+      reserve the idea-to-plan routine for the five concurrency/integration/design slices
+      (0.1, 1.7, 2.1, 2.3, 3.1).</li>
+      <li><strong>Every slice ends with a frontier-model audit</strong> that re-derives acceptance
+      criteria from the PRD and hunts laziness and lies; audit bounces are the quality metric.</li>
+      <li><strong>Instruments before experiment:</strong> cost records (0.2) land first, so loop vs
+      routine is settled by recorded numbers at phase-end checkpoints, not by intuition.</li>
+      <li><strong>Fixtures before reducers:</strong> the PRD's tables become an audited fixture
+      corpus before implementation starts — the loop's ground truth can't be negotiated down.</li>
+      <li><strong>Dogfood from the first possible moment</strong> (after 2.3/2.6) and analyze every
+      dogfooded run for inefficiencies and gaps — that analysis stream is what turns "graphs should
+      win eventually" into "graphs win, measurably, here."</li>
+    </ol>
+  </div>
+  <h3 style="margin-top:1.2rem">First three actions</h3>
+  <p style="font-size:0.98rem">① Run slice <strong>0.2 (cost records)</strong> as the first loop
+  experiment — it's small, mechanically checkable, and instruments everything after it.&ensp;
+  ② Start <strong>0.1 (event-log durability)</strong> through idea-to-plan in parallel.&ensp;
+  ③ Draft the <strong>audit checklist</strong> as a reusable prompt so the true pass is consistent
+  from the first slice.</p>
+</section>
+
+</div>
+
+<div class="footer-nav">
+  <span class="hint">← → arrows, space, or click to navigate</span>
+  <span>
+    <span class="counter" id="counter"></span>
+    <button onclick="prev()">‹ Prev</button>
+    <button onclick="next()">Next ›</button>
+  </span>
+</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll('.slide'));
+  let i = 0;
+  function show(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('active', k === i));
+    document.getElementById('counter').textContent = (i + 1) + ' / ' + slides.length;
+    document.getElementById('progress').style.width = ((i + 1) / slides.length * 100) + '%';
+  }
+  function next() { show(i + 1); }
+  function prev() { show(i - 1); }
+  document.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') { e.preventDefault(); next(); }
+    if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
+    if (e.key === 'Home') show(0);
+    if (e.key === 'End') show(slides.length - 1);
+  });
+  document.getElementById('deck').addEventListener('click', e => {
+    if (e.target.closest('button') || window.getSelection().toString()) return;
+    next();
+  });
+  show(0);
+</script>
+</body>
+</html>
