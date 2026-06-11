@@ -5,8 +5,10 @@ Revises: t1a2b3c4d5e6
 Create Date: 2026-05-26 00:00:00.000000
 
 Creates the events_v2 table as the foundation for the unified SQLite event store.
-Includes a UNIQUE(aggregate_id, version) constraint for optimistic concurrency
-control and two composite indexes for efficient stream and type queries.
+``position`` is the durable global ordering key. The proof path uses
+``UNIQUE(aggregate_id, version)`` as the stable retry/import duplicate-detection
+identity and per-aggregate ordering guard. The composite indexes support
+ordered replay by aggregate and event type.
 """
 
 from typing import Sequence, Union

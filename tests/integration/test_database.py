@@ -3,9 +3,11 @@
 import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -153,6 +155,205 @@ async def test_event_v2_insert_and_query(session: AsyncSession) -> None:
     assert len(loaded) == 2
     assert loaded[0].event_type == "run_status_changed"
     assert loaded[1].event_type == "task_status_changed"
+
+
+def test_event_v2_metadata_exposes_durability_contract() -> None:
+    table = EventV2Model.__table__
+
+    assert table.primary_key.columns.keys() == ["position"]
+    assert table.c.position.autoincrement is True
+
+    required_columns = {
+        "position",
+        "aggregate_id",
+        "event_type",
+        "payload",
+        "timestamp",
+        "version",
+    }
+    assert required_columns <= set(table.columns.keys())
+    for column_name in required_columns:
+        assert not table.c[column_name].nullable
+    assert "event_id" not in table.columns
+    assert "import_id" not in table.columns
+
+    unique_constraints = {
+        constraint.name: tuple(column.name for column in constraint.columns)
+        for constraint in table.constraints
+        if constraint.name
+    }
+    assert unique_constraints["uq_events_v2_aggregate_version"] == ("aggregate_id", "version")
+
+    indexes = {
+        index.name: tuple(column.name for column in index.columns) for index in table.indexes
+    }
+    assert indexes["idx_events_v2_aggregate"] == ("aggregate_id", "position")
+    assert indexes["idx_events_v2_type"] == ("event_type", "position")
+
+
+async def test_events_v2_alembic_schema_and_retry_identity(tmp_path: Path) -> None:
+    db_path = tmp_path / "events-v2-migration.sqlite"
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+
+    async with engine.begin() as conn:
+        schema = await conn.run_sync(
+            lambda sync_conn: {
+                "columns": {
+                    column["name"]: column for column in inspect(sync_conn).get_columns("events_v2")
+                },
+                "pk": inspect(sync_conn).get_pk_constraint("events_v2"),
+                "unique": inspect(sync_conn).get_unique_constraints("events_v2"),
+                "indexes": inspect(sync_conn).get_indexes("events_v2"),
+            }
+        )
+
+    assert set(schema["columns"]) >= {
+        "position",
+        "aggregate_id",
+        "event_type",
+        "payload",
+        "timestamp",
+        "version",
+    }
+    assert schema["pk"]["constrained_columns"] == ["position"]
+    assert any(
+        constraint["name"] == "uq_events_v2_aggregate_version"
+        and constraint["column_names"] == ["aggregate_id", "version"]
+        for constraint in schema["unique"]
+    )
+    indexes = {index["name"]: index["column_names"] for index in schema["indexes"]}
+    assert indexes["idx_events_v2_aggregate"] == ["aggregate_id", "position"]
+    assert indexes["idx_events_v2_type"] == ["event_type", "position"]
+
+    async with factory() as migrated_session:
+        await migrated_session.execute(
+            text(
+                "INSERT INTO events_v2"
+                " (aggregate_id, event_type, payload, timestamp, version)"
+                " VALUES (:aggregate_id, :event_type, :payload, :timestamp, :version)"
+            ),
+            {
+                "aggregate_id": "retry-run",
+                "event_type": "run_status_changed",
+                "payload": json.dumps({"run_id": "retry-run"}),
+                "timestamp": "2025-01-15T10:30:00Z",
+                "version": 1,
+            },
+        )
+        await migrated_session.flush()
+        await migrated_session.commit()
+
+        with pytest.raises(IntegrityError):
+            await migrated_session.execute(
+                text(
+                    "INSERT INTO events_v2"
+                    " (aggregate_id, event_type, payload, timestamp, version)"
+                    " VALUES (:aggregate_id, :event_type, :payload, :timestamp, :version)"
+                ),
+                {
+                    "aggregate_id": "retry-run",
+                    "event_type": "task_status_changed",
+                    "payload": json.dumps({"run_id": "retry-run", "task_id": "task-1"}),
+                    "timestamp": "2025-01-15T10:30:01Z",
+                    "version": 1,
+                },
+            )
+            await migrated_session.flush()
+
+        await migrated_session.rollback()
+
+    async with factory() as verify_session:
+        count = await verify_session.scalar(
+            text(
+                "SELECT COUNT(*) FROM events_v2"
+                " WHERE aggregate_id = :aggregate_id AND version = :version"
+            ),
+            {"aggregate_id": "retry-run", "version": 1},
+        )
+        assert count == 1
+
+    await engine.dispose()
+
+
+async def test_events_v2_retry_identity_is_aggregate_version_not_payload_identity(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "events-v2-identity-limitation.sqlite"
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+
+    payload = json.dumps({"run_id": "retry-run", "status": "active"})
+    async with factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO events_v2"
+                " (aggregate_id, event_type, payload, timestamp, version)"
+                " VALUES (:aggregate_id, :event_type, :payload, :timestamp, :version)"
+            ),
+            {
+                "aggregate_id": "retry-run",
+                "event_type": "run_status_changed",
+                "payload": payload,
+                "timestamp": "2025-01-15T10:30:00Z",
+                "version": 1,
+            },
+        )
+        await session.execute(
+            text(
+                "INSERT INTO events_v2"
+                " (aggregate_id, event_type, payload, timestamp, version)"
+                " VALUES (:aggregate_id, :event_type, :payload, :timestamp, :version)"
+            ),
+            {
+                "aggregate_id": "retry-run",
+                "event_type": "run_status_changed",
+                "payload": payload,
+                "timestamp": "2025-01-15T10:30:00Z",
+                "version": 2,
+            },
+        )
+        await session.commit()
+
+    async with factory() as session:
+        with pytest.raises(IntegrityError):
+            await session.execute(
+                text(
+                    "INSERT INTO events_v2"
+                    " (aggregate_id, event_type, payload, timestamp, version)"
+                    " VALUES (:aggregate_id, :event_type, :payload, :timestamp, :version)"
+                ),
+                {
+                    "aggregate_id": "retry-run",
+                    "event_type": "task_status_changed",
+                    "payload": json.dumps({"run_id": "retry-run", "task_id": "task-1"}),
+                    "timestamp": "2025-01-15T10:30:01Z",
+                    "version": 2,
+                },
+            )
+            await session.flush()
+
+        await session.rollback()
+
+    async with factory() as verify_session:
+        rows = (
+            (
+                await verify_session.execute(
+                    text(
+                        "SELECT position, payload, version FROM events_v2"
+                        " WHERE aggregate_id = :aggregate_id ORDER BY position"
+                    ),
+                    {"aggregate_id": "retry-run"},
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    assert [(row["version"], row["payload"]) for row in rows] == [(1, payload), (2, payload)]
+    await engine.dispose()
 
 
 async def test_step_ordering(session: AsyncSession) -> None:

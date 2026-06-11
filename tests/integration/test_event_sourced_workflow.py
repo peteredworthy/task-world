@@ -4,31 +4,146 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncGenerator
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import JSON, select
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
-from orchestrator.config.enums import RunStatus
+from orchestrator.config.enums import RunStatus, TaskStatus
 from orchestrator.db import init_db
-from orchestrator.db import SqliteEventStore
+from orchestrator.db import AttemptModel, RunModel, SqliteEventStore, StepModel, TaskModel
 from orchestrator.db import ProjectionRegistry, RunStateProjector, TaskStateProjector
 from orchestrator.workflow import (
     CreateRunCommand,
-    InitialStepForRunCreate,
+    CreateTaskAttemptCommand,
     CreateTaskCommand,
+    InitialStepForRunCreate,
+    UpdateLatestAttemptCommand,
     UpdateRunStatusCommand,
     handle_create_run,
     handle_create_task,
+    handle_create_task_attempt,
+    handle_update_latest_attempt,
     handle_update_run_status,
 )
 from orchestrator.workflow import deserialize_event
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
+
+VOLATILE_PROJECTION_FIELDS: dict[str, dict[str, str]] = {
+    "runs": {},
+    "steps": {},
+    "tasks": {},
+    "attempts": {},
+}
+
+
+def _normalize_projection_value(value: Any, *, parse_json: bool = False) -> Any:
+    if isinstance(value, datetime | date):
+        return value.isoformat()
+    if parse_json and isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    if isinstance(value, dict):
+        return {
+            str(key): _normalize_projection_value(value[key])
+            for key in sorted(value, key=lambda item: str(item))
+        }
+    if isinstance(value, list):
+        normalized_items = [_normalize_projection_value(item) for item in value]
+        if all(isinstance(item, dict) for item in normalized_items):
+            return sorted(
+                normalized_items,
+                key=lambda item: json.dumps(item, sort_keys=True, default=str),
+            )
+        return normalized_items
+    return value
+
+
+def _projection_row(model: Any, instance: Any) -> dict[str, Any]:
+    omitted = VOLATILE_PROJECTION_FIELDS[model.__tablename__]
+    row: dict[str, Any] = {}
+    for column in model.__table__.columns:
+        if column.name in omitted:
+            continue
+        row[column.name] = _normalize_projection_value(
+            getattr(instance, column.name),
+            parse_json=isinstance(column.type, JSON),
+        )
+    return row
+
+
+async def canonical_projection_state(session: AsyncSession, run_id: str) -> dict[str, Any]:
+    """Capture deterministic read-model projection state for rebuild comparison.
+
+    Omitted fields are explicitly listed in VOLATILE_PROJECTION_FIELDS. The
+    current proof path has no timestamp omissions because projector timestamps
+    are sourced from persisted events and must replay deterministically.
+    """
+
+    runs = (
+        await session.execute(select(RunModel).where(RunModel.id == run_id).order_by(RunModel.id))
+    ).scalars()
+    steps = (
+        await session.execute(
+            select(StepModel)
+            .where(StepModel.run_id == run_id)
+            .order_by(StepModel.order_index, StepModel.id)
+        )
+    ).scalars()
+    step_rows = list(steps)
+    step_ids = [step.id for step in step_rows]
+
+    task_rows: list[TaskModel] = []
+    if step_ids:
+        task_rows = list(
+            (
+                await session.execute(
+                    select(TaskModel)
+                    .where(TaskModel.step_id.in_(step_ids))
+                    .order_by(TaskModel.step_id, TaskModel.order_index, TaskModel.id)
+                )
+            ).scalars()
+        )
+    task_ids = [task.id for task in task_rows]
+
+    attempt_rows: list[AttemptModel] = []
+    if task_ids:
+        attempt_rows = list(
+            (
+                await session.execute(
+                    select(AttemptModel)
+                    .where(AttemptModel.task_id.in_(task_ids))
+                    .order_by(AttemptModel.task_id, AttemptModel.attempt_num, AttemptModel.id)
+                )
+            ).scalars()
+        )
+
+    return {
+        "omitted_fields": VOLATILE_PROJECTION_FIELDS,
+        "runs": [_projection_row(RunModel, run) for run in runs],
+        "steps": [_projection_row(StepModel, step) for step in step_rows],
+        "tasks": [_projection_row(TaskModel, task) for task in task_rows],
+        "attempts": [_projection_row(AttemptModel, attempt) for attempt in attempt_rows],
+    }
+
+
+def assert_projection_state_equal(before: dict[str, Any], after: dict[str, Any]) -> None:
+    assert after == before, json.dumps(
+        {"before": before, "after": after, "omitted_fields": VOLATILE_PROJECTION_FIELDS},
+        indent=2,
+        sort_keys=True,
+        default=str,
+    )
 
 
 @pytest.fixture
@@ -166,6 +281,66 @@ async def test_empty_db_rebuild(
             session,
         )
 
+        await handle_create_task_attempt(
+            CreateTaskAttemptCommand(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id="rebuild-attempt-001",
+                attempt_num=1,
+                runner_type="cli_subprocess",
+                agent_model="gpt-5.3-codex",
+                new_task_status=TaskStatus.BUILDING,
+            ),
+            store,
+            session,
+        )
+        await handle_update_latest_attempt(
+            UpdateLatestAttemptCommand(
+                run_id=run_id,
+                task_id=task_id,
+                attempt_id="rebuild-attempt-001",
+                output_lines=["builder output", "verification output"],
+                outcome="passed",
+                builder_prompt="build the durable projection proof",
+                verifier_prompt="verify the durable projection proof",
+                verifier_comment="accepted",
+                grade_snapshot=[
+                    {
+                        "req_id": "R1",
+                        "desc": "rebuild passes",
+                        "priority": "critical",
+                        "status": "done",
+                        "grade": "A",
+                    }
+                ],
+                completed_at="2025-01-15T10:30:00Z",
+                auto_verify_results=[{"name": "unit", "passed": True}],
+                action_log={"events": [{"kind": "command", "name": "pytest"}]},
+                token_usage_by_model=[
+                    {
+                        "model": "gpt-5.3-codex",
+                        "input_tokens": 11,
+                        "output_tokens": 7,
+                        "cache_read_tokens": 0,
+                        "cache_creation_tokens": 0,
+                    }
+                ],
+                tokens_read=11,
+                tokens_write=7,
+                tokens_cache=0,
+                duration_ms=1234,
+                num_actions=2,
+                agent_runner_type="cli_subprocess",
+                agent_model="gpt-5.3-codex",
+                agent_settings={"model": "gpt-5.3-codex", "temperature": 0},
+                start_commit="abc123",
+                end_commit="def456",
+                new_task_status=TaskStatus.COMPLETED,
+            ),
+            store,
+            session,
+        )
+
         await session.commit()
 
     # Step 2: Capture current API response
@@ -178,9 +353,19 @@ async def test_empty_db_rebuild(
     assert len(before["steps"]) == 1
     assert len(before["steps"][0]["tasks"]) == 1
 
-    # Step 3: Truncate runs and tasks read-model tables
     async with session_factory() as session:
+        before_projection = await canonical_projection_state(session, run_id)
+
+    assert before_projection["runs"], "canonical state must capture the run row"
+    assert before_projection["steps"], "canonical state must capture the step row"
+    assert before_projection["tasks"], "canonical state must capture the task row"
+    assert before_projection["attempts"], "canonical state must capture the attempt row"
+
+    # Step 3: Truncate read-model tables
+    async with session_factory() as session:
+        await session.execute(text("DELETE FROM attempts"))
         await session.execute(text("DELETE FROM tasks"))
+        await session.execute(text("DELETE FROM steps"))
         await session.execute(text("DELETE FROM runs"))
         await session.commit()
 
@@ -208,21 +393,16 @@ async def test_empty_db_rebuild(
         await rebuild_registry.rebuild_all(workflow_events, session)
         await session.commit()
 
-    # Step 6: Re-fetch API response and compare field-by-field
+    # Step 6: Re-fetch API response and compare canonical read-model state
     after_resp = await client.get(f"/api/runs/{run_id}")
     assert after_resp.status_code == 200, f"Run not found after rebuild: {after_resp.text}"
     after = after_resp.json()
 
+    async with session_factory() as session:
+        after_projection = await canonical_projection_state(session, run_id)
+
+    assert_projection_state_equal(before_projection, after_projection)
     assert after["id"] == before["id"]
-    assert after["status"] == before["status"]
-    assert after["routine_id"] == before["routine_id"]
-    assert after["repo_name"] == before["repo_name"]
-    assert after["pause_reason"] == before["pause_reason"]
-    assert len(after["steps"]) == len(before["steps"])
-    assert len(after["steps"][0]["tasks"]) == len(before["steps"][0]["tasks"])
-    assert after["steps"][0]["tasks"][0]["id"] == before["steps"][0]["tasks"][0]["id"]
-    assert after["steps"][0]["tasks"][0]["title"] == before["steps"][0]["tasks"][0]["title"]
-    assert after["steps"][0]["tasks"][0]["status"] == before["steps"][0]["tasks"][0]["status"]
 
 
 async def test_parity_run_status_update(

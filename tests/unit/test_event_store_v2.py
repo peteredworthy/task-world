@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import RunStatus, TaskStatus
@@ -157,6 +158,44 @@ async def test_get_all_returns_all_events_in_order(async_session: AsyncSession) 
     assert len(all_events) == 3
     positions = [e.position for e in all_events]
     assert positions == sorted(positions)
+
+
+async def test_reads_use_durable_position_not_version_or_timestamp(
+    async_session: AsyncSession,
+) -> None:
+    await async_session.execute(
+        text(
+            "INSERT INTO events_v2"
+            " (aggregate_id, event_type, payload, timestamp, version)"
+            " VALUES"
+            " ('run-1', 'second_version_first', '{}', '2025-01-15T10:30:02Z', 2),"
+            " ('run-2', 'other_run_middle', '{}', '2025-01-15T10:30:01Z', 1),"
+            " ('run-1', 'first_version_last', '{}', '2025-01-15T10:30:00Z', 1)"
+        )
+    )
+    await async_session.flush()
+
+    store = SqliteEventStore(async_session)
+
+    stream = await store.get_stream("run-1")
+    assert [event.event_type for event in stream] == [
+        "second_version_first",
+        "first_version_last",
+    ]
+    assert [event.position for event in stream] == sorted(event.position for event in stream)
+    assert [event.version for event in stream] == [2, 1]
+
+    all_events = await store.get_all()
+    assert [event.event_type for event in all_events] == [
+        "second_version_first",
+        "other_run_middle",
+        "first_version_last",
+    ]
+    assert [event.position for event in all_events] == [1, 2, 3]
+    assert [event.event_type for event in await store.get_all(after_position=1)] == [
+        "other_run_middle",
+        "first_version_last",
+    ]
 
 
 async def test_get_events_paginated_uses_position_cursor_and_parses_payload(

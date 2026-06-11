@@ -327,6 +327,14 @@ class InteractionLogArtifactModel(Base):
 
 
 class EventV2Model(Base):
+    """Authoritative append-only workflow event row.
+
+    ``position`` is the durable global ordering key. ``version`` is the
+    per-aggregate event sequence, not a SQLAlchemy optimistic-lock column. The
+    proof path uses ``(aggregate_id, version)`` as its stable retry/import
+    duplicate-detection identity.
+    """
+
     __tablename__ = "events_v2"
     __table_args__ = (
         UniqueConstraint("aggregate_id", "version", name="uq_events_v2_aggregate_version"),

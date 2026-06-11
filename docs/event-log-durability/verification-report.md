@@ -180,6 +180,41 @@ Evidence artifacts:
 - Graph-reference conflict status.
 - Next-cycle recommendation.
 
+## Builder Reference Recheck
+
+Rechecked on 2026-06-11 for the step-01 builder gate:
+
+- Inspected `docs/graph-approach/execution-graph-prd-plus.md`,
+  `docs/graph-approach/execution-graph-evaluation.md`,
+  `docs/intent/30-EVENT-DRIVEN-MIGRATION.md`, and
+  `docs/event-log-durability/step-01-plan.md`.
+- Conflict status: no conflict found between the restored graph references,
+  the event-driven migration intent, and the current slice-1 durability plan.
+  If later implementation evidence contradicts these references, treat that as
+  a replan trigger rather than broadening this step.
+- Scope status: this remains limited to one workflow path plus rebuild/crash
+  drills. No `step-02-plan.md` or later executable step plan exists under
+  `docs/event-log-durability/`.
+- Cutover status: production-like migration/import cutover is still deferred
+  unless a later implementation slice explicitly touches it and captures backup
+  and import evidence.
+
+Preserved stop/replan conditions for handoff:
+
+- Real workflow activity cannot create durable run/task events without
+  unrelated workflow engine rewrites.
+- Existing real-surface tests already fully cover the missing proof.
+- Required SQLite, Alembic, journal, workflow, or projection rebuild surfaces
+  cannot run in this environment.
+- The chosen slice expands beyond one workflow path plus rebuild/crash drills.
+- Implementation evidence contradicts the restored graph references.
+- Projection rebuild needs a larger event taxonomy change.
+- Deterministic event ordering cannot be achieved from existing payloads plus
+  additive metadata.
+- The crash drill shows an event can be considered accepted before the
+  `events_v2` commit.
+- A fallback or shim passes while the real verification path fails.
+
 ## Masked Verification Check
 
 No frontend work is in scope. Integration readiness is based on blocking
