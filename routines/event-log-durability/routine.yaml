@@ -1,0 +1,12 @@
+id: "event-log-durability"
+name: "Event-log Durability"
+description: |
+  The orchestrator records every accepted workflow event in `events_v2` transactionally before any projection update, making the database event log the authoritative source of truth.
+inputs:
+  - name: "feature"
+    required: true
+    description: "Feature name for directory paths"
+    default: "event-log-durability"
+steps:
+  - id: "S-01"
+    file: "steps/step-01-plan.yaml"

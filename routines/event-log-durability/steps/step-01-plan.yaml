@@ -1,0 +1,419 @@
+id: "S-01"
+title: "Verification-Path Proof For DB-Authoritative Events"
+step_context: |
+  Prove the first event-log durability slice through one real workflow path:
+  accepted events are authoritative in events_v2, run/task projections are
+  disposable, and the JSONL journal is only a secondary sink/import surface.
+  Stop and replan if the proof needs a workflow engine rewrite, non-real
+  verification, or broader event taxonomy changes.
+
+  Assumption under test: the existing events_v2 model, SqliteEventStore,
+  service/API event wiring, and ProjectionRegistry/projectors can prove one
+  durable workflow run/task lifecycle without replacing the workflow engine.
+  Target behavior/missing proof: every accepted event for the proof path is
+  written to events_v2 before committed projection state, can be ordered and
+  replayed from the database alone, survives retry without duplication, and
+  does not depend on the JSONL journal for acceptance or rebuild.
+  Real verification surface: SQLAlchemy metadata, Alembic migration SQL,
+  temporary SQLite files, temporary JSONL journal files, the standard
+  create_wired_event_store_v2/service/API dependency path, real event-store
+  reads/writes, and existing ProjectionRegistry/projector code.
+  Evidence artifacts: migration revision/SQL shape, exact uv run pytest
+  commands and relevant output, before/after canonical projection snapshots,
+  event counts and aggregate version ranges, temp database/journal path
+  patterns, backup/import evidence if touched, graph-reference conflict status,
+  and a next-cycle recommendation.
+  Scope guards: do not add frontend work, remove the JSONL journal, delete or
+  reset live orchestrator.db/history data, rewrite the workflow engine/API, or
+  introduce external streaming infrastructure. If production-like
+  migration/import cutover is not implemented in this slice, evidence must say
+  so explicitly and must not claim cutover completion.
+
+tasks:
+  - id: "T-01"
+    title: "Confirm references and define proof boundaries"
+    task_context: |
+      Inspect the restored graph-approach references and the current durability
+      plan before changing code:
+      - docs/graph-approach/execution-graph-prd-plus.md
+      - docs/graph-approach/execution-graph-evaluation.md
+      - docs/intent/30-EVENT-DRIVEN-MIGRATION.md
+      - docs/event-log-durability/step-01-plan.md
+
+      Treat the references as authoritative for this slice unless implementation
+      evidence contradicts them. Record any conflict as a replan trigger instead
+      of broadening this step. Confirm no later executable step plan is created
+      under docs/event-log-durability/.
+
+      Preserve these stop/replan conditions in the handoff notes:
+      - Real workflow activity cannot create durable run/task events without
+        unrelated workflow engine rewrites.
+      - Existing real-surface tests already fully cover the missing proof.
+      - Required SQLite, Alembic, journal, workflow, or projection rebuild
+        surfaces cannot run in this environment.
+      - The chosen slice expands beyond one workflow path plus rebuild/crash
+        drills.
+      - Implementation evidence contradicts the restored graph references.
+      - Projection rebuild needs a larger event taxonomy change.
+      - Deterministic event ordering cannot be achieved from existing payloads
+        plus additive metadata.
+      - The crash drill shows an event can be considered accepted before the
+        events_v2 commit.
+      - A fallback/shim passes while the real verification path fails.
+    requirements:
+      - id: "R1"
+        desc: "The restored graph references and intent doc are inspected, and any conflict with implementation evidence is recorded as a replan trigger."
+        priority: critical
+      - id: "R2"
+        desc: "The implementation remains scoped to one workflow path plus rebuild/crash drills; no step-02-plan.md or later executable step plan is created under docs/event-log-durability/."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "references_exist"
+          cmd: "test -f docs/graph-approach/execution-graph-prd-plus.md && test -f docs/graph-approach/execution-graph-evaluation.md && test -f docs/intent/30-EVENT-DRIVEN-MIGRATION.md && test -f docs/event-log-durability/step-01-plan.md"
+          must: true
+        - id: "no_later_executable_step_plan"
+          cmd: "test -z \"$(find docs/event-log-durability -maxdepth 1 -name 'step-0[2-9]-plan.md' -print -quit 2>/dev/null)\""
+          must: true
+        - id: "event_store_contract_imports"
+          cmd: "uv run python -c \"from orchestrator.db import EventV2Model, SqliteEventStore, create_wired_event_store_v2; required = {'position','aggregate_id','event_type','payload','timestamp','version'}; assert required <= set(EventV2Model.__table__.c.keys()), sorted(required - set(EventV2Model.__table__.c.keys())); assert callable(getattr(SqliteEventStore, 'append', None)); assert callable(getattr(SqliteEventStore, 'get_stream', None)); assert callable(getattr(SqliteEventStore, 'get_all', None)); assert callable(create_wired_event_store_v2)\""
+          must: true
+    verifier:
+      rubric:
+        - id: "R1"
+          text: "R1 — A: references were inspected and handoff notes explicitly state whether they conflict with implementation evidence; conflicts are treated as replan triggers. B: references were checked but conflict handling is only implicit. F: references were ignored or contradicted without replan."
+        - id: "R2"
+          text: "R2 — A: scope stays to one workflow path plus rebuild/crash drills and no later executable step plan exists. B: minor scope creep is documented but contained. F: the work creates later executable plans or expands into a broad rewrite."
+
+  - id: "T-02"
+    title: "Add canonical projection-state comparison helper"
+    task_context: |
+      Add a focused helper in the durability proof test surface, preferably in
+      tests/integration/test_event_log_durability.py unless an existing recovery
+      test file is a better local fit. The helper must capture canonical run,
+      step, task, and attempt projection fields through the same read-model
+      tables/application surfaces the app uses before and after rebuild.
+
+      Exclude volatile timestamps only when an existing domain model or projector
+      treats them as non-deterministic. Do not hide mismatches by broad field
+      omission. The serialized state from the rebuild drill must be available in
+      assertion output or evidence notes when comparison fails.
+
+      Include all run, step, task, and attempt columns that are deterministic
+      rebuild outputs. Any omitted field must be named in the helper or evidence
+      notes with the domain reason it is volatile. Normalize JSON values
+      deterministically before comparison so ordering noise cannot hide semantic
+      mismatches.
+    requirements:
+      - id: "R3"
+        desc: "A canonical projection-state helper captures run, step, task, and attempt fields from application read models before and after rebuild."
+        priority: critical
+      - id: "R4"
+        desc: "The helper excludes only explicitly non-deterministic volatile fields and preserves enough serialized state to diagnose rebuild mismatches."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "durability_test_file_exists"
+          cmd: "test -f tests/integration/test_event_log_durability.py || grep -R \"canonical.*projection\" -n tests/integration/test_projection_recovery.py"
+          must: true
+        - id: "canonical_helper_present"
+          cmd: "grep -R \"canonical.*projection\\|projection.*snapshot\\|snapshot.*projection\" -n tests/integration/test_event_log_durability.py tests/integration/test_projection_recovery.py"
+          must: true
+        - id: "canonical_helper_covers_projection_tables"
+          cmd: "grep -R \"runs\" -n tests/integration/test_event_log_durability.py tests/integration/test_projection_recovery.py && grep -R \"steps\" -n tests/integration/test_event_log_durability.py tests/integration/test_projection_recovery.py && grep -R \"tasks\" -n tests/integration/test_event_log_durability.py tests/integration/test_projection_recovery.py && grep -R \"attempts\" -n tests/integration/test_event_log_durability.py tests/integration/test_projection_recovery.py"
+          must: true
+        - id: "canonical_helper_normalizes_json"
+          cmd: "grep -R \"sort_keys=True\\|json.dumps\\|canonical.*json\\|normalize.*json\" -n tests/integration/test_event_log_durability.py tests/integration/test_projection_recovery.py"
+          must: true
+        - id: "canonical_projection_helper_contract_tests"
+          cmd: "uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'canonical or projection_state or projection_snapshot'"
+          must: true
+    verifier:
+      rubric:
+        - id: "R3"
+          text: "R3 — A: helper compares canonical run/step/task/attempt state from real read models. B: helper covers run/task but misses a relevant projection table. F: helper compares fabricated state or skips read models."
+        - id: "R4"
+          text: "R4 — A: only justified volatile fields are excluded and mismatch output includes serialized before/after state. B: exclusions are broader than needed but documented. F: mismatches are masked or state evidence is unavailable."
+
+  - id: "T-03"
+    title: "Confirm events_v2 schema and migration contract"
+    task_context: |
+      Inspect and, only where necessary, extend EventV2Model and the Alembic
+      migration surface so the proof can rely on:
+      - durable global position ordering;
+      - per-aggregate version ordering with a database uniqueness constraint;
+      - payload/timestamp metadata needed by projection rebuild and evidence.
+
+      If additive metadata or constraints require a new Alembic revision, record
+      the revision name and SQL shape in the evidence notes. Do not mutate prior
+      event rows to correct history; append-only semantics remain the application
+      contract.
+
+      Make the retry/import identity explicit. Either add a stable event/import
+      identity column with a uniqueness constraint, or record that this proof
+      uses `(aggregate_id, version)` as the stable retry identity and test the
+      limitation directly.
+    requirements:
+      - id: "R5"
+        desc: "events_v2 SQLAlchemy metadata and Alembic migrations expose durable position ordering, aggregate/version ordering, payload, timestamp, and idempotency or duplicate-detection metadata required by the proof."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "events_v2_metadata_imports"
+          cmd: "uv run python -c \"from orchestrator.db import EventV2Model; table = EventV2Model.__table__; cols = set(table.c.keys()); required = {'position','aggregate_id','event_type','payload','timestamp','version'}; assert required <= cols, sorted(required - cols); unique_sets = [set(c.columns.keys()) for c in table.constraints if c.__class__.__name__ == 'UniqueConstraint']; assert {'aggregate_id', 'version'} in unique_sets, unique_sets\""
+          must: true
+        - id: "durability_schema_tests"
+          cmd: "uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'schema or migration or ordering'"
+          must: true
+        - id: "retry_identity_decision_present"
+          cmd: "grep -R \"retry identity\\|import identity\\|stable.*identity\\|aggregate_id.*version\" -n tests/integration/test_event_log_durability.py docs/event-log-durability"
+          must: true
+    verifier:
+      rubric:
+        - id: "R5"
+          text: "R5 — A: model and migration provide all required ordering, payload, timestamp, and idempotency/duplicate-detection metadata, with migration evidence recorded. B: existing schema satisfies most contract but evidence misses one metadata detail. F: deterministic ordering or retry identity is missing."
+
+  - id: "T-04"
+    title: "Verify event-store append and ordered reads"
+    task_context: |
+      Inspect and, only where necessary, extend SqliteEventStore so existing
+      event write/read call sites keep working while the proof can rely on
+      deterministic get_stream/get_all reads ordered by durable database
+      position.
+
+      Keep this increment limited to public event-store behavior and call-site
+      compatibility. Duplicate prevention belongs in the next task; workflow
+      authority and journal behavior belong in the following task.
+    requirements:
+      - id: "R6"
+        desc: "SqliteEventStore append/read behavior remains compatible with existing call sites and returns deterministic ordered streams for rebuild and retry evidence."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "events_v2_targeted_tests"
+          cmd: "uv run pytest tests/unit/test_event_store_v2.py tests/integration/test_event_store_wiring.py -q --tb=short"
+          must: true
+        - id: "durability_ordering_tests"
+          cmd: "uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'ordering or get_stream or get_all'"
+          must: true
+    verifier:
+      rubric:
+        - id: "R6"
+          text: "R6 — A: append/read call sites remain compatible and ordered get_stream/get_all behavior is tested. B: compatible but deterministic ordering evidence is weak. F: public write/read surfaces regress."
+
+  - id: "T-05"
+    title: "Add duplicate-prevention durability tests"
+    task_context: |
+      Add focused real SQLite tests for duplicate stable event identity and
+      duplicate aggregate sequence behavior. The accepted-event contract must be
+      either idempotent or fail with explicit constraint-backed behavior, and a
+      duplicate attempt must not create a second accepted event row.
+
+      The tests must assert row counts and ordered stream contents after the
+      duplicate attempt, not only catch an exception.
+
+      Keep this increment limited to duplicate prevention and its evidence. Do
+      not fold workflow authority, JSONL behavior, rebuild, or crash/retry drills
+      into this task.
+    requirements:
+      - id: "R7"
+        desc: "Duplicate stable event identity and duplicate aggregate sequence behavior are covered by real SQLite constraint or idempotency tests."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "durability_duplicate_tests"
+          cmd: "grep -R \"test_.*duplicate.*aggregate\\|test_.*duplicate.*identity\\|test_.*duplicate.*retry\" -n tests/integration/test_event_log_durability.py && uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'duplicate'"
+          must: true
+        - id: "duplicate_tests_assert_counts_and_streams"
+          cmd: "grep -R \"row.*count\\|count()\\|select(func.count\\|len(.*get_all\\|len(.*get_stream\" -n tests/integration/test_event_log_durability.py && grep -R \"get_stream\\|get_all\\|position\\|version\" -n tests/integration/test_event_log_durability.py"
+          must: true
+    verifier:
+      rubric:
+        - id: "R7"
+          text: "R7 — A: real SQLite tests prove duplicate identity and duplicate aggregate sequence cannot create duplicate accepted events. B: one duplicate case is covered. F: duplicate handling is untested or simulated with mocks."
+
+  - id: "T-06"
+    title: "Prove DB append authority and secondary journal behavior"
+    task_context: |
+      Add or extend integration coverage around the real event store and workflow
+      path to show accepted events are inserted into events_v2 before projection
+      updates are committed for the proof path. Use real temporary SQLite files
+      and temporary JSONL journal paths.
+
+      The JSONL journal remains a best-effort secondary sink/import source. A
+      journal write failure must not invalidate an accepted database append. Test
+      this with real filesystem behavior or dependency injection using concrete
+      objects, not patch, MagicMock, or monkeypatching.
+
+      Include one standard service/API dependency path assertion so the proof
+      covers real wiring, not only manually instantiated store behavior. If a
+      projector/listener failure is used to test transaction boundaries, assert
+      event rows roll back with the failed projection while post-commit
+      secondary-sink failure leaves committed events present.
+    requirements:
+      - id: "R8"
+        desc: "At least one real workflow/service/API path creates observable run/task lifecycle events persisted to events_v2 before corresponding projection updates are considered committed."
+        priority: critical
+      - id: "R9"
+        desc: "JSONL journal output is exercised with a real temporary file and is not required for successful database-authoritative append or rebuild."
+        priority: critical
+      - id: "R10"
+        desc: "A journal write failure is captured as secondary-sink evidence and does not roll back or delete the accepted events_v2 row."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "workflow_authority_tests"
+          cmd: "grep -R \"test_.*workflow.*events_v2\\|test_.*authority\\|test_.*journal\" -n tests/integration/test_event_log_durability.py && uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'workflow or authority or journal'"
+          must: true
+        - id: "standard_wiring_evidence_present"
+          cmd: "grep -R \"create_wired_event_store_v2\\|dependency_overrides\\|WorkflowService\\|TestClient\\|/api/runs\" -n tests/integration/test_event_log_durability.py tests/integration/test_event_store_wiring.py"
+          must: true
+        - id: "secondary_sink_boundary_evidence_present"
+          cmd: "grep -R \"projection.*rollback\\|rollback.*projection\\|secondary.*sink\\|journal.*failure\\|post_commit\" -n tests/integration/test_event_log_durability.py"
+          must: true
+        - id: "no_mocking_in_durability_test"
+          cmd: "uv run python -c \"from pathlib import Path; p = Path('tests/integration/test_event_log_durability.py'); text = p.read_text() if p.exists() else ''; forbidden = ['unittest.mock', 'MagicMock', 'patch(', 'monkeypatch']; assert not any(token in text for token in forbidden), [token for token in forbidden if token in text]\""
+          must: true
+    verifier:
+      rubric:
+        - id: "R8"
+          text: "R8 — A: real workflow/service/API activity creates run/task events and tests prove events_v2 append precedes committed projection state. B: event-store path is real but workflow activity is minimal. F: proof uses fabricated events only."
+        - id: "R9"
+          text: "R9 — A: temporary JSONL journal is exercised but rebuild succeeds from events_v2 alone. B: journal is present but independence is weakly asserted. F: rebuild depends on JSONL."
+        - id: "R10"
+          text: "R10 — A: a real secondary-sink failure leaves DB event rows authoritative and recorded in evidence. B: failure is partially covered. F: journal failure can roll back accepted DB events or is untested."
+
+  - id: "T-07"
+    title: "Add projection rebuild durability drill"
+    task_context: |
+      Add the rebuild durability drill in integration tests:
+      - create the smallest real workflow activity that produces durable run/task
+        lifecycle events;
+      - capture canonical projection state;
+      - clear or drop disposable run/task projection rows in the temp database;
+      - rebuild projections from ordered events_v2 rows alone through the existing
+        ProjectionRegistry/projector path;
+      - assert rebuilt state is identical to the pre-clear snapshot.
+
+      Stop and return to planning with before/after serialized state plus event
+      stream evidence if rebuild mismatches or real verification fails while a
+      fallback passes.
+
+      Clear `projection_checkpoints` along with run/task-owned projection rows,
+      or record why checkpoint correctness is deferred. The rebuild must read
+      ordered events from `events_v2` after projection rows are cleared; do not
+      replay an in-memory event list captured before clearing.
+    requirements:
+      - id: "R11"
+        desc: "A rebuild drill clears or drops disposable run/task projection state, rebuilds from events_v2 alone, and asserts canonical before/after state equivalence."
+        priority: critical
+      - id: "R13"
+        desc: "The drills record event counts and aggregate sequence ranges before crash, after retry, and after rebuild."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "rebuild_drill"
+          cmd: "grep -R \"test_.*rebuild\" -n tests/integration/test_event_log_durability.py && ! grep -R \"pytest.mark.skip\\|pytest.mark.xfail\" -n tests/integration/test_event_log_durability.py && uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'rebuild'"
+          must: true
+        - id: "rebuild_reads_events_v2_after_clear"
+          cmd: "grep -R \"events_v2\\|EventV2Model\\|get_all\" -n tests/integration/test_event_log_durability.py && grep -R \"projection_checkpoints\\|ProjectionCheckpoint\\|checkpoint\" -n tests/integration/test_event_log_durability.py && grep -R \"delete(.*Run\\|delete(.*Task\\|clear.*projection\\|drop.*projection\" -n tests/integration/test_event_log_durability.py"
+          must: true
+        - id: "projection_recovery_regression"
+          cmd: "uv run pytest tests/integration/test_projection_recovery.py -q --tb=short"
+          must: true
+    verifier:
+      rubric:
+        - id: "R11"
+          text: "R11 — A: drill clears disposable projections, rebuilds only from events_v2 through real projectors, and exact canonical state matches. B: rebuild works but omits a minor read-model field. F: rebuild uses JSONL or fabricated state."
+        - id: "R13"
+          text: "R13 — A: event counts and aggregate version ranges are recorded at each phase. B: counts are recorded but ranges are missing. F: no retry/rebuild evidence artifacts are available."
+
+  - id: "T-08"
+    title: "Add crash/retry durability drill"
+    task_context: |
+      Add the crash/retry durability drill in integration tests. Exercise
+      interrupted append/retry behavior around real database transaction
+      boundaries and assert no accepted event is lost or duplicated across retry.
+
+      Stop and return to planning with event stream evidence if crash/retry
+      exposes acceptance before DB commit, loses an accepted event, duplicates an
+      accepted event, or real verification fails while a fallback passes.
+
+      Cover both sides of the boundary: a pre-commit interruption creates no
+      accepted event, and retry after a committed append cannot create a
+      duplicate accepted event.
+    requirements:
+      - id: "R12"
+        desc: "A crash/retry drill uses real database transaction boundaries and proves accepted events are neither lost nor duplicated across retry."
+        priority: critical
+      - id: "R13"
+        desc: "The drills record event counts and aggregate sequence ranges before crash, after retry, and after rebuild."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "crash_retry_drill"
+          cmd: "grep -R \"test_.*pre_commit\\|test_.*post_commit\\|test_.*retry\" -n tests/integration/test_event_log_durability.py && uv run pytest tests/integration/test_event_log_durability.py -q --tb=short -k 'crash or retry or pre_commit or post_commit'"
+          must: true
+        - id: "crash_retry_boundaries_named"
+          cmd: "grep -R \"pre_commit\\|pre-commit\\|before commit\" -n tests/integration/test_event_log_durability.py && grep -R \"post_commit\\|post-commit\\|after commit\" -n tests/integration/test_event_log_durability.py"
+          must: true
+    verifier:
+      rubric:
+        - id: "R12"
+          text: "R12 — A: crash/retry proof uses real transaction boundaries and demonstrates no accepted event loss or duplication. B: retry is real but crash boundary is narrow. F: proof relies on mocks or cannot establish acceptance semantics."
+        - id: "R13"
+          text: "R13 — A: event counts and aggregate version ranges are recorded at each phase. B: counts are recorded but ranges are missing. F: no retry/rebuild evidence artifacts are available."
+
+  - id: "T-09"
+    title: "Record evidence and run targeted verification"
+    task_context: |
+      Leave concise evidence notes in the implementation artifacts or a durability
+      evidence document that identify:
+      - Alembic migration revision name if added, and the inspected/generated
+        events_v2 SQL shape;
+      - test file names and exact targeted commands with relevant output;
+      - serialized before/after canonical rebuild state or where assertion output
+        provides it;
+      - event counts and aggregate sequence ranges before crash, after retry, and
+        after rebuild;
+      - temporary database and journal path patterns used by tests, plus
+        backup/import verification output if migration/import behavior is touched;
+      - any graph-reference conflict, or an explicit statement that none was found;
+      - a recommendation for the next cycle: broaden event write-path migration,
+        expand projection rebuild coverage, or replan.
+
+      Run real targeted verification. The primary durability command must be
+      blocking and must pass once the slice claims the surface is runnable.
+      Static checks may supplement but cannot replace the real test path.
+    requirements:
+      - id: "R14"
+        desc: "Evidence artifacts for schema, tests, rebuild state, event counts, temp paths, reference conflicts, and next-cycle recommendation are recorded."
+        priority: critical
+      - id: "R15"
+        desc: "Targeted unit and integration tests for the durability slice pass under uv run pytest without mocks, MagicMock, patch, or monkeypatching."
+        priority: critical
+      - id: "R16"
+        desc: "Existing event write/read regression surfaces still pass through the durable store."
+        priority: critical
+    auto_verify:
+      items:
+        - id: "durability_tests_pass"
+          cmd: "uv run pytest tests/integration/test_event_log_durability.py -v --tb=short"
+          must: true
+        - id: "event_store_regressions_pass"
+          cmd: "uv run pytest tests/unit/test_event_store.py tests/unit/test_event_store_v2.py tests/integration/test_event_store_wiring.py tests/integration/test_jsonl_bootstrap.py tests/integration/test_projection_recovery.py -q --tb=short"
+          must: true
+        - id: "no_forbidden_mocking"
+          cmd: "uv run python -c \"from pathlib import Path; paths = list(Path('tests/integration').glob('*event_log_durability*.py')); text = '\\n'.join(p.read_text() for p in paths if p.exists()); forbidden = ['unittest.mock', 'MagicMock', 'patch(', 'monkeypatch']; assert not any(token in text for token in forbidden), [token for token in forbidden if token in text]\""
+          must: true
+        - id: "evidence_artifacts_present"
+          cmd: "grep -R \"migration.*SQL\\|before.*after\\|event counts\\|aggregate.*range\\|temp.*journal\\|next-cycle\\|next cycle\" -n docs/event-log-durability tests/integration/test_event_log_durability.py"
+          must: true
+    verifier:
+      rubric:
+        - id: "R14"
+          text: "R14 — A: evidence notes include every requested artifact and a concrete next-cycle recommendation. B: evidence is present but one artifact is thin. F: evidence is missing or too vague for follow-on planning."
+        - id: "R15"
+          text: "R15 — A: targeted durability tests pass with real SQLite/journal surfaces and no mocking library or monkeypatching. B: tests pass but one diagnostic command is missing. F: real verification fails or only a fallback passes."
+        - id: "R16"
+          text: "R16 — A: existing event store, JSONL bootstrap, and projection recovery regression tests pass. B: most pass with a documented unrelated blocker. F: durable-store changes break existing event write/read surfaces."
