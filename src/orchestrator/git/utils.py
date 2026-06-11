@@ -223,7 +223,17 @@ def commit_uncommitted_changes_or_raise(
 
     logger.info(f"Found uncommitted changes in {path}, auto-committing")
     _run_git_commit_command(path, ["add", "-A"])
-    _run_git_commit_command(path, ["commit", "-m", message])
+    try:
+        _run_git_commit_command(path, ["commit", "-m", message])
+    except WorktreeCommitError as exc:
+        # Formatting hooks (e.g. ruff-format) may rewrite files and fail the
+        # first commit attempt; the files are already fixed, so re-stage and
+        # retry once.
+        if "files were modified by this hook" not in str(exc):
+            raise
+        logger.info(f"Commit hooks modified files in {path}, retrying commit once")
+        _run_git_commit_command(path, ["add", "-A"])
+        _run_git_commit_command(path, ["commit", "-m", message])
     head_after = get_head_commit(path)
     logger.info(f"Auto-committed uncommitted changes in {path}")
     return WorktreeCommitResult(
