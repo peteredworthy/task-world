@@ -128,6 +128,31 @@ class PhaseHandler:
 
         return metrics, usage_by_model
 
+    @staticmethod
+    def _execution_model_name(
+        result: Any,
+        token_usage_by_model: list[ModelTokenUsage],
+        agent: "AgentRunner",
+    ) -> str:
+        if token_usage_by_model:
+            return token_usage_by_model[0].model
+        action_log = getattr(result, "action_log", None)
+        if action_log is not None and getattr(action_log, "agent_model", None):
+            return action_log.agent_model
+        try:
+            return agent.info.name or "unknown"
+        except Exception:
+            return "unknown"
+
+    @staticmethod
+    def _agent_runner_type_value(agent: "AgentRunner", explicit_value: str = "") -> str:
+        if explicit_value:
+            return explicit_value
+        try:
+            return agent.info.agent_runner_type.value
+        except Exception:
+            return "unknown"
+
     # ------------------------------------------------------------------
     # Public entry point
     # ------------------------------------------------------------------
@@ -174,11 +199,25 @@ class PhaseHandler:
         elif phase == "verifying":
             assert service is not None, "service is required for verifying phase"
             await self._execute_verifying(
-                run, task_state, service, agent, context, req_desc_to_id, session=session
+                run,
+                task_state,
+                service,
+                agent,
+                context,
+                req_desc_to_id,
+                agent_runner_type_value=agent_runner_type_value,
+                session=session,
             )
         elif phase == "recovering":
             assert service is not None, "service is required for recovering phase"
-            await self._execute_recovering(run, task_state, service, agent, context)
+            await self._execute_recovering(
+                run,
+                task_state,
+                service,
+                agent,
+                context,
+                agent_runner_type_value=agent_runner_type_value,
+            )
         else:
             raise ValueError(f"Unknown phase: {phase}")
 
@@ -300,18 +339,32 @@ class PhaseHandler:
 
         # Extract metrics and per-model token usage from action_log
         metrics, token_usage_by_model = self._extract_metrics_and_usage(result)
+        resolved_agent_runner_type = self._agent_runner_type_value(agent, agent_runner_type_value)
 
         # Store agent output, action log, and metrics on attempt
         await self._attempt_store.store_attempt_output(
-            run.id, task_state.id, result.output_lines, result.error, result.action_log
+            run.id,
+            task_state.id,
+            result.output_lines,
+            result.error,
+            result.action_log,
+            phase="building",
+            agent_runner_type=resolved_agent_runner_type,
         )
         await self._attempt_store.store_attempt_metrics(
-            run.id, task_state.id, metrics, token_usage_by_model=token_usage_by_model
+            run.id,
+            task_state.id,
+            metrics,
+            token_usage_by_model=token_usage_by_model,
+            phase="building",
+            agent_runner_type=resolved_agent_runner_type,
+            model_name=self._execution_model_name(result, token_usage_by_model, agent),
+            mode_tag=context.work_mode,
         )
 
         if not result.success:
             raise AgentExecutionError(
-                agent_runner_type=agent_runner_type_value,
+                agent_runner_type=resolved_agent_runner_type,
                 message=result.error or "Agent execution returned unsuccessful result",
             )
 
@@ -329,6 +382,7 @@ class PhaseHandler:
         agent: "AgentRunner",
         context: ExecutionContext,
         req_desc_to_id: dict[str, str],
+        agent_runner_type_value: str = "",
         session: Any = None,
     ) -> None:
         # Store the verifier prompt BEFORE agent execution
@@ -439,10 +493,23 @@ class PhaseHandler:
 
         # Store agent output, action log, and metrics on attempt
         await self._attempt_store.store_attempt_output(
-            run.id, task_state.id, result.output_lines, result.error, result.action_log
+            run.id,
+            task_state.id,
+            result.output_lines,
+            result.error,
+            result.action_log,
+            phase="verifying",
+            agent_runner_type=self._agent_runner_type_value(agent, agent_runner_type_value),
         )
         await self._attempt_store.store_attempt_metrics(
-            run.id, task_state.id, metrics, token_usage_by_model=token_usage_by_model
+            run.id,
+            task_state.id,
+            metrics,
+            token_usage_by_model=token_usage_by_model,
+            phase="verifying",
+            agent_runner_type=self._agent_runner_type_value(agent, agent_runner_type_value),
+            model_name=self._execution_model_name(result, token_usage_by_model, agent),
+            mode_tag=context.work_mode,
         )
 
         logger.info(f"Task {task_state.id}: verifier execution complete, success={result.success}")
@@ -458,7 +525,14 @@ class PhaseHandler:
         service: "WorkflowService",
         agent: "AgentRunner",
         context: ExecutionContext,
+        agent_runner_type_value: str = "",
     ) -> None:
+        # Store the recovery prompt on the verifier-side prompt field so
+        # recovering artifacts capture the prompt for this execution phase.
+        await self._attempt_store.store_attempt_prompt(
+            run.id, task_state.id, verifier_prompt=context.prompt
+        )
+
         # Define callbacks - recovery agent uses complete_recovery via dynamic tool
         async def on_checklist_update(  # pragma: no cover
             req_id: str, status: ChecklistStatus, note: str | None
@@ -506,10 +580,23 @@ class PhaseHandler:
 
         # Store agent output, action log, and metrics on attempt
         await self._attempt_store.store_attempt_output(
-            run.id, task_state.id, result.output_lines, result.error, result.action_log
+            run.id,
+            task_state.id,
+            result.output_lines,
+            result.error,
+            result.action_log,
+            phase="recovering",
+            agent_runner_type=self._agent_runner_type_value(agent, agent_runner_type_value),
         )
         await self._attempt_store.store_attempt_metrics(
-            run.id, task_state.id, metrics, token_usage_by_model=token_usage_by_model
+            run.id,
+            task_state.id,
+            metrics,
+            token_usage_by_model=token_usage_by_model,
+            phase="recovering",
+            agent_runner_type=self._agent_runner_type_value(agent, agent_runner_type_value),
+            model_name=self._execution_model_name(result, token_usage_by_model, agent),
+            mode_tag=context.work_mode,
         )
 
         logger.info(f"Task {task_state.id}: recovery execution complete, success={result.success}")

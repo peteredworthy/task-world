@@ -1,6 +1,7 @@
 """Mock agent for testing."""
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from orchestrator.runners.errors import AgentCancelledError, AgentExecutionError
 from orchestrator.runners.runtime.quota import QuotaFetcher
@@ -18,6 +19,10 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
+
+
+def _empty_output_lines() -> list[str]:
+    return []
 
 
 @dataclass
@@ -43,6 +48,8 @@ class MockBehavior:
     tokens_write: int = 50
     tokens_cache: int = 0
     duration_ms: int = 1000
+    output_lines: list[str] = field(default_factory=_empty_output_lines)
+    action_log: Any = None
 
 
 class MockAgent:
@@ -107,6 +114,8 @@ class MockAgent:
                 tokens_cache=self._behavior.tokens_cache,
                 duration_ms=self._behavior.duration_ms,
             ),
+            output_lines=list(self._behavior.output_lines),
+            action_log=self._behavior.action_log,
         )
 
     async def cancel(self) -> None:

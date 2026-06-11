@@ -1713,6 +1713,7 @@ class AgentRunnerExecutor:
             agent=agent,
             context=context,
             req_desc_to_id=req_desc_to_id,
+            agent_runner_type_value=agent_runner_type.value,
         )
 
     async def _handle_recovery(
@@ -1777,6 +1778,7 @@ class AgentRunnerExecutor:
             agent=agent,
             context=context,
             req_desc_to_id={},
+            agent_runner_type_value=agent_runner_type.value,
         )
 
     @staticmethod

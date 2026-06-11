@@ -4,7 +4,17 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from orchestrator.db.orm.base import Base
@@ -233,6 +243,87 @@ class AttemptModel(Base):
 
     # Relationships
     task: Mapped["TaskModel"] = relationship("TaskModel", back_populates="attempts")
+
+
+class CostRecordModel(Base):
+    __tablename__ = "cost_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "task_id",
+            "attempt_num",
+            "agent_runner_type",
+            "phase",
+            name="uq_cost_records_execution",
+        ),
+        Index("idx_cost_records_run", "run_id"),
+        Index("idx_cost_records_mode", "agent_runner_type", "mode_tag"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    run_id: Mapped[str] = mapped_column(
+        String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[str] = mapped_column(
+        String, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("attempts.id", ondelete="SET NULL"), nullable=True
+    )
+    attempt_num: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_runner_type: Mapped[str] = mapped_column(String, nullable=False)
+    phase: Mapped[str] = mapped_column(String, nullable=False)
+    mode_tag: Mapped[str] = mapped_column(String, nullable=False, default="default")
+    model_name: Mapped[str] = mapped_column(String, nullable=False, default="unknown")
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cache_write_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    wall_time_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    token_usage_by_model: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSON, nullable=True, default=None
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+
+
+class InteractionLogArtifactModel(Base):
+    __tablename__ = "interaction_log_artifacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "run_id",
+            "task_id",
+            "attempt_num",
+            "agent_runner_type",
+            "phase",
+            name="uq_interaction_log_artifacts_execution",
+        ),
+        Index("idx_interaction_log_artifacts_run", "run_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    cost_record_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("cost_records.id", ondelete="SET NULL"), nullable=True
+    )
+    run_id: Mapped[str] = mapped_column(
+        String, ForeignKey("runs.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[str] = mapped_column(
+        String, ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("attempts.id", ondelete="SET NULL"), nullable=True
+    )
+    attempt_num: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_runner_type: Mapped[str] = mapped_column(String, nullable=False)
+    phase: Mapped[str] = mapped_column(String, nullable=False)
+    artifact_kind: Mapped[str] = mapped_column(
+        String, nullable=False, default="agent_interaction_log"
+    )
+    prompt_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    output_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    action_log_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
 class EventV2Model(Base):
