@@ -1,0 +1,41 @@
+- name: task_projection_accepted
+  given_events:
+    - task_projection_changed: {task_id: task-accepted, state: accepted, reason: verifier_pass_and_gates_passed}
+  when_command: null
+  then_events: [task_projection_changed]
+  then_projection: {}
+
+- name: task_projection_needs_revision
+  given_events:
+    - task_projection_changed: {task_id: task-revision, state: needs_revision, reason: verifier_failure_no_active_appeal}
+  when_command: null
+  then_events: [task_projection_changed]
+  then_projection: {}
+
+- name: task_projection_blocked_invalid_test
+  given_events:
+    - task_projection_changed: {task_id: task-invalid-test, state: blocked_invalid_test, reason: invalid_test_appeal_accepted}
+  when_command: null
+  then_events: [task_projection_changed]
+  then_projection: {}
+
+- name: task_projection_blocked_environment
+  given_events:
+    - task_projection_changed: {task_id: task-environment, state: blocked_environment, reason: latest_check_environment_error}
+  when_command: null
+  then_events: [task_projection_changed]
+  then_projection: {}
+
+- name: task_projection_in_progress
+  given_events:
+    - task_projection_changed: {task_id: task-in-progress, state: in_progress, reason: active_worker_verifier_or_check_lease}
+  when_command: null
+  then_events: [task_projection_changed]
+  then_projection: {}
+
+- name: task_projection_pending
+  given_events:
+    - task_projection_changed: {task_id: task-pending, state: pending, reason: no_candidate_attempt_started}
+  when_command: null
+  then_events: [task_projection_changed]
+  then_projection: {}

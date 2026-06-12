@@ -1,0 +1,56 @@
+- name: check_planned_to_ready
+  given_events:
+    - node_created: {node_id: check-1, kind: check, state: planned}
+    - input_bound: {to_node_id: check-1, command_id: pytest}
+    - node_state_changed: {node_id: check-1, new_state: ready, trigger: inputs_and_command_available}
+  when_command: null
+  then_events: [input_bound, node_state_changed]
+  then_projection: {check-1: ready}
+
+- name: check_ready_to_leased
+  given_events:
+    - node_created: {node_id: check-2, kind: check, state: ready}
+    - lease_granted: {node_id: check-2, lease_id: lease-check-2}
+    - node_state_changed: {node_id: check-2, new_state: leased, trigger: scheduler_grants_check_lease}
+  when_command: null
+  then_events: [lease_granted, node_state_changed]
+  then_projection: {check-2: leased}
+
+- name: check_leased_to_running
+  given_events:
+    - node_created: {node_id: check-3, kind: check, state: leased}
+    - callback_accepted: {node_id: check-3, callback_type: check_started}
+    - node_state_changed: {node_id: check-3, new_state: running, trigger: check_command_starts}
+  when_command: null
+  then_events: [callback_accepted, node_state_changed]
+  then_projection: {check-3: running}
+
+- name: check_running_to_completed
+  given_events:
+    - node_created: {node_id: check-4, kind: check, state: running}
+    - check_result_classified: {node_id: check-4, passed: false, classification: test_failure}
+    - node_state_changed: {node_id: check-4, new_state: completed, trigger: result_classified}
+  when_command: null
+  then_events: [check_result_classified, node_state_changed]
+  then_projection: {check-4: completed}
+
+- name: check_running_to_failed
+  given_events:
+    - node_created: {node_id: check-5, kind: check, state: running}
+    - callback_accepted: {node_id: check-5, callback_type: runner_crashed}
+    - node_state_changed: {node_id: check-5, new_state: failed, trigger: runner_crashed}
+  when_command: null
+  then_events: [callback_accepted, node_state_changed]
+  then_projection: {check-5: failed}
+
+- name: check_failed_creates_recovery
+  given_events:
+    - node_created: {node_id: check-6, kind: check, state: failed}
+    - environment_failure_accepted: {node_id: check-6, reason: tool_unavailable}
+    - node_created: {node_id: recovery-6, kind: recovery, state: planned}
+    - node_state_changed: {node_id: check-6, new_state: failed, trigger: environment_failure_accepted}
+  when_command: null
+  then_events:
+    - environment_failure_accepted
+    - node_created: {node_id: recovery-6, kind: recovery}
+  then_projection: {check-6: failed}

@@ -1,0 +1,81 @@
+- name: invariant_replay_is_deterministic
+  given_events:
+    - invariant_checked: {invariant: replay_is_deterministic}
+  when_command: null
+  then_events: [invariant_checked]
+  then_projection: {}
+
+- name: invariant_no_conflicting_write_leases
+  given_events:
+    - invariant_checked: {invariant: no_conflicting_write_leases}
+  when_command: null
+  then_events: [invariant_checked]
+  then_projection: {}
+
+- name: invariant_no_callback_without_valid_lease
+  given_events:
+    - callback_rejected_stale: {node_id: worker-invariant-3, reason: missing_valid_lease}
+    - invariant_checked: {invariant: no_callback_without_valid_lease}
+  when_command: null
+  then_events: [callback_rejected_stale, invariant_checked]
+  then_projection: {}
+
+- name: invariant_successor_requires_inputs
+  given_events:
+    - node_state_changed: {node_id: successor-invariant-4, new_state: blocked}
+    - invariant_checked: {invariant: successor_requires_inputs}
+  when_command: null
+  then_events: [node_state_changed, invariant_checked]
+  then_projection: {successor-invariant-4: blocked}
+
+- name: invariant_retired_nodes_cannot_run
+  given_events:
+    - node_state_changed: {node_id: retired-invariant-5, new_state: retired}
+    - callback_rejected_stale: {node_id: retired-invariant-5, callback_type: start, reason: node_retired}
+    - invariant_checked: {invariant: retired_nodes_cannot_run}
+  when_command: null
+  then_events: [callback_rejected_stale, invariant_checked]
+  then_projection: {retired-invariant-5: retired}
+
+- name: invariant_planner_authority_scoped
+  given_events:
+    - graph_patch_rejected: {node_id: planner-invariant-6, reason: authority_scope_exceeded}
+    - invariant_checked: {invariant: planner_authority_scoped}
+  when_command: null
+  then_events: [graph_patch_rejected, invariant_checked]
+  then_projection: {}
+
+- name: invariant_verification_failure_preserves_builder
+  given_events:
+    - node_state_changed: {node_id: builder-invariant-7, new_state: completed}
+    - verification_failed: {node_id: verifier-invariant-7, candidate_id: candidate-invariant-7}
+    - node_state_changed: {node_id: verifier-invariant-7, new_state: completed}
+    - invariant_checked: {invariant: verification_failure_preserves_builder}
+  when_command: null
+  then_events: [verification_failed, invariant_checked]
+  then_projection: {builder-invariant-7: completed, verifier-invariant-7: completed}
+
+- name: invariant_snapshot_mismatch_not_consumed
+  given_events:
+    - input_binding_rejected: {to_node_id: reader-invariant-8, required_snapshot_id: S1, record_snapshot_id: S0}
+    - invariant_checked: {invariant: snapshot_mismatch_not_consumed}
+  when_command: null
+  then_events: [input_binding_rejected, invariant_checked]
+  then_projection: {}
+
+- name: invariant_human_gate_blocks_successors
+  given_events:
+    - node_state_changed: {node_id: gate-invariant-9, new_state: blocked}
+    - node_state_changed: {node_id: successor-invariant-9, new_state: blocked}
+    - invariant_checked: {invariant: human_gate_blocks_successors}
+  when_command: null
+  then_events: [node_state_changed, invariant_checked]
+  then_projection: {gate-invariant-9: blocked, successor-invariant-9: blocked}
+
+- name: invariant_file_state_rejects_residue
+  given_events:
+    - file_state_rejected: {producer_node_id: worker-invariant-10, reason: undeclared_untracked_residue}
+    - invariant_checked: {invariant: file_state_rejects_residue}
+  when_command: null
+  then_events: [file_state_rejected, invariant_checked]
+  then_projection: {}

@@ -1,0 +1,69 @@
+- name: run_draft_to_queued
+  given_events:
+    - run_lifecycle_changed: {from_state: draft, to_state: queued, trigger: run_accepted}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_queued_to_active
+  given_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active, trigger: start_command_accepted}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_active_to_pausing
+  given_events:
+    - run_lifecycle_changed: {from_state: active, to_state: pausing, trigger: pause_command_accepted}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_pausing_to_paused
+  given_events:
+    - run_lifecycle_changed: {from_state: pausing, to_state: paused, trigger: active_lease_policy_resolved}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_paused_to_resuming
+  given_events:
+    - run_lifecycle_changed: {from_state: paused, to_state: resuming, trigger: resume_command_accepted}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_resuming_to_active
+  given_events:
+    - run_lifecycle_changed: {from_state: resuming, to_state: active, trigger: resume_applied}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_active_to_cancelling
+  given_events:
+    - run_lifecycle_changed: {from_state: active, to_state: cancelling, trigger: cancel_command_accepted}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_cancelling_to_cancelled
+  given_events:
+    - run_lifecycle_changed: {from_state: cancelling, to_state: cancelled, trigger: cancellation_complete}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_active_to_completed
+  given_events:
+    - run_lifecycle_changed: {from_state: active, to_state: completed, trigger: completion_invariants_pass}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}
+
+- name: run_nonterminal_to_failed
+  given_events:
+    - run_lifecycle_changed: {from_state: active, to_state: failed, trigger: unrecoverable_controller_error}
+  when_command: null
+  then_events: [run_lifecycle_changed]
+  then_projection: {}

@@ -1,0 +1,26 @@
+- name: appeal_planned_to_ready
+  given_events:
+    - node_created: {node_id: appeal-1, kind: appeal, state: planned}
+    - appeal_opened: {node_id: appeal-1, appealed_node_id: verify-1, appeal_type: invalid_test}
+    - node_state_changed: {node_id: appeal-1, new_state: ready, trigger: appeal_well_formed}
+  when_command: null
+  then_events: [appeal_opened, node_state_changed]
+  then_projection: {appeal-1: ready}
+
+- name: appeal_ready_to_completed
+  given_events:
+    - node_created: {node_id: appeal-2, kind: appeal, state: ready}
+    - oversight_decision_recorded: {node_id: appeal-2, decision: accepted}
+    - node_state_changed: {node_id: appeal-2, new_state: completed, trigger: oversight_decision_accepted}
+  when_command: null
+  then_events: [oversight_decision_recorded, node_state_changed]
+  then_projection: {appeal-2: completed}
+
+- name: appeal_ready_to_failed
+  given_events:
+    - node_created: {node_id: appeal-3, kind: appeal, state: ready}
+    - oversight_decision_recorded: {node_id: appeal-3, decision: malformed}
+    - node_state_changed: {node_id: appeal-3, new_state: failed, trigger: appeal_malformed}
+  when_command: null
+  then_events: [oversight_decision_recorded, node_state_changed]
+  then_projection: {appeal-3: failed}
