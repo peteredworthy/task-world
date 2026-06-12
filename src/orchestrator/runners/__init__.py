@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 # Agent interface and types
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.types import AgentMetadataCallback, BroadcastCallback
+from orchestrator.runners.agent_factory import create as create_agent_runner
 
 # Agent discovery
 from orchestrator.runners.agents import discover as discover_agents
@@ -211,6 +212,7 @@ __all__ = [
     "AgentRunner",
     "AgentMetadataCallback",
     "BroadcastCallback",
+    "create_agent_runner",
     # Discovery
     "discover_agents",
     # Agent classes

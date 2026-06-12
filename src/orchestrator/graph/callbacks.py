@@ -24,6 +24,7 @@ class CallbackRequest:
 class CallbackOutcome:
     ACCEPTED = "accepted"
     REJECTED_STALE = "rejected_stale"
+    REJECTED_CONFLICT = "rejected_conflict"
     REJECTED_IDEMPOTENCY_CONFLICT = "rejected_idempotency_conflict"
     DUPLICATE_IDEMPOTENT = "duplicate_idempotent"
 
@@ -82,16 +83,21 @@ def validate_callback(
         return _rejected_stale("lease released, use idempotency key")
 
     generation = lease.get("generation")
-    if isinstance(generation, int) and request.lease_generation < generation:
-        return _rejected_stale("old lease generation")
-
-    node_state = projection["node_states"].get(request.node_id)
-    if request.is_mutating and node_state in _TERMINAL_NODE_STATES:
-        return _rejected_stale(f"node {node_state}")
+    if isinstance(generation, int) and request.lease_generation != generation:
+        return _rejected_stale("lease_generation_incompatible")
 
     run_state = projection["run_state"]
     if run_state in _TERMINAL_RUN_STATES:
         return _rejected_stale(f"run {run_state}")
+
+    node_state = projection["node_states"].get(request.node_id)
+    if request.is_mutating and node_state in _TERMINAL_NODE_STATES:
+        return _rejected_stale(f"node {node_state}")
+    if request.is_mutating and node_state != "running":
+        return CallbackValidationResult(
+            outcome=CallbackOutcome.REJECTED_CONFLICT,
+            reason=f"node not running: {node_state}",
+        )
 
     return CallbackValidationResult(
         outcome=CallbackOutcome.ACCEPTED,

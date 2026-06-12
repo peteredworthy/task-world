@@ -191,7 +191,39 @@ def test_old_generation_rejected() -> None:
     )
 
     assert result.outcome == CallbackOutcome.REJECTED_STALE
-    assert result.reason == "old lease generation"
+    assert result.reason == "lease_generation_incompatible"
+
+
+def test_future_generation_rejected() -> None:
+    result = validate_callback(
+        _request(lease_generation=2),
+        _projection(leases={"lease-1": _lease("active", generation=1)}),
+        [],
+    )
+
+    assert result.outcome == CallbackOutcome.REJECTED_STALE
+    assert result.reason == "lease_generation_incompatible"
+
+
+def test_far_future_generation_rejected() -> None:
+    result = validate_callback(
+        _request(lease_generation=999),
+        _projection(leases={"lease-1": _lease("active", generation=1)}),
+        [],
+    )
+
+    assert result.outcome == CallbackOutcome.REJECTED_STALE
+    assert result.reason == "lease_generation_incompatible"
+
+
+def test_exact_generation_accepted() -> None:
+    result = validate_callback(
+        _request(lease_generation=3),
+        _projection(leases={"lease-1": _lease("active", generation=3)}),
+        [],
+    )
+
+    assert result.outcome == CallbackOutcome.ACCEPTED
 
 
 def test_execution_mismatch_rejected() -> None:
@@ -239,6 +271,17 @@ def test_node_terminal_rejected() -> None:
 
     assert result.outcome == CallbackOutcome.REJECTED_STALE
     assert result.reason == "node completed"
+
+
+def test_mutating_callback_before_start_ack_rejected_as_conflict() -> None:
+    result = validate_callback(
+        _request(),
+        _projection(node_states={"worker-1": "leased"}),
+        [],
+    )
+
+    assert result.outcome == CallbackOutcome.REJECTED_CONFLICT
+    assert result.reason == "node not running: leased"
 
 
 def test_run_cancelled_rejected() -> None:

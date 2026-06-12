@@ -348,6 +348,11 @@ def test_two_step_routine_worker_completion_unblocks_next_step_worker() -> None:
     first_lease = schedule_events_by_type(first_tick, "lease_granted")[0]
     assert first_lease.payload["node_id"] == "worker-s-01-t-01"
     events = [*events, *first_tick]
+    started = _append(
+        events,
+        _apply(events, "acknowledge_start", _start_payload(first_lease)),
+    )
+    events = [*events, *started]
 
     completed = _append(
         events,
@@ -372,6 +377,11 @@ def test_two_step_routine_worker_failure_blocks_next_step_worker() -> None:
     )
     first_lease = schedule_events_by_type(first_tick, "lease_granted")[0]
     events = [*events, *first_tick]
+    started = _append(
+        events,
+        _apply(events, "acknowledge_start", _start_payload(first_lease)),
+    )
+    events = [*events, *started]
     failed = _append(
         events,
         _apply(events, "submit_callback", _callback_payload(first_lease, new_state="failed")),
@@ -490,6 +500,16 @@ def _callback_payload(
         "idempotency_key": f"callback-{lease_granted.payload['node_id']}-{new_state}",
         "payload_hash": f"hash-{lease_granted.payload['node_id']}-{new_state}",
         "new_state": new_state,
+    }
+
+
+def _start_payload(lease_granted: EventEnvelope) -> dict[str, Any]:
+    return {
+        "run_id": "run-1",
+        "node_id": lease_granted.payload["node_id"],
+        "execution_id": lease_granted.payload["execution_id"],
+        "lease_id": lease_granted.payload["lease_id"],
+        "lease_generation": lease_granted.payload["generation"],
     }
 
 

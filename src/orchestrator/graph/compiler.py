@@ -298,6 +298,11 @@ class _Compiler:
             terminal_node_ids.append(verifier_id)
         if not terminal_node_ids:
             terminal_node_ids.append(worker_id)
+
+        # Every executable node needs a base snapshot identity to be leasable —
+        # the scheduler defers nodes without one rather than fabricating it.
+        for executable_id in {worker_id, verifier_id, *check_ids} - {entry_node_id, None}:
+            self._bind_routine_snapshot(str(executable_id))
         return _CompiledTask(entry_node_ids=entry_node_ids, terminal_node_ids=terminal_node_ids)
 
     def _create_worker(

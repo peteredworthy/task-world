@@ -211,6 +211,14 @@ def _apply_callback_command(
             )
         ]
 
+    callback_payload = _callback_payload(payload)
+    # Mutating-ness is derived from the callback's actual effects, never trusted
+    # from the caller's flag: completing the node or carrying output records IS
+    # a mutation, so a callback claiming is_mutating=False cannot bypass the
+    # running-state and suspended-lease guards.
+    has_effects = bool(payload.get("complete_node", True)) or bool(
+        (callback_payload or {}).get("output_records")
+    )
     request = CallbackRequest(
         run_id=str(payload["run_id"]),
         node_id=str(payload["node_id"]),
@@ -220,8 +228,8 @@ def _apply_callback_command(
         base_snapshot_id=str(payload["base_snapshot_id"]),
         observed_graph_position=int(payload["observed_graph_position"]),
         idempotency_key=str(payload["idempotency_key"]),
-        payload=_callback_payload(payload),
-        is_mutating=bool(payload.get("is_mutating", True)),
+        payload=callback_payload,
+        is_mutating=bool(payload.get("is_mutating", True)) or has_effects,
     )
     result = validate_callback(request, projection, events)
 
@@ -235,7 +243,10 @@ def _apply_callback_command(
     }
     if result.outcome == CallbackOutcome.REJECTED_STALE:
         return [make_event("callback_rejected_stale", event_payload)]
-    if result.outcome == CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT:
+    if result.outcome in {
+        CallbackOutcome.REJECTED_CONFLICT,
+        CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT,
+    }:
         return [make_event("callback_rejected_conflict", event_payload)]
     if result.outcome == CallbackOutcome.DUPLICATE_IDEMPOTENT:
         return [
@@ -266,6 +277,18 @@ def _apply_callback_command(
             make_event(
                 "callback_rejected_conflict",
                 {**event_payload, "reason": provenance_conflict},
+            )
+        ]
+    verification_conflict = _verification_record_conflict(
+        projection,
+        request,
+        expected_producer_node_id,
+    )
+    if verification_conflict is not None:
+        return [
+            make_event(
+                "callback_rejected_conflict",
+                {**event_payload, "reason": verification_conflict},
             )
         ]
 
@@ -348,6 +371,17 @@ def _accepted_output_record_events(
             continue
         record_payload = dict(cast(dict[str, Any], raw_record))
         record_payload.setdefault("producer_node_id", expected_producer_node_id)
+        if record_payload.get("record_kind") == "verification":
+            output.extend(
+                _accepted_verification_record_events(
+                    projection,
+                    request,
+                    expected_producer_node_id,
+                    record_payload,
+                    make_event,
+                )
+            )
+            continue
         try:
             record = OutputRecord.model_validate(record_payload)
         except ValueError:
@@ -355,6 +389,94 @@ def _accepted_output_record_events(
         output.append(make_event("output_record_accepted", record.model_dump(mode="json")))
         output.extend(_input_bound_events_for_record(projection, record, make_event))
     return output
+
+
+def _verification_record_conflict(
+    projection: GraphProjection,
+    request: CallbackRequest,
+    expected_producer_node_id: str,
+) -> str | None:
+    raw_records = request.payload.get("output_records") if request.payload is not None else None
+    if not isinstance(raw_records, list):
+        return None
+
+    for index, raw_record in enumerate(cast(list[Any], raw_records)):
+        if not isinstance(raw_record, dict):
+            continue
+        record_payload = cast(dict[str, Any], raw_record)
+        if record_payload.get("record_kind") != "verification":
+            continue
+        if projection["node_kinds"].get(expected_producer_node_id) != "verifier":
+            return f"verification record at index {index} was not produced by a verifier"
+        candidate_id = _candidate_id_from_payload(record_payload)
+        if candidate_id is None:
+            return f"verification record at index {index} missing candidate_id"
+        if not _candidate_is_bound_to_verifier(projection, expected_producer_node_id, candidate_id):
+            return (
+                f"verification record candidate_id at index {index} is not bound "
+                f"to verifier input: {candidate_id}"
+            )
+        verdict = record_payload.get("verdict")
+        if verdict not in {"passed", "failed", "pass", "fail"}:
+            return f"verification record at index {index} has invalid verdict: {verdict}"
+    return None
+
+
+def _accepted_verification_record_events(
+    projection: GraphProjection,
+    request: CallbackRequest,
+    expected_producer_node_id: str,
+    record_payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    candidate_id = _candidate_id_from_payload(record_payload)
+    if candidate_id is None:
+        return []
+    if not _candidate_is_bound_to_verifier(projection, expected_producer_node_id, candidate_id):
+        return []
+
+    verdict = str(record_payload.get("verdict"))
+    event_type = "verification_passed" if verdict in {"passed", "pass"} else "verification_failed"
+    task_region_id = projection["node_task_regions"].get(expected_producer_node_id)
+    event_payload = {
+        "node_id": request.node_id,
+        "verifier_node_id": expected_producer_node_id,
+        "candidate_id": candidate_id,
+        "verdict": "passed" if event_type == "verification_passed" else "failed",
+        "record_id": record_payload.get("record_id"),
+        "evidence": record_payload.get("evidence"),
+        "value": record_payload.get("value"),
+    }
+    if task_region_id is not None:
+        event_payload["task_region_id"] = task_region_id
+    return [
+        make_event("output_record_accepted", record_payload),
+        make_event(event_type, event_payload),
+    ]
+
+
+def _candidate_is_bound_to_verifier(
+    projection: GraphProjection,
+    verifier_node_id: str,
+    candidate_id: str,
+) -> bool:
+    binding = projection["input_bindings"].get(verifier_node_id, {}).get("candidate_under_test")
+    if binding is None:
+        return False
+    record_ids = binding.get("record_ids")
+    return isinstance(record_ids, list) and candidate_id in record_ids
+
+
+def _candidate_id_from_payload(payload: dict[str, Any]) -> str | None:
+    candidate_id = payload.get("candidate_id")
+    if isinstance(candidate_id, str):
+        return candidate_id
+    membership = payload.get("membership")
+    if isinstance(membership, dict):
+        value = cast(dict[str, Any], membership).get("candidate_id")
+        if isinstance(value, str):
+            return value
+    return None
 
 
 def _input_bound_events_for_record(
@@ -516,6 +638,15 @@ def _apply_schedule_tick(
             if isinstance(payload.get("lease_ids"), dict) and node_id in payload["lease_ids"]
             else id_gen.next_id("lease")
         )
+        base_snapshot_id = _base_snapshot_id_for_node(projection, payload, node_id)
+        if base_snapshot_id is None:
+            output.append(
+                make_event(
+                    "node_deferred",
+                    {"node_id": node_id, "reason": "missing_base_snapshot"},
+                )
+            )
+            continue
         if node_id not in readied_node_ids:
             output.append(make_event("node_ready", {"node_id": node_id}))
         output.append(
@@ -526,7 +657,7 @@ def _apply_schedule_tick(
                     "node_id": node_id,
                     "generation": 1,
                     "execution_id": id_gen.next_id("exec"),
-                    "base_snapshot_id": str(payload.get("base_snapshot_id", "S0")),
+                    "base_snapshot_id": base_snapshot_id,
                     "expires_at": (clock.now() + timedelta(seconds=lease_seconds)).isoformat(),
                     "resource_claims": claims,
                 },
@@ -549,6 +680,31 @@ def _apply_schedule_tick(
             )
         )
     return output
+
+
+def _base_snapshot_id_for_node(
+    projection: GraphProjection,
+    payload: dict[str, Any],
+    node_id: str,
+) -> str | None:
+    """Resolve a node's base snapshot from command override or input bindings.
+
+    Returns None when no snapshot identity exists — the scheduler defers the
+    node rather than fabricating an identity (PRD §19: every lease carries a
+    real base snapshot).
+    """
+    override = payload.get("base_snapshot_id")
+    if isinstance(override, str) and override:
+        return override
+
+    bindings = projection["input_bindings"].get(node_id, {})
+    for port in ("base_snapshot", "root_snapshot", "routine_snapshot"):
+        record_ids = bindings.get(port, {}).get("record_ids")
+        if isinstance(record_ids, list) and record_ids:
+            first_record_id = cast(list[Any], record_ids)[0]
+            if isinstance(first_record_id, str) and first_record_id:
+                return first_record_id
+    return None
 
 
 def _apply_acknowledge_start(

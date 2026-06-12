@@ -41,6 +41,16 @@
     - callback_rejected_stale: {node_id: worker-stale-4, lease_id: lease-4}
   then_projection: {lease-4: active}
 
+- name: stale_callback_for_future_generation
+  given_events:
+    - node_created: {node_id: worker-stale-4f, kind: worker, state: running}
+    - lease_granted: {node_id: worker-stale-4f, lease_id: lease-4f, generation: 1, execution_id: exec-4f, base_snapshot_id: S0}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-4f, execution_id: exec-4f, lease_id: lease-4f, lease_generation: 999, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-4f}
+  then_events:
+    - callback_rejected_stale: {node_id: worker-stale-4f, lease_id: lease-4f}
+  then_projection: {worker-stale-4f: running, lease-4f: active}
+
 - name: stale_success_after_retry
   given_events:
     - node_state_changed: {node_id: worker-stale-5a, new_state: failed}

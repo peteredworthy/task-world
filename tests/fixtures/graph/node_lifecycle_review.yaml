@@ -11,7 +11,7 @@
   given_events:
     - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: review-2, kind: review, state: ready, resource_claims: [{mode: review_write, scope: repo, paths: [docs/review.md]}]}
-  when_command: {schedule_tick: {run_id: run-1}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
   then_events:
     - lease_granted: {node_id: review-2}
     - node_state_changed: {node_id: review-2, new_state: leased}

@@ -275,6 +275,10 @@ def _ready_nodes(node_states: dict[str, str]) -> list[str]:
 
 
 def _record_candidate(state: GraphProjection, event: EventEnvelope) -> None:
+    record_kind = event.payload.get("record_kind")
+    if record_kind is not None and record_kind != "output":
+        return
+
     producer_node_id = event.payload.get("producer_node_id")
     task_region_id = _task_region_id(event.payload)
     if task_region_id is None and isinstance(producer_node_id, str):

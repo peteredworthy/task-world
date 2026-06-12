@@ -1,0 +1,429 @@
+"""Outbox-to-agent bridge for graph runtime dispatch."""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal, Protocol, cast
+
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
+from orchestrator.graph import EventEnvelope
+from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
+from orchestrator.graph_runtime.outbox import OutboxItem, SideEffectExecutor
+from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.runners import AgentRunner, create_agent_runner
+from orchestrator.runners.types import ExecutionContext
+
+
+@dataclass(frozen=True)
+class GraphDispatchContext:
+    """Graph facts mapped into an existing runner execution context.
+
+    Mapping decisions:
+    - ``node_payload`` is the compiled executable node payload. It provides
+      task title/context, role, candidate identity, tools, and verifier rubric.
+    - ``requirements`` are reconstructed from requirement nodes bound to the
+      executable node by compiler-created input bindings.
+    - ``worktree_path`` is injected by runtime construction because filesystem
+      location is run setup state, not a pure graph fact in slice 2.3.
+    - Lease identity stays outside ``ExecutionContext`` and is copied into the
+      graph callback envelope when the runner submits.
+    """
+
+    run_id: str
+    node_id: str
+    node_kind: str
+    node_payload: dict[str, Any]
+    requirements: list[str]
+    worktree_path: str
+    lease_id: str
+    lease_generation: int
+    execution_id: str
+    base_snapshot_id: str
+    dispatch_event_id: str
+
+
+class GraphAgentFactory(Protocol):
+    def create_runner(self, context: GraphDispatchContext) -> AgentRunner: ...
+
+
+class GraphProcessRegistry(Protocol):
+    def is_running(self, execution_id: str) -> bool: ...
+
+
+class StaticGraphAgentFactory:
+    """Production-oriented adapter around the existing runner registry."""
+
+    def __init__(
+        self,
+        runner_type: AgentRunnerType,
+        runner_config: dict[str, Any] | None = None,
+    ) -> None:
+        self._runner_type = runner_type
+        self._runner_config = dict(runner_config or {})
+
+    def create_runner(self, context: GraphDispatchContext) -> AgentRunner:
+        phase = "verifying" if context.node_kind == "verifier" else "building"
+        return create_agent_runner(
+            self._runner_type,
+            self._runner_config,
+            run_id=context.run_id,
+            phase=phase,
+        )
+
+
+class GraphDispatchExecutor(SideEffectExecutor):
+    """Start graph-leased agent executions from durable outbox items."""
+
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        controller: GraphController,
+        agent_factory: GraphAgentFactory,
+        *,
+        worktree_path: str | Path,
+        running_executions: dict[str, asyncio.Task[None]] | None = None,
+        process_registry: GraphProcessRegistry | None = None,
+    ) -> None:
+        self._session_factory = session_factory
+        self._controller = controller
+        self._agent_factory = agent_factory
+        self._worktree_path = str(worktree_path)
+        self._running = running_executions if running_executions is not None else {}
+        self._process_registry = process_registry
+
+    async def dispatch(self, item: OutboxItem) -> None:
+        if item.kind != "agent_dispatch":
+            return
+
+        context = await self._build_dispatch_context(item)
+        existing = self._running.get(context.execution_id)
+        if existing is not None and not existing.done():
+            return
+
+        runner = self._agent_factory.create_runner(context)
+        task = asyncio.create_task(self._run_agent(context, runner))
+        task.add_done_callback(_consume_task_exception)
+        self._running[context.execution_id] = task
+
+    def is_running(self, execution_id: str) -> bool:
+        task = self._running.get(execution_id)
+        if task is not None and not task.done():
+            return True
+        return self._process_registry is not None and self._process_registry.is_running(
+            execution_id
+        )
+
+    async def wait_for_all(self) -> None:
+        tasks = list(self._running.values())
+        if tasks:
+            await asyncio.gather(*tasks)
+
+    def cancel_all(self) -> None:
+        for task in self._running.values():
+            task.cancel()
+
+    async def _run_agent(self, context: GraphDispatchContext, runner: AgentRunner) -> None:
+        try:
+            await self._acknowledge_start(context)
+            grades: list[tuple[str, str, str | None]] = []
+
+            async def on_checklist_update(
+                _req_id: str,
+                _status: ChecklistStatus,
+                _note: str | None,
+            ) -> None:
+                return None
+
+            async def on_submit() -> None:
+                await self._submit_callback(context, grades)
+
+            async def on_grade(req_id: str, grade: str, grade_reason: str | None) -> None:
+                grades.append((req_id, grade, grade_reason))
+
+            await runner.execute(
+                self._execution_context(context),
+                on_checklist_update,
+                on_submit,
+                on_grade=on_grade if context.node_kind == "verifier" else None,
+            )
+        except Exception as exc:
+            await self._agent_died(context, str(exc))
+
+    async def _build_dispatch_context(self, item: OutboxItem) -> GraphDispatchContext:
+        payload = item.payload
+        node_id = str(payload["node_id"])
+        async with self._session_factory() as session:
+            events = await GraphEventStore(session).read_run(item.run_id)
+
+        node_payload = _node_payload(events, node_id)
+        node_kind = str(node_payload.get("kind", "worker"))
+        base_snapshot_id = payload.get("base_snapshot_id")
+        if not isinstance(base_snapshot_id, str) or not base_snapshot_id:
+            msg = "agent dispatch payload missing base_snapshot_id"
+            raise ValueError(msg)
+        return GraphDispatchContext(
+            run_id=item.run_id,
+            node_id=node_id,
+            node_kind=node_kind,
+            node_payload=node_payload,
+            requirements=_requirements_for_node(events, node_id),
+            worktree_path=self._worktree_path,
+            lease_id=str(payload["lease_id"]),
+            lease_generation=_payload_int(payload, "generation"),
+            execution_id=str(payload["execution_id"]),
+            base_snapshot_id=base_snapshot_id,
+            dispatch_event_id=item.event_id,
+        )
+
+    def _execution_context(self, context: GraphDispatchContext) -> ExecutionContext:
+        node = context.node_payload
+        prompt = _prompt_for_node(context)
+        return ExecutionContext(
+            run_id=context.run_id,
+            task_id=str(node.get("task_id") or node.get("task_region_id") or context.node_id),
+            working_dir=context.worktree_path,
+            prompt=prompt,
+            requirements=context.requirements,
+            step_id=cast(str | None, node.get("step_id")),
+            available_tools=cast(list[str] | None, node.get("available_tools")),
+            mcp_servers=cast(Any, node.get("mcp_servers")),
+            work_mode=_work_mode(node.get("work_mode")),
+        )
+
+    async def _acknowledge_start(self, context: GraphDispatchContext) -> None:
+        await self._controller.handle_command(
+            context.run_id,
+            await self._current_position(context.run_id),
+            "acknowledge_start",
+            {
+                "node_id": context.node_id,
+                "lease_id": context.lease_id,
+                "lease_generation": context.lease_generation,
+                "execution_id": context.execution_id,
+            },
+        )
+
+    async def _submit_callback(
+        self,
+        context: GraphDispatchContext,
+        grades: list[tuple[str, str, str | None]],
+    ) -> None:
+        observed_position = await self._current_position(context.run_id)
+        output_records = _output_records_for_submit(context, grades)
+        payload = {
+            "payload_hash": _payload_hash(output_records),
+            "output_records": output_records,
+        }
+        await self._controller.handle_command(
+            context.run_id,
+            observed_position,
+            "submit_callback",
+            {
+                "node_id": context.node_id,
+                "execution_id": context.execution_id,
+                "lease_id": context.lease_id,
+                "lease_generation": context.lease_generation,
+                "base_snapshot_id": context.base_snapshot_id,
+                "observed_graph_position": observed_position,
+                "idempotency_key": f"{context.dispatch_event_id}:{context.execution_id}:submit",
+                "payload_hash": payload["payload_hash"],
+                "payload": payload,
+            },
+        )
+
+    async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
+        await self._controller.handle_command(
+            context.run_id,
+            await self._current_position(context.run_id),
+            "agent_died",
+            {
+                "lease_id": context.lease_id,
+                "execution_id": context.execution_id,
+                "reason": reason or "runtime_process_died",
+            },
+        )
+
+    async def _current_position(self, run_id: str) -> int:
+        async with self._session_factory() as session:
+            return await GraphEventStore(session).current_position(run_id)
+
+
+async def reconcile_runtime(
+    controller: GraphController,
+    dispatcher: GraphDispatchExecutor,
+    report: object,
+) -> None:
+    """Reconcile recovered active leases with in-process runtime liveness."""
+
+    for lease in [
+        *cast(Any, getattr(report, "awaiting_start_ack", [])),
+        *cast(Any, getattr(report, "awaiting_callback", [])),
+    ]:
+        execution_id = str(lease.get("execution_id", ""))
+        if execution_id and dispatcher.is_running(execution_id):
+            continue
+        run_id = str(lease["run_id"])
+        await controller.handle_command(
+            run_id,
+            await controller.current_position(run_id),
+            "agent_died",
+            {
+                "lease_id": str(lease["lease_id"]),
+                "execution_id": execution_id,
+                "reason": "runtime_process_missing_after_restart",
+            },
+        )
+
+
+def build_graph_runtime(
+    session_factory: async_sessionmaker[AsyncSession],
+    clock: Any,
+    id_gen: Any,
+    *,
+    worktree_path: str | Path,
+    runner_type: AgentRunnerType,
+    runner_config: dict[str, Any] | None = None,
+) -> tuple[GraphController, GraphDispatchExecutor]:
+    """Assemble graph controller and dispatch executor without API imports."""
+
+    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        StaticGraphAgentFactory(runner_type, runner_config),
+        worktree_path=worktree_path,
+    )
+    return controller, executor
+
+
+def _node_payload(events: list[EventEnvelope], node_id: str) -> dict[str, Any]:
+    for event in events:
+        if event.event_type != "node_created":
+            continue
+        if event.payload.get("node_id") == node_id:
+            return dict(event.payload)
+    return {"node_id": node_id}
+
+
+def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[str]:
+    projection = rebuild_projection(events)
+    bound_record_ids: set[str] = set()
+    for port, binding in projection["input_bindings"].get(node_id, {}).items():
+        if not port.startswith("requirement_"):
+            continue
+        record_ids = binding.get("record_ids")
+        if isinstance(record_ids, list):
+            bound_record_ids.update(str(record_id) for record_id in cast(list[object], record_ids))
+
+    requirements: list[str] = []
+    for event in events:
+        if event.event_type != "node_created":
+            continue
+        requirement_node_id = event.payload.get("node_id")
+        if not isinstance(requirement_node_id, str) or requirement_node_id not in bound_record_ids:
+            continue
+        requirement = event.payload.get("requirement")
+        if isinstance(requirement, dict):
+            req = cast(dict[str, Any], requirement)
+            requirements.append(f"{req.get('id', requirement_node_id)}: {req.get('desc', '')}")
+    return requirements
+
+
+def _prompt_for_node(context: GraphDispatchContext) -> str:
+    node = context.node_payload
+    if context.node_kind == "verifier":
+        rubric = node.get("rubric")
+        return "\n".join(
+            [
+                f"Verify task region {node.get('task_region_id', context.node_id)}.",
+                f"Candidate: {node.get('candidate_id', '')}",
+                f"Rubric: {json.dumps(rubric or [], sort_keys=True)}",
+            ]
+        )
+    return "\n".join(
+        [
+            str(node.get("title", context.node_id)),
+            str(node.get("task_context", "")),
+        ]
+    ).strip()
+
+
+def _output_records_for_submit(
+    context: GraphDispatchContext,
+    grades: list[tuple[str, str, str | None]],
+) -> list[dict[str, Any]]:
+    node = context.node_payload
+    candidate_id = str(node.get("candidate_id") or f"candidate-{context.node_id}")
+    task_region_id = str(node.get("task_region_id") or context.node_id)
+    attempt_number = int(node.get("attempt_number", 0))
+    if context.node_kind == "verifier":
+        verdict = "passed" if _grades_pass(grades) else "failed"
+        return [
+            {
+                "record_id": f"verification-{context.execution_id}",
+                "record_kind": "verification",
+                "producer_node_id": context.node_id,
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": candidate_id,
+                "task_region_id": task_region_id,
+                "verdict": verdict,
+                "value": {
+                    "grades": [
+                        {"requirement_id": req_id, "grade": grade, "reason": reason}
+                        for req_id, grade, reason in grades
+                    ]
+                },
+            }
+        ]
+    return [
+        {
+            "record_id": candidate_id,
+            "record_kind": "output",
+            "producer_node_id": context.node_id,
+            "port": "candidate",
+            "schema": "ImplementationCandidate",
+            "candidate_id": candidate_id,
+            "task_region_id": task_region_id,
+            "attempt_number": attempt_number,
+            "value": {"summary": "submitted by graph runner"},
+        }
+    ]
+
+
+def _grades_pass(grades: list[tuple[str, str, str | None]]) -> bool:
+    if not grades:
+        return True
+    passing = {"a", "pass", "passed", "ok", "yes"}
+    return all(grade.strip().lower() in passing for _, grade, _ in grades)
+
+
+def _payload_hash(output_records: list[dict[str, Any]]) -> str:
+    encoded = json.dumps(output_records, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _payload_int(payload: dict[str, object], key: str) -> int:
+    value = payload[key]
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        return int(value)
+    msg = f"payload field {key} must be int-compatible"
+    raise TypeError(msg)
+
+
+def _work_mode(value: object) -> Literal["implementation", "oversight"]:
+    return "oversight" if value == "oversight" else "implementation"
+
+
+def _consume_task_exception(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
+        return
+    task.exception()

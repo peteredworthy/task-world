@@ -11,6 +11,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command,
     initial_projection,
+    project_task_states,
     reduce_event,
 )
 
@@ -75,6 +76,24 @@ def _active_lease_events() -> list[EventEnvelope]:
     ]
 
 
+def _leased_lease_events() -> list[EventEnvelope]:
+    return [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "leased"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+            },
+            2,
+        ),
+    ]
+
+
 def test_lifecycle_legal_transitions() -> None:
     cases = [
         ([], "accept_run", "queued"),
@@ -106,6 +125,76 @@ def test_lifecycle_illegal_transition_rejected() -> None:
 
 def test_callback_accept_emits_boundary_events() -> None:
     output = _apply(_active_lease_events(), "submit_callback", _callback_payload())
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+
+
+def test_callback_before_acknowledge_start_rejected_and_leaves_lease_intact() -> None:
+    events = _leased_lease_events()
+
+    output = _apply(events, "submit_callback", _callback_payload())
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == "node not running: leased"
+
+    projected = _project([*events, *output])
+    assert projected["node_states"]["worker-1"] == "leased"
+    assert projected["leases"]["lease-1"]["state"] == "active"
+
+
+def test_callback_claiming_non_mutating_cannot_complete_leased_node() -> None:
+    """is_mutating=False is not trusted: completion is derived as a mutation."""
+    events = _leased_lease_events()
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(is_mutating=False),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == "node not running: leased"
+
+    projected = _project([*events, *output])
+    assert projected["node_states"]["worker-1"] == "leased"
+    assert projected["leases"]["lease-1"]["state"] == "active"
+
+
+def test_schedule_tick_defers_node_without_base_snapshot() -> None:
+    """The kernel never fabricates a base snapshot identity (no 'S0' fallback)."""
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "ready"}, 1),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert not any(event.event_type == "lease_granted" for event in output)
+    assert any(
+        event.event_type == "node_deferred"
+        and event.payload == {"node_id": "worker-1", "reason": "missing_base_snapshot"}
+        for event in output
+    )
+
+
+def test_callback_after_acknowledge_start_accepts_boundary() -> None:
+    events = _leased_lease_events()
+    start_output = _apply(
+        events,
+        "acknowledge_start",
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "execution_id": "exec-1",
+        },
+    )
+
+    output = _apply([*events, *start_output], "submit_callback", _callback_payload())
 
     assert [event.event_type for event in output] == [
         "callback_accepted",
@@ -174,7 +263,7 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
         projected,
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1"},
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -182,6 +271,230 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
         event.event_type == "lease_granted" and event.payload["node_id"] == "verifier-1"
         for event in schedule_output
     )
+
+
+def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "task-1",
+                "attempt_number": 1,
+                "candidate_id": "candidate-1",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+                "attempt_number": 1,
+                "value": {},
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-1",
+                "kind": "verifier",
+                "state": "running",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
+            },
+            3,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            4,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-v",
+                "generation": 1,
+                "execution_id": "exec-v",
+                "base_snapshot_id": "S0",
+            },
+            5,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-key",
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "verdict": "passed",
+                        "value": {"grades": []},
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "verification_passed",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[2].payload["candidate_id"] == "candidate-1"
+
+
+def test_verifier_callback_rejects_unbound_verification_candidate() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-1",
+                "kind": "verifier",
+                "state": "running",
+                "task_region_id": "task-1",
+            },
+            1,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            2,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-v",
+                "generation": 1,
+                "execution_id": "exec-v",
+                "base_snapshot_id": "S0",
+            },
+            3,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-key",
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "other-candidate",
+                        "verdict": "passed",
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "not bound" in output[0].payload["reason"]
+
+
+def test_worker_smuggled_verification_record_rejected_atomically() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "running",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
+            },
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-forged",
+                        "record_kind": "verification",
+                        "producer_node_id": "worker-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "verdict": "passed",
+                    }
+                ],
+            },
+        ),
+    )
+
+    event_types = [event.event_type for event in output]
+    assert event_types == ["callback_rejected_conflict"]
+    assert "not produced by a verifier" in output[0].payload["reason"]
+    assert "callback_accepted" not in event_types
+    assert "output_record_accepted" not in event_types
+    assert "verification_passed" not in event_types
+
+    projected = _project([*events, *output])
+    assert projected["node_states"]["worker-1"] == "running"
+    assert projected["leases"]["lease-1"]["state"] == "active"
+    assert project_task_states([*events, *output]).get("task-1") != "accepted"
 
 
 def test_callback_rejects_output_record_producer_forgery_without_partial_events() -> None:
@@ -592,7 +905,7 @@ def test_schedule_tick_grants_leases() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -628,7 +941,7 @@ def test_schedule_tick_marks_planned_node_ready_when_required_input_bound() -> N
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -665,7 +978,7 @@ def test_schedule_tick_defers_missing_required_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "worker-1", "reason": "missing_required_input:candidate"})
@@ -696,7 +1009,7 @@ def test_schedule_tick_defers_unapproved_gate_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "worker-1", "reason": "gate_not_approved:gate-1"})
@@ -728,7 +1041,7 @@ def test_schedule_tick_allows_approved_gate_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -764,7 +1077,7 @@ def test_schedule_tick_check_precondition_requires_command_definition() -> None:
         _event("node_created", {"node_id": "check-1", "kind": "check", "state": "planned"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -789,7 +1102,7 @@ def test_schedule_tick_check_precondition_passes_with_command_definition() -> No
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -814,7 +1127,7 @@ def test_schedule_tick_external_claim_missing_key_is_invalid() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "external-1", "reason": "invalid_claim:external_missing_key"})
@@ -990,7 +1303,7 @@ def test_schedule_tick_expires_past_leases_only() -> None:
         _project(events),
         events,
         "schedule_tick",
-        {"run_id": "run-1"},
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
         clock,
         SequentialIdGenerator(),
     )

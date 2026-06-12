@@ -302,6 +302,36 @@ def test_task_projection_needs_revision() -> None:
     assert project_task_states(events) == {"task-1": "needs_revision"}
 
 
+def test_verification_output_record_is_not_projected_as_candidate() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
+                "attempt_number": 1,
+            },
+        ).model_copy(update={"position": 0}),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-1",
+                "record_kind": "verification",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-2",
+                "attempt_number": 99,
+            },
+        ).model_copy(update={"position": 1}),
+        _event("verification_passed", {"candidate_id": "candidate-1"}).model_copy(
+            update={"position": 2}
+        ),
+    ]
+
+    assert project_task_states(events) == {"task-1": "accepted"}
+
+
 def test_task_projection_blocked_invalid_test() -> None:
     events = [
         _event(

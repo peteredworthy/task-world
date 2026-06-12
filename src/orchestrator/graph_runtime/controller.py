@@ -98,6 +98,11 @@ class GraphController:
             projection_position=expected_position + len(stored_events),
         )
 
+    async def current_position(self, run_id: str) -> int:
+        """Return the current durable graph position for a run."""
+        async with self._session_factory() as session:
+            return await GraphEventStore(session).current_position(run_id)
+
     def _add_dispatch_intent_events(
         self,
         events: list[EventEnvelope],

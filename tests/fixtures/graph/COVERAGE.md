@@ -117,7 +117,8 @@
 | §19 | duplicate same key and same payload | stale_callbacks.yaml::stale_duplicate_same_payload |
 | §19 | duplicate same key and different payload | stale_callbacks.yaml::stale_duplicate_different_payload |
 | §19 | callback for revoked lease | stale_callbacks.yaml::stale_callback_for_revoked_lease |
-| §19 | callback for old lease generation | stale_callbacks.yaml::stale_callback_for_old_generation |
+| §19 | callback lease generation must exactly match; old generation rejected | stale_callbacks.yaml::stale_callback_for_old_generation |
+| §19 | callback lease generation must exactly match; future generation rejected | stale_callbacks.yaml::stale_callback_for_future_generation |
 | §19 | callback execution identity mismatch rejected | tests/unit/test_callbacks.py::test_execution_mismatch_rejected |
 | §19 | callback snapshot mismatch rejected as snapshot_incompatible via callback_rejected_stale | invariants.yaml::invariant_snapshot_mismatch_not_consumed |
 | §19 | success after node already retried | stale_callbacks.yaml::stale_success_after_retry |

@@ -229,7 +229,9 @@ async def test_crash_before_append_no_events_no_outbox_no_dispatch(
     controller = GraphController(session_factory, clock, SequentialIds(), dispatcher=dispatcher)
 
     with pytest.raises(StaleProjectionError):
-        await controller.handle_command(run_id, 1, "schedule_tick", {"lease_seconds": 60})
+        await controller.handle_command(
+            run_id, 1, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        )
 
     events = await _read_events(session_factory, run_id)
     assert [event.event_id for event in events] == [
@@ -250,7 +252,9 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
     clock = FixedClock()
     controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
 
-    result = await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+    result = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
     assert [item.status for item in result.outbox_items] == ["pending"]
 
     call_log: list[str] = []
@@ -288,7 +292,9 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
         dispatcher=dispatcher,
     )
 
-    await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+    await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
     assert len(call_log) == 1
 
     restarted_dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
@@ -331,7 +337,9 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         dispatcher=dispatcher,
     )
 
-    first = await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+    first = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
     lease_id = str(first.outbox_items[0].payload["lease_id"])
     execution_id = str(first.outbox_items[0].payload["execution_id"])
     started = await controller.handle_command(
@@ -357,7 +365,7 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         run_id,
         died.projection_position,
         "schedule_tick",
-        {"lease_seconds": 60},
+        {"lease_seconds": 60, "base_snapshot_id": "S0"},
     )
     projection_after_relearn = rebuild_projection(await _read_events(session_factory, run_id))
 
@@ -392,7 +400,9 @@ async def test_duplicate_dispatch_pending_invokes_executor_once(
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
     controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
-    await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+    await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
 
     call_log: list[str] = []
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
@@ -412,7 +422,9 @@ async def test_restart_mid_dispatching_row_is_retried_idempotently(
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
     controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
-    result = await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+    result = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
 
     call_log: list[str] = []
     crashing_dispatcher = OutboxDispatcher(
@@ -501,7 +513,9 @@ async def test_controller_does_not_start_side_effect_before_commit(
         dispatcher=dispatcher,
     )
 
-    result = await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+    result = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
 
     assert call_log == [result.outbox_items[0].event_id]
     assert await _outbox_statuses(session_factory) == ["completed"]
@@ -552,7 +566,9 @@ async def test_controller_rolls_back_events_when_dispatch_outbox_insert_fails(
     )
 
     with pytest.raises(OutboxAppendError):
-        await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+        await controller.handle_command(
+            run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        )
 
     events = await _read_events(session_factory, run_id)
     outbox_rows = await _outbox_rows(session_factory)
@@ -575,7 +591,9 @@ async def test_agent_dispatch_requested_event_envelope_is_persisted_exactly(
     clock = FixedClock()
     controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
 
-    result = await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+    result = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
     read_back = await _read_events(session_factory, run_id)
     lease_event = next(event for event in read_back if event.event_type == "lease_granted")
     dispatch_event = next(
@@ -611,7 +629,9 @@ async def test_controller_round_trip_projection_matches_in_memory_projection(
     clock = FixedClock()
     controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
 
-    result = await controller.handle_command(run_id, 2, "schedule_tick", {"lease_seconds": 60})
+    result = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
     read_back = await _read_events(session_factory, run_id)
 
     assert read_back == seed_events + result.events
