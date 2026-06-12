@@ -7,6 +7,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GIT_WRAPPER = REPO_ROOT / "scripts" / "worktree" / "git-wrapper.sh"
+GIT = "/usr/bin/git"
 
 
 def _run(
@@ -18,12 +19,12 @@ def _run(
 def _make_repo(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     repo.mkdir()
-    _run(["git", "init"], repo)
+    _run([GIT, "init"], repo)
     (repo / "sample.txt").write_text("hello\n", encoding="utf-8")
-    _run(["git", "add", "sample.txt"], repo)
+    _run([GIT, "add", "sample.txt"], repo)
     result = _run(
         [
-            "git",
+            GIT,
             "-c",
             "user.name=Test User",
             "-c",

@@ -1,6 +1,7 @@
 """Git utility functions."""
 
 import logging
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,7 +39,7 @@ def _run_git_reset_command(
 ) -> subprocess.CompletedProcess[str]:
     try:
         result = subprocess.run(
-            ["git", *args],
+            [_git_executable(), *args],
             cwd=worktree_path,
             capture_output=True,
             text=True,
@@ -60,7 +61,7 @@ def _run_git_commit_command(
     timeout = _timeout_for_commit_command(args)
     try:
         result = subprocess.run(
-            ["git", *args],
+            [_git_executable(), *args],
             cwd=worktree_path,
             capture_output=True,
             text=True,
@@ -94,6 +95,18 @@ def _timeout_for_commit_command(args: list[str]) -> int:
     if command == "add":
         return GIT_ADD_TIMEOUT_SECONDS
     return GIT_QUICK_TIMEOUT_SECONDS
+
+
+def _git_executable() -> str:
+    git = shutil.which("git")
+    if git is None:
+        return "git"
+    resolved = Path(git).resolve()
+    if resolved.name == "git-wrapper.sh":
+        system_git = shutil.which("git", path="/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin")
+        if system_git is not None:
+            return system_git
+    return git
 
 
 def _format_commit_timeout_error(args: list[str], timeout: int) -> str:

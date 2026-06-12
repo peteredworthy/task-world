@@ -76,6 +76,7 @@ from orchestrator.git.repos import (
     list_branches,
     list_repos,
 )
+from orchestrator.git.snapshot import SnapshotResult, restore, snapshot
 from orchestrator.git.testing import TestRunResult, TestRunner, TestSummary
 from orchestrator.git.utils import (
     GIT_ADD_TIMEOUT_SECONDS,
@@ -134,6 +135,7 @@ __all__ = [
     "RepoInfo",
     "RepoNotFoundError",
     "RevertBackMergeResult",
+    "SnapshotResult",
     "TestRunResult",
     "TestRunner",
     "TestSummary",
@@ -179,4 +181,6 @@ __all__ = [
     "revert_file",
     "reset_worktree_changes",
     "reset_worktree_to_ref",
+    "restore",
+    "snapshot",
 ]
