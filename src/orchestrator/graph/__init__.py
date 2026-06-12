@@ -8,6 +8,7 @@ from orchestrator.graph.callbacks import (
     validate_callback,
 )
 from orchestrator.graph.commands import apply_command
+from orchestrator.graph.compiler import compile_routine
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -106,6 +107,7 @@ __all__ = [
     "apply_command",
     "claims_conflict",
     "classify_event",
+    "compile_routine",
     "evaluate_readiness",
     "initial_projection",
     "op_read_set",

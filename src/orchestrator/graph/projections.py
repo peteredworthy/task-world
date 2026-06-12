@@ -408,6 +408,7 @@ def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
         "to_node_id": to_node_id,
         "to_port": to_port,
         "required": required is not False,
+        "dependency_type": event.payload.get("dependency_type", "input_binding"),
     }
 
 

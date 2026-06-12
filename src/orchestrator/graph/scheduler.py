@@ -71,6 +71,7 @@ class InputEdgeInfo:
     to_node_id: str
     to_port: str
     required: bool = True
+    dependency_type: str = "input_binding"
 
 
 @dataclass(frozen=True)
@@ -127,6 +128,8 @@ def evaluate_readiness(
     for edge in node.required_edges:
         if not edge.required:
             continue
+        if edge.dependency_type == "state_dependency":
+            continue
         if edge.to_port not in node.satisfied_input_ports:
             return False, f"missing_required_input:{edge.to_port}"
     for edge in node.required_edges:
@@ -139,6 +142,8 @@ def evaluate_readiness(
             continue
         if upstream_state in {"failed", "cancelled"} or pending_appeal:
             return False, f"upstream_failed:{upstream_node_id}"
+        if edge.dependency_type == "state_dependency" and upstream_state != "completed":
+            return False, f"upstream_pending:{upstream_node_id}"
     for edge in node.required_edges:
         if not edge.required:
             continue

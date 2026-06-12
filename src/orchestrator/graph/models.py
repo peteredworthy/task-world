@@ -142,6 +142,7 @@ class EdgeModel(GraphBaseModel):
     to_node_id: str
     to_port: str
     required: bool = True
+    dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
     accepted_record_selector: RecordSelector | None = None
 
 

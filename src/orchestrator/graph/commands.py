@@ -14,6 +14,7 @@ from orchestrator.graph.models import (
     Actor,
     ActorKind,
     EventEnvelope,
+    OutputRecord,
     PatchEnvelope,
     PatchOp,
 )
@@ -71,6 +72,8 @@ def apply_command(
 
     if command_type in RUN_LIFECYCLE_TRANSITIONS or command_type == "fail":
         return _apply_lifecycle_command(projection, command_type, payload, make_event)
+    if command_type == "seed_compiled_events":
+        return _apply_seed_compiled_events(projection, payload, make_event)
     if command_type == "submit_callback":
         return _apply_callback_command(projection, events, payload, make_event)
     if command_type == "submit_patch":
@@ -136,6 +139,52 @@ def _apply_lifecycle_command(
     ]
 
 
+def _apply_seed_compiled_events(
+    projection: GraphProjection,
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if projection["node_states"] or projection["edges"] or projection["input_bindings"]:
+        return [
+            _command_rejected(make_event, "seed_compiled_events", "run topology already seeded")
+        ]
+
+    raw_events = payload.get("events")
+    if not isinstance(raw_events, list) or not raw_events:
+        return [_command_rejected(make_event, "seed_compiled_events", "missing compiled events")]
+
+    run_id = str(payload.get("run_id", ""))
+    compiled_events: list[EventEnvelope] = []
+    try:
+        for raw_event in cast(list[Any], raw_events):
+            event = (
+                raw_event
+                if isinstance(raw_event, EventEnvelope)
+                else EventEnvelope.model_validate(raw_event)
+            )
+            if event.run_id != run_id:
+                return [
+                    _command_rejected(
+                        make_event,
+                        "seed_compiled_events",
+                        f"event run_id mismatch: {event.run_id}",
+                    )
+                ]
+            if event.event_type not in {"node_created", "edge_created", "input_bound"}:
+                return [
+                    _command_rejected(
+                        make_event,
+                        "seed_compiled_events",
+                        f"unsupported seed event: {event.event_type}",
+                    )
+                ]
+            compiled_events.append(event)
+    except (TypeError, ValueError) as exc:
+        return [_command_rejected(make_event, "seed_compiled_events", f"malformed event: {exc}")]
+
+    return compiled_events
+
+
 def _apply_callback_command(
     projection: GraphProjection,
     events: list[EventEnvelope],
@@ -196,8 +245,40 @@ def _apply_callback_command(
             )
         ]
 
+    lease_node_id = _lease_node_id(projection, request.lease_id)
+    expected_producer_node_id = lease_node_id or request.node_id
+    if lease_node_id is not None and request.node_id != lease_node_id:
+        return [
+            make_event(
+                "callback_rejected_conflict",
+                {
+                    **event_payload,
+                    "reason": (
+                        "callback node_id does not match lease node: "
+                        f"{request.node_id} != {lease_node_id}"
+                    ),
+                },
+            )
+        ]
+    provenance_conflict = _output_record_provenance_conflict(request, expected_producer_node_id)
+    if provenance_conflict is not None:
+        return [
+            make_event(
+                "callback_rejected_conflict",
+                {**event_payload, "reason": provenance_conflict},
+            )
+        ]
+
     accepted = make_event("callback_accepted", event_payload)
     output: list[EventEnvelope] = [accepted]
+    output.extend(
+        _accepted_output_record_events(
+            projection,
+            request,
+            expected_producer_node_id,
+            make_event,
+        )
+    )
     if payload.get("complete_node", True):
         output.append(
             make_event(
@@ -216,6 +297,97 @@ def _apply_callback_command(
                     "node_id": request.node_id,
                     "lease_id": request.lease_id,
                     "generation": request.lease_generation,
+                },
+            )
+        )
+    return output
+
+
+def _lease_node_id(projection: GraphProjection, lease_id: str) -> str | None:
+    lease = projection["leases"].get(lease_id)
+    if lease is None:
+        return None
+    node_id = lease.get("node_id")
+    return node_id if isinstance(node_id, str) else None
+
+
+def _output_record_provenance_conflict(
+    request: CallbackRequest,
+    expected_producer_node_id: str,
+) -> str | None:
+    raw_records = request.payload.get("output_records") if request.payload is not None else None
+    if not isinstance(raw_records, list):
+        return None
+
+    for index, raw_record in enumerate(cast(list[Any], raw_records)):
+        if not isinstance(raw_record, dict):
+            continue
+        record_payload = cast(dict[str, Any], raw_record)
+        producer_node_id = record_payload.get("producer_node_id", expected_producer_node_id)
+        if producer_node_id != expected_producer_node_id:
+            return (
+                "output record producer_node_id does not match lease node "
+                f"at index {index}: {producer_node_id} != {expected_producer_node_id}"
+            )
+    return None
+
+
+def _accepted_output_record_events(
+    projection: GraphProjection,
+    request: CallbackRequest,
+    expected_producer_node_id: str,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    raw_records = request.payload.get("output_records") if request.payload is not None else None
+    if not isinstance(raw_records, list):
+        return []
+
+    output: list[EventEnvelope] = []
+    for raw_record in cast(list[Any], raw_records):
+        if not isinstance(raw_record, dict):
+            continue
+        record_payload = dict(cast(dict[str, Any], raw_record))
+        record_payload.setdefault("producer_node_id", expected_producer_node_id)
+        try:
+            record = OutputRecord.model_validate(record_payload)
+        except ValueError:
+            continue
+        output.append(make_event("output_record_accepted", record.model_dump(mode="json")))
+        output.extend(_input_bound_events_for_record(projection, record, make_event))
+    return output
+
+
+def _input_bound_events_for_record(
+    projection: GraphProjection,
+    record: OutputRecord,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    output: list[EventEnvelope] = []
+    # Output records are facts produced by the leased node. Edges are the only
+    # authority for routing those facts into downstream required inputs.
+    for edge in projection["edges"].values():
+        if edge.get("dependency_type", "input_binding") != "input_binding":
+            continue
+        if edge.get("from_node_id") != record.producer_node_id:
+            continue
+        if edge.get("from_port") != record.port:
+            continue
+        edge_id = edge.get("edge_id")
+        to_node_id = edge.get("to_node_id")
+        to_port = edge.get("to_port")
+        if not isinstance(edge_id, str) or not isinstance(to_node_id, str):
+            continue
+        if not isinstance(to_port, str):
+            continue
+        output.append(
+            make_event(
+                "input_bound",
+                {
+                    "edge_id": edge_id,
+                    "to_node_id": to_node_id,
+                    "to_port": to_port,
+                    "record_ids": [record.record_id],
+                    "bound_at_position": 0,
                 },
             )
         )
@@ -603,6 +775,7 @@ def _patch_op_events(
                     "to_node_id": op.to_node_id,
                     "to_port": op.to_port,
                     "required": required if isinstance(required, bool) else True,
+                    "dependency_type": op_payload.get("dependency_type", "input_binding"),
                 },
             )
         ]
@@ -782,6 +955,7 @@ def _required_edges_for_node(
                 to_node_id=str(edge.get("to_node_id", "")),
                 to_port=str(edge.get("to_port", "")),
                 required=edge.get("required") is not False,
+                dependency_type=str(edge.get("dependency_type", "input_binding")),
             )
         )
     return edges

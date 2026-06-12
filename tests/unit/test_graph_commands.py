@@ -114,6 +114,254 @@ def test_callback_accept_emits_boundary_events() -> None:
     ]
 
 
+def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "planned"}, 3
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-candidate",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "required": True,
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "done"},
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "input_bound",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[2].payload == {
+        "edge_id": "edge-candidate",
+        "to_node_id": "verifier-1",
+        "to_port": "candidate_under_test",
+        "record_ids": ["candidate-1"],
+        "bound_at_position": 0,
+    }
+
+    projected = _project([*events, *output])
+    schedule_output = apply_command(
+        projected,
+        [*events, *output],
+        "schedule_tick",
+        {"run_id": "run-1"},
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+    assert any(
+        event.event_type == "lease_granted" and event.payload["node_id"] == "verifier-1"
+        for event in schedule_output
+    )
+
+
+def test_callback_rejects_output_record_producer_forgery_without_partial_events() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"}, 1),
+        _event(
+            "node_created",
+            {"node_id": "consumer-1", "kind": "verifier", "state": "blocked"},
+            2,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-candidate",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "consumer-1",
+                "to_port": "candidate_under_test",
+                "required": True,
+            },
+            3,
+        ),
+        _event(
+            "node_created",
+            {"node_id": "verifier-evil", "kind": "verifier", "state": "running"},
+            4,
+        ),
+        _event(
+            "lease_granted",
+            {"node_id": "verifier-evil", "lease_id": "lease-evil", "generation": 1},
+            5,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-evil",
+            lease_id="lease-evil",
+            execution_id="exec-evil",
+            idempotency_key="evil-key",
+            payload_hash="hash-evil",
+            payload={
+                "payload_hash": "hash-evil",
+                "output_records": [
+                    {
+                        "record_id": "forged-candidate",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "worker never ran"},
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "producer_node_id does not match lease node" in output[0].payload["reason"]
+    assert "output_record_accepted" not in [event.event_type for event in output]
+    assert "input_bound" not in [event.event_type for event in output]
+
+    projected = _project([*events, *output])
+    assert "consumer-1" not in projected["input_bindings"]
+
+    schedule_output = apply_command(
+        projected,
+        [*events, *output],
+        "schedule_tick",
+        {"run_id": "run-1", "max_grants": 10},
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert not any(
+        event.event_type in {"node_ready", "lease_granted"}
+        and event.payload.get("node_id") == "consumer-1"
+        for event in schedule_output
+    )
+    assert any(
+        event.event_type == "node_deferred"
+        and event.payload
+        == {
+            "node_id": "consumer-1",
+            "reason": "missing_required_input:candidate_under_test",
+        }
+        for event in schedule_output
+    )
+
+
+def test_callback_with_mixed_honest_and_forged_records_rejected_atomically() -> None:
+    events = [
+        *_active_lease_events(),
+        _event("node_created", {"node_id": "other-1", "kind": "worker", "state": "planned"}, 3),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-mixed",
+                "output_records": [
+                    {
+                        "record_id": "honest-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "real"},
+                    },
+                    {
+                        "record_id": "forged-1",
+                        "record_kind": "output",
+                        "producer_node_id": "other-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "forged"},
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "producer_node_id does not match lease node" in output[0].payload["reason"]
+
+
+def test_callback_accepts_unmatched_output_port_without_binding_input() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "blocked"}, 3
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-candidate",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "required": True,
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "diagnostic-1",
+                        "record_kind": "output",
+                        "port": "diagnostic",
+                        "schema": "DiagnosticRecord",
+                        "value": {"summary": "not a candidate"},
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[1].payload["producer_node_id"] == "worker-1"
+    assert output[1].payload["port"] == "diagnostic"
+
+
 def test_callback_rejected_stale() -> None:
     events = [
         *_active_lease_events(),
@@ -286,6 +534,47 @@ def test_patch_reject_emits_rejection() -> None:
 
     assert output[0].event_type == "graph_patch_rejected"
     assert "cannot perform create_gate" in output[0].payload["reason"]
+
+
+def test_seed_compiled_events_accepts_topology_only_for_empty_run() -> None:
+    seed_events = [
+        _event("node_created", {"node_id": "root", "kind": "root", "state": "completed"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "planned"},
+            1,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-1",
+                "from_node_id": "root",
+                "from_port": "snapshot",
+                "to_node_id": "worker-1",
+                "to_port": "routine_snapshot",
+                "required": True,
+            },
+            2,
+        ),
+        _event(
+            "input_bound",
+            {"edge_id": "edge-1", "to_node_id": "worker-1", "to_port": "routine_snapshot"},
+            3,
+        ),
+    ]
+
+    output = _apply([], "seed_compiled_events", {"run_id": "run-1", "events": seed_events})
+
+    assert output == seed_events
+
+
+def test_seed_compiled_events_rejects_already_seeded_run() -> None:
+    events = [_event("node_created", {"node_id": "root", "kind": "root", "state": "completed"}, 0)]
+
+    output = _apply(events, "seed_compiled_events", {"run_id": "run-1", "events": events})
+
+    assert output[0].event_type == "command_rejected"
+    assert output[0].payload["reason"] == "run topology already seeded"
 
 
 def test_schedule_tick_grants_leases() -> None:

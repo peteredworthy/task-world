@@ -8,6 +8,7 @@ from orchestrator.graph_runtime.errors import (
 )
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, SideEffectExecutor
 from orchestrator.graph_runtime.recovery import RecoveryReport, recover
+from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
 from orchestrator.graph_runtime.store import GraphEventStore
 
 __all__ = [
@@ -19,7 +20,9 @@ __all__ = [
     "OutboxDispatcher",
     "OutboxItem",
     "RecoveryReport",
+    "SeedRunResult",
     "SideEffectExecutor",
     "StaleProjectionError",
     "recover",
+    "seed_run",
 ]

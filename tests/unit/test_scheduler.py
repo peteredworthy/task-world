@@ -63,6 +63,7 @@ def _edge(
     to_port: str,
     *,
     required: bool = True,
+    dependency_type: str = "input_binding",
 ) -> InputEdgeInfo:
     return InputEdgeInfo(
         from_node_id=from_node_id,
@@ -70,6 +71,7 @@ def _edge(
         to_node_id="n1",
         to_port=to_port,
         required=required,
+        dependency_type=dependency_type,
     )
 
 
@@ -124,6 +126,38 @@ def test_evaluate_readiness_missing_required_input() -> None:
 def test_evaluate_readiness_optional_input_does_not_block() -> None:
     node = _node(
         "n1", state="planned", required_edges=[_edge("producer-1", "notes", required=False)]
+    )
+
+    ready, reason = evaluate_readiness(node, "active", [], [])
+
+    assert ready is True
+    assert reason == ""
+
+
+def test_evaluate_readiness_state_dependency_waits_for_upstream_completion() -> None:
+    node = _node(
+        "n1",
+        state="planned",
+        required_edges=[
+            _edge("producer-1", "prior_step_completion", dependency_type="state_dependency")
+        ],
+        upstream_states={"producer-1": "running"},
+    )
+
+    ready, reason = evaluate_readiness(node, "active", [], [])
+
+    assert ready is False
+    assert reason == "upstream_pending:producer-1"
+
+
+def test_evaluate_readiness_state_dependency_does_not_require_input_binding() -> None:
+    node = _node(
+        "n1",
+        state="planned",
+        required_edges=[
+            _edge("producer-1", "prior_step_completion", dependency_type="state_dependency")
+        ],
+        upstream_states={"producer-1": "completed"},
     )
 
     ready, reason = evaluate_readiness(node, "active", [], [])
