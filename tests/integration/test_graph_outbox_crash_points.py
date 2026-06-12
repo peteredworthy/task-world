@@ -34,6 +34,7 @@ from orchestrator.graph_runtime import (
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
 from orchestrator.graph_runtime.outbox import append_outbox_rows
+from orchestrator.graph_runtime.store import graph_aggregate_id
 
 
 class FixedClock:
@@ -95,7 +96,9 @@ class VisibilityAssertingExecutor:
                     select(GraphOutboxModel).where(GraphOutboxModel.event_id == item.event_id)
                 )
                 event_rows = await session.execute(
-                    select(EventV2Model).where(EventV2Model.aggregate_id == item.run_id)
+                    select(EventV2Model).where(
+                        EventV2Model.aggregate_id == graph_aggregate_id(item.run_id)
+                    )
                 )
                 visible_outbox_row = outbox_row.scalar_one_or_none()
                 visible_event_rows = list(event_rows.scalars())

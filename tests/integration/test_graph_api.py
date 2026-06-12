@@ -7,6 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from orchestrator.config.models import RoutineConfig
+from orchestrator.db import EventV2Model
 from orchestrator.graph import FakeClock
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
@@ -193,6 +194,52 @@ async def test_is_graph_backed_false_for_legacy_run(
 
     list_response = await client.get("/api/runs")
     assert list_response.status_code == 200
+    runs = list_response.json()["runs"]
+    run_entry = next(run for run in runs if run["id"] == run_id)
+    assert run_entry["is_graph_backed"] is False
+
+
+async def test_legacy_run_with_workflow_events_is_not_graph_backed(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    """Production legacy runs have workflow events in events_v2 under
+    aggregate_id == run_id. Those rows must not 500 the graph projection
+    endpoint nor mark the run graph-backed (regression: dogfood run r220)."""
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"legacy-evented-{uuid4().hex[:8]}"
+    run = create_run_from_routine(
+        _routine(),
+        repo_name="graph-api-legacy-repo",
+        source_branch="main",
+    )
+    run.id = run_id
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await save_run(session, run)
+        # Simulate the legacy workflow event stream for this run.
+        session.add(
+            EventV2Model(
+                aggregate_id=run_id,
+                version=1,
+                event_type="run_created",
+                payload='{"timestamp": "2026-06-12T00:00:00Z", "run_id": "%s"}' % run_id,
+                timestamp="2026-06-12T00:00:00Z",
+            )
+        )
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph")
+    assert response.status_code == 200
+    projection = response.json()
+    assert projection["event_count"] == 0
+    assert projection["run_state"] is None
+    assert projection["node_states"] == {}
+
+    detail = await client.get(f"/api/runs/{run_id}")
+    assert detail.status_code == 200
+    assert detail.json()["is_graph_backed"] is False
+
+    list_response = await client.get("/api/runs")
     runs = list_response.json()["runs"]
     run_entry = next(run for run in runs if run["id"] == run_id)
     assert run_entry["is_graph_backed"] is False

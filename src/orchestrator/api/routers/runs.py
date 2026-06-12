@@ -84,6 +84,7 @@ from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import EventV2Model, RunRepository, create_wired_event_store_v2
 from orchestrator.db import SqliteEventStore
+from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, graph_aggregate_id
 from orchestrator.db import commit_with_event_outbox
 from orchestrator.api.metrics import estimate_cost
 from orchestrator.config import discover_routines
@@ -120,7 +121,7 @@ async def _graph_backed_run_ids(session: AsyncSession, run_ids: list[str]) -> se
 
     query = (
         select(EventV2Model.aggregate_id, func.max(EventV2Model.version).label("position"))
-        .where(EventV2Model.aggregate_id.in_(run_ids))
+        .where(EventV2Model.aggregate_id.in_([graph_aggregate_id(r) for r in run_ids]))
         .group_by(EventV2Model.aggregate_id)
     )
     result = await session.execute(query)
@@ -128,7 +129,11 @@ async def _graph_backed_run_ids(session: AsyncSession, run_ids: list[str]) -> se
 
 
 def _graph_backed_run_ids_from_rows(rows: Any) -> set[str]:
-    return {run_id for run_id, position in rows if int(position) > 0}
+    return {
+        aggregate_id.removeprefix(GRAPH_AGGREGATE_PREFIX)
+        for aggregate_id, position in rows
+        if int(position) > 0 and aggregate_id.startswith(GRAPH_AGGREGATE_PREFIX)
+    }
 
 
 def _run_to_response(run: Run, *, is_graph_backed: bool = False) -> RunResponse:

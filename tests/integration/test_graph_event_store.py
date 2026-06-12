@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore, StaleProjectionError
+from orchestrator.graph_runtime.store import graph_aggregate_id
 
 
 @pytest.fixture(scope="module")
@@ -146,7 +147,7 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
 
         async with session_factory() as session:
             rows = await session.execute(
-                select(EventV2Model).where(EventV2Model.aggregate_id == run_id)
+                select(EventV2Model).where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
             )
             stored_rows = list(rows.scalars())
             events = await GraphEventStore(session).read_run(run_id)
@@ -155,6 +156,47 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
         assert [event.event_id for event in events] == ["evt-race-1"]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_graph_stream_coexists_with_legacy_workflow_events(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Legacy workflow events live in events_v2 under aggregate_id == run_id.
+    The graph stream is namespaced (graph:<run_id>) so the two never contend
+    for (aggregate_id, version) and never leak into each other's reads."""
+    run_id = "store-coexist"
+    async with session_factory() as session:
+        async with session.begin():
+            # Legacy workflow event at version 1 for the same run.
+            session.add(
+                EventV2Model(
+                    aggregate_id=run_id,
+                    version=1,
+                    event_type="run_created",
+                    payload='{"run_id": "store-coexist"}',
+                    timestamp="2026-01-01T00:00:00+00:00",
+                )
+            )
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            # Graph stream starts empty despite the legacy row.
+            assert await store.current_position(run_id) == 0
+            # Appending at expected_position=0 must not collide with the
+            # legacy row's (aggregate_id, version=1).
+            await store.append_events(
+                run_id,
+                0,
+                [_event("evt-coexist-1", run_id, "node_created", {"node_id": "n1"})],
+            )
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        events = await store.read_run(run_id)
+        assert [event.event_id for event in events] == ["evt-coexist-1"]
+        assert await store.current_position(run_id) == 1
 
 
 @pytest.mark.asyncio

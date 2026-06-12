@@ -121,5 +121,16 @@ def test_build_node_detail_filters_by_node_id() -> None:
 
 
 def test_batch_graph_backed_detection() -> None:
-    rows: list[tuple[str, int]] = [("run-draft", 0), ("run-queued", 2), ("run-complete", 1)]
+    rows: list[tuple[str, int]] = [
+        ("graph:run-draft", 0),
+        ("graph:run-queued", 2),
+        ("graph:run-complete", 1),
+    ]
     assert _graph_backed_run_ids_from_rows(rows) == {"run-queued", "run-complete"}
+
+
+def test_batch_graph_backed_detection_ignores_legacy_aggregates() -> None:
+    # Legacy workflow events share events_v2 with aggregate_id == run_id;
+    # they must never make a run count as graph-backed.
+    rows: list[tuple[str, int]] = [("run-legacy", 7), ("graph:run-graph", 3)]
+    assert _graph_backed_run_ids_from_rows(rows) == {"run-graph"}

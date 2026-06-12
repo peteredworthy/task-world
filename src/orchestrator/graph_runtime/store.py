@@ -12,6 +12,18 @@ from orchestrator.db import EventV2Model
 from orchestrator.graph import EventEnvelope
 from orchestrator.graph_runtime.errors import StaleProjectionError
 
+GRAPH_AGGREGATE_PREFIX = "graph:"
+
+
+def graph_aggregate_id(run_id: str) -> str:
+    """events_v2 aggregate key for a run's graph event stream.
+
+    Legacy workflow events use ``aggregate_id == run_id``; graph events are
+    namespaced so the two streams never contend for the same
+    (aggregate_id, version) sequence and never appear in each other's reads.
+    """
+    return f"{GRAPH_AGGREGATE_PREFIX}{run_id}"
+
 
 class GraphEventStore:
     """Append-only graph event store backed by ``events_v2``.
@@ -55,7 +67,7 @@ class GraphEventStore:
             stored_events.append(stored)
             rows.append(
                 EventV2Model(
-                    aggregate_id=run_id,
+                    aggregate_id=graph_aggregate_id(run_id),
                     version=position,
                     event_type=stored.event_type,
                     payload=stored.model_dump_json(),
@@ -75,7 +87,7 @@ class GraphEventStore:
         """Read graph events for a run ordered by run-local position."""
         result = await self._session.execute(
             select(EventV2Model)
-            .where(EventV2Model.aggregate_id == run_id)
+            .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
             .where(EventV2Model.version >= from_position)
             .order_by(EventV2Model.version)
         )
@@ -87,6 +99,8 @@ class GraphEventStore:
 
     async def current_position(self, run_id: str) -> int:
         result = await self._session.execute(
-            select(func.max(EventV2Model.version)).where(EventV2Model.aggregate_id == run_id)
+            select(func.max(EventV2Model.version)).where(
+                EventV2Model.aggregate_id == graph_aggregate_id(run_id)
+            )
         )
         return int(result.scalar_one_or_none() or 0)
