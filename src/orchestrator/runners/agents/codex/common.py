@@ -319,6 +319,81 @@ def extract_agent_message_delta(notification: dict[str, Any]) -> str | None:
     return None
 
 
+def extract_item_activity_line(notification: dict[str, Any]) -> str | None:
+    """Summarize a completed non-message item as a single output line.
+
+    Codex models do most of their work through command executions and file
+    changes while emitting little or no agent-message text, so a session can
+    run for minutes with nothing reaching the live activity feed. This helper
+    turns each completed work item into one human-readable line for streaming
+    via ``on_output``.
+
+    Args:
+        notification: A parsed JSON-RPC notification dict.
+
+    Returns:
+        A one-line summary for command executions, file changes, and tool
+        calls. ``None`` for agent messages (already streamed as deltas),
+        reasoning items (too noisy), and all other notifications.
+    """
+    if notification.get("method") != "item/completed":
+        return None
+    params = notification.get("params", {})
+    item: dict[str, Any] = params.get("item", {})
+    item_type = str(item.get("type", ""))
+    normalized = item_type.replace("_", "").lower()
+
+    if normalized == "commandexecution":
+        command = str(item.get("command", "")).strip()
+        exit_code = item.get("exit_code", item.get("exitCode"))
+        suffix = f" (exit {exit_code})" if isinstance(exit_code, int) else ""
+        return f"$ {command}{suffix}" if command else None
+
+    if normalized == "filechange":
+        changes_raw = item.get("changes")
+        if not isinstance(changes_raw, list):
+            return "file change"
+        changes = cast(list[Any], changes_raw)
+        paths = [
+            str(cast(dict[str, Any], change).get("path", ""))
+            for change in changes
+            if isinstance(change, dict)
+        ]
+        named = ", ".join(p for p in paths if p)
+        return f"file change: {named}" if named else f"file change: {len(changes)} update(s)"
+
+    if normalized in ("mcptoolcall", "toolcall", "tooluse", "dynamictoolcall"):
+        tool_name = str(item.get("tool") or item.get("toolName") or item_type)
+        status = str(item.get("status", "")).strip().lower()
+        suffix = f" ({status})" if status else ""
+        return f"tool: {tool_name}{suffix}"
+
+    return None
+
+
+def extract_turn_error(notification: dict[str, Any]) -> str | None:
+    """Extract error detail from a failed ``turn/completed`` notification.
+
+    Args:
+        notification: A parsed JSON-RPC notification dict.
+
+    Returns:
+        The error message string if the turn payload carries one, else ``None``.
+    """
+    if notification.get("method") != "turn/completed":
+        return None
+    params = notification.get("params", {})
+    turn: dict[str, Any] = params.get("turn", {})
+    error = turn.get("error")
+    if isinstance(error, dict):
+        error_dict = cast(dict[str, Any], error)
+        message: Any = error_dict.get("message") or error_dict.get("detail") or error_dict
+        return str(message)
+    if isinstance(error, str) and error:
+        return error
+    return None
+
+
 def is_terminal_notification(notification: dict[str, Any]) -> tuple[bool, str]:
     """Return ``(True, status)`` for a ``turn/completed`` notification.
 

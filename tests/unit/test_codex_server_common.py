@@ -14,6 +14,8 @@ from orchestrator.runners import (
     build_execution_result,
     enforce_tool_allowlist,
     extract_codex_model_ids,
+    extract_item_activity_line,
+    extract_turn_error,
     extract_turn_usage,
     fetch_codex_models,
     is_allowed_tool,
@@ -734,3 +736,63 @@ def test_select_preferred_codex_mini_over_deprecated() -> None:
     """gpt-5.1-codex-mini is preferred over gpt-5.2-codex when 5.3 is absent."""
     result = select_preferred_codex_model(["gpt-5.2-codex", "gpt-5.1-codex-mini"])
     assert result == "gpt-5.1-codex-mini"
+
+
+# --- extract_item_activity_line / extract_turn_error ---
+
+
+def _item_completed(item: dict[str, object]) -> dict[str, object]:
+    return {"method": "item/completed", "params": {"item": item}}
+
+
+def test_item_activity_command_execution_with_exit_code() -> None:
+    note = _item_completed(
+        {"type": "commandExecution", "command": "uv run pytest -q", "exit_code": 0}
+    )
+    assert extract_item_activity_line(note) == "$ uv run pytest -q (exit 0)"
+
+
+def test_item_activity_command_execution_snake_case_type() -> None:
+    note = _item_completed({"type": "command_execution", "command": "ls", "exitCode": 1})
+    assert extract_item_activity_line(note) == "$ ls (exit 1)"
+
+
+def test_item_activity_file_change_lists_paths() -> None:
+    note = _item_completed(
+        {"type": "fileChange", "changes": [{"path": "src/a.py"}, {"path": "src/b.py"}]}
+    )
+    assert extract_item_activity_line(note) == "file change: src/a.py, src/b.py"
+
+
+def test_item_activity_tool_call() -> None:
+    note = _item_completed({"type": "mcpToolCall", "tool": "submit_work", "status": "completed"})
+    assert extract_item_activity_line(note) == "tool: submit_work (completed)"
+
+
+def test_item_activity_skips_agent_message_and_reasoning() -> None:
+    assert (
+        extract_item_activity_line(_item_completed({"type": "agentMessage", "text": "hi"})) is None
+    )
+    assert extract_item_activity_line(_item_completed({"type": "reasoning", "text": "hmm"})) is None
+
+
+def test_item_activity_ignores_other_methods() -> None:
+    assert (
+        extract_item_activity_line(
+            {"method": "item/started", "params": {"item": {"type": "commandExecution"}}}
+        )
+        is None
+    )
+
+
+def test_extract_turn_error_from_dict_and_string() -> None:
+    base = {"method": "turn/completed"}
+    assert (
+        extract_turn_error({**base, "params": {"turn": {"error": {"message": "quota exceeded"}}}})
+        == "quota exceeded"
+    )
+    assert (
+        extract_turn_error({**base, "params": {"turn": {"error": "rate limited"}}})
+        == "rate limited"
+    )
+    assert extract_turn_error({**base, "params": {"turn": {"status": "failed"}}}) is None

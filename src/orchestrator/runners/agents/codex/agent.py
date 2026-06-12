@@ -38,6 +38,8 @@ from orchestrator.runners.agents.codex.common import (
     build_execution_result,
     build_jsonrpc_request,
     extract_agent_message_delta,
+    extract_item_activity_line,
+    extract_turn_error,
     extract_dynamic_tool_call,
     extract_tool_call_from_notification,
     extract_turn_usage,
@@ -970,10 +972,11 @@ class CodexServerAgent:
             if status == "interrupted":
                 raise AgentCancelledError(AgentRunnerType.CODEX_SERVER.value)
             if status in ("systemError", "failed"):
-                raise AgentExecutionError(
-                    AgentRunnerType.CODEX_SERVER.value,
-                    f"Codex session ended with status: {status}",
-                )
+                error_detail = extract_turn_error(msg)
+                message = f"Codex session ended with status: {status}"
+                if error_detail:
+                    message = f"{message} — {error_detail}"
+                raise AgentExecutionError(AgentRunnerType.CODEX_SERVER.value, message)
             # "completed" — normal success; extract usage from the turn payload.
             usage = extract_turn_usage(msg)
             return (True, usage)
@@ -1011,5 +1014,13 @@ class CodexServerAgent:
             output_lines.append(delta)
             if on_output is not None:
                 await on_output([delta])
+
+        # Stream completed work items (commands, file changes, tool calls) so
+        # the activity feed shows progress even when the model emits no text.
+        activity_line = extract_item_activity_line(msg)
+        if activity_line:
+            output_lines.append(activity_line)
+            if on_output is not None:
+                await on_output([activity_line])
 
         return (False, {})
