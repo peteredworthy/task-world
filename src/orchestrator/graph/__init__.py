@@ -1,6 +1,12 @@
 """Pure Pydantic execution graph models."""
 
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
+from orchestrator.graph.callbacks import (
+    CallbackOutcome,
+    CallbackRequest,
+    CallbackValidationResult,
+    validate_callback,
+)
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -54,6 +60,9 @@ __all__ = [
     "ActorKind",
     "Authority",
     "CallbackEnvelope",
+    "CallbackOutcome",
+    "CallbackRequest",
+    "CallbackValidationResult",
     "EdgeModel",
     "EventEnvelope",
     "FileEntry",
@@ -95,4 +104,5 @@ __all__ = [
     "reduce_event",
     "run_scenario",
     "schedule",
+    "validate_callback",
 ]
