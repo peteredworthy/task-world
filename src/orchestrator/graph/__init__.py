@@ -35,6 +35,12 @@ from orchestrator.graph.models import (
     RunLifecycleState,
     RunModel,
 )
+from orchestrator.graph.patch_validator import (
+    PatchValidationResult,
+    classify_event,
+    op_read_set,
+    validate_patch,
+)
 from orchestrator.graph.projections import (
     GraphProjection,
     initial_projection,
@@ -83,6 +89,7 @@ __all__ = [
     "OutputRecord",
     "PatchEnvelope",
     "PatchOp",
+    "PatchValidationResult",
     "PortModel",
     "RecordSelector",
     "ResourceClaim",
@@ -94,8 +101,10 @@ __all__ = [
     "InMemoryEventStore",
     "DuplicateEventError",
     "claims_conflict",
+    "classify_event",
     "evaluate_readiness",
     "initial_projection",
+    "op_read_set",
     "project_leases",
     "project_node_states",
     "project_ready_nodes",
@@ -105,4 +114,5 @@ __all__ = [
     "run_scenario",
     "schedule",
     "validate_callback",
+    "validate_patch",
 ]

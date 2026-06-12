@@ -43,6 +43,12 @@
 | §15.5 | appeal planned -> ready | node_lifecycle_appeal.yaml::appeal_planned_to_ready |
 | §15.5 | appeal ready -> completed | node_lifecycle_appeal.yaml::appeal_ready_to_completed |
 | §15.5 | appeal ready -> failed | node_lifecycle_appeal.yaml::appeal_ready_to_failed |
+| §16 | stale neutral lease accepted | patch_validator.yaml::patch_stale_neutral_lease_accepted |
+| §16 | stale neutral heartbeat accepted | patch_validator.yaml::patch_stale_neutral_heartbeat_accepted |
+| §16 | stale requirement in read-set rejected | patch_validator.yaml::patch_stale_requirement_in_read_set_rejected |
+| §16 | stale retired region rejected | patch_validator.yaml::patch_stale_retired_region_rejected |
+| §16 | planner create gate rejected | patch_validator.yaml::patch_planner_create_gate_rejected |
+| §16 | resource claim escalation rejected | patch_validator.yaml::patch_resource_claim_escalation_rejected |
 | §17 | single planned node becomes ready | readiness.yaml::readiness_single_node_planned_to_ready |
 | §17 | blocked node becomes ready | readiness.yaml::readiness_blocked_node_becomes_ready |
 | §17 | multiple independent nodes become ready | readiness.yaml::readiness_multiple_nodes_independent |
