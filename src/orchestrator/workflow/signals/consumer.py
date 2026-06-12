@@ -291,6 +291,8 @@ class SignalConsumer:
         )
         from orchestrator.workflow import SignalProcessed
 
+        from orchestrator.workflow import InvalidTransitionError
+
         enqueued_position, signal_type, payload = signal_data
 
         async with self._session_factory() as session:
@@ -304,6 +306,26 @@ class SignalConsumer:
                     enqueued_position=enqueued_position,
                 )
                 await store.append([processed_event])
+            except InvalidTransitionError:
+                # Signal is stale — run already moved past this state.
+                # Rollback the failed attempt then mark processed so the
+                # signal is not retried indefinitely.
+                await rollback_with_event_outbox(session)
+                logger.warning(
+                    "SignalConsumer: stale %s for run %s (invalid transition) — discarding",
+                    signal_type.value,
+                    run_id,
+                )
+                async with self._session_factory() as fresh_session:
+                    fresh_store = create_wired_event_store_v2(fresh_session)
+                    stale_processed = SignalProcessed(
+                        run_id=run_id,
+                        event_type="signal_processed",
+                        enqueued_position=enqueued_position,
+                    )
+                    await fresh_store.append([stale_processed])
+                    await commit_with_event_outbox(fresh_session)
+                return True
             except Exception:
                 await rollback_with_event_outbox(session)
                 logger.exception(
