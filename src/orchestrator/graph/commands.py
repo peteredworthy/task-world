@@ -466,6 +466,7 @@ def _accepted_output_record_events(
                 record.producer_node_id,
                 record.port,
                 record.record_id,
+                record.model_dump(mode="json"),
                 make_event,
             )
         )
@@ -494,7 +495,9 @@ def _accepted_file_state_record_events(
             record.producer_node_id or expected_producer_node_id,
             record.port,
             record.record_id,
+            payload,
             make_event,
+            aliases={"accepted_file_state", "file_state"},
         )
     )
     return output
@@ -593,7 +596,9 @@ def _input_bound_events_for_record(
     producer_node_id: str,
     port: str,
     record_id: str,
+    record_payload: dict[str, Any],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    aliases: set[str] | None = None,
 ) -> list[EventEnvelope]:
     output: list[EventEnvelope] = []
     # Output records are facts produced by the leased node. Edges are the only
@@ -604,6 +609,10 @@ def _input_bound_events_for_record(
         if edge.get("from_node_id") != producer_node_id:
             continue
         if edge.get("from_port") != port:
+            continue
+        if not _record_matches_selector(
+            edge.get("accepted_record_selector"), record_payload, aliases
+        ):
             continue
         edge_id = edge.get("edge_id")
         to_node_id = edge.get("to_node_id")
@@ -625,6 +634,39 @@ def _input_bound_events_for_record(
             )
         )
     return output
+
+
+def _record_matches_selector(
+    selector: Any,
+    record_payload: dict[str, Any],
+    aliases: set[str] | None,
+) -> bool:
+    if not isinstance(selector, dict):
+        return True
+    typed_selector = cast(dict[str, Any], selector)
+    raw_kinds = typed_selector.get("record_kinds")
+    if not isinstance(raw_kinds, list):
+        return True
+    accepted = {kind for kind in cast(list[Any], raw_kinds) if isinstance(kind, str)}
+    if not accepted:
+        return True
+    candidates = {
+        value
+        for value in (
+            record_payload.get("record_kind"),
+            record_payload.get("schema"),
+            record_payload.get("port"),
+            record_payload.get("milestone_kind"),
+        )
+        if isinstance(value, str)
+    }
+    value = record_payload.get("value")
+    if isinstance(value, dict):
+        milestone_kind = cast(dict[str, Any], value).get("milestone_kind")
+        if isinstance(milestone_kind, str):
+            candidates.add(milestone_kind)
+    candidates.update(aliases or set())
+    return bool(accepted & candidates)
 
 
 def _apply_patch_command(
@@ -660,6 +702,60 @@ def _apply_patch_command(
             )
         ]
 
+    successor_planner_node_ids = _successor_planner_node_ids(patch)
+    if actor_role == "planner" and len(successor_planner_node_ids) > 1:
+        return [
+            make_event(
+                "graph_patch_rejected",
+                {
+                    "patch_id": patch.patch_id,
+                    "reason": "multiple_successor_planners_not_allowed",
+                    "read_set_diff": None,
+                },
+            )
+        ]
+    if actor_role == "planner" and successor_planner_node_ids:
+        budget_rejection = _planner_budget_rejection(projection, patch)
+        if budget_rejection is not None:
+            gate_node_id = str(
+                payload.get(
+                    "budget_gate_node_id",
+                    f"gate-planner-budget-{patch.proposed_by_node_id}",
+                )
+            )
+            return [
+                make_event(
+                    "graph_patch_rejected",
+                    {
+                        "patch_id": patch.patch_id,
+                        "reason": "planner_generation_budget_exhausted",
+                        "budget": budget_rejection["budget"],
+                        "count": budget_rejection["count"],
+                        "read_set_diff": None,
+                    },
+                ),
+                make_event(
+                    "node_created",
+                    {
+                        "node_id": gate_node_id,
+                        "kind": "gate",
+                        "state": "planned",
+                        "role": "planner_generation_budget_gate",
+                        "guarded_planner_node_id": patch.proposed_by_node_id,
+                        "rejected_patch_id": patch.patch_id,
+                        "reason": "planner_generation_budget_exhausted",
+                    },
+                ),
+                make_event(
+                    "node_state_changed",
+                    {
+                        "node_id": gate_node_id,
+                        "new_state": "ready",
+                        "trigger": "planner_generation_budget_exhausted",
+                    },
+                ),
+            ]
+
     output = [
         make_event(
             "graph_patch_accepted",
@@ -667,12 +763,40 @@ def _apply_patch_command(
                 "patch_id": patch.patch_id,
                 "base_graph_position": patch.base_graph_position,
                 "actor_role": actor_role,
+                "proposed_by_node_id": patch.proposed_by_node_id,
+                "successor_planner_node_ids": successor_planner_node_ids,
             },
         )
     ]
     for op in patch.ops:
         output.extend(_patch_op_events(op, make_event))
     return output
+
+
+def _successor_planner_node_ids(patch: PatchEnvelope) -> list[str]:
+    node_ids: list[str] = []
+    for op in patch.ops:
+        if op.op != "create_node" or not isinstance(op.node, dict):
+            continue
+        node = op.node
+        if node.get("kind") != "planner" or node.get("role") != "planner":
+            continue
+        node_id = node.get("node_id")
+        if isinstance(node_id, str):
+            node_ids.append(node_id)
+    return node_ids
+
+
+def _planner_budget_rejection(
+    projection: GraphProjection,
+    patch: PatchEnvelope,
+) -> dict[str, int] | None:
+    parent_generation = projection["planner_generations"].get(patch.proposed_by_node_id, 0)
+    attempted_generation = parent_generation + 1
+    budget = projection["planner_generation_budget"]
+    if attempted_generation <= budget:
+        return None
+    return {"budget": budget, "count": attempted_generation}
 
 
 def _apply_schedule_tick(
@@ -1434,18 +1558,22 @@ def _patch_op_events(
     if op.op == "create_edge":
         edge_id = op_payload.get("edge_id")
         required = op_payload.get("required")
+        edge_payload = {
+            "edge_id": edge_id,
+            "from_node_id": op.from_node_id,
+            "from_port": op.from_port,
+            "to_node_id": op.to_node_id,
+            "to_port": op.to_port,
+            "required": required if isinstance(required, bool) else True,
+            "dependency_type": op_payload.get("dependency_type", "input_binding"),
+        }
+        selector = op_payload.get("accepted_record_selector")
+        if isinstance(selector, dict):
+            edge_payload["accepted_record_selector"] = selector
         return [
             make_event(
                 "edge_created",
-                {
-                    "edge_id": edge_id,
-                    "from_node_id": op.from_node_id,
-                    "from_port": op.from_port,
-                    "to_node_id": op.to_node_id,
-                    "to_port": op.to_port,
-                    "required": required if isinstance(required, bool) else True,
-                    "dependency_type": op_payload.get("dependency_type", "input_binding"),
-                },
+                edge_payload,
             )
         ]
     if op.op == "retire_node" and isinstance(op.node_id, str):

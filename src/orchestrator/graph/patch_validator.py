@@ -47,6 +47,11 @@ ALLOWED_BY_ROLE = {
 MODE_RANK = {"read": 0, "write": 1, "graph_write": 2, "review_write": 3}
 RUNNING_STATES = {"running", "leased"}
 EXECUTABLE_NODE_KINDS = {"worker", "verifier", "check", "planner"}
+PLANNER_SUCCESSOR_PORTS = {
+    "region_summary",
+    "accepted_file_state",
+    "outstanding_failures",
+}
 
 
 def classify_event(event: EventEnvelope) -> str:
@@ -141,7 +146,76 @@ def validate_patch(
                         rejection_reason=f"executable node requires role: {kind}",
                     )
 
+    planner_successor_error = _validate_planner_successor_bindings(ops)
+    if planner_successor_error is not None:
+        return PatchValidationResult(accepted=False, rejection_reason=planner_successor_error)
+
     return PatchValidationResult(accepted=True)
+
+
+def _validate_planner_successor_bindings(ops: list[dict[str, Any]]) -> str | None:
+    successor_ids: set[str] = set()
+    required_ports_by_successor: dict[str, set[str]] = {}
+    for op in ops:
+        if op.get("op") != "create_node":
+            continue
+        node = op.get("node")
+        if not isinstance(node, dict):
+            continue
+        typed_node = cast(dict[str, Any], node)
+        if typed_node.get("kind") != "planner" or typed_node.get("role") != "planner":
+            continue
+        node_id = typed_node.get("node_id")
+        if not isinstance(node_id, str):
+            continue
+        successor_ids.add(node_id)
+        required_ports_by_successor[node_id] = {
+            str(port.get("port"))
+            for port in _port_dicts(typed_node.get("inputs"))
+            if port.get("required") is not False and isinstance(port.get("port"), str)
+        }
+
+    if not successor_ids:
+        return None
+
+    selector_ports_by_successor: dict[str, set[str]] = {node_id: set() for node_id in successor_ids}
+    for op in ops:
+        if op.get("op") != "create_edge":
+            continue
+        to_node_id = op.get("to_node_id")
+        to_port = op.get("to_port")
+        if not isinstance(to_node_id, str) or to_node_id not in successor_ids:
+            continue
+        if not isinstance(to_port, str) or to_port not in PLANNER_SUCCESSOR_PORTS:
+            return f"invalid planner successor input port: {to_port}"
+        if not _has_selector_for_port(op, to_port):
+            return f"planner successor input requires selector: {to_port}"
+        selector_ports_by_successor[to_node_id].add(to_port)
+
+    for node_id, required_ports in required_ports_by_successor.items():
+        missing = sorted(required_ports - selector_ports_by_successor[node_id])
+        if missing:
+            return f"planner successor missing selector-bound inputs: {', '.join(missing)}"
+    return None
+
+
+def _has_selector_for_port(op: dict[str, Any], port: str) -> bool:
+    selector = op.get("accepted_record_selector")
+    if not isinstance(selector, dict):
+        return False
+    typed_selector = cast(dict[str, Any], selector)
+    record_kinds = typed_selector.get("record_kinds")
+    if not isinstance(record_kinds, list):
+        return False
+    return port in {kind for kind in cast(list[Any], record_kinds) if isinstance(kind, str)}
+
+
+def _port_dicts(raw_ports: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_ports, list):
+        return []
+    return [
+        cast(dict[str, Any], port) for port in cast(list[Any], raw_ports) if isinstance(port, dict)
+    ]
 
 
 def _validate_staleness(

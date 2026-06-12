@@ -146,4 +146,8 @@ production orchestrator (not test harness). Being satisfied via slice 3.1
 
 | Slice | Status | Spec |
 |---|---|---|
-| 3.1 Recursive horizon planner (kernel) | ⬜ next | slice-3.1-spec.md |
+| 3.1 Recursive horizon planner (kernel) | ✅ done | slice-3.1-spec.md |
+
+Slice 3.1 ran as orchestrator run `38ab0331` (codex_server / gpt-5.5,
+3 builder/verifier rounds: termination-invariant bypass and parallel-planner
+fork both caught by the auditor and fixed). All six rubric criteria graded A.

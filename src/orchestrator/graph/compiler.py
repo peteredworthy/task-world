@@ -67,6 +67,7 @@ class _Compiler:
         self._source_ref = source_ref
         self._events: list[EventEnvelope] = []
         self._stem_counts = _task_stem_counts(routine)
+        self._has_planner_step = any(step.kind == "planner" for step in routine.steps)
 
     def compile(self) -> list[EventEnvelope]:
         self._create_root()
@@ -76,6 +77,22 @@ class _Compiler:
         for step_index, step in enumerate(self._routine.steps):
             step_entries: list[str] = []
             step_terminals: list[str] = []
+
+            if step.kind == "planner":
+                planner_id = self._create_planner_head(step, step_index)
+                step_entries.append(planner_id)
+                step_terminals.append(planner_id)
+                for upstream_node_id in prior_step_terminals:
+                    self._edge(
+                        upstream_node_id,
+                        "completion",
+                        planner_id,
+                        "prior_step_completion",
+                        purpose="step_order",
+                        dependency_type="state_dependency",
+                    )
+                prior_step_terminals = step_terminals
+                continue
 
             gate_id = self._create_step_gate(step, step_index)
             if gate_id is not None:
@@ -101,26 +118,27 @@ class _Compiler:
         return self._events
 
     def _create_root(self) -> None:
-        self._node(
-            {
-                "node_id": "root",
-                "kind": "root",
-                "state": "completed",
-                "role": "run_root",
-                "outputs": [
-                    {
-                        "port": "routine_snapshot",
-                        "direction": "output",
-                        "schema": "RoutineSnapshot",
-                        "record_layers": ["graph_record"],
-                    }
-                ],
-                "routine": {
-                    "id": self._routine.id,
-                    "name": self._routine.name,
-                },
-            }
-        )
+        payload: dict[str, Any] = {
+            "node_id": "root",
+            "kind": "root",
+            "state": "completed",
+            "role": "run_root",
+            "outputs": [
+                {
+                    "port": "routine_snapshot",
+                    "direction": "output",
+                    "schema": "RoutineSnapshot",
+                    "record_layers": ["graph_record"],
+                }
+            ],
+            "routine": {
+                "id": self._routine.id,
+                "name": self._routine.name,
+            },
+        }
+        if self._has_planner_step:
+            payload["planner_generation_budget"] = self._routine.planner_generation_budget
+        self._node(payload)
 
     def _create_routine_snapshot(self) -> None:
         self._node(
@@ -201,6 +219,50 @@ class _Compiler:
         )
         self._bind(edge_id, gate_id, "routine_snapshot", [_ROUTINE_SNAPSHOT_NODE_ID])
         return gate_id
+
+    def _create_planner_head(self, step: StepConfig, step_index: int) -> str:
+        planner_id = f"planner-{_slug(step.id)}"
+        self._node(
+            {
+                "node_id": planner_id,
+                "kind": "planner",
+                "state": "planned",
+                "role": "planner",
+                "generation_index": 0,
+                "step_id": step.id,
+                "step_index": step_index,
+                "title": step.title,
+                "step_context": step.step_context,
+                "authority": {
+                    "allowed_actions": ["submit_patch", "request_clarification"],
+                    "resource_claims": [{"mode": "graph_write", "scope": "graph"}],
+                },
+                "inputs": [
+                    {
+                        "port": "routine_snapshot",
+                        "direction": "input",
+                        "schema": "RoutineSnapshot",
+                        "required": True,
+                    }
+                ],
+                "outputs": [
+                    {
+                        "port": "graph_patch",
+                        "direction": "output",
+                        "schema": "GraphPatch",
+                        "record_layers": ["graph_record"],
+                    },
+                    {
+                        "port": "completion",
+                        "direction": "output",
+                        "schema": "NodeCompletion",
+                        "record_layers": ["graph_record"],
+                    },
+                ],
+            }
+        )
+        self._bind_routine_snapshot(planner_id)
+        return planner_id
 
     def _compile_task(
         self,

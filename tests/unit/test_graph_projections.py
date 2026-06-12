@@ -47,6 +47,7 @@ def test_empty_projection() -> None:
         "leases": {},
         "ready_nodes": [],
         "node_kinds": {},
+        "node_roles": {},
         "node_task_regions": {},
         "node_attempts": {},
         "node_candidates": {},
@@ -66,6 +67,9 @@ def test_empty_projection() -> None:
         "gate_decisions": {},
         "environment_failures": {},
         "file_state_records": {},
+        "planner_generation_budget": 8,
+        "planner_successors": {},
+        "planner_generations": {},
     }
 
 
@@ -104,6 +108,7 @@ def test_projection_immutability() -> None:
         "leases": {"lease-1": {"lease_id": "lease-1", "state": "active"}},
         "ready_nodes": ["worker-1"],
         "node_kinds": {},
+        "node_roles": {},
         "node_task_regions": {},
         "node_attempts": {},
         "node_candidates": {},
@@ -123,6 +128,9 @@ def test_projection_immutability() -> None:
         "gate_decisions": {},
         "environment_failures": {},
         "file_state_records": {},
+        "planner_generation_budget": 8,
+        "planner_successors": {},
+        "planner_generations": {},
     }
 
     next_state = reduce_event(
@@ -142,6 +150,7 @@ def test_projection_immutability() -> None:
         "leases": {"lease-1": {"lease_id": "lease-1", "state": "active"}},
         "ready_nodes": ["worker-1"],
         "node_kinds": {},
+        "node_roles": {},
         "node_task_regions": {},
         "node_attempts": {},
         "node_candidates": {},
@@ -161,6 +170,9 @@ def test_projection_immutability() -> None:
         "gate_decisions": {},
         "environment_failures": {},
         "file_state_records": {},
+        "planner_generation_budget": 8,
+        "planner_successors": {},
+        "planner_generations": {},
     }
     assert next_state["node_states"] == {"worker-1": "running"}
 

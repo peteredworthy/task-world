@@ -12,6 +12,7 @@ class GraphProjection(TypedDict):
     leases: dict[str, dict[str, Any]]
     ready_nodes: list[str]
     node_kinds: dict[str, str]
+    node_roles: dict[str, str]
     node_task_regions: dict[str, str]
     node_attempts: dict[str, int]
     node_candidates: dict[str, str]
@@ -31,6 +32,9 @@ class GraphProjection(TypedDict):
     gate_decisions: dict[str, dict[str, bool]]
     environment_failures: dict[str, dict[str, Any]]
     file_state_records: dict[str, dict[str, Any]]
+    planner_generation_budget: int
+    planner_successors: dict[str, str]
+    planner_generations: dict[str, int]
 
 
 def initial_projection() -> GraphProjection:
@@ -41,6 +45,7 @@ def initial_projection() -> GraphProjection:
         "leases": {},
         "ready_nodes": [],
         "node_kinds": {},
+        "node_roles": {},
         "node_task_regions": {},
         "node_attempts": {},
         "node_candidates": {},
@@ -60,6 +65,9 @@ def initial_projection() -> GraphProjection:
         "gate_decisions": {},
         "environment_failures": {},
         "file_state_records": {},
+        "planner_generation_budget": 8,
+        "planner_successors": {},
+        "planner_generations": {},
     }
 
 
@@ -71,6 +79,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "leases": {lease_id: dict(lease) for lease_id, lease in state["leases"].items()},
         "ready_nodes": list(state["ready_nodes"]),
         "node_kinds": dict(state["node_kinds"]),
+        "node_roles": dict(state.get("node_roles", {})),
         "node_task_regions": dict(state["node_task_regions"]),
         "node_attempts": dict(state["node_attempts"]),
         "node_candidates": dict(state["node_candidates"]),
@@ -122,6 +131,9 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             record_id: _copy_file_state_record(record)
             for record_id, record in state.get("file_state_records", {}).items()
         },
+        "planner_generation_budget": state.get("planner_generation_budget", 8),
+        "planner_successors": dict(state.get("planner_successors", {})),
+        "planner_generations": dict(state.get("planner_generations", {})),
     }
 
     if event.event_type == "run_lifecycle_changed":
@@ -131,6 +143,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
     elif event.event_type == "node_created":
         node_id = event.payload.get("node_id")
         kind = event.payload.get("kind")
+        role = event.payload.get("role")
         node_state = event.payload.get("state")
         task_region_id = _task_region_id(event.payload)
         attempt_number = _attempt_number(event.payload)
@@ -138,8 +151,18 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         if isinstance(node_id, str) and isinstance(node_state, str):
             next_state["node_states"][node_id] = node_state
         if isinstance(node_id, str):
+            if kind == "root":
+                budget = event.payload.get("planner_generation_budget")
+                if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0:
+                    next_state["planner_generation_budget"] = budget
             if isinstance(kind, str):
                 next_state["node_kinds"][node_id] = kind
+            if isinstance(role, str):
+                next_state["node_roles"][node_id] = role
+            if kind == "planner" and role == "planner":
+                generation_index = event.payload.get("generation_index")
+                if isinstance(generation_index, int) and not isinstance(generation_index, bool):
+                    next_state["planner_generations"][node_id] = generation_index
             if task_region_id is not None:
                 next_state["node_task_regions"][node_id] = task_region_id
             if attempt_number is not None:
@@ -242,6 +265,14 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_environment_failure(next_state, event)
     elif event.event_type == "file_state_accepted":
         _record_file_state(next_state, event)
+    elif event.event_type == "graph_patch_accepted":
+        planner_node_id = event.payload.get("proposed_by_node_id")
+        successor_node_ids = event.payload.get("successor_planner_node_ids")
+        if isinstance(planner_node_id, str) and isinstance(successor_node_ids, list):
+            for successor_node_id in cast(list[Any], successor_node_ids):
+                if isinstance(successor_node_id, str):
+                    next_state["planner_successors"][planner_node_id] = successor_node_id
+                    break
     elif event.event_type == "gatekeeper_verdict_recorded":
         _record_gatekeeper_verdicts(next_state, event)
     elif event.event_type == "cleanup_requested":
@@ -258,7 +289,52 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
 
 
 def project_run_state(events: list[EventEnvelope]) -> str | None:
-    return _project(events)["run_state"]
+    projection = _project(events)
+    run_state = projection["run_state"]
+    if run_state == "completed":
+        if _has_pending_planner(projection):
+            return "active"
+        if _has_pending_planner_budget_gate(projection):
+            return "active"
+        if any(state != "accepted" for state in projection["task_states"].values()):
+            return "active"
+        return run_state
+    if run_state != "active":
+        return run_state
+    if _has_pending_planner(projection):
+        return run_state
+    if _has_pending_planner_budget_gate(projection):
+        return run_state
+    task_states = projection["task_states"]
+    if task_states and all(state == "accepted" for state in task_states.values()):
+        return "completed"
+    return run_state
+
+
+def project_planner_chain(events: list[EventEnvelope]) -> list[dict[str, Any]]:
+    projection = _project(events)
+    planner_ids = [
+        node_id
+        for node_id, kind in projection["node_kinds"].items()
+        if kind == "planner" and projection["node_roles"].get(node_id) == "planner"
+    ]
+    ordered = sorted(
+        planner_ids,
+        key=lambda node_id: (
+            projection["planner_generations"].get(node_id, 0),
+            _node_creation_position(events, node_id),
+            node_id,
+        ),
+    )
+    return [
+        {
+            "node_id": node_id,
+            "generation_index": projection["planner_generations"].get(node_id, 0),
+            "state": projection["node_states"].get(node_id),
+            "successor_node_id": projection["planner_successors"].get(node_id),
+        }
+        for node_id in ordered
+    ]
 
 
 def project_node_states(events: list[EventEnvelope]) -> dict[str, str]:
@@ -445,6 +521,33 @@ def _project(events: list[EventEnvelope]) -> GraphProjection:
     return projection
 
 
+def _has_pending_planner(projection: GraphProjection) -> bool:
+    pending_states = {"planned", "ready", "leased", "running"}
+    return any(
+        projection["node_kinds"].get(node_id) == "planner"
+        and node_state in pending_states
+        and projection["node_roles"].get(node_id) == "planner"
+        for node_id, node_state in projection["node_states"].items()
+    )
+
+
+def _has_pending_planner_budget_gate(projection: GraphProjection) -> bool:
+    pending_states = {"planned", "ready", "leased", "running"}
+    return any(
+        projection["node_kinds"].get(node_id) == "gate"
+        and projection["node_roles"].get(node_id) == "planner_generation_budget_gate"
+        and node_state in pending_states
+        for node_id, node_state in projection["node_states"].items()
+    )
+
+
+def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
+    for event in events:
+        if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
+            return event.position
+    return 0
+
+
 def _ready_nodes(node_states: dict[str, str]) -> list[str]:
     return [node_id for node_id, node_state in node_states.items() if node_state == "ready"]
 
@@ -452,6 +555,9 @@ def _ready_nodes(node_states: dict[str, str]) -> list[str]:
 def _record_candidate(state: GraphProjection, event: EventEnvelope) -> None:
     record_kind = event.payload.get("record_kind")
     if record_kind is not None and record_kind != "output":
+        return
+    port = event.payload.get("port")
+    if port != "candidate" and not isinstance(event.payload.get("candidate_id"), str):
         return
 
     producer_node_id = event.payload.get("producer_node_id")
@@ -589,6 +695,9 @@ def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
         "required": required is not False,
         "dependency_type": event.payload.get("dependency_type", "input_binding"),
     }
+    selector = event.payload.get("accepted_record_selector")
+    if isinstance(selector, dict):
+        state["edges"][edge_id]["accepted_record_selector"] = dict(cast(dict[str, Any], selector))
 
 
 def _record_input_binding(state: GraphProjection, event: EventEnvelope) -> None:

@@ -389,6 +389,7 @@ class StepConfig(BaseModel):
     """A step within a routine."""
 
     id: str
+    kind: Literal["planner"] | None = None
     file: str | None = None
     title: str | None = None
     step_context: str | None = None
@@ -430,6 +431,8 @@ class StepConfig(BaseModel):
             overlapping: list[str] = []
             if self.title is not None:
                 overlapping.append("title")
+            if self.kind is not None:
+                overlapping.append("kind")
             if self.tasks:
                 overlapping.append("tasks")
             if self.step_context is not None:
@@ -459,7 +462,7 @@ class StepConfig(BaseModel):
                 raise ValueError(
                     f"Step '{self.id}' must have a 'title' (or use 'file' to reference an external step)."
                 )
-            if not self.tasks:
+            if not self.tasks and self.kind != "planner":
                 raise ValueError(
                     f"Step '{self.id}' must have at least one task (or use 'file' to reference an external step)."
                 )
@@ -501,6 +504,7 @@ class RoutineConfig(BaseModel):
     env_files: list[EnvFileConfig] = Field(default_factory=lambda: [])
     clarifications: ClarificationsConfig | None = None
     strict_validation: bool = False
+    planner_generation_budget: int = Field(default=8, ge=0)
 
     @model_validator(mode="before")
     @classmethod

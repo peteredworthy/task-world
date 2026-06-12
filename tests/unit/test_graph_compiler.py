@@ -316,6 +316,35 @@ def test_minimal_single_task_graph_has_exact_minimum_executable_node_set_and_sch
     )
 
 
+def test_compile_planner_step_seeds_chain_head() -> None:
+    routine = RoutineConfig(
+        id="planner-routine",
+        name="Planner Routine",
+        planner_generation_budget=3,
+        steps=[StepConfig(id="Plan", kind="planner", title="Plan horizons")],
+    )
+
+    events = _compile(routine)
+    projection = _project(events)
+
+    assert projection["planner_generation_budget"] == 3
+    assert projection["node_kinds"]["planner-plan"] == "planner"
+    assert _node_event(events, "planner-plan").payload["role"] == "planner"
+    assert _node_event(events, "planner-plan").payload["generation_index"] == 0
+    assert projection["input_bindings"]["planner-plan"]["routine_snapshot"]["record_ids"] == [
+        "routine-snapshot"
+    ]
+
+
+def test_compile_without_planner_unchanged() -> None:
+    events = _compile(_minimal_routine())
+
+    assert "planner_generation_budget" not in _node_event(events, "root").payload
+    assert [event.model_dump(mode="json") for event in events] == [
+        event.model_dump(mode="json") for event in _compile(_minimal_routine())
+    ]
+
+
 def test_compiler_is_deterministic_for_same_clock_and_id_sequence() -> None:
     first = _compile(_minimal_routine())
     second = _compile(_minimal_routine())
