@@ -1,0 +1,78 @@
+**Acceptance Criteria**
+
+| # | Re-derived criterion | Implementation + tests | Status |
+|---|---|---|---|
+| 1 | Deterministic classifier runs first; LLM only sees misses. | `capture_file_state_boundary(... policy_with_pattern_library(...))` in [dispatch.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/dispatch.py:230); unmatched paths get `needs_gatekeeper=True` in [file_state.py](/Users/peter/code/task-world/src/orchestrator/graph/file_state.py:253). Tested in [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:210). | MET |
+| 2 | Calls capped per boundary; overflow remains unresolved residue. | Cap in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:119), runtime use in [dispatch.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/dispatch.py:326). Tested in [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:236). | MET |
+| 3 | Metadata only to classifier; no content/snippets/previews; secret suspects not consulted. | `ResidueMetadata` fields are metadata-only in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:25); extraction skips `secret` in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:141). Tested weakly in [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:211) and secret skip at line 277. | MOSTLY MET |
+| 4 | Verdict recorded as accepted event; replay never re-asks; reducers/projections deterministic. | Events emitted in [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1127); replay reducer applies stored verdicts in [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:649). Tested in [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:20) and [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:225). | MET |
+| 5 | Verdicts seed pattern library; hit rate rises; derived pattern hits avoid re-ask. | Library projection in [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:309), policy injection in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:87). Tested in [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:137) and flow line 215. | MET, UNSAFE |
+| 6 | §20.3 taxonomy and forged verdict validation; invalid/unknown/duplicate rejected; secret classification sane. | Taxonomy in [file_state.py](/Users/peter/code/task-world/src/orchestrator/graph/file_state.py:22), validation in [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1024). Tests cover unknown record/path/invalid/already-resolved in [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:47). No same-payload duplicate test; no retroactive secret test. | PARTIAL |
+| 7 | Cost facts model/tokens/cache/wall-time recorded; hit-rate and pattern-library growth visible. | Cost event in [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1151); report in [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:357). Tested values in [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:154). | PARTIAL |
+| 8 | No real LLM in tests; Claude stub not default-wired. | Stub raises `NotImplementedError` in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:70); fake classifier in [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:69). No default construction found. | MET |
+
+**Findings**
+
+| Severity | Type | Description | Location |
+|---|---|---|---|
+| High | Security/correctness | A gatekeeper verdict can classify residue as `secret` only after `capture_file_state_boundary` has already snapshotted and accepted the file-state record. The projection then marks the entry `secret`/`needs_gatekeeper=False`, but there is no rejection, no snapshot invalidation, and no downstream protection. This violates §20.3 “secret never captured” for anything the gatekeeper identifies as secret. | [dispatch.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/dispatch.py:230), [file_state.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/file_state.py:108), [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:676) |
+| High | Correctness | Pattern-library poisoning is too broad and applies before tracked-file classification. A verdict for `foo.py` derives `*.py`, and `policy_with_pattern_library` prepends it as a declaration; `_classify_path` checks declarations before `path.kind == "tracked"`. A learned `tool_cache`/`test_artifact` pattern can swallow real tracked source files. | [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:707), [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:95), [file_state.py](/Users/peter/code/task-world/src/orchestrator/graph/file_state.py:210) |
+| Medium | Cost/reporting | `gatekeeper_cost_recorded` carries model/tokens/wall-time, but `project_gatekeeper_report` aggregates away model/consult detail, and records are not structurally keyed by `execution_id`/lease as §6.5 requires. Runtime encodes execution id inside `consult_id`, but the command accepts a generic default. | [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1125), [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1151), [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:396) |
+| Low | Test laziness | Metadata-only assertion only checks absence of a `content` attribute, not an exact allowed-field contract; duplicate verdicts within the same payload are validated in code but untested; no test covers a `secret` gatekeeper verdict after snapshot acceptance. | [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:211), [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:105) |
+
+**Checks Run**
+
+`uv run pytest tests/unit/test_graph_gatekeeper.py -q`: 7 passed in 0.81s.  
+`uv run pytest tests/integration/test_graph_gatekeeper_flow.py -q`: 3 passed in 3.11s.  
+`uv run pytest tests/unit -q`: 2626 passed, 3 warnings in 17.11s.  
+`uv run ruff check .`: passed.
+
+Kernel suite timing `<5s` could not be completed under the read-only sandbox. `uv run pytest tests/unit/test_graph*.py -q` failed on `/Users/peter/.cache/uv/... Operation not permitted`; `.venv/bin/pytest` failed before collection because Python could not create a temp file, even with `TMPDIR=/private/tmp`.
+
+**Lies / Counts / Standards**
+
+No builder summary was supplied to compare beyond the file list. `git status` shows 7 modified tracked files plus 3 untracked new files. Tracked diff is `573 insertions, 9 deletions`; untracked new files total 842 lines. I found no `unittest.mock`, `MagicMock`, `patch`, or `monkeypatch` in the new gatekeeper tests, and no real LLM usage. Integration uses real SQLite and real git subprocesses.
+
+**Verdict: BOUNCE**
+
+The slice has the right event shape and much of the deterministic/replay machinery is in place, but the two high-severity issues are kernel-level correctness problems: secret verdicts happen too late to enforce “never captured,” and learned patterns can overclassify tracked source files. Those need design fixes before accepting slice 2.5.
+tokens used
+180,164
+**Acceptance Criteria**
+
+| # | Re-derived criterion | Implementation + tests | Status |
+|---|---|---|---|
+| 1 | Deterministic classifier runs first; LLM only sees misses. | `capture_file_state_boundary(... policy_with_pattern_library(...))` in [dispatch.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/dispatch.py:230); unmatched paths get `needs_gatekeeper=True` in [file_state.py](/Users/peter/code/task-world/src/orchestrator/graph/file_state.py:253). Tested in [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:210). | MET |
+| 2 | Calls capped per boundary; overflow remains unresolved residue. | Cap in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:119), runtime use in [dispatch.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/dispatch.py:326). Tested in [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:236). | MET |
+| 3 | Metadata only to classifier; no content/snippets/previews; secret suspects not consulted. | `ResidueMetadata` fields are metadata-only in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:25); extraction skips `secret` in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:141). Tested weakly in [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:211) and secret skip at line 277. | MOSTLY MET |
+| 4 | Verdict recorded as accepted event; replay never re-asks; reducers/projections deterministic. | Events emitted in [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1127); replay reducer applies stored verdicts in [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:649). Tested in [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:20) and [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:225). | MET |
+| 5 | Verdicts seed pattern library; hit rate rises; derived pattern hits avoid re-ask. | Library projection in [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:309), policy injection in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:87). Tested in [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:137) and flow line 215. | MET, UNSAFE |
+| 6 | §20.3 taxonomy and forged verdict validation; invalid/unknown/duplicate rejected; secret classification sane. | Taxonomy in [file_state.py](/Users/peter/code/task-world/src/orchestrator/graph/file_state.py:22), validation in [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1024). Tests cover unknown record/path/invalid/already-resolved in [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:47). No same-payload duplicate test; no retroactive secret test. | PARTIAL |
+| 7 | Cost facts model/tokens/cache/wall-time recorded; hit-rate and pattern-library growth visible. | Cost event in [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1151); report in [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:357). Tested values in [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:154). | PARTIAL |
+| 8 | No real LLM in tests; Claude stub not default-wired. | Stub raises `NotImplementedError` in [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:70); fake classifier in [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:69). No default construction found. | MET |
+
+**Findings**
+
+| Severity | Type | Description | Location |
+|---|---|---|---|
+| High | Security/correctness | A gatekeeper verdict can classify residue as `secret` only after `capture_file_state_boundary` has already snapshotted and accepted the file-state record. The projection then marks the entry `secret`/`needs_gatekeeper=False`, but there is no rejection, no snapshot invalidation, and no downstream protection. This violates §20.3 “secret never captured” for anything the gatekeeper identifies as secret. | [dispatch.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/dispatch.py:230), [file_state.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/file_state.py:108), [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:676) |
+| High | Correctness | Pattern-library poisoning is too broad and applies before tracked-file classification. A verdict for `foo.py` derives `*.py`, and `policy_with_pattern_library` prepends it as a declaration; `_classify_path` checks declarations before `path.kind == "tracked"`. A learned `tool_cache`/`test_artifact` pattern can swallow real tracked source files. | [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:707), [gatekeeper.py](/Users/peter/code/task-world/src/orchestrator/graph_runtime/gatekeeper.py:95), [file_state.py](/Users/peter/code/task-world/src/orchestrator/graph/file_state.py:210) |
+| Medium | Cost/reporting | `gatekeeper_cost_recorded` carries model/tokens/wall-time, but `project_gatekeeper_report` aggregates away model/consult detail, and records are not structurally keyed by `execution_id`/lease as §6.5 requires. Runtime encodes execution id inside `consult_id`, but the command accepts a generic default. | [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1125), [commands.py](/Users/peter/code/task-world/src/orchestrator/graph/commands.py:1151), [projections.py](/Users/peter/code/task-world/src/orchestrator/graph/projections.py:396) |
+| Low | Test laziness | Metadata-only assertion only checks absence of a `content` attribute, not an exact allowed-field contract; duplicate verdicts within the same payload are validated in code but untested; no test covers a `secret` gatekeeper verdict after snapshot acceptance. | [test_graph_gatekeeper_flow.py](/Users/peter/code/task-world/tests/integration/test_graph_gatekeeper_flow.py:211), [test_graph_gatekeeper.py](/Users/peter/code/task-world/tests/unit/test_graph_gatekeeper.py:105) |
+
+**Checks Run**
+
+`uv run pytest tests/unit/test_graph_gatekeeper.py -q`: 7 passed in 0.81s.  
+`uv run pytest tests/integration/test_graph_gatekeeper_flow.py -q`: 3 passed in 3.11s.  
+`uv run pytest tests/unit -q`: 2626 passed, 3 warnings in 17.11s.  
+`uv run ruff check .`: passed.
+
+Kernel suite timing `<5s` could not be completed under the read-only sandbox. `uv run pytest tests/unit/test_graph*.py -q` failed on `/Users/peter/.cache/uv/... Operation not permitted`; `.venv/bin/pytest` failed before collection because Python could not create a temp file, even with `TMPDIR=/private/tmp`.
+
+**Lies / Counts / Standards**
+
+No builder summary was supplied to compare beyond the file list. `git status` shows 7 modified tracked files plus 3 untracked new files. Tracked diff is `573 insertions, 9 deletions`; untracked new files total 842 lines. I found no `unittest.mock`, `MagicMock`, `patch`, or `monkeypatch` in the new gatekeeper tests, and no real LLM usage. Integration uses real SQLite and real git subprocesses.
+
+**Verdict: BOUNCE**
+
+The slice has the right event shape and much of the deterministic/replay machinery is in place, but the two high-severity issues are kernel-level correctness problems: secret verdicts happen too late to enforce “never captured,” and learned patterns can overclassify tracked source files. Those need design fixes before accepting slice 2.5.

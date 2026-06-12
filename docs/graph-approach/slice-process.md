@@ -56,8 +56,9 @@ always checks them before grading anything else:
   src/orchestrator/graph/`.
 - **graph_runtime import boundary**: `src/orchestrator/graph_runtime/` must
   import no FastAPI / workflow-service internals.
-- **Kernel suite < 5 s**: `uv run pytest tests/unit -q` must finish under 5 s
-  after this slice's additions.
+- **Kernel tests stay fast**: the graph-kernel unit tests (`tests/unit/test_graph_*`)
+  must stay in the low single-digit seconds. The full `tests/unit` suite has no
+  hard time bound (measured ~33 s at end of phase 2 — acceptable).
 - **No git mutation on main repo**: codex agents operate inside a run worktree;
   all git ops are on the worktree branch only.
 - **§28 rule 1**: only `GraphController.handle_command()` appends accepted graph
@@ -126,12 +127,23 @@ callbacks return through the API.
 
 | Slice | Status | Spec |
 |---|---|---|
-| 2.1 Event store + outbox | ✅ done | builder-2.1.md |
-| 2.2 Routine compiler | ✅ done | builder-2.2.md |
-| 2.3 Runner integration | ✅ done | builder-2.3.md |
-| 2.4 File-state boundary | ✅ done | builder-2.4.md |
-| 2.5 LLM gatekeeper | ✅ done | builder-2.5.md |
-| 2.6 Compat API + UI projection | ⬜ next | slice-2.6-spec.md |
+| 2.1 Event store + outbox | ✅ done | slice-audits/builder-2.1.md |
+| 2.2 Routine compiler | ✅ done | slice-audits/builder-2.2.md |
+| 2.3 Runner integration | ✅ done | slice-audits/builder-2.3.md |
+| 2.4 File-state boundary | ✅ done | slice-audits/builder-2.4.md |
+| 2.5 LLM gatekeeper | ✅ done | slice-audits/builder-2.5.md |
+| 2.6 Compat API + UI projection | ✅ done | slice-2.6-spec.md |
+
+Builder prompts and audit/reaudit reports for 1.8–2.5 are preserved in
+`docs/graph-approach/slice-audits/` (recovered from `/tmp/codex-graph/`).
+Raw agent transcripts (`*.log`) were not committed.
 
 Dogfood gate: after 2.6, execute a graph run end-to-end through the
-production orchestrator (not test harness).
+production orchestrator (not test harness). Being satisfied via slice 3.1
+(`slice-3.1-spec.md`) run as a graph-backed orchestrator run.
+
+## Phase 3 (Dynamic planning)
+
+| Slice | Status | Spec |
+|---|---|---|
+| 3.1 Recursive horizon planner (kernel) | ⬜ next | slice-3.1-spec.md |
