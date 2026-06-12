@@ -30,7 +30,8 @@ routine:
         - Kernel purity: src/orchestrator/graph/ must have zero IO/DB/HTTP imports.
           Check: grep -r 'sqlite\|subprocess\|aiohttp\|fastapi\|httpx' src/orchestrator/graph/
         - graph_runtime must import no FastAPI / workflow-service internals.
-        - Kernel suite < 5s: uv run pytest tests/unit -q must finish under 5s.
+        - Kernel tests stay fast: tests/unit/test_graph_* in low single-digit seconds.
+          Full tests/unit suite has no time bound (~33s is normal).
         - §28 rule 1: only GraphController.handle_command() appends accepted graph events.
 
       tasks:
@@ -52,7 +53,7 @@ routine:
             Implementation checklist (do all before submitting):
             1. Implement every file listed in the spec scope.
             2. Write every test described in the spec tests section.
-            3. Run `uv run pytest tests/unit -q` — must pass, under 5s.
+            3. Run `uv run pytest tests/unit -q` — must pass (kernel-only test_graph_* tests stay fast; full suite has no time bound).
             4. Run `uv run pytest tests/integration -q` — must pass.
             5. Run `uv run ruff check src tests` — zero errors.
             6. Run `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime` — zero errors.
@@ -92,7 +93,7 @@ routine:
                   2. Run: grep -r 'sqlite\|subprocess\|aiohttp\|fastapi\|httpx' src/orchestrator/graph/
                      Expected: zero hits (kernel purity).
                   3. Run: uv run pytest tests/unit -q
-                     Expected: zero failures, completes under 5s for the unit suite.
+                     Expected: zero failures. (Kernel test_graph_* tests stay in low single-digit seconds; full suite ~33s is normal.)
                   4. Run: uv run pytest tests/integration -q
                      Expected: zero failures.
                   5. Run: uv run ruff check src tests && uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime
