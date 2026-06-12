@@ -626,6 +626,66 @@ def test_callback_with_mixed_honest_and_forged_records_rejected_atomically() -> 
     assert "producer_node_id does not match lease node" in output[0].payload["reason"]
 
 
+def test_callback_rejects_forged_file_state_record_atomically() -> None:
+    events = [
+        *_active_lease_events(),
+        _event("node_created", {"node_id": "other-1", "kind": "worker", "state": "planned"}, 3),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-file-state",
+                "output_records": [
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "other-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "producer_node_id does not match lease node" in output[0].payload["reason"]
+    assert "file_state_accepted" not in [event.event_type for event in output]
+
+
+def test_callback_rejects_forged_file_state_rejected_node_id() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-file-state-rejected",
+                "output_records": [],
+                "file_state_rejected": {
+                    "record_kind": "file_state_rejected",
+                    "run_id": "run-1",
+                    "node_id": "other-1",
+                    "reason": "file_state_rejected",
+                    "classifications": [],
+                    "rejected_paths": [],
+                    "residue": [],
+                },
+            },
+            complete_node=False,
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "file_state_rejected node_id does not match lease node" in output[0].payload["reason"]
+    assert "file_state_rejected" not in [event.event_type for event in output]
+
+
 def test_callback_accepts_unmatched_output_port_without_binding_input() -> None:
     events = [
         *_active_lease_events(),
@@ -1279,6 +1339,42 @@ def test_agent_died_rejects_unknown_or_inactive_lease() -> None:
     assert unknown_output[0].payload["reason"] == "unknown lease"
     assert inactive_output[0].event_type == "command_rejected"
     assert inactive_output[0].payload["reason"] == "lease not active"
+
+
+def test_agent_died_requires_execution_id_when_lease_records_one() -> None:
+    """A lease bound to an execution cannot be revoked without presenting it."""
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    omitted = _apply(events, "agent_died", {"run_id": "run-1", "lease_id": "lease-1"})
+    mismatched = _apply(
+        events,
+        "agent_died",
+        {"run_id": "run-1", "lease_id": "lease-1", "execution_id": "exec-other"},
+    )
+    matching = _apply(
+        events,
+        "agent_died",
+        {"run_id": "run-1", "lease_id": "lease-1", "execution_id": "exec-1"},
+    )
+
+    assert omitted[0].event_type == "command_rejected"
+    assert omitted[0].payload["reason"] == "missing execution_id"
+    assert mismatched[0].event_type == "command_rejected"
+    assert mismatched[0].payload["reason"] == "execution_incompatible"
+    assert matching[0].event_type == "agent_died"
 
 
 def test_schedule_tick_expires_past_leases_only() -> None:

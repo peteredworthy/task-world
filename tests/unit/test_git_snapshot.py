@@ -158,3 +158,36 @@ def test_hooks_never_fire(tmp_path: Path) -> None:
 
     assert result.ref.startswith("refs/orchestrator/snapshots/")
     assert not sentinel.exists()
+
+
+def test_force_include_paths_are_literal_for_leading_dash_and_pathspec_magic(
+    tmp_path: Path,
+) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / ".gitignore").write_text("--secret\n:(glob)*\n", encoding="utf-8")
+    _run_git(repo, "add", ".gitignore")
+    _run_git(repo, "commit", "-q", "-m", "ignore special names")
+    (repo / "--secret").write_text("leading dash\n", encoding="utf-8")
+    (repo / ":(glob)*").write_text("pathspec magic\n", encoding="utf-8")
+
+    result = snapshot(
+        repo,
+        "literal force include",
+        force_include_paths=["--secret", ":(glob)*"],
+    )
+
+    tree = _run_git(repo, "ls-tree", "-r", "--name-only", result.commit_sha).stdout.splitlines()
+    assert "--secret" in tree
+    assert ":(glob)*" in tree
+
+
+def test_exclude_paths_are_literal_for_pathspec_magic(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / ":(glob)*").write_text("remove only me\n", encoding="utf-8")
+    (repo / "keep.txt").write_text("keep me\n", encoding="utf-8")
+
+    result = snapshot(repo, "literal exclude", exclude_paths=[":(glob)*"])
+
+    tree = _run_git(repo, "ls-tree", "-r", "--name-only", result.commit_sha).stdout.splitlines()
+    assert ":(glob)*" not in tree
+    assert "keep.txt" in tree

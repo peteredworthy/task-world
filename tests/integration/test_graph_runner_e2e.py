@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
-from orchestrator.graph import project_leases, project_task_states
+from orchestrator.graph import project_leases, project_residue_report, project_task_states
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -87,6 +87,22 @@ class SubmitAgent:
 
     async def cancel(self) -> None:
         return None
+
+
+class ResidueSubmitAgent(SubmitAgent):
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        Path(context.working_dir, "real-run-residue.txt").write_text("residue\n")
+        await on_submit()
+        return ExecutionResult(success=True)
 
 
 class GradingAgent:
@@ -352,7 +368,7 @@ async def test_graph_runner_builder_verifier_pass_accepts_task(
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
-        AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
+        AgentFactory({"worker": ResidueSubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
@@ -362,6 +378,8 @@ async def test_graph_runner_builder_verifier_pass_accepts_task(
 
     events = await _read_events(session_factory, run_id)
     assert project_task_states(events) == {"step-1/task-1": "accepted"}
+    residue_report = project_residue_report(events)
+    assert residue_report["real-run-residue.txt"][0]["classification"] == "unknown_untracked"
 
 
 @pytest.mark.asyncio

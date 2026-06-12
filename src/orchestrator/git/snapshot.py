@@ -23,7 +23,13 @@ class SnapshotResult:
     ref: str
 
 
-def snapshot(worktree_path: str | Path, message: str) -> SnapshotResult:
+def snapshot(
+    worktree_path: str | Path,
+    message: str,
+    *,
+    force_include_paths: list[str] | None = None,
+    exclude_paths: list[str] | None = None,
+) -> SnapshotResult:
     """Capture the current worktree in a snapshot ref without touching HEAD or the index."""
     path = _require_worktree_path(worktree_path)
     env = _git_env()
@@ -32,6 +38,27 @@ def snapshot(worktree_path: str | Path, message: str) -> SnapshotResult:
         index_path = Path(tmpdir) / "index"
         indexed_env = {**env, "GIT_INDEX_FILE": str(index_path)}
         _run_git(path, ["add", "-A"], env=indexed_env)
+        force_paths = _safe_pathspecs(force_include_paths or [])
+        excluded_paths = _safe_pathspecs(exclude_paths or [])
+        if force_paths:
+            _run_git(
+                path,
+                ["add", "-f", "--", *force_paths],
+                env=indexed_env,
+            )
+        if excluded_paths:
+            _run_git(
+                path,
+                [
+                    "rm",
+                    "--cached",
+                    "-r",
+                    "--ignore-unmatch",
+                    "--",
+                    *excluded_paths,
+                ],
+                env=indexed_env,
+            )
         tree_sha = _run_git(path, ["write-tree"], env=indexed_env).stdout.strip()
 
     existing = _find_snapshot_by_tree(path, tree_sha, env=env)
@@ -178,3 +205,19 @@ def _validate_snapshot_id(snapshot_id: str) -> str:
     ):
         raise WorktreeError(f"Invalid snapshot id: {snapshot_id}")
     return snapshot_id
+
+
+def _safe_pathspecs(paths: list[str]) -> list[str]:
+    safe: list[str] = []
+    for path in paths:
+        normalized = path.replace("\\", "/").strip()
+        if (
+            not normalized
+            or normalized.startswith("/")
+            or normalized.startswith("../")
+            or "/../" in normalized
+            or normalized == ".."
+        ):
+            continue
+        safe.append(f":(literal){normalized}")
+    return safe

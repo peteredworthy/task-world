@@ -571,6 +571,17 @@ class _Compiler:
             "candidate_under_test",
             purpose="candidate_verification",
         )
+        # §20.4: downstream consumers bind to the accepted file-state record.
+        # Optional (required=False) in v1: binding happens when the boundary
+        # produces a record; pure-kernel paths without a boundary still verify.
+        self._edge(
+            worker_id,
+            "file_state",
+            verifier_id,
+            "file_state",
+            purpose="file_state_consumption",
+            required=False,
+        )
         return verifier_id
 
     def _compile_checks(
@@ -632,6 +643,14 @@ class _Compiler:
                 check_id,
                 "candidate_under_test",
                 purpose=source,
+            )
+            self._edge(
+                worker_id,
+                "file_state",
+                check_id,
+                "file_state",
+                purpose="file_state_consumption",
+                required=False,
             )
             check_ids.append(check_id)
         return check_ids

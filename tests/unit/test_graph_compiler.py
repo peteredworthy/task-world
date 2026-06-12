@@ -173,6 +173,33 @@ def test_verifier_rubric_maps_to_verifier_node() -> None:
     )
 
 
+def test_verifier_and_checks_get_optional_file_state_consumption_edge() -> None:
+    """§20.4: downstream consumers bind to the worker's accepted file-state record."""
+    routine = _routine_with_task(
+        TaskConfig(
+            id="T-01",
+            title="Task",
+            verifier={"rubric": [{"id": "rubric-1", "text": "Is it correct?"}]},
+            auto_verify={"items": [{"id": "check-1", "cmd": "true"}]},
+        )
+    )
+
+    events = _compile(routine)
+    projection = _project(events)
+
+    file_state_edges = [
+        edge
+        for edge in projection["edges"].values()
+        if edge["from_node_id"] == "worker-s-01-t-01"
+        and edge["from_port"] == "file_state"
+        and edge["to_port"] == "file_state"
+    ]
+    consumers = {edge["to_node_id"] for edge in file_state_edges}
+    assert "verifier-s-01-t-01" in consumers
+    assert any(consumer.startswith("check-") for consumer in consumers)
+    assert all(edge["required"] is False for edge in file_state_edges)
+
+
 def test_human_approval_gate_maps_to_gate_node_only_when_configured() -> None:
     routine = RoutineConfig(
         id="gate-routine",

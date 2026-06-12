@@ -14,6 +14,7 @@ from orchestrator.graph.models import (
     Actor,
     ActorKind,
     EventEnvelope,
+    FileStateRecord,
     OutputRecord,
     PatchEnvelope,
     PatchOp,
@@ -279,6 +280,17 @@ def _apply_callback_command(
                 {**event_payload, "reason": provenance_conflict},
             )
         ]
+    file_state_rejection_conflict = _file_state_rejected_conflict(
+        request,
+        expected_producer_node_id,
+    )
+    if file_state_rejection_conflict is not None:
+        return [
+            make_event(
+                "callback_rejected_conflict",
+                {**event_payload, "reason": file_state_rejection_conflict},
+            )
+        ]
     verification_conflict = _verification_record_conflict(
         projection,
         request,
@@ -294,6 +306,7 @@ def _apply_callback_command(
 
     accepted = make_event("callback_accepted", event_payload)
     output: list[EventEnvelope] = [accepted]
+    output.extend(_file_state_rejected_events(request, make_event))
     output.extend(
         _accepted_output_record_events(
             projection,
@@ -352,7 +365,52 @@ def _output_record_provenance_conflict(
                 "output record producer_node_id does not match lease node "
                 f"at index {index}: {producer_node_id} != {expected_producer_node_id}"
             )
+        if record_payload.get("record_kind") == "file_state":
+            node_id = record_payload.get("node_id", expected_producer_node_id)
+            if node_id != expected_producer_node_id:
+                return (
+                    "file_state record node_id does not match lease node "
+                    f"at index {index}: {node_id} != {expected_producer_node_id}"
+                )
     return None
+
+
+def _file_state_rejected_conflict(
+    request: CallbackRequest,
+    expected_producer_node_id: str,
+) -> str | None:
+    rejection = request.payload.get("file_state_rejected") if request.payload is not None else None
+    if not isinstance(rejection, dict):
+        return None
+    rejection_payload = cast(dict[str, Any], rejection)
+    node_id = rejection_payload.get("node_id", expected_producer_node_id)
+    if node_id != expected_producer_node_id:
+        return (
+            "file_state_rejected node_id does not match lease node: "
+            f"{node_id} != {expected_producer_node_id}"
+        )
+    producer_node_id = rejection_payload.get("producer_node_id", expected_producer_node_id)
+    if producer_node_id != expected_producer_node_id:
+        return (
+            "file_state_rejected producer_node_id does not match lease node: "
+            f"{producer_node_id} != {expected_producer_node_id}"
+        )
+    return None
+
+
+def _file_state_rejected_events(
+    request: CallbackRequest,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    rejection = request.payload.get("file_state_rejected") if request.payload is not None else None
+    if not isinstance(rejection, dict):
+        return []
+    payload = dict(cast(dict[str, Any], rejection))
+    payload.setdefault("node_id", request.node_id)
+    payload.setdefault("lease_id", request.lease_id)
+    payload.setdefault("lease_generation", request.lease_generation)
+    payload.setdefault("base_snapshot_id", request.base_snapshot_id)
+    return [make_event("file_state_rejected", payload)]
 
 
 def _accepted_output_record_events(
@@ -382,12 +440,58 @@ def _accepted_output_record_events(
                 )
             )
             continue
+        if record_payload.get("record_kind") == "file_state":
+            output.extend(
+                _accepted_file_state_record_events(
+                    projection,
+                    expected_producer_node_id,
+                    record_payload,
+                    make_event,
+                )
+            )
+            continue
         try:
             record = OutputRecord.model_validate(record_payload)
         except ValueError:
             continue
         output.append(make_event("output_record_accepted", record.model_dump(mode="json")))
-        output.extend(_input_bound_events_for_record(projection, record, make_event))
+        output.extend(
+            _input_bound_events_for_record(
+                projection,
+                record.producer_node_id,
+                record.port,
+                record.record_id,
+                make_event,
+            )
+        )
+    return output
+
+
+def _accepted_file_state_record_events(
+    projection: GraphProjection,
+    expected_producer_node_id: str,
+    record_payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    record_payload.setdefault("producer_node_id", expected_producer_node_id)
+    try:
+        record = FileStateRecord.model_validate(record_payload)
+    except ValueError:
+        return []
+    payload = record.model_dump(mode="json")
+    output = [
+        make_event("output_record_accepted", payload),
+        make_event("file_state_accepted", payload),
+    ]
+    output.extend(
+        _input_bound_events_for_record(
+            projection,
+            record.producer_node_id or expected_producer_node_id,
+            record.port,
+            record.record_id,
+            make_event,
+        )
+    )
     return output
 
 
@@ -481,7 +585,9 @@ def _candidate_id_from_payload(payload: dict[str, Any]) -> str | None:
 
 def _input_bound_events_for_record(
     projection: GraphProjection,
-    record: OutputRecord,
+    producer_node_id: str,
+    port: str,
+    record_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     output: list[EventEnvelope] = []
@@ -490,9 +596,9 @@ def _input_bound_events_for_record(
     for edge in projection["edges"].values():
         if edge.get("dependency_type", "input_binding") != "input_binding":
             continue
-        if edge.get("from_node_id") != record.producer_node_id:
+        if edge.get("from_node_id") != producer_node_id:
             continue
-        if edge.get("from_port") != record.port:
+        if edge.get("from_port") != port:
             continue
         edge_id = edge.get("edge_id")
         to_node_id = edge.get("to_node_id")
@@ -508,7 +614,7 @@ def _input_bound_events_for_record(
                     "edge_id": edge_id,
                     "to_node_id": to_node_id,
                     "to_port": to_port,
-                    "record_ids": [record.record_id],
+                    "record_ids": [record_id],
                     "bound_at_position": 0,
                 },
             )
@@ -765,12 +871,13 @@ def _apply_agent_died(
 
     execution_id = payload.get("execution_id")
     lease_execution_id = lease.get("execution_id")
-    if (
-        isinstance(execution_id, str)
-        and isinstance(lease_execution_id, str)
-        and execution_id != lease_execution_id
-    ):
-        return [_command_rejected(make_event, "agent_died", "execution_incompatible")]
+    if isinstance(lease_execution_id, str):
+        # A lease with a recorded execution requires the caller to present the
+        # matching execution identity — omitting it cannot revoke the lease.
+        if not isinstance(execution_id, str):
+            return [_command_rejected(make_event, "agent_died", "missing execution_id")]
+        if execution_id != lease_execution_id:
+            return [_command_rejected(make_event, "agent_died", "execution_incompatible")]
 
     node_id = str(lease.get("node_id"))
     generation = lease.get("generation")

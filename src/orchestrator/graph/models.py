@@ -167,6 +167,7 @@ class GitRef(GraphBaseModel):
     commit_sha: str | None = None
     tree_sha: str | None = None
     no_commit_reason: str | None = None
+    ref: str | None = None
 
 
 class FileEntry(GraphBaseModel):
@@ -174,9 +175,28 @@ class FileEntry(GraphBaseModel):
     status: str | None = None
     classification: str | None = None
     policy: str | None = None
+    matched_rule: str | None = None
+    needs_gatekeeper: bool | None = None
+    rejected: bool | None = None
+    reason: str | None = None
+
+
+class ExternalArtifactManifest(GraphBaseModel):
+    path: str
+    hash: str
+    origin: str
+    retention: str
+
+
+class ExternalFileEntry(FileEntry):
+    manifest: ExternalArtifactManifest
 
 
 def _empty_file_entries() -> list[FileEntry]:
+    return []
+
+
+def _empty_external_file_entries() -> list[ExternalFileEntry]:
     return []
 
 
@@ -186,11 +206,17 @@ class FileStateRecord(GraphBaseModel):
     snapshot_id: str
     base_snapshot_id: str | None = None
     producer_node_id: str | None = None
+    port: str = "file_state"
+    schema_: str = Field(default="FileStateRecord", alias="schema")
     git: GitRef | None = None
     tracked: list[FileEntry] = Field(default_factory=_empty_file_entries)
     untracked: list[FileEntry] = Field(default_factory=_empty_file_entries)
     ignored: list[FileEntry] = Field(default_factory=_empty_file_entries)
-    external: list[FileEntry] = Field(default_factory=_empty_file_entries)
+    external: list[ExternalFileEntry] = Field(default_factory=_empty_external_file_entries)
+    classifications: list[FileEntry] = Field(default_factory=_empty_file_entries)
+    residue: list[FileEntry] = Field(default_factory=_empty_file_entries)
+    rejected_paths: list[FileEntry] = Field(default_factory=_empty_file_entries)
+    verdict: Literal["captured", "rejected"] = "captured"
     patch_bundle_id: str | None = None
     tree_snapshot_id: str | None = None
 

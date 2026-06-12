@@ -263,6 +263,41 @@ def project_ready_nodes(events: list[EventEnvelope]) -> list[str]:
     return _project(events)["ready_nodes"]
 
 
+def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[str, Any]]]:
+    """Project accepted file-state residue classifications by path."""
+    report: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        if event.event_type != "file_state_accepted":
+            continue
+        node_id = event.payload.get("producer_node_id")
+        record_id = event.payload.get("record_id")
+        residue = event.payload.get("residue")
+        if not isinstance(residue, list):
+            residue = event.payload.get("classifications", [])
+        if not isinstance(residue, list):
+            continue
+        for raw_entry in cast(list[Any], residue):
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = cast(dict[str, Any], raw_entry)
+            path = entry.get("path")
+            if not isinstance(path, str):
+                continue
+            report.setdefault(path, []).append(
+                {
+                    "path": path,
+                    "classification": entry.get("classification"),
+                    "matched_rule": entry.get("matched_rule") or entry.get("policy"),
+                    "needs_gatekeeper": entry.get("needs_gatekeeper") is True,
+                    "run_id": event.run_id,
+                    "node_id": node_id,
+                    "record_id": record_id,
+                    "source": entry.get("source"),
+                }
+            )
+    return {path: report[path] for path in sorted(report)}
+
+
 def _project(events: list[EventEnvelope]) -> GraphProjection:
     projection = initial_projection()
     for event in events:

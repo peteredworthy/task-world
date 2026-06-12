@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.graph import EventEnvelope
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
+from orchestrator.graph_runtime.file_state import capture_file_state_boundary
 from orchestrator.graph_runtime.outbox import OutboxItem, SideEffectExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, create_agent_runner
@@ -216,6 +217,47 @@ class GraphDispatchExecutor(SideEffectExecutor):
     ) -> None:
         observed_position = await self._current_position(context.run_id)
         output_records = _output_records_for_submit(context, grades)
+        boundary = capture_file_state_boundary(
+            worktree_path=context.worktree_path,
+            run_id=context.run_id,
+            node_id=context.node_id,
+            execution_id=context.execution_id,
+            base_snapshot_id=context.base_snapshot_id,
+        )
+        if boundary.output_record is not None:
+            output_records.append(boundary.output_record)
+        if boundary.rejection_record is not None:
+            payload: dict[str, object] = {
+                "payload_hash": _payload_hash([boundary.rejection_record]),
+                "output_records": [],
+                "file_state_rejected": boundary.rejection_record,
+            }
+            result = await self._controller.handle_command(
+                context.run_id,
+                observed_position,
+                "submit_callback",
+                {
+                    "node_id": context.node_id,
+                    "execution_id": context.execution_id,
+                    "lease_id": context.lease_id,
+                    "lease_generation": context.lease_generation,
+                    "base_snapshot_id": context.base_snapshot_id,
+                    "observed_graph_position": observed_position,
+                    "idempotency_key": (
+                        f"{context.dispatch_event_id}:{context.execution_id}:file-state-rejected"
+                    ),
+                    "payload_hash": payload["payload_hash"],
+                    "payload": payload,
+                    "complete_node": False,
+                },
+            )
+            if any(event.event_type == "file_state_rejected" for event in result.events):
+                # A rejected boundary means the managed runner exited without an
+                # accepted file-state record. Reuse the existing process-death
+                # recovery path so evidence remains durable and the lease is
+                # revoked before the same node becomes retryable.
+                await self._agent_died(context, "file_state_rejected_boundary")
+            return
         payload = {
             "payload_hash": _payload_hash(output_records),
             "output_records": output_records,
