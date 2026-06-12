@@ -15,6 +15,9 @@ import type {
   EnvDefaultTarget,
   EnvFile,
   EnvSnapshot,
+  GraphEventResponse,
+  GraphProjectionResponse,
+  NodeDetailResponse,
   GlobalConfig,
   ModelProfileInfo,
   PendingAction,
@@ -517,6 +520,23 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/tasks/' + taskId + '/complete-verification', {
       method: 'POST',
     });
+  },
+
+  getRunGraphProjection(runId: string): Promise<GraphProjectionResponse> {
+    return fetchApi('/api/runs/' + runId + '/graph');
+  },
+
+  getRunGraphEvents(runId: string, fromPosition?: number): Promise<GraphEventResponse[]> {
+    const sp = new URLSearchParams();
+    if (fromPosition !== undefined) {
+      sp.set('from_position', String(fromPosition));
+    }
+    const qs = sp.toString();
+    return fetchApi('/api/runs/' + runId + '/graph/events' + (qs ? '?' + qs : ''));
+  },
+
+  getRunGraphNodeDetail(runId: string, nodeId: string): Promise<NodeDetailResponse> {
+    return fetchApi('/api/runs/' + runId + '/graph/nodes/' + nodeId);
   },
 
   getActivity(runId: string, params?: { after?: number; limit?: number; event_type?: string }): Promise<ActivityResponse> {

@@ -694,6 +694,7 @@ def create_app(
     from orchestrator.api.routers.clarifications import router as clarifications_router
     from orchestrator.api.routers.config import router as config_router
     from orchestrator.api.routers.envfiles import router as envfiles_router
+    from orchestrator.api.routers.graph import router as graph_router
     from orchestrator.api.routers.model_profiles import router as model_profiles_router
     from orchestrator.api.routers.repos import router as repos_router
     from orchestrator.api.routers.review import router as review_router
@@ -711,6 +712,7 @@ def create_app(
     app.include_router(repos_router, dependencies=auth_deps)
     app.include_router(review_router, dependencies=auth_deps)
     app.include_router(routines_router, dependencies=auth_deps)
+    app.include_router(graph_router, dependencies=auth_deps)
     app.include_router(runs_router, dependencies=auth_deps)
     app.include_router(tasks_router, dependencies=auth_deps)
 

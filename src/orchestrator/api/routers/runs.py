@@ -12,11 +12,13 @@ import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import ValidationError
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.deps import (
     get_codex_models_fn,
     get_runner_executor,
+    get_graph_store,
     get_event_emitter,
     get_event_store_v2,
     get_global_config,
@@ -80,7 +82,7 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import RunRepository, create_wired_event_store_v2
+from orchestrator.db import EventV2Model, RunRepository, create_wired_event_store_v2
 from orchestrator.db import SqliteEventStore
 from orchestrator.db import commit_with_event_outbox
 from orchestrator.api.metrics import estimate_cost
@@ -112,7 +114,24 @@ def _is_codex_runner(runner_type: AgentRunnerType, config: dict[str, Any]) -> bo
     return False
 
 
-def _run_to_response(run: Run) -> RunResponse:
+async def _graph_backed_run_ids(session: AsyncSession, run_ids: list[str]) -> set[str]:
+    if not run_ids:
+        return set()
+
+    query = (
+        select(EventV2Model.aggregate_id, func.max(EventV2Model.version).label("position"))
+        .where(EventV2Model.aggregate_id.in_(run_ids))
+        .group_by(EventV2Model.aggregate_id)
+    )
+    result = await session.execute(query)
+    return _graph_backed_run_ids_from_rows(result.all())
+
+
+def _graph_backed_run_ids_from_rows(rows: Any) -> set[str]:
+    return {run_id for run_id, position in rows if int(position) > 0}
+
+
+def _run_to_response(run: Run, *, is_graph_backed: bool = False) -> RunResponse:
     """Convert domain Run to API response."""
     # Parse routine config if available for gate information
     routine_config: RoutineConfig | None = None
@@ -287,6 +306,7 @@ def _run_to_response(run: Run) -> RunResponse:
         repo_name=run.repo_name,
         status=run.status.value,
         pause_reason=run.pause_reason,
+        is_graph_backed=is_graph_backed,
         last_error=run.last_error,
         routine_id=run.routine_id,
         routine_sha=run.routine_sha,
@@ -649,6 +669,7 @@ async def refresh_parent_oversight(
 @router.get("", response_model=RunListResponse)
 async def list_runs(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    session: Annotated[AsyncSession, Depends(get_session)],
     config: Annotated[GlobalConfig, Depends(get_global_config)],
     repo_name: str | None = Query(default=None),
     status: str | None = Query(default=None),
@@ -680,7 +701,10 @@ async def list_runs(
         effective_limit = limit if limit is not None else config.dashboard.max_recent_runs
         runs = await service.list_runs(limit=effective_limit)
 
-    return RunListResponse(runs=[_run_to_response(r) for r in runs])
+    graph_backed = await _graph_backed_run_ids(session, [r.id for r in runs])
+    return RunListResponse(
+        runs=[_run_to_response(r, is_graph_backed=r.id in graph_backed) for r in runs]
+    )
 
 
 @router.get("/{run_id}/trace", response_model=RunTraceResponse)
@@ -697,10 +721,12 @@ async def get_run_trace(
 async def get_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    graph_store: Annotated[Any, Depends(get_graph_store)],
 ) -> RunResponse:
     """Get a run by ID."""
     run = await service.get_run(run_id)
-    return _run_to_response(run)
+    graph_position = await graph_store.current_position(run_id)
+    return _run_to_response(run, is_graph_backed=graph_position > 0)
 
 
 @router.post("/{run_id}/start", response_model=RunResponse, status_code=202)

@@ -97,6 +97,11 @@ _TASKS_ROUTER_SYMBOLS = {
 _MCP_SYMBOLS = {"ORCHESTRATOR_TOOLS", "ToolHandler"}
 _MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer", "ALL_TOOLS"}
 
+# Pure helpers from graph router + runs router, exposed here so tests don't
+# reach into orchestrator.api.routers.* sub-packages directly.
+_GRAPH_ROUTER_SYMBOLS = {"build_graph_projection_response", "build_node_detail_response"}
+_RUNS_ROUTER_SYMBOLS = {"_graph_backed_run_ids_from_rows"}
+
 
 def __getattr__(name: str) -> object:
     if name in _TASKS_ROUTER_SYMBOLS:
@@ -111,4 +116,12 @@ def __getattr__(name: str) -> object:
         import orchestrator.api.mcp.server as _mcp_server  # noqa: PLC0415
 
         return getattr(_mcp_server, name)
+    if name in _GRAPH_ROUTER_SYMBOLS:
+        import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+        return getattr(_graph_router, name)
+    if name in _RUNS_ROUTER_SYMBOLS:
+        import orchestrator.api.routers.runs as _runs_router  # noqa: PLC0415
+
+        return getattr(_runs_router, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

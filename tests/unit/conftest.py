@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import os
 import subprocess
+import shutil
 import time
 from pathlib import Path
 
@@ -61,19 +62,25 @@ def _unit_base_repo(tmp_path_factory: pytest.TempPathFactory) -> Path:
     base = tmp_path_factory.mktemp("unit_base_repo")
     repo = base / "repo"
     repo.mkdir()
+    git_binary = shutil.which("git", path="/usr/bin:/bin:/usr/local/bin") or "/usr/bin/git"
 
     def _git(*args: str) -> None:
         env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
         env["PRE_COMMIT_ALLOW_NO_CONFIG"] = "1"
-        subprocess.run(list(args), cwd=repo, check=True, capture_output=True, env=env)
+        normalized = list(args)
+        if normalized and normalized[0] == "git":
+            normalized = normalized[1:]
+        subprocess.run(
+            [git_binary, *normalized], cwd=repo, check=True, capture_output=True, env=env
+        )
 
-    _git("git", "init")
-    _git("git", "config", "user.email", "test@test.com")
-    _git("git", "config", "user.name", "Test")
+    _git("init")
+    _git("config", "user.email", "test@test.com")
+    _git("config", "user.name", "Test")
     (repo / "README.md").write_text("# Test\n")
-    _git("git", "add", ".")
-    _git("git", "commit", "-m", "Initial commit")
-    _git("git", "branch", "-M", "main")
+    _git("add", ".")
+    _git("commit", "-m", "Initial commit")
+    _git("branch", "-M", "main")
     return repo
 
 

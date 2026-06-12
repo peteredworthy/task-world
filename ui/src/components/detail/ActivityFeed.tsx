@@ -13,6 +13,7 @@ interface ActivityFeedProps {
   onSelectTask?: (taskId: string) => void;
   selectedTaskId?: string | null;
   run?: RunResponse;
+  graphTaskStates?: Record<string, string>;
   expandCompletedSteps?: boolean;
 }
 
@@ -348,6 +349,7 @@ export function ActivityFeed({
   onSelectTask,
   selectedTaskId,
   run,
+  graphTaskStates,
   expandCompletedSteps = false,
 }: ActivityFeedProps) {
   const groups: ActivityGroup[] = groupEventsByTask(events);
@@ -406,6 +408,7 @@ export function ActivityFeed({
                   taskId={taskId}
                   taskTitle={taskTitle}
                   stepTitle={stepTitle}
+                  graphTaskState={graphTaskStates?.[taskId]}
                   status={taskSummary.status}
                   events={eventGroup.events}
                   gradeSummary={taskSummary.grade_summary}
@@ -422,6 +425,7 @@ export function ActivityFeed({
                   taskId={taskId}
                   taskTitle={taskTitle}
                   stepTitle={stepTitle}
+                  graphTaskState={graphTaskStates?.[taskId]}
                   status={taskSummary.status}
                   events={[]}
                   gradeSummary={taskSummary.grade_summary}

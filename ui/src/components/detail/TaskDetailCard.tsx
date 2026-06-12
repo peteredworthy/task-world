@@ -27,6 +27,7 @@ interface TaskDetailCardProps {
   taskId: string;
   taskTitle: string;
   stepTitle: string;
+  graphTaskState?: string | null;
   status: string;
   events: ActivityEvent[];
   gradeSummary: GradeSummaryItem[];
@@ -725,6 +726,7 @@ export function TaskDetailCard({
   taskId,
   taskTitle,
   stepTitle,
+  graphTaskState,
   status,
   events,
   gradeSummary,
@@ -812,6 +814,11 @@ export function TaskDetailCard({
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
         </div>
+        {graphTaskState && (
+          <div className="mt-1 px-3 pb-1 text-[10px] text-text-secondary">
+            graph: {graphTaskState}
+          </div>
+        )}
       </button>
 
       {/* Force-accept override strip — shown for failed tasks */}

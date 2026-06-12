@@ -1,6 +1,14 @@
 import { useMutation, useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { api, getConfig, validateRoutine } from '../api/client';
-import type { CreateRunRequest, RecoverRequest, SetGradeRequest, UpdateChecklistRequest } from '../types';
+import type {
+  CreateRunRequest,
+  RecoverRequest,
+  SetGradeRequest,
+  UpdateChecklistRequest,
+  GraphProjectionResponse,
+  GraphEventResponse,
+  NodeDetailResponse,
+} from '../types';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopping']);
 
@@ -28,6 +36,33 @@ export function useRun(runId: string | undefined) {
       const status = query.state.data?.status;
       return (status === 'completed' || status === 'failed') ? false : 10000;
     },
+  });
+}
+
+export function useGraphProjection(runId: string | undefined) {
+  return useQuery<GraphProjectionResponse>({
+    queryKey: ['graphProjection', runId],
+    queryFn: () => api.getRunGraphProjection(runId!),
+    enabled: !!runId,
+    staleTime: 5000,
+  });
+}
+
+export function useGraphEvents(runId: string | undefined, fromPosition?: number) {
+  return useQuery<GraphEventResponse[]>({
+    queryKey: ['graphEvents', runId, fromPosition],
+    queryFn: () => api.getRunGraphEvents(runId!, fromPosition),
+    enabled: !!runId,
+    staleTime: 5000,
+  });
+}
+
+export function useGraphNodeDetail(runId: string | undefined, nodeId: string | undefined) {
+  return useQuery<NodeDetailResponse>({
+    queryKey: ['graphNodeDetail', runId, nodeId],
+    queryFn: () => api.getRunGraphNodeDetail(runId!, nodeId!),
+    enabled: !!runId && !!nodeId,
+    staleTime: 5000,
   });
 }
 

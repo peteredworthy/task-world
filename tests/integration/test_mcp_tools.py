@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import shutil
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from pathlib import Path
@@ -535,34 +536,18 @@ async def test_collect_run_evidence_uses_files_changed_since_source_commit(
 ) -> None:
     worktree = tmp_path / "repo"
     worktree.mkdir()
-    subprocess.run(["git", "init", "-b", "main"], cwd=worktree, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "config", "user.email", "test@example.com"],
-        cwd=worktree,
-        check=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=worktree,
-        check=True,
-        capture_output=True,
-    )
+    _git(["init", "-b", "main"], cwd=worktree)
+    _git(["config", "user.email", "test@example.com"], cwd=worktree)
+    _git(["config", "user.name", "Test User"], cwd=worktree)
     committed_dir = worktree / "docs" / "old"
     committed_dir.mkdir(parents=True)
     (committed_dir / "old-evidence.json").write_text(
         '{"schema_version":"run.evidence.v1","outcome":"environment_blocked"}',
         encoding="utf-8",
     )
-    subprocess.run(["git", "add", "."], cwd=worktree, check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "base"], cwd=worktree, check=True, capture_output=True)
-    base_sha = subprocess.run(
-        ["git", "rev-parse", "HEAD"],
-        cwd=worktree,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
+    _git(["add", "."], cwd=worktree)
+    _git(["commit", "-m", "base"], cwd=worktree)
+    base_sha = _git(["rev-parse", "HEAD"], cwd=worktree)
 
     evidence_dir = worktree / "docs" / "new"
     evidence_dir.mkdir(parents=True)
@@ -586,13 +571,8 @@ async def test_collect_run_evidence_uses_files_changed_since_source_commit(
 }""",
         encoding="utf-8",
     )
-    subprocess.run(["git", "add", "."], cwd=worktree, check=True, capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "add new evidence"],
-        cwd=worktree,
-        check=True,
-        capture_output=True,
-    )
+    _git(["add", "."], cwd=worktree)
+    _git(["commit", "-m", "add new evidence"], cwd=worktree)
 
     run = _make_run()
     run.worktree_path = str(worktree)
@@ -653,12 +633,22 @@ async def test_full_workflow_via_tools(handler: ToolHandler, service: WorkflowSe
 # --- Repo tool tests ---
 
 _GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+_PATH_ENTRIES = [
+    path
+    for path in _GIT_ENV.get("PATH", "").split(os.pathsep)
+    if path and "orchestrator-git-wrapper-bin" not in path
+]
+for required in ("/usr/bin", "/usr/local/bin", "/bin"):
+    if required not in _PATH_ENTRIES:
+        _PATH_ENTRIES.append(required)
+_GIT_ENV["PATH"] = os.pathsep.join(_PATH_ENTRIES)
+_GIT_BIN = shutil.which("git", path=_GIT_ENV["PATH"]) or "/usr/bin/git"
 
 
 def _git(args: list[str], cwd: Path) -> str:
     """Run a git command, stripping GIT_* env vars to prevent test contamination."""
     result = subprocess.run(
-        ["git"] + args, cwd=cwd, check=True, capture_output=True, text=True, env=_GIT_ENV
+        [_GIT_BIN] + args, cwd=cwd, check=True, capture_output=True, text=True, env=_GIT_ENV
     )
     return result.stdout.strip()
 

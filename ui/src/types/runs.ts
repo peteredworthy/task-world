@@ -137,6 +137,7 @@ export interface RunResponse {
   status: RunStatus;
   pause_reason: string | null;
   last_error: string | null;
+  is_graph_backed: boolean;
   routine_id: string | null;
   routine_sha: string | null;
   routine_source: string | null;
@@ -175,6 +176,35 @@ export interface RunResponse {
   token_usage_by_model: ModelTokenUsage[];
   estimated_cost_usd: number | null;
   cost_disclaimer: string | null;
+}
+
+export interface GraphEventResponse {
+  event_id: string;
+  event_type: string;
+  run_id: string;
+  position: number;
+  timestamp: string;
+  payload: Record<string, unknown>;
+}
+
+export interface GraphProjectionResponse {
+  run_id: string;
+  event_count: number;
+  run_state: string | null;
+  node_states: Record<string, string>;
+  task_states: Record<string, string>;
+  leases: Record<string, Record<string, unknown>>;
+  ready_nodes: string[];
+}
+
+export interface NodeDetailResponse {
+  run_id: string;
+  node_id: string;
+  state: string | null;
+  output_records: Record<string, unknown>[];
+  file_state_records: Record<string, unknown>[];
+  active_lease: Record<string, unknown> | null;
+  events: GraphEventResponse[];
 }
 
 export interface RunListResponse {

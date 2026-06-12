@@ -7,16 +7,27 @@ to prevent test operations from leaking into the main project's .git config
 
 import os
 import subprocess
+import shutil
 from pathlib import Path
 
 _GIT_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 _GIT_ENV["PRE_COMMIT_ALLOW_NO_CONFIG"] = "1"
+_PATH_ENTRIES = [
+    path
+    for path in _GIT_ENV.get("PATH", "").split(os.pathsep)
+    if path and "orchestrator-git-wrapper-bin" not in path
+]
+for required in ("/usr/bin", "/usr/local/bin", "/bin"):
+    if required not in _PATH_ENTRIES:
+        _PATH_ENTRIES.append(required)
+_GIT_ENV["PATH"] = os.pathsep.join(_PATH_ENTRIES)
+_GIT_BIN = shutil.which("git", path="/usr/bin:/usr/local/bin:/bin") or "/usr/bin/git"
 
 
 def _git(args: list[str], cwd: Path) -> str:
     """Run a git command and return stdout."""
     result = subprocess.run(
-        ["git"] + args, cwd=cwd, check=True, capture_output=True, text=True, env=_GIT_ENV
+        [_GIT_BIN] + args, cwd=cwd, check=True, capture_output=True, text=True, env=_GIT_ENV
     )
     return result.stdout.strip()
 

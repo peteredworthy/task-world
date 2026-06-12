@@ -1,9 +1,11 @@
 """Dependency injection for FastAPI endpoints."""
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, TYPE_CHECKING
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -31,6 +33,9 @@ from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.git import TestRunner
 from orchestrator.runners import AgentRunnerExecutor, fetch_codex_models
 from orchestrator.runners.agent_detector import ToolDetector
+
+if TYPE_CHECKING:
+    from orchestrator.graph_runtime.store import GraphEventStore
 
 
 def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
@@ -79,6 +84,14 @@ async def get_event_store_v2(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> SqliteEventStore:
     return create_wired_event_store_v2(session)
+
+
+async def get_graph_store(
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> GraphEventStore:
+    from orchestrator.graph_runtime.store import GraphEventStore
+
+    return GraphEventStore(session)
 
 
 def get_env_lifecycle(request: Request) -> EnvFileLifecycle | None:

@@ -9,8 +9,11 @@ import { WebSocketProvider } from '../../context/WebSocketContext';
 import { ReviewMergeProvider } from '../../context/ReviewMergeContext';
 import { useReviewMerge } from '../../context/useReviewMerge';
 import { useWebSocketStatus } from '../../hooks/useWebSocketStatus';
+import { useGraphProjection } from '../../hooks/useApi';
 import { RunStatusBadge } from '../StatusBadge';
 import { ConnectionIndicator } from '../ConnectionIndicator';
+import { GraphIndicator } from '../GraphIndicator';
+import { GraphPanel } from '../GraphPanel';
 import { ResumeDialog } from '../run/ResumeDialog';
 import { ClarificationModal } from '../detail/ClarificationModal';
 import { ApprovalModal } from '../detail/ApprovalModal';
@@ -298,6 +301,7 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
   const { data: branchStatus } = useBranchStatus(runId);
   const { isPruneMode, onTogglePruneMode, onOpenBackMergeModal } = useReviewMerge();
   const [showResumeDialog, setShowResumeDialog] = useState(false);
+  const [showGraphPanel, setShowGraphPanel] = useState(false);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
@@ -305,6 +309,7 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
   const [approvalReviewAction, setApprovalReviewAction] = useState<PendingAction | null>(null);
   const [acceptTarget, setAcceptTarget] = useState<ChildOversightSummary | null>(null);
   const autoOpenedRef = useRef<string | null>(null);
+  const { data: graphProjection } = useGraphProjection(run?.id);
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
     const detail = err instanceof ApiError
@@ -445,6 +450,10 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
                 </h1>
                 <RunStatusBadge status={run.status} />
                 <ConnectionIndicator status={wsStatus} onReconnect={wsReconnect} />
+                <GraphIndicator
+                  isGraphBacked={run.is_graph_backed}
+                  onOpen={() => setShowGraphPanel(true)}
+                />
               </div>
               {run.status === 'paused' && run.pause_reason && run.pause_reason !== 'manual_pause' && (
                 <div className="mt-1.5 text-xs text-status-paused">
@@ -818,8 +827,13 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
                     Status changes, task transitions, gates, and other recorded run events.
                   </p>
                 </div>
-                <ActivityFeed events={events} run={run} expandCompletedSteps />
-              </section>
+              <ActivityFeed
+                events={events}
+                run={run}
+                graphTaskStates={run.is_graph_backed ? graphProjection?.task_states : undefined}
+                expandCompletedSteps
+              />
+            </section>
             </>
           ) : (
             <ReviewMergeTab runId={run.id} worktreePath={run.worktree_path ?? null} />
@@ -867,6 +881,15 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
           onClose={() => setApprovalReviewAction(null)}
           pendingAction={approvalReviewAction}
           runId={runId}
+        />
+      )}
+
+      {showGraphPanel && (
+        <GraphPanel
+          runId={run.id}
+          run={run}
+          open={showGraphPanel}
+          onClose={() => setShowGraphPanel(false)}
         />
       )}
 

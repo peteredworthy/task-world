@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+from pathlib import Path
 from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -32,6 +32,33 @@ def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
     return max(1, multiprocessing.cpu_count() - 2)
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_git_session_path() -> Generator[None, None, None]:
+    """Ensure tests resolve to a real git binary instead of the wrapper.
+
+    A project-installed git wrapper is present in PATH and blocks `git init` in
+    test repos during local execution. Remove it for the full test run and keep
+    standard system locations available.
+    """
+    previous_path = os.environ.get("PATH")
+    path_entries = [
+        path
+        for path in os.environ.get("PATH", "").split(os.pathsep)
+        if path and "orchestrator-git-wrapper-bin" not in path
+    ]
+    for required in ("/usr/bin", "/usr/local/bin", "/bin"):
+        if required not in path_entries:
+            path_entries.append(required)
+    os.environ["PATH"] = os.pathsep.join(path_entries)
+    try:
+        yield
+    finally:
+        if previous_path is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = previous_path
+
+
 @pytest.fixture(autouse=True)
 def _isolate_git(tmp_path: Path) -> Generator[None, None, None]:
     """Isolate git operations from the project repo and pre-commit state.
@@ -52,15 +79,37 @@ def _isolate_git(tmp_path: Path) -> Generator[None, None, None]:
         "GIT_COMMITTER_EMAIL",
     )
     previous = {name: os.environ.get(name) for name in vars_to_restore}
+    previous["PATH"] = os.environ.get("PATH")
+    previous["ORCHESTRATOR_RUN_WORKTREE"] = os.environ.get("ORCHESTRATOR_RUN_WORKTREE")
+    previous["ORCHESTRATOR_RUN_BRANCH"] = os.environ.get("ORCHESTRATOR_RUN_BRANCH")
+
+    path_entries = [
+        path
+        for path in os.environ.get("PATH", "").split(os.pathsep)
+        if path and "orchestrator-git-wrapper-bin" not in path
+    ]
+    if "/usr/bin" not in path_entries:
+        path_entries.append("/usr/bin")
+    if "/usr/local/bin" not in path_entries:
+        path_entries.append("/usr/local/bin")
+    if "/bin" not in path_entries:
+        path_entries.append("/bin")
+    os.environ["PATH"] = os.pathsep.join(path_entries)
+
+    os.environ.pop("ORCHESTRATOR_RUN_WORKTREE", None)
+    os.environ.pop("ORCHESTRATOR_RUN_BRANCH", None)
     os.environ["GIT_CEILING_DIRECTORIES"] = str(tmp_path)
-    for var in vars_to_restore[1:]:
+    for var in vars_to_restore:
         os.environ.pop(var, None)
     try:
         yield
     finally:
         for name, value in previous.items():
             if value is None:
-                os.environ.pop(name, None)
+                if name == "PATH":
+                    os.environ.pop(name, None)
+                else:
+                    os.environ.pop(name, None)
             else:
                 os.environ[name] = value
 
