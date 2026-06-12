@@ -32,7 +32,7 @@ _CLAUDE_SDK_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="max_turns",
         field_type="number",
-        default=50,
+        default=200,
         description="Maximum agentic turns per run",
     ),
 ]

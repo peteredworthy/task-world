@@ -40,7 +40,7 @@ CLI_SUBPROCESS_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="max_turns",
         field_type="number",
-        default=50,
+        default=200,
         description="Maximum Claude Code agentic turns per subprocess task",
     ),
     AgentConfigField(

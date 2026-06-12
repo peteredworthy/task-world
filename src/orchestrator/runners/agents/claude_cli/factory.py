@@ -54,7 +54,7 @@ def create_cli_agent(
     # Build args based on command
     args = agent_runner_config.get("args", [])
     parser = None
-    max_turns = agent_runner_config.get("max_turns", 50)
+    max_turns = agent_runner_config.get("max_turns", 200)
     if command == "claude" and not args:
         args = [
             "-p",

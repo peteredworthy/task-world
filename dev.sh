@@ -47,10 +47,10 @@ log "Writing dev logs to $RUN_LOG_DIR"
 if [ -f "$ROOT/.git" ]; then
     echo ""
     echo "  ERROR: dev.sh must not be run from a worktree."
-    echo "  This directory ($ROOT) is a git worktree, not the main repo."
+        echo "  This directory ($ROOT) is a git worktree, not the main repo."
     if [ -f "$ROOT/.worktree-manifest.json" ]; then
-        ASSIGNED_PORT=$(python3 -c "import json; print(json.load(open('$ROOT/.worktree-manifest.json')).get('assigned_port','?'))" 2>/dev/null || echo "?")
-        MAIN_URL=$(python3 -c "import json; print(json.load(open('$ROOT/.worktree-manifest.json')).get('main_server_url','?'))" 2>/dev/null || echo "?")
+        ASSIGNED_PORT=$(uv run python -c "import json; print(json.load(open('$ROOT/.worktree-manifest.json')).get('assigned_port','?'))" 2>/dev/null || echo "?")
+        MAIN_URL=$(uv run python -c "import json; print(json.load(open('$ROOT/.worktree-manifest.json')).get('main_server_url','?'))" 2>/dev/null || echo "?")
         echo "  Main server: $MAIN_URL"
         echo "  Assigned port for this worktree: $ASSIGNED_PORT"
         echo ""
@@ -110,6 +110,21 @@ run_frontend_supervisor() {
   done
 }
 
+wait_for_backend() {
+  local deadline=$((SECONDS + 60))
+  log "Waiting for backend health check..."
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if curl -fsS "http://127.0.0.1:8000/health" >/dev/null 2>&1; then
+      log "Backend is ready."
+      return 0
+    fi
+    sleep 0.5
+  done
+
+  log "Backend did not become healthy within 60 seconds."
+  return 1
+}
+
 # --- Kill stale uvicorn processes on port 8000 ---
 # Two uvicorn processes sharing the same DB cause executor death loops:
 # requests get load-balanced between them, and one has no executor for the run.
@@ -151,14 +166,15 @@ fi
 log "Starting backend on http://localhost:8000 ..."
 (
   cd "$ROOT"
-  uv run uvicorn scripts.serve:app \
-    --reload \
-    --reload-dir "$ROOT/src" \
-    --reload-dir "$ROOT/scripts" \
-    --port 8000
+  ORCHESTRATOR_SKIP_STALE_PORT_KILL=1 uv run orchestrator serve --reload
 ) > >(timestamp_stream "backend" "$BACKEND_LOG") 2>&1 &
 BACKEND_PID=$!
 log "Backend PID $BACKEND_PID"
+
+if ! wait_for_backend; then
+  cleanup
+  exit 1
+fi
 
 # Frontend (Vite HMR, restarted if it exits unexpectedly)
 run_frontend_supervisor &

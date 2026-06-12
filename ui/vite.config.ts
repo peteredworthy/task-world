@@ -8,8 +8,8 @@ import type { Socket } from 'node:net'
 // Example (isolated dev server on port 9100):
 //   cd ui && VITE_API_PORT=9100 npm run dev -- --port 9173
 const apiPort = process.env.VITE_API_PORT ?? '8000'
-const httpTarget = `http://localhost:${apiPort}`
-const wsTarget = `ws://localhost:${apiPort}`
+const httpTarget = `http://127.0.0.1:${apiPort}`
+const wsTarget = `ws://127.0.0.1:${apiPort}`
 
 function isServerResponse(value: ServerResponse | Socket): value is ServerResponse {
   return 'writeHead' in value

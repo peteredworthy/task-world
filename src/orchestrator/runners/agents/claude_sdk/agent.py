@@ -416,7 +416,7 @@ class ClaudeSDKAgent:
         api_key: Anthropic API key. Falls back to ANTHROPIC_API_KEY env var.
         auth_token: Bearer token. Falls back to ANTHROPIC_AUTH_TOKEN env var,
             then the Claude CLI OAuth token from the macOS keychain.
-        max_turns: Maximum agentic turns (default: 50).
+        max_turns: Maximum agentic turns (default: 200).
 
     Test injection:
         _query_fn: Inject a fake query function for unit testing.
@@ -432,7 +432,7 @@ class ClaudeSDKAgent:
         model: str = "claude-sonnet-4-5",
         api_key: str | None = None,
         auth_token: str | None = None,
-        max_turns: int = 50,
+        max_turns: int = 200,
         *,
         _query_fn: Any | None = None,
         _environ: dict[str, str] | None = None,

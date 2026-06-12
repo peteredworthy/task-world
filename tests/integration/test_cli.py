@@ -37,6 +37,14 @@ def runner() -> CliRunner:
     return CliRunner()
 
 
+def test_serve_command_is_registered(runner: CliRunner) -> None:
+    """The documented backend startup command should exist."""
+    result = runner.invoke(cli, ["serve", "--help"])
+    assert result.exit_code == 0
+    assert "Start the local FastAPI backend" in result.output
+    assert "--reload" in result.output
+
+
 def test_runs_list_empty(runner: CliRunner, tmp_path: Path) -> None:
     """Test runs list with no runs."""
     db_path = tmp_path / "test.db"

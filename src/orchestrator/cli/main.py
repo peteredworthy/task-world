@@ -1,5 +1,7 @@
 """Main CLI entry point."""
 
+from pathlib import Path
+
 import click
 from dotenv import load_dotenv
 
@@ -25,6 +27,27 @@ def cli(ctx: click.Context, db: str, json: bool) -> None:
     ctx.obj["json"] = json
 
 
+@click.command("serve")
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind")
+@click.option("--port", default=8000, show_default=True, help="Port to bind")
+@click.option("--reload/--no-reload", default=False, help="Restart when backend files change")
+def serve(host: str, port: int, reload: bool) -> None:
+    """Start the local FastAPI backend."""
+    import uvicorn
+
+    root = Path(__file__).resolve().parents[3]
+    reload_dirs = [str(root / "src"), str(root / "scripts")] if reload else None
+    uvicorn.run(
+        "scripts.serve:app",
+        host=host,
+        port=port,
+        reload=reload,
+        reload_dirs=reload_dirs,
+        app_dir=str(root),
+    )
+
+
+cli.add_command(serve)
 cli.add_command(runs)
 cli.add_command(routines)
 cli.add_command(agents)

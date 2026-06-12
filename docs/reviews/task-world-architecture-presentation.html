@@ -1,0 +1,1344 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Task-World Architecture Review</title>
+    <style>
+      :root {
+        --bg: #f7f4ee;
+        --ink: #20242a;
+        --muted: #66707a;
+        --line: #c9d1d9;
+        --panel: #ffffff;
+        --panel-2: #eef5f1;
+        --blue: #275efe;
+        --green: #1d7d5a;
+        --red: #b84040;
+        --yellow: #946c1c;
+        --violet: #6d4dbd;
+        --cyan: #087a8f;
+        --shadow: 0 18px 50px rgba(36, 42, 51, 0.11);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+      }
+
+      .deck {
+        height: 100vh;
+        overflow-y: auto;
+        scroll-snap-type: y mandatory;
+      }
+
+      .slide {
+        min-height: 100vh;
+        scroll-snap-align: start;
+        padding: 30px clamp(22px, 4vw, 58px) 46px;
+        display: flex;
+        align-items: center;
+      }
+
+      .slide-inner {
+        width: min(1240px, 100%);
+        margin: 0 auto;
+      }
+
+      .hero {
+        background:
+          linear-gradient(rgba(247, 244, 238, 0.72), rgba(247, 244, 238, 0.92)),
+          linear-gradient(135deg, rgba(39, 94, 254, 0.12), transparent 28%),
+          linear-gradient(315deg, rgba(29, 125, 90, 0.16), transparent 32%);
+      }
+
+      .eyebrow {
+        color: var(--green);
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0;
+        text-transform: uppercase;
+        margin-bottom: 16px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        line-height: 1.05;
+        letter-spacing: 0;
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(46px, 7vw, 86px);
+        max-width: 980px;
+      }
+
+      h2 {
+        font-size: clamp(34px, 4.4vw, 58px);
+        max-width: 1040px;
+      }
+
+      h3 {
+        font-size: 21px;
+        margin-bottom: 10px;
+      }
+
+      p {
+        font-size: clamp(17px, 1.6vw, 22px);
+        line-height: 1.42;
+        color: var(--muted);
+        max-width: 980px;
+      }
+
+      .lead {
+        font-size: clamp(20px, 2.1vw, 30px);
+        color: #38414a;
+        margin-top: 22px;
+      }
+
+      .meta-row {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 34px;
+      }
+
+      .tag {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.66);
+        border-radius: 999px;
+        padding: 9px 13px;
+        color: #3b4550;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .grid {
+        display: grid;
+        gap: 18px;
+      }
+
+      .cols-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .cols-3 {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .cols-4 {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid rgba(99, 112, 124, 0.24);
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: var(--shadow);
+      }
+
+      .quiet-panel {
+        background: rgba(255, 255, 255, 0.62);
+        border: 1px solid rgba(99, 112, 124, 0.22);
+        border-radius: 8px;
+        padding: 18px;
+      }
+
+      .band {
+        margin-top: 28px;
+        padding: 20px;
+        border-left: 6px solid var(--blue);
+        background: rgba(255, 255, 255, 0.66);
+      }
+
+      ul {
+        margin: 14px 0 0;
+        padding-left: 20px;
+      }
+
+      li {
+        margin: 8px 0;
+        line-height: 1.35;
+        color: #3c4650;
+        font-size: 16px;
+      }
+
+      .small {
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.35;
+      }
+
+      .code {
+        font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        background: #eef1f4;
+        color: #25313c;
+        border-radius: 5px;
+        padding: 2px 5px;
+        white-space: nowrap;
+      }
+
+      .callout {
+        border-radius: 8px;
+        padding: 18px;
+        background: #102033;
+        color: #eef6ff;
+      }
+
+      .callout p,
+      .callout li,
+      .callout .small {
+        color: #d7e5f7;
+      }
+
+      .section-kicker {
+        margin: 0 0 22px;
+        max-width: 780px;
+      }
+
+      .diagram-wrap {
+        overflow: hidden;
+        border-radius: 8px;
+        border: 1px solid rgba(99, 112, 124, 0.24);
+        background: linear-gradient(180deg, #ffffff, #f7faf9);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+      }
+
+      svg.diagram {
+        display: block;
+        width: 100%;
+        max-height: 42vh;
+        height: auto;
+      }
+
+      .node rect,
+      .node path {
+        fill: #ffffff;
+        stroke: #8794a1;
+        stroke-width: 1.4;
+      }
+
+      .node text {
+        fill: #20242a;
+        font-size: 15px;
+        font-weight: 700;
+      }
+
+      .node .sub {
+        fill: #66707a;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .edge {
+        stroke: #768493;
+        stroke-width: 2;
+        fill: none;
+        marker-end: url(#arrow);
+      }
+
+      .edge.green {
+        stroke: var(--green);
+      }
+
+      .edge.red {
+        stroke: var(--red);
+      }
+
+      .edge.blue {
+        stroke: var(--blue);
+      }
+
+      .edge.yellow {
+        stroke: var(--yellow);
+      }
+
+      .edge.violet {
+        stroke: var(--violet);
+      }
+
+      .legend {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-top: 10px;
+      }
+
+      .legend span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .swatch {
+        width: 18px;
+        height: 3px;
+        border-radius: 999px;
+        background: #768493;
+      }
+
+      .swatch.green {
+        background: var(--green);
+      }
+
+      .swatch.red {
+        background: var(--red);
+      }
+
+      .swatch.blue {
+        background: var(--blue);
+      }
+
+      .timeline {
+        display: grid;
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      .timebox {
+        background: #fff;
+        border: 1px solid rgba(99, 112, 124, 0.22);
+        border-top: 5px solid var(--cyan);
+        border-radius: 8px;
+        padding: 14px;
+        min-height: 118px;
+      }
+
+      .timebox strong {
+        display: block;
+        font-size: 13px;
+        color: var(--cyan);
+        margin-bottom: 6px;
+      }
+
+      .timebox span {
+        display: block;
+        color: #36424e;
+        font-size: 14px;
+        line-height: 1.3;
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 14px;
+        font-size: 15px;
+        background: #fff;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .table th,
+      .table td {
+        border-bottom: 1px solid #e2e7ea;
+        padding: 12px 14px;
+        vertical-align: top;
+        text-align: left;
+      }
+
+      .table th {
+        color: #293540;
+        background: #eef5f1;
+        font-size: 13px;
+        text-transform: uppercase;
+        letter-spacing: 0;
+      }
+
+      .table td {
+        color: #3c4650;
+      }
+
+      .score {
+        font-weight: 800;
+        white-space: nowrap;
+      }
+
+      .score.high {
+        color: var(--red);
+      }
+
+      .score.med {
+        color: var(--yellow);
+      }
+
+      .score.low {
+        color: var(--green);
+      }
+
+      .nav {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        z-index: 20;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: rgba(255, 255, 255, 0.86);
+        border: 1px solid rgba(99, 112, 124, 0.28);
+        border-radius: 8px;
+        padding: 8px;
+        box-shadow: 0 12px 32px rgba(36, 42, 51, 0.16);
+      }
+
+      button {
+        appearance: none;
+        border: 0;
+        background: #20242a;
+        color: #fff;
+        border-radius: 6px;
+        min-width: 36px;
+        height: 34px;
+        font-weight: 800;
+        cursor: pointer;
+      }
+
+      button:focus-visible {
+        outline: 3px solid rgba(39, 94, 254, 0.35);
+        outline-offset: 2px;
+      }
+
+      #slide-count {
+        min-width: 64px;
+        text-align: center;
+        color: #37424d;
+        font-size: 13px;
+        font-weight: 800;
+      }
+
+      .footer-note {
+        margin-top: 12px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      @media (max-width: 900px) {
+        .slide {
+          align-items: flex-start;
+          padding-top: 32px;
+        }
+
+        .cols-2,
+        .cols-3,
+        .cols-4,
+        .timeline {
+          grid-template-columns: 1fr;
+        }
+
+        p {
+          font-size: 17px;
+        }
+
+        .panel,
+        .quiet-panel {
+          padding: 16px;
+        }
+
+        .table {
+          display: block;
+          overflow-x: auto;
+        }
+      }
+
+      @media print {
+        .deck {
+          height: auto;
+          overflow: visible;
+        }
+
+        .slide {
+          min-height: 0;
+          page-break-after: always;
+        }
+
+        .nav {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="deck" id="deck" aria-label="Task-World architecture presentation">
+      <section class="slide hero" data-title="Title">
+        <div class="slide-inner">
+          <div class="eyebrow">Task-World architecture review</div>
+          <h1>Current architecture: disciplined intent, hybrid reality</h1>
+          <p class="lead">
+            Task-World is a routine-driven orchestration system for LLM coding agents. The
+            intended design is modular, event-backed, worktree-isolated, and signal-driven;
+            the operational risk comes from the layers required to keep that design compatible
+            with existing runs, external agents, projections, and parent/child workflows.
+          </p>
+          <div class="meta-row">
+            <span class="tag">Repo: /Users/peter/code/task-world</span>
+            <span class="tag">Date: 2026-06-09</span>
+            <span class="tag">HEAD observed: 8207de09</span>
+            <span class="tag">Verified with antagonist mini-agent passes</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Executive View">
+        <div class="slide-inner">
+          <h2>Executive view</h2>
+          <p class="section-kicker">
+            The system has a clear conceptual core, but correctness depends on several duplicated
+            representations staying aligned.
+          </p>
+          <div class="grid cols-4">
+            <div class="panel">
+              <h3>Routine snapshot</h3>
+              <p class="small">
+                YAML routines are validated into Pydantic models, assembled from optional external
+                step files, and embedded into each run as <span class="code">routine_embedded</span>.
+              </p>
+            </div>
+            <div class="panel">
+              <h3>Run worktree</h3>
+              <p class="small">
+                Execution occurs on per-run branches and worktrees. Attempts carry commit metadata
+                so builder and verifier phases can reason about changes.
+              </p>
+            </div>
+            <div class="panel">
+              <h3>Events plus projections</h3>
+              <p class="small">
+                The event stream is the durable write path for current workflow changes, while ORM
+                tables are materialized read models with some compatibility paths.
+              </p>
+            </div>
+            <div class="panel">
+              <h3>Signal queue</h3>
+              <p class="small">
+                Lifecycle controls are queued as events and consumed by a per-run signal consumer,
+                giving the system recovery semantics after crashes.
+              </p>
+            </div>
+          </div>
+          <div class="band">
+            <strong>Most important caveat:</strong> Task-World is event-backed, not purely
+            event-sourced. Compatibility mutations, embedded snapshots, direct apply methods, and
+            legacy replay expansion are intentional but increase drift risk. Some architecture
+            docs also lag the code, especially around runner variants.
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="System Map">
+        <div class="slide-inner">
+          <h2>System map</h2>
+          <p class="section-kicker">
+            The system is organized around a small number of top-level modules, with workflows
+            coordinating config, state, database projections, git worktrees, and runner backends.
+          </p>
+          <div class="diagram-wrap">
+            <svg class="diagram" viewBox="0 0 1180 650" role="img" aria-label="System relationship map">
+              <defs>
+                <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#768493"></path>
+                </marker>
+              </defs>
+              <g class="node">
+                <rect x="500" y="30" width="180" height="64" rx="8"></rect>
+                <text x="590" y="58" text-anchor="middle">api</text>
+                <text x="590" y="78" text-anchor="middle" class="sub">REST, WebSocket, MCP</text>
+              </g>
+              <g class="node">
+                <rect x="500" y="150" width="180" height="64" rx="8"></rect>
+                <text x="590" y="178" text-anchor="middle">workflow</text>
+                <text x="590" y="198" text-anchor="middle" class="sub">engine, service, signals</text>
+              </g>
+              <g class="node">
+                <rect x="115" y="150" width="178" height="64" rx="8"></rect>
+                <text x="204" y="178" text-anchor="middle">config</text>
+                <text x="204" y="198" text-anchor="middle" class="sub">routines and enums</text>
+              </g>
+              <g class="node">
+                <rect x="305" y="300" width="178" height="64" rx="8"></rect>
+                <text x="394" y="328" text-anchor="middle">state</text>
+                <text x="394" y="348" text-anchor="middle" class="sub">runtime Pydantic models</text>
+              </g>
+              <g class="node">
+                <rect x="582" y="300" width="178" height="64" rx="8"></rect>
+                <text x="671" y="328" text-anchor="middle">db</text>
+                <text x="671" y="348" text-anchor="middle" class="sub">events and projections</text>
+              </g>
+              <g class="node">
+                <rect x="872" y="300" width="178" height="64" rx="8"></rect>
+                <text x="961" y="328" text-anchor="middle">runners</text>
+                <text x="961" y="348" text-anchor="middle" class="sub">agent backends</text>
+              </g>
+              <g class="node">
+                <rect x="210" y="485" width="178" height="64" rx="8"></rect>
+                <text x="299" y="513" text-anchor="middle">git</text>
+                <text x="299" y="533" text-anchor="middle" class="sub">worktrees, diffs, merges</text>
+              </g>
+              <g class="node">
+                <rect x="490" y="485" width="178" height="64" rx="8"></rect>
+                <text x="579" y="513" text-anchor="middle">envfiles</text>
+                <text x="579" y="533" text-anchor="middle" class="sub">secret file lifecycle</text>
+              </g>
+              <g class="node">
+                <rect x="770" y="485" width="178" height="64" rx="8"></rect>
+                <text x="859" y="513" text-anchor="middle">cli</text>
+                <text x="859" y="533" text-anchor="middle" class="sub">Click commands</text>
+              </g>
+              <path class="edge blue" d="M590 94 V146"></path>
+              <path class="edge" d="M500 182 H298"></path>
+              <path class="edge" d="M558 214 C520 250 450 270 408 300"></path>
+              <path class="edge green" d="M632 214 C660 250 668 270 671 300"></path>
+              <path class="edge violet" d="M680 182 C778 190 886 244 945 300"></path>
+              <path class="edge" d="M530 214 C420 300 342 405 306 485"></path>
+              <path class="edge" d="M590 214 C585 315 582 404 579 485"></path>
+              <path class="edge" d="M859 485 C825 390 748 250 680 182"></path>
+            </svg>
+          </div>
+          <div class="legend">
+            <span><i class="swatch blue"></i> External interface</span>
+            <span><i class="swatch green"></i> Durable persistence path</span>
+            <span><i class="swatch"></i> Dependency and data flow</span>
+            <span><i class="swatch" style="background: var(--violet)"></i> Runner dispatch</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Routines">
+        <div class="slide-inner">
+          <h2>How routines work</h2>
+          <p class="section-kicker">
+            A routine is the task template. A run is a materialized instance of that template with
+            generated runtime IDs, selected runner config, worktree metadata, and progress state.
+          </p>
+          <div class="diagram-wrap">
+            <svg class="diagram" viewBox="0 0 1180 520" role="img" aria-label="Routine to run flow">
+              <defs>
+                <marker id="arrow2" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#768493"></path>
+                </marker>
+              </defs>
+              <g class="node">
+                <rect x="40" y="80" width="190" height="70" rx="8"></rect>
+                <text x="135" y="110" text-anchor="middle">routine.yaml</text>
+                <text x="135" y="132" text-anchor="middle" class="sub">steps, tasks, gates</text>
+              </g>
+              <g class="node">
+                <rect x="295" y="80" width="210" height="70" rx="8"></rect>
+                <text x="400" y="110" text-anchor="middle">RoutineConfig</text>
+                <text x="400" y="132" text-anchor="middle" class="sub">Pydantic validation</text>
+              </g>
+              <g class="node">
+                <rect x="570" y="80" width="215" height="70" rx="8"></rect>
+                <text x="677" y="110" text-anchor="middle">Run</text>
+                <text x="677" y="132" text-anchor="middle" class="sub">runtime step/task IDs</text>
+              </g>
+              <g class="node">
+                <rect x="850" y="80" width="240" height="70" rx="8"></rect>
+                <text x="970" y="110" text-anchor="middle">RunCreated events</text>
+                <text x="970" y="132" text-anchor="middle" class="sub">projected into DB tables</text>
+              </g>
+              <g class="node">
+                <rect x="295" y="265" width="210" height="84" rx="8"></rect>
+                <text x="400" y="296" text-anchor="middle">Provenance</text>
+                <text x="400" y="318" text-anchor="middle" class="sub">routine_path</text>
+                <text x="400" y="338" text-anchor="middle" class="sub">routine_commit</text>
+              </g>
+              <g class="node">
+                <rect x="570" y="265" width="215" height="84" rx="8"></rect>
+                <text x="677" y="296" text-anchor="middle">Embedded snapshot</text>
+                <text x="677" y="318" text-anchor="middle" class="sub">routine_embedded</text>
+                <text x="677" y="338" text-anchor="middle" class="sub">used at execution time</text>
+              </g>
+              <g class="node">
+                <rect x="850" y="265" width="240" height="84" rx="8"></rect>
+                <text x="970" y="296" text-anchor="middle">Worktree</text>
+                <text x="970" y="318" text-anchor="middle" class="sub">orchestrator/run-&lt;id&gt;</text>
+                <text x="970" y="338" text-anchor="middle" class="sub">isolated branch</text>
+              </g>
+              <path class="edge blue" marker-end="url(#arrow2)" d="M230 115 H292"></path>
+              <path class="edge blue" marker-end="url(#arrow2)" d="M505 115 H566"></path>
+              <path class="edge green" marker-end="url(#arrow2)" d="M785 115 H846"></path>
+              <path class="edge" marker-end="url(#arrow2)" d="M400 150 V260"></path>
+              <path class="edge green" marker-end="url(#arrow2)" d="M677 150 V260"></path>
+              <path class="edge" marker-end="url(#arrow2)" d="M790 145 C870 182 943 218 970 260"></path>
+            </svg>
+          </div>
+          <p class="footer-note">
+            Key constraints: existing runs keep the embedded snapshot; <span class="code">ref</span>
+            and <span class="code">use</span> are rejected; external step files are supported but
+            exclusive with inline step fields; git versioning records a dirty flag rather than
+            forcing clean commits. Evidence: config models, loader, discovery, factory, and run API paths in
+            <span class="code">src/orchestrator/config</span>,
+            <span class="code">src/orchestrator/state/factory.py</span>, and
+            <span class="code">src/orchestrator/api/routers/runs.py</span>.
+          </p>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Execution Loop">
+        <div class="slide-inner">
+          <h2>Builder/verifier execution loop</h2>
+          <p class="section-kicker">
+            Each task moves through a builder phase and verifier phase with fresh LLM context. The
+            orchestrator gates the transition, retries revisions, and records attempts.
+          </p>
+          <div class="diagram-wrap">
+            <svg class="diagram" viewBox="0 0 1180 560" role="img" aria-label="Task execution loop">
+              <defs>
+                <marker id="arrow3" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#768493"></path>
+                </marker>
+              </defs>
+              <g class="node">
+                <rect x="70" y="90" width="160" height="64" rx="8"></rect>
+                <text x="150" y="118" text-anchor="middle">Pending</text>
+                <text x="150" y="138" text-anchor="middle" class="sub">task selected</text>
+              </g>
+              <g class="node">
+                <rect x="310" y="90" width="180" height="64" rx="8"></rect>
+                <text x="400" y="118" text-anchor="middle">Building</text>
+                <text x="400" y="138" text-anchor="middle" class="sub">fresh builder context</text>
+              </g>
+              <g class="node">
+                <rect x="575" y="90" width="180" height="64" rx="8"></rect>
+                <text x="665" y="118" text-anchor="middle">Verifying</text>
+                <text x="665" y="138" text-anchor="middle" class="sub">fresh verifier context</text>
+              </g>
+              <g class="node">
+                <rect x="835" y="40" width="180" height="64" rx="8"></rect>
+                <text x="925" y="68" text-anchor="middle">Completed</text>
+                <text x="925" y="88" text-anchor="middle" class="sub">grade gates pass</text>
+              </g>
+              <g class="node">
+                <rect x="835" y="165" width="180" height="64" rx="8"></rect>
+                <text x="925" y="193" text-anchor="middle">Failed</text>
+                <text x="925" y="213" text-anchor="middle" class="sub">attempts exhausted</text>
+              </g>
+              <g class="node">
+                <rect x="575" y="325" width="180" height="64" rx="8"></rect>
+                <text x="665" y="353" text-anchor="middle">Recovering</text>
+                <text x="665" y="373" text-anchor="middle" class="sub">validation crash path</text>
+              </g>
+              <g class="node">
+                <rect x="310" y="325" width="180" height="64" rx="8"></rect>
+                <text x="400" y="353" text-anchor="middle">User action</text>
+                <text x="400" y="373" text-anchor="middle" class="sub">approval or clarification</text>
+              </g>
+              <path class="edge blue" marker-end="url(#arrow3)" d="M230 122 H306"></path>
+              <path class="edge blue" marker-end="url(#arrow3)" d="M490 122 H571"></path>
+              <path class="edge green" marker-end="url(#arrow3)" d="M755 107 C790 95 812 83 832 73"></path>
+              <path class="edge red" marker-end="url(#arrow3)" d="M755 145 C790 158 812 176 832 195"></path>
+              <path class="edge yellow" marker-end="url(#arrow3)" d="M665 154 C665 205 590 260 490 322"></path>
+              <path class="edge yellow" marker-end="url(#arrow3)" d="M400 325 V158"></path>
+              <path class="edge red" marker-end="url(#arrow3)" d="M665 154 V321"></path>
+              <path class="edge yellow" marker-end="url(#arrow3)" d="M575 357 H493"></path>
+            </svg>
+          </div>
+          <div class="legend">
+            <span><i class="swatch blue"></i> Normal phase progress</span>
+            <span><i class="swatch green"></i> Accepted result</span>
+            <span><i class="swatch" style="background: var(--yellow)"></i> Revision or human path</span>
+            <span><i class="swatch red"></i> Failure path</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Run State Machine">
+        <div class="slide-inner">
+          <h2>Run lifecycle state machine</h2>
+          <p class="section-kicker">
+            The lifecycle adds <span class="code">stopping</span> as an observable intermediate
+            state so a pause can be requested while an agent process is being cancelled.
+          </p>
+          <div class="grid cols-2">
+            <div class="diagram-wrap">
+              <svg class="diagram" viewBox="0 0 560 520" role="img" aria-label="Run state transitions">
+                <defs>
+                  <marker id="arrow4" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                    <path d="M0,0 L0,6 L9,3 z" fill="#768493"></path>
+                  </marker>
+                </defs>
+                <g class="node">
+                  <rect x="55" y="55" width="135" height="56" rx="8"></rect>
+                  <text x="122" y="88" text-anchor="middle">draft</text>
+                </g>
+                <g class="node">
+                  <rect x="295" y="55" width="135" height="56" rx="8"></rect>
+                  <text x="362" y="88" text-anchor="middle">active</text>
+                </g>
+                <g class="node">
+                  <rect x="295" y="190" width="135" height="56" rx="8"></rect>
+                  <text x="362" y="223" text-anchor="middle">stopping</text>
+                </g>
+                <g class="node">
+                  <rect x="55" y="190" width="135" height="56" rx="8"></rect>
+                  <text x="122" y="223" text-anchor="middle">paused</text>
+                </g>
+                <g class="node">
+                  <rect x="55" y="360" width="135" height="56" rx="8"></rect>
+                  <text x="122" y="393" text-anchor="middle">failed</text>
+                </g>
+                <g class="node">
+                  <rect x="295" y="360" width="135" height="56" rx="8"></rect>
+                  <text x="362" y="393" text-anchor="middle">completed</text>
+                </g>
+                <path class="edge blue" marker-end="url(#arrow4)" d="M190 83 H292"></path>
+                <path class="edge yellow" marker-end="url(#arrow4)" d="M362 111 V187"></path>
+                <path class="edge yellow" marker-end="url(#arrow4)" d="M295 218 H193"></path>
+                <path class="edge green" marker-end="url(#arrow4)" d="M190 218 H292"></path>
+                <path class="edge green" marker-end="url(#arrow4)" d="M362 246 V357"></path>
+                <path class="edge red" marker-end="url(#arrow4)" d="M122 246 V357"></path>
+                <path class="edge red" marker-end="url(#arrow4)" d="M332 246 C260 300 190 330 134 357"></path>
+              </svg>
+            </div>
+            <div class="panel">
+              <h3>Lifecycle invariants</h3>
+              <ul>
+                <li><span class="code">start_run</span> enqueues <span class="code">RUN_START</span>; the consumer applies <span class="code">draft -&gt; active</span>.</li>
+                <li><span class="code">pause_run</span> first applies <span class="code">active -&gt; stopping</span>, then enqueues <span class="code">PAUSE</span>.</li>
+                <li><span class="code">resume_run</span> enqueues <span class="code">RESUME</span>; the consumer applies <span class="code">paused -&gt; active</span>.</li>
+                <li><span class="code">cancel_run</span> enqueues <span class="code">CANCEL</span>; the consumer applies terminal failure.</li>
+                <li>Executor failures, stale-run startup repair, and clarification response handling can call <span class="code">apply_*</span> methods directly.</li>
+              </ul>
+              <p class="small">
+                Evidence: <span class="code">WorkflowService</span>, <span class="code">SignalConsumer</span>,
+                <span class="code">RunWorkflow</span>, <span class="code">api/app.py</span>, and
+                <span class="code">api/routers/clarifications.py</span> expose this split between enqueue methods and apply methods.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Events">
+        <div class="slide-inner">
+          <h2>Event and projection flow</h2>
+          <p class="section-kicker">
+            Workflow changes are appended to <span class="code">events_v2</span>, synchronously
+            projected into read-model tables, written to the JSONL history outbox, and broadcast
+            to connected UIs.
+          </p>
+          <div class="diagram-wrap">
+            <svg class="diagram" viewBox="0 0 1180 560" role="img" aria-label="Event flow">
+              <defs>
+                <marker id="arrow5" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#768493"></path>
+                </marker>
+              </defs>
+              <g class="node">
+                <rect x="65" y="95" width="170" height="64" rx="8"></rect>
+                <text x="150" y="123" text-anchor="middle">API / runner</text>
+                <text x="150" y="143" text-anchor="middle" class="sub">command intent</text>
+              </g>
+              <g class="node">
+                <rect x="300" y="95" width="190" height="64" rx="8"></rect>
+                <text x="395" y="123" text-anchor="middle">WorkflowService</text>
+                <text x="395" y="143" text-anchor="middle" class="sub">command handler</text>
+              </g>
+              <g class="node">
+                <rect x="555" y="95" width="190" height="64" rx="8"></rect>
+                <text x="650" y="123" text-anchor="middle">events_v2</text>
+                <text x="650" y="143" text-anchor="middle" class="sub">append-only log</text>
+              </g>
+              <g class="node">
+                <rect x="815" y="95" width="210" height="64" rx="8"></rect>
+                <text x="920" y="123" text-anchor="middle">ProjectionRegistry</text>
+                <text x="920" y="143" text-anchor="middle" class="sub">same transaction</text>
+              </g>
+              <g class="node">
+                <rect x="130" y="310" width="190" height="70" rx="8"></rect>
+                <text x="225" y="340" text-anchor="middle">RunStateProjector</text>
+                <text x="225" y="362" text-anchor="middle" class="sub">runs, steps</text>
+              </g>
+              <g class="node">
+                <rect x="390" y="310" width="190" height="70" rx="8"></rect>
+                <text x="485" y="340" text-anchor="middle">TaskStateProjector</text>
+                <text x="485" y="362" text-anchor="middle" class="sub">tasks, attempts</text>
+              </g>
+              <g class="node">
+                <rect x="650" y="310" width="210" height="70" rx="8"></rect>
+                <text x="755" y="340" text-anchor="middle">LifecycleProjector</text>
+                <text x="755" y="362" text-anchor="middle" class="sub">active and terminal runs</text>
+              </g>
+              <g class="node">
+                <rect x="905" y="310" width="180" height="70" rx="8"></rect>
+                <text x="995" y="340" text-anchor="middle">JSONL outbox</text>
+                <text x="995" y="362" text-anchor="middle" class="sub">history.jsonl</text>
+              </g>
+              <path class="edge blue" marker-end="url(#arrow5)" d="M235 127 H296"></path>
+              <path class="edge green" marker-end="url(#arrow5)" d="M490 127 H551"></path>
+              <path class="edge green" marker-end="url(#arrow5)" d="M745 127 H811"></path>
+              <path class="edge" marker-end="url(#arrow5)" d="M880 159 C730 230 420 260 225 306"></path>
+              <path class="edge" marker-end="url(#arrow5)" d="M905 159 C780 230 610 270 485 306"></path>
+              <path class="edge yellow" marker-end="url(#arrow5)" d="M940 159 C905 225 820 270 755 306"></path>
+              <path class="edge" marker-end="url(#arrow5)" d="M970 159 C1015 220 1005 270 995 306"></path>
+            </svg>
+          </div>
+          <div class="grid cols-3" style="margin-top: 18px">
+            <div class="quiet-panel">
+              <h3>Strength</h3>
+              <p class="small">Projection failures abort append transactions, so the event log and read models are intended to stay consistent.</p>
+            </div>
+            <div class="quiet-panel">
+              <h3>Migration scar</h3>
+              <p class="small">Legacy run snapshots can be expanded into child projection events during replay.</p>
+            </div>
+            <div class="quiet-panel">
+              <h3>Risk</h3>
+              <p class="small">Every new event type needs matching event schema, command handler, projector behavior, and tests.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Signals">
+        <div class="slide-inner">
+          <h2>Signal queue model</h2>
+          <p class="section-kicker">
+            Signals are one-time control commands persisted as events. They let API calls request
+            lifecycle changes without directly owning the executor loop.
+          </p>
+          <div class="grid cols-2">
+            <div class="panel">
+              <h3>Signal types</h3>
+              <table class="table">
+                <thead>
+                  <tr><th>Signal</th><th>Purpose</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td><span class="code">RUN_START</span></td><td>Register and start a run workflow.</td></tr>
+                  <tr><td><span class="code">RESUME</span></td><td>Restart a paused workflow, optionally with a new runner config.</td></tr>
+                  <tr><td><span class="code">PAUSE</span></td><td>Set paused state and stop executor progress.</td></tr>
+                  <tr><td><span class="code">CANCEL</span></td><td>Mark run failed and clean up execution.</td></tr>
+                  <tr><td><span class="code">ACTIVITY_COMPLETED</span></td><td>External activity completed builder phase.</td></tr>
+                  <tr><td><span class="code">ACTIVITY_VERIFIED</span></td><td>External activity completed verifier phase.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel">
+              <h3>Delivery semantics</h3>
+              <ul>
+                <li><span class="code">SignalEnqueued</span> is appended first.</li>
+                <li>The consumer processes pending signals FIFO per run.</li>
+                <li><span class="code">SignalProcessed</span> is appended only after handler success.</li>
+                <li>If a handler fails, the signal remains eligible for redelivery on restart.</li>
+                <li>A signal can interrupt between runner phases, not always mid-subprocess.</li>
+              </ul>
+              <p class="small">
+                This model is strong for crash recovery but creates timing cases: an API call can
+                return before the projected lifecycle transition has been consumed.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="State Replicas">
+        <div class="slide-inner">
+          <h2>The central weakness: state has many shapes</h2>
+          <p class="section-kicker">
+            The architecture trades isolation and recovery for duplication. The highest-risk bugs
+            appear where these shapes diverge.
+          </p>
+          <div class="diagram-wrap">
+            <svg class="diagram" viewBox="0 0 1180 620" role="img" aria-label="State representation relationships">
+              <defs>
+                <marker id="arrow6" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                  <path d="M0,0 L0,6 L9,3 z" fill="#768493"></path>
+                </marker>
+              </defs>
+              <g class="node">
+                <rect x="495" y="35" width="210" height="68" rx="8"></rect>
+                <text x="600" y="64" text-anchor="middle">RoutineConfig</text>
+                <text x="600" y="84" text-anchor="middle" class="sub">template schema</text>
+              </g>
+              <g class="node">
+                <rect x="115" y="205" width="210" height="68" rx="8"></rect>
+                <text x="220" y="234" text-anchor="middle">state.Run</text>
+                <text x="220" y="254" text-anchor="middle" class="sub">runtime Pydantic model</text>
+              </g>
+              <g class="node">
+                <rect x="410" y="205" width="210" height="68" rx="8"></rect>
+                <text x="515" y="234" text-anchor="middle">WorkflowEvent</text>
+                <text x="515" y="254" text-anchor="middle" class="sub">event payload schema</text>
+              </g>
+              <g class="node">
+                <rect x="705" y="205" width="210" height="68" rx="8"></rect>
+                <text x="810" y="234" text-anchor="middle">Command models</text>
+                <text x="810" y="254" text-anchor="middle" class="sub">write intent schema</text>
+              </g>
+              <g class="node">
+                <rect x="260" y="420" width="210" height="68" rx="8"></rect>
+                <text x="365" y="449" text-anchor="middle">ORM models</text>
+                <text x="365" y="469" text-anchor="middle" class="sub">runs, tasks, attempts</text>
+              </g>
+              <g class="node">
+                <rect x="590" y="420" width="210" height="68" rx="8"></rect>
+                <text x="695" y="449" text-anchor="middle">API schemas</text>
+                <text x="695" y="469" text-anchor="middle" class="sub">UI contract</text>
+              </g>
+              <g class="node">
+                <rect x="890" y="420" width="210" height="68" rx="8"></rect>
+                <text x="995" y="449" text-anchor="middle">UI state</text>
+                <text x="995" y="469" text-anchor="middle" class="sub">React queries and views</text>
+              </g>
+              <path class="edge blue" marker-end="url(#arrow6)" d="M570 103 C500 150 320 170 230 202"></path>
+              <path class="edge green" marker-end="url(#arrow6)" d="M325 238 H407"></path>
+              <path class="edge green" marker-end="url(#arrow6)" d="M620 238 H702"></path>
+              <path class="edge green" marker-end="url(#arrow6)" d="M515 273 C480 335 420 370 365 416"></path>
+              <path class="edge" marker-end="url(#arrow6)" d="M470 454 H586"></path>
+              <path class="edge" marker-end="url(#arrow6)" d="M800 454 H886"></path>
+              <path class="edge red" marker-end="url(#arrow6)" d="M220 273 C190 365 235 430 258 454"></path>
+              <path class="edge red" marker-end="url(#arrow6)" d="M810 273 C760 340 725 380 700 416"></path>
+            </svg>
+          </div>
+          <div class="band">
+            <strong>Architectural consequence:</strong> Tests that prove one layer behaves
+            correctly may not prove that event replay, API presentation, UI state, and worktree
+            side effects stay aligned. This is the dominant source of accidental breakage.
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Weaknesses">
+        <div class="slide-inner">
+          <h2>Weaknesses that make regressions easy</h2>
+          <p class="section-kicker">
+            These are not generic complaints; they map to recent commits, tech-debt notes, and
+            code shapes in the current repository.
+          </p>
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Weakness</th>
+                <th>Why it breaks things</th>
+                <th>Current mitigation</th>
+                <th>Residual risk</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Hybrid event sourcing</td>
+                <td>Events, projections, legacy snapshots, and direct apply methods can drift.</td>
+                <td>Projection registry, replay tests, event-first command handlers.</td>
+                <td class="score high">High</td>
+              </tr>
+              <tr>
+                <td>Runner diversity</td>
+                <td>CLI, SDK, OpenHands, and Codex server paths have different failure and callback semantics; docs still mention removed or unavailable variants.</td>
+                <td>Shared runner protocol and phase handler.</td>
+                <td class="score high">High</td>
+              </tr>
+              <tr>
+                <td>Worktree side effects</td>
+                <td>Correctness depends on branch state, commits, resets, env files, and cleanup.</td>
+                <td>Dedicated git module and worktree tests.</td>
+                <td class="score med">Medium</td>
+              </tr>
+              <tr>
+                <td>Parent/child oversight</td>
+                <td>Child run state feeds parent decisions, merge queues, evidence bundles, and recovery behavior.</td>
+                <td>Pure oversight reducer and boundary checks.</td>
+                <td class="score high">High</td>
+              </tr>
+              <tr>
+                <td>Uneven guardrails</td>
+                <td>Module import checks are active; signal-routing checker is currently a placeholder.</td>
+                <td>Pre-commit hooks and architecture docs.</td>
+                <td class="score med">Medium</td>
+              </tr>
+              <tr>
+                <td>Broad public facades</td>
+                <td>Top-level modules re-export large surfaces, including some private helpers for compatibility.</td>
+                <td>Import-boundary script catches deep cross-package imports.</td>
+                <td class="score med">Medium</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Testing">
+        <div class="slide-inner">
+          <h2>Why effective tests are hard</h2>
+          <p class="section-kicker">
+            The project correctly forbids broad mocking, which improves confidence but forces many
+            real integration surfaces into tests.
+          </p>
+          <div class="grid cols-3">
+            <div class="panel">
+              <h3>Async control flow</h3>
+              <ul>
+                <li>Signals can be queued before they are applied.</li>
+                <li>Consumer and executor loops run concurrently per run.</li>
+                <li>Agent output is persisted out of band.</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>Durable replay</h3>
+              <ul>
+                <li>Tests need to cover event append and projection rebuild.</li>
+                <li>Old events may expand into modern projection events.</li>
+                <li>Read-model corruption tests are valuable but not exhaustive.</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>External execution</h3>
+              <ul>
+                <li>Worktrees require real git repos and branch operations.</li>
+                <li>Agent runners depend on subprocesses, SDKs, local servers, and callbacks.</li>
+                <li>UI sees async states through REST, SSE, and WebSocket surfaces.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="callout" style="margin-top: 22px">
+            <h3>Testing implication</h3>
+            <p>
+              The most protective tests are not small unit tests of transition helpers alone. They
+              are focused integration tests that append events, rebuild projections, drive lifecycle
+              signals, touch real worktrees, and assert the API shape the UI consumes.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="History">
+        <div class="slide-inner">
+          <h2>What git history says</h2>
+          <p class="section-kicker">
+            Recent history is dominated by event-sourcing migration, parent/child recovery,
+            runner abstraction, and worktree isolation. That is a strong signal about where the
+            architecture is expensive to change.
+          </p>
+          <div class="timeline">
+            <div class="timebox">
+              <strong>8207de09</strong>
+              <span>Large squash merge near event-source work and projection changes.</span>
+            </div>
+            <div class="timebox">
+              <strong>0475d5a9</strong>
+              <span>Event-source architecture docs and migration planning.</span>
+            </div>
+            <div class="timebox">
+              <strong>d14ed0d8</strong>
+              <span>Harden super-parent oversight loop, cascade, recovery.</span>
+            </div>
+            <div class="timebox">
+              <strong>f7e5bd9f</strong>
+              <span>Fix parent/child cascade losing recovery on server shutdown.</span>
+            </div>
+            <div class="timebox">
+              <strong>5b04b2d9</strong>
+              <span>Codex transport limit-overrun regression tests.</span>
+            </div>
+            <div class="timebox">
+              <strong>58219531</strong>
+              <span>Align agent runner naming and remove partial phases.</span>
+            </div>
+          </div>
+          <div class="band">
+            <strong>Read from history:</strong> the recurring failure modes are not ordinary syntax
+            or local logic bugs. They are lifecycle ordering bugs, event/projection consistency
+            bugs, runner callback mismatches, and parent/child recovery gaps.
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Can Change">
+        <div class="slide-inner">
+          <h2>What can and cannot be changed</h2>
+          <p class="section-kicker">
+            The architecture is changeable, but changes have different blast radiuses depending on
+            whether they touch templates, runtime state, durable events, or worktree behavior.
+          </p>
+          <div class="grid cols-2">
+            <div class="panel">
+              <h3>Low to moderate blast radius</h3>
+              <ul>
+                <li>Routine text, requirements, and rubrics for future runs.</li>
+                <li>New task-level auto-verify commands that obey validation rules.</li>
+                <li>UI presentation changes that do not alter REST schemas.</li>
+                <li>New public exports from module roots, with import checks passing.</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>High blast radius</h3>
+              <ul>
+                <li>Event payload shape or event type names.</li>
+                <li>Task/run state enum changes.</li>
+                <li>Run lifecycle semantics around <span class="code">stopping</span>, pause, resume, or cancel.</li>
+                <li>Runner callback contracts and external REST/MCP callback behavior.</li>
+                <li>Worktree branch naming, reset, commit, or merge assumptions.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="band">
+            <strong>Rule of thumb:</strong> if a change crosses from config into runtime state,
+            event payloads, DB projection logic, or worktree operations, design the migration and
+            replay path first. Otherwise tests can pass on new runs and still break existing ones.
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Recommendations">
+        <div class="slide-inner">
+          <h2>Recommended architecture safeguards</h2>
+          <p class="section-kicker">
+            These are scoped to the current architecture; they aim to reduce accidental breakage
+            without a rewrite.
+          </p>
+          <div class="grid cols-2">
+            <div class="panel">
+              <h3>Strengthen contracts</h3>
+              <ul>
+                <li>Maintain an explicit event compatibility matrix: event type, projector, API surface, replay test.</li>
+                <li>Promote signal-routing checks from placeholder to active AST rules for direct lifecycle mutations outside allowed files.</li>
+                <li>Keep enum exports generated and compare backend/frontend state names in CI.</li>
+                <li>Document which <span class="code">apply_*</span> methods are consumer-only versus executor self-pause paths.</li>
+              </ul>
+            </div>
+            <div class="panel">
+              <h3>Improve protection</h3>
+              <ul>
+                <li>Add golden replay scenarios for old and current runs after each event schema change.</li>
+                <li>Exercise pause/resume/cancel via API plus signal consumer, not only service methods.</li>
+                <li>Keep runner contract tests backend-neutral, then add small backend-specific failure cases.</li>
+                <li>Test routines with external step files and embedded routine snapshots across schema changes.</li>
+              </ul>
+            </div>
+          </div>
+          <div class="callout" style="margin-top: 22px">
+            <h3>Bottom line</h3>
+            <p>
+              Task-World's architecture is coherent but fragile at boundaries. The best next
+              improvements are boundary checks, replay tests, and narrower runner contracts rather
+              than broader abstractions.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="slide" data-title="Verification">
+        <div class="slide-inner">
+          <h2>How this deck was verified</h2>
+          <p class="section-kicker">
+            I used both direct code inspection and antagonist mini-agent passes to avoid presenting
+            a clean story that the code does not actually support.
+          </p>
+          <div class="grid cols-3">
+            <div class="panel">
+              <h3>Affirmative pass</h3>
+              <p class="small">
+                A gpt-5.4-mini explorer tried to prove the architecture claims true with file
+                references. It confirmed routine snapshots, signal/event intent, module boundaries,
+                and drift risks.
+              </p>
+            </div>
+            <div class="panel">
+              <h3>Negative pass</h3>
+              <p class="small">
+                A paired gpt-5.4-mini explorer was assigned to find overclaims and exceptions:
+                compatibility paths, direct apply methods, stale docs, and weaker guardrails.
+              </p>
+            </div>
+            <div class="panel">
+              <h3>Local render pass</h3>
+              <p class="small">
+                The presentation is self-contained HTML with inline SVG diagrams so it can be
+                opened from disk and checked without network access.
+              </p>
+            </div>
+          </div>
+          <table class="table">
+            <thead>
+              <tr><th>Evidence area</th><th>Primary files reviewed</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Routines</td><td><span class="code">config/models.py</span>, <span class="code">config/routines/*.py</span>, <span class="code">state/factory.py</span></td></tr>
+              <tr><td>State machines</td><td><span class="code">config/enums.py</span>, <span class="code">workflow/engine/transitions.py</span>, <span class="code">workflow/service.py</span></td></tr>
+              <tr><td>Signals/events</td><td><span class="code">workflow/signals/*.py</span>, <span class="code">workflow/events/types.py</span>, <span class="code">db/projections/*.py</span></td></tr>
+              <tr><td>History</td><td><span class="code">git log</span> over workflow, db, runner, and docs paths.</td></tr>
+              <tr><td>Counterexamples</td><td>Direct <span class="code">apply_*</span> paths, broad <span class="code">__init__.py</span> exports, stale runner docs, dirty routine versioning.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <nav class="nav" aria-label="Slide navigation">
+      <button type="button" id="prev" aria-label="Previous slide">&lt;</button>
+      <span id="slide-count">1 / 15</span>
+      <button type="button" id="next" aria-label="Next slide">&gt;</button>
+    </nav>
+
+    <script>
+      const deck = document.getElementById("deck");
+      const slides = Array.from(document.querySelectorAll(".slide"));
+      const count = document.getElementById("slide-count");
+      let index = 0;
+
+      function setIndex(nextIndex) {
+        index = Math.max(0, Math.min(slides.length - 1, nextIndex));
+        slides[index].scrollIntoView({ behavior: "smooth", block: "start" });
+        updateCount();
+      }
+
+      function updateCount() {
+        count.textContent = `${index + 1} / ${slides.length}`;
+      }
+
+      document.getElementById("prev").addEventListener("click", () => setIndex(index - 1));
+      document.getElementById("next").addEventListener("click", () => setIndex(index + 1));
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "ArrowDown" || event.key === "PageDown" || event.key === " ") {
+          event.preventDefault();
+          setIndex(index + 1);
+        }
+        if (event.key === "ArrowUp" || event.key === "PageUp") {
+          event.preventDefault();
+          setIndex(index - 1);
+        }
+        if (event.key === "Home") {
+          event.preventDefault();
+          setIndex(0);
+        }
+        if (event.key === "End") {
+          event.preventDefault();
+          setIndex(slides.length - 1);
+        }
+      });
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          const visible = entries
+            .filter((entry) => entry.isIntersecting)
+            .sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+          if (!visible) return;
+          index = slides.indexOf(visible.target);
+          updateCount();
+        },
+        { root: deck, threshold: [0.55, 0.8] }
+      );
+      slides.forEach((slide) => observer.observe(slide));
+      updateCount();
+    </script>
+  </body>
+</html>

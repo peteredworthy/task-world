@@ -9,7 +9,7 @@ This document provides a high-level overview of the Orchestrator project structu
 **Backend API Server (FastAPI):**
 ```bash
 # Start the backend on port 8000
-uv run uvicorn scripts.serve:app --reload --port 8000
+uv run orchestrator serve --reload
 ```
 
 **Frontend UI (React/Vite):**

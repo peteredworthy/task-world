@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.config.enums import TaskStatus
 from orchestrator.db.orm.models import AttemptModel, StepModel, TaskModel
+from orchestrator.time_utils import format_utc_datetime
 from orchestrator.workflow import (
     ApprovalDecision,
     ApprovalRequested,
@@ -46,6 +47,11 @@ def _parse_datetime(value: Any) -> datetime | None:
     if isinstance(value, str):
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     return None
+
+
+def _datetime_param(value: Any) -> str | None:
+    parsed = _parse_datetime(value)
+    return format_utc_datetime(parsed) if parsed is not None else None
 
 
 def _attempt_from_snapshot(task_id: str, snapshot: dict[str, Any]) -> AttemptModel:
@@ -333,7 +339,7 @@ class TaskStateProjector:
                         "task_id": event.task_id,
                         "attempt_num": event.attempt_num,
                         "questions": _json.dumps(event.questions),
-                        "created_at": event.timestamp,
+                        "created_at": _datetime_param(event.timestamp),
                     },
                 )
             case ClarificationResponded():
@@ -354,7 +360,7 @@ class TaskStateProjector:
                         ),
                         {
                             "request_id": event.request_id,
-                            "responded_at": _parse_datetime(event.responded_at),
+                            "responded_at": _datetime_param(event.responded_at),
                         },
                     )
                 should_insert_response = (
@@ -371,7 +377,9 @@ class TaskStateProjector:
                     responded_by = (
                         event.responded_by or first_answer.get("answered_by") or "unknown"
                     )
-                    responded_at = _parse_datetime(event.responded_at) or event.timestamp
+                    responded_at = _datetime_param(event.responded_at) or _datetime_param(
+                        event.timestamp
+                    )
                     await session.execute(
                         text(
                             "INSERT OR IGNORE INTO clarification_responses"
@@ -425,7 +433,7 @@ class TaskStateProjector:
                         "task_id": event.task_id,
                         "attempt_num": event.attempt_num,
                         "attempt_id": event.attempt_id,
-                        "started_at": _parse_datetime(event.started_at),
+                        "started_at": _datetime_param(event.started_at),
                         "runner_type": event.runner_type,
                         "agent_model": event.agent_model,
                     },

@@ -80,6 +80,42 @@ steps:
     _git(["commit", "-m", f"Add directory routine {routine_id}"], cwd=repo)
 
 
+def _add_multifile_directory_routine(repo: Path, routine_id: str) -> None:
+    """Add a directory routine whose root YAML references external step files."""
+    routine_dir = repo / "routines" / routine_id
+    steps_dir = routine_dir / "steps"
+    steps_dir.mkdir(parents=True, exist_ok=True)
+
+    (routine_dir / "routine.yaml").write_text(
+        f"""routine:
+  id: {routine_id}
+  name: Multi-file Routine
+  description: A directory routine with step file references
+  inputs: []
+  steps:
+    - id: S-01
+      file: steps/step-01.yaml
+"""
+    )
+    (steps_dir / "step-01.yaml").write_text(
+        """step:
+  title: Referenced Step
+  tasks:
+    - id: T-01
+      title: Referenced Task
+      task_context: Do the referenced task
+      requirements:
+        - id: R-01
+          desc: Complete the referenced task
+          priority: critical
+      artifacts: []
+"""
+    )
+
+    _git(["add", "."], cwd=repo)
+    _git(["commit", "-m", f"Add multi-file routine {routine_id}"], cwd=repo)
+
+
 @pytest.fixture
 def repo_with_routines(tmp_path: Path, _base_repo: Path) -> Path:
     """Create a git repo with sample routines.
@@ -157,6 +193,20 @@ class TestDiscoverRoutinesInRepo:
         assert r.config.id == "with-scaffold"
         assert r.has_scaffolding is True
         assert r.scaffolding_path == "routines/with-scaffold/scaffolding/"
+
+    def test_discover_directory_routine_resolves_step_files(self, repo_with_routines: Path) -> None:
+        """Resolves file: step references for project routines read from git."""
+        _add_multifile_directory_routine(repo_with_routines, "multi-file")
+
+        routines = discover_routines_in_repo(repo_with_routines, "main")
+
+        assert len(routines) == 1
+        step = routines[0].config.steps[0]
+        assert step.id == "S-01"
+        assert step.file is None
+        assert step.title == "Referenced Step"
+        assert len(step.tasks) == 1
+        assert step.tasks[0].id == "T-01"
 
     def test_discover_mixed_routines(self, repo_with_routines: Path) -> None:
         """Discovers both flat and directory-based routines."""

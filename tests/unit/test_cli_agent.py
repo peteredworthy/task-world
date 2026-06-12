@@ -97,7 +97,7 @@ def test_model_parameter_no_args() -> None:
 def test_create_cli_agent_defaults_claude_max_turns() -> None:
     agent = create_cli_agent({"command": "claude"})
     assert "--max-turns" in agent._args  # pyright: ignore[reportPrivateUsage]
-    assert agent._args[agent._args.index("--max-turns") + 1] == "50"  # pyright: ignore[reportPrivateUsage]
+    assert agent._args[agent._args.index("--max-turns") + 1] == "200"  # pyright: ignore[reportPrivateUsage]
 
 
 def test_create_cli_agent_uses_configured_claude_max_turns() -> None:

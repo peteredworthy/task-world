@@ -2,15 +2,20 @@
 
 import subprocess
 from dataclasses import dataclass, field
+from pathlib import PurePosixPath
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 import yaml
 from pydantic import ValidationError
 
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.models import RoutineConfig
-from orchestrator.config.routines.errors import RoutineError
+from orchestrator.config.routines.errors import (
+    RoutineError,
+    RoutineParseError,
+    RoutineValidationError,
+)
 from orchestrator.config.routines.loader import load_routine_from_path
 
 
@@ -164,7 +169,11 @@ def discover_routines_in_repo(
     for file_path in routine_files:
         try:
             content = _git_show(repo_path, branch, file_path)
-            config = _parse_routine_content(content, file_path)
+            config = _parse_routine_content(
+                content,
+                file_path,
+                step_file_loader=lambda path: _git_show(repo_path, branch, path),
+            )
 
             # Check for scaffolding directory (directory-based routines only)
             scaffolding_path = None
@@ -254,7 +263,66 @@ def _git_show(repo_path: Path, ref: str, file_path: str) -> str:
     return result.stdout
 
 
-def _parse_routine_content(content: str, file_path: str) -> RoutineConfig:
+def _resolve_repo_step_files(
+    steps: list[Any],
+    routine_path: str,
+    step_file_loader: Callable[[str], str],
+    visited: set[str],
+) -> list[Any]:
+    """Resolve step file references from git-backed routine content."""
+    resolved: list[Any] = []
+    routine_dir = PurePosixPath(routine_path).parent
+
+    for raw_step in steps:
+        if not isinstance(raw_step, dict) or "file" not in raw_step:
+            resolved.append(raw_step)
+            continue
+
+        step: dict[str, Any] = cast(dict[str, Any], raw_step)
+        step_id = str(step.get("id", "<unknown>"))
+        file_ref = str(step["file"])
+        step_file = str(routine_dir / PurePosixPath(file_ref))
+
+        if step_file in visited:
+            raise RoutineValidationError(
+                routine_path,
+                [f"Step '{step_id}': circular reference detected for file '{file_ref}'"],
+            )
+
+        ext_content = step_file_loader(step_file)
+        try:
+            ext_raw: Any = yaml.safe_load(ext_content)
+        except yaml.YAMLError as e:
+            raise RoutineParseError(step_file, str(e)) from e
+
+        if ext_raw is None:
+            raise RoutineParseError(step_file, "Empty file")
+
+        if not isinstance(ext_raw, dict):
+            raise RoutineValidationError(
+                routine_path,
+                [f"Step '{step_id}': referenced file '{file_ref}' must contain a YAML mapping"],
+            )
+
+        ext_data: dict[str, Any] = cast(dict[str, Any], ext_raw)
+
+        if "step" in ext_data and len(ext_data) == 1:
+            inner = ext_data["step"]
+            if isinstance(inner, dict):
+                ext_data = cast(dict[str, Any], inner)
+
+        merged = dict(ext_data)
+        merged["id"] = step_id
+        resolved.append(merged)
+
+    return resolved
+
+
+def _parse_routine_content(
+    content: str,
+    file_path: str,
+    step_file_loader: Callable[[str], str] | None = None,
+) -> RoutineConfig:
     """Parse routine content from a YAML string.
 
     Args:
@@ -278,5 +346,18 @@ def _parse_routine_content(content: str, file_path: str) -> RoutineConfig:
     # Handle both wrapped and unwrapped format
     if isinstance(data, dict) and "routine" in data:
         data = cast(Any, data["routine"])
+
+    if (
+        step_file_loader is not None
+        and isinstance(data, dict)
+        and "steps" in data
+        and isinstance(data["steps"], list)
+    ):
+        data["steps"] = _resolve_repo_step_files(
+            cast(list[Any], data["steps"]),
+            file_path,
+            step_file_loader,
+            {file_path},
+        )
 
     return RoutineConfig.model_validate(data)

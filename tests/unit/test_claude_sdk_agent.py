@@ -773,7 +773,7 @@ class TestBuildMcpServers:
 
 def test_max_turns_default() -> None:
     agent = ClaudeSDKAgent(_environ={})
-    assert agent._max_turns == 50
+    assert agent._max_turns == 200
 
 
 def test_max_turns_custom() -> None:

@@ -56,12 +56,17 @@ logger = logging.getLogger(__name__)
 _LIST_LIMIT = 100
 
 
-def _parse_datetime(value: Any) -> datetime | str | None:
+def _parse_datetime(value: Any) -> datetime | None:
     if value is None or isinstance(value, datetime):
         return value
     if isinstance(value, str):
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     return None
+
+
+def _datetime_param(value: Any) -> str | None:
+    parsed = _parse_datetime(value)
+    return format_utc_datetime(parsed) if parsed is not None else None
 
 
 def _json_dump(value: Any) -> str:
@@ -239,11 +244,13 @@ class RunStateProjector:
                         "total_duration_ms": event.total_duration_ms,
                         "total_num_actions": event.total_num_actions,
                         "token_usage_by_model": _json_dump(event.token_usage_by_model),
-                        "created_at": _parse_datetime(event.created_at) or event.timestamp,
-                        "updated_at": _parse_datetime(event.updated_at) or event.timestamp,
-                        "started_at": _parse_datetime(event.started_at),
-                        "completed_at": _parse_datetime(event.completed_at),
-                        "runner_started_at": _parse_datetime(event.agent_runner_started_at),
+                        "created_at": _datetime_param(event.created_at)
+                        or _datetime_param(event.timestamp),
+                        "updated_at": _datetime_param(event.updated_at)
+                        or _datetime_param(event.timestamp),
+                        "started_at": _datetime_param(event.started_at),
+                        "completed_at": _datetime_param(event.completed_at),
+                        "runner_started_at": _datetime_param(event.agent_runner_started_at),
                     },
                 )
             case StepCreated():
@@ -528,12 +535,14 @@ class RunStateProjector:
                 "transition_tracker": _json_dump(snapshot.get("transition_tracker"))
                 if snapshot.get("transition_tracker") is not None
                 else None,
-                "created_at": _parse_datetime(snapshot.get("created_at")) or event.timestamp,
-                "updated_at": _parse_datetime(snapshot.get("updated_at")) or event.timestamp,
-                "started_at": _parse_datetime(snapshot.get("started_at")),
-                "completed_at": _parse_datetime(snapshot.get("completed_at")),
-                "runner_started_at": _parse_datetime(snapshot.get("agent_runner_started_at")),
-                "scheduled_resume_at": _parse_datetime(snapshot.get("scheduled_resume_at")),
+                "created_at": _datetime_param(snapshot.get("created_at"))
+                or _datetime_param(event.timestamp),
+                "updated_at": _datetime_param(snapshot.get("updated_at"))
+                or _datetime_param(event.timestamp),
+                "started_at": _datetime_param(snapshot.get("started_at")),
+                "completed_at": _datetime_param(snapshot.get("completed_at")),
+                "runner_started_at": _datetime_param(snapshot.get("agent_runner_started_at")),
+                "scheduled_resume_at": _datetime_param(snapshot.get("scheduled_resume_at")),
                 "total_tokens_read": snapshot.get("total_tokens_read", 0),
                 "total_tokens_write": snapshot.get("total_tokens_write", 0),
                 "total_tokens_cache": snapshot.get("total_tokens_cache", 0),

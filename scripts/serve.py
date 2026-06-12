@@ -1,9 +1,9 @@
 """Simple server entry point that configures routine directories.
 
 Usage:
-    uv run uvicorn scripts.serve:app --reload --port 8000
+    uv run orchestrator serve --reload
 or:
-    cd /Users/peter/code/task-world && uv run python -m uvicorn scripts.serve:app --reload --port 8000
+    cd /Users/peter/code/task-world && uv run python -m uvicorn scripts.serve:app --reload --reload-dir src --reload-dir scripts --port 8000
 """
 
 import json
@@ -136,7 +136,9 @@ for _i, _arg in enumerate(sys.argv):
             _target_port = int(sys.argv[_i + 1])
         except ValueError:
             pass
-if _target_port is None or _target_port == 8000:
+if os.environ.get("ORCHESTRATOR_SKIP_STALE_PORT_KILL") != "1" and (
+    _target_port is None or _target_port == 8000
+):
     _kill_stale_port_holders(8000)
 
 # Load .env file from project root (for OPENAI_API_KEY, etc.)

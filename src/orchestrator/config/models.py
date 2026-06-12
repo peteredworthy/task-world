@@ -305,7 +305,7 @@ class TaskConfig(BaseModel):
         has_rubric = bool(self.verifier.rubric)
 
         if not has_auto_verify and not has_rubric:
-            logger.warning(
+            logger.debug(
                 "Task '%s' ('%s') has no auto_verify items and no verifier rubric. "
                 "The verifier will have no criteria to grade against.",
                 self.id,
@@ -315,7 +315,7 @@ class TaskConfig(BaseModel):
             req_ids = {req.id for req in self.requirements}
             for item in self.verifier.rubric:
                 if item.id not in req_ids:
-                    logger.warning(
+                    logger.debug(
                         "Task '%s' ('%s'): rubric item '%s' does not match any "
                         "requirement id %s. If this is a composite item (e.g. 'R1-R3'), "
                         "consider splitting into per-requirement rubric items.",

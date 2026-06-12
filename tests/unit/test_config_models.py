@@ -413,11 +413,11 @@ def _make_routine(
     }
 
 
-def test_task_no_verification_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
-    """TaskConfig with no auto_verify and no verifier logs a warning."""
+def test_task_no_verification_logs_debug_diagnostic(caplog: pytest.LogCaptureFixture) -> None:
+    """TaskConfig with no auto_verify and no verifier logs a debug diagnostic."""
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="orchestrator.config.models"):
+    with caplog.at_level(logging.DEBUG, logger="orchestrator.config.models"):
         TaskConfig(id="T1", title="Task 1", task_context="ctx")
 
     assert any("no auto_verify" in record.message for record in caplog.records)
@@ -546,11 +546,11 @@ def test_rubric_auto_generated_from_requirements() -> None:
     assert task.verifier.rubric[1].text == "Does the implementation satisfy: Second requirement?"
 
 
-def test_rubric_mismatch_warns(caplog: pytest.LogCaptureFixture) -> None:
-    """Rubric IDs that don't match any requirement ID produce a warning."""
+def test_rubric_mismatch_logs_debug_diagnostic(caplog: pytest.LogCaptureFixture) -> None:
+    """Rubric IDs that don't match any requirement ID produce a debug diagnostic."""
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="orchestrator.config.models"):
+    with caplog.at_level(logging.DEBUG, logger="orchestrator.config.models"):
         TaskConfig(
             id="T1",
             title="Task 1",
@@ -567,7 +567,7 @@ def test_rubric_mismatch_warns(caplog: pytest.LogCaptureFixture) -> None:
             },
         )
 
-    warning_messages = [r.message for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("R1-R3" in msg for msg in warning_messages), (
-        f"Expected warning about 'R1-R3', got: {warning_messages}"
+    debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("R1-R3" in msg for msg in debug_messages), (
+        f"Expected debug diagnostic about 'R1-R3', got: {debug_messages}"
     )

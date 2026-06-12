@@ -40,7 +40,7 @@ This file is the Stage 1 artifact. Later stages should append actual results, cr
 
 ## Live Service Setup
 
-- Start the service with `./dev.sh` or `uv run uvicorn scripts.serve:app --reload --port 8000`.
+- Start the service with `./dev.sh` or `uv run orchestrator serve --reload`.
 - Confirm:
   - `GET /health` returns OK.
   - `GET /api/agent-runners` includes `user_managed`.
