@@ -18,6 +18,7 @@ from orchestrator.graph import (
     project_node_states,
     project_ready_nodes,
     project_run_state,
+    project_task_states,
     run_scenario,
     reduce_event,
 )
@@ -45,6 +46,25 @@ def test_empty_projection() -> None:
         "task_states": {},
         "leases": {},
         "ready_nodes": [],
+        "node_kinds": {},
+        "node_task_regions": {},
+        "node_attempts": {},
+        "node_candidates": {},
+        "node_failed_candidates": {},
+        "node_resource_claims": {},
+        "node_allowed_actions": {},
+        "node_preconditions": {},
+        "node_command_definitions": {},
+        "edges": {},
+        "input_bindings": {},
+        "node_pending_appeals": {},
+        "node_gate_decisions": {},
+        "task_candidates": {},
+        "verifier_verdicts": {},
+        "invalid_test_blocks": {},
+        "configured_gates": {},
+        "gate_decisions": {},
+        "environment_failures": {},
     }
 
 
@@ -69,6 +89,7 @@ def test_replay_determinism() -> None:
         "lease-1": {
             "lease_id": "lease-1",
             "node_id": "worker-1",
+            "kind": "worker",
             "state": "active",
         }
     }
@@ -81,6 +102,25 @@ def test_projection_immutability() -> None:
         "task_states": {"task-1": "running"},
         "leases": {"lease-1": {"lease_id": "lease-1", "state": "active"}},
         "ready_nodes": ["worker-1"],
+        "node_kinds": {},
+        "node_task_regions": {},
+        "node_attempts": {},
+        "node_candidates": {},
+        "node_failed_candidates": {},
+        "node_resource_claims": {},
+        "node_allowed_actions": {},
+        "node_preconditions": {},
+        "node_command_definitions": {},
+        "edges": {},
+        "input_bindings": {},
+        "node_pending_appeals": {},
+        "node_gate_decisions": {},
+        "task_candidates": {},
+        "verifier_verdicts": {},
+        "invalid_test_blocks": {},
+        "configured_gates": {},
+        "gate_decisions": {},
+        "environment_failures": {},
     }
 
     next_state = reduce_event(
@@ -99,6 +139,25 @@ def test_projection_immutability() -> None:
         "task_states": {"task-1": "running"},
         "leases": {"lease-1": {"lease_id": "lease-1", "state": "active"}},
         "ready_nodes": ["worker-1"],
+        "node_kinds": {},
+        "node_task_regions": {},
+        "node_attempts": {},
+        "node_candidates": {},
+        "node_failed_candidates": {},
+        "node_resource_claims": {},
+        "node_allowed_actions": {},
+        "node_preconditions": {},
+        "node_command_definitions": {},
+        "edges": {},
+        "input_bindings": {},
+        "node_pending_appeals": {},
+        "node_gate_decisions": {},
+        "task_candidates": {},
+        "verifier_verdicts": {},
+        "invalid_test_blocks": {},
+        "configured_gates": {},
+        "gate_decisions": {},
+        "environment_failures": {},
     }
     assert next_state["node_states"] == {"worker-1": "running"}
 
@@ -171,6 +230,249 @@ def test_lease_lifecycle() -> None:
     }
 
 
+def test_task_projection_accepted() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_passed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 1}
+        ),
+        _event(
+            "approval_decision_recorded",
+            {"task_region_id": "task-1", "gate_id": "gate-1", "approved": True},
+        ).model_copy(update={"position": 2}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "accepted"}
+
+
+def test_task_projection_configured_gate_requires_decision() -> None:
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": "gate-1",
+                "kind": "gate",
+                "task_region_id": "task-1",
+            },
+        ).model_copy(update={"position": 0}),
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 1}),
+        _event("verification_passed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 2}
+        ),
+    ]
+
+    assert project_task_states(events) == {"task-1": "pending"}
+
+    approved_events = [
+        *events,
+        _event(
+            "approval_decision_recorded",
+            {"node_id": "gate-1", "decision": "approved"},
+        ).model_copy(update={"position": 3}),
+    ]
+    assert project_task_states(approved_events) == {"task-1": "accepted"}
+
+    rejected_events = [
+        *events,
+        _event(
+            "approval_decision_recorded",
+            {"node_id": "gate-1", "decision": "rejected"},
+        ).model_copy(update={"position": 3}),
+    ]
+    assert project_task_states(rejected_events) == {"task-1": "pending"}
+
+
+def test_task_projection_needs_revision() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 1}
+        ),
+    ]
+
+    assert project_task_states(events) == {"task-1": "needs_revision"}
+
+
+def test_task_projection_blocked_invalid_test() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 1}
+        ),
+        _event(
+            "oversight_decision_recorded",
+            {
+                "task_region_id": "task-1",
+                "candidate_id": "cand-1",
+                "appeal_type": "invalid_test",
+                "decision": "accepted",
+            },
+        ).model_copy(update={"position": 2}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "blocked_invalid_test"}
+
+
+def test_task_projection_blocked_environment() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event(
+            "environment_failure_accepted",
+            {"task_region_id": "task-1", "reason": "tool_unavailable"},
+        ).model_copy(update={"position": 1}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "blocked_environment"}
+
+
+def test_task_projection_in_progress() -> None:
+    events = [
+        _event(
+            "node_created", {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"}
+        ),
+        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "in_progress"}
+
+
+def test_task_projection_pending() -> None:
+    events = [
+        _event(
+            "node_created", {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"}
+        )
+    ]
+
+    assert project_task_states(events) == {"task-1": "pending"}
+
+
+def test_task_projection_latest_candidate_by_attempt_then_position() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-old", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-new-pos", "attempt_number": 1},
+        ).model_copy(update={"position": 2}),
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-new-attempt", "attempt_number": 2},
+        ).model_copy(update={"position": 1}),
+        _event("verification_passed", {"candidate_id": "cand-new-pos"}).model_copy(
+            update={"position": 3}
+        ),
+        _event("verification_failed", {"candidate_id": "cand-new-attempt"}).model_copy(
+            update={"position": 4}
+        ),
+    ]
+
+    assert project_task_states(events) == {"task-1": "needs_revision"}
+
+
+def test_task_projection_latest_candidate_position_tiebreak() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-old", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-later", "attempt_number": 1},
+        ).model_copy(update={"position": 1}),
+        _event("verification_passed", {"candidate_id": "cand-later"}).model_copy(
+            update={"position": 2}
+        ),
+        _event("verification_failed", {"candidate_id": "cand-old"}).model_copy(
+            update={"position": 3}
+        ),
+    ]
+
+    assert project_task_states(events) == {"task-1": "accepted"}
+
+
+def test_task_projection_ignores_mismatched_verdict_candidate() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_passed", {"candidate_id": "other-candidate"}).model_copy(
+            update={"position": 1}
+        ),
+    ]
+
+    assert project_task_states(events) == {"task-1": "pending"}
+
+
+def test_task_projection_active_appeal_overrides_latest_failure() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 1}
+        ),
+        _event(
+            "appeal_opened",
+            {
+                "task_region_id": "task-1",
+                "candidate_id": "cand-1",
+                "appeal_type": "invalid_test",
+            },
+        ).model_copy(update={"position": 2}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "pending"}
+
+
+def test_task_projection_invalid_test_block_exits_after_replacement_pass() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 1}
+        ),
+        _event(
+            "oversight_decision_recorded",
+            {
+                "task_region_id": "task-1",
+                "candidate_id": "cand-1",
+                "appeal_type": "invalid_test",
+                "decision": "accepted",
+            },
+        ).model_copy(update={"position": 2}),
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-2", "attempt_number": 2},
+        ).model_copy(update={"position": 3}),
+        _event("verification_passed", {"candidate_id": "cand-2"}).model_copy(
+            update={"position": 4}
+        ),
+    ]
+
+    assert project_task_states(events) == {"task-1": "accepted"}
+
+
 def test_fixture_corpus_then_projections_satisfied() -> None:
     for path in sorted(FIXTURE_DIR.glob("*.yaml")):
         raw = yaml.safe_load(path.read_text())
@@ -179,9 +481,8 @@ def test_fixture_corpus_then_projections_satisfied() -> None:
             assert isinstance(scenario, dict), f"{path.name} contains a non-mapping scenario"
             typed_scenario = cast(dict[str, Any], scenario)
             then_projection = typed_scenario.get("then_projection")
-            if not then_projection:
-                continue
             assert isinstance(then_projection, dict)
+            assert then_projection, f"{path.name}::{typed_scenario['name']} has empty projection"
 
             result = run_scenario(
                 typed_scenario,

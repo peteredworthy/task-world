@@ -7,6 +7,7 @@ from orchestrator.graph.callbacks import (
     CallbackValidationResult,
     validate_callback,
 )
+from orchestrator.graph.commands import apply_command
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -53,6 +54,7 @@ from orchestrator.graph.projections import (
 )
 from orchestrator.graph.scenario import ScenarioResult, run_scenario
 from orchestrator.graph.scheduler import (
+    InputEdgeInfo,
     NodeScheduleInfo,
     SchedulingDecision,
     claims_conflict,
@@ -79,6 +81,7 @@ __all__ = [
     "GraphRecordKind",
     "GraphProjection",
     "InputBinding",
+    "InputEdgeInfo",
     "LeaseModel",
     "LeaseState",
     "NodeKind",
@@ -100,6 +103,7 @@ __all__ = [
     "SequentialIdGenerator",
     "InMemoryEventStore",
     "DuplicateEventError",
+    "apply_command",
     "claims_conflict",
     "classify_event",
     "evaluate_readiness",

@@ -1,11 +1,14 @@
 - name: appeal_planned_to_ready
   given_events:
-    - node_created: {node_id: appeal-1, kind: appeal, state: planned}
-    - appeal_opened: {node_id: appeal-1, appealed_node_id: verify-1, appeal_type: invalid_test}
-    - node_state_changed: {node_id: appeal-1, new_state: ready, trigger: appeal_well_formed}
-  when_command: null
-  then_events: [appeal_opened, node_state_changed]
-  then_projection: {appeal-1: ready}
+    - node_created: {node_id: verify-1, kind: verifier, state: completed, task_region_id: task-appeal-1}
+    - output_record_accepted: {task_region_id: task-appeal-1, candidate_id: cand-appeal-1, attempt_number: 1}
+    - verification_failed: {node_id: verify-1, candidate_id: cand-appeal-1}
+  when_command:
+    raise_appeal: {run_id: run-1, node_id: verify-1, candidate_id: cand-appeal-1, task_region_id: task-appeal-1, appeal_type: invalid_test, appeal_node_id: appeal-1, oversight_node_id: oversight-1}
+  then_events:
+    - appeal_opened: {node_id: appeal-1, appealed_node_id: verify-1}
+    - node_created: {node_id: oversight-1, kind: oversight}
+  then_projection: {verify-1: completed, task-appeal-1: pending}
 
 - name: appeal_ready_to_completed
   given_events:
@@ -13,7 +16,7 @@
     - oversight_decision_recorded: {node_id: appeal-2, decision: accepted}
     - node_state_changed: {node_id: appeal-2, new_state: completed, trigger: oversight_decision_accepted}
   when_command: null
-  then_events: [oversight_decision_recorded, node_state_changed]
+  then_events: []
   then_projection: {appeal-2: completed}
 
 - name: appeal_ready_to_failed
@@ -22,5 +25,5 @@
     - oversight_decision_recorded: {node_id: appeal-3, decision: malformed}
     - node_state_changed: {node_id: appeal-3, new_state: failed, trigger: appeal_malformed}
   when_command: null
-  then_events: [oversight_decision_recorded, node_state_changed]
+  then_events: []
   then_projection: {appeal-3: failed}

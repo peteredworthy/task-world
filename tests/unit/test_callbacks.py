@@ -10,6 +10,7 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     GraphProjection,
+    initial_projection,
     validate_callback,
 )
 
@@ -20,21 +21,20 @@ def _projection(
     node_states: dict[str, str] | None = None,
     leases: dict[str, dict[str, Any]] | None = None,
 ) -> GraphProjection:
-    return {
-        "run_state": run_state,
-        "node_states": node_states or {"worker-1": "running"},
-        "task_states": {},
-        "leases": leases
-        or {
-            "lease-1": {
-                "lease_id": "lease-1",
-                "node_id": "worker-1",
-                "generation": 1,
-                "state": "active",
-            }
-        },
-        "ready_nodes": [],
+    projection = initial_projection()
+    projection["run_state"] = run_state
+    projection["node_states"] = node_states or {"worker-1": "running"}
+    projection["leases"] = leases or {
+        "lease-1": {
+            "lease_id": "lease-1",
+            "node_id": "worker-1",
+            "generation": 1,
+            "state": "active",
+            "execution_id": "exec-1",
+            "base_snapshot_id": "snapshot-1",
+        }
     }
+    return projection
 
 
 def _request(
@@ -79,6 +79,8 @@ def _lease(state: str, generation: int = 1) -> dict[str, Any]:
         "node_id": "worker-1",
         "generation": generation,
         "state": state,
+        "execution_id": "exec-1",
+        "base_snapshot_id": "snapshot-1",
     }
 
 
@@ -190,6 +192,42 @@ def test_old_generation_rejected() -> None:
 
     assert result.outcome == CallbackOutcome.REJECTED_STALE
     assert result.reason == "old lease generation"
+
+
+def test_execution_mismatch_rejected() -> None:
+    result = validate_callback(
+        _request(),
+        _projection(
+            leases={
+                "lease-1": {
+                    **_lease("active"),
+                    "execution_id": "exec-other",
+                }
+            }
+        ),
+        [],
+    )
+
+    assert result.outcome == CallbackOutcome.REJECTED_STALE
+    assert result.reason == "execution_incompatible"
+
+
+def test_snapshot_mismatch_rejected() -> None:
+    result = validate_callback(
+        _request(),
+        _projection(
+            leases={
+                "lease-1": {
+                    **_lease("active"),
+                    "base_snapshot_id": "snapshot-other",
+                }
+            }
+        ),
+        [],
+    )
+
+    assert result.outcome == CallbackOutcome.REJECTED_STALE
+    assert result.reason == "snapshot_incompatible"
 
 
 def test_node_terminal_rejected() -> None:

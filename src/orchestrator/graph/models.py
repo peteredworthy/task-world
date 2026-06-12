@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GraphBaseModel(BaseModel):
@@ -79,6 +79,13 @@ class ResourceClaim(GraphBaseModel):
     scope: str
     paths: list[str] | None = None
     external_resource_key: str | None = None
+
+    @model_validator(mode="after")
+    def external_claims_require_keys(self) -> "ResourceClaim":
+        if self.mode == "external" and self.external_resource_key is None:
+            msg = "external claims require external_resource_key"
+            raise ValueError(msg)
+        return self
 
 
 def _empty_resource_claims() -> list[ResourceClaim]:

@@ -1,0 +1,66 @@
+- name: planner_planned_to_ready
+  given_events:
+    - node_created: {node_id: planner-1, kind: planner, state: planned}
+    - input_bound: {to_node_id: planner-1, input: planning_context}
+    - node_state_changed: {node_id: planner-1, new_state: ready, trigger: planning_inputs_available}
+  when_command: null
+  then_events: []
+  then_projection: {planner-1: ready}
+
+- name: planner_ready_to_leased
+  given_events:
+    - run_lifecycle_changed: {to_state: active}
+    - node_created: {node_id: planner-2, kind: planner, state: ready}
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - lease_granted: {node_id: planner-2}
+    - node_state_changed: {node_id: planner-2, new_state: leased}
+  then_projection: {planner-2: leased}
+
+- name: planner_leased_to_running
+  given_events:
+    - node_created: {node_id: planner-3, kind: planner, state: leased}
+    - lease_granted: {node_id: planner-3, lease_id: lease-planner-3, generation: 1, execution_id: exec-planner-3}
+  when_command:
+    acknowledge_start: {run_id: run-1, node_id: planner-3, lease_id: lease-planner-3, lease_generation: 1, execution_id: exec-planner-3}
+  then_events:
+    - node_state_changed: {node_id: planner-3, new_state: running}
+  then_projection: {planner-3: running}
+
+- name: planner_running_to_completed
+  given_events:
+    - node_created: {node_id: planner-4, kind: planner, state: running}
+    - lease_granted: {node_id: planner-4, lease_id: lease-planner-4, generation: 1, execution_id: exec-planner-4, base_snapshot_id: S0}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: planner-4, execution_id: exec-planner-4, lease_id: lease-planner-4, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-planner-4, payload: {patch_id: patch-planner-4}}
+  then_events:
+    - callback_accepted: {node_id: planner-4}
+    - node_state_changed: {node_id: planner-4, new_state: completed}
+  then_projection: {planner-4: completed}
+
+- name: planner_running_to_failed
+  given_events:
+    - node_created: {node_id: planner-5, kind: planner, state: running}
+    - lease_granted: {node_id: planner-5, lease_id: lease-planner-5, generation: 1, execution_id: exec-planner-5, base_snapshot_id: S0}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: planner-5, execution_id: exec-planner-5, lease_id: lease-planner-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-planner-5, new_state: failed, payload: {error: planner_runtime_failure}}
+  then_events:
+    - callback_accepted: {node_id: planner-5}
+    - node_state_changed: {node_id: planner-5, new_state: failed}
+  then_projection: {planner-5: failed}
+
+- name: planner_completed_patch_rejected_stays_completed
+  given_events:
+    - node_created: {node_id: planner-6, kind: planner, state: completed}
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-planner-6
+      proposed_by_node_id: planner-6
+      actor_role: planner
+      base_graph_position: 0
+      ops:
+        - {op: create_gate, node_id: gate-planner-6}
+  then_events:
+    - graph_patch_rejected: {patch_id: patch-planner-6}
+  then_projection: {planner-6: completed}

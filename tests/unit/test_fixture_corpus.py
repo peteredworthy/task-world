@@ -48,6 +48,7 @@ def test_all_fixtures_run_through_harness() -> None:
             SequentialIdGenerator(),
         )
         assert result.scenario_name == scenario["name"], path.name
+        assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
 
 
 def test_coverage_index_complete() -> None:
@@ -63,3 +64,19 @@ def test_fixture_names_unique() -> None:
     names = [scenario["name"] for _, scenario in _all_scenarios()]
     assert len(names) >= 40
     assert len(names) == len(set(names))
+
+
+def test_all_fixtures_assert_nonempty_projection() -> None:
+    for path, scenario in _all_scenarios():
+        then_projection = scenario.get("then_projection")
+        assert isinstance(then_projection, dict), f"{path.name}::{scenario['name']}"
+        assert then_projection, f"{path.name}::{scenario['name']} has empty then_projection"
+
+
+def test_pure_projection_fixtures_do_not_echo_events() -> None:
+    for path, scenario in _all_scenarios():
+        if scenario.get("when_command") is not None:
+            continue
+        assert not scenario.get("then_events"), (
+            f"{path.name}::{scenario['name']} has echo-style then_events"
+        )

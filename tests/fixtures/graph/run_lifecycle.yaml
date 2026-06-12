@@ -1,69 +1,94 @@
 - name: run_draft_to_queued
-  given_events:
-    - run_lifecycle_changed: {from_state: draft, to_state: queued, trigger: run_accepted}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+  given_events: []
+  when_command: {accept_run: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: draft, to_state: queued}
+  then_projection: {run_state: queued}
 
 - name: run_queued_to_active
   given_events:
-    - run_lifecycle_changed: {from_state: queued, to_state: active, trigger: start_command_accepted}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: draft, to_state: queued}
+  when_command: {start: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+  then_projection: {run_state: active}
 
 - name: run_active_to_pausing
   given_events:
-    - run_lifecycle_changed: {from_state: active, to_state: pausing, trigger: pause_command_accepted}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+  when_command: {pause: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: active, to_state: pausing}
+  then_projection: {run_state: pausing}
 
 - name: run_pausing_to_paused
   given_events:
-    - run_lifecycle_changed: {from_state: pausing, to_state: paused, trigger: active_lease_policy_resolved}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: active, to_state: pausing}
+  when_command: {pause: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: pausing, to_state: paused}
+  then_projection: {run_state: paused}
 
 - name: run_paused_to_resuming
   given_events:
-    - run_lifecycle_changed: {from_state: paused, to_state: resuming, trigger: resume_command_accepted}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: active, to_state: paused}
+  when_command: {resume: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: paused, to_state: resuming}
+  then_projection: {run_state: resuming}
 
 - name: run_resuming_to_active
   given_events:
-    - run_lifecycle_changed: {from_state: resuming, to_state: active, trigger: resume_applied}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: paused, to_state: resuming}
+  when_command: {resume: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: resuming, to_state: active}
+  then_projection: {run_state: active}
 
 - name: run_active_to_cancelling
   given_events:
-    - run_lifecycle_changed: {from_state: active, to_state: cancelling, trigger: cancel_command_accepted}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+  when_command: {cancel: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: active, to_state: cancelling}
+  then_projection: {run_state: cancelling}
 
 - name: run_cancelling_to_cancelled
   given_events:
-    - run_lifecycle_changed: {from_state: cancelling, to_state: cancelled, trigger: cancellation_complete}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: active, to_state: cancelling}
+  when_command: {cancel: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: cancelling, to_state: cancelled}
+  then_projection: {run_state: cancelled}
 
 - name: run_active_to_completed
   given_events:
-    - run_lifecycle_changed: {from_state: active, to_state: completed, trigger: completion_invariants_pass}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+  when_command: {complete: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: active, to_state: completed}
+  then_projection: {run_state: completed}
 
 - name: run_nonterminal_to_failed
   given_events:
-    - run_lifecycle_changed: {from_state: active, to_state: failed, trigger: unrecoverable_controller_error}
-  when_command: null
-  then_events: [run_lifecycle_changed]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: draft, to_state: queued}
+  when_command: {fail: {run_id: run-1, reason: unrecoverable_controller_error}}
+  then_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: failed}
+  then_projection: {run_state: failed}
+
+- name: run_illegal_complete_from_queued_rejected
+  given_events:
+    - run_lifecycle_changed: {from_state: draft, to_state: queued}
+  when_command: {complete: {run_id: run-1}}
+  then_events:
+    - command_rejected: {command_type: complete}
+  then_projection: {run_state: queued}
+
+- name: run_resume_after_cancel_rejected
+  given_events:
+    - run_lifecycle_changed: {from_state: cancelling, to_state: cancelled}
+  when_command: {resume: {run_id: run-1}}
+  then_events:
+    - command_rejected: {command_type: resume}
+  then_projection: {run_state: cancelled}

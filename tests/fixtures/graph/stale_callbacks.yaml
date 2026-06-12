@@ -1,81 +1,103 @@
 - name: stale_duplicate_same_payload
   given_events:
-    - callback_accepted: {node_id: worker-stale-1, idempotency_key: key-1, payload_hash: hash-a}
-    - callback_duplicate_returned: {node_id: worker-stale-1, idempotency_key: key-1, result: prior_accepted}
-  when_command: null
-  then_events: [callback_accepted, callback_duplicate_returned]
-  then_projection: {}
+    - node_state_changed: {node_id: worker-stale-1, new_state: completed}
+    - lease_granted: {node_id: worker-stale-1, lease_id: lease-1, generation: 1}
+    - lease_released: {node_id: worker-stale-1, lease_id: lease-1}
+    - callback_accepted: {node_id: worker-stale-1, idempotency_key: key-1, payload: {payload_hash: hash-a}}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-1, execution_id: exec-1, lease_id: lease-1, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-1, payload_hash: hash-a}
+  then_events:
+    - callback_duplicate_returned: {node_id: worker-stale-1, idempotency_key: key-1}
+  then_projection: {worker-stale-1: completed, lease-1: released}
 
 - name: stale_duplicate_different_payload
   given_events:
-    - callback_accepted: {node_id: worker-stale-2, idempotency_key: key-2, payload_hash: hash-a}
-    - callback_rejected_conflict: {node_id: worker-stale-2, idempotency_key: key-2, payload_hash: hash-b}
-  when_command: null
-  then_events: [callback_accepted, callback_rejected_conflict]
-  then_projection: {}
+    - node_state_changed: {node_id: worker-stale-2, new_state: completed}
+    - lease_granted: {node_id: worker-stale-2, lease_id: lease-2, generation: 1}
+    - lease_released: {node_id: worker-stale-2, lease_id: lease-2}
+    - callback_accepted: {node_id: worker-stale-2, idempotency_key: key-2, payload: {payload_hash: hash-a}}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-2, execution_id: exec-2, lease_id: lease-2, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-2, payload_hash: hash-b}
+  then_events:
+    - callback_rejected_conflict: {node_id: worker-stale-2, idempotency_key: key-2}
+  then_projection: {worker-stale-2: completed, lease-2: released}
 
 - name: stale_callback_for_revoked_lease
   given_events:
+    - lease_granted: {node_id: worker-stale-3, lease_id: lease-3, generation: 1}
     - lease_revoked: {node_id: worker-stale-3, lease_id: lease-3}
-    - callback_rejected_stale: {node_id: worker-stale-3, lease_id: lease-3, reason: revoked_lease}
-  when_command: null
-  then_events: [lease_revoked, callback_rejected_stale]
-  then_projection: {}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-3, execution_id: exec-3, lease_id: lease-3, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-3}
+  then_events:
+    - callback_rejected_stale: {node_id: worker-stale-3, lease_id: lease-3}
+  then_projection: {lease-3: revoked}
 
 - name: stale_callback_for_old_generation
   given_events:
     - lease_granted: {node_id: worker-stale-4, lease_id: lease-4, generation: 2}
-    - callback_rejected_stale: {node_id: worker-stale-4, lease_id: lease-4, lease_generation: 1, reason: old_generation}
-  when_command: null
-  then_events: [lease_granted, callback_rejected_stale]
-  then_projection: {}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-4, execution_id: exec-4, lease_id: lease-4, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-4}
+  then_events:
+    - callback_rejected_stale: {node_id: worker-stale-4, lease_id: lease-4}
+  then_projection: {lease-4: active}
 
 - name: stale_success_after_retry
   given_events:
     - node_state_changed: {node_id: worker-stale-5a, new_state: failed}
     - node_created: {node_id: worker-stale-5b, kind: worker, state: ready}
-    - callback_rejected_stale: {node_id: worker-stale-5a, callback_type: success, reason: node_retried}
-  when_command: null
-  then_events: [node_created, callback_rejected_stale]
-  then_projection: {worker-stale-5a: failed}
+    - lease_granted: {node_id: worker-stale-5a, lease_id: lease-5a, generation: 1}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-5a, execution_id: exec-5a, lease_id: lease-5a, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 3, idempotency_key: key-5a}
+  then_events:
+    - callback_rejected_stale: {node_id: worker-stale-5a}
+  then_projection: {worker-stale-5a: failed, worker-stale-5b: ready}
 
 - name: stale_failure_after_completed
   given_events:
     - node_state_changed: {node_id: worker-stale-6, new_state: completed}
-    - callback_rejected_stale: {node_id: worker-stale-6, callback_type: failure, reason: node_completed}
-  when_command: null
-  then_events: [callback_rejected_stale]
+    - lease_granted: {node_id: worker-stale-6, lease_id: lease-6, generation: 1}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-6, execution_id: exec-6, lease_id: lease-6, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-6}
+  then_events:
+    - callback_rejected_stale: {node_id: worker-stale-6}
   then_projection: {worker-stale-6: completed}
 
 - name: stale_approval_after_cancellation
   given_events:
     - run_lifecycle_changed: {to_state: cancelled}
-    - callback_rejected_stale: {node_id: gate-stale-7, callback_type: approval, reason: run_cancelled}
-  when_command: null
-  then_events: [run_lifecycle_changed, callback_rejected_stale]
-  then_projection: {}
+    - lease_granted: {node_id: gate-stale-7, lease_id: lease-7, generation: 1}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: gate-stale-7, execution_id: exec-7, lease_id: lease-7, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-7}
+  then_events:
+    - callback_rejected_stale: {node_id: gate-stale-7}
+  then_projection: {run_state: cancelled}
 
 - name: stale_resume_after_cancel
   given_events:
     - run_lifecycle_changed: {to_state: cancelled}
-    - command_rejected: {command_type: resume, reason: cancel_is_terminal}
-  when_command: null
-  then_events: [run_lifecycle_changed, command_rejected]
-  then_projection: {}
+  when_command: {resume: {run_id: run-1}}
+  then_events:
+    - command_rejected: {command_type: resume}
+  then_projection: {run_state: cancelled}
 
 - name: stale_pause_callback_race_callback_first
   given_events:
-    - callback_accepted: {node_id: worker-stale-9a, callback_type: success, position_wins: true}
+    - run_lifecycle_changed: {to_state: active}
+    - node_created: {node_id: worker-stale-9a, kind: worker, state: running}
+    - lease_granted: {node_id: worker-stale-9a, lease_id: lease-9a, generation: 1}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-9a, execution_id: exec-9a, lease_id: lease-9a, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 3, idempotency_key: key-9a}
+  then_events:
+    - callback_accepted: {node_id: worker-stale-9a}
     - node_state_changed: {node_id: worker-stale-9a, new_state: completed}
-    - run_lifecycle_changed: {to_state: pausing, trigger: pause_after_boundary}
-  when_command: null
-  then_events: [callback_accepted, node_state_changed, run_lifecycle_changed]
-  then_projection: {worker-stale-9a: completed}
+  then_projection: {worker-stale-9a: completed, lease-9a: released}
 
 - name: stale_pause_callback_race_pause_first
   given_events:
+    - lease_granted: {node_id: worker-stale-9b, lease_id: lease-9b, generation: 1}
     - lease_suspended: {node_id: worker-stale-9b, lease_id: lease-9b, reason: pause}
-    - callback_rejected_stale: {node_id: worker-stale-9b, lease_id: lease-9b, reason: pause_won_race}
-  when_command: null
-  then_events: [lease_suspended, callback_rejected_stale]
-  then_projection: {}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-stale-9b, execution_id: exec-9b, lease_id: lease-9b, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-9b}
+  then_events:
+    - callback_rejected_stale: {node_id: worker-stale-9b, lease_id: lease-9b}
+  then_projection: {lease-9b: suspended}

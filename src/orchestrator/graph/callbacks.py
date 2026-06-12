@@ -62,6 +62,17 @@ def validate_callback(
     if lease is None:
         return _rejected_stale("unknown lease")
 
+    lease_execution_id = lease.get("execution_id")
+    if isinstance(lease_execution_id, str) and lease_execution_id != request.execution_id:
+        return _rejected_stale("execution_incompatible")
+
+    lease_base_snapshot_id = lease.get("base_snapshot_id")
+    if (
+        isinstance(lease_base_snapshot_id, str)
+        and lease_base_snapshot_id != request.base_snapshot_id
+    ):
+        return _rejected_stale("snapshot_incompatible")
+
     lease_state = lease.get("state")
     if lease_state in _STALE_LEASE_STATES:
         return _rejected_stale(f"lease {lease_state}")

@@ -2,6 +2,7 @@
 
 from typing import Any, TypeVar
 
+import pytest
 from pydantic import BaseModel
 
 from orchestrator.graph.models import (
@@ -360,3 +361,8 @@ def test_all_models_import_and_enums_cover_prd_values() -> None:
     assert ResourceClaim.model_validate({"mode": "read", "scope": "repo"}).mode == "read"
     assert Authority.model_validate({"allowed_actions": []}).allowed_actions == []
     assert RecordSelector.model_validate({"record_kinds": ["output"]}).record_kinds == ["output"]
+
+
+def test_external_resource_claim_requires_key() -> None:
+    with pytest.raises(ValueError, match="external_resource_key"):
+        ResourceClaim.model_validate({"mode": "external", "scope": "external"})

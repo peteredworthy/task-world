@@ -4,16 +4,17 @@
     - input_bound: {to_node_id: verify-1, candidate_id: candidate-1}
     - node_state_changed: {node_id: verify-1, new_state: ready, trigger: candidate_file_state_bound}
   when_command: null
-  then_events: [input_bound, node_state_changed]
+  then_events: []
   then_projection: {verify-1: ready}
 
 - name: verifier_ready_to_leased
   given_events:
+    - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: verify-2, kind: verifier, state: ready}
-    - lease_granted: {node_id: verify-2, lease_id: lease-verify-2}
-    - node_state_changed: {node_id: verify-2, new_state: leased, trigger: scheduler_grants_verifier_lease}
-  when_command: null
-  then_events: [lease_granted, node_state_changed]
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - lease_granted: {node_id: verify-2}
+    - node_state_changed: {node_id: verify-2, new_state: leased}
   then_projection: {verify-2: leased}
 
 - name: verifier_leased_to_running
@@ -22,7 +23,7 @@
     - callback_accepted: {node_id: verify-3, callback_type: verifier_started}
     - node_state_changed: {node_id: verify-3, new_state: running, trigger: verifier_starts}
   when_command: null
-  then_events: [callback_accepted, node_state_changed]
+  then_events: []
   then_projection: {verify-3: running}
 
 - name: verifier_running_to_completed_pass
@@ -31,7 +32,7 @@
     - verification_passed: {node_id: verify-4, candidate_id: candidate-1}
     - node_state_changed: {node_id: verify-4, new_state: completed, trigger: valid_verification_result}
   when_command: null
-  then_events: [verification_passed, node_state_changed]
+  then_events: []
   then_projection: {verify-4: completed}
 
 - name: verifier_running_to_completed_failure
@@ -40,7 +41,7 @@
     - verification_failed: {node_id: verify-5, candidate_id: candidate-1, valid_result: true}
     - node_state_changed: {node_id: verify-5, new_state: completed, trigger: valid_verification_result}
   when_command: null
-  then_events: [verification_failed, node_state_changed]
+  then_events: []
   then_projection: {verify-5: completed}
 
 - name: verifier_running_to_failed
@@ -49,5 +50,5 @@
     - callback_accepted: {node_id: verify-6, callback_type: verifier_runtime_error}
     - node_state_changed: {node_id: verify-6, new_state: failed, trigger: verifier_runtime_error}
   when_command: null
-  then_events: [callback_accepted, node_state_changed]
+  then_events: []
   then_projection: {verify-6: failed}

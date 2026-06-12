@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
+from orchestrator.graph.commands import apply_command
 from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
 from orchestrator.graph.projections import initial_projection, reduce_event
 from orchestrator.graph.store import InMemoryEventStore
@@ -43,6 +44,19 @@ def run_scenario(
                 id_gen,
             )
         )
+        events_before_command = store.read_from(run_id)
+        projection = initial_projection()
+        for event in events_before_command:
+            projection = reduce_event(projection, event)
+        for event in apply_command(
+            projection,
+            events_before_command,
+            command_type,
+            command_payload,
+            clock,
+            id_gen,
+        ):
+            store.append(event)
 
     events = store.read_from(run_id)
     failures.extend(_check_then_events(scenario.get("then_events", []), events))

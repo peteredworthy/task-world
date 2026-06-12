@@ -3,18 +3,17 @@
     - node_created: {node_id: worker-1, kind: worker, state: planned}
     - node_state_changed: {node_id: worker-1, new_state: ready, trigger: readiness_evaluator}
   when_command: null
-  then_events:
-    - node_created
-    - node_state_changed: {node_id: worker-1, new_state: ready}
+  then_events: []
   then_projection: {worker-1: ready}
 
 - name: worker_ready_to_leased
   given_events:
+    - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: worker-2, kind: worker, state: ready}
-    - lease_granted: {node_id: worker-2, lease_id: lease-worker-2}
-    - node_state_changed: {node_id: worker-2, new_state: leased, trigger: scheduler_grants_lease}
-  when_command: null
-  then_events: [lease_granted, node_state_changed]
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - lease_granted: {node_id: worker-2}
+    - node_state_changed: {node_id: worker-2, new_state: leased}
   then_projection: {worker-2: leased}
 
 - name: worker_leased_to_running
@@ -23,7 +22,7 @@
     - callback_accepted: {node_id: worker-3, callback_type: agent_started}
     - node_state_changed: {node_id: worker-3, new_state: running, trigger: agent_start_accepted}
   when_command: null
-  then_events: [callback_accepted, node_state_changed]
+  then_events: []
   then_projection: {worker-3: running}
 
 - name: worker_running_to_completed
@@ -33,7 +32,7 @@
     - file_state_accepted: {producer_node_id: worker-4, snapshot_id: S1}
     - node_state_changed: {node_id: worker-4, new_state: completed, trigger: output_callback_accepted}
   when_command: null
-  then_events: [output_record_accepted, file_state_accepted, node_state_changed]
+  then_events: []
   then_projection: {worker-4: completed}
 
 - name: worker_running_to_suspended
@@ -42,7 +41,7 @@
     - lease_suspended: {node_id: worker-5, lease_id: lease-worker-5, reason: clarification}
     - node_state_changed: {node_id: worker-5, new_state: suspended, trigger: clarification}
   when_command: null
-  then_events: [lease_suspended, node_state_changed]
+  then_events: []
   then_projection: {worker-5: suspended}
 
 - name: worker_suspended_to_leased
@@ -51,7 +50,7 @@
     - lease_granted: {node_id: worker-6, lease_id: lease-worker-6b, generation: 2}
     - node_state_changed: {node_id: worker-6, new_state: leased, trigger: resume_renew_lease}
   when_command: null
-  then_events: [lease_granted, node_state_changed]
+  then_events: []
   then_projection: {worker-6: leased}
 
 - name: worker_running_to_failed
@@ -60,7 +59,7 @@
     - callback_accepted: {node_id: worker-7, callback_type: agent_failed}
     - node_state_changed: {node_id: worker-7, new_state: failed, trigger: accepted_failure}
   when_command: null
-  then_events: [callback_accepted, node_state_changed]
+  then_events: []
   then_projection: {worker-7: failed}
 
 - name: worker_planned_to_retired
@@ -69,5 +68,5 @@
     - graph_patch_accepted: {retired_node_id: worker-8, reason: superseded}
     - node_state_changed: {node_id: worker-8, new_state: retired, trigger: planner_patch_accepted}
   when_command: null
-  then_events: [graph_patch_accepted, node_state_changed]
+  then_events: []
   then_projection: {worker-8: retired}

@@ -1,81 +1,144 @@
 - name: invariant_replay_is_deterministic
   given_events:
-    - invariant_checked: {invariant: replay_is_deterministic}
-  when_command: null
-  then_events: [invariant_checked]
-  then_projection: {}
+    - run_lifecycle_changed: {from_state: draft, to_state: queued}
+  when_command: {start: {run_id: run-1}}
+  then_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+  then_projection: {run_state: active}
 
 - name: invariant_no_conflicting_write_leases
   given_events:
-    - invariant_checked: {invariant: no_conflicting_write_leases}
-  when_command: null
-  then_events: [invariant_checked]
-  then_projection: {}
+    - run_lifecycle_changed: {to_state: active}
+    - node_created: {node_id: writer-active, kind: worker, state: leased, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
+    - lease_granted: {node_id: writer-active, lease_id: lease-writer-active, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
+    - node_created: {node_id: writer-conflict, kind: worker, state: ready, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - command_recorded: {command_type: schedule_tick}
+  then_projection: {writer-conflict: ready, lease-writer-active: active}
 
 - name: invariant_no_callback_without_valid_lease
   given_events:
-    - callback_rejected_stale: {node_id: worker-invariant-3, reason: missing_valid_lease}
-    - invariant_checked: {invariant: no_callback_without_valid_lease}
-  when_command: null
-  then_events: [callback_rejected_stale, invariant_checked]
-  then_projection: {}
+    - node_created: {node_id: worker-invariant-3, kind: worker, state: running}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-invariant-3, execution_id: exec-3, lease_id: missing-lease, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 0, idempotency_key: key-3}
+  then_events:
+    - callback_rejected_stale: {node_id: worker-invariant-3, lease_id: missing-lease}
+  then_projection: {worker-invariant-3: running}
 
 - name: invariant_successor_requires_inputs
   given_events:
-    - node_state_changed: {node_id: successor-invariant-4, new_state: blocked}
-    - invariant_checked: {invariant: successor_requires_inputs}
-  when_command: null
-  then_events: [node_state_changed, invariant_checked]
+    - run_lifecycle_changed: {to_state: active}
+    - node_created: {node_id: producer-invariant-4, kind: worker, state: completed}
+    - node_created: {node_id: successor-invariant-4, kind: worker, state: blocked}
+    - edge_created: {edge_id: edge-invariant-4, from_node_id: producer-invariant-4, from_port: candidate, to_node_id: successor-invariant-4, to_port: candidate, required: true}
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - command_recorded: {command_type: schedule_tick}
+    - node_deferred: {node_id: successor-invariant-4, reason: missing_required_input:candidate}
   then_projection: {successor-invariant-4: blocked}
+
+- name: invariant_successor_releases_after_required_input
+  given_events:
+    - run_lifecycle_changed: {to_state: active}
+    - node_created: {node_id: producer-invariant-4b, kind: worker, state: completed}
+    - node_created: {node_id: successor-invariant-4b, kind: worker, state: blocked}
+    - edge_created: {edge_id: edge-invariant-4b, from_node_id: producer-invariant-4b, from_port: candidate, to_node_id: successor-invariant-4b, to_port: candidate, required: true}
+    - input_bound: {edge_id: edge-invariant-4b, to_node_id: successor-invariant-4b, to_port: candidate}
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - node_ready: {node_id: successor-invariant-4b}
+    - lease_granted: {node_id: successor-invariant-4b}
+  then_projection: {successor-invariant-4b: leased}
 
 - name: invariant_retired_nodes_cannot_run
   given_events:
     - node_state_changed: {node_id: retired-invariant-5, new_state: retired}
-    - callback_rejected_stale: {node_id: retired-invariant-5, callback_type: start, reason: node_retired}
-    - invariant_checked: {invariant: retired_nodes_cannot_run}
-  when_command: null
-  then_events: [callback_rejected_stale, invariant_checked]
+    - lease_granted: {node_id: retired-invariant-5, lease_id: lease-retired-5, generation: 1}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: retired-invariant-5, execution_id: exec-5, lease_id: lease-retired-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-5}
+  then_events:
+    - callback_rejected_stale: {node_id: retired-invariant-5}
   then_projection: {retired-invariant-5: retired}
 
 - name: invariant_planner_authority_scoped
   given_events:
-    - graph_patch_rejected: {node_id: planner-invariant-6, reason: authority_scope_exceeded}
-    - invariant_checked: {invariant: planner_authority_scoped}
-  when_command: null
-  then_events: [graph_patch_rejected, invariant_checked]
-  then_projection: {}
+    - node_created: {node_id: worker-1, kind: worker, state: planned}
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-planner-scope
+      proposed_by_node_id: planner-invariant-6
+      actor_role: planner
+      base_graph_position: -1
+      ops:
+        - {op: create_gate, predecessor_node_ids: [worker-1]}
+  then_events:
+    - graph_patch_rejected: {patch_id: patch-planner-scope}
+  then_projection: {worker-1: planned}
 
 - name: invariant_verification_failure_preserves_builder
   given_events:
     - node_state_changed: {node_id: builder-invariant-7, new_state: completed}
+    - output_record_accepted: {task_region_id: task-invariant-7, candidate_id: candidate-invariant-7, attempt_number: 1}
     - verification_failed: {node_id: verifier-invariant-7, candidate_id: candidate-invariant-7}
-    - node_state_changed: {node_id: verifier-invariant-7, new_state: completed}
-    - invariant_checked: {invariant: verification_failure_preserves_builder}
-  when_command: null
-  then_events: [verification_failed, invariant_checked]
-  then_projection: {builder-invariant-7: completed, verifier-invariant-7: completed}
+    - node_state_changed: {node_id: verifier-invariant-7, new_state: running}
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-retire-builder-7
+      proposed_by_node_id: planner-invariant-7
+      actor_role: planner
+      base_graph_position: 3
+      ops:
+        - {op: retire_node, node_id: verifier-invariant-7}
+  then_events:
+    - graph_patch_rejected: {patch_id: patch-retire-builder-7}
+  then_projection: {builder-invariant-7: completed, verifier-invariant-7: running, task-invariant-7: needs_revision}
 
 - name: invariant_snapshot_mismatch_not_consumed
   given_events:
-    - input_binding_rejected: {to_node_id: reader-invariant-8, required_snapshot_id: S1, record_snapshot_id: S0}
-    - invariant_checked: {invariant: snapshot_mismatch_not_consumed}
-  when_command: null
-  then_events: [input_binding_rejected, invariant_checked]
-  then_projection: {}
+    - node_created: {node_id: reader-invariant-8, kind: worker, state: running}
+    - lease_granted: {node_id: reader-invariant-8, lease_id: lease-reader-8, generation: 1, execution_id: exec-8, base_snapshot_id: S1}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: reader-invariant-8, execution_id: exec-8, lease_id: lease-reader-8, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-8}
+  then_events:
+    - callback_rejected_stale: {node_id: reader-invariant-8, reason: snapshot_incompatible}
+  then_projection: {reader-invariant-8: running, lease-reader-8: active}
 
 - name: invariant_human_gate_blocks_successors
   given_events:
-    - node_state_changed: {node_id: gate-invariant-9, new_state: blocked}
-    - node_state_changed: {node_id: successor-invariant-9, new_state: blocked}
-    - invariant_checked: {invariant: human_gate_blocks_successors}
-  when_command: null
-  then_events: [node_state_changed, invariant_checked]
-  then_projection: {gate-invariant-9: blocked, successor-invariant-9: blocked}
+    - run_lifecycle_changed: {to_state: active}
+    - node_created: {node_id: gate-invariant-9, kind: gate, state: completed}
+    - node_created: {node_id: successor-invariant-9, kind: worker, state: blocked}
+    - edge_created: {edge_id: edge-invariant-9, from_node_id: gate-invariant-9, from_port: decision, to_node_id: successor-invariant-9, to_port: approval, required: true}
+    - input_bound: {edge_id: edge-invariant-9, to_node_id: successor-invariant-9, to_port: approval}
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - command_recorded: {command_type: schedule_tick}
+    - node_deferred: {node_id: successor-invariant-9, reason: gate_not_approved:gate-invariant-9}
+  then_projection: {gate-invariant-9: completed, successor-invariant-9: blocked}
+
+- name: invariant_human_gate_approval_releases_successor
+  given_events:
+    - run_lifecycle_changed: {to_state: active}
+    - node_created: {node_id: gate-invariant-9b, kind: gate, state: completed}
+    - approval_decision_recorded: {node_id: gate-invariant-9b, decision: approved}
+    - node_created: {node_id: successor-invariant-9b, kind: worker, state: blocked}
+    - edge_created: {edge_id: edge-invariant-9b, from_node_id: gate-invariant-9b, from_port: decision, to_node_id: successor-invariant-9b, to_port: approval, required: true}
+    - input_bound: {edge_id: edge-invariant-9b, to_node_id: successor-invariant-9b, to_port: approval}
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - node_ready: {node_id: successor-invariant-9b}
+    - lease_granted: {node_id: successor-invariant-9b}
+  then_projection: {gate-invariant-9b: completed, successor-invariant-9b: leased}
+
 
 - name: invariant_file_state_rejects_residue
   given_events:
-    - file_state_rejected: {producer_node_id: worker-invariant-10, reason: undeclared_untracked_residue}
-    - invariant_checked: {invariant: file_state_rejects_residue}
-  when_command: null
-  then_events: [file_state_rejected, invariant_checked]
-  then_projection: {}
+    - node_created: {node_id: worker-invariant-10, kind: worker, state: running}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: worker-invariant-10, execution_id: exec-10, lease_id: missing-lease-10, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 0, idempotency_key: key-10, payload: {file_state: undeclared_untracked_residue}}
+  then_events:
+    - callback_rejected_stale: {node_id: worker-invariant-10}
+  then_projection: {worker-invariant-10: running}

@@ -1,41 +1,48 @@
 - name: task_projection_accepted
   given_events:
-    - task_projection_changed: {task_id: task-accepted, state: accepted, reason: verifier_pass_and_gates_passed}
+    - output_record_accepted: {task_region_id: task-accepted, candidate_id: cand-accepted, attempt_number: 1}
+    - verification_passed: {candidate_id: cand-accepted}
+    - approval_decision_recorded: {task_region_id: task-accepted, gate_id: gate-accepted, approved: true}
   when_command: null
-  then_events: [task_projection_changed]
-  then_projection: {}
+  then_events: []
+  then_projection: {task-accepted: accepted}
 
 - name: task_projection_needs_revision
   given_events:
-    - task_projection_changed: {task_id: task-revision, state: needs_revision, reason: verifier_failure_no_active_appeal}
+    - output_record_accepted: {task_region_id: task-revision, candidate_id: cand-revision, attempt_number: 1}
+    - verification_failed: {candidate_id: cand-revision}
   when_command: null
-  then_events: [task_projection_changed]
-  then_projection: {}
+  then_events: []
+  then_projection: {task-revision: needs_revision}
 
 - name: task_projection_blocked_invalid_test
   given_events:
-    - task_projection_changed: {task_id: task-invalid-test, state: blocked_invalid_test, reason: invalid_test_appeal_accepted}
+    - output_record_accepted: {task_region_id: task-invalid-test, candidate_id: cand-invalid-test, attempt_number: 1}
+    - verification_failed: {candidate_id: cand-invalid-test}
+    - oversight_decision_recorded: {task_region_id: task-invalid-test, candidate_id: cand-invalid-test, appeal_type: invalid_test, decision: accepted}
   when_command: null
-  then_events: [task_projection_changed]
-  then_projection: {}
+  then_events: []
+  then_projection: {task-invalid-test: blocked_invalid_test}
 
 - name: task_projection_blocked_environment
   given_events:
-    - task_projection_changed: {task_id: task-environment, state: blocked_environment, reason: latest_check_environment_error}
+    - output_record_accepted: {task_region_id: task-environment, candidate_id: cand-environment, attempt_number: 1}
+    - environment_failure_accepted: {task_region_id: task-environment, reason: tool_unavailable}
   when_command: null
-  then_events: [task_projection_changed]
-  then_projection: {}
+  then_events: []
+  then_projection: {task-environment: blocked_environment}
 
 - name: task_projection_in_progress
   given_events:
-    - task_projection_changed: {task_id: task-in-progress, state: in_progress, reason: active_worker_verifier_or_check_lease}
+    - node_created: {node_id: worker-in-progress, kind: worker, state: running, task_region_id: task-in-progress}
+    - lease_granted: {node_id: worker-in-progress, lease_id: lease-in-progress}
   when_command: null
-  then_events: [task_projection_changed]
-  then_projection: {}
+  then_events: []
+  then_projection: {task-in-progress: in_progress, lease-in-progress: active}
 
 - name: task_projection_pending
   given_events:
-    - task_projection_changed: {task_id: task-pending, state: pending, reason: no_candidate_attempt_started}
+    - node_created: {node_id: worker-pending, kind: worker, state: planned, task_region_id: task-pending}
   when_command: null
-  then_events: [task_projection_changed]
-  then_projection: {}
+  then_events: []
+  then_projection: {task-pending: pending, worker-pending: planned}

@@ -1,57 +1,99 @@
 - name: patch_stale_neutral_lease_accepted
   given_events:
-    - graph_patch_accepted: {patch_id: patch-neutral-lease, base_graph_position: 10}
     - lease_granted: {node_id: worker-neutral-lease, lease_id: lease-neutral-lease}
-  when_command: null
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-neutral-lease
+      proposed_by_node_id: planner-1
+      actor_role: planner
+      base_graph_position: 0
+      ops:
+        - {op: create_node, node: {node_id: artifact-neutral-lease, kind: artifact, state: planned}}
   then_events:
     - graph_patch_accepted: {patch_id: patch-neutral-lease}
-    - lease_granted: {node_id: worker-neutral-lease}
-  then_projection: {lease-neutral-lease: active}
+    - node_created: {node_id: artifact-neutral-lease}
+  then_projection: {lease-neutral-lease: active, artifact-neutral-lease: planned}
 
 - name: patch_stale_neutral_heartbeat_accepted
   given_events:
     - heartbeat_recorded: {node_id: worker-neutral-heartbeat}
-    - graph_patch_accepted: {patch_id: patch-neutral-heartbeat, base_graph_position: 20}
-  when_command: null
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-neutral-heartbeat
+      proposed_by_node_id: planner-1
+      actor_role: planner
+      base_graph_position: 0
+      ops:
+        - {op: create_node, node: {node_id: artifact-neutral-heartbeat, kind: artifact, state: planned}}
   then_events:
-    - heartbeat_recorded: {node_id: worker-neutral-heartbeat}
     - graph_patch_accepted: {patch_id: patch-neutral-heartbeat}
-  then_projection: {}
+    - node_created: {node_id: artifact-neutral-heartbeat}
+  then_projection: {artifact-neutral-heartbeat: planned}
 
 - name: patch_stale_requirement_in_read_set_rejected
   given_events:
+    - node_created: {node_id: task-1, kind: task_projection, state: planned}
     - requirement_amended: {record_id: requirement-1, version: 2}
-    - graph_patch_rejected: {patch_id: patch-requirement-conflict, reason: stale_read_set_conflict}
-  when_command: null
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-requirement-conflict
+      proposed_by_node_id: planner-1
+      actor_role: planner
+      base_graph_position: -1
+      ops:
+        - {op: create_revision_attempt, task_region_id: task-1, failed_candidate_id: requirement-1}
   then_events:
-    - requirement_amended: {record_id: requirement-1}
     - graph_patch_rejected: {patch_id: patch-requirement-conflict}
-  then_projection: {}
+  then_projection: {task-1: planned}
 
 - name: patch_stale_retired_region_rejected
   given_events:
+    - node_created: {node_id: region-1, kind: planner, state: planned}
     - region_marked_suspect: {region_node_ids: [region-1], reason: requirement_changed}
-    - graph_patch_rejected: {patch_id: patch-region-conflict, reason: stale_read_set_conflict}
-  when_command: null
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-region-conflict
+      proposed_by_node_id: planner-1
+      actor_role: planner
+      base_graph_position: -1
+      ops:
+        - {op: mark_plan_region_suspect, region_node_ids: [region-1]}
   then_events:
-    - region_marked_suspect: {region_node_ids: [region-1]}
     - graph_patch_rejected: {patch_id: patch-region-conflict}
-  then_projection: {}
+  then_projection: {region-1: planned}
 
 - name: patch_planner_create_gate_rejected
   given_events:
-    - graph_patch_rejected: {patch_id: patch-create-gate, reason: actor_role_not_allowed}
-  when_command: null
+    - node_created: {node_id: worker-1, kind: worker, state: planned}
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-create-gate
+      proposed_by_node_id: planner-1
+      actor_role: planner
+      base_graph_position: -1
+      ops:
+        - {op: create_gate, predecessor_node_ids: [worker-1]}
   then_events:
     - graph_patch_rejected: {patch_id: patch-create-gate}
-  then_projection: {}
+  then_projection: {worker-1: planned}
 
 - name: patch_resource_claim_escalation_rejected
   given_events:
-    - authority_narrowed: {node_id: worker-claim, mode: read}
-    - graph_patch_rejected: {patch_id: patch-claim-escalation, reason: authority_scope_exceeded}
-  when_command: null
+    - node_created: {node_id: worker-claim, kind: worker, state: planned, resource_claims: [{mode: read, scope: repo}]}
+  when_command:
+    submit_patch:
+      run_id: run-1
+      patch_id: patch-claim-escalation
+      proposed_by_node_id: planner-1
+      actor_role: planner
+      base_graph_position: 0
+      ops:
+        - {op: set_resource_claims, node_id: worker-claim, resource_claims: [{mode: write, scope: repo}]}
   then_events:
-    - authority_narrowed: {node_id: worker-claim}
     - graph_patch_rejected: {patch_id: patch-claim-escalation}
-  then_projection: {}
+  then_projection: {worker-claim: planned}

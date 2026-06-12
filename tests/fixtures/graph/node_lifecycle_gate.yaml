@@ -4,7 +4,7 @@
     - input_bound: {to_node_id: gate-1, input: candidate_and_verdict}
     - node_state_changed: {node_id: gate-1, new_state: ready, trigger: all_gate_inputs_present}
   when_command: null
-  then_events: [input_bound, node_state_changed]
+  then_events: []
   then_projection: {gate-1: ready}
 
 - name: gate_ready_to_blocked
@@ -12,23 +12,25 @@
     - node_created: {node_id: gate-2, kind: gate, state: ready}
     - node_state_changed: {node_id: gate-2, new_state: blocked, trigger: waiting_for_human_decision}
   when_command: null
-  then_events: [node_state_changed]
+  then_events: []
   then_projection: {gate-2: blocked}
 
 - name: gate_blocked_to_completed_approved
   given_events:
-    - node_created: {node_id: gate-3, kind: gate, state: blocked}
-    - approval_decision_recorded: {node_id: gate-3, approved: true}
-    - node_state_changed: {node_id: gate-3, new_state: completed, trigger: approval_decision_accepted}
-  when_command: null
-  then_events: [approval_decision_recorded, node_state_changed]
+    - node_created: {node_id: gate-3, kind: gate, state: blocked, task_region_id: task-gate-3}
+  when_command:
+    record_decision: {run_id: run-1, decision_type: approval, node_id: gate-3, decision: approved, decider: {kind: human, id: reviewer-1}}
+  then_events:
+    - approval_decision_recorded: {node_id: gate-3, decision: approved}
+    - node_state_changed: {node_id: gate-3, new_state: completed}
   then_projection: {gate-3: completed}
 
 - name: gate_blocked_to_completed_rejected
   given_events:
-    - node_created: {node_id: gate-4, kind: gate, state: blocked}
-    - approval_decision_recorded: {node_id: gate-4, approved: false}
-    - node_state_changed: {node_id: gate-4, new_state: completed, trigger: rejection_decision_accepted}
-  when_command: null
-  then_events: [approval_decision_recorded, node_state_changed]
+    - node_created: {node_id: gate-4, kind: gate, state: blocked, task_region_id: task-gate-4}
+  when_command:
+    record_decision: {run_id: run-1, decision_type: approval, node_id: gate-4, decision: rejected, decider: {kind: human, id: reviewer-1}}
+  then_events:
+    - approval_decision_recorded: {node_id: gate-4, decision: rejected}
+    - node_state_changed: {node_id: gate-4, new_state: completed}
   then_projection: {gate-4: completed}

@@ -1,0 +1,58 @@
+- name: review_planned_to_ready
+  given_events:
+    - node_created: {node_id: review-1, kind: review, state: planned}
+    - input_bound: {to_node_id: review-1, input: review_context}
+    - node_state_changed: {node_id: review-1, new_state: ready, trigger: review_inputs_available}
+  when_command: null
+  then_events: []
+  then_projection: {review-1: ready}
+
+- name: review_ready_to_leased
+  given_events:
+    - run_lifecycle_changed: {to_state: active}
+    - node_created: {node_id: review-2, kind: review, state: ready, resource_claims: [{mode: review_write, scope: repo, paths: [docs/review.md]}]}
+  when_command: {schedule_tick: {run_id: run-1}}
+  then_events:
+    - lease_granted: {node_id: review-2}
+    - node_state_changed: {node_id: review-2, new_state: leased}
+  then_projection: {review-2: leased}
+
+- name: review_ready_to_blocked
+  given_events:
+    - node_created: {node_id: review-3, kind: review, state: ready}
+    - node_state_changed: {node_id: review-3, new_state: blocked, trigger: waiting_for_human_review_gate}
+  when_command: null
+  then_events: []
+  then_projection: {review-3: blocked}
+
+- name: review_leased_to_running
+  given_events:
+    - node_created: {node_id: review-4, kind: review, state: leased}
+    - lease_granted: {node_id: review-4, lease_id: lease-review-4, generation: 1, execution_id: exec-review-4}
+  when_command:
+    acknowledge_start: {run_id: run-1, node_id: review-4, lease_id: lease-review-4, lease_generation: 1, execution_id: exec-review-4}
+  then_events:
+    - node_state_changed: {node_id: review-4, new_state: running}
+  then_projection: {review-4: running}
+
+- name: review_running_to_completed
+  given_events:
+    - node_created: {node_id: review-5, kind: review, state: running}
+    - lease_granted: {node_id: review-5, lease_id: lease-review-5, generation: 1, execution_id: exec-review-5, base_snapshot_id: S0}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: review-5, execution_id: exec-review-5, lease_id: lease-review-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-review-5, payload: {review_record_id: review-record-5}}
+  then_events:
+    - callback_accepted: {node_id: review-5}
+    - node_state_changed: {node_id: review-5, new_state: completed}
+  then_projection: {review-5: completed}
+
+- name: review_running_to_failed
+  given_events:
+    - node_created: {node_id: review-6, kind: review, state: running}
+    - lease_granted: {node_id: review-6, lease_id: lease-review-6, generation: 1, execution_id: exec-review-6, base_snapshot_id: S0}
+  when_command:
+    submit_callback: {run_id: run-1, node_id: review-6, execution_id: exec-review-6, lease_id: lease-review-6, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-review-6, new_state: failed, payload: {error: review_action_failed}}
+  then_events:
+    - callback_accepted: {node_id: review-6}
+    - node_state_changed: {node_id: review-6, new_state: failed}
+  then_projection: {review-6: failed}
