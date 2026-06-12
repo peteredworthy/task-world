@@ -28,6 +28,8 @@ from orchestrator.graph.models import (
     RunLifecycleState,
     RunModel,
 )
+from orchestrator.graph.scenario import ScenarioResult, run_scenario
+from orchestrator.graph.store import DuplicateEventError, InMemoryEventStore
 
 __all__ = [
     "Actor",
@@ -56,4 +58,8 @@ __all__ = [
     "ResourceClaim",
     "RunLifecycleState",
     "RunModel",
+    "ScenarioResult",
+    "InMemoryEventStore",
+    "DuplicateEventError",
+    "run_scenario",
 ]
