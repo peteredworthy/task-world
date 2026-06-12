@@ -40,6 +40,13 @@ from orchestrator.graph.projections import (
     reduce_event,
 )
 from orchestrator.graph.scenario import ScenarioResult, run_scenario
+from orchestrator.graph.scheduler import (
+    NodeScheduleInfo,
+    SchedulingDecision,
+    claims_conflict,
+    evaluate_readiness,
+    schedule,
+)
 from orchestrator.graph.store import DuplicateEventError, InMemoryEventStore
 
 __all__ = [
@@ -62,6 +69,7 @@ __all__ = [
     "NodeKind",
     "NodeMembership",
     "NodeModel",
+    "NodeScheduleInfo",
     "NodeState",
     "OutputRecord",
     "PatchEnvelope",
@@ -72,9 +80,12 @@ __all__ = [
     "RunLifecycleState",
     "RunModel",
     "ScenarioResult",
+    "SchedulingDecision",
     "SequentialIdGenerator",
     "InMemoryEventStore",
     "DuplicateEventError",
+    "claims_conflict",
+    "evaluate_readiness",
     "initial_projection",
     "project_leases",
     "project_node_states",
@@ -83,4 +94,5 @@ __all__ = [
     "project_task_states",
     "reduce_event",
     "run_scenario",
+    "schedule",
 ]

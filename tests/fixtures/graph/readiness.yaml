@@ -1,0 +1,88 @@
+- name: readiness_single_node_planned_to_ready
+  given_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+    - node_created: {node_id: worker-1, kind: worker, state: planned}
+    - node_state_changed: {node_id: worker-1, new_state: ready, trigger: readiness_evaluator}
+  when_command: null
+  then_events:
+    - run_lifecycle_changed: {to_state: active}
+    - node_state_changed: {node_id: worker-1, new_state: ready}
+  then_projection: {run_state: active, worker-1: ready}
+
+- name: readiness_blocked_node_becomes_ready
+  given_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+    - node_created: {node_id: gate-successor, kind: worker, state: blocked}
+    - approval_decision_recorded: {node_id: gate-1, decision: approved}
+    - node_state_changed: {node_id: gate-successor, new_state: ready, trigger: gate_approved}
+  when_command: null
+  then_events:
+    - approval_decision_recorded: {decision: approved}
+    - node_state_changed: {node_id: gate-successor, new_state: ready}
+  then_projection: {run_state: active, gate-successor: ready}
+
+- name: readiness_multiple_nodes_independent
+  given_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+    - node_created: {node_id: reader-1, kind: worker, state: planned}
+    - node_created: {node_id: reader-2, kind: worker, state: planned}
+    - node_state_changed: {node_id: reader-1, new_state: ready, trigger: readiness_evaluator}
+    - node_state_changed: {node_id: reader-2, new_state: ready, trigger: readiness_evaluator}
+  when_command: null
+  then_events:
+    - node_state_changed: {node_id: reader-1, new_state: ready}
+    - node_state_changed: {node_id: reader-2, new_state: ready}
+  then_projection: {run_state: active, reader-1: ready, reader-2: ready}
+
+- name: readiness_write_node_blocked_by_active_write
+  given_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+    - node_created: {node_id: writer-active, kind: worker, state: leased}
+    - lease_granted: {node_id: writer-active, lease_id: lease-writer-active}
+    - node_created: {node_id: writer-waiting, kind: worker, state: blocked}
+  when_command: null
+  then_events:
+    - lease_granted: {node_id: writer-active, lease_id: lease-writer-active}
+  then_projection: {run_state: active, writer-active: leased, writer-waiting: blocked}
+
+- name: readiness_read_node_compatible_with_read
+  given_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+    - node_created: {node_id: reader-active, kind: worker, state: leased}
+    - lease_granted: {node_id: reader-active, lease_id: lease-reader-active}
+    - node_created: {node_id: reader-waiting, kind: worker, state: planned}
+    - node_state_changed: {node_id: reader-waiting, new_state: ready, trigger: read_read_compatible}
+  when_command: null
+  then_events:
+    - lease_granted: {node_id: reader-active, lease_id: lease-reader-active}
+    - node_state_changed: {node_id: reader-waiting, new_state: ready}
+  then_projection: {run_state: active, reader-active: leased, reader-waiting: ready}
+
+- name: readiness_gate_blocked_until_input
+  given_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+    - node_created: {node_id: approval-gate, kind: gate, state: blocked}
+  when_command: null
+  then_events:
+    - node_created: {node_id: approval-gate, state: blocked}
+  then_projection: {run_state: active, approval-gate: blocked}
+
+- name: readiness_retired_node_not_eligible
+  given_events:
+    - run_lifecycle_changed: {from_state: queued, to_state: active}
+    - node_created: {node_id: retired-worker, kind: worker, state: planned}
+    - node_state_changed: {node_id: retired-worker, new_state: retired, trigger: superseded}
+  when_command: null
+  then_events:
+    - node_state_changed: {node_id: retired-worker, new_state: retired}
+  then_projection: {run_state: active, retired-worker: retired}
+
+- name: readiness_run_not_active_no_scheduling
+  given_events:
+    - run_lifecycle_changed: {from_state: active, to_state: paused}
+    - node_created: {node_id: paused-worker, kind: worker, state: planned}
+  when_command: null
+  then_events:
+    - run_lifecycle_changed: {to_state: paused}
+    - node_created: {node_id: paused-worker, state: planned}
+  then_projection: {run_state: paused, paused-worker: planned}

@@ -43,6 +43,14 @@
 | §15.5 | appeal planned -> ready | node_lifecycle_appeal.yaml::appeal_planned_to_ready |
 | §15.5 | appeal ready -> completed | node_lifecycle_appeal.yaml::appeal_ready_to_completed |
 | §15.5 | appeal ready -> failed | node_lifecycle_appeal.yaml::appeal_ready_to_failed |
+| §17 | single planned node becomes ready | readiness.yaml::readiness_single_node_planned_to_ready |
+| §17 | blocked node becomes ready | readiness.yaml::readiness_blocked_node_becomes_ready |
+| §17 | multiple independent nodes become ready | readiness.yaml::readiness_multiple_nodes_independent |
+| §17 | write node blocked by active write | readiness.yaml::readiness_write_node_blocked_by_active_write |
+| §17 | read node compatible with active read | readiness.yaml::readiness_read_node_compatible_with_read |
+| §17 | gate blocked until input | readiness.yaml::readiness_gate_blocked_until_input |
+| §17 | retired node not eligible | readiness.yaml::readiness_retired_node_not_eligible |
+| §17 | inactive run prevents scheduling | readiness.yaml::readiness_run_not_active_no_scheduling |
 | §19 | duplicate same key and same payload | stale_callbacks.yaml::stale_duplicate_same_payload |
 | §19 | duplicate same key and different payload | stale_callbacks.yaml::stale_duplicate_different_payload |
 | §19 | callback for revoked lease | stale_callbacks.yaml::stale_callback_for_revoked_lease |
