@@ -1,5 +1,6 @@
 """Pure Pydantic execution graph models."""
 
+from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -28,6 +29,16 @@ from orchestrator.graph.models import (
     RunLifecycleState,
     RunModel,
 )
+from orchestrator.graph.projections import (
+    GraphProjection,
+    initial_projection,
+    project_leases,
+    project_node_states,
+    project_ready_nodes,
+    project_run_state,
+    project_task_states,
+    reduce_event,
+)
 from orchestrator.graph.scenario import ScenarioResult, run_scenario
 from orchestrator.graph.store import DuplicateEventError, InMemoryEventStore
 
@@ -40,9 +51,11 @@ __all__ = [
     "EventEnvelope",
     "FileEntry",
     "FileStateRecord",
+    "FakeClock",
     "GitRef",
     "GraphRecord",
     "GraphRecordKind",
+    "GraphProjection",
     "InputBinding",
     "LeaseModel",
     "LeaseState",
@@ -59,7 +72,15 @@ __all__ = [
     "RunLifecycleState",
     "RunModel",
     "ScenarioResult",
+    "SequentialIdGenerator",
     "InMemoryEventStore",
     "DuplicateEventError",
+    "initial_projection",
+    "project_leases",
+    "project_node_states",
+    "project_ready_nodes",
+    "project_run_state",
+    "project_task_states",
+    "reduce_event",
     "run_scenario",
 ]

@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
 from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
-from orchestrator.graph.projections import project_node_states, project_task_states
+from orchestrator.graph.projections import initial_projection, reduce_event
 from orchestrator.graph.store import InMemoryEventStore
 
 
@@ -47,9 +47,17 @@ def run_scenario(
     events = store.read_from(run_id)
     failures.extend(_check_then_events(scenario.get("then_events", []), events))
 
-    node_states = project_node_states(events)
-    task_states = project_task_states(events)
-    projection_snapshot = {**node_states, **task_states}
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+    projection_snapshot: dict[str, str] = {}
+    if projection["run_state"] is not None:
+        projection_snapshot["run_state"] = projection["run_state"]
+    projection_snapshot.update(projection["node_states"])
+    projection_snapshot.update(projection["task_states"])
+    for lease_id, lease in projection["leases"].items():
+        state = lease.get("state", "")
+        projection_snapshot[lease_id] = state if isinstance(state, str) else ""
     failures.extend(
         _check_then_projection(scenario.get("then_projection", {}), projection_snapshot)
     )
