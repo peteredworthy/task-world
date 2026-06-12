@@ -11,3 +11,7 @@ class StaleProjectionError(GraphRuntimeError):
 
 class OutboxAppendError(GraphRuntimeError):
     """Raised when side-effect intent cannot be written atomically."""
+
+
+class CompromisedFileStateError(GraphRuntimeError):
+    """Raised when runtime dispatch would consume a compromised file-state record."""

@@ -76,7 +76,7 @@ from orchestrator.git.repos import (
     list_branches,
     list_repos,
 )
-from orchestrator.git.snapshot import SnapshotResult, restore, snapshot
+from orchestrator.git.snapshot import SnapshotResult, delete_snapshot_ref, restore, snapshot
 from orchestrator.git.testing import TestRunResult, TestRunner, TestSummary
 from orchestrator.git.utils import (
     GIT_ADD_TIMEOUT_SECONDS,
@@ -155,6 +155,7 @@ __all__ = [
     "commit_uncommitted_changes",
     "commit_uncommitted_changes_or_raise",
     "compute_selection_preview",
+    "delete_snapshot_ref",
     "get_branch_diff",
     "get_branch_status",
     "get_commit_diff",

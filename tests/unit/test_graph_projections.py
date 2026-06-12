@@ -65,6 +65,7 @@ def test_empty_projection() -> None:
         "configured_gates": {},
         "gate_decisions": {},
         "environment_failures": {},
+        "file_state_records": {},
     }
 
 
@@ -121,6 +122,7 @@ def test_projection_immutability() -> None:
         "configured_gates": {},
         "gate_decisions": {},
         "environment_failures": {},
+        "file_state_records": {},
     }
 
     next_state = reduce_event(
@@ -158,6 +160,7 @@ def test_projection_immutability() -> None:
         "configured_gates": {},
         "gate_decisions": {},
         "environment_failures": {},
+        "file_state_records": {},
     }
     assert next_state["node_states"] == {"worker-1": "running"}
 

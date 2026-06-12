@@ -219,6 +219,16 @@ class FileStateRecord(GraphBaseModel):
     verdict: Literal["captured", "rejected"] = "captured"
     patch_bundle_id: str | None = None
     tree_snapshot_id: str | None = None
+    # Projection-only lineage/safety fields used when a later gatekeeper verdict
+    # proves the original snapshot captured a secret. Historical records remain
+    # immutable; reducers mark the old record compromised and point at the
+    # superseding cleanup record.
+    compromised: bool | None = None
+    superseded_pending: bool | None = None
+    supersedes_record_id: str | None = None
+    superseded_by_record_id: str | None = None
+    cleanup_id: str | None = None
+    compromised_paths: list[str] | None = None
 
 
 class GraphRecordKind(str, Enum):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,12 +19,17 @@ from orchestrator.db import (
 )
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import (
+    CompromisedFileStateError,
+    GraphDispatchContext,
+    GraphDispatchExecutor,
     GraphController,
     GraphEventStore,
     OutboxAppendError,
     OutboxDispatcher,
     OutboxItem,
     StaleProjectionError,
+    apply_cleanup_requested,
+    capture_file_state_boundary,
     recover,
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
@@ -116,6 +122,17 @@ class CrashOnceAfterSideEffectExecutor:
         self._call_log.append(item.event_id)
         if self._calls == 1:
             raise SimulatedProcessCrash("process died before outbox completion")
+
+
+class CrashBeforeCleanupExecutor:
+    async def dispatch(self, item: OutboxItem) -> None:
+        if item.kind == "snapshot_cleanup":
+            raise RuntimeError("cleanup side effect did not start")
+
+
+class UnusedAgentFactory:
+    def create_runner(self, context: GraphDispatchContext) -> Any:
+        raise AssertionError(f"unexpected agent dispatch for {context.node_id}")
 
 
 @pytest.fixture
@@ -214,6 +231,100 @@ async def _outbox_count(session_factory: async_sessionmaker[AsyncSession]) -> in
     async with session_factory() as session:
         result = await session.execute(select(func.count(GraphOutboxModel.outbox_id)))
         return int(result.scalar_one())
+
+
+def _init_repo(path: Path) -> None:
+    path.mkdir()
+    _run_git(path, ["init"])
+    _run_git(path, ["config", "user.email", "test@example.com"])
+    _run_git(path, ["config", "user.name", "Test User"])
+    (path / "README.md").write_text("base\n")
+    _run_git(path, ["add", "README.md"])
+    _run_git(path, ["commit", "-m", "base"])
+
+
+def _run_git(path: Path, args: list[str]) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=30,
+    )
+    return result.stdout.strip()
+
+
+def _ref_exists(path: Path, ref: str) -> bool:
+    result = subprocess.run(
+        ["git", "show-ref", "--verify", "--quiet", ref],
+        cwd=path,
+        check=False,
+        timeout=30,
+    )
+    return result.returncode == 0
+
+
+def _tree_paths(path: Path, commit_sha: str) -> set[str]:
+    output = _run_git(path, ["ls-tree", "-r", "--name-only", commit_sha])
+    return set(output.splitlines()) if output else set()
+
+
+def _secret_verdict(path: str) -> dict[str, object]:
+    return {
+        "path": path,
+        "classification": "secret",
+        "confidence": 0.99,
+        "rationale": "secret fixture",
+        "model_id": "test-gatekeeper",
+        "input_tokens": 1,
+        "output_tokens": 1,
+        "cost_usd": 0.001,
+        "wall_time_ms": 1,
+    }
+
+
+async def _seed_cleanup_request(
+    session_factory: async_sessionmaker[AsyncSession],
+    repo: Path,
+    *,
+    run_id: str,
+    clock: FixedClock,
+    ids: SequentialIds,
+) -> tuple[GraphController, str, str]:
+    (repo / "residue.txt").write_text("secret\n")
+    boundary = capture_file_state_boundary(
+        worktree_path=repo,
+        run_id=run_id,
+        node_id="worker-1",
+        execution_id="exec-1",
+        base_snapshot_id="base-snapshot",
+    )
+    assert boundary.output_record is not None
+    record_id = str(boundary.output_record["record_id"])
+    old_snapshot_id = str(boundary.output_record["snapshot_id"])
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(
+                run_id,
+                0,
+                [_event("file-state-event", run_id, "file_state_accepted", boundary.output_record)],
+            )
+
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    result = await controller.handle_command(
+        run_id,
+        1,
+        "record_gatekeeper_verdicts",
+        {
+            "file_state_record_id": record_id,
+            "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "verdicts": [_secret_verdict("residue.txt")],
+        },
+    )
+    assert [item.kind for item in result.outbox_items] == ["snapshot_cleanup"]
+    return controller, record_id, old_snapshot_id
 
 
 @pytest.mark.asyncio
@@ -451,6 +562,224 @@ async def test_restart_mid_dispatching_row_is_retried_idempotently(
     assert call_log == [result.outbox_items[0].event_id, result.outbox_items[0].event_id]
     assert rows_after_recovery[0].status == "completed"
     assert rows_after_recovery[0].attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "cleanup-before-side-effect"
+    _init_repo(repo)
+    clock = FixedClock()
+    controller, record_id, old_snapshot_id = await _seed_cleanup_request(
+        session_factory,
+        repo,
+        run_id="cleanup-before-side-effect",
+        clock=clock,
+        ids=SequentialIds(),
+    )
+    old_ref = f"refs/orchestrator/snapshots/{old_snapshot_id}"
+    assert _ref_exists(repo, old_ref) is True
+
+    crashing_dispatcher = OutboxDispatcher(session_factory, CrashBeforeCleanupExecutor(), clock)
+    await crashing_dispatcher.dispatch_pending(limit=1)
+    rows_after_crash = await _outbox_rows(session_factory)
+    assert len(rows_after_crash) == 1
+    assert rows_after_crash[0].kind == "snapshot_cleanup"
+    assert rows_after_crash[0].status == "pending"
+
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        UnusedAgentFactory(),
+        worktree_path=repo,
+    )
+    restarted_dispatcher = OutboxDispatcher(session_factory, executor, clock)
+    report = await recover(
+        session_factory,
+        restarted_dispatcher,
+        run_id="cleanup-before-side-effect",
+    )
+    await restarted_dispatcher.dispatch_pending()
+
+    events = await _read_events(session_factory, "cleanup-before-side-effect")
+    projection = rebuild_projection(events)
+    original = projection["file_state_records"][record_id]
+    superseding_id = str(original["superseded_by_record_id"])
+    superseding = projection["file_state_records"][superseding_id]
+    new_snapshot_id = str(superseding["snapshot_id"])
+    new_ref = f"refs/orchestrator/snapshots/{new_snapshot_id}"
+
+    assert [item.kind for item in report.pending_cleanups] == ["snapshot_cleanup"]
+    assert [item.kind for item in report.redispatched] == ["snapshot_cleanup"]
+    assert _ref_exists(repo, old_ref) is False
+    assert _ref_exists(repo, new_ref) is True
+    assert "residue.txt" not in _tree_paths(repo, str(superseding["git"]["commit_sha"]))
+    assert any(event.event_type == "cleanup_applied" for event in events)
+    assert original["superseded_pending"] is False
+    assert superseding["supersedes_record_id"] == record_id
+    assert await _outbox_statuses(session_factory) == ["completed"]
+
+
+@pytest.mark.asyncio
+async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "cleanup-after-ref-delete"
+    _init_repo(repo)
+    clock = FixedClock()
+    controller, record_id, old_snapshot_id = await _seed_cleanup_request(
+        session_factory,
+        repo,
+        run_id="cleanup-after-ref-delete",
+        clock=clock,
+        ids=SequentialIds(),
+    )
+    events_before = await _read_events(session_factory, "cleanup-after-ref-delete")
+    cleanup_event = next(
+        event for event in events_before if event.event_type == "cleanup_requested"
+    )
+    compromised_record = rebuild_projection(events_before)["file_state_records"][record_id]
+    first_cleanup = apply_cleanup_requested(
+        worktree_path=repo,
+        cleanup_request=cleanup_event.payload,
+        compromised_record=compromised_record,
+    )
+    old_ref = f"refs/orchestrator/snapshots/{old_snapshot_id}"
+    first_new_ref = (
+        f"refs/orchestrator/snapshots/{first_cleanup.superseding_file_state_record['snapshot_id']}"
+    )
+    assert first_cleanup.deleted_snapshot_ref is True
+    assert _ref_exists(repo, old_ref) is False
+    assert _ref_exists(repo, first_new_ref) is True
+
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        UnusedAgentFactory(),
+        worktree_path=repo,
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+    await dispatcher.dispatch_pending()
+    await dispatcher.dispatch_pending()
+
+    events_after = await _read_events(session_factory, "cleanup-after-ref-delete")
+    projection = rebuild_projection(events_after)
+    original = projection["file_state_records"][record_id]
+    superseding_records = [
+        event
+        for event in events_after
+        if event.event_type == "file_state_accepted"
+        and event.payload.get("supersedes_record_id") == record_id
+    ]
+
+    assert _ref_exists(repo, old_ref) is False
+    assert len([event for event in events_after if event.event_type == "cleanup_applied"]) == 1
+    assert len(superseding_records) == 1
+    assert original["superseded_pending"] is False
+    assert await _outbox_statuses(session_factory) == ["completed"]
+
+
+@pytest.mark.asyncio
+async def test_compromised_file_state_binding_is_refused_before_cleanup_completes(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "compromised-binding"
+    _init_repo(repo)
+    run_id = "compromised-binding"
+    file_state_payload = {
+        "record_id": "file-state-1",
+        "record_kind": "file_state",
+        "producer_node_id": "worker-1",
+        "snapshot_id": "snapshot-1",
+        "base_snapshot_id": "base-1",
+        "git": {
+            "commit_sha": "commit-1",
+            "tree_sha": "tree-1",
+            "ref": "refs/orchestrator/snapshots/snapshot-1",
+        },
+        "classifications": [
+            {"path": "residue.txt", "source": "untracked", "classification": "secret"}
+        ],
+        "residue": [{"path": "residue.txt", "source": "untracked", "classification": "secret"}],
+    }
+    events = [
+        _event(
+            "file-state-event",
+            run_id,
+            "file_state_accepted",
+            file_state_payload,
+        ),
+        _event(
+            "cleanup-event",
+            run_id,
+            "cleanup_requested",
+            {
+                "cleanup_id": "cleanup-1",
+                "file_state_record_id": "file-state-1",
+                "snapshot_id": "snapshot-1",
+                "paths": ["residue.txt"],
+            },
+        ),
+        _event(
+            "worker-event",
+            run_id,
+            "node_created",
+            {"node_id": "consumer-1", "kind": "worker", "state": "ready"},
+        ),
+        _event(
+            "bound-event",
+            run_id,
+            "input_bound",
+            {
+                "edge_id": "edge-1",
+                "to_node_id": "consumer-1",
+                "to_port": "file_state",
+                "record_ids": ["file-state-1"],
+                "bound_at_position": 0,
+            },
+        ),
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+
+    clock = FixedClock()
+    controller = GraphController(session_factory, clock=clock, id_gen=SequentialIds())
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        UnusedAgentFactory(),
+        worktree_path=repo,
+    )
+
+    with pytest.raises(CompromisedFileStateError):
+        await executor.dispatch(
+            OutboxItem(
+                outbox_id=1,
+                event_id="dispatch-1",
+                run_id=run_id,
+                kind="agent_dispatch",
+                payload={
+                    "node_id": "consumer-1",
+                    "lease_id": "lease-1",
+                    "generation": 1,
+                    "execution_id": "exec-1",
+                    "base_snapshot_id": "base-1",
+                },
+                status="pending",
+                attempts=0,
+                created_at=clock.now(),
+                updated_at=clock.now(),
+                last_error=None,
+            )
+        )
 
 
 @pytest.mark.asyncio

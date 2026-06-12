@@ -54,6 +54,33 @@ def test_tracked_changes_are_captured_as_tracked_change() -> None:
     assert result.paths[0].matched_rule == "git_status"
 
 
+def test_learned_patterns_apply_only_to_untracked_or_ignored_sources() -> None:
+    policy = FileStatePolicy(
+        declarations=(
+            FileStateDeclaration(
+                "*.py",
+                "tool_cache",
+                rule="pattern_library:*.py",
+                source_kinds=("untracked", "ignored"),
+            ),
+        )
+    )
+
+    result = classify_file_state(
+        WorktreeStatus(
+            tracked_modified=(_path("foo.py", "tracked"),),
+            untracked=(_path("bar.py", "untracked"),),
+        ),
+        policy,
+    )
+
+    by_path = {entry.path: entry for entry in result.paths}
+    assert by_path["foo.py"].classification == "tracked_change"
+    assert by_path["foo.py"].matched_rule == "git_status"
+    assert by_path["bar.py"].classification == "tool_cache"
+    assert by_path["bar.py"].matched_rule == "pattern_library:*.py"
+
+
 def test_untracked_residue_is_captured_and_needs_gatekeeper() -> None:
     result = classify_file_state(
         WorktreeStatus(untracked=(_path("notes/tmp.txt", "untracked"),)),

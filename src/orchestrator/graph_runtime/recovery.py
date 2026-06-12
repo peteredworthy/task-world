@@ -16,6 +16,7 @@ from orchestrator.graph_runtime.store import GraphEventStore
 @dataclass(frozen=True)
 class RecoveryReport:
     redispatched: list[OutboxItem]
+    pending_cleanups: list[OutboxItem]
     awaiting_start_ack: list[dict[str, object]]
     awaiting_callback: list[dict[str, object]]
 
@@ -28,6 +29,7 @@ async def recover(
 ) -> RecoveryReport:
     """Rebuild projections and reconcile in-flight side effects."""
     pending_before = await dispatcher.pending_items()
+    pending_cleanups = [item for item in pending_before if item.kind == "snapshot_cleanup"]
     redispatched = await dispatcher.dispatch_pending()
 
     awaiting_start_ack: list[dict[str, object]] = []
@@ -61,6 +63,7 @@ async def recover(
         redispatched = []
     return RecoveryReport(
         redispatched=redispatched,
+        pending_cleanups=pending_cleanups,
         awaiting_start_ack=awaiting_start_ack,
         awaiting_callback=awaiting_callback,
     )

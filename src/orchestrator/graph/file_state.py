@@ -19,6 +19,24 @@ FileStateTaxonomy = Literal[
     "unknown_ignored",
     "unknown_untracked",
 ]
+GatekeeperTaxonomy = Literal[
+    "tool_cache",
+    "build_output",
+    "test_artifact",
+    "secret",
+    "external_artifact",
+    "unknown_ignored",
+]
+GATEKEEPER_TAXONOMY: frozenset[str] = frozenset(
+    {
+        "tool_cache",
+        "build_output",
+        "test_artifact",
+        "secret",
+        "external_artifact",
+        "unknown_ignored",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -63,6 +81,7 @@ class FileStateDeclaration:
     rule: str | None = None
     origin: str | None = None
     retention: str | None = None
+    source_kinds: tuple[FileStatePathKind, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -189,8 +208,12 @@ def secret_name_matches(path: str, policy: FileStatePolicy | None = None) -> boo
 
 
 def _classify_path(path: FileStatePath, policy: FileStatePolicy) -> PathClassification:
-    declaration = _match_declaration(path.path, policy.declarations)
-    if declaration is not None and declaration.classification == "external_artifact":
+    declaration = _match_declaration(path, policy.declarations)
+    if (
+        path.kind != "tracked"
+        and declaration is not None
+        and declaration.classification == "external_artifact"
+    ):
         manifest = _external_manifest(path, declaration)
         if manifest is None:
             return _classification(
@@ -217,6 +240,17 @@ def _classify_path(path: FileStatePath, policy: FileStatePolicy) -> PathClassifi
         )
     if secret_name_matches(path.path, policy) and _secret_metadata_matches(path, policy):
         return _classification(path, "secret", "secret_detector", rejected=True, reason="secret")
+    if path.kind == "tracked":
+        return _classification(path, "tracked_change", "git_status")
+
+    if declaration is not None and declaration.classification == "secret":
+        return _classification(
+            path,
+            "secret",
+            declaration.rule or f"declared:{declaration.pattern}",
+            rejected=True,
+            reason="secret",
+        )
 
     if declaration is not None:
         return _classification(
@@ -225,9 +259,6 @@ def _classify_path(path: FileStatePath, policy: FileStatePolicy) -> PathClassifi
             declaration.rule or f"declared:{declaration.pattern}",
             needs_gatekeeper=False,
         )
-
-    if path.kind == "tracked":
-        return _classification(path, "tracked_change", "git_status")
 
     if _matches_any(path.path, policy.tool_cache_patterns):
         return _classification(path, "tool_cache", "builtin_tool_cache")
@@ -304,11 +335,13 @@ def _secret_metadata_matches(path: FileStatePath, policy: FileStatePolicy) -> bo
 
 
 def _match_declaration(
-    path: str,
+    path: FileStatePath,
     declarations: tuple[FileStateDeclaration, ...],
 ) -> FileStateDeclaration | None:
-    normalized = _normalize_match_path(path)
+    normalized = _normalize_match_path(path.path)
     for declaration in declarations:
+        if declaration.source_kinds is not None and path.kind not in declaration.source_kinds:
+            continue
         if _pattern_matches(normalized, declaration.pattern):
             return declaration
     return None

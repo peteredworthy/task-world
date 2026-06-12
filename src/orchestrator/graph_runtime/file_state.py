@@ -12,7 +12,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import cast
 
-from orchestrator.git import SnapshotResult, WorktreeError, snapshot
+from orchestrator.git import SnapshotResult, WorktreeError, delete_snapshot_ref, snapshot
 from orchestrator.graph import (
     FileStateClassification,
     FileStatePath,
@@ -31,6 +31,13 @@ class FileStateBoundaryResult:
     output_record: dict[str, object] | None
     rejection_record: dict[str, object] | None
     snapshot_result: SnapshotResult | None
+
+
+@dataclass(frozen=True)
+class CleanupApplication:
+    cleanup_id: str
+    superseding_file_state_record: dict[str, object]
+    deleted_snapshot_ref: bool
 
 
 def collect_worktree_status(
@@ -125,6 +132,34 @@ def capture_file_state_boundary(
     )
 
 
+def apply_cleanup_requested(
+    *,
+    worktree_path: str | Path,
+    cleanup_request: dict[str, object],
+    compromised_record: dict[str, object],
+) -> CleanupApplication:
+    """Re-snapshot without gatekeeper-secret paths and delete the compromised ref."""
+    cleanup_id = str(cleanup_request.get("cleanup_id", ""))
+    paths = _cleanup_paths(cleanup_request)
+    old_snapshot_id = str(cleanup_request.get("snapshot_id") or compromised_record["snapshot_id"])
+    snap = snapshot(
+        worktree_path,
+        f"graph file-state cleanup {cleanup_id}",
+        exclude_paths=paths,
+    )
+    deleted = delete_snapshot_ref(worktree_path, old_snapshot_id)
+    return CleanupApplication(
+        cleanup_id=cleanup_id,
+        superseding_file_state_record=_cleanup_superseding_record(
+            compromised_record=compromised_record,
+            cleanup_id=cleanup_id,
+            excluded_paths=paths,
+            snapshot_result=snap,
+        ),
+        deleted_snapshot_ref=deleted,
+    )
+
+
 def _file_state_output_record(
     *,
     classification: FileStateClassification,
@@ -167,6 +202,64 @@ def _file_state_output_record(
         "residue": [entry.to_record() for entry in classification.residue],
         "rejected_paths": [],
     }
+
+
+def _cleanup_paths(cleanup_request: dict[str, object]) -> list[str]:
+    raw_paths = cleanup_request.get("paths")
+    if not isinstance(raw_paths, list):
+        return []
+    paths: list[str] = []
+    for raw_path in cast(list[object], raw_paths):
+        if isinstance(raw_path, str) and raw_path:
+            paths.append(raw_path)
+    return paths
+
+
+def _cleanup_superseding_record(
+    *,
+    compromised_record: dict[str, object],
+    cleanup_id: str,
+    excluded_paths: list[str],
+    snapshot_result: SnapshotResult,
+) -> dict[str, object]:
+    old_record_id = str(compromised_record["record_id"])
+    excluded = set(excluded_paths)
+    record = dict(compromised_record)
+    record["record_id"] = f"{old_record_id}-cleanup"
+    record["snapshot_id"] = snapshot_result.id
+    record["git"] = {
+        "commit_sha": snapshot_result.commit_sha,
+        "tree_sha": snapshot_result.tree_sha,
+        "ref": snapshot_result.ref,
+        "no_commit_reason": None,
+    }
+    record["supersedes_record_id"] = old_record_id
+    record["cleanup_id"] = cleanup_id
+    record["cleanup_excluded_paths"] = list(excluded_paths)
+    record["compromised"] = False
+    record["superseded_pending"] = False
+    for key in (
+        "tracked",
+        "untracked",
+        "ignored",
+        "external",
+        "classifications",
+        "residue",
+        "rejected_paths",
+    ):
+        value = record.get(key)
+        if not isinstance(value, list):
+            continue
+        retained: list[dict[str, object]] = []
+        for entry in cast(list[object], value):
+            if not isinstance(entry, dict):
+                continue
+            typed_entry = dict(cast(dict[str, object], entry))
+            if typed_entry.get("path") in excluded:
+                continue
+            retained.append(typed_entry)
+        record[key] = retained
+    return record
 
 
 def _tracked_status_and_path(line: str) -> tuple[str, str]:

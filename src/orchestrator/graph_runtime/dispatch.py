@@ -12,9 +12,18 @@ from typing import Any, Literal, Protocol, cast
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
-from orchestrator.graph import EventEnvelope
+from orchestrator.graph import EventEnvelope, GraphProjection
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
-from orchestrator.graph_runtime.file_state import capture_file_state_boundary
+from orchestrator.graph_runtime.errors import CompromisedFileStateError
+from orchestrator.graph_runtime.file_state import (
+    apply_cleanup_requested,
+    capture_file_state_boundary,
+)
+from orchestrator.graph_runtime.gatekeeper import (
+    ResidueClassifier,
+    metadata_from_file_state_record,
+    policy_with_pattern_library,
+)
 from orchestrator.graph_runtime.outbox import OutboxItem, SideEffectExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, create_agent_runner
@@ -90,6 +99,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
         worktree_path: str | Path,
         running_executions: dict[str, asyncio.Task[None]] | None = None,
         process_registry: GraphProcessRegistry | None = None,
+        residue_classifier: ResidueClassifier | None = None,
+        max_gatekeeper_items_per_boundary: int = 20,
     ) -> None:
         self._session_factory = session_factory
         self._controller = controller
@@ -97,8 +108,13 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self._worktree_path = str(worktree_path)
         self._running = running_executions if running_executions is not None else {}
         self._process_registry = process_registry
+        self._residue_classifier = residue_classifier
+        self._max_gatekeeper_items_per_boundary = max_gatekeeper_items_per_boundary
 
     async def dispatch(self, item: OutboxItem) -> None:
+        if item.kind == "snapshot_cleanup":
+            await self._dispatch_snapshot_cleanup(item)
+            return
         if item.kind != "agent_dispatch":
             return
 
@@ -162,6 +178,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
         async with self._session_factory() as session:
             events = await GraphEventStore(session).read_run(item.run_id)
 
+        projection = rebuild_projection(events)
+        _guard_no_pending_compromised_file_state_bindings(projection, node_id)
         node_payload = _node_payload(events, node_id)
         node_kind = str(node_payload.get("kind", "worker"))
         base_snapshot_id = payload.get("base_snapshot_id")
@@ -217,12 +235,14 @@ class GraphDispatchExecutor(SideEffectExecutor):
     ) -> None:
         observed_position = await self._current_position(context.run_id)
         output_records = _output_records_for_submit(context, grades)
+        events_before_boundary = await self._events(context.run_id)
         boundary = capture_file_state_boundary(
             worktree_path=context.worktree_path,
             run_id=context.run_id,
             node_id=context.node_id,
             execution_id=context.execution_id,
             base_snapshot_id=context.base_snapshot_id,
+            policy=policy_with_pattern_library(events_before_boundary),
         )
         if boundary.output_record is not None:
             output_records.append(boundary.output_record)
@@ -262,7 +282,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "payload_hash": _payload_hash(output_records),
             "output_records": output_records,
         }
-        await self._controller.handle_command(
+        result = await self._controller.handle_command(
             context.run_id,
             observed_position,
             "submit_callback",
@@ -278,6 +298,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "payload": payload,
             },
         )
+        await self._record_gatekeeper_verdicts(context, result.projection_position, result.events)
 
     async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
         await self._controller.handle_command(
@@ -294,6 +315,99 @@ class GraphDispatchExecutor(SideEffectExecutor):
     async def _current_position(self, run_id: str) -> int:
         async with self._session_factory() as session:
             return await GraphEventStore(session).current_position(run_id)
+
+    async def _events(self, run_id: str) -> list[EventEnvelope]:
+        async with self._session_factory() as session:
+            return await GraphEventStore(session).read_run(run_id)
+
+    async def _record_gatekeeper_verdicts(
+        self,
+        context: GraphDispatchContext,
+        projection_position: int,
+        accepted_events: list[EventEnvelope],
+    ) -> None:
+        if self._residue_classifier is None:
+            return
+        current_position = projection_position
+        for event in accepted_events:
+            if event.event_type != "file_state_accepted":
+                continue
+            metadata = metadata_from_file_state_record(
+                event.payload,
+                max_items=self._max_gatekeeper_items_per_boundary,
+            )
+            if not metadata:
+                continue
+            verdicts = self._residue_classifier.classify(metadata)
+            if not verdicts:
+                continue
+            result = await self._controller.handle_command(
+                context.run_id,
+                current_position,
+                "record_gatekeeper_verdicts",
+                {
+                    "file_state_record_id": event.payload.get("record_id"),
+                    "execution_id": context.execution_id,
+                    "consult_id": f"{context.execution_id}:{event.payload.get('record_id')}",
+                    "verdicts": [verdict.to_payload() for verdict in verdicts],
+                },
+            )
+            current_position = result.projection_position
+
+    async def _dispatch_snapshot_cleanup(self, item: OutboxItem) -> None:
+        """Apply a cleanup side effect and record its durable result.
+
+        ``snapshot_cleanup`` outbox rows are at-least-once. A retry may observe
+        that ``cleanup_applied`` was already committed after an earlier
+        filesystem cleanup; in that case the side effect intent is complete.
+        """
+        events = await self._events(item.run_id)
+        cleanup_id = str(item.payload.get("cleanup_id", ""))
+        if _cleanup_applied_exists(events, cleanup_id):
+            return
+        cleanup_event = _cleanup_requested_event(events, cleanup_id)
+        if cleanup_event is None:
+            msg = f"unknown cleanup_requested: {cleanup_id}"
+            raise ValueError(msg)
+        record_id = cleanup_event.payload.get("file_state_record_id")
+        if not isinstance(record_id, str):
+            msg = f"cleanup_requested missing file_state_record_id: {cleanup_id}"
+            raise ValueError(msg)
+        projection = rebuild_projection(events)
+        compromised_record = projection["file_state_records"].get(record_id)
+        if compromised_record is None:
+            msg = f"unknown cleanup file_state record: {record_id}"
+            raise ValueError(msg)
+
+        cleanup = apply_cleanup_requested(
+            worktree_path=self._worktree_path,
+            cleanup_request=cleanup_event.payload,
+            compromised_record=compromised_record,
+        )
+        result = await self._controller.handle_command(
+            item.run_id,
+            await self._current_position(item.run_id),
+            "record_cleanup_applied",
+            {
+                "cleanup_id": cleanup.cleanup_id,
+                "superseding_file_state_record": cleanup.superseding_file_state_record,
+                "deleted_snapshot_ref": cleanup.deleted_snapshot_ref,
+            },
+        )
+        if _rejected_cleanup_already_applied(result.events, cleanup_id):
+            return
+        rejected = next(
+            (
+                event
+                for event in result.events
+                if event.event_type == "command_rejected"
+                and event.payload.get("command_type") == "record_cleanup_applied"
+            ),
+            None,
+        )
+        if rejected is not None:
+            msg = str(rejected.payload.get("reason") or "record_cleanup_applied rejected")
+            raise ValueError(msg)
 
 
 async def reconcile_runtime(
@@ -355,6 +469,7 @@ def _node_payload(events: list[EventEnvelope], node_id: str) -> dict[str, Any]:
 
 def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[str]:
     projection = rebuild_projection(events)
+    _guard_no_pending_compromised_file_state_bindings(projection, node_id)
     bound_record_ids: set[str] = set()
     for port, binding in projection["input_bindings"].get(node_id, {}).items():
         if not port.startswith("requirement_"):
@@ -375,6 +490,70 @@ def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[st
             req = cast(dict[str, Any], requirement)
             requirements.append(f"{req.get('id', requirement_node_id)}: {req.get('desc', '')}")
     return requirements
+
+
+def _guard_no_pending_compromised_file_state_bindings(
+    projection: GraphProjection,
+    node_id: str,
+) -> None:
+    """Refuse to build runtime bindings from a cleanup-pending snapshot.
+
+    Slice 2.6+ will add richer file-state restore/consumption paths. Until
+    then this is the single runtime binding read boundary: if a downstream
+    node is bound to a file-state record that the projection has marked as
+    compromised and still awaiting cleanup, dispatch must stop before a runner
+    can consume that snapshot identity.
+    """
+    for binding in projection["input_bindings"].get(node_id, {}).values():
+        record_ids = binding.get("record_ids")
+        if not isinstance(record_ids, list):
+            continue
+        for raw_record_id in cast(list[object], record_ids):
+            if not isinstance(raw_record_id, str):
+                continue
+            record = projection["file_state_records"].get(raw_record_id)
+            if record is None:
+                continue
+            if record.get("compromised") is True and record.get("superseded_pending") is True:
+                cleanup_id = record.get("cleanup_id")
+                msg = (
+                    "refusing to bind compromised file-state record "
+                    f"{raw_record_id} for node {node_id}"
+                )
+                if isinstance(cleanup_id, str) and cleanup_id:
+                    msg = f"{msg}; cleanup pending: {cleanup_id}"
+                raise CompromisedFileStateError(msg)
+
+
+def _cleanup_requested_event(
+    events: list[EventEnvelope],
+    cleanup_id: str,
+) -> EventEnvelope | None:
+    for event in events:
+        if event.event_type != "cleanup_requested":
+            continue
+        if event.payload.get("cleanup_id") == cleanup_id:
+            return event
+    return None
+
+
+def _cleanup_applied_exists(events: list[EventEnvelope], cleanup_id: str) -> bool:
+    return any(
+        event.event_type == "cleanup_applied" and event.payload.get("cleanup_id") == cleanup_id
+        for event in events
+    )
+
+
+def _rejected_cleanup_already_applied(
+    events: list[EventEnvelope],
+    cleanup_id: str,
+) -> bool:
+    return any(
+        event.event_type == "command_rejected"
+        and event.payload.get("command_type") == "record_cleanup_applied"
+        and event.payload.get("reason") == f"cleanup already applied: {cleanup_id}"
+        for event in events
+    )
 
 
 def _prompt_for_node(context: GraphDispatchContext) -> str:

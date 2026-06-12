@@ -128,6 +128,17 @@
 | §19 | pause and callback race callback first | stale_callbacks.yaml::stale_pause_callback_race_callback_first |
 | §19 | pause and callback race pause first | stale_callbacks.yaml::stale_pause_callback_race_pause_first |
 | §19 | schedule tick emits lease_expired | tests/unit/test_graph_commands.py::test_schedule_tick_expires_past_leases_only |
+| §6.3 | gatekeeper sees metadata only and replay uses recorded verdict | tests/integration/test_graph_gatekeeper_flow.py::test_gatekeeper_flow_metadata_only_pattern_reuse_and_replay |
+| §6.3 | gatekeeper cap leaves overflow residue unresolved | tests/integration/test_graph_gatekeeper_flow.py::test_gatekeeper_cap_leaves_remainder_flagged |
+| §6.5 | gatekeeper cost is keyed by execution and reported per model | tests/unit/test_graph_gatekeeper.py::test_project_gatekeeper_report_hit_rate_and_growth |
+| §20.2 | gatekeeper secret verdict requests and applies explicit cleanup | tests/integration/test_graph_gatekeeper_flow.py::test_gatekeeper_secret_verdict_scrubs_compromised_snapshot |
+| §20.2 | cleanup_requested writes durable snapshot_cleanup outbox intent | tests/integration/test_graph_outbox_crash_points.py::test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect |
+| §20.2 | snapshot_cleanup recovers after ref delete before cleanup record | tests/integration/test_graph_outbox_crash_points.py::test_snapshot_cleanup_recovers_after_ref_delete_before_record |
+| §20.3 | late secret verdict deletes compromised snapshot ref and supersedes file-state | tests/integration/test_graph_gatekeeper_flow.py::test_gatekeeper_secret_verdict_scrubs_compromised_snapshot |
+| §20.3 | cleanup_applied rejects duplicate and inconsistent superseding records | tests/unit/test_graph_gatekeeper.py::test_record_cleanup_applied_rejects_duplicate_cleanup |
+| §20.3 | compromised file-state binding is refused while cleanup is pending | tests/integration/test_graph_outbox_crash_points.py::test_compromised_file_state_binding_is_refused_before_cleanup_completes |
+| §20.3 | learned gatekeeper patterns cannot classify tracked files | tests/unit/test_graph_file_state.py::test_learned_patterns_apply_only_to_untracked_or_ignored_sources |
+| §20.3 | root-level gatekeeper verdicts derive exact-path patterns only | tests/unit/test_graph_gatekeeper.py::test_project_pattern_library_derives_and_merges_globs |
 | §27.2 | replaying same event stream is deterministic | invariants.yaml::invariant_replay_is_deterministic |
 | §27.2 | no conflicting write leases active | invariants.yaml::invariant_no_conflicting_write_leases |
 | §27.2 | no callback without valid lease alters outcome | invariants.yaml::invariant_no_callback_without_valid_lease |

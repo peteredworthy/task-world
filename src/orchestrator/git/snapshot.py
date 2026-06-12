@@ -117,6 +117,26 @@ def restore(worktree_path: str | Path, snapshot_id: str) -> None:
         )
 
 
+def delete_snapshot_ref(worktree_path: str | Path, snapshot_id: str) -> bool:
+    """Delete a snapshot ref if it exists, leaving objects and worktree untouched."""
+    path = _require_worktree_path(worktree_path)
+    ref = f"{SNAPSHOT_REF_PREFIX}/{_validate_snapshot_id(snapshot_id)}"
+    env = _git_env()
+    exists = subprocess.run(
+        [_git_executable(), "rev-parse", "--verify", "--quiet", ref],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        env=env,
+        check=False,
+    )
+    if exists.returncode != 0:
+        return False
+    _run_git(path, ["update-ref", "-d", ref], env=env)
+    return True
+
+
 def _require_worktree_path(worktree_path: str | Path) -> Path:
     path = Path(worktree_path)
     if not path.exists() or not path.is_dir():

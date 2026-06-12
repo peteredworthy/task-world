@@ -30,6 +30,7 @@ class GraphProjection(TypedDict):
     configured_gates: dict[str, dict[str, bool]]
     gate_decisions: dict[str, dict[str, bool]]
     environment_failures: dict[str, dict[str, Any]]
+    file_state_records: dict[str, dict[str, Any]]
 
 
 def initial_projection() -> GraphProjection:
@@ -58,6 +59,7 @@ def initial_projection() -> GraphProjection:
         "configured_gates": {},
         "gate_decisions": {},
         "environment_failures": {},
+        "file_state_records": {},
     }
 
 
@@ -115,6 +117,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "environment_failures": {
             task_region_id: dict(failure)
             for task_region_id, failure in state["environment_failures"].items()
+        },
+        "file_state_records": {
+            record_id: _copy_file_state_record(record)
+            for record_id, record in state.get("file_state_records", {}).items()
         },
     }
 
@@ -234,6 +240,14 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_authority_change(next_state, event)
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
         _record_environment_failure(next_state, event)
+    elif event.event_type == "file_state_accepted":
+        _record_file_state(next_state, event)
+    elif event.event_type == "gatekeeper_verdict_recorded":
+        _record_gatekeeper_verdicts(next_state, event)
+    elif event.event_type == "cleanup_requested":
+        _record_cleanup_requested(next_state, event)
+    elif event.event_type == "cleanup_applied":
+        _record_cleanup_applied(next_state, event)
     # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
     # audit/policy facts. Projection facts are updated only by lease_* and
     # node_state_changed events so replay has a single state authority.
@@ -266,14 +280,12 @@ def project_ready_nodes(events: list[EventEnvelope]) -> list[str]:
 def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[str, Any]]]:
     """Project accepted file-state residue classifications by path."""
     report: dict[str, list[dict[str, Any]]] = {}
-    for event in events:
-        if event.event_type != "file_state_accepted":
-            continue
-        node_id = event.payload.get("producer_node_id")
-        record_id = event.payload.get("record_id")
-        residue = event.payload.get("residue")
+    for record in _project(events)["file_state_records"].values():
+        node_id = record.get("producer_node_id")
+        record_id = record.get("record_id")
+        residue = record.get("residue")
         if not isinstance(residue, list):
-            residue = event.payload.get("classifications", [])
+            residue = record.get("classifications", [])
         if not isinstance(residue, list):
             continue
         for raw_entry in cast(list[Any], residue):
@@ -289,13 +301,141 @@ def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[s
                     "classification": entry.get("classification"),
                     "matched_rule": entry.get("matched_rule") or entry.get("policy"),
                     "needs_gatekeeper": entry.get("needs_gatekeeper") is True,
-                    "run_id": event.run_id,
+                    "run_id": record.get("run_id"),
                     "node_id": node_id,
                     "record_id": record_id,
                     "source": entry.get("source"),
                 }
             )
     return {path: report[path] for path in sorted(report)}
+
+
+def project_pattern_library(events: list[EventEnvelope]) -> dict[str, Any]:
+    """Project accepted gatekeeper verdicts into exact paths and derived globs.
+
+    Learned patterns are scoped to untracked/ignored residue. The derived
+    pattern rule is deterministic: ``dirname/*.ext`` when a non-root path has
+    an extension, otherwise the exact path. Root-level files derive exact-path
+    patterns only, never bare ``*.ext`` globs. Identical derived patterns merge
+    and accumulate occurrence counts; exact paths are kept separately so the
+    next boundary can classify both the same path and sibling files with the
+    same directory-scoped shape.
+    """
+    patterns: dict[str, dict[str, Any]] = {}
+    paths: dict[str, dict[str, Any]] = {}
+    file_state_records: dict[str, dict[str, Any]] = {}
+    for event in events:
+        if event.event_type == "file_state_accepted":
+            record_id = event.payload.get("record_id")
+            if isinstance(record_id, str):
+                file_state_records[record_id] = event.payload
+            continue
+        if event.event_type != "gatekeeper_verdict_recorded":
+            continue
+        record_id = event.payload.get("file_state_record_id")
+        verdicts = event.payload.get("verdicts")
+        if not isinstance(verdicts, list):
+            continue
+        source_by_path = _file_state_source_by_path(file_state_records.get(str(record_id)))
+        for raw_verdict in cast(list[Any], verdicts):
+            if not isinstance(raw_verdict, dict):
+                continue
+            verdict = cast(dict[str, Any], raw_verdict)
+            path = verdict.get("path")
+            classification = verdict.get("classification")
+            if not isinstance(path, str) or not isinstance(classification, str):
+                continue
+            source = source_by_path.get(path)
+            if source not in {"untracked", "ignored"} or classification == "secret":
+                continue
+            pattern = _derive_gatekeeper_pattern(path)
+            _merge_pattern_entry(
+                patterns,
+                pattern,
+                classification,
+                path,
+                event.position,
+                record_id,
+            )
+            paths[path] = {
+                "path": path,
+                "classification": classification,
+                "matched_rule": f"pattern_library:{path}",
+                "source_record_ids": [record_id] if isinstance(record_id, str) else [],
+                "last_position": event.position,
+                "source_kinds": ["untracked", "ignored"],
+            }
+    return {
+        "patterns": {pattern: patterns[pattern] for pattern in sorted(patterns)},
+        "paths": {path: paths[path] for path in sorted(paths)},
+    }
+
+
+def project_gatekeeper_report(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
+    """Project gatekeeper cost, hit-rate, and pattern-library growth per run."""
+    reports: dict[str, dict[str, Any]] = {}
+    prefixes: dict[str, list[EventEnvelope]] = {}
+    for event in events:
+        run = reports.setdefault(event.run_id, _empty_gatekeeper_report(event.run_id))
+        prefixes.setdefault(event.run_id, []).append(event)
+        if event.event_type == "file_state_accepted":
+            classifications = _payload_entries(event.payload, "classifications")
+            deterministic = sum(
+                1 for entry in classifications if entry.get("needs_gatekeeper") is not True
+            )
+            unresolved = sum(
+                1 for entry in classifications if entry.get("needs_gatekeeper") is True
+            )
+            run["deterministic_classifications"] += deterministic
+            run["unresolved_residue"] += unresolved
+            run["boundary_count"] += 1
+            library = project_pattern_library(prefixes[event.run_id])
+            run["pattern_library_size_over_time"].append(
+                {
+                    "position": event.position,
+                    "file_state_record_id": event.payload.get("record_id"),
+                    "size": len(library["patterns"]),
+                }
+            )
+        elif event.event_type == "gatekeeper_verdict_recorded":
+            verdicts = event.payload.get("verdicts")
+            resolved = len(cast(list[Any], verdicts)) if isinstance(verdicts, list) else 0
+            run["gatekeeper_resolved"] += resolved
+            run["unresolved_residue"] = max(0, int(run["unresolved_residue"]) - resolved)
+            library = project_pattern_library(prefixes[event.run_id])
+            run["pattern_library_size_over_time"].append(
+                {
+                    "position": event.position,
+                    "file_state_record_id": event.payload.get("file_state_record_id"),
+                    "size": len(library["patterns"]),
+                }
+            )
+        elif event.event_type == "gatekeeper_cost_recorded":
+            run["gatekeeper_consults"] += 1
+            run["input_tokens"] += _payload_number(event.payload, "input_tokens")
+            run["output_tokens"] += _payload_number(event.payload, "output_tokens")
+            run["cache_read_tokens"] += _payload_number(event.payload, "cache_read_tokens")
+            run["cache_write_tokens"] += _payload_number(event.payload, "cache_write_tokens")
+            run["cost_usd"] += _payload_float(event.payload, "cost_usd")
+            run["wall_time_ms"] += _payload_number(event.payload, "wall_time_ms")
+            _record_model_cost(run, event.payload)
+
+    for run in reports.values():
+        total_classified = int(run["deterministic_classifications"]) + int(
+            run["gatekeeper_resolved"]
+        )
+        run["total_classified"] = total_classified
+        run["hit_rate"] = (
+            float(run["deterministic_classifications"]) / total_classified
+            if total_classified
+            else 0.0
+        )
+        run["pattern_library_size"] = (
+            int(run["pattern_library_size_over_time"][-1]["size"])
+            if run["pattern_library_size_over_time"]
+            else 0
+        )
+    return reports
 
 
 def _project(events: list[EventEnvelope]) -> GraphProjection:
@@ -512,6 +652,245 @@ def _record_environment_failure(state: GraphProjection, event: EventEnvelope) ->
             "classification": classification,
             "reason": reason,
         }
+
+
+def _record_file_state(state: GraphProjection, event: EventEnvelope) -> None:
+    record_id = event.payload.get("record_id")
+    if not isinstance(record_id, str):
+        return
+    record = _copy_file_state_record(event.payload)
+    record["run_id"] = event.run_id
+    record["position"] = event.position
+    state["file_state_records"][record_id] = record
+
+
+def _record_gatekeeper_verdicts(state: GraphProjection, event: EventEnvelope) -> None:
+    record_id = event.payload.get("file_state_record_id")
+    if not isinstance(record_id, str):
+        return
+    record = state["file_state_records"].get(record_id)
+    if record is None:
+        return
+    verdicts = event.payload.get("verdicts")
+    if not isinstance(verdicts, list):
+        return
+    by_path: dict[str, dict[str, Any]] = {}
+    for raw_verdict in cast(list[Any], verdicts):
+        if not isinstance(raw_verdict, dict):
+            continue
+        verdict = cast(dict[str, Any], raw_verdict)
+        path = verdict.get("path")
+        if isinstance(path, str):
+            by_path[path] = verdict
+    for key in ("classifications", "residue", "untracked", "ignored", "external"):
+        entries = record.get(key)
+        if not isinstance(entries, list):
+            continue
+        record[key] = [_resolved_file_entry(entry, by_path) for entry in cast(list[Any], entries)]
+
+
+def _record_cleanup_requested(state: GraphProjection, event: EventEnvelope) -> None:
+    record_id = event.payload.get("file_state_record_id")
+    if not isinstance(record_id, str):
+        return
+    record = state["file_state_records"].get(record_id)
+    if record is None:
+        return
+    paths = event.payload.get("paths")
+    record["compromised"] = True
+    record["superseded_pending"] = True
+    record["cleanup_id"] = event.payload.get("cleanup_id")
+    record["cleanup_reason"] = event.payload.get("reason")
+    record["compromised_paths"] = list(cast(list[Any], paths)) if isinstance(paths, list) else []
+
+
+def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> None:
+    record_id = event.payload.get("file_state_record_id")
+    if not isinstance(record_id, str):
+        return
+    record = state["file_state_records"].get(record_id)
+    if record is None:
+        return
+    record["compromised"] = True
+    record["superseded_pending"] = False
+    record["superseded_by_record_id"] = event.payload.get("superseding_record_id")
+    record["cleanup_applied_event_id"] = event.event_id
+    record["compromised_snapshot_deleted"] = event.payload.get("deleted_snapshot_ref") is True
+
+
+def _resolved_file_entry(
+    raw_entry: Any,
+    verdicts_by_path: dict[str, dict[str, Any]],
+) -> Any:
+    if not isinstance(raw_entry, dict):
+        return raw_entry
+    entry = dict(cast(dict[str, Any], raw_entry))
+    path = entry.get("path")
+    if not isinstance(path, str) or path not in verdicts_by_path:
+        return entry
+    verdict = verdicts_by_path[path]
+    entry["classification"] = verdict.get("classification")
+    entry["matched_rule"] = f"gatekeeper:{verdict.get('model_id', 'unknown')}"
+    entry["needs_gatekeeper"] = False
+    entry["gatekeeper_confidence"] = verdict.get("confidence")
+    entry["gatekeeper_rationale"] = verdict.get("rationale")
+    return entry
+
+
+def _copy_file_state_record(record: dict[str, Any]) -> dict[str, Any]:
+    copied = dict(record)
+    for key in ("tracked", "untracked", "ignored", "external", "classifications", "residue"):
+        value = copied.get(key)
+        if isinstance(value, list):
+            copied[key] = [
+                dict(cast(dict[str, Any], entry)) if isinstance(entry, dict) else entry
+                for entry in cast(list[Any], value)
+            ]
+    return copied
+
+
+def _derive_gatekeeper_pattern(path: str) -> str:
+    normalized = path.replace("\\", "/").strip("/")
+    dirname, _, filename = normalized.rpartition("/")
+    if not dirname:
+        return filename
+    stem, dot, extension = filename.rpartition(".")
+    if dot and stem:
+        glob = f"*.{extension}"
+    else:
+        glob = filename
+    return f"{dirname}/{glob}"
+
+
+def _merge_pattern_entry(
+    patterns: dict[str, dict[str, Any]],
+    pattern: str,
+    classification: str,
+    path: str,
+    position: int,
+    record_id: Any,
+) -> None:
+    entry = patterns.get(pattern)
+    if entry is None:
+        patterns[pattern] = {
+            "pattern": pattern,
+            "classification": classification,
+            "occurrences": 1,
+            "paths": [path],
+            "source_record_ids": [record_id] if isinstance(record_id, str) else [],
+            "source_kinds": ["untracked", "ignored"],
+            "first_position": position,
+            "last_position": position,
+        }
+        return
+    entry["occurrences"] = int(entry["occurrences"]) + 1
+    entry["last_position"] = position
+    if path not in entry["paths"]:
+        entry["paths"].append(path)
+        entry["paths"].sort()
+    if isinstance(record_id, str) and record_id not in entry["source_record_ids"]:
+        entry["source_record_ids"].append(record_id)
+
+
+def _file_state_source_by_path(record: dict[str, Any] | None) -> dict[str, str]:
+    if record is None:
+        return {}
+    sources: dict[str, str] = {}
+    for key in ("residue", "classifications"):
+        entries = record.get(key)
+        if not isinstance(entries, list):
+            continue
+        for raw_entry in cast(list[Any], entries):
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = cast(dict[str, Any], raw_entry)
+            path = entry.get("path")
+            source = entry.get("source")
+            if isinstance(path, str) and isinstance(source, str):
+                sources[path] = source
+    return sources
+
+
+def _payload_entries(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return []
+    return [
+        dict(cast(dict[str, Any], entry))
+        for entry in cast(list[Any], value)
+        if isinstance(entry, dict)
+    ]
+
+
+def _payload_number(payload: dict[str, Any], key: str) -> int:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int | float):
+        return int(value)
+    return 0
+
+
+def _payload_float(payload: dict[str, Any], key: str) -> float:
+    value = payload.get(key)
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, int | float):
+        return float(value)
+    return 0.0
+
+
+def _empty_gatekeeper_report(run_id: str) -> dict[str, Any]:
+    return {
+        "run_id": run_id,
+        "boundary_count": 0,
+        "deterministic_classifications": 0,
+        "gatekeeper_consults": 0,
+        "gatekeeper_resolved": 0,
+        "unresolved_residue": 0,
+        "total_classified": 0,
+        "hit_rate": 0.0,
+        "pattern_library_size": 0,
+        "pattern_library_size_over_time": [],
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "wall_time_ms": 0,
+        "models": {},
+    }
+
+
+def _record_model_cost(run: dict[str, Any], payload: dict[str, Any]) -> None:
+    model_id = payload.get("model_id")
+    if not isinstance(model_id, str) or not model_id:
+        model_id = "unknown"
+    models = cast(dict[str, dict[str, Any]], run["models"])
+    model = models.setdefault(
+        model_id,
+        {
+            "model_id": model_id,
+            "consults": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "cost_usd": 0.0,
+            "wall_time_ms": 0,
+            "executions": [],
+        },
+    )
+    model["consults"] += 1
+    model["input_tokens"] += _payload_number(payload, "input_tokens")
+    model["output_tokens"] += _payload_number(payload, "output_tokens")
+    model["cache_read_tokens"] += _payload_number(payload, "cache_read_tokens")
+    model["cache_write_tokens"] += _payload_number(payload, "cache_write_tokens")
+    model["cost_usd"] += _payload_float(payload, "cost_usd")
+    model["wall_time_ms"] += _payload_number(payload, "wall_time_ms")
+    execution_id = payload.get("execution_id")
+    if isinstance(execution_id, str) and execution_id not in model["executions"]:
+        model["executions"].append(execution_id)
 
 
 def _derive_task_states(state: GraphProjection) -> dict[str, str]:

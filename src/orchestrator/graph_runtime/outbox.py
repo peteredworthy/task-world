@@ -53,19 +53,27 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
     """Map accepted graph events to durable side-effect intent.
 
     The explicit slice-2.1 mapping is:
-    ``agent_dispatch_requested`` -> ``agent_dispatch``. Rejection/audit events
+    ``agent_dispatch_requested`` -> ``agent_dispatch`` and
+    ``cleanup_requested`` -> ``snapshot_cleanup``. Rejection/audit events
     intentionally return ``None`` so they are persisted facts only.
     """
-    if event.event_type != "agent_dispatch_requested":
-        return None
-
-    payload: dict[str, object] = {
-        "event_id": event.event_id,
-        "run_id": event.run_id,
-        "classification": "agent_dispatch_pending",
-    }
-    payload.update(event.payload)
-    return "agent_dispatch", payload
+    if event.event_type == "agent_dispatch_requested":
+        payload: dict[str, object] = {
+            "event_id": event.event_id,
+            "run_id": event.run_id,
+            "classification": "agent_dispatch_pending",
+        }
+        payload.update(event.payload)
+        return "agent_dispatch", payload
+    if event.event_type == "cleanup_requested":
+        payload = {
+            "event_id": event.event_id,
+            "run_id": event.run_id,
+            "classification": "snapshot_cleanup_pending",
+        }
+        payload.update(event.payload)
+        return "snapshot_cleanup", payload
+    return None
 
 
 async def append_outbox_rows(
@@ -125,8 +133,9 @@ class OutboxDispatcher:
         """Dispatch pending rows in outbox order and return completed items."""
         await self.reset_dispatching_to_pending()
         completed: list[OutboxItem] = []
+        remaining = limit
         while True:
-            item = await self._claim_next(limit)
+            item = await self._claim_next(remaining)
             if item is None:
                 return completed
             try:
@@ -135,6 +144,10 @@ class OutboxDispatcher:
                 await self._mark_failed_attempt(item, exc)
             else:
                 completed.append(await self._mark_completed(item))
+            if remaining is not None:
+                remaining -= 1
+                if remaining <= 0:
+                    return completed
 
     async def reset_dispatching_to_pending(self) -> int:
         """Treat startup ``dispatching`` rows as pending for at-least-once retry."""

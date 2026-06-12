@@ -1,0 +1,120 @@
+routine:
+  id: "graph-kernel-slice"
+  name: "Graph Kernel Slice"
+  description: |
+    Executes one graph-kernel implementation slice using the 3-agent pattern:
+    Builder (implement) → Auditor/Verifier (grade against spec "Done when") →
+    Fixer (retry with verifier feedback).
+
+    The orchestrator's builder/verifier/retry cycle IS the 3-agent pattern.
+    See docs/graph-approach/slice-process.md for the full methodology.
+
+  inputs:
+    - name: slice_id
+      required: true
+      description: "Slice identifier, e.g. '2.6'"
+    - name: spec_path
+      required: true
+      description: "Repo-relative path to the slice spec file, e.g. docs/graph-approach/slice-2.6-spec.md"
+
+  steps:
+    - id: "S-01"
+      title: "Implement Slice {{slice_id}}"
+      step_context: |
+        Graph-kernel implementation slice. All work happens inside this run's
+        worktree. No git ops on the main repo. No server. No touching orchestrator.db.
+
+        Universal hard constraints (non-negotiable):
+        - NO unittest.mock / monkeypatching. Hand-written fake classes only.
+        - Real SQLite in tmp dirs. Never touch orchestrator.db / main repo git state.
+        - Kernel purity: src/orchestrator/graph/ must have zero IO/DB/HTTP imports.
+          Check: grep -r 'sqlite\|subprocess\|aiohttp\|fastapi\|httpx' src/orchestrator/graph/
+        - graph_runtime must import no FastAPI / workflow-service internals.
+        - Kernel suite < 5s: uv run pytest tests/unit -q must finish under 5s.
+        - §28 rule 1: only GraphController.handle_command() appends accepted graph events.
+
+      tasks:
+        - id: "T-01"
+          title: "Build and test the slice"
+          context_from:
+            - artifact: "{{spec_path}}"
+              as: "spec"
+              required: true
+          task_context: |
+            You are the BUILDER for graph kernel slice {{slice_id}}.
+
+            Read the SPEC below in full before writing any code. The spec defines
+            the exact scope, constraints, and done-when criteria.
+
+            SPEC:
+            {{context.spec}}
+
+            Implementation checklist (do all before submitting):
+            1. Implement every file listed in the spec scope.
+            2. Write every test described in the spec tests section.
+            3. Run `uv run pytest tests/unit -q` — must pass, under 5s.
+            4. Run `uv run pytest tests/integration -q` — must pass.
+            5. Run `uv run ruff check src tests` — zero errors.
+            6. Run `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime` — zero errors.
+            7. Check kernel purity: `grep -r 'sqlite\|subprocess\|aiohttp\|fastapi\|httpx' src/orchestrator/graph/` — zero hits.
+            8. Check no mocks: `grep -r 'unittest.mock\|monkeypatch' tests/` — zero hits in new test files.
+
+            Include full test output in your submission summary.
+
+          requirements:
+            - id: "R-impl"
+              desc: "All files specified in the spec are created/modified as described"
+              priority: critical
+            - id: "R-tests"
+              desc: "uv run pytest tests/unit -q and tests/integration -q both pass with zero failures"
+              priority: critical
+            - id: "R-lint"
+              desc: "uv run ruff check src tests and uv run pyright both pass with zero errors"
+              priority: critical
+            - id: "R-purity"
+              desc: "src/orchestrator/graph/ has zero IO/DB/subprocess/HTTP imports"
+              priority: critical
+            - id: "R-no-mocks"
+              desc: "No unittest.mock or monkeypatching in any test file"
+              priority: critical
+            - id: "R-done-when"
+              desc: "Every 'Done when' criterion in the spec is satisfied"
+              priority: critical
+
+          verifier:
+            rubric:
+              - id: "hard-constraints"
+                text: |
+                  Check non-negotiable constraints first. Any failure = immediate F.
+
+                  1. Run: grep -r 'unittest.mock\|monkeypatch' tests/unit/test_graph*.py tests/integration/test_graph*.py
+                     Expected: zero hits in files modified/created by this slice.
+                  2. Run: grep -r 'sqlite\|subprocess\|aiohttp\|fastapi\|httpx' src/orchestrator/graph/
+                     Expected: zero hits (kernel purity).
+                  3. Run: uv run pytest tests/unit -q
+                     Expected: zero failures, completes under 5s for the unit suite.
+                  4. Run: uv run pytest tests/integration -q
+                     Expected: zero failures.
+                  5. Run: uv run ruff check src tests && uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime
+                     Expected: zero errors.
+
+                  If any of the above fail, grade F immediately and list the exact
+                  failing check + output. Builder uses this for the fix.
+
+              - id: "done-when"
+                text: |
+                  Grade each 'Done when' criterion from the spec:
+                  A: criterion fully met with evidence.
+                  B: criterion mostly met, minor gap.
+                  F: criterion not met.
+
+                  List the criteria and your verdict for each. Be specific about
+                  what is missing so the builder can fix it on retry.
+
+                  Overall:
+                  A: all criteria met, all hard constraints pass.
+                  B: hard constraints pass, one or two expected criteria have minor gaps.
+                  F: any hard constraint fails, or a critical criterion is not met.
+
+          retry:
+            max_attempts: 3

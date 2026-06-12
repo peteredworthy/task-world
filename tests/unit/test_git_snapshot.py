@@ -5,7 +5,7 @@ import stat
 import subprocess
 from pathlib import Path
 
-from orchestrator.git import restore, snapshot
+from orchestrator.git import delete_snapshot_ref, restore, snapshot
 
 GIT = "/usr/bin/git"
 
@@ -191,3 +191,22 @@ def test_exclude_paths_are_literal_for_pathspec_magic(tmp_path: Path) -> None:
     tree = _run_git(repo, "ls-tree", "-r", "--name-only", result.commit_sha).stdout.splitlines()
     assert ":(glob)*" not in tree
     assert "keep.txt" in tree
+
+
+def test_delete_snapshot_ref_removes_ref_without_touching_worktree(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    (repo / "README.md").write_text("snapshot version\n", encoding="utf-8")
+    result = snapshot(repo, "delete ref")
+    before = (repo / "README.md").read_text(encoding="utf-8")
+
+    assert delete_snapshot_ref(repo, result.id) is True
+    assert delete_snapshot_ref(repo, result.id) is False
+
+    refs = _run_git(
+        repo,
+        "for-each-ref",
+        "--format=%(refname)",
+        "refs/orchestrator/snapshots",
+    ).stdout.splitlines()
+    assert result.ref not in refs
+    assert (repo / "README.md").read_text(encoding="utf-8") == before

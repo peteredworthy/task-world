@@ -19,6 +19,7 @@ from orchestrator.graph.models import (
     PatchEnvelope,
     PatchOp,
 )
+from orchestrator.graph.file_state import GATEKEEPER_TAXONOMY
 from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import GraphProjection
 from orchestrator.graph.scheduler import (
@@ -89,6 +90,10 @@ def apply_command(
         return _apply_raise_appeal(payload, make_event, id_gen)
     if command_type == "record_decision":
         return _apply_record_decision(projection, payload, make_event)
+    if command_type == "record_gatekeeper_verdicts":
+        return _apply_record_gatekeeper_verdicts(projection, payload, make_event)
+    if command_type == "record_cleanup_applied":
+        return _apply_record_cleanup_applied(projection, events, payload, make_event)
 
     return [
         make_event(
@@ -1016,6 +1021,407 @@ def _apply_record_decision(
             },
         ),
     ]
+
+
+def _apply_record_gatekeeper_verdicts(
+    projection: GraphProjection,
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    record_id = payload.get("file_state_record_id")
+    if not isinstance(record_id, str) or not record_id:
+        return [_command_rejected(make_event, "record_gatekeeper_verdicts", "missing record id")]
+
+    record = projection["file_state_records"].get(record_id)
+    if record is None:
+        return [
+            _command_rejected(
+                make_event,
+                "record_gatekeeper_verdicts",
+                f"unknown file_state record: {record_id}",
+            )
+        ]
+
+    execution_id = payload.get("execution_id")
+    if not isinstance(execution_id, str) or not execution_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_gatekeeper_verdicts",
+                "missing execution_id",
+            )
+        ]
+
+    raw_verdicts = payload.get("verdicts")
+    if not isinstance(raw_verdicts, list) or not raw_verdicts:
+        return [_command_rejected(make_event, "record_gatekeeper_verdicts", "missing verdicts")]
+
+    unresolved_paths = {
+        str(entry["path"])
+        for entry in _record_residue(record)
+        if isinstance(entry.get("path"), str) and entry.get("needs_gatekeeper") is True
+    }
+    accepted: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for index, raw_verdict in enumerate(cast(list[Any], raw_verdicts)):
+        if not isinstance(raw_verdict, dict):
+            return [
+                _command_rejected(
+                    make_event,
+                    "record_gatekeeper_verdicts",
+                    f"malformed verdict at index {index}",
+                )
+            ]
+        verdict = dict(cast(dict[str, Any], raw_verdict))
+        path = verdict.get("path")
+        if not isinstance(path, str) or not path:
+            return [
+                _command_rejected(
+                    make_event,
+                    "record_gatekeeper_verdicts",
+                    f"verdict at index {index} missing path",
+                )
+            ]
+        if path in seen_paths:
+            return [
+                _command_rejected(
+                    make_event,
+                    "record_gatekeeper_verdicts",
+                    f"duplicate verdict path: {path}",
+                )
+            ]
+        seen_paths.add(path)
+        if path not in unresolved_paths:
+            return [
+                _command_rejected(
+                    make_event,
+                    "record_gatekeeper_verdicts",
+                    f"path is not unresolved residue: {path}",
+                )
+            ]
+        classification = verdict.get("classification")
+        if classification not in GATEKEEPER_TAXONOMY:
+            valid = ", ".join(sorted(GATEKEEPER_TAXONOMY))
+            return [
+                _command_rejected(
+                    make_event,
+                    "record_gatekeeper_verdicts",
+                    f"invalid classification for {path}: {classification}; valid: {valid}",
+                )
+            ]
+        confidence = verdict.get("confidence", 0.0)
+        if not isinstance(confidence, int | float) or confidence < 0 or confidence > 1:
+            return [
+                _command_rejected(
+                    make_event,
+                    "record_gatekeeper_verdicts",
+                    f"invalid confidence for {path}",
+                )
+            ]
+        accepted.append(
+            {
+                "path": path,
+                "classification": classification,
+                "confidence": float(confidence),
+                "rationale": str(verdict.get("rationale", "")),
+                "model_id": str(verdict.get("model_id", payload.get("model_id", "unknown"))),
+                "input_tokens": _nonnegative_int(verdict.get("input_tokens", 0)),
+                "output_tokens": _nonnegative_int(verdict.get("output_tokens", 0)),
+                "cache_read_tokens": _nonnegative_int(verdict.get("cache_read_tokens", 0)),
+                "cache_write_tokens": _nonnegative_int(verdict.get("cache_write_tokens", 0)),
+                "cost_usd": _nonnegative_float(verdict.get("cost_usd", 0.0)),
+                "wall_time_ms": _nonnegative_int(verdict.get("wall_time_ms", 0)),
+            }
+        )
+
+    consult_id = str(payload.get("consult_id", "gatekeeper-consult"))
+    cost_payload = _gatekeeper_cost_payload(record_id, execution_id, consult_id, accepted, payload)
+    events = [
+        make_event(
+            "gatekeeper_verdict_recorded",
+            {
+                "file_state_record_id": record_id,
+                "execution_id": execution_id,
+                "producer_node_id": record.get("producer_node_id"),
+                "verdicts": accepted,
+                "resolved_count": len(accepted),
+            },
+        ),
+    ]
+    secret_paths = [
+        str(verdict["path"]) for verdict in accepted if verdict.get("classification") == "secret"
+    ]
+    if secret_paths:
+        cleanup_id = f"{record_id}:gatekeeper-secret"
+        events.append(
+            make_event(
+                "cleanup_requested",
+                {
+                    "cleanup_id": cleanup_id,
+                    "file_state_record_id": record_id,
+                    "snapshot_id": record.get("snapshot_id"),
+                    "paths": secret_paths,
+                    "authority": "gatekeeper",
+                    "reason": "gatekeeper_classified_secret_after_snapshot",
+                    "execution_id": execution_id,
+                    "producer_node_id": record.get("producer_node_id"),
+                },
+            )
+        )
+    events.append(make_event("gatekeeper_cost_recorded", cost_payload))
+    return events
+
+
+def _apply_record_cleanup_applied(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    cleanup_id = payload.get("cleanup_id")
+    if not isinstance(cleanup_id, str) or not cleanup_id:
+        return [_command_rejected(make_event, "record_cleanup_applied", "missing cleanup_id")]
+
+    requested = _cleanup_requested_event(events, cleanup_id)
+    if requested is None:
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                f"unknown cleanup_requested: {cleanup_id}",
+            )
+        ]
+    if _cleanup_applied_exists(events, cleanup_id):
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                f"cleanup already applied: {cleanup_id}",
+            )
+        ]
+
+    record_id = requested.payload.get("file_state_record_id")
+    if not isinstance(record_id, str) or record_id not in projection["file_state_records"]:
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                f"unknown cleanup file_state record: {record_id}",
+            )
+        ]
+    compromised_record = projection["file_state_records"][record_id]
+    requested_snapshot_id = requested.payload.get("snapshot_id")
+    compromised_snapshot_id = compromised_record.get("snapshot_id")
+    if requested_snapshot_id != compromised_snapshot_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                "cleanup snapshot_id does not match compromised record",
+            )
+        ]
+
+    raw_record = payload.get("superseding_file_state_record")
+    if not isinstance(raw_record, dict):
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                "missing superseding file_state record",
+            )
+        ]
+    record_payload = dict(cast(dict[str, Any], raw_record))
+    record_payload.setdefault("supersedes_record_id", record_id)
+    record_payload.setdefault("cleanup_id", cleanup_id)
+    if record_payload.get("supersedes_record_id") != record_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                "superseding record does not match cleanup target",
+            )
+        ]
+    if record_payload.get("cleanup_id") != cleanup_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                "superseding record cleanup_id does not match cleanup target",
+            )
+        ]
+    if record_payload.get("snapshot_id") == compromised_snapshot_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                "superseding record must use a different snapshot_id",
+            )
+        ]
+    secret_paths = _cleanup_secret_paths(requested.payload)
+    retained_secret_path = _record_contains_any_path(record_payload, secret_paths)
+    if retained_secret_path is not None:
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                f"superseding record still contains cleanup secret path: {retained_secret_path}",
+            )
+        ]
+    try:
+        record = FileStateRecord.model_validate(record_payload)
+    except ValueError as exc:
+        return [
+            _command_rejected(
+                make_event,
+                "record_cleanup_applied",
+                f"invalid superseding file_state record: {exc}",
+            )
+        ]
+
+    applied_payload = {
+        "cleanup_id": cleanup_id,
+        "file_state_record_id": record_id,
+        "superseding_record_id": record.record_id,
+        "old_snapshot_id": requested.payload.get("snapshot_id"),
+        "new_snapshot_id": record.snapshot_id,
+        "paths": requested.payload.get("paths", []),
+        "authority": requested.payload.get("authority", "gatekeeper"),
+        "reason": payload.get("reason", requested.payload.get("reason")),
+        "execution_id": requested.payload.get("execution_id"),
+        "deleted_snapshot_ref": payload.get("deleted_snapshot_ref") is True,
+    }
+    accepted_payload = record.model_dump(mode="json")
+    return [
+        make_event("cleanup_applied", applied_payload),
+        make_event("output_record_accepted", accepted_payload),
+        make_event("file_state_accepted", accepted_payload),
+    ]
+
+
+def _cleanup_requested_event(
+    events: list[EventEnvelope],
+    cleanup_id: str,
+) -> EventEnvelope | None:
+    for event in events:
+        if event.event_type != "cleanup_requested":
+            continue
+        if event.payload.get("cleanup_id") == cleanup_id:
+            return event
+    return None
+
+
+def _cleanup_applied_exists(events: list[EventEnvelope], cleanup_id: str) -> bool:
+    return any(
+        event.event_type == "cleanup_applied" and event.payload.get("cleanup_id") == cleanup_id
+        for event in events
+    )
+
+
+def _cleanup_secret_paths(payload: dict[str, Any]) -> set[str]:
+    paths = payload.get("paths")
+    if not isinstance(paths, list):
+        return set()
+    return {path for path in cast(list[Any], paths) if isinstance(path, str) and path}
+
+
+def _record_contains_any_path(
+    record_payload: dict[str, Any],
+    paths: set[str],
+) -> str | None:
+    if not paths:
+        return None
+    for key in (
+        "tracked",
+        "untracked",
+        "ignored",
+        "external",
+        "classifications",
+        "residue",
+        "rejected_paths",
+    ):
+        entries = record_payload.get(key)
+        if not isinstance(entries, list):
+            continue
+        for raw_entry in cast(list[Any], entries):
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = cast(dict[str, Any], raw_entry)
+            path = entry.get("path")
+            if isinstance(path, str) and path in paths:
+                return path
+    return None
+
+
+def _record_residue(record: dict[str, Any]) -> list[dict[str, Any]]:
+    residue = record.get("residue")
+    if not isinstance(residue, list):
+        return []
+    typed_residue = cast(list[Any], residue)
+    return [dict(cast(dict[str, Any], entry)) for entry in typed_residue if isinstance(entry, dict)]
+
+
+def _gatekeeper_cost_payload(
+    record_id: str,
+    execution_id: str,
+    consult_id: str,
+    verdicts: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    cost = payload.get("cost")
+    if isinstance(cost, dict):
+        typed_cost = cast(dict[str, Any], cost)
+    else:
+        typed_cost = {}
+    model_ids = sorted({str(verdict.get("model_id", "unknown")) for verdict in verdicts})
+    return {
+        "file_state_record_id": record_id,
+        "execution_id": execution_id,
+        "consult_id": consult_id,
+        "model_id": str(
+            typed_cost.get("model_id") or (model_ids[0] if len(model_ids) == 1 else "mixed")
+        ),
+        "input_tokens": _nonnegative_int(
+            typed_cost.get("input_tokens", sum(int(v["input_tokens"]) for v in verdicts))
+        ),
+        "output_tokens": _nonnegative_int(
+            typed_cost.get("output_tokens", sum(int(v["output_tokens"]) for v in verdicts))
+        ),
+        "cache_read_tokens": _nonnegative_int(
+            typed_cost.get(
+                "cache_read_tokens",
+                sum(int(v["cache_read_tokens"]) for v in verdicts),
+            )
+        ),
+        "cache_write_tokens": _nonnegative_int(
+            typed_cost.get(
+                "cache_write_tokens",
+                sum(int(v["cache_write_tokens"]) for v in verdicts),
+            )
+        ),
+        "cost_usd": _nonnegative_float(
+            typed_cost.get("cost_usd", sum(float(v["cost_usd"]) for v in verdicts))
+        ),
+        "wall_time_ms": _nonnegative_int(
+            typed_cost.get("wall_time_ms", sum(int(v["wall_time_ms"]) for v in verdicts))
+        ),
+        "item_count": len(verdicts),
+    }
+
+
+def _nonnegative_int(value: Any) -> int:
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int | float) and value >= 0:
+        return int(value)
+    return 0
+
+
+def _nonnegative_float(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, int | float) and value >= 0:
+        return float(value)
+    return 0.0
 
 
 def _patch_op_events(
