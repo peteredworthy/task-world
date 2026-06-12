@@ -350,6 +350,28 @@ class EventV2Model(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class GraphOutboxModel(Base):
+    """Transactional side-effect intent emitted from accepted graph events."""
+
+    __tablename__ = "graph_outbox"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_graph_outbox_event_id"),
+        Index("idx_graph_outbox_status_id", "status", "outbox_id"),
+        Index("idx_graph_outbox_run", "run_id", "outbox_id"),
+    )
+
+    outbox_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    event_id: Mapped[str] = mapped_column(String, nullable=False)
+    run_id: Mapped[str] = mapped_column(String, nullable=False)
+    kind: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 class ProjectionCheckpointModel(Base):
     __tablename__ = "projection_checkpoints"
 

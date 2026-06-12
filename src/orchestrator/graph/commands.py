@@ -79,6 +79,8 @@ def apply_command(
         return _apply_schedule_tick(projection, events, payload, clock, id_gen, make_event)
     if command_type == "acknowledge_start":
         return _apply_acknowledge_start(projection, payload, make_event)
+    if command_type == "agent_died":
+        return _apply_agent_died(projection, payload, make_event)
     if command_type == "raise_appeal":
         return _apply_raise_appeal(payload, make_event, id_gen)
     if command_type == "record_decision":
@@ -415,6 +417,76 @@ def _apply_acknowledge_start(
                 "trigger": "runtime_start_acknowledged",
             },
         )
+    ]
+
+
+def _apply_agent_died(
+    projection: GraphProjection,
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    lease_id = payload.get("lease_id")
+    if not isinstance(lease_id, str):
+        return [_command_rejected(make_event, "agent_died", "missing lease_id")]
+
+    lease = projection["leases"].get(lease_id)
+    if lease is None:
+        return [_command_rejected(make_event, "agent_died", "unknown lease")]
+    if lease.get("state") != "active":
+        return [_command_rejected(make_event, "agent_died", "lease not active")]
+
+    execution_id = payload.get("execution_id")
+    lease_execution_id = lease.get("execution_id")
+    if (
+        isinstance(execution_id, str)
+        and isinstance(lease_execution_id, str)
+        and execution_id != lease_execution_id
+    ):
+        return [_command_rejected(make_event, "agent_died", "execution_incompatible")]
+
+    node_id = str(lease.get("node_id"))
+    generation = lease.get("generation")
+    reason = str(payload.get("reason", "runtime_process_died"))
+    event_payload = {
+        "lease_id": lease_id,
+        "node_id": node_id,
+        "generation": generation,
+        "execution_id": lease_execution_id if isinstance(lease_execution_id, str) else execution_id,
+        "reason": reason,
+    }
+
+    # V1 retry policy: runtime death before an accepted boundary requeues the
+    # same executable node. No new retry node is created until output/file-state
+    # acceptance semantics exist in the graph runtime slice.
+    return [
+        make_event("agent_died", event_payload),
+        make_event(
+            "lease_revoked",
+            {
+                "lease_id": lease_id,
+                "node_id": node_id,
+                "generation": generation,
+                "reason": reason,
+            },
+        ),
+        make_event(
+            "runtime_retry_scheduled",
+            {
+                "node_id": node_id,
+                "lease_id": lease_id,
+                "generation": generation,
+                "policy": "v1_requeue_same_node_after_agent_death",
+                "reason": reason,
+            },
+        ),
+        make_event(
+            "node_state_changed",
+            {
+                "node_id": node_id,
+                "new_state": "ready",
+                "trigger": "agent_died_retry_scheduled",
+            },
+        ),
     ]
 
 

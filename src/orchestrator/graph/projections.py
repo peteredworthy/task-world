@@ -234,8 +234,9 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_authority_change(next_state, event)
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
         _record_environment_failure(next_state, event)
-    # node_ready and node_deferred are audit/activity events. Projection facts are
-    # updated only by node_state_changed so replay has a single state authority.
+    # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
+    # audit/policy facts. Projection facts are updated only by lease_* and
+    # node_state_changed events so replay has a single state authority.
 
     next_state["ready_nodes"] = _ready_nodes(next_state["node_states"])
     next_state["task_states"] = _derive_task_states(next_state)

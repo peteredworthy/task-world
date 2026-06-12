@@ -604,6 +604,81 @@ def test_acknowledge_start_rejects_wrong_execution_id() -> None:
     assert output[0].payload["reason"] == "execution_incompatible"
 
 
+def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "runtime_retry_scheduled",
+        "node_state_changed",
+    ]
+    assert output[0].payload == {
+        "lease_id": "lease-1",
+        "node_id": "worker-1",
+        "generation": 1,
+        "execution_id": "exec-1",
+        "reason": "process_exit",
+    }
+    assert output[2].payload["policy"] == "v1_requeue_same_node_after_agent_death"
+    assert output[3].payload == {
+        "node_id": "worker-1",
+        "new_state": "ready",
+        "trigger": "agent_died_retry_scheduled",
+    }
+    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["node_states"]["worker-1"] == "ready"
+
+
+def test_agent_died_rejects_unknown_or_inactive_lease() -> None:
+    inactive_events = [
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 0),
+        _event(
+            "lease_granted",
+            {"node_id": "worker-1", "lease_id": "lease-1", "generation": 1},
+            1,
+        ),
+        _event("lease_revoked", {"node_id": "worker-1", "lease_id": "lease-1"}, 2),
+    ]
+
+    unknown_output = _apply([], "agent_died", {"run_id": "run-1", "lease_id": "missing-lease"})
+    inactive_output = _apply(
+        inactive_events,
+        "agent_died",
+        {"run_id": "run-1", "lease_id": "lease-1"},
+    )
+
+    assert unknown_output[0].event_type == "command_rejected"
+    assert unknown_output[0].payload["reason"] == "unknown lease"
+    assert inactive_output[0].event_type == "command_rejected"
+    assert inactive_output[0].payload["reason"] == "lease not active"
+
+
 def test_schedule_tick_expires_past_leases_only() -> None:
     clock = FakeClock()
     past = (clock.now() - timedelta(seconds=1)).isoformat()
