@@ -139,8 +139,18 @@ Builder prompts and audit/reaudit reports for 1.8–2.5 are preserved in
 Raw agent transcripts (`*.log`) were not committed.
 
 Dogfood gate: after 2.6, execute a graph run end-to-end through the
-production orchestrator (not test harness). Being satisfied via slice 3.1
-(`slice-3.1-spec.md`) run as a graph-backed orchestrator run.
+production orchestrator (not test harness). The kernel slices (3.1, etc.)
+are *built by* the orchestrator on the legacy path, but no run has yet
+*executed as a graph* in the server — `graph_runtime` has no production
+caller. **Slice 2.7 (`slice-2.7-spec.md`) builds that production driver and
+retires this gate**; slice 2.8 adds graph startup/crash recovery wiring.
+
+## Phase 2 completion (runtime integration)
+
+| Slice | Status | Spec |
+|---|---|---|
+| 2.7 Production graph run driver | ⬜ next | slice-2.7-spec.md |
+| 2.8 Graph startup recovery wiring | ⬜ planned | (spec TBD) |
 
 ## Phase 3 (Dynamic planning)
 
