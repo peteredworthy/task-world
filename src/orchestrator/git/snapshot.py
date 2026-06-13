@@ -40,13 +40,13 @@ def snapshot(
         _run_git(path, ["add", "-A"], env=indexed_env)
         force_paths = _safe_pathspecs(force_include_paths or [])
         excluded_paths = _safe_pathspecs(exclude_paths or [])
-        if force_paths:
+        for batch in _pathspec_batches(force_paths):
             _run_git(
                 path,
-                ["add", "-f", "--", *force_paths],
+                ["add", "-f", "--", *batch],
                 env=indexed_env,
             )
-        if excluded_paths:
+        for batch in _pathspec_batches(excluded_paths):
             _run_git(
                 path,
                 [
@@ -55,7 +55,7 @@ def snapshot(
                     "-r",
                     "--ignore-unmatch",
                     "--",
-                    *excluded_paths,
+                    *batch,
                 ],
                 env=indexed_env,
             )
@@ -241,3 +241,32 @@ def _safe_pathspecs(paths: list[str]) -> list[str]:
             continue
         safe.append(f":(literal){normalized}")
     return safe
+
+
+# Keep each ``git`` argv well under the OS ARG_MAX (1 MB on macOS) so a worktree
+# with very many force-included/excluded pathspecs cannot overflow execve. The
+# budget is conservative: it leaves ample headroom for the fixed git prefix and
+# the inherited environment.
+_MAX_PATHSPEC_BYTES_PER_BATCH = 96 * 1024
+_MAX_PATHSPECS_PER_BATCH = 2000
+
+
+def _pathspec_batches(pathspecs: list[str]) -> list[list[str]]:
+    """Split pathspecs into argv-safe batches (by byte budget and count)."""
+    batches: list[list[str]] = []
+    current: list[str] = []
+    current_bytes = 0
+    for spec in pathspecs:
+        spec_bytes = len(spec.encode("utf-8")) + 1  # +1 for the argv separator
+        if current and (
+            current_bytes + spec_bytes > _MAX_PATHSPEC_BYTES_PER_BATCH
+            or len(current) >= _MAX_PATHSPECS_PER_BATCH
+        ):
+            batches.append(current)
+            current = []
+            current_bytes = 0
+        current.append(spec)
+        current_bytes += spec_bytes
+    if current:
+        batches.append(current)
+    return batches

@@ -210,3 +210,59 @@ def test_delete_snapshot_ref_removes_ref_without_touching_worktree(tmp_path: Pat
     ).stdout.splitlines()
     assert result.ref not in refs
     assert (repo / "README.md").read_text(encoding="utf-8") == before
+
+
+def test_pathspec_batches_splits_by_count() -> None:
+    from orchestrator.git.snapshot import _MAX_PATHSPECS_PER_BATCH, _pathspec_batches
+
+    specs = [f":(literal)f{i}" for i in range(_MAX_PATHSPECS_PER_BATCH * 2 + 5)]
+    batches = _pathspec_batches(specs)
+    assert len(batches) == 3
+    assert sum(len(b) for b in batches) == len(specs)
+    assert all(len(b) <= _MAX_PATHSPECS_PER_BATCH for b in batches)
+    # Order preserved across the flattened batches.
+    assert [s for b in batches for s in b] == specs
+
+
+def test_pathspec_batches_splits_by_bytes() -> None:
+    from orchestrator.git.snapshot import _MAX_PATHSPEC_BYTES_PER_BATCH, _pathspec_batches
+
+    big = "x" * (_MAX_PATHSPEC_BYTES_PER_BATCH // 4)
+    specs = [f":(literal){big}{i}" for i in range(10)]
+    batches = _pathspec_batches(specs)
+    assert len(batches) > 1
+    for batch in batches:
+        total = sum(len(s.encode()) + 1 for s in batch)
+        # Each batch (beyond a single oversized spec) stays within budget.
+        assert total <= _MAX_PATHSPEC_BYTES_PER_BATCH or len(batch) == 1
+
+
+def test_pathspec_batches_empty() -> None:
+    from orchestrator.git.snapshot import _pathspec_batches
+
+    assert _pathspec_batches([]) == []
+
+
+def test_snapshot_force_includes_many_paths_without_arg_overflow(tmp_path: Path) -> None:
+    """A worktree with thousands of force-included ignored files must snapshot
+    without overflowing git's argv (regression for the ARG_MAX/E2BIG boundary bug).
+    """
+    repo = _make_repo(tmp_path)
+    # Ignore a cache dir and fill it with many files, mirroring an in-worktree .venv.
+    (repo / ".gitignore").write_text("cache/\n", encoding="utf-8")
+    _run_git(repo, "add", ".gitignore")
+    _run_git(repo, "commit", "-q", "-m", "ignore cache")
+    cache = repo / "cache"
+    cache.mkdir()
+    n = 5000
+    force_paths = []
+    for i in range(n):
+        rel = f"cache/f{i}.txt"
+        (repo / rel).write_text(str(i), encoding="utf-8")
+        force_paths.append(rel)
+
+    # Must not raise OSError/E2BIG and must capture the ignored files.
+    result = snapshot(repo, "many force-included paths", force_include_paths=force_paths)
+    listing = _run_git(repo, "ls-tree", "-r", "--name-only", result.commit_sha).stdout
+    assert "cache/f0.txt" in listing
+    assert f"cache/f{n - 1}.txt" in listing

@@ -105,6 +105,12 @@ def capture_file_state_boundary(
             snapshot_result=None,
         )
 
+    # Ignored-but-accepted files (residue, and tool caches like an in-worktree
+    # .venv classified by slice 2.4) are force-included so the snapshot is a
+    # faithful, restorable copy of the boundary. A real .venv holds tens of
+    # thousands of files, so this list can be huge — `snapshot()` batches the
+    # `git add` to stay under ARG_MAX (otherwise execve raised an opaque E2BIG
+    # OSError that the codex runner further mislabelled as a transport error).
     force_include_paths = [
         entry.path
         for entry in classification.paths
