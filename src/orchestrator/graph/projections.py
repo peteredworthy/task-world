@@ -1,6 +1,6 @@
 """Pure graph projections for scenario fixtures."""
 
-from typing import Any, TypedDict, cast
+from typing import Any, Literal, TypedDict, cast
 
 from orchestrator.graph.models import EventEnvelope
 
@@ -35,6 +35,32 @@ class GraphProjection(TypedDict):
     planner_generation_budget: int
     planner_successors: dict[str, str]
     planner_generations: dict[str, int]
+
+
+class SchedulerBlockedNode(TypedDict):
+    node_id: str
+    reason: str
+
+
+class SchedulerView(TypedDict):
+    ready: list[str]
+    blocked: list[SchedulerBlockedNode]
+    waiting_resources: list[SchedulerBlockedNode]
+    waiting_gates: list[SchedulerBlockedNode]
+
+
+class LeaseViewEntry(TypedDict):
+    lease_id: str
+    node_id: str
+    generation: int | None
+    state: str
+    execution_id: str | None
+    expires_at: str | None
+
+
+class LeaseView(TypedDict):
+    active: list[LeaseViewEntry]
+    suspended: list[LeaseViewEntry]
 
 
 def initial_projection() -> GraphProjection:
@@ -368,6 +394,63 @@ def project_ready_nodes(events: list[EventEnvelope]) -> list[str]:
     return _project(events)["ready_nodes"]
 
 
+def project_scheduler_view(events: list[EventEnvelope]) -> SchedulerView:
+    """Project ready/deferred scheduler buckets from graph events.
+
+    Readiness remains governed by node_state_changed facts. Deferred scheduler
+    events are audit facts, so this view uses only the latest deferral reason
+    for nodes that are not currently ready.
+    """
+    node_states = project_node_states(events)
+    ready = sorted(project_ready_nodes(events))
+    latest_deferrals = _latest_node_deferrals(events)
+    view: SchedulerView = {
+        "ready": ready,
+        "blocked": [],
+        "waiting_resources": [],
+        "waiting_gates": [],
+    }
+    pending_states = {"planned", "blocked"}
+    for node_id, node_state in sorted(node_states.items()):
+        if node_state not in pending_states:
+            continue
+        reason = latest_deferrals.get(node_id)
+        if reason is None and node_state != "blocked":
+            continue
+        if reason is None:
+            reason = "blocked"
+        entry: SchedulerBlockedNode = {"node_id": node_id, "reason": reason}
+        bucket = _scheduler_bucket_for_reason(reason)
+        view[bucket].append(entry)
+    return view
+
+
+def project_lease_view(events: list[EventEnvelope]) -> LeaseView:
+    leases = project_leases(events)
+    view: LeaseView = {"active": [], "suspended": []}
+    for lease_id in sorted(leases):
+        lease = leases[lease_id]
+        state = lease.get("state")
+        if state not in {"active", "suspended"}:
+            continue
+        node_id = lease.get("node_id")
+        if not isinstance(node_id, str):
+            continue
+        entry: LeaseViewEntry = {
+            "lease_id": lease_id,
+            "node_id": node_id,
+            "generation": _optional_int(lease.get("generation")),
+            "state": state,
+            "execution_id": _optional_str(lease.get("execution_id")),
+            "expires_at": _optional_str(lease.get("expires_at")),
+        }
+        if state == "active":
+            view["active"].append(entry)
+        else:
+            view["suspended"].append(entry)
+    return view
+
+
 def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[str, Any]]]:
     """Project accepted file-state residue classifications by path."""
     report: dict[str, list[dict[str, Any]]] = {}
@@ -541,6 +624,36 @@ def _project(events: list[EventEnvelope]) -> GraphProjection:
     for event in events:
         projection = reduce_event(projection, event)
     return projection
+
+
+def _latest_node_deferrals(events: list[EventEnvelope]) -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    for event in events:
+        if event.event_type != "node_deferred":
+            continue
+        node_id = event.payload.get("node_id")
+        reason = event.payload.get("reason")
+        if isinstance(node_id, str) and isinstance(reason, str):
+            reasons[node_id] = reason
+    return reasons
+
+
+def _scheduler_bucket_for_reason(
+    reason: str,
+) -> Literal["blocked", "waiting_resources", "waiting_gates"]:
+    if reason.startswith("resource_") or reason.startswith("invalid_claim:"):
+        return "waiting_resources"
+    if reason.startswith("gate_") or reason.startswith("waiting_gate"):
+        return "waiting_gates"
+    return "blocked"
+
+
+def _optional_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _optional_str(value: Any) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _has_pending_planner(projection: GraphProjection) -> bool:

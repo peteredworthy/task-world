@@ -7,6 +7,7 @@ import type {
   UpdateChecklistRequest,
   GraphProjectionResponse,
   GraphEventResponse,
+  SchedulerViewResponse,
   NodeDetailResponse,
 } from '../types';
 
@@ -52,6 +53,15 @@ export function useGraphEvents(runId: string | undefined, fromPosition?: number)
   return useQuery<GraphEventResponse[]>({
     queryKey: ['graphEvents', runId, fromPosition],
     queryFn: () => api.getRunGraphEvents(runId!, fromPosition),
+    enabled: !!runId,
+    staleTime: 5000,
+  });
+}
+
+export function useSchedulerView(runId: string | undefined) {
+  return useQuery<SchedulerViewResponse>({
+    queryKey: ['graphScheduler', runId],
+    queryFn: () => api.getRunGraphScheduler(runId!),
     enabled: !!runId,
     staleTime: 5000,
   });

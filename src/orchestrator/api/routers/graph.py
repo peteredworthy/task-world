@@ -11,10 +11,12 @@ from orchestrator.api.schemas.base import ApiModel
 from orchestrator.graph import EventEnvelope
 from orchestrator.graph.projections import (
     project_leases,
+    project_lease_view,
     project_node_metadata,
     project_node_states,
     project_ready_nodes,
     project_run_state,
+    project_scheduler_view,
     project_task_states,
 )
 from orchestrator.graph_runtime.store import GraphEventStore
@@ -39,6 +41,39 @@ class GraphProjectionResponse(ApiModel):
     task_states: dict[str, str]
     leases: dict[str, dict[str, Any]]
     ready_nodes: list[str]
+
+
+class SchedulerBlockedNodeResponse(ApiModel):
+    node_id: str
+    reason: str
+
+
+class SchedulerViewResponseBody(ApiModel):
+    ready: list[str]
+    blocked: list[SchedulerBlockedNodeResponse]
+    waiting_resources: list[SchedulerBlockedNodeResponse]
+    waiting_gates: list[SchedulerBlockedNodeResponse]
+
+
+class LeaseViewEntryResponse(ApiModel):
+    lease_id: str
+    node_id: str
+    generation: int | None = None
+    state: str
+    execution_id: str | None = None
+    expires_at: str | None = None
+
+
+class LeaseViewResponse(ApiModel):
+    active: list[LeaseViewEntryResponse]
+    suspended: list[LeaseViewEntryResponse]
+
+
+class SchedulerViewResponse(ApiModel):
+    run_id: str
+    event_count: int
+    scheduler: SchedulerViewResponseBody
+    leases: LeaseViewResponse
 
 
 class NodeDetailResponse(ApiModel):
@@ -90,6 +125,46 @@ def build_graph_projection_response(
         task_states=project_task_states(events),
         leases=project_leases(events),
         ready_nodes=project_ready_nodes(events),
+    )
+
+
+def build_scheduler_view_response(
+    run_id: str,
+    events: list[EventEnvelope],
+) -> SchedulerViewResponse:
+    if not events:
+        return SchedulerViewResponse(
+            run_id=run_id,
+            event_count=0,
+            scheduler=SchedulerViewResponseBody(
+                ready=[],
+                blocked=[],
+                waiting_resources=[],
+                waiting_gates=[],
+            ),
+            leases=LeaseViewResponse(active=[], suspended=[]),
+        )
+
+    scheduler_view = project_scheduler_view(events)
+    lease_view = project_lease_view(events)
+    return SchedulerViewResponse(
+        run_id=run_id,
+        event_count=max(event.position for event in events),
+        scheduler=SchedulerViewResponseBody(
+            ready=scheduler_view["ready"],
+            blocked=[SchedulerBlockedNodeResponse(**entry) for entry in scheduler_view["blocked"]],
+            waiting_resources=[
+                SchedulerBlockedNodeResponse(**entry)
+                for entry in scheduler_view["waiting_resources"]
+            ],
+            waiting_gates=[
+                SchedulerBlockedNodeResponse(**entry) for entry in scheduler_view["waiting_gates"]
+            ],
+        ),
+        leases=LeaseViewResponse(
+            active=[LeaseViewEntryResponse(**entry) for entry in lease_view["active"]],
+            suspended=[LeaseViewEntryResponse(**entry) for entry in lease_view["suspended"]],
+        ),
     )
 
 
@@ -259,6 +334,15 @@ async def get_graph_events(
 ) -> list[GraphEventResponse]:
     events = await graph_store.read_run(run_id, from_position=from_position)
     return [_event_to_response(event) for event in events]
+
+
+@router.get("/{run_id}/graph/scheduler", response_model=SchedulerViewResponse)
+async def get_graph_scheduler_view(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> SchedulerViewResponse:
+    events = await graph_store.read_run(run_id)
+    return build_scheduler_view_response(run_id, events)
 
 
 @router.get("/{run_id}/graph/nodes/{node_id}", response_model=NodeDetailResponse)

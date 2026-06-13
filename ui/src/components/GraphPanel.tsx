@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useGraphEvents, useGraphProjection } from '../hooks/useApi';
+import { useGraphEvents, useGraphProjection, useSchedulerView } from '../hooks/useApi';
 import { NodeDetailPanel } from './NodeDetailPanel';
+import { SchedulerView } from './SchedulerView';
 import type { ActivityEvent, GraphEventResponse, GraphProjectionResponse, RunResponse } from '../types';
 
 interface GraphPanelProps {
@@ -217,6 +218,7 @@ function EventModal({
 
 export function GraphPanel({ runId, run, open, onClose, activityEvents = [], initialNodeId = null }: GraphPanelProps) {
   const { data: projection } = useGraphProjection(runId);
+  const { data: schedulerView } = useSchedulerView(runId);
   const { data: events = [] } = useGraphEvents(runId);
   const [showEvents, setShowEvents] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -262,6 +264,7 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
         </div>
 
         <div className="mt-4 space-y-4">
+          {schedulerView && <SchedulerView view={schedulerView} />}
           <NodeStatesTable
             projection={projection}
             events={events}

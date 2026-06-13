@@ -17,6 +17,7 @@ import type {
   EnvSnapshot,
   GraphEventResponse,
   GraphProjectionResponse,
+  SchedulerViewResponse,
   NodeDetailResponse,
   GlobalConfig,
   ModelProfileInfo,
@@ -524,6 +525,10 @@ export const api = {
 
   getRunGraphProjection(runId: string): Promise<GraphProjectionResponse> {
     return fetchApi('/api/runs/' + runId + '/graph');
+  },
+
+  getRunGraphScheduler(runId: string): Promise<SchedulerViewResponse> {
+    return fetchApi('/api/runs/' + runId + '/graph/scheduler');
   },
 
   getRunGraphEvents(runId: string, fromPosition?: number): Promise<GraphEventResponse[]> {

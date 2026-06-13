@@ -197,6 +197,35 @@ export interface GraphProjectionResponse {
   ready_nodes: string[];
 }
 
+export interface SchedulerBlockedNode {
+  node_id: string;
+  reason: string;
+}
+
+export interface SchedulerLease {
+  lease_id: string;
+  node_id: string;
+  generation: number | null;
+  state: string;
+  execution_id: string | null;
+  expires_at: string | null;
+}
+
+export interface SchedulerViewResponse {
+  run_id: string;
+  event_count: number;
+  scheduler: {
+    ready: string[];
+    blocked: SchedulerBlockedNode[];
+    waiting_resources: SchedulerBlockedNode[];
+    waiting_gates: SchedulerBlockedNode[];
+  };
+  leases: {
+    active: SchedulerLease[];
+    suspended: SchedulerLease[];
+  };
+}
+
 export interface NodeDetailResponse {
   run_id: string;
   node_id: string;

@@ -10,6 +10,7 @@ import type {
   NodeDetailResponse,
   GraphProjectionResponse,
   RunResponse,
+  SchedulerViewResponse,
 } from '../../types';
 
 afterEach(cleanup);
@@ -139,8 +140,32 @@ function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
       },
     },
   ];
+  const schedulerView: SchedulerViewResponse = {
+    run_id: run.id,
+    event_count: 2,
+    scheduler: {
+      ready: [],
+      blocked: [],
+      waiting_resources: [],
+      waiting_gates: [],
+    },
+    leases: {
+      active: [
+        {
+          lease_id: 'lease-1',
+          node_id: 'worker-1',
+          generation: 1,
+          state: 'active',
+          execution_id: 'exec-1',
+          expires_at: '2026-01-01T00:10:00Z',
+        },
+      ],
+      suspended: [],
+    },
+  };
 
   queryClient.setQueryData(['graphProjection', run.id], projection);
+  queryClient.setQueryData(['graphScheduler', run.id], schedulerView);
   queryClient.setQueryData(['graphEvents', run.id, undefined], graphEvents);
   queryClient.setQueryData(['graphNodeDetail', run.id, 'worker-1'], makeNodeDetail(run.id));
 
