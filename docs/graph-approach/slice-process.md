@@ -217,8 +217,8 @@ carrier in Phase 4). Both are numbered 3.x.
 | Slice | Status | Spec |
 |---|---|---|
 | 3.1 Recursive horizon planner (kernel) | ✅ done | slice-3.1-spec.md |
-| 3.7 Retained planner session | ⬜ next | slice-3.7-spec.md |
-| 3.8 Parent/child re-expressed as planner chain | ⬜ planned | slice-3.8-spec.md |
+| 3.7 Retained planner session | ✅ done | slice-3.7-spec.md |
+| 3.8 Parent/child re-expressed as planner chain | ⬜ next | slice-3.8-spec.md |
 
 ### Frontend / observability track (PRD §26)
 
