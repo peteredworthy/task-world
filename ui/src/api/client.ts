@@ -16,6 +16,7 @@ import type {
   EnvFile,
   EnvSnapshot,
   GraphEventResponse,
+  FileStateReportResponse,
   GraphProjectionResponse,
   SchedulerViewResponse,
   NodeDetailResponse,
@@ -529,6 +530,10 @@ export const api = {
 
   getRunGraphScheduler(runId: string): Promise<SchedulerViewResponse> {
     return fetchApi('/api/runs/' + runId + '/graph/scheduler');
+  },
+
+  getRunGraphFileState(runId: string): Promise<FileStateReportResponse> {
+    return fetchApi('/api/runs/' + runId + '/graph/file-state');
   },
 
   getRunGraphEvents(runId: string, fromPosition?: number): Promise<GraphEventResponse[]> {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useGraphEvents, useGraphProjection, useSchedulerView } from '../hooks/useApi';
+import { useFileStateReport, useGraphEvents, useGraphProjection, useSchedulerView } from '../hooks/useApi';
+import { FileStateViewer } from './FileStateViewer';
 import { NodeDetailPanel } from './NodeDetailPanel';
 import { SchedulerView } from './SchedulerView';
 import type { ActivityEvent, GraphEventResponse, GraphProjectionResponse, RunResponse } from '../types';
@@ -219,6 +220,7 @@ function EventModal({
 export function GraphPanel({ runId, run, open, onClose, activityEvents = [], initialNodeId = null }: GraphPanelProps) {
   const { data: projection } = useGraphProjection(runId);
   const { data: schedulerView } = useSchedulerView(runId);
+  const { data: fileStateReport } = useFileStateReport(runId);
   const { data: events = [] } = useGraphEvents(runId);
   const [showEvents, setShowEvents] = useState(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -265,6 +267,7 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
 
         <div className="mt-4 space-y-4">
           {schedulerView && <SchedulerView view={schedulerView} />}
+          {fileStateReport && <FileStateViewer report={fileStateReport} />}
           <NodeStatesTable
             projection={projection}
             events={events}

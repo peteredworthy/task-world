@@ -7,6 +7,7 @@ import type {
   UpdateChecklistRequest,
   GraphProjectionResponse,
   GraphEventResponse,
+  FileStateReportResponse,
   SchedulerViewResponse,
   NodeDetailResponse,
 } from '../types';
@@ -62,6 +63,15 @@ export function useSchedulerView(runId: string | undefined) {
   return useQuery<SchedulerViewResponse>({
     queryKey: ['graphScheduler', runId],
     queryFn: () => api.getRunGraphScheduler(runId!),
+    enabled: !!runId,
+    staleTime: 5000,
+  });
+}
+
+export function useFileStateReport(runId: string | undefined) {
+  return useQuery<FileStateReportResponse>({
+    queryKey: ['graphFileState', runId],
+    queryFn: () => api.getRunGraphFileState(runId!),
     enabled: !!runId,
     staleTime: 5000,
   });

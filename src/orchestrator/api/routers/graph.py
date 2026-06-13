@@ -8,13 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from orchestrator.api.deps import get_graph_store
 from orchestrator.api.schemas.base import ApiModel
-from orchestrator.graph import EventEnvelope
-from orchestrator.graph.projections import (
+from orchestrator.graph import (
+    EventEnvelope,
     project_leases,
     project_lease_view,
     project_node_metadata,
     project_node_states,
     project_ready_nodes,
+    project_residue_report,
+    project_gatekeeper_report,
     project_run_state,
     project_scheduler_view,
     project_task_states,
@@ -89,6 +91,55 @@ class NodeDetailResponse(ApiModel):
     callback_history: list[GraphEventResponse]
     events: list[GraphEventResponse]
     prompt_summary: dict[str, Any] | None = None
+
+
+class FileStatePathResponse(ApiModel):
+    path: str
+    classification: str | None = None
+    reason: str | None = None
+    source: str | None = None
+    matched_rule: str | None = None
+    needs_gatekeeper: bool = False
+
+
+class FileStateGatekeeperVerdictResponse(ApiModel):
+    path: str
+    verdict: str
+    classification: str | None = None
+    rationale: str | None = None
+    confidence: float | None = None
+    model_id: str | None = None
+
+
+class FileStateDiffSummaryResponse(ApiModel):
+    files_changed: int
+    additions: int | None = None
+    deletions: int | None = None
+
+
+class FileStateBoundaryResponse(ApiModel):
+    record_id: str
+    node_id: str | None = None
+    snapshot_id: str
+    snapshot_type: str
+    verdict: str | None = None
+    classification_counts: dict[str, int]
+    captured_paths: list[FileStatePathResponse]
+    rejected_paths: list[FileStatePathResponse]
+    gatekeeper_verdicts: list[FileStateGatekeeperVerdictResponse]
+    diff_summary: FileStateDiffSummaryResponse | None = None
+
+
+class FileStateNodeReportResponse(ApiModel):
+    node_id: str
+    boundaries: list[FileStateBoundaryResponse]
+
+
+class FileStateReportResponse(ApiModel):
+    run_id: str
+    event_count: int
+    nodes: list[FileStateNodeReportResponse]
+    gatekeeper: dict[str, Any] | None = None
 
 
 def _event_to_response(event: EventEnvelope) -> GraphEventResponse:
@@ -244,6 +295,224 @@ def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
     return summary
 
 
+def _path_text(entry: dict[str, Any]) -> str | None:
+    path = entry.get("path")
+    return path if isinstance(path, str) else None
+
+
+def _record_path_entries(record: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for key in ("classifications", "residue", "tracked", "untracked", "ignored", "external"):
+        raw_entries = record.get(key)
+        if not isinstance(raw_entries, list):
+            continue
+        for raw_entry in cast(list[Any], raw_entries):
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = dict(cast(dict[str, Any], raw_entry))
+            path = _path_text(entry)
+            if path is None or path in seen:
+                continue
+            seen.add(path)
+            entries.append(entry)
+    return entries
+
+
+def _rejected_path_entries(record: dict[str, Any]) -> list[FileStatePathResponse]:
+    raw_entries = record.get("rejected_paths")
+    if not isinstance(raw_entries, list):
+        return []
+    entries: list[FileStatePathResponse] = []
+    for raw_entry in cast(list[Any], raw_entries):
+        if not isinstance(raw_entry, dict):
+            continue
+        entry = cast(dict[str, Any], raw_entry)
+        path = _path_text(entry)
+        if path is None:
+            continue
+        reason = entry.get("reason") or entry.get("matched_rule") or entry.get("policy")
+        entries.append(
+            FileStatePathResponse(
+                path=path,
+                classification=cast(str | None, entry.get("classification")),
+                reason=cast(str | None, reason),
+                source=cast(str | None, entry.get("source")),
+                matched_rule=cast(str | None, entry.get("matched_rule")),
+                needs_gatekeeper=entry.get("needs_gatekeeper") is True,
+            )
+        )
+    return entries
+
+
+def _residue_by_record_path(
+    residue_report: dict[str, list[dict[str, Any]]],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    by_record: dict[tuple[str, str], dict[str, Any]] = {}
+    for path, entries in residue_report.items():
+        for entry in entries:
+            record_id = entry.get("record_id")
+            if isinstance(record_id, str):
+                by_record[(record_id, path)] = entry
+    return by_record
+
+
+def _gatekeeper_verdicts_by_record(
+    events: list[EventEnvelope],
+) -> dict[str, list[FileStateGatekeeperVerdictResponse]]:
+    by_record: dict[str, list[FileStateGatekeeperVerdictResponse]] = {}
+    for event in events:
+        if event.event_type != "gatekeeper_verdict_recorded":
+            continue
+        record_id = event.payload.get("file_state_record_id")
+        verdicts = event.payload.get("verdicts")
+        if not isinstance(record_id, str) or not isinstance(verdicts, list):
+            continue
+        for raw_verdict in cast(list[Any], verdicts):
+            if not isinstance(raw_verdict, dict):
+                continue
+            verdict = cast(dict[str, Any], raw_verdict)
+            path = verdict.get("path")
+            if not isinstance(path, str):
+                continue
+            classification = cast(str | None, verdict.get("classification"))
+            by_record.setdefault(record_id, []).append(
+                FileStateGatekeeperVerdictResponse(
+                    path=path,
+                    verdict="reject" if classification == "secret" else "allow",
+                    classification=classification,
+                    rationale=cast(str | None, verdict.get("rationale")),
+                    confidence=cast(float | None, verdict.get("confidence")),
+                    model_id=cast(str | None, verdict.get("model_id")),
+                )
+            )
+    return by_record
+
+
+def _snapshot_type(record: dict[str, Any]) -> str:
+    git = record.get("git")
+    if isinstance(git, dict) and isinstance(cast(dict[str, Any], git).get("commit_sha"), str):
+        return "git_commit"
+    return "manifest"
+
+
+def _optional_int(value: Any) -> int | None:
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _diff_summary(
+    record: dict[str, Any],
+    captured_paths: list[FileStatePathResponse],
+) -> FileStateDiffSummaryResponse | None:
+    if _snapshot_type(record) != "git_commit":
+        return None
+    raw_summary: Any = record.get("diff_summary")
+    git = record.get("git")
+    if raw_summary is None and isinstance(git, dict):
+        raw_summary = cast(dict[str, Any], git).get("diff_summary")
+    if isinstance(raw_summary, dict):
+        summary = cast(dict[str, Any], raw_summary)
+        files_changed = _optional_int(summary.get("files_changed")) or len(captured_paths)
+        return FileStateDiffSummaryResponse(
+            files_changed=files_changed,
+            additions=_optional_int(summary.get("additions")),
+            deletions=_optional_int(summary.get("deletions")),
+        )
+    return FileStateDiffSummaryResponse(files_changed=len(captured_paths))
+
+
+def _file_state_boundary_response(
+    record: dict[str, Any],
+    residue_by_path: dict[tuple[str, str], dict[str, Any]],
+    gatekeeper_verdicts: dict[str, list[FileStateGatekeeperVerdictResponse]],
+) -> FileStateBoundaryResponse | None:
+    record_id = record.get("record_id")
+    snapshot_id = record.get("snapshot_id")
+    if not isinstance(record_id, str) or not isinstance(snapshot_id, str):
+        return None
+
+    counts: dict[str, int] = {}
+    captured_paths: list[FileStatePathResponse] = []
+    for entry in _record_path_entries(record):
+        path = _path_text(entry)
+        if path is None:
+            continue
+        residue = residue_by_path.get((record_id, path), {})
+        classification = residue.get("classification", entry.get("classification"))
+        if isinstance(classification, str):
+            counts[classification] = counts.get(classification, 0) + 1
+        captured_paths.append(
+            FileStatePathResponse(
+                path=path,
+                classification=cast(str | None, classification),
+                reason=cast(str | None, entry.get("reason")),
+                source=cast(str | None, residue.get("source", entry.get("source"))),
+                matched_rule=cast(
+                    str | None,
+                    residue.get("matched_rule", entry.get("matched_rule")),
+                ),
+                needs_gatekeeper=residue.get("needs_gatekeeper", entry.get("needs_gatekeeper"))
+                is True,
+            )
+        )
+
+    rejected_paths = _rejected_path_entries(record)
+    for rejected in rejected_paths:
+        if rejected.classification is not None:
+            counts[rejected.classification] = counts.get(rejected.classification, 0) + 1
+
+    return FileStateBoundaryResponse(
+        record_id=record_id,
+        node_id=cast(str | None, record.get("producer_node_id")),
+        snapshot_id=snapshot_id,
+        snapshot_type=_snapshot_type(record),
+        verdict=cast(str | None, record.get("verdict")),
+        classification_counts={key: counts[key] for key in sorted(counts)},
+        captured_paths=captured_paths,
+        rejected_paths=rejected_paths,
+        gatekeeper_verdicts=gatekeeper_verdicts.get(record_id, []),
+        diff_summary=_diff_summary(record, captured_paths),
+    )
+
+
+def build_file_state_report_response(
+    run_id: str,
+    events: list[EventEnvelope],
+) -> FileStateReportResponse:
+    if not events:
+        return FileStateReportResponse(run_id=run_id, event_count=0, nodes=[], gatekeeper=None)
+
+    residue_report = project_residue_report(events)
+    gatekeeper_report = project_gatekeeper_report(events).get(run_id)
+    residue_by_path = _residue_by_record_path(residue_report)
+    gatekeeper_verdicts = _gatekeeper_verdicts_by_record(events)
+    by_node: dict[str, list[FileStateBoundaryResponse]] = {}
+    for event in events:
+        if event.event_type != "file_state_accepted":
+            continue
+        boundary = _file_state_boundary_response(
+            dict(event.payload),
+            residue_by_path,
+            gatekeeper_verdicts,
+        )
+        if boundary is None:
+            continue
+        node_id = boundary.node_id or "unknown"
+        by_node.setdefault(node_id, []).append(boundary)
+
+    return FileStateReportResponse(
+        run_id=run_id,
+        event_count=max(event.position for event in events),
+        nodes=[
+            FileStateNodeReportResponse(node_id=node_id, boundaries=boundaries)
+            for node_id, boundaries in sorted(by_node.items())
+        ],
+        gatekeeper=gatekeeper_report,
+    )
+
+
 def _is_callback_history_event(event: EventEnvelope) -> bool:
     if event.event_type in {
         "callback_accepted",
@@ -343,6 +612,15 @@ async def get_graph_scheduler_view(
 ) -> SchedulerViewResponse:
     events = await graph_store.read_run(run_id)
     return build_scheduler_view_response(run_id, events)
+
+
+@router.get("/{run_id}/graph/file-state", response_model=FileStateReportResponse)
+async def get_graph_file_state_report(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> FileStateReportResponse:
+    events = await graph_store.read_run(run_id)
+    return build_file_state_report_response(run_id, events)
 
 
 @router.get("/{run_id}/graph/nodes/{node_id}", response_model=NodeDetailResponse)

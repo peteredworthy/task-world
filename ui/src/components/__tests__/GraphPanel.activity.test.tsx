@@ -6,6 +6,7 @@ import { NodeDetailPanel } from '../NodeDetailPanel';
 import { ActivityFeed } from '../detail/ActivityFeed';
 import type {
   ActivityEvent,
+  FileStateReportResponse,
   GraphEventResponse,
   NodeDetailResponse,
   GraphProjectionResponse,
@@ -166,6 +167,7 @@ function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
 
   queryClient.setQueryData(['graphProjection', run.id], projection);
   queryClient.setQueryData(['graphScheduler', run.id], schedulerView);
+  queryClient.setQueryData(['graphFileState', run.id], makeFileStateReport(run.id));
   queryClient.setQueryData(['graphEvents', run.id, undefined], graphEvents);
   queryClient.setQueryData(['graphNodeDetail', run.id, 'worker-1'], makeNodeDetail(run.id));
 
@@ -239,6 +241,79 @@ function makeNodeDetail(runId: string): NodeDetailResponse {
   };
 }
 
+function makeFileStateReport(runId: string): FileStateReportResponse {
+  return {
+    run_id: runId,
+    event_count: 4,
+    gatekeeper: {
+      gatekeeper_resolved: 1,
+      unresolved_residue: 0,
+    },
+    nodes: [
+      {
+        node_id: 'worker-1',
+        boundaries: [
+          {
+            record_id: 'file-state-1',
+            node_id: 'worker-1',
+            snapshot_id: 'snapshot-1',
+            snapshot_type: 'git_commit',
+            verdict: 'captured',
+            classification_counts: {
+              source: 1,
+              test_artifact: 1,
+              tool_cache: 1,
+            },
+            captured_paths: [
+              {
+                path: 'src/app.py',
+                classification: 'source',
+                reason: null,
+                source: 'tracked',
+                matched_rule: 'tracked_source',
+                needs_gatekeeper: false,
+              },
+              {
+                path: 'reports/result.xml',
+                classification: 'test_artifact',
+                reason: null,
+                source: 'untracked',
+                matched_rule: 'gatekeeper:fake-small-model',
+                needs_gatekeeper: false,
+              },
+            ],
+            rejected_paths: [
+              {
+                path: 'tmp/cache.bin',
+                classification: 'tool_cache',
+                reason: 'ignored cache outside manifest',
+                source: 'ignored',
+                matched_rule: null,
+                needs_gatekeeper: false,
+              },
+            ],
+            gatekeeper_verdicts: [
+              {
+                path: 'reports/result.xml',
+                verdict: 'allow',
+                classification: 'test_artifact',
+                rationale: 'metadata shape matches test output',
+                confidence: 0.92,
+                model_id: 'fake-small-model',
+              },
+            ],
+            diff_summary: {
+              files_changed: 2,
+              additions: 7,
+              deletions: 1,
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
 describe('GraphPanel activity', () => {
   it('renders live node activity and activity feed agent output lines', () => {
     const run = makeRun();
@@ -248,6 +323,14 @@ describe('GraphPanel activity', () => {
 
     expect(screen.getByText('live activity')).toBeInTheDocument();
     expect(screen.getByText('worker line two')).toBeInTheDocument();
+    expect(screen.getByTestId('file-state-viewer')).toBeInTheDocument();
+    expect(screen.getByText('snapshot-1')).toBeInTheDocument();
+    expect(screen.getByText('test_artifact: 1')).toBeInTheDocument();
+    expect(screen.getByText('tmp/cache.bin')).toBeInTheDocument();
+    expect(screen.getByText('ignored cache outside manifest')).toBeInTheDocument();
+    expect(screen.getByText('allow / test_artifact')).toBeInTheDocument();
+    expect(screen.getByText('metadata shape matches test output')).toBeInTheDocument();
+    expect(screen.getByText('diff summary: 2 files changed / +7 -1')).toBeInTheDocument();
 
     cleanup();
 

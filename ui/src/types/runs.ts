@@ -241,6 +241,55 @@ export interface NodeDetailResponse {
   prompt_summary?: Record<string, unknown> | null;
 }
 
+export interface FileStatePath {
+  path: string;
+  classification: string | null;
+  reason: string | null;
+  source: string | null;
+  matched_rule: string | null;
+  needs_gatekeeper: boolean;
+}
+
+export interface FileStateGatekeeperVerdict {
+  path: string;
+  verdict: string;
+  classification: string | null;
+  rationale: string | null;
+  confidence: number | null;
+  model_id: string | null;
+}
+
+export interface FileStateDiffSummary {
+  files_changed: number;
+  additions: number | null;
+  deletions: number | null;
+}
+
+export interface FileStateBoundary {
+  record_id: string;
+  node_id: string | null;
+  snapshot_id: string;
+  snapshot_type: string;
+  verdict: string | null;
+  classification_counts: Record<string, number>;
+  captured_paths: FileStatePath[];
+  rejected_paths: FileStatePath[];
+  gatekeeper_verdicts: FileStateGatekeeperVerdict[];
+  diff_summary: FileStateDiffSummary | null;
+}
+
+export interface FileStateNodeReport {
+  node_id: string;
+  boundaries: FileStateBoundary[];
+}
+
+export interface FileStateReportResponse {
+  run_id: string;
+  event_count: number;
+  nodes: FileStateNodeReport[];
+  gatekeeper: Record<string, unknown> | null;
+}
+
 export interface RunListResponse {
   runs: RunResponse[];
 }
