@@ -269,4 +269,15 @@ fork both caught by the auditor and fixed). All six rubric criteria graded A.
 Graph runs become the default carrier; the parent/child oversight layer is
 deleted; the loop-vs-routine-vs-graph mode experiment concludes by data. The
 §26 frontend track (3.2–3.6) is a prerequisite for deleting the legacy
-oversight UI. No slices specced yet.
+oversight UI.
+
+| Slice | Status | Spec | Depends on |
+|---|---|---|---|
+| 4.1 Graph runs become the default carrier | ⬜ planned | slice-4.1-spec.md | gate D, 3.2–3.6 |
+| 4.2 Retire the parent/child oversight layer | ⬜ planned | slice-4.2-spec.md | 3.8, 3.6, 4.1 |
+| 4.3 Conclude the carrier experiment (data) | ⬜ planned | slice-4.3-spec.md | 4.1, 4.2 |
+
+Execution order for the remaining work: dogfood gate (D) → 3.5 → 3.6 → 3.7 →
+3.8 → 4.1 → 4.2 → 4.3. 4.1 must not flip the default until gate D is green; 4.2
+must not delete the legacy oversight code until 3.8 (planner-chain) and 3.6
+(decisions UI) provide the replacement capability.
