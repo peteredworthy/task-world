@@ -10,6 +10,7 @@ from orchestrator.api.deps import get_graph_store
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.graph import (
     EventEnvelope,
+    project_decision_view,
     project_leases,
     project_lease_view,
     project_node_metadata,
@@ -69,6 +70,31 @@ class LeaseViewEntryResponse(ApiModel):
 class LeaseViewResponse(ApiModel):
     active: list[LeaseViewEntryResponse]
     suspended: list[LeaseViewEntryResponse]
+
+
+class PendingGateDecisionResponse(ApiModel):
+    node_id: str
+    gate_type: str
+    prompt: str | None = None
+
+
+class AppealDecisionResponse(ApiModel):
+    node_id: str
+    state: str
+    outcome: str | None = None
+
+
+class ReviewReadinessResponse(ApiModel):
+    ready: bool
+    blockers: list[str]
+
+
+class DecisionViewResponse(ApiModel):
+    run_id: str
+    event_count: int
+    pending_gates: list[PendingGateDecisionResponse]
+    appeals: list[AppealDecisionResponse]
+    review: ReviewReadinessResponse
 
 
 class SchedulerViewResponse(ApiModel):
@@ -216,6 +242,29 @@ def build_scheduler_view_response(
             active=[LeaseViewEntryResponse(**entry) for entry in lease_view["active"]],
             suspended=[LeaseViewEntryResponse(**entry) for entry in lease_view["suspended"]],
         ),
+    )
+
+
+def build_decision_view_response(
+    run_id: str,
+    events: list[EventEnvelope],
+) -> DecisionViewResponse:
+    if not events:
+        return DecisionViewResponse(
+            run_id=run_id,
+            event_count=0,
+            pending_gates=[],
+            appeals=[],
+            review=ReviewReadinessResponse(ready=False, blockers=[]),
+        )
+
+    view = project_decision_view(events)
+    return DecisionViewResponse(
+        run_id=run_id,
+        event_count=max(event.position for event in events),
+        pending_gates=[PendingGateDecisionResponse(**entry) for entry in view["pending_gates"]],
+        appeals=[AppealDecisionResponse(**entry) for entry in view["appeals"]],
+        review=ReviewReadinessResponse(**view["review"]),
     )
 
 
@@ -612,6 +661,15 @@ async def get_graph_scheduler_view(
 ) -> SchedulerViewResponse:
     events = await graph_store.read_run(run_id)
     return build_scheduler_view_response(run_id, events)
+
+
+@router.get("/{run_id}/graph/decisions", response_model=DecisionViewResponse)
+async def get_graph_decision_view(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> DecisionViewResponse:
+    events = await graph_store.read_run(run_id)
+    return build_decision_view_response(run_id, events)
 
 
 @router.get("/{run_id}/graph/file-state", response_model=FileStateReportResponse)

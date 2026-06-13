@@ -63,6 +63,29 @@ class LeaseView(TypedDict):
     suspended: list[LeaseViewEntry]
 
 
+class PendingGateDecision(TypedDict):
+    node_id: str
+    gate_type: str
+    prompt: str | None
+
+
+class AppealDecision(TypedDict):
+    node_id: str
+    state: str
+    outcome: str | None
+
+
+class ReviewReadiness(TypedDict):
+    ready: bool
+    blockers: list[str]
+
+
+class DecisionView(TypedDict):
+    pending_gates: list[PendingGateDecision]
+    appeals: list[AppealDecision]
+    review: ReviewReadiness
+
+
 def initial_projection() -> GraphProjection:
     return {
         "run_state": None,
@@ -451,6 +474,60 @@ def project_lease_view(events: list[EventEnvelope]) -> LeaseView:
     return view
 
 
+def project_decision_view(events: list[EventEnvelope]) -> DecisionView:
+    """Project human decisions, appeal outcomes, and review readiness."""
+    projection = _project(events)
+    latest_node_payloads = _latest_node_creation_payloads(events)
+    approval_decisions = _latest_decisions(events, "approval_decision_recorded")
+    oversight_decisions = _latest_decisions(events, "oversight_decision_recorded")
+    latest_deferrals = _latest_node_deferrals(events)
+
+    pending_gates: list[PendingGateDecision] = []
+    appeals: list[AppealDecision] = []
+    review_blockers: list[str] = []
+    review_node_count = 0
+    review_complete_count = 0
+
+    for node_id, state in sorted(projection["node_states"].items()):
+        kind = projection["node_kinds"].get(node_id)
+        payload = latest_node_payloads.get(node_id, {})
+        if (
+            kind == "gate"
+            and state in _PENDING_DECISION_STATES
+            and node_id not in approval_decisions
+        ):
+            pending_gates.append(
+                {
+                    "node_id": node_id,
+                    "gate_type": _gate_type(node_id, payload, projection),
+                    "prompt": _gate_prompt(payload),
+                }
+            )
+        elif kind == "appeal":
+            appeals.append(
+                {
+                    "node_id": node_id,
+                    "state": state,
+                    "outcome": _decision_outcome(oversight_decisions.get(node_id)),
+                }
+            )
+        elif kind == "review":
+            review_node_count += 1
+            if state == "completed":
+                review_complete_count += 1
+            else:
+                review_blockers.append(_review_blocker(node_id, state, payload, latest_deferrals))
+
+    return {
+        "pending_gates": pending_gates,
+        "appeals": appeals,
+        "review": {
+            "ready": review_node_count > 0 and review_complete_count == review_node_count,
+            "blockers": review_blockers,
+        },
+    }
+
+
 def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[str, Any]]]:
     """Project accepted file-state residue classifications by path."""
     report: dict[str, list[dict[str, Any]]] = {}
@@ -624,6 +701,89 @@ def _project(events: list[EventEnvelope]) -> GraphProjection:
     for event in events:
         projection = reduce_event(projection, event)
     return projection
+
+
+_PENDING_DECISION_STATES = {"planned", "blocked", "ready", "leased", "running", "suspended"}
+
+
+def _latest_node_creation_payloads(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
+    payloads: dict[str, dict[str, Any]] = {}
+    for event in events:
+        if event.event_type != "node_created":
+            continue
+        node_id = event.payload.get("node_id")
+        if isinstance(node_id, str):
+            payloads[node_id] = dict(event.payload)
+    return payloads
+
+
+def _latest_decisions(
+    events: list[EventEnvelope],
+    event_type: str,
+) -> dict[str, dict[str, Any]]:
+    decisions: dict[str, dict[str, Any]] = {}
+    for event in events:
+        if event.event_type != event_type:
+            continue
+        node_id = event.payload.get("node_id")
+        if isinstance(node_id, str):
+            decisions[node_id] = dict(event.payload)
+        appeal_node_id = event.payload.get("appeal_node_id")
+        if isinstance(appeal_node_id, str):
+            decisions[appeal_node_id] = dict(event.payload)
+    return decisions
+
+
+def _gate_type(
+    node_id: str,
+    payload: dict[str, Any],
+    projection: GraphProjection,
+) -> str:
+    for key in ("gate_type", "approval_type", "reason", "role"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    role = projection["node_roles"].get(node_id)
+    if role is not None:
+        return role
+    return "approval"
+
+
+def _gate_prompt(payload: dict[str, Any]) -> str | None:
+    for key in ("prompt", "approval_prompt", "human_prompt", "message", "reason"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _decision_outcome(payload: dict[str, Any] | None) -> str | None:
+    if payload is None:
+        return None
+    for key in ("outcome", "decision", "verdict"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    approved = payload.get("approved")
+    if isinstance(approved, bool):
+        return "approved" if approved else "rejected"
+    return None
+
+
+def _review_blocker(
+    node_id: str,
+    state: str,
+    payload: dict[str, Any],
+    latest_deferrals: dict[str, str],
+) -> str:
+    for key in ("blocker", "blocker_reason", "reason"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return f"{node_id}: {value}"
+    reason = latest_deferrals.get(node_id)
+    if reason is not None:
+        return f"{node_id}: {reason}"
+    return f"{node_id}: {state}"
 
 
 def _latest_node_deferrals(events: list[EventEnvelope]) -> dict[str, str]:

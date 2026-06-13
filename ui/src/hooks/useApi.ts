@@ -6,6 +6,7 @@ import type {
   SetGradeRequest,
   UpdateChecklistRequest,
   GraphProjectionResponse,
+  DecisionViewResponse,
   GraphEventResponse,
   FileStateReportResponse,
   SchedulerViewResponse,
@@ -63,6 +64,15 @@ export function useSchedulerView(runId: string | undefined) {
   return useQuery<SchedulerViewResponse>({
     queryKey: ['graphScheduler', runId],
     queryFn: () => api.getRunGraphScheduler(runId!),
+    enabled: !!runId,
+    staleTime: 5000,
+  });
+}
+
+export function useDecisionView(runId: string | undefined) {
+  return useQuery<DecisionViewResponse>({
+    queryKey: ['graphDecisions', runId],
+    queryFn: () => api.getRunGraphDecisions(runId!),
     enabled: !!runId,
     staleTime: 5000,
   });

@@ -6,6 +6,7 @@ import { NodeDetailPanel } from '../NodeDetailPanel';
 import { ActivityFeed } from '../detail/ActivityFeed';
 import type {
   ActivityEvent,
+  DecisionViewResponse,
   FileStateReportResponse,
   GraphEventResponse,
   NodeDetailResponse,
@@ -164,9 +165,32 @@ function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
       suspended: [],
     },
   };
+  const decisionView: DecisionViewResponse = {
+    run_id: run.id,
+    event_count: 5,
+    pending_gates: [
+      {
+        node_id: 'gate-planner-budget-planner-1',
+        gate_type: 'planner_generation_budget_exhausted',
+        prompt: 'planner_generation_budget_exhausted',
+      },
+    ],
+    appeals: [
+      {
+        node_id: 'appeal-1',
+        state: 'completed',
+        outcome: 'invalid_test_accepted',
+      },
+    ],
+    review: {
+      ready: false,
+      blockers: ['review-1: merge_conflicts'],
+    },
+  };
 
   queryClient.setQueryData(['graphProjection', run.id], projection);
   queryClient.setQueryData(['graphScheduler', run.id], schedulerView);
+  queryClient.setQueryData(['graphDecisions', run.id], decisionView);
   queryClient.setQueryData(['graphFileState', run.id], makeFileStateReport(run.id));
   queryClient.setQueryData(['graphEvents', run.id, undefined], graphEvents);
   queryClient.setQueryData(['graphNodeDetail', run.id, 'worker-1'], makeNodeDetail(run.id));
@@ -323,6 +347,13 @@ describe('GraphPanel activity', () => {
 
     expect(screen.getByText('live activity')).toBeInTheDocument();
     expect(screen.getByText('worker line two')).toBeInTheDocument();
+    expect(screen.getByText('Decisions')).toBeInTheDocument();
+    expect(screen.getByText('gate-planner-budget-planner-1')).toBeInTheDocument();
+    expect(screen.getAllByText('planner_generation_budget_exhausted')).toHaveLength(2);
+    expect(screen.getByText('appeal-1')).toBeInTheDocument();
+    expect(screen.getByText('invalid_test_accepted')).toBeInTheDocument();
+    expect(screen.getByText('Review readiness')).toBeInTheDocument();
+    expect(screen.getByText('review-1: merge_conflicts')).toBeInTheDocument();
     expect(screen.getByTestId('file-state-viewer')).toBeInTheDocument();
     expect(screen.getByText('snapshot-1')).toBeInTheDocument();
     expect(screen.getByText('test_artifact: 1')).toBeInTheDocument();

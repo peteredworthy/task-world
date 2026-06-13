@@ -226,6 +226,29 @@ export interface SchedulerViewResponse {
   };
 }
 
+export interface PendingGateDecision {
+  node_id: string;
+  gate_type: string;
+  prompt: string | null;
+}
+
+export interface AppealDecision {
+  node_id: string;
+  state: string;
+  outcome: string | null;
+}
+
+export interface DecisionViewResponse {
+  run_id: string;
+  event_count: number;
+  pending_gates: PendingGateDecision[];
+  appeals: AppealDecision[];
+  review: {
+    ready: boolean;
+    blockers: string[];
+  };
+}
+
 export interface NodeDetailResponse {
   run_id: string;
   node_id: string;

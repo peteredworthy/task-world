@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useFileStateReport, useGraphEvents, useGraphProjection, useSchedulerView } from '../hooks/useApi';
+import { useDecisionView, useFileStateReport, useGraphEvents, useGraphProjection, useSchedulerView } from '../hooks/useApi';
 import { FileStateViewer } from './FileStateViewer';
 import { NodeDetailPanel } from './NodeDetailPanel';
 import { SchedulerView } from './SchedulerView';
-import type { ActivityEvent, GraphEventResponse, GraphProjectionResponse, RunResponse } from '../types';
+import type { ActivityEvent, DecisionViewResponse, GraphEventResponse, GraphProjectionResponse, RunResponse } from '../types';
 
 interface GraphPanelProps {
   runId: string;
@@ -180,6 +180,80 @@ function TaskStatesSection({ projection, run }: { projection: GraphProjectionRes
   );
 }
 
+function DecisionsSection({ view }: { view: DecisionViewResponse }) {
+  const reviewLabel = view.review.ready ? 'Ready' : 'Blocked';
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold text-text-primary">Decisions</h3>
+      <div className="space-y-3 rounded border border-border bg-bg-card p-3 text-xs">
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <span className="font-medium text-text-primary">Pending gates</span>
+            <span className="text-text-muted">{view.pending_gates.length}</span>
+          </div>
+          {view.pending_gates.length === 0 ? (
+            <p className="text-text-muted italic">No pending human gates</p>
+          ) : (
+            <ul className="space-y-1">
+              {view.pending_gates.map((gate) => (
+                <li key={gate.node_id} className="rounded border border-border/80 bg-bg-elevated px-2 py-1.5">
+                  <div className="break-all font-mono text-text-primary">{gate.node_id}</div>
+                  <div className="mt-1 text-text-muted">{gate.gate_type}</div>
+                  {gate.prompt && <div className="mt-1 text-text-secondary">{gate.prompt}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <span className="font-medium text-text-primary">Appeals</span>
+            <span className="text-text-muted">{view.appeals.length}</span>
+          </div>
+          {view.appeals.length === 0 ? (
+            <p className="text-text-muted italic">No appeals recorded</p>
+          ) : (
+            <ul className="space-y-1">
+              {view.appeals.map((appeal) => (
+                <li key={appeal.node_id} className="flex items-start justify-between gap-3 rounded border border-border/80 bg-bg-elevated px-2 py-1.5">
+                  <div>
+                    <div className="break-all font-mono text-text-primary">{appeal.node_id}</div>
+                    <div className="mt-1 text-text-muted">{appeal.state}</div>
+                  </div>
+                  <span className="shrink-0 rounded border border-border bg-bg-card px-1.5 py-0.5 text-[10px] text-text-muted">
+                    {appeal.outcome ?? 'pending'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-1 flex items-center justify-between gap-3">
+            <span className="font-medium text-text-primary">Review readiness</span>
+            <span className={view.review.ready ? 'text-status-completed' : 'text-status-failed'}>
+              {reviewLabel}
+            </span>
+          </div>
+          {view.review.blockers.length === 0 ? (
+            <p className="text-text-muted italic">No merge blockers</p>
+          ) : (
+            <ul className="space-y-1">
+              {view.review.blockers.map((blocker) => (
+                <li key={blocker} className="break-words rounded border border-border/80 bg-bg-elevated px-2 py-1 text-text-secondary">
+                  {blocker}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function EventModal({
   events,
   onClose,
@@ -220,6 +294,7 @@ function EventModal({
 export function GraphPanel({ runId, run, open, onClose, activityEvents = [], initialNodeId = null }: GraphPanelProps) {
   const { data: projection } = useGraphProjection(runId);
   const { data: schedulerView } = useSchedulerView(runId);
+  const { data: decisionView } = useDecisionView(runId);
   const { data: fileStateReport } = useFileStateReport(runId);
   const { data: events = [] } = useGraphEvents(runId);
   const [showEvents, setShowEvents] = useState(false);
@@ -267,6 +342,7 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
 
         <div className="mt-4 space-y-4">
           {schedulerView && <SchedulerView view={schedulerView} />}
+          {decisionView && <DecisionsSection view={decisionView} />}
           {fileStateReport && <FileStateViewer report={fileStateReport} />}
           <NodeStatesTable
             projection={projection}

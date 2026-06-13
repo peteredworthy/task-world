@@ -615,6 +615,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/activity` | Activity log (paginated) |
 | GET | `/api/runs/{id}/activity/stream` | Activity SSE stream |
 | GET | `/api/runs/{id}/guidance` | Aggregate guidance for agents |
+| GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
 | GET | `/api/runs/{id}/branch-status` | Branch ahead/behind status |
 | POST | `/api/runs/{id}/back-merge` | Pull source branch into run |
 | POST | `/api/runs/{id}/merge-back` | Merge run branch into source |
