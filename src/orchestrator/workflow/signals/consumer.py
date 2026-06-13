@@ -391,10 +391,8 @@ class SignalConsumer:
 
         run = await service.apply_start_run(run_id)
         if getattr(run, "execution_mode", "legacy") == "graph":
-            self._active_graph_runs.add(run_id)
-            logger.info("SignalConsumer: RUN_START for %s — graph driver registered", run_id)
-            if self._graph_runner is not None:
-                asyncio.create_task(self._safe_run_graph_driver(run_id))
+            if self.arm_graph_run(run_id):
+                logger.info("SignalConsumer: RUN_START for %s — graph driver registered", run_id)
             return
 
         workflow = RunWorkflow(
@@ -459,6 +457,14 @@ class SignalConsumer:
             agent_runner_config=agent_runner_config,
             resume_strategy=resume_strategy,
         )
+        if getattr(run, "execution_mode", "legacy") == "graph":
+            # Graph runs resume onto the (re-enterable) GraphRunDriver, not the
+            # legacy RunWorkflow. The driver picks up from the durable graph
+            # position without re-seeding.
+            if self.arm_graph_run(run_id):
+                logger.info("SignalConsumer: RESUME for %s — graph driver re-armed", run_id)
+            return
+
         workflow = RunWorkflow(
             run_id=run_id,
             agent_runner_type=run.agent_runner_type,
@@ -577,6 +583,23 @@ class SignalConsumer:
             logger.exception("SignalConsumer: workflow for %s failed", run_id)
         finally:
             self._active_workflows.pop(run_id, None)
+
+    def arm_graph_run(self, run_id: str) -> bool:
+        """Start (or re-arm) the graph driver for a run, guarding double-arm.
+
+        Used by RUN_START, RESUME, and startup recovery. Returns True if a
+        driver task was started, False if no graph runner is configured or the
+        run is already being driven. The GraphRunDriver is re-enterable, so a
+        re-arm after a restart resumes the run from its durable graph position
+        without re-seeding.
+        """
+        if self._graph_runner is None:
+            return False
+        if run_id in self._active_graph_runs:
+            return False
+        self._active_graph_runs.add(run_id)
+        asyncio.create_task(self._safe_run_graph_driver(run_id))
+        return True
 
     async def _safe_run_graph_driver(self, run_id: str) -> None:
         """Run a graph driver via the injected callback, cleaning up on completion."""

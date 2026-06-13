@@ -144,6 +144,10 @@ async def _run_startup_recovery(app: FastAPI) -> None:
             active_runs = await repo.list_by_status(RunStatus.ACTIVE, include_action_logs=False)
 
         for run in active_runs:
+            # Graph-execution runs are recovered by _run_graph_startup_recovery,
+            # not the legacy executor loop. Skip them here.
+            if getattr(run, "execution_mode", "legacy") == "graph":
+                continue
             if run.agent_runner_type and run.agent_runner_type in managed_runner_types:
                 if not executor.is_running(run.id):
                     spawned = executor.spawn_for_run(
@@ -171,6 +175,8 @@ async def _run_startup_recovery(app: FastAPI) -> None:
                 if _is_startup_recoverable_pause_reason(r.pause_reason)
                 and r.agent_runner_type is not None
                 and r.agent_runner_type in managed_runner_types
+                # Graph runs are resumed by _run_graph_startup_recovery.
+                and getattr(r, "execution_mode", "legacy") != "graph"
             ]
 
         # Resume children before parents. A super-parent run queries its
@@ -249,6 +255,46 @@ async def _run_startup_recovery(app: FastAPI) -> None:
         # If recovery fails (e.g., during first startup with no tables), log but
         # do not crash the application.
         logger.warning(f"Startup recovery failed: {e}")
+
+
+async def _run_graph_startup_recovery(app: FastAPI) -> None:
+    """Re-arm graph-execution runs after a server restart / reload.
+
+    Graph runs are driven by ``GraphRunDriver`` (not the legacy executor), so
+    they are excluded from ``_run_startup_recovery`` and recovered here. The
+    actual in-flight recovery — redispatching pending outbox rows and converting
+    dead leases to ``agent_died`` — happens inside ``GraphRunDriver.run()`` when
+    re-armed (single executor across recovery and the drive loop). This handler
+    only selects the runs to re-arm.
+    """
+    import asyncio as _asyncio
+
+    from orchestrator.db import RunRepository
+    from orchestrator.workflow.graph_recovery import select_graph_runs_to_recover
+
+    session_factory = app.state.session_factory
+    consumer = getattr(app.state, "signal_consumer", None)
+    if consumer is None:
+        return
+
+    try:
+        async with session_factory() as session:
+            repo = RunRepository(session)
+            active = await repo.list_by_status(RunStatus.ACTIVE, include_action_logs=False)
+            paused = await repo.list_by_status(RunStatus.PAUSED, include_action_logs=False)
+
+        to_recover = select_graph_runs_to_recover(
+            [*active, *paused],
+            is_recoverable_pause=_is_startup_recoverable_pause_reason,
+        )
+        for run in to_recover:
+            if consumer.arm_graph_run(run.id):
+                logger.info("Graph startup recovery: re-armed graph run %s", run.id)
+                await _asyncio.sleep(_STARTUP_RECOVERY_RUN_STAGGER_SECONDS)
+    except _asyncio.CancelledError:
+        raise
+    except Exception as e:
+        logger.warning(f"Graph startup recovery failed: {e}")
 
 
 @asynccontextmanager
@@ -403,6 +449,12 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                             RunStatus.ACTIVE, include_action_logs=False
                         )
                     for run in active_runs:
+                        # Graph-execution runs are driven by GraphRunDriver, not
+                        # the legacy AgentRunnerExecutor, so executor.is_running()
+                        # is always False for them. They have their own lifecycle
+                        # management and must never be paused by this sweeper.
+                        if getattr(run, "execution_mode", "legacy") == "graph":
+                            continue
                         if executor.is_running(run.id):
                             continue
 
@@ -478,12 +530,22 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     startup_recovery_task = _asyncio.create_task(_run_startup_recovery(app))
     app.state.startup_recovery_task = startup_recovery_task
 
+    graph_recovery_task = _asyncio.create_task(_run_graph_startup_recovery(app))
+    app.state.graph_recovery_task = graph_recovery_task
+
     yield
 
     if not startup_recovery_task.done():
         startup_recovery_task.cancel()
         try:
             await startup_recovery_task
+        except _asyncio.CancelledError:
+            pass
+
+    if not graph_recovery_task.done():
+        graph_recovery_task.cancel()
+        try:
+            await graph_recovery_task
         except _asyncio.CancelledError:
             pass
 

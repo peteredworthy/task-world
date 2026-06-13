@@ -28,6 +28,8 @@ from orchestrator.graph_runtime import (
     GraphEventStore,
     OutboxDispatcher,
     build_graph_runtime,
+    recover,
+    reconcile_runtime,
     seed_run,
 )
 
@@ -108,6 +110,11 @@ class GraphRunDriver:
         if run.status == RunStatus.DRAFT:
             await self._apply_start(run_id)
             run = await self._get_run(run_id)
+        elif run.status == RunStatus.PAUSED:
+            # Re-armed after a restart / recoverable pause: return the run to
+            # ACTIVE so the lifecycle bridge can complete it from a valid state.
+            await self._apply_resume(run_id)
+            run = await self._get_run(run_id)
 
         if not run.worktree_path:
             await self._apply_pause(run_id, "graph_worktree_missing", "Graph run has no worktree")
@@ -165,6 +172,18 @@ class GraphRunDriver:
             runner_config=run.agent_runner_config,
         )
         dispatcher = self._dispatcher_factory(self._session_factory, executor, self._clock)
+
+        # Recover in-flight side effects before driving. This is a no-op for a
+        # freshly seeded run (nothing pending, no leases), and the recovery path
+        # when re-armed after a restart: recover() idempotently redispatches
+        # pending outbox rows (agent_dispatch + snapshot_cleanup) on THIS
+        # executor, and reconcile_runtime() converts leases whose executions are
+        # no longer running in-process into agent_died so the kernel reschedules
+        # them. Using the driver's own runtime keeps a single executor across
+        # recovery and the drive loop.
+        report = await recover(self._session_factory, dispatcher, run_id=run_id)
+        await reconcile_runtime(controller, executor, report)
+
         outcome = await self.drive_to_quiescence(
             run_id,
             controller=controller,
@@ -187,6 +206,7 @@ class GraphRunDriver:
         executor: GraphLoopExecutor,
         read_projection: Callable[[str], Awaitable[GraphProjectionSnapshot]],
     ) -> GraphRunOutcome:
+        previous_signature: tuple[Any, ...] | None = None
         while True:
             position = await controller.current_position(run_id)
             await controller.handle_command(
@@ -212,6 +232,19 @@ class GraphRunDriver:
                     await controller.handle_command(run_id, position, "complete")
                     projection = await read_projection(run_id)
                 return classify_graph_outcome(run_id, projection)
+            # No-progress guard: schedule_tick emits audit events (e.g.
+            # node_deferred) every call, so raw event position always advances.
+            # Compare a signature of meaningful state instead. wait_for_all()
+            # blocks while an agent is genuinely running, so reaching here with
+            # an unchanged signature means a dispatched execution finished
+            # without producing a callback or agent_died, leaving a lease held
+            # with nothing schedulable. Repeating cannot help — return a blocked
+            # outcome so the run pauses (and can be recovered) rather than
+            # spinning a core.
+            signature = _progress_signature(projection)
+            if signature == previous_signature:
+                return classify_graph_outcome(run_id, projection)
+            previous_signature = signature
 
     async def _bootstrap_graph_lifecycle(self, run_id: str) -> None:
         events = await self._read_events(run_id)
@@ -251,6 +284,11 @@ class GraphRunDriver:
             service = await self._create_service(session)
             await service.apply_start_run(run_id)
 
+    async def _apply_resume(self, run_id: str) -> None:
+        async with self._session_factory() as session:
+            service = await self._create_service(session)
+            await service.apply_resume_run(run_id, resume_strategy="continue")
+
     async def _apply_complete(self, run_id: str) -> None:
         async with self._session_factory() as session:
             service = await self._create_service(session)
@@ -267,6 +305,28 @@ class GraphRunDriver:
             run = await service.get_run(run_id)
             if run.status in (RunStatus.ACTIVE, RunStatus.STOPPING):
                 await service.apply_pause_run(run_id, reason=reason, error_detail=error_detail)
+
+
+def _progress_signature(projection: GraphProjectionSnapshot) -> tuple[Any, ...]:
+    """A signature of meaningful drive state, ignoring audit-only churn.
+
+    Two consecutive drive iterations with the same signature mean no progress
+    was made (no lease/state/task transition), so the loop must stop instead of
+    spinning on schedule_tick's per-tick audit events.
+    """
+    leases = tuple(
+        sorted(
+            (lease_id, str(lease.get("state")), str(lease.get("node_id")))
+            for lease_id, lease in projection.active_leases.items()
+        )
+    )
+    return (
+        projection.run_state,
+        tuple(sorted(projection.ready_nodes)),
+        tuple(sorted(projection.schedulable_nodes)),
+        tuple(sorted(projection.task_states.items())),
+        leases,
+    )
 
 
 def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapshot:
