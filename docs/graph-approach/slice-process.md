@@ -160,8 +160,8 @@ no 2.5 remediation.
 
 Running graph-mode runs through the production `GraphRunDriver` (the gate) was
 done directly rather than via a graph-built slice, because a graph run cannot
-build the fixes for its own lifecycle. The live runs surfaced and we fixed four
-real latent defects (each committed with tests):
+build the fixes for its own lifecycle. The live runs surfaced and we fixed
+**five** real latent defects (each committed with tests):
 
 1. `_sweep_stale_runs` paused graph runs as `no_executor_running` at 60s —
    graph runs now excluded from the legacy executor sweeper/startup recovery.
@@ -171,19 +171,30 @@ real latent defects (each committed with tests):
    driver now uses UUID event ids + a wall clock.
 4. Operator cancel/pause did not stop the driver loop — `drive_to_quiescence`
    now honours a `should_continue` check.
+5. **File-state boundary rejected every real worktree** — `_classify_path` ran
+   the secret-name (`*credentials*`, `*.pem`) and repo-escape heuristics BEFORE
+   the tool-cache check, so the in-worktree `.venv` (32k files: authlib/google/
+   docker `credentials.py`, certifi `cacert.pem`, `.venv/bin/python` symlinks)
+   was flagged as secrets/external and rejected. Tool-cache/dependency dirs are
+   now classified first; genuine worker-introduced secrets outside them are
+   still rejected. Also allow `.claude/` and `.worktree-manifest.json`.
 
 **Proven live:** routine → graph compile → worker dispatch → real codex agent
-execution, surviving the sweeper, with UUID-safe ids, no crash/spin, and the
-§13 agent_died→requeue retry path firing. **Test-covered (integration):**
-worker → verifier → `accepted` → `run_state` completed → `Run.status`
-COMPLETED (`test_graph_run_driver.py`), dead-lease resume, idempotent re-arm.
+execution → **clean file-state boundary capture** (after fix 5), surviving the
+sweeper, with UUID-safe ids, no crash/spin, and the §13 agent_died→requeue
+retry path firing. **Test-covered (integration):** worker → verifier →
+`accepted` → `run_state` completed → `Run.status` COMPLETED
+(`test_graph_run_driver.py`), dead-lease resume, idempotent re-arm.
 
-A fully-green live run to COMPLETED was blocked only by **codex account quota
-exhaustion** (sessions fail with "usage limit for GPT-5.3-Codex-Spark" even
-when the run requests gpt-5.5 — an external codex/app-server limit, not a graph
-defect; the run's model config threads correctly through
-`StaticGraphAgentFactory`). Re-run the live gate once codex quota resets, per
-the 2.8 spec's "Manual dogfood gate".
+A fully-green live run to COMPLETED remains the one open item. After fix 5 the
+graph pipeline reaches a clean boundary capture; the final blocker observed was
+**codex app-server transport instability** ("Transport error communicating with
+codex app-server") after ~12 sessions in one day — the per-run app-server
+processes degrade/disconnect. This is codex infra, not a graph defect (the same
+codex_server/gpt-5.5 path completed run `38ab0331` earlier the same day, and the
+first graph run dispatched codex fine). Re-run the live gate with a fresh codex
+app-server, per the 2.8 spec's "Manual dogfood gate" — a no-op or commit-and-
+clean worker on a trivial embedded routine completes the full pipeline.
 
 Slice 2.7 ran as orchestrator run `04818168` (codex_server / gpt-5.5,
 first-pass all-A). Audit-pass correction before merge: the builder's Alembic
