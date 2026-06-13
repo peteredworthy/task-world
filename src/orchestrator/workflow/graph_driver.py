@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,8 @@ from orchestrator.graph_runtime import (
 
 if TYPE_CHECKING:
     from orchestrator.workflow.service import WorkflowService
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,7 @@ class GraphRunDriver:
             )
 
         controller_position = await self._current_position(run_id)
+        is_fresh = controller_position == 0
         if controller_position == 0:
             if run.routine_embedded is None:
                 await self._apply_pause(
@@ -173,16 +177,24 @@ class GraphRunDriver:
         )
         dispatcher = self._dispatcher_factory(self._session_factory, executor, self._clock)
 
-        # Recover in-flight side effects before driving. This is a no-op for a
-        # freshly seeded run (nothing pending, no leases), and the recovery path
-        # when re-armed after a restart: recover() idempotently redispatches
-        # pending outbox rows (agent_dispatch + snapshot_cleanup) on THIS
-        # executor, and reconcile_runtime() converts leases whose executions are
-        # no longer running in-process into agent_died so the kernel reschedules
-        # them. Using the driver's own runtime keeps a single executor across
-        # recovery and the drive loop.
-        report = await recover(self._session_factory, dispatcher, run_id=run_id)
-        await reconcile_runtime(controller, executor, report)
+        # Recover in-flight side effects only when RESUMING an already-seeded run
+        # (re-armed after a restart / recoverable pause). A freshly seeded run
+        # has nothing in flight, so recovery is skipped. recover() idempotently
+        # redispatches pending outbox rows on THIS executor and reconcile_runtime
+        # converts leases whose executions are gone into agent_died so the kernel
+        # reschedules them — single executor across recovery and the drive loop.
+        # Recovery is best-effort priming: if it fails, fall through to the drive
+        # loop (its own schedule_tick/dispatch_pending redispatches pending work,
+        # and the no-progress guard handles a dead lease) rather than killing the
+        # driver task.
+        if not is_fresh:
+            try:
+                report = await recover(self._session_factory, dispatcher, run_id=run_id)
+                await reconcile_runtime(controller, executor, report)
+            except Exception:
+                logger.exception(
+                    "GraphRunDriver: recovery for %s failed; proceeding to drive", run_id
+                )
 
         outcome = await self.drive_to_quiescence(
             run_id,
