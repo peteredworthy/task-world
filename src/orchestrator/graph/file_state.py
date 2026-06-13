@@ -98,6 +98,11 @@ class FileStatePolicy:
         "**/.ruff_cache/**",
         ".venv/**",
         "**/.venv/**",
+        ".mypy_cache/**",
+        "**/.mypy_cache/**",
+        ".claude/**",
+        "**/.claude/**",
+        ".worktree-manifest.json",
     )
     secret_name_patterns: tuple[str, ...] = (
         "*.pem",
@@ -229,6 +234,17 @@ def _classify_path(path: FileStatePath, policy: FileStatePolicy) -> PathClassifi
             declaration.rule or f"declared:{declaration.pattern}",
             manifest=manifest,
         )
+
+    # Known tool-cache / dependency dirs (e.g. .venv, node_modules) are allowed
+    # gitignored content that is never restored downstream. Classify them before
+    # the repo-escape and secret-name heuristics so third-party library files —
+    # venv python symlinks, or sources merely named like `*credentials*`/`*.pem`
+    # (authlib, certifi cacert.pem, google.auth, …) — are not false-flagged as
+    # repo escapes or secrets and used to reject the whole boundary. A genuine
+    # worker-introduced secret lands as an untracked file outside these dirs and
+    # is still caught by the checks below.
+    if path.kind != "tracked" and _matches_any(path.path, policy.tool_cache_patterns):
+        return _classification(path, "tool_cache", "builtin_tool_cache")
 
     if _path_escapes_repo(path):
         return _classification(

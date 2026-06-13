@@ -271,3 +271,43 @@ def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         timestamp=FakeClock().now(),
         payload=payload,
     )
+
+
+def test_tool_cache_dir_files_not_flagged_as_secret_or_escape() -> None:
+    """Files inside a known tool-cache/dependency dir (.venv) are allowed even
+    when their names match secret heuristics (e.g. third-party
+    `*credentials*.py`, `cacert.pem`) or are repo-escaping symlinks (venv python
+    links). Regression: a real worktree's .venv flagged 46 library files as
+    secrets/external and rejected every file-state boundary."""
+    status = WorktreeStatus(
+        ignored=(
+            _path(".venv/lib/python3.12/site-packages/authlib/oauth2/credentials.py", "ignored"),
+            _path(".venv/lib/python3.12/site-packages/certifi/cacert.pem", "ignored", entropy=7.5),
+            _path(".venv/bin/python", "ignored", repo_escape=True, symlink_escape=True),
+            _path(".claude/settings.local.json", "ignored"),
+            _path(".worktree-manifest.json", "ignored"),
+        )
+    )
+    result = classify_file_state(status, FileStatePolicy())
+
+    assert result.verdict == "captured"
+    assert result.rejected_paths == ()
+    by_path = {entry.path: entry for entry in result.paths}
+    assert (
+        by_path[".venv/lib/python3.12/site-packages/certifi/cacert.pem"].classification
+        == "tool_cache"
+    )
+    assert by_path[".venv/bin/python"].classification == "tool_cache"
+    assert by_path[".claude/settings.local.json"].classification == "tool_cache"
+    assert by_path[".worktree-manifest.json"].classification == "tool_cache"
+
+
+def test_worker_introduced_secret_outside_tool_cache_still_rejected() -> None:
+    """The tool-cache precedence must NOT weaken detection of a genuine
+    worker-introduced secret that lands outside a tool-cache dir."""
+    result = classify_file_state(
+        WorktreeStatus(untracked=(_path("config/id_rsa", "untracked", entropy=7.1),)),
+        FileStatePolicy(),
+    )
+    assert result.verdict == "rejected"
+    assert result.rejected_paths[0].classification == "secret"
