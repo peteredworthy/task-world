@@ -196,7 +196,31 @@ first graph run dispatched codex fine). Re-run the live gate with a fresh codex
 app-server, per the 2.8 spec's "Manual dogfood gate" — a no-op or commit-and-
 clean worker on a trivial embedded routine completes the full pipeline.
 
-### Gate D status after the 2026-06-13 (Phase 3 completion) session
+### Gate D — CLOSED ✅ (2026-06-13)
+
+**The first fully-green live graph-mode run reached COMPLETED through the
+production `GraphRunDriver`** — run `ff804112` (codex_server / gpt-5.5,
+`execution_mode: graph`, no-op embedded routine): routine → graph compile →
+worker dispatch → real codex agent → submit → **clean file-state boundary
+capture** → verifier → `accepted` → `run_state` completed → `Run.status`
+COMPLETED (worker + verifier nodes both `completed`, 2 callbacks accepted,
+2 file-state records accepted, zero `agent_died`).
+
+Root cause of the prior blockage (fixed in `ac3bda8f`): `capture_file_state_boundary`
+force-includes every ignored-but-accepted file into the boundary snapshot, and an
+in-worktree `.venv` (tens of thousands of `tool_cache` files) overflowed
+`snapshot()`'s `git add -f -- <paths>` argv past ARG_MAX. execve raised an opaque
+`OSError [Errno 7] Argument list too long: '/usr/bin/git'`, which the codex
+runner's `except OSError` handler then **mislabelled** as "Transport error
+communicating with codex app-server" — which is why restarting Codex.app didn't
+help and the earlier diagnosis chased codex infra. `snapshot()` now batches the
+`git add`/`git rm --cached` pathspecs (`_pathspec_batches`); behaviour is
+unchanged (tool_cache/residue still captured + restorable), it just no longer
+overflows. Known follow-up (polish, not blocking): the codex agent's broad
+`except OSError → "Transport error"` mapping should not swallow callback-path
+OSErrors as transport failures — it masked this bug for several runs.
+
+### Earlier (pre-fix) Gate D investigation, 2026-06-13
 
 Re-attempted the live no-op graph gate (trivial embedded routine, worker → verifier
 → accepted → COMPLETED) across **three** agent runners; the graph driver/kernel
