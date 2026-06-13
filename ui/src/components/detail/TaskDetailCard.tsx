@@ -28,6 +28,8 @@ interface TaskDetailCardProps {
   taskTitle: string;
   stepTitle: string;
   graphTaskState?: string | null;
+  graphNodeId?: string | null;
+  onOpenGraphNode?: (nodeId: string) => void;
   status: string;
   events: ActivityEvent[];
   gradeSummary: GradeSummaryItem[];
@@ -732,6 +734,8 @@ export function TaskDetailCard({
   taskTitle,
   stepTitle,
   graphTaskState,
+  graphNodeId,
+  onOpenGraphNode,
   status,
   events,
   gradeSummary,
@@ -819,12 +823,22 @@ export function TaskDetailCard({
             <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
           </svg>
         </div>
-        {graphTaskState && (
-          <div className="mt-1 px-3 pb-1 text-[10px] text-text-secondary">
-            graph: {graphTaskState}
-          </div>
-        )}
       </button>
+      {graphTaskState && (
+        <div className="border-t border-border/60 px-3 py-1 text-[10px] text-text-secondary">
+          {graphNodeId && onOpenGraphNode ? (
+            <button
+              type="button"
+              onClick={() => onOpenGraphNode(graphNodeId)}
+              className="font-mono underline decoration-dotted hover:text-accent-purple"
+            >
+              graph: {graphTaskState}
+            </button>
+          ) : (
+            <span>graph: {graphTaskState}</span>
+          )}
+        </div>
+      )}
 
       {/* Force-accept override strip — shown for failed tasks */}
       {status === 'failed' && (

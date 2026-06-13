@@ -12,7 +12,7 @@ from orchestrator.graph import FakeClock
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
-from orchestrator.graph_runtime import GraphController, seed_run
+from orchestrator.graph_runtime import GraphController, GraphEventStore, seed_run
 
 
 def _routine() -> RoutineConfig:
@@ -29,6 +29,14 @@ def _routine() -> RoutineConfig:
                             "id": "task-1",
                             "title": "Do one thing",
                             "task_context": "Exercise graph projections.",
+                            "verifier": {
+                                "rubric": [
+                                    {
+                                        "id": "req-1",
+                                        "text": "The implementation is correct.",
+                                    }
+                                ]
+                            },
                         }
                     ],
                 }
@@ -37,20 +45,21 @@ def _routine() -> RoutineConfig:
     )
 
 
+class _RunSeedIdGenerator:
+    def __init__(self, run_id: str) -> None:
+        self._run_id = run_id.replace("-", "")
+        self._next = 1
+
+    def next_id(self, prefix: str = "") -> str:
+        value = f"{self._run_id}-{prefix}-{self._next}"
+        self._next += 1
+        return value
+
+
 async def _seed_graph_run(
     app: Any,
     run_id: str,
 ) -> None:
-    class _RunSeedIdGenerator:
-        def __init__(self, run_id: str) -> None:
-            self._run_id = run_id.replace("-", "")
-            self._next = 1
-
-        def next_id(self, prefix: str = "") -> str:
-            value = f"{self._run_id}-{prefix}-{self._next}"
-            self._next += 1
-            return value
-
     clock = FakeClock()
     id_gen: IdGenerator = _RunSeedIdGenerator(run_id)
     routine = _routine()
@@ -85,6 +94,141 @@ async def _seed_graph_run(
     async with session_factory() as session:
         await save_run(session, run)
         await session.commit()
+
+
+async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
+    await _seed_graph_run(app, run_id)
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    clock = FakeClock()
+    id_gen: IdGenerator = _RunSeedIdGenerator(run_id)
+    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    async with session_factory() as session:
+        events = await GraphEventStore(session).read_run(run_id)
+    position = max(event.position for event in events)
+    worker_lease = next(event for event in events if event.event_type == "lease_granted")
+    worker_node = str(worker_lease.payload["node_id"])
+    worker_created = next(
+        event
+        for event in events
+        if event.event_type == "node_created" and event.payload.get("node_id") == worker_node
+    )
+    candidate_id = str(worker_created.payload["candidate_id"])
+    task_region_id = str(worker_created.payload["task_region_id"])
+    attempt_number = int(worker_created.payload["attempt_number"])
+
+    acknowledged = await controller.handle_command(
+        run_id,
+        position,
+        "acknowledge_start",
+        {
+            "node_id": worker_node,
+            "lease_id": worker_lease.payload["lease_id"],
+            "lease_generation": worker_lease.payload["generation"],
+            "execution_id": worker_lease.payload["execution_id"],
+        },
+    )
+    completed_worker = await controller.handle_command(
+        run_id,
+        acknowledged.projection_position,
+        "submit_callback",
+        {
+            "run_id": run_id,
+            "node_id": worker_node,
+            "execution_id": worker_lease.payload["execution_id"],
+            "lease_id": worker_lease.payload["lease_id"],
+            "lease_generation": worker_lease.payload["generation"],
+            "base_snapshot_id": worker_lease.payload["base_snapshot_id"],
+            "observed_graph_position": acknowledged.projection_position,
+            "idempotency_key": f"callback-{worker_node}",
+            "payload": {
+                "payload_hash": f"hash-{worker_node}",
+                "output_records": [
+                    {
+                        "record_id": candidate_id,
+                        "record_kind": "output",
+                        "producer_node_id": worker_node,
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": candidate_id,
+                        "task_region_id": task_region_id,
+                        "attempt_number": attempt_number,
+                        "value": {"summary": "worker output"},
+                    },
+                    {
+                        "record_id": f"fs-{worker_node}",
+                        "record_kind": "file_state",
+                        "snapshot_id": f"snapshot-{worker_node}",
+                        "producer_node_id": worker_node,
+                        "verdict": "captured",
+                        "tracked": [
+                            {
+                                "path": "src/app.py",
+                                "status": "modified",
+                                "classification": "source",
+                            }
+                        ],
+                        "residue": [
+                            {
+                                "path": "tmp/output.log",
+                                "classification": "test_artifact",
+                                "needs_gatekeeper": False,
+                            }
+                        ],
+                    },
+                ],
+            },
+        },
+    )
+    scheduled_verifier = await controller.handle_command(
+        run_id,
+        completed_worker.projection_position,
+        "schedule_tick",
+        {"max_grants": 1, "lease_seconds": 60},
+    )
+    verifier_lease = next(
+        event for event in scheduled_verifier.events if event.event_type == "lease_granted"
+    )
+    verifier_node = str(verifier_lease.payload["node_id"])
+    acknowledged_verifier = await controller.handle_command(
+        run_id,
+        scheduled_verifier.projection_position,
+        "acknowledge_start",
+        {
+            "node_id": verifier_node,
+            "lease_id": verifier_lease.payload["lease_id"],
+            "lease_generation": verifier_lease.payload["generation"],
+            "execution_id": verifier_lease.payload["execution_id"],
+        },
+    )
+    await controller.handle_command(
+        run_id,
+        acknowledged_verifier.projection_position,
+        "submit_callback",
+        {
+            "run_id": run_id,
+            "node_id": verifier_node,
+            "execution_id": verifier_lease.payload["execution_id"],
+            "lease_id": verifier_lease.payload["lease_id"],
+            "lease_generation": verifier_lease.payload["generation"],
+            "base_snapshot_id": verifier_lease.payload["base_snapshot_id"],
+            "observed_graph_position": acknowledged_verifier.projection_position,
+            "idempotency_key": f"callback-{verifier_node}",
+            "payload": {
+                "payload_hash": f"hash-{verifier_node}",
+                "output_records": [
+                    {
+                        "record_id": f"verification-{candidate_id}",
+                        "record_kind": "verification",
+                        "producer_node_id": verifier_node,
+                        "candidate_id": candidate_id,
+                        "verdict": "passed",
+                        "evidence": {"summary": "looks good"},
+                    }
+                ],
+            },
+        },
+    )
 
 
 async def test_graph_projection_empty_for_non_graph_run(
@@ -152,6 +296,70 @@ async def test_graph_projection_reflects_seeded_events(
 
     not_found = await client.get(f"/api/runs/{run_id}/graph/nodes/nonexistent")
     assert not_found.status_code == 404
+
+
+async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = "graph-node-detail-cycle"
+    await _seed_worker_verifier_cycle(app, run_id)
+
+    events_resp = await client.get(f"/api/runs/{run_id}/graph/events")
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    worker_node = next(
+        event["payload"]["node_id"]
+        for event in events
+        if event["event_type"] == "node_created" and event["payload"].get("kind") == "worker"
+    )
+    verifier_node = next(
+        event["payload"]["node_id"]
+        for event in events
+        if event["event_type"] == "node_created" and event["payload"].get("kind") == "verifier"
+    )
+
+    worker_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{worker_node}")
+    assert worker_resp.status_code == 200
+    worker = worker_resp.json()
+    assert worker["kind"] == "worker"
+    assert worker["role"] == "builder"
+    assert worker["output_records"]
+    assert any(record["record_kind"] == "output" for record in worker["output_records"])
+    assert worker["file_state_records"]
+    file_state = worker["file_state_records"][0]
+    assert file_state["verdict"] == "captured"
+    assert file_state["classification_summary"]["total_paths"] == 2
+    assert file_state["classification_summary"]["classifications"]["test_artifact"] == 1
+    assert worker["active_lease"]["state"] == "released"
+    worker_callback_types = [event["event_type"] for event in worker["callback_history"]]
+    assert worker_callback_types == ["node_state_changed", "callback_accepted"]
+    assert [event["position"] for event in worker["callback_history"]] == sorted(
+        event["position"] for event in worker["callback_history"]
+    )
+
+    verifier_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{verifier_node}")
+    assert verifier_resp.status_code == 200
+    verifier = verifier_resp.json()
+    assert verifier["kind"] == "verifier"
+    assert verifier["input_ports"]["candidate_under_test"] == [
+        worker["output_records"][0]["record_id"]
+    ]
+    assert verifier["output_records"]
+    assert verifier["output_records"][0]["record_kind"] == "verification"
+    verifier_callback_types = [event["event_type"] for event in verifier["callback_history"]]
+    assert verifier_callback_types == ["node_state_changed", "callback_accepted"]
+
+
+async def test_node_detail_404_for_unknown_node(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = "graph-node-detail-404"
+    await _seed_graph_run(app, run_id)
+
+    response = await client.get(f"/api/runs/{run_id}/graph/nodes/nonexistent")
+    assert response.status_code == 404
 
 
 async def test_is_graph_backed_flag_in_run_response(

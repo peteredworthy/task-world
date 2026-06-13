@@ -341,6 +341,21 @@ def project_node_states(events: list[EventEnvelope]) -> dict[str, str]:
     return _project(events)["node_states"]
 
 
+def project_node_metadata(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
+    projection = _project(events)
+    return {
+        node_id: {
+            "kind": projection["node_kinds"].get(node_id),
+            "role": projection["node_roles"].get(node_id),
+            "input_ports": {
+                port: _bound_record_ids(binding)
+                for port, binding in projection["input_bindings"].get(node_id, {}).items()
+            },
+        }
+        for node_id in projection["node_states"]
+    }
+
+
 def project_task_states(events: list[EventEnvelope]) -> dict[str, str]:
     return _project(events)["task_states"]
 
@@ -384,6 +399,13 @@ def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[s
                 }
             )
     return {path: report[path] for path in sorted(report)}
+
+
+def _bound_record_ids(binding: dict[str, Any]) -> list[str]:
+    record_ids = binding.get("record_ids")
+    if not isinstance(record_ids, list):
+        return []
+    return [record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)]
 
 
 def project_pattern_library(events: list[EventEnvelope]) -> dict[str, Any]:

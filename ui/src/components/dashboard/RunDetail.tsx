@@ -9,7 +9,7 @@ import { WebSocketProvider } from '../../context/WebSocketContext';
 import { ReviewMergeProvider } from '../../context/ReviewMergeContext';
 import { useReviewMerge } from '../../context/useReviewMerge';
 import { useWebSocketStatus } from '../../hooks/useWebSocketStatus';
-import { useGraphProjection } from '../../hooks/useApi';
+import { useGraphEvents, useGraphProjection } from '../../hooks/useApi';
 import { RunStatusBadge } from '../StatusBadge';
 import { ConnectionIndicator } from '../ConnectionIndicator';
 import { GraphIndicator } from '../GraphIndicator';
@@ -302,6 +302,7 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
   const { isPruneMode, onTogglePruneMode, onOpenBackMergeModal } = useReviewMerge();
   const [showResumeDialog, setShowResumeDialog] = useState(false);
   const [showGraphPanel, setShowGraphPanel] = useState(false);
+  const [graphPanelNodeId, setGraphPanelNodeId] = useState<string | null>(null);
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [mergeResult, setMergeResult] = useState<string | null>(null);
   const [dirtyWorkingTree, setDirtyWorkingTree] = useState<{ branch: string; dirty_files: string[] } | null>(null);
@@ -310,6 +311,29 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
   const [acceptTarget, setAcceptTarget] = useState<ChildOversightSummary | null>(null);
   const autoOpenedRef = useRef<string | null>(null);
   const { data: graphProjection } = useGraphProjection(run?.id);
+  const { data: graphEvents = [] } = useGraphEvents(run?.id);
+
+  const graphTaskNodeIds = useMemo(() => {
+    const byTaskId: Record<string, string> = {};
+    for (const event of graphEvents) {
+      if (event.event_type !== 'node_created') continue;
+      const nodeId = event.payload.node_id;
+      const kind = event.payload.kind;
+      if (typeof nodeId !== 'string' || (kind !== 'worker' && kind !== 'verifier')) continue;
+      for (const key of ['task_id', 'task_region_id']) {
+        const taskKey = event.payload[key];
+        if (typeof taskKey === 'string' && !(taskKey in byTaskId)) {
+          byTaskId[taskKey] = nodeId;
+        }
+      }
+    }
+    return byTaskId;
+  }, [graphEvents]);
+
+  const handleOpenGraphNode = useCallback((nodeId: string) => {
+    setGraphPanelNodeId(nodeId);
+    setShowGraphPanel(true);
+  }, []);
 
   const handleMutationError = useCallback((action: string) => (err: Error) => {
     const detail = err instanceof ApiError
@@ -831,6 +855,8 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
                 events={events}
                 run={run}
                 graphTaskStates={run.is_graph_backed ? graphProjection?.task_states : undefined}
+                graphTaskNodeIds={run.is_graph_backed ? graphTaskNodeIds : undefined}
+                onOpenGraphNode={handleOpenGraphNode}
                 expandCompletedSteps
               />
             </section>
@@ -891,6 +917,7 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
           open={showGraphPanel}
           onClose={() => setShowGraphPanel(false)}
           activityEvents={events}
+          initialNodeId={graphPanelNodeId}
         />
       )}
 

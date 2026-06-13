@@ -200,11 +200,16 @@ export interface GraphProjectionResponse {
 export interface NodeDetailResponse {
   run_id: string;
   node_id: string;
+  kind: string | null;
+  role: string | null;
   state: string | null;
+  input_ports: Record<string, string[]>;
   output_records: Record<string, unknown>[];
   file_state_records: Record<string, unknown>[];
   active_lease: Record<string, unknown> | null;
+  callback_history: GraphEventResponse[];
   events: GraphEventResponse[];
+  prompt_summary?: Record<string, unknown> | null;
 }
 
 export interface RunListResponse {

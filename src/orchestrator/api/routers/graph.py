@@ -11,6 +11,7 @@ from orchestrator.api.schemas.base import ApiModel
 from orchestrator.graph import EventEnvelope
 from orchestrator.graph.projections import (
     project_leases,
+    project_node_metadata,
     project_node_states,
     project_ready_nodes,
     project_run_state,
@@ -43,11 +44,16 @@ class GraphProjectionResponse(ApiModel):
 class NodeDetailResponse(ApiModel):
     run_id: str
     node_id: str
+    kind: str | None
+    role: str | None
     state: str | None
+    input_ports: dict[str, list[str]]
     output_records: list[dict[str, Any]]
     file_state_records: list[dict[str, Any]]
     active_lease: dict[str, Any] | None
+    callback_history: list[GraphEventResponse]
     events: list[GraphEventResponse]
+    prompt_summary: dict[str, Any] | None = None
 
 
 def _event_to_response(event: EventEnvelope) -> GraphEventResponse:
@@ -111,7 +117,7 @@ def _pick_output_records(events: list[EventEnvelope], node_id: str) -> list[dict
         payload = event.payload
         if not isinstance(payload.get("record_kind"), str):
             continue
-        if payload.get("record_kind") != "output":
+        if payload.get("record_kind") == "file_state":
             continue
         if payload.get("producer_node_id") != node_id:
             continue
@@ -127,8 +133,55 @@ def _pick_file_state_records(events: list[EventEnvelope], node_id: str) -> list[
         payload = event.payload
         if payload.get("producer_node_id") != node_id:
             continue
-        records.append(dict(payload))
+        record = dict(payload)
+        record["classification_summary"] = _classification_summary(record)
+        records.append(record)
     return records
+
+
+def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "verdict": record.get("verdict"),
+        "total_paths": 0,
+        "needs_gatekeeper": 0,
+        "classifications": {},
+    }
+    class_counts: dict[str, int] = {}
+    for key in ("tracked", "untracked", "ignored", "external", "classifications", "residue"):
+        entries = record.get(key)
+        if not isinstance(entries, list):
+            continue
+        summary[key] = len(cast(list[Any], entries))
+        for raw_entry in cast(list[Any], entries):
+            if not isinstance(raw_entry, dict):
+                continue
+            entry = cast(dict[str, Any], raw_entry)
+            summary["total_paths"] = int(summary["total_paths"]) + 1
+            if entry.get("needs_gatekeeper") is True:
+                summary["needs_gatekeeper"] = int(summary["needs_gatekeeper"]) + 1
+            classification = entry.get("classification")
+            if isinstance(classification, str):
+                class_counts[classification] = class_counts.get(classification, 0) + 1
+    rejected_paths = record.get("rejected_paths")
+    if isinstance(rejected_paths, list):
+        summary["rejected_paths"] = len(cast(list[Any], rejected_paths))
+    summary["classifications"] = class_counts
+    return summary
+
+
+def _is_callback_history_event(event: EventEnvelope) -> bool:
+    if event.event_type in {
+        "callback_accepted",
+        "callback_rejected_stale",
+        "callback_rejected_conflict",
+        "callback_duplicate_returned",
+        "agent_died",
+    }:
+        return True
+    return (
+        event.event_type == "node_state_changed"
+        and event.payload.get("trigger") == "runtime_start_acknowledged"
+    )
 
 
 def _active_lease_for_node(
@@ -155,19 +208,26 @@ def build_node_detail_response(
         return None
 
     node_states = project_node_states(events)
+    node_metadata = project_node_metadata(events)
     leases = project_leases(events)
     state = node_states.get(node_id)
+    metadata = node_metadata.get(node_id, {})
     output_records = _pick_output_records(events, node_id)
     file_state_records = _pick_file_state_records(events, node_id)
     active_lease = _active_lease_for_node(leases, node_id)
+    callback_history = [event for event in node_events if _is_callback_history_event(event)]
 
     return NodeDetailResponse(
         run_id=run_id,
         node_id=node_id,
+        kind=cast(str | None, metadata.get("kind")),
+        role=cast(str | None, metadata.get("role")),
         state=state,
+        input_ports=cast(dict[str, list[str]], metadata.get("input_ports", {})),
         output_records=output_records,
         file_state_records=file_state_records,
         active_lease=active_lease,
+        callback_history=[_event_to_response(event) for event in callback_history],
         events=[_event_to_response(event) for event in node_events],
     )
 

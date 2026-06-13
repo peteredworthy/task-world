@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useGraphEvents, useGraphProjection } from '../hooks/useApi';
+import { NodeDetailPanel } from './NodeDetailPanel';
 import type { ActivityEvent, GraphEventResponse, GraphProjectionResponse, RunResponse } from '../types';
 
 interface GraphPanelProps {
@@ -8,6 +9,7 @@ interface GraphPanelProps {
   open: boolean;
   onClose: () => void;
   activityEvents?: ActivityEvent[];
+  initialNodeId?: string | null;
 }
 
 function runStateChipClass(runState: string | null): string {
@@ -27,10 +29,14 @@ function NodeStatesTable({
   projection,
   events,
   activityEvents,
+  selectedNodeId,
+  onSelectNode,
 }: {
   projection: GraphProjectionResponse;
   events: GraphEventResponse[];
   activityEvents: ActivityEvent[];
+  selectedNodeId: string | null;
+  onSelectNode: (nodeId: string) => void;
 }) {
   const nodeActivity = useMemo(() => {
     const nodeTaskKeys = new Map<string, Set<string>>();
@@ -99,8 +105,19 @@ function NodeStatesTable({
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={row.nodeId} className="border-t border-border/80">
-                  <td className="py-2 pr-3 font-mono text-text-primary break-all">{row.nodeId}</td>
+                <tr
+                  key={row.nodeId}
+                  className={'border-t border-border/80 ' + (selectedNodeId === row.nodeId ? 'bg-accent-purple/10' : '')}
+                >
+                  <td className="py-2 pr-3">
+                    <button
+                      type="button"
+                      onClick={() => onSelectNode(row.nodeId)}
+                      className="break-all text-left font-mono text-text-primary underline decoration-dotted hover:text-accent-purple"
+                    >
+                      {row.nodeId}
+                    </button>
+                  </td>
                   <td className="py-2 pr-3">
                     <span className="inline-flex rounded border border-border bg-bg-card px-1.5 py-0.5 text-[10px] text-text-muted">
                       {row.state}
@@ -198,10 +215,17 @@ function EventModal({
   );
 }
 
-export function GraphPanel({ runId, run, open, onClose, activityEvents = [] }: GraphPanelProps) {
+export function GraphPanel({ runId, run, open, onClose, activityEvents = [], initialNodeId = null }: GraphPanelProps) {
   const { data: projection } = useGraphProjection(runId);
   const { data: events = [] } = useGraphEvents(runId);
   const [showEvents, setShowEvents] = useState(false);
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (open && initialNodeId) {
+      setSelectedNodeId(initialNodeId);
+    }
+  }, [initialNodeId, open]);
 
   if (!open || !projection) {
     return null;
@@ -238,7 +262,18 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [] }: G
         </div>
 
         <div className="mt-4 space-y-4">
-          <NodeStatesTable projection={projection} events={events} activityEvents={activityEvents} />
+          <NodeStatesTable
+            projection={projection}
+            events={events}
+            activityEvents={activityEvents}
+            selectedNodeId={selectedNodeId}
+            onSelectNode={setSelectedNodeId}
+          />
+          <NodeDetailPanel
+            runId={runId}
+            nodeId={selectedNodeId}
+            onClose={() => setSelectedNodeId(null)}
+          />
           <TaskStatesSection projection={projection} run={run} />
           <button
             type="button"

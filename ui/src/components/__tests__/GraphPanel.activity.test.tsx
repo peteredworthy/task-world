@@ -1,11 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GraphPanel } from '../GraphPanel';
+import { NodeDetailPanel } from '../NodeDetailPanel';
 import { ActivityFeed } from '../detail/ActivityFeed';
 import type {
   ActivityEvent,
   GraphEventResponse,
+  NodeDetailResponse,
   GraphProjectionResponse,
   RunResponse,
 } from '../../types';
@@ -140,6 +142,7 @@ function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
 
   queryClient.setQueryData(['graphProjection', run.id], projection);
   queryClient.setQueryData(['graphEvents', run.id, undefined], graphEvents);
+  queryClient.setQueryData(['graphNodeDetail', run.id, 'worker-1'], makeNodeDetail(run.id));
 
   return render(
     <QueryClientProvider client={queryClient}>
@@ -152,6 +155,63 @@ function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
       />
     </QueryClientProvider>,
   );
+}
+
+function makeNodeDetail(runId: string): NodeDetailResponse {
+  return {
+    run_id: runId,
+    node_id: 'worker-1',
+    kind: 'worker',
+    role: 'builder',
+    state: 'running',
+    input_ports: {
+      context: ['record-input-1'],
+    },
+    output_records: [
+      {
+        record_id: 'candidate-1',
+        record_kind: 'output',
+        producer_node_id: 'worker-1',
+        port: 'candidate',
+        value: { summary: 'implemented' },
+      },
+    ],
+    file_state_records: [
+      {
+        record_id: 'fs-1',
+        record_kind: 'file_state',
+        verdict: 'captured',
+        classification_summary: {
+          total_paths: 1,
+          classifications: { source: 1 },
+        },
+        patch_bundle_id: 'patch-1',
+      },
+    ],
+    active_lease: {
+      lease_id: 'lease-1',
+      state: 'active',
+    },
+    callback_history: [
+      {
+        event_id: 'event-ack',
+        event_type: 'node_state_changed',
+        run_id: runId,
+        position: 2,
+        timestamp: '2026-01-01T00:00:02Z',
+        payload: { node_id: 'worker-1', trigger: 'runtime_start_acknowledged' },
+      },
+      {
+        event_id: 'event-callback',
+        event_type: 'callback_accepted',
+        run_id: runId,
+        position: 3,
+        timestamp: '2026-01-01T00:00:03Z',
+        payload: { node_id: 'worker-1' },
+      },
+    ],
+    events: [],
+  };
 }
 
 describe('GraphPanel activity', () => {
@@ -176,5 +236,63 @@ describe('GraphPanel activity', () => {
 
     expect(screen.getByText(/worker line one/)).toBeInTheDocument();
     expect(screen.getByText(/worker line two/)).toBeInTheDocument();
+  });
+
+  it('renders node detail sections from fixture data', () => {
+    const run = makeRun();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    queryClient.setQueryData(['graphNodeDetail', run.id, 'worker-1'], makeNodeDetail(run.id));
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <NodeDetailPanel runId={run.id} nodeId="worker-1" onClose={() => undefined} />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('Node detail')).toBeInTheDocument();
+    expect(screen.getByText('Inputs')).toBeInTheDocument();
+    expect(screen.getByText('record-input-1')).toBeInTheDocument();
+    expect(screen.getByText('Outputs')).toBeInTheDocument();
+    expect(screen.getByText('candidate-1')).toBeInTheDocument();
+    expect(screen.getByText('File-state')).toBeInTheDocument();
+    expect(screen.getByText(/patch-1/)).toBeInTheDocument();
+    expect(screen.getByText('Callback history')).toBeInTheDocument();
+    expect(screen.getByText('callback_accepted')).toBeInTheDocument();
+  });
+
+  it('opens node detail when a node row is clicked', () => {
+    const run = makeRun();
+    renderGraphPanel(run, []);
+
+    fireEvent.click(screen.getByRole('button', { name: 'worker-1' }));
+
+    expect(screen.getByTestId('node-detail-panel')).toBeInTheDocument();
+    expect(screen.getByText('candidate-1')).toBeInTheDocument();
+  });
+
+  it('task card graph label opens the linked node facts', () => {
+    const run = makeRun();
+    const opened: string[] = [];
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ActivityFeed
+          events={[makeActivityEvent()]}
+          run={run}
+          graphTaskStates={{ 'task-runtime-1': 'in_progress' }}
+          graphTaskNodeIds={{ 'task-runtime-1': 'worker-1' }}
+          onOpenGraphNode={(nodeId) => opened.push(nodeId)}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'graph: in_progress' }));
+
+    expect(opened).toEqual(['worker-1']);
   });
 });
