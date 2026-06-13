@@ -218,7 +218,15 @@ carrier in Phase 4). Both are numbered 3.x.
 |---|---|---|
 | 3.1 Recursive horizon planner (kernel) | ✅ done | slice-3.1-spec.md |
 | 3.7 Retained planner session | ✅ done | slice-3.7-spec.md |
-| 3.8 Parent/child re-expressed as planner chain | ⬜ next | slice-3.8-spec.md |
+| 3.8 Parent/child re-expressed as planner chain | ✅ done | slice-3.8-spec.md |
+
+**Phase 3 complete (3.1–3.8).** Dynamic-planning kernel (recursive horizon
+planner, retained planner session, parent/child-as-planner-chain) + the full §26
+frontend/observability track are done. Each slice ran first-pass all-A through
+the orchestrator on codex_server/gpt-5.5. The codex submission-feedback fix
+(commit-gate failures now bounce back to the builder in-session instead of
+killing it) landed during 3.3 and held clean for 3.4–3.8 (zero commit-gate
+session deaths).
 
 ### Frontend / observability track (PRD §26)
 
