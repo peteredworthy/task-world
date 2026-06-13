@@ -54,8 +54,8 @@ def test_all_tools_registered() -> None:
 def test_allowed_tools_registers_subset() -> None:
     """Scoped MCP servers expose only the explicitly requested tools."""
     allowed_tools = {
-        "orchestrator_get_parent_oversight",
-        "orchestrator_update_parent_oversight",
+        "orchestrator_wait_for_run",
+        "orchestrator_get_run_evidence",
     }
     server = OrchestratorMCPServer(handler=_NoOpHandler(), allowed_tools=allowed_tools)
 

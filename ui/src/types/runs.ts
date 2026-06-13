@@ -116,21 +116,6 @@ export interface ParentOversightState {
   slices?: Record<string, unknown>[];
 }
 
-export interface ParentOversightResponse {
-  run_id: string;
-  oversight_state: ParentOversightState;
-}
-
-export interface AcceptChildRunResponse {
-  parent_run_id: string;
-  child_run_id: string;
-  status: 'clean' | 'conflicts';
-  merge_commit_sha: string | null;
-  conflict_files: string[];
-  conflict_count: number;
-  oversight_state: ParentOversightState;
-}
-
 export interface RunResponse {
   id: string;
   repo_name: string;

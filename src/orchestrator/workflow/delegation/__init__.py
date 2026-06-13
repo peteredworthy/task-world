@@ -25,11 +25,6 @@ from orchestrator.workflow.delegation.fan_out import (
     build_fan_out_facts,
     work_from_fan_out_child,
 )
-from orchestrator.workflow.delegation.super_parent import (
-    SuperParentDelegationPolicy,
-    result_from_child_evidence,
-    work_from_child_run,
-)
 
 __all__ = [
     "DelegateCommand",
@@ -48,10 +43,7 @@ __all__ = [
     "DelegationState",
     "FanOutDelegationPolicy",
     "FanOutFacts",
-    "SuperParentDelegationPolicy",
     "apply_delegate_command",
     "build_fan_out_facts",
-    "result_from_child_evidence",
-    "work_from_child_run",
     "work_from_fan_out_child",
 ]

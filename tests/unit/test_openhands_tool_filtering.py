@@ -76,11 +76,11 @@ class TestOpenHandsMCPConfig:
         server = MCPServerConfig(name="orchestrator", url="http://localhost:8000/mcp/sse")
         config = _build_openhands_mcp_config(
             [server],
-            available_tools=["orchestrator_get_parent_oversight"],
+            available_tools=["orchestrator_wait_for_run"],
         )
         assert config is not None
         assert config["mcpServers"]["orchestrator"]["url"] == _scoped_orchestrator_url(
-            "orchestrator_get_parent_oversight"
+            "orchestrator_wait_for_run"
         )
 
     def test_orchestrator_url_verifier_scoped_to_verifier_tools(self) -> None:

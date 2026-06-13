@@ -7,7 +7,7 @@ from orchestrator.api import ORCHESTRATOR_TOOLS, validate_clarification_question
 
 def test_tool_definitions_well_formed() -> None:
     """Verify tool definitions have required fields."""
-    assert len(ORCHESTRATOR_TOOLS) == 19
+    assert len(ORCHESTRATOR_TOOLS) == 11
 
     for tool in ORCHESTRATOR_TOOLS:
         assert "name" in tool
@@ -28,45 +28,9 @@ def test_tool_definitions_well_formed() -> None:
         "orchestrator_escalate_requirement",
         "orchestrator_list_repos",
         "orchestrator_list_branches",
-        "orchestrator_create_child_run",
-        "orchestrator_create_child_from_template",
-        "orchestrator_list_child_runs",
-        "orchestrator_accept_child_run",
-        "orchestrator_resolve_child_run",
         "orchestrator_wait_for_run",
         "orchestrator_get_run_evidence",
-        "orchestrator_get_parent_oversight",
-        "orchestrator_update_parent_oversight",
-        "orchestrator_refresh_parent_oversight",
     }
-
-
-def test_create_child_run_has_no_start_flag() -> None:
-    """Child runs always start through service-owned child creation."""
-    tool = next(t for t in ORCHESTRATOR_TOOLS if t["name"] == "orchestrator_create_child_run")
-
-    assert "start" not in tool["inputSchema"]["properties"]
-
-
-def test_create_child_from_template_has_slice_spec_schema() -> None:
-    tool = next(
-        t for t in ORCHESTRATOR_TOOLS if t["name"] == "orchestrator_create_child_from_template"
-    )
-
-    assert tool["inputSchema"]["required"] == ["parent_run_id", "slice_spec"]
-    slice_spec = tool["inputSchema"]["properties"]["slice_spec"]
-    assert slice_spec["required"] == ["template_id", "slice_id", "goal"]
-    assert slice_spec["properties"]["template_id"]["enum"] == [
-        "bug_fix_with_regression_test",
-        "test_coverage_gap",
-        "frontend_behavior_fix",
-        "investigation_only",
-        "implementation_slice",
-        "planning_to_implementation_brief",
-        "partial_progress_recovery",
-        "cleanup_refactor",
-        "environment_blocker_repro",
-    ]
 
 
 def test_clarification_tool_guides_human_facing_select_questions() -> None:

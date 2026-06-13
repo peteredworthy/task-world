@@ -6,52 +6,21 @@ It is tested independently of server transport.
 
 from __future__ import annotations
 
-import subprocess
-from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Literal, cast, get_args
+from typing import Any
 
-from orchestrator.config import RoutineConfig
-from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RoutineSource
+from orchestrator.config.enums import ChecklistStatus
 from orchestrator.git import get_repo, list_branches, list_repos
 from orchestrator.git.repos import RepoNotFoundError
 from orchestrator.api.mcp.clarification_tools import (
     CLARIFICATION_TOOL,
     validate_clarification_question_payloads,
 )
-from orchestrator.state.factory import create_run_from_routine
-from orchestrator.state import Run
 from orchestrator.time_utils import format_utc_datetime
 from orchestrator.workflow import (
-    ChildSliceSpec,
-    ChildWorkflowTemplateId,
     ClarificationQuestion,
-    compile_child_routine_from_spec,
 )
 from orchestrator.workflow.service import WorkflowService
-
-
-def _resolve_child_source_branch(parent_run: Run, requested_branch: str | None) -> str:
-    """Resolve the branch to use when creating an oversight child run.
-
-    Prefer the parent accumulation branch when present in the parent worktree,
-    then honor an explicit branch if no accumulation branch exists.
-    """
-
-    parent_accum_branch = f"orchestrator/run-{parent_run.id}"
-    if parent_run.worktree_path:
-        try:
-            branches = list_branches(Path(parent_run.worktree_path), local_only=True)
-        except (OSError, subprocess.CalledProcessError):
-            branches = []
-        else:
-            if any(branch.name == parent_accum_branch for branch in branches):
-                return parent_accum_branch
-
-    if requested_branch:
-        return requested_branch
-
-    return parent_run.source_branch or "main"
 
 
 # JSON schemas for the orchestrator MCP tools
@@ -198,157 +167,6 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
         },
     },
     {
-        "name": "orchestrator_create_child_run",
-        "description": "Create an oversight child run from an embedded routine.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "parent_run_id": {"type": "string", "description": "Parent oversight run ID"},
-                "parent_slice_id": {"type": "string", "description": "Slice ID for this child"},
-                "routine_embedded": {
-                    "type": "object",
-                    "description": "Embedded routine config for the child run",
-                },
-                "repo_name": {"type": "string", "description": "Optional child repo name"},
-                "branch": {"type": "string", "description": "Optional child source branch"},
-                "config": {"type": "object", "description": "Optional child run config"},
-                "agent_runner_type": {
-                    "type": "string",
-                    "description": "Optional child runner type",
-                },
-                "agent_runner_config": {
-                    "type": "object",
-                    "description": "Optional child runner config",
-                },
-                "next_action_decision": {
-                    "type": "string",
-                    "enum": ["continue", "replan", "stop", "environment_blocked"],
-                    "description": "Parent oversight decision that led to this child",
-                },
-            },
-            "required": ["parent_run_id", "parent_slice_id", "routine_embedded"],
-        },
-    },
-    {
-        "name": "orchestrator_create_child_from_template",
-        "description": (
-            "Create an oversight child run by compiling a compact slice spec through a "
-            "server-owned child workflow template."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "parent_run_id": {"type": "string", "description": "Parent oversight run ID"},
-                "slice_spec": {
-                    "type": "object",
-                    "description": "Compact child slice spec compiled by the server",
-                    "properties": {
-                        "template_id": {
-                            "type": "string",
-                            "enum": list(get_args(ChildWorkflowTemplateId)),
-                        },
-                        "slice_id": {"type": "string"},
-                        "goal": {"type": "string"},
-                        "routine_id": {"type": "string"},
-                        "title": {"type": "string"},
-                        "target_inventory_ids": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "allowed_paths": {"type": "array", "items": {"type": "string"}},
-                        "expected_files_changed": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "verification_commands": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": (
-                                "Commands the generated child should run through "
-                                "scripts/run_child_evidence.py so logs and run.evidence.v1 "
-                                "are produced together."
-                            ),
-                        },
-                        "evidence_expectations": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "stop_conditions": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "real_execution_surface": {"type": "string"},
-                        "real_frontend_path_required": {"type": "boolean"},
-                        "notes": {"type": "string"},
-                        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 4},
-                    },
-                    "required": ["template_id", "slice_id", "goal"],
-                },
-                "repo_name": {"type": "string", "description": "Optional child repo name"},
-                "branch": {"type": "string", "description": "Optional child source branch"},
-                "config": {"type": "object", "description": "Optional child run config"},
-                "agent_runner_type": {
-                    "type": "string",
-                    "description": "Optional child runner type",
-                },
-                "agent_runner_config": {
-                    "type": "object",
-                    "description": "Optional child runner config",
-                },
-                "next_action_decision": {
-                    "type": "string",
-                    "enum": ["continue", "replan", "stop", "environment_blocked"],
-                    "description": "Parent oversight decision that led to this child",
-                },
-            },
-            "required": ["parent_run_id", "slice_spec"],
-        },
-    },
-    {
-        "name": "orchestrator_list_child_runs",
-        "description": "List child runs linked to an oversight parent run.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "parent_run_id": {"type": "string", "description": "Parent oversight run ID"},
-            },
-            "required": ["parent_run_id"],
-        },
-    },
-    {
-        "name": "orchestrator_accept_child_run",
-        "description": "Merge an accepted child run into its parent run branch.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "parent_run_id": {"type": "string", "description": "Parent run ID"},
-                "child_run_id": {"type": "string", "description": "Child run ID to accept"},
-            },
-            "required": ["parent_run_id", "child_run_id"],
-        },
-    },
-    {
-        "name": "orchestrator_resolve_child_run",
-        "description": "Reject or abandon a child run so the parent can continue iterating.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "parent_run_id": {"type": "string", "description": "Parent run ID"},
-                "child_run_id": {"type": "string", "description": "Child run ID to resolve"},
-                "resolution": {
-                    "type": "string",
-                    "enum": ["reject", "abandon"],
-                    "description": "Parent decision for this child",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Audit reason for rejecting or abandoning this child",
-                },
-            },
-            "required": ["parent_run_id", "child_run_id", "resolution", "reason"],
-        },
-    },
-    {
         "name": "orchestrator_wait_for_run",
         "description": (
             "Wait for a run to complete, fail, or pause, then return its current status. "
@@ -375,115 +193,6 @@ ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "run_id": {"type": "string", "description": "Run ID to inspect"},
-            },
-            "required": ["run_id"],
-        },
-    },
-    {
-        "name": "orchestrator_get_parent_oversight",
-        "description": "Return the persisted super-parent oversight snapshot for a parent run.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "run_id": {"type": "string", "description": "Parent run ID to inspect"},
-            },
-            "required": ["run_id"],
-        },
-    },
-    {
-        "name": "orchestrator_update_parent_oversight",
-        "description": (
-            "Persist parent-authored super-parent oversight facts such as target inventory, "
-            "final validation, current understanding, and decisions."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "run_id": {"type": "string", "description": "Parent run ID to update"},
-                "current_understanding": {
-                    "type": "object",
-                    "description": "Optional current understanding payload",
-                },
-                "target_inventory": {
-                    "type": "array",
-                    "description": "Optional full replacement target inventory",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "schema_version": {
-                                "type": "string",
-                                "enum": ["super_parent.target_inventory.v1"],
-                            },
-                            "id": {"type": "string"},
-                            "in_scope": {"type": "boolean"},
-                            "resolved": {"type": "boolean"},
-                        },
-                        "required": ["id"],
-                    },
-                },
-                "final_validation": {
-                    "type": "object",
-                    "description": "Optional integrated final validation marker",
-                    "properties": {
-                        "schema_version": {
-                            "type": "string",
-                            "enum": ["super_parent.final_validation.v1"],
-                        },
-                        "passed": {"type": "boolean"},
-                        "integration_scope": {
-                            "type": "string",
-                            "enum": ["integrated", "final"],
-                        },
-                        "integrated_commit_sha": {"type": "string", "minLength": 7},
-                        "report_path": {"type": "string", "minLength": 1},
-                        "commands_run": {
-                            "type": "array",
-                            "minItems": 1,
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "command": {"type": "string"},
-                                    "exit_code": {"type": "integer"},
-                                    "stdout_excerpt": {"type": "string"},
-                                    "stderr_excerpt": {"type": "string"},
-                                },
-                                "required": ["command", "exit_code"],
-                            },
-                        },
-                        "evidence_files": {
-                            "type": "array",
-                            "minItems": 1,
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": [
-                        "passed",
-                        "integrated_commit_sha",
-                        "report_path",
-                        "commands_run",
-                        "evidence_files",
-                    ],
-                },
-                "decisions": {
-                    "type": "array",
-                    "description": "Optional decision records to append",
-                    "items": {"type": "object"},
-                },
-                "decision": {
-                    "type": "object",
-                    "description": "Optional single decision record to append",
-                },
-            },
-            "required": ["run_id"],
-        },
-    },
-    {
-        "name": "orchestrator_refresh_parent_oversight",
-        "description": "Recompute and persist the super-parent oversight snapshot.",
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "run_id": {"type": "string", "description": "Parent run ID to refresh"},
             },
             "required": ["run_id"],
         },
@@ -526,26 +235,10 @@ class ToolHandler:
             return await self._list_repos(arguments)
         elif tool_name == "orchestrator_list_branches":
             return await self._list_branches(arguments)
-        elif tool_name == "orchestrator_create_child_run":
-            return await self._create_child_run(arguments)
-        elif tool_name == "orchestrator_create_child_from_template":
-            return await self._create_child_from_template(arguments)
-        elif tool_name == "orchestrator_list_child_runs":
-            return await self._list_child_runs(arguments)
-        elif tool_name == "orchestrator_accept_child_run":
-            return await self._accept_child_run(arguments)
-        elif tool_name == "orchestrator_resolve_child_run":
-            return await self._resolve_child_run(arguments)
         elif tool_name == "orchestrator_wait_for_run":
             return await self._wait_for_run(arguments)
         elif tool_name == "orchestrator_get_run_evidence":
             return await self._get_run_evidence(arguments)
-        elif tool_name == "orchestrator_get_parent_oversight":
-            return await self._get_parent_oversight(arguments)
-        elif tool_name == "orchestrator_update_parent_oversight":
-            return await self._update_parent_oversight(arguments)
-        elif tool_name == "orchestrator_refresh_parent_oversight":
-            return await self._refresh_parent_oversight(arguments)
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 
@@ -826,125 +519,6 @@ class ToolHandler:
         except Exception as e:
             return {"error": str(e), "branches": []}
 
-    async def _create_child_run(self, args: dict[str, Any]) -> dict[str, Any]:
-        parent_run_id: str = args["parent_run_id"]
-        parent_slice_id: str = args["parent_slice_id"]
-        routine_embedded: dict[str, Any] = args["routine_embedded"]
-        decision: str = args.get("next_action_decision", "continue")
-        if decision not in ("continue", "replan", "stop", "environment_blocked"):
-            raise ValueError(
-                "next_action_decision must be one of: continue, replan, stop, environment_blocked"
-            )
-
-        parent = await self._service.get_run(parent_run_id)
-        routine_config = RoutineConfig.model_validate(routine_embedded)
-        child = create_run_from_routine(
-            routine=routine_config,
-            repo_name=args.get("repo_name") or parent.repo_name,
-            source_branch=_resolve_child_source_branch(parent, args.get("branch")),
-            config=args.get("config") or {},
-            routine_source=RoutineSource.EMBEDDED,
-        )
-        child.routine_embedded = routine_embedded
-
-        agent_runner_type: str | None = args.get("agent_runner_type")
-        if agent_runner_type:
-            child.agent_runner_type = AgentRunnerType(agent_runner_type)
-        else:
-            child.agent_runner_type = parent.agent_runner_type
-        child.agent_runner_config = args.get("agent_runner_config") or dict(
-            parent.agent_runner_config
-        )
-        child.verifier_model = child.agent_runner_config.get("model") or parent.verifier_model
-
-        child = await self._service.create_child_run(
-            parent_run_id,
-            child,
-            parent_slice_id=parent_slice_id,
-            next_action_decision=decision,
-        )
-
-        return {
-            "parent_run_id": parent_run_id,
-            "child_run_id": child.id,
-            "parent_slice_id": child.parent_slice_id,
-            "status": child.status.value,
-            "start_enqueued": True,
-        }
-
-    async def _create_child_from_template(self, args: dict[str, Any]) -> dict[str, Any]:
-        spec = ChildSliceSpec.model_validate(args["slice_spec"])
-        routine_embedded = compile_child_routine_from_spec(spec)
-        create_args = dict(args)
-        create_args.pop("slice_spec")
-        create_args["parent_slice_id"] = spec.slice_id
-        create_args["routine_embedded"] = routine_embedded
-        result = await self._create_child_run(create_args)
-        result["template_id"] = spec.template_id
-        result["routine_id"] = routine_embedded["id"]
-        return result
-
-    async def _list_child_runs(self, args: dict[str, Any]) -> dict[str, Any]:
-        parent_run_id: str = args["parent_run_id"]
-        children = await self._service.list_child_runs(parent_run_id)
-        return {
-            "parent_run_id": parent_run_id,
-            "children": [
-                {
-                    "id": child.id,
-                    "routine_id": child.routine_id,
-                    "parent_slice_id": child.parent_slice_id,
-                    "status": child.status.value,
-                    "pause_reason": child.pause_reason,
-                    "completed_at": format_utc_datetime(child.completed_at)
-                    if child.completed_at
-                    else None,
-                }
-                for child in children
-            ],
-        }
-
-    async def _accept_child_run(self, args: dict[str, Any]) -> dict[str, Any]:
-        parent_run_id: str = args["parent_run_id"]
-        child_run_id: str = args["child_run_id"]
-        result = await self._service.accept_child_run(parent_run_id, child_run_id)
-        oversight_state = await self._service.get_parent_oversight(parent_run_id)
-        return {
-            "parent_run_id": parent_run_id,
-            "child_run_id": child_run_id,
-            "status": result.status,
-            "merge_commit_sha": result.merge_commit_sha,
-            "conflict_files": result.conflict_files,
-            "conflict_count": result.conflict_count,
-            "oversight_state": oversight_state,
-        }
-
-    async def _resolve_child_run(self, args: dict[str, Any]) -> dict[str, Any]:
-        parent_run_id: str = args["parent_run_id"]
-        child_run_id: str = args["child_run_id"]
-        resolution: str = args["resolution"]
-        if resolution not in ("reject", "abandon"):
-            raise ValueError("resolution must be one of: reject, abandon")
-        resolution_literal: Literal["reject", "abandon"] = (
-            "reject" if resolution == "reject" else "abandon"
-        )
-        reason = str(args["reason"]).strip()
-        result = await self._service.resolve_child_run(
-            parent_run_id,
-            child_run_id,
-            resolution=resolution_literal,
-            reason=reason,
-        )
-        oversight_state = await self._service.get_parent_oversight(parent_run_id)
-        return {
-            "parent_run_id": parent_run_id,
-            "child_run_id": child_run_id,
-            "resolution": result.resolution,
-            "reason": result.reason,
-            "resolved_at": format_utc_datetime(result.resolved_at),
-            "oversight_state": oversight_state,
-        }
-
     async def _wait_for_run(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
         requested_timeout_seconds = float(args.get("timeout_seconds", 0))
@@ -954,25 +528,7 @@ class ToolHandler:
         # verifier failures. Keep the cap below the nudger kill window
         # (default 600s kill_after_seconds).
         timeout_seconds = min(requested_timeout_seconds, 600.0)
-        initial_run = await self._service.get_run(run_id)
-        parent_run_id = initial_run.parent_run_id
-        if parent_run_id:
-            await self._service.record_child_wait_observation(
-                parent_run_id,
-                run_id,
-                observed_status=initial_run.status,
-                phase="started",
-                timeout_seconds=timeout_seconds,
-            )
         run = await self._service.wait_for_run_terminal(run_id, timeout_seconds)
-        if parent_run_id:
-            await self._service.record_child_wait_observation(
-                parent_run_id,
-                run_id,
-                observed_status=run.status,
-                phase="observed",
-                timeout_seconds=timeout_seconds,
-            )
         terminal = run.status.value in ("completed", "failed")
         meaningful_state = terminal or run.status.value == "paused"
         return {
@@ -990,50 +546,3 @@ class ToolHandler:
     async def _get_run_evidence(self, args: dict[str, Any]) -> dict[str, Any]:
         run_id: str = args["run_id"]
         return await self._service.collect_validated_run_evidence(run_id)
-
-    async def _get_parent_oversight(self, args: dict[str, Any]) -> dict[str, Any]:
-        run_id: str = args["run_id"]
-        oversight_state = await self._service.get_parent_oversight(run_id)
-        return {"run_id": run_id, "oversight_state": oversight_state}
-
-    async def _update_parent_oversight(self, args: dict[str, Any]) -> dict[str, Any]:
-        run_id: str = args["run_id"]
-        decisions: list[dict[str, Any]] | None = None
-        if isinstance(args.get("decisions"), list):
-            decisions = [
-                dict(cast(Mapping[str, Any], item))
-                for item in args["decisions"]
-                if isinstance(item, Mapping)
-            ]
-        if isinstance(args.get("decision"), Mapping):
-            decisions = [*(decisions or []), dict(cast(Mapping[str, Any], args["decision"]))]
-
-        current_understanding: dict[str, Any] | None = None
-        if isinstance(args.get("current_understanding"), Mapping):
-            current_understanding = dict(cast(Mapping[str, Any], args["current_understanding"]))
-
-        target_inventory: list[dict[str, Any]] | None = None
-        if isinstance(args.get("target_inventory"), list):
-            target_inventory = [
-                dict(cast(Mapping[str, Any], item))
-                for item in args["target_inventory"]
-                if isinstance(item, Mapping)
-            ]
-
-        final_validation: dict[str, Any] | None = None
-        if isinstance(args.get("final_validation"), Mapping):
-            final_validation = dict(cast(Mapping[str, Any], args["final_validation"]))
-
-        run = await self._service.update_parent_oversight(
-            run_id,
-            current_understanding=current_understanding,
-            target_inventory=target_inventory,
-            final_validation=final_validation,
-            decisions=decisions,
-        )
-        return {"run_id": run.id, "oversight_state": run.oversight_state}
-
-    async def _refresh_parent_oversight(self, args: dict[str, Any]) -> dict[str, Any]:
-        run_id: str = args["run_id"]
-        run = await self._service.refresh_parent_oversight(run_id)
-        return {"run_id": run.id, "oversight_state": run.oversight_state}

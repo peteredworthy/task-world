@@ -114,50 +114,6 @@ def test_topological_sort_children_first_preserves_empty_input() -> None:
     assert _topological_sort_children_first([]) == []
 
 
-def test_is_retryable_runner_pause_state_strips_parent_prefix() -> None:
-    """Cascade reasons (parent_X) must follow underlying-cause retryability."""
-    from orchestrator.state.models import Run
-    from orchestrator.workflow.parent_oversight import _is_retryable_runner_pause_state
-
-    def make_run(reason: str) -> Run:
-        return Run(
-            id="r",
-            repo_name="r",
-            status=RunStatus.PAUSED,
-            pause_reason=reason,
-            steps=[],
-        )
-
-    assert _is_retryable_runner_pause_state(make_run("server_shutdown")) is True
-    assert _is_retryable_runner_pause_state(make_run("parent_server_shutdown")) is True
-    assert _is_retryable_runner_pause_state(make_run("parent_rate_limit")) is True
-    assert _is_retryable_runner_pause_state(make_run("parent_manual_pause")) is False
-    assert _is_retryable_runner_pause_state(make_run("parent_paused_manual")) is False
-    assert _is_retryable_runner_pause_state(make_run("parent_escalated_requirement")) is False
-    assert _is_retryable_runner_pause_state(make_run("manual_pause")) is False
-
-
-def test_oversight_is_retryable_runner_pause_strips_parent_prefix() -> None:
-    """The other copy of the allow list (oversight.py) must also strip prefix."""
-    from orchestrator.state.models import Run
-    from orchestrator.workflow.oversight import _is_retryable_runner_pause
-
-    def make_run(reason: str) -> Run:
-        return Run(
-            id="r",
-            repo_name="r",
-            status=RunStatus.PAUSED,
-            pause_reason=reason,
-            steps=[],
-        )
-
-    assert _is_retryable_runner_pause(make_run("server_shutdown")) is True
-    assert _is_retryable_runner_pause(make_run("parent_server_shutdown")) is True
-    assert _is_retryable_runner_pause(make_run("parent_manual_pause")) is False
-    assert _is_retryable_runner_pause(make_run("parent_paused_manual")) is False
-    assert _is_retryable_runner_pause(make_run("parent_escalated_requirement")) is False
-
-
 @pytest.mark.asyncio
 async def test_deferred_startup_recovery_resumes_restart_paused_run() -> None:
     engine = create_engine(":memory:")

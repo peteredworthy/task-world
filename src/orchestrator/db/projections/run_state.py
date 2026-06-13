@@ -45,7 +45,7 @@ from orchestrator.workflow import (
     TaskStatusChanged,
     WorkflowEvent,
 )
-from orchestrator.workflow.oversight_facts import (
+from orchestrator.workflow.legacy_run_facts import (
     APPEND_ONLY_OVERSIGHT_LIST_KEYS,
     SET_UNION_OVERSIGHT_LIST_KEYS,
 )

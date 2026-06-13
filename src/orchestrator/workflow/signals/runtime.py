@@ -493,7 +493,7 @@ class RunWorkflow:
                         )
                         await commit_with_event_outbox(session)
                     elif action.kind in ("complete", "fail"):
-                        guarded_run = await service.save_run_with_oversight_terminal_guard(run)
+                        guarded_run = await service.save_run_with_completion_transition(run)
                         logger.info(
                             f"Run {run_id}: safety-net completion → {guarded_run.status.value}"
                         )

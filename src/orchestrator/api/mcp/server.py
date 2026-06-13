@@ -25,16 +25,8 @@ BUILDER_TOOLS = {
     "orchestrator_escalate_requirement",
     "orchestrator_list_repos",
     "orchestrator_list_branches",
-    "orchestrator_create_child_run",
-    "orchestrator_create_child_from_template",
-    "orchestrator_list_child_runs",
-    "orchestrator_accept_child_run",
-    "orchestrator_resolve_child_run",
     "orchestrator_wait_for_run",
     "orchestrator_get_run_evidence",
-    "orchestrator_get_parent_oversight",
-    "orchestrator_update_parent_oversight",
-    "orchestrator_refresh_parent_oversight",
 }
 
 VERIFIER_TOOLS = {
@@ -289,100 +281,6 @@ class OrchestratorMCPServer:
             description="List branches in a repository with optional glob pattern filter.",
         )
 
-        async def orchestrator_create_child_run(
-            parent_run_id: str,
-            parent_slice_id: str,
-            routine_embedded: dict[str, object],
-            repo_name: str = "",
-            branch: str = "",
-            config: dict[str, object] | None = None,
-            agent_runner_type: str = "",
-            agent_runner_config: dict[str, object] | None = None,
-            next_action_decision: str = "continue",
-        ) -> str:
-            """Create an oversight child run from an embedded routine."""
-            args: dict[str, object] = {
-                "parent_run_id": parent_run_id,
-                "parent_slice_id": parent_slice_id,
-                "routine_embedded": routine_embedded,
-                "next_action_decision": next_action_decision,
-            }
-            if repo_name:
-                args["repo_name"] = repo_name
-            if branch:
-                args["branch"] = branch
-            if config is not None:
-                args["config"] = config
-            if agent_runner_type:
-                args["agent_runner_type"] = agent_runner_type
-            if agent_runner_config is not None:
-                args["agent_runner_config"] = agent_runner_config
-            result = await handler.handle("orchestrator_create_child_run", args)
-            return json.dumps(result)
-
-        async def orchestrator_create_child_from_template(
-            parent_run_id: str,
-            slice_spec: dict[str, object],
-            repo_name: str = "",
-            branch: str = "",
-            config: dict[str, object] | None = None,
-            agent_runner_type: str = "",
-            agent_runner_config: dict[str, object] | None = None,
-            next_action_decision: str = "continue",
-        ) -> str:
-            """Create an oversight child run from a compact template slice spec."""
-            args: dict[str, object] = {
-                "parent_run_id": parent_run_id,
-                "slice_spec": slice_spec,
-                "next_action_decision": next_action_decision,
-            }
-            if repo_name:
-                args["repo_name"] = repo_name
-            if branch:
-                args["branch"] = branch
-            if config is not None:
-                args["config"] = config
-            if agent_runner_type:
-                args["agent_runner_type"] = agent_runner_type
-            if agent_runner_config is not None:
-                args["agent_runner_config"] = agent_runner_config
-            result = await handler.handle("orchestrator_create_child_from_template", args)
-            return json.dumps(result)
-
-        async def orchestrator_list_child_runs(parent_run_id: str) -> str:
-            """List child runs linked to an oversight parent run."""
-            result = await handler.handle(
-                "orchestrator_list_child_runs",
-                {"parent_run_id": parent_run_id},
-            )
-            return json.dumps(result)
-
-        async def orchestrator_accept_child_run(parent_run_id: str, child_run_id: str) -> str:
-            """Merge an accepted child run into its parent run branch."""
-            result = await handler.handle(
-                "orchestrator_accept_child_run",
-                {"parent_run_id": parent_run_id, "child_run_id": child_run_id},
-            )
-            return json.dumps(result)
-
-        async def orchestrator_resolve_child_run(
-            parent_run_id: str,
-            child_run_id: str,
-            resolution: Literal["reject", "abandon"],
-            reason: str,
-        ) -> str:
-            """Reject or abandon a child run so the parent can continue iterating."""
-            result = await handler.handle(
-                "orchestrator_resolve_child_run",
-                {
-                    "parent_run_id": parent_run_id,
-                    "child_run_id": child_run_id,
-                    "resolution": resolution,
-                    "reason": reason,
-                },
-            )
-            return json.dumps(result)
-
         async def orchestrator_wait_for_run(
             run_id: str,
             timeout_seconds: float = 0,
@@ -399,67 +297,6 @@ class OrchestratorMCPServer:
             result = await handler.handle("orchestrator_get_run_evidence", {"run_id": run_id})
             return json.dumps(result)
 
-        async def orchestrator_get_parent_oversight(run_id: str) -> str:
-            """Return the persisted super-parent oversight snapshot."""
-            result = await handler.handle("orchestrator_get_parent_oversight", {"run_id": run_id})
-            return json.dumps(result)
-
-        async def orchestrator_update_parent_oversight(
-            run_id: str,
-            current_understanding: dict[str, object] | None = None,
-            target_inventory: list[dict[str, object]] | None = None,
-            final_validation: dict[str, object] | None = None,
-            decisions: list[dict[str, object]] | None = None,
-            decision: dict[str, object] | None = None,
-        ) -> str:
-            """Persist parent-authored super-parent oversight facts."""
-            args: dict[str, object] = {"run_id": run_id}
-            if current_understanding is not None:
-                args["current_understanding"] = current_understanding
-            if target_inventory is not None:
-                args["target_inventory"] = target_inventory
-            if final_validation is not None:
-                args["final_validation"] = final_validation
-            if decisions is not None:
-                args["decisions"] = decisions
-            if decision is not None:
-                args["decision"] = decision
-            result = await handler.handle("orchestrator_update_parent_oversight", args)
-            return json.dumps(result)
-
-        async def orchestrator_refresh_parent_oversight(run_id: str) -> str:
-            """Recompute and persist the super-parent oversight snapshot."""
-            result = await handler.handle(
-                "orchestrator_refresh_parent_oversight",
-                {"run_id": run_id},
-            )
-            return json.dumps(result)
-
-        add_tool_if_allowed(
-            orchestrator_create_child_run,
-            name="orchestrator_create_child_run",
-            description="Create an oversight child run from an embedded routine.",
-        )
-        add_tool_if_allowed(
-            orchestrator_create_child_from_template,
-            name="orchestrator_create_child_from_template",
-            description="Create an oversight child run from a compact template slice spec.",
-        )
-        add_tool_if_allowed(
-            orchestrator_list_child_runs,
-            name="orchestrator_list_child_runs",
-            description="List child runs linked to an oversight parent run.",
-        )
-        add_tool_if_allowed(
-            orchestrator_accept_child_run,
-            name="orchestrator_accept_child_run",
-            description="Merge an accepted child run into its parent run branch.",
-        )
-        add_tool_if_allowed(
-            orchestrator_resolve_child_run,
-            name="orchestrator_resolve_child_run",
-            description="Reject or abandon a child run so the parent can continue iterating.",
-        )
         add_tool_if_allowed(
             orchestrator_wait_for_run,
             name="orchestrator_wait_for_run",
@@ -469,21 +306,6 @@ class OrchestratorMCPServer:
             orchestrator_get_run_evidence,
             name="orchestrator_get_run_evidence",
             description="Return structured run.evidence.v1 bundles from a run worktree.",
-        )
-        add_tool_if_allowed(
-            orchestrator_get_parent_oversight,
-            name="orchestrator_get_parent_oversight",
-            description="Return the persisted super-parent oversight snapshot.",
-        )
-        add_tool_if_allowed(
-            orchestrator_update_parent_oversight,
-            name="orchestrator_update_parent_oversight",
-            description="Persist parent-authored super-parent oversight facts.",
-        )
-        add_tool_if_allowed(
-            orchestrator_refresh_parent_oversight,
-            name="orchestrator_refresh_parent_oversight",
-            description="Recompute and persist the super-parent oversight snapshot.",
         )
 
     @property

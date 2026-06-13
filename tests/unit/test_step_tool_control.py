@@ -93,11 +93,11 @@ class TestTaskLevelToolControl:
             title="Task with explicit tools",
             task_context="Do something",
             requirements=[],
-            available_tools=["orchestrator_get_parent_oversight"],
+            available_tools=["orchestrator_wait_for_run"],
             mcp_servers=[{"name": "orchestrator", "url": "http://127.0.0.1:8000/mcp/sse"}],
         )
 
-        assert task.available_tools == ["orchestrator_get_parent_oversight"]
+        assert task.available_tools == ["orchestrator_wait_for_run"]
         assert task.mcp_servers is not None
         assert task.mcp_servers[0].name == "orchestrator"
 

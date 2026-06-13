@@ -46,7 +46,6 @@ from orchestrator.workflow import (
     UpdateParentOversightFactsCommand,
     UpdateRunStatusCommand,
     UpdateRunWorktreeCommand,
-    durable_parent_oversight_patch,
     FailRunWorktreeCreationCommand,
     handle_complete_run_worktree_commit,
     handle_create_run,
@@ -160,17 +159,11 @@ from orchestrator.workflow.delegation import (
     DelegationDecision,
     DelegationRecorder,
     FanOutDelegationPolicy,
-    SuperParentDelegationPolicy,
     build_fan_out_facts,
     work_from_fan_out_child,
 )
-from orchestrator.workflow.oversight import validate_run_evidence_items
-from orchestrator.workflow.parent_oversight import (
-    ChildRunResolutionResult,
-    ParentOversightService,
-)
+from orchestrator.workflow.legacy_run_facts import durable_parent_oversight_patch
 from orchestrator.git import (
-    ParentChildMergeResult,
     WorktreeCommitError,
     WorktreeResetError,
     commit_uncommitted_changes_or_raise,
@@ -180,40 +173,6 @@ from orchestrator.git import (
 )
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
-
-
-_SELF_PAUSING_REASONS: frozenset[str] = frozenset(
-    {
-        "server_shutdown",
-        "executor_not_started",
-        "executor_exited",
-        "executor_crash",
-        "no_executor_running",
-        "agent_not_running_on_startup",
-        "rate_limit",
-        "recovery_loop",
-    }
-)
-
-
-# Cascade pause reasons: mirror parent intent. Errors keep the literal
-# `parent_<reason>` so retryability checks remain stable; human-actionable
-# pauses get a clearer label so children + dashboards can distinguish
-# "human is reviewing parent" from "parent crashed".
-_HUMAN_ACTIONABLE_CASCADE_REASONS: dict[str, str] = {
-    "requirement_escalated": "parent_escalated_requirement",
-    "awaiting_clarification": "parent_awaiting_clarification",
-    "manual_pause": "parent_paused_manual",
-    "gate_blocked": "parent_gate_blocked",
-}
-
-
-def _cascade_reason_for(parent_reason: str) -> str:
-    """Map a parent's pause_reason to the child's cascade pause_reason."""
-    mapped = _HUMAN_ACTIONABLE_CASCADE_REASONS.get(parent_reason)
-    if mapped is not None:
-        return mapped
-    return f"parent_{parent_reason}"
 
 
 @dataclass
@@ -346,7 +305,6 @@ class WorkflowService:
         global_config: GlobalConfig | None = None,
         env_lifecycle: EnvFileLifecycle | None = None,
         signal_transport: SignalTransport | None = None,
-        super_parent_policy: SuperParentDelegationPolicy | None = None,
         fan_out_policy: FanOutDelegationPolicy | None = None,
         event_store_v2: SqliteEventStore | None = None,
     ) -> None:
@@ -363,18 +321,8 @@ class WorkflowService:
         self._global_config = global_config
         self._env_lifecycle = env_lifecycle
         self._signal_transport = signal_transport
-        self._super_parent_policy = super_parent_policy or SuperParentDelegationPolicy()
         self._fan_out_policy = fan_out_policy or FanOutDelegationPolicy()
         self._delegation_recorder = DelegationRecorder(self._clock)
-        self._parent_oversight = ParentOversightService(
-            self._session,
-            self._repo,
-            self._event_emitter,
-            self._clock,
-            global_config=self._global_config,
-            super_parent_policy=self._super_parent_policy,
-            signal_transport=self._signal_transport,
-        )
 
     async def _update_parent_oversight_facts(
         self,
@@ -498,20 +446,15 @@ class WorkflowService:
         self, state: SessionStateManager, run_id: str, buffer: BufferingEmitter
     ) -> Run:
         """Append buffered events, let projectors update read models, then commit."""
-        run = state.get_run(run_id)
-        self._parent_oversight.strip_computed_oversight_for_persist(run)
-        parent_run_id = run.parent_run_id
         events = self._attach_task_projection_payloads(state, run_id, buffer.drain())
         if events:
             await self._store_v2.append(events)
             self._event_emitter.notify_persisted_batch(events)
-        if parent_run_id is not None:
-            await self._refresh_parent_oversight_without_commit(parent_run_id)
         await commit_with_event_outbox(self._session)
         return await self._repo.get(run_id)
 
-    async def save_run_with_oversight_terminal_guard(self, run: Run) -> Run:
-        """Persist a run after applying any super-parent terminal guard."""
+    async def save_run_with_completion_transition(self, run: Run) -> Run:
+        """Persist a run after applying normal completion transitions."""
         persisted_status = await self._session.scalar(
             select(RunModel.status).where(RunModel.id == run.id)
         )
@@ -790,29 +733,8 @@ class WorkflowService:
         reason: str,
         error_detail: str | None = None,
     ) -> None:
-        """Pause/cancel active/suspending child runs when a parent run is controlled."""
-        # System-wide pauses (server shutdown, rate limits, executor crashes) hit
-        # every run's asyncio loop independently; each loop self-pauses with the
-        # correct reason. Cascading from the parent would clobber that with a
-        # `parent_*` prefix that downstream recovery paths do not recognize.
-        if action == "pause" and reason in _SELF_PAUSING_REASONS:
-            return
-
-        children = await self._repo.list_child_runs(parent.id, include_action_logs=False)
-        control_reason = _cascade_reason_for(reason)
-
-        for child in children:
-            if child.status not in (RunStatus.ACTIVE, RunStatus.STOPPING):
-                continue
-            try:
-                if action == "pause":
-                    await self._pause_child_run(child, control_reason, error_detail)
-                else:
-                    await self._cancel_child_run(child, control_reason)
-            except InvalidTransitionError:
-                # Child states can change while the parent is being controlled;
-                # do not fail parent control because one child raced to terminal.
-                continue
+        """Legacy parent/child run control is retired."""
+        _ = (parent, action, reason, error_detail)
 
     async def pause_run(
         self,
@@ -914,8 +836,6 @@ class WorkflowService:
                     self._session,
                 )
 
-        if child.parent_run_id is not None:
-            await self._refresh_parent_oversight_without_commit(child.parent_run_id)
         await commit_with_event_outbox(self._session)
 
         # Best-effort PAUSE signal so the child's loop exits cleanly between
@@ -954,8 +874,6 @@ class WorkflowService:
             self._session,
         )
         self._event_emitter.notify_persisted(events[0])
-        if child.parent_run_id is not None:
-            await self._refresh_parent_oversight_without_commit(child.parent_run_id)
         await commit_with_event_outbox(self._session)
 
     async def apply_pause_run(
@@ -3235,68 +3153,27 @@ class WorkflowService:
         )
 
     async def list_child_runs(self, parent_run_id: str) -> list[Run]:
-        """List child runs linked to an oversight parent run."""
+        """List historical child runs linked by legacy parent_run_id."""
         await self._repo.get(parent_run_id)
         return await self._repo.list_child_runs(
             parent_run_id, include_action_logs=False, include_routine_embedded=False
         )
 
-    async def get_parent_oversight(self, parent_run_id: str) -> dict[str, Any]:
-        """Return current deterministic oversight state for a parent run."""
-        return await self._parent_oversight.get_parent_oversight(parent_run_id)
-
     async def _with_current_oversight(self, run: Run) -> Run:
-        """Attach computed oversight to parent runs before returning API data."""
-        return await self._parent_oversight.hydrate_if_parent(run)
+        """Return stored run state without recomputing retired oversight facts."""
+        return run
 
     async def _with_current_oversight_for_runs(self, runs: list[Run]) -> list[Run]:
-        """Attach computed oversight to any parent runs in a response list."""
-        return [await self._with_current_oversight(run) for run in runs]
-
-    async def update_parent_oversight(
-        self,
-        parent_run_id: str,
-        *,
-        current_understanding: dict[str, Any] | None = None,
-        target_inventory: list[dict[str, Any]] | None = None,
-        final_validation: dict[str, Any] | None = None,
-        decisions: list[dict[str, Any]] | None = None,
-    ) -> Run:
-        """Persist parent-authored oversight facts, then recompute derived state."""
-        return await self._parent_oversight.update_parent_oversight(
-            parent_run_id,
-            current_understanding=current_understanding,
-            target_inventory=target_inventory,
-            final_validation=final_validation,
-            decisions=decisions,
-        )
+        """Return stored run states without recomputing retired oversight facts."""
+        return runs
 
     def _drop_stale_final_validation(
         self,
         parent: Run,
         oversight_state: dict[str, Any],
     ) -> dict[str, Any]:
-        return self._parent_oversight.drop_stale_final_validation(parent, oversight_state)
-
-    async def refresh_parent_oversight(self, parent_run_id: str) -> Run:
-        """Recompute and persist the parent oversight snapshot from child state."""
-        return await self._parent_oversight.refresh_parent_oversight(parent_run_id)
-
-    async def _refresh_parent_oversight_without_commit(
-        self,
-        parent_run_id: str,
-        *,
-        parent: Run | None = None,
-    ) -> Run:
-        """Recompute and save parent oversight state without committing."""
-        return await self._parent_oversight.refresh_parent_oversight_without_commit(
-            parent_run_id,
-            parent=parent,
-        )
-
-    async def _compute_parent_oversight_state(self, parent: Run) -> dict[str, Any]:
-        """Compute parent oversight from persisted parent facts plus current children."""
-        return await self._parent_oversight.compute_parent_oversight_state(parent)
+        _ = parent
+        return oversight_state
 
     def _fan_out_children_for_parent(
         self,
@@ -3462,63 +3339,20 @@ class WorkflowService:
             child_id=task_model.child_id,
         )
 
-    async def accept_child_run(
-        self,
-        parent_run_id: str,
-        child_run_id: str,
-        *,
-        expected_generation: int | None = None,
-        idempotency_key: str | None = None,
-        owner_token: str | None = None,
-    ) -> ParentChildMergeResult:
-        """Accept a completed child by merging it into the parent run branch."""
-        return await self._parent_oversight.accept_child_run(
-            parent_run_id,
-            child_run_id,
-            expected_generation=expected_generation,
-            idempotency_key=idempotency_key,
-            owner_token=owner_token,
-        )
-
-    async def resolve_child_run(
-        self,
-        parent_run_id: str,
-        child_run_id: str,
-        *,
-        resolution: Literal["reject", "abandon"],
-        reason: str,
-    ) -> ChildRunResolutionResult:
-        """Record a parent decision that closes a child without merging it."""
-        return await self._parent_oversight.resolve_child_run(
-            parent_run_id,
-            child_run_id,
-            resolution=resolution,
-            reason=reason,
-        )
-
-    async def create_child_run(
-        self,
-        parent_run_id: str,
-        child_run: Run,
-        *,
-        parent_slice_id: str,
-        next_action_decision: str,
-    ) -> Run:
-        """Persist a child run and record it in the parent's oversight history."""
-        return await self._parent_oversight.create_child_run(
-            parent_run_id,
-            child_run,
-            parent_slice_id=parent_slice_id,
-            next_action_decision=next_action_decision,
-        )
-
     def _resolved_child_run_ids(self, parent: Run) -> set[str]:
-        """Return child IDs that the parent has explicitly resolved."""
-        return self._parent_oversight.resolved_child_run_ids(parent)
+        """Return historical resolved child IDs from stored legacy facts."""
+        state = parent.oversight_state
+        values: set[str] = set()
+        for key in ("accepted_child_run_ids", "rejected_child_run_ids", "abandoned_child_run_ids"):
+            raw = state.get(key)
+            if isinstance(raw, list):
+                values.update(item for item in cast(list[Any], raw) if isinstance(item, str))
+        return values
 
     def _max_child_runs_for_parent(self, parent: Run) -> int:
-        """Resolve the configured child-run limit for a parent run."""
-        return self._parent_oversight.max_child_runs_for_parent(parent)
+        """Legacy child-run creation is retired."""
+        _ = parent
+        return 0
 
     def _state_dict_list(self, value: Any) -> list[dict[str, Any]]:
         if not isinstance(value, list):
@@ -3526,21 +3360,6 @@ class WorkflowService:
         return [
             cast(dict[str, Any], item) for item in cast(list[Any], value) if isinstance(item, dict)
         ]
-
-    async def _apply_oversight_terminal_guard(
-        self,
-        run: Run,
-        state: SessionStateManager,
-        buffer: BufferingEmitter,
-        *,
-        emit_status_change: bool = True,
-    ) -> None:
-        await self._parent_oversight.apply_oversight_terminal_guard(
-            run,
-            state,
-            buffer,
-            emit_status_change=emit_status_change,
-        )
 
     async def _resolve_run_completion_transition(
         self,
@@ -3550,20 +3369,11 @@ class WorkflowService:
         *,
         old_status: RunStatus,
     ) -> None:
-        """Apply the final run transition after step progression and oversight reduction."""
+        """Apply the final run transition after step progression."""
         if run.status == RunStatus.ACTIVE:
             check_run_completion(run, self._clock.now())
 
-        if run.status in (RunStatus.COMPLETED, RunStatus.FAILED):
-            await self._apply_oversight_terminal_guard(
-                run,
-                state,
-                buffer,
-                emit_status_change=False,
-            )
-            run = state.get_run(run.id)
-        else:
-            state.update_run(run)
+        state.update_run(run)
 
         if run.status != old_status:
             buffer.emit(
@@ -3579,8 +3389,9 @@ class WorkflowService:
             )
 
     def _is_oversight_parent_run(self, run: Run) -> bool:
-        """Return whether a run is meant to use super-parent terminal guards."""
-        return self._parent_oversight.is_oversight_parent_run(run)
+        """Legacy oversight parent behavior is retired."""
+        _ = run
+        return False
 
     async def wait_for_run_terminal(self, run_id: str, timeout_seconds: float) -> Run:
         """Wait for a run to reach terminal or paused state, then return current state."""
@@ -3594,33 +3405,10 @@ class WorkflowService:
                 return run
             await asyncio.sleep(0.25)
 
-    async def record_child_wait_observation(
-        self,
-        parent_run_id: str,
-        child_run_id: str,
-        *,
-        observed_status: RunStatus,
-        phase: Literal["started", "observed"],
-        timeout_seconds: float,
-        expected_generation: int | None = None,
-        owner_token: str | None = None,
-        idempotency_key: str | None = None,
-    ) -> Run:
-        """Persist parent wait intent/observation for child-run recovery."""
-        return await self._parent_oversight.record_child_wait_observation(
-            parent_run_id,
-            child_run_id,
-            observed_status=observed_status,
-            phase=phase,
-            timeout_seconds=timeout_seconds,
-            expected_generation=expected_generation,
-            owner_token=owner_token,
-            idempotency_key=idempotency_key,
-        )
-
     async def collect_run_evidence(self, run_id: str) -> list[dict[str, Any]]:
-        """Collect run.evidence.v1 bundles from a run worktree."""
-        return await self._parent_oversight.collect_run_evidence(run_id)
+        """The retired super-parent evidence collector no longer scans worktrees."""
+        await self._repo.get(run_id)
+        return []
 
     async def collect_validated_run_evidence(
         self,
@@ -3630,16 +3418,13 @@ class WorkflowService:
         expected_routine_id: str | None = None,
     ) -> dict[str, Any]:
         """Collect run evidence with valid bundles separated from validation failures."""
-        raw_items = await self.collect_run_evidence(run_id)
-        evidence, invalid_evidence = validate_run_evidence_items(
-            raw_items,
-            expected_slice_id=expected_slice_id,
-            expected_routine_id=expected_routine_id,
-        )
+        _ = (expected_slice_id, expected_routine_id)
+        evidence: list[dict[str, Any]] = await self.collect_run_evidence(run_id)
+        invalid_evidence: list[dict[str, Any]] = []
         return {
             "run_id": run_id,
             "evidence": evidence,
-            "invalid_evidence": [item.model_dump(mode="json") for item in invalid_evidence],
+            "invalid_evidence": invalid_evidence,
         }
 
     async def get_task(self, run_id: str, task_id: str) -> TaskState:
@@ -4481,18 +4266,6 @@ class WorkflowService:
         run = await self._repo.get(run_id)
 
         actions: list[dict[str, Any]] = []
-        oversight_run = run
-        if (
-            self._is_oversight_parent_run(run)
-            or run.pause_reason == "oversight_children_unresolved"
-        ):
-            oversight_run = run.model_copy(
-                deep=True,
-                update={"oversight_state": await self._compute_parent_oversight_state(run)},
-            )
-        oversight_action = self._pending_oversight_action(oversight_run)
-        if oversight_action is not None:
-            actions.append(oversight_action)
         current_step_index = run.current_step_index
 
         # Be resilient to stale indices by skipping completed steps.
@@ -4543,43 +4316,6 @@ class WorkflowService:
                 actions.append(action)
 
         return actions
-
-    def _pending_oversight_action(self, run: Run) -> dict[str, Any] | None:
-        """Return a run-level pending action for blocked oversight parents."""
-        oversight_state = run.oversight_state
-        terminal_guard = oversight_state.get("terminal_guard")
-        attention_items = oversight_state.get("attention_items")
-        blocking_reasons: list[Any] = []
-        if isinstance(terminal_guard, dict):
-            terminal_guard_dict = cast(dict[str, Any], terminal_guard)
-            raw_reasons = terminal_guard_dict.get("blocking_reasons")
-            if isinstance(raw_reasons, list):
-                blocking_reasons = cast(list[Any], raw_reasons)
-
-        blocked = (
-            run.pause_reason == "oversight_children_unresolved"
-            or bool(attention_items)
-            or (run.status == RunStatus.PAUSED and bool(blocking_reasons))
-        )
-        if not blocked:
-            return None
-
-        return {
-            "task_id": "",
-            "step_id": "",
-            "action_type": "oversight",
-            "is_gate_approval": False,
-            "approval_prompt": run.last_error
-            or "Parent oversight requires human attention before completion can continue.",
-            "details": {
-                "pause_reason": run.pause_reason,
-                "next_parent_action": oversight_state.get("next_parent_action"),
-                "blocking_reasons": blocking_reasons,
-                "attention_items": attention_items if isinstance(attention_items, list) else [],
-                "active_child_run_ids": oversight_state.get("active_child_run_ids", []),
-                "paused_child_run_ids": oversight_state.get("paused_child_run_ids", []),
-            },
-        }
 
     # --- Recovery methods ---
 

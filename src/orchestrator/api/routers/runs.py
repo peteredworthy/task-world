@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import subprocess
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,18 +29,15 @@ from orchestrator.api.deps import (
     get_workflow_service,
 )
 from orchestrator.envfiles.resolution import resolve_env_specs
-from orchestrator.git import WorktreeResetError, list_branches
+from orchestrator.git import WorktreeResetError
 from orchestrator.runners.executor import AgentRunnerExecutor
 from orchestrator.git import TestRunner
 from orchestrator.api.schemas.activity import ActivityEvent, ActivityResponse
 from orchestrator.api.schemas.runs import (
-    AcceptChildRunResponse,
     AttemptOutcome,
     BackMergeResponse,
     BackwardTransitionRequest,
     BranchStatusResponse,
-    ChildRunListResponse,
-    CreateChildRunRequest,
     CreateRunRequest,
     EvidenceBundleSchema,
     GradeSummaryItem,
@@ -49,12 +45,8 @@ from orchestrator.api.schemas.runs import (
     MergeBackRequest,
     MergeBackResponse,
     MergeReadinessSnapshot,
-    ParentOversightResponse,
-    ParentOversightUpdateRequest,
     RecoverRequest,
     RecoverResponse,
-    ResolveChildRunRequest,
-    ResolveChildRunResponse,
     ResumeRunRequest,
     RunEvidenceItem,
     RunEvidenceResponse,
@@ -360,35 +352,8 @@ def _run_to_response(run: Run, *, is_graph_backed: bool = False) -> RunResponse:
     )
 
 
-def _resolve_child_source_branch(*, parent_run: Run, request_branch: str | None) -> str:
-    """Resolve the branch to use when creating an oversight child run.
-
-    Prefer the parent accumulation branch if it exists in the parent worktree.
-    This keeps later child slices based on integrated accepted child work. An
-    explicit branch is only honored when the parent accumulation branch is not
-    present yet.
-    """
-
-    parent_accum_branch = f"orchestrator/run-{parent_run.id}"
-    worktree_path = parent_run.worktree_path
-
-    if worktree_path:
-        try:
-            branches = list_branches(Path(worktree_path), local_only=True)
-        except (OSError, subprocess.CalledProcessError):
-            branches = []
-        else:
-            if any(branch.name == parent_accum_branch for branch in branches):
-                return parent_accum_branch
-
-    if request_branch:
-        return request_branch
-
-    return parent_run.source_branch or "main"
-
-
 def _build_run_from_request(
-    request: CreateRunRequest | CreateChildRunRequest,
+    request: CreateRunRequest,
     routine_dirs: list[tuple[Path, RoutineSource]],
     config: GlobalConfig,
     *,
@@ -398,8 +363,6 @@ def _build_run_from_request(
     """Build a draft run from a create request without persisting it."""
     resolved_repo_name = repo_name or request.repo_name
     resolved_branch = branch or request.branch
-    if resolved_repo_name is None or resolved_branch is None:
-        raise HTTPException(status_code=422, detail="repo_name and branch are required")
 
     if request.routine_embedded is not None:
         try:
@@ -520,104 +483,6 @@ async def create_run(
     return _run_to_response(created)
 
 
-@router.post("/{parent_run_id}/children", response_model=RunResponse, status_code=201)
-async def create_child_run(
-    parent_run_id: str,
-    request: CreateChildRunRequest,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-    routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
-    config: Annotated[GlobalConfig, Depends(get_global_config)],
-) -> RunResponse:
-    """Create a child run linked to an oversight parent run."""
-    parent = await service.get_run(parent_run_id)
-    run, _ = _build_run_from_request(
-        request,
-        routine_dirs,
-        config,
-        repo_name=request.repo_name or parent.repo_name,
-        branch=_resolve_child_source_branch(parent_run=parent, request_branch=request.branch),
-    )
-    if run.id == parent_run_id:
-        raise HTTPException(status_code=409, detail="Child run cannot parent itself")
-    if request.agent_runner_type is None:
-        run.agent_runner_type = parent.agent_runner_type
-    if not request.agent_runner_config:
-        run.agent_runner_config = dict(parent.agent_runner_config)
-        run.verifier_model = parent.verifier_model
-
-    created = await service.create_child_run(
-        parent_run_id,
-        run,
-        parent_slice_id=request.parent_slice_id,
-        next_action_decision=request.next_action_decision,
-    )
-    return _run_to_response(await service.get_run(created.id))
-
-
-@router.get("/{parent_run_id}/children", response_model=ChildRunListResponse)
-async def list_child_runs(
-    parent_run_id: str,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> ChildRunListResponse:
-    """List child runs linked to an oversight parent run."""
-    children = await service.list_child_runs(parent_run_id)
-    return ChildRunListResponse(
-        parent_run_id=parent_run_id,
-        children=[_run_to_response(child) for child in children],
-    )
-
-
-@router.post(
-    "/{parent_run_id}/children/{child_run_id}/accept",
-    response_model=AcceptChildRunResponse,
-)
-async def accept_child_run(
-    parent_run_id: str,
-    child_run_id: str,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> AcceptChildRunResponse:
-    """Merge an accepted child run into its parent run branch."""
-    result = await service.accept_child_run(parent_run_id, child_run_id)
-    oversight_state = await service.get_parent_oversight(parent_run_id)
-    return AcceptChildRunResponse(
-        parent_run_id=parent_run_id,
-        child_run_id=child_run_id,
-        status=result.status,
-        merge_commit_sha=result.merge_commit_sha,
-        conflict_files=result.conflict_files,
-        conflict_count=result.conflict_count,
-        oversight_state=oversight_state,
-    )
-
-
-@router.post(
-    "/{parent_run_id}/children/{child_run_id}/resolve",
-    response_model=ResolveChildRunResponse,
-)
-async def resolve_child_run(
-    parent_run_id: str,
-    child_run_id: str,
-    request: ResolveChildRunRequest,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> ResolveChildRunResponse:
-    """Reject or abandon a child run so the parent can continue iterating."""
-    result = await service.resolve_child_run(
-        parent_run_id,
-        child_run_id,
-        resolution=request.resolution,
-        reason=request.reason,
-    )
-    oversight_state = await service.get_parent_oversight(parent_run_id)
-    return ResolveChildRunResponse(
-        parent_run_id=parent_run_id,
-        child_run_id=child_run_id,
-        resolution=result.resolution,
-        reason=result.reason,
-        resolved_at=result.resolved_at,
-        oversight_state=oversight_state,
-    )
-
-
 @router.get("/{run_id}/evidence", response_model=RunEvidenceResponse)
 async def get_run_evidence(
     run_id: str,
@@ -636,49 +501,6 @@ async def get_run_evidence(
         InvalidEvidenceItem.model_validate(item) for item in validated["invalid_evidence"]
     ]
     return RunEvidenceResponse(run_id=run_id, evidence=items, invalid_evidence=invalid_items)
-
-
-@router.get("/{run_id}/oversight", response_model=ParentOversightResponse)
-async def get_parent_oversight(
-    run_id: str,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> ParentOversightResponse:
-    """Return the latest persisted super-parent oversight snapshot."""
-    return ParentOversightResponse(
-        run_id=run_id,
-        oversight_state=await service.get_parent_oversight(run_id),
-    )
-
-
-@router.patch("/{run_id}/oversight", response_model=ParentOversightResponse)
-async def update_parent_oversight(
-    run_id: str,
-    request: ParentOversightUpdateRequest,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> ParentOversightResponse:
-    """Persist parent-authored oversight facts and recompute the snapshot."""
-    run = await service.update_parent_oversight(
-        run_id,
-        current_understanding=request.current_understanding,
-        target_inventory=[item.model_dump(mode="json") for item in request.target_inventory]
-        if request.target_inventory is not None
-        else None,
-        final_validation=request.final_validation.model_dump(mode="json")
-        if request.final_validation is not None
-        else None,
-        decisions=request.decisions,
-    )
-    return ParentOversightResponse(run_id=run.id, oversight_state=run.oversight_state)
-
-
-@router.post("/{run_id}/oversight/refresh", response_model=ParentOversightResponse)
-async def refresh_parent_oversight(
-    run_id: str,
-    service: Annotated[WorkflowService, Depends(get_workflow_service)],
-) -> ParentOversightResponse:
-    """Recompute and persist the super-parent oversight snapshot."""
-    run = await service.refresh_parent_oversight(run_id)
-    return ParentOversightResponse(run_id=run.id, oversight_state=run.oversight_state)
 
 
 @router.get("", response_model=RunListResponse)
@@ -805,10 +627,7 @@ async def _cancel_active_child_executors(
     executor: AgentRunnerExecutor,
 ) -> None:
     """Stop active child executor processes before parent control settles."""
-    children = await service.list_child_runs(parent_run_id)
-    for child in children:
-        if child.status in (RunStatus.ACTIVE, RunStatus.STOPPING):
-            await executor.cancel_run(child.id)
+    _ = (parent_run_id, service, executor)
 
 
 @router.post("/{run_id}/resume", response_model=RunResponse, status_code=202)

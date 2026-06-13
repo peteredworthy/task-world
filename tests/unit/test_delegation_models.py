@@ -5,17 +5,13 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.config import RunStatus
-from orchestrator.state import Run
 from orchestrator.workflow import (
     DelegateCommand,
     DelegateResultEnvelope,
     DelegationDecision,
     DelegationState,
     DelegatedWork,
-    SuperParentDelegationPolicy,
     apply_delegate_command,
-    delegation_decision_from_parent_snapshot,
 )
 
 
@@ -393,43 +389,3 @@ def test_delegation_state_apply_command_returns_new_state_without_mutating_old_s
     assert state.delegation_decisions == ()
     assert updated.delegated_work[0].status == "running"
     assert updated.delegation_decisions[-1].idempotency_key == "launch-child-1"
-
-
-def test_parent_snapshot_decision_waits_for_active_delegate() -> None:
-    decision = delegation_decision_from_parent_snapshot(
-        {
-            "next_parent_action": "wait_for_child",
-            "active_child_run_ids": ["child-1"],
-            "terminal_guard": {"can_complete": False},
-            "child_count": 1,
-            "max_child_runs": 20,
-        }
-    )
-
-    assert decision.kind == "wait"
-    assert decision.work_id == "child-1"
-    assert decision.stable_state == "WaitingOnDelegate"
-
-
-def test_super_parent_policy_detects_duplicate_child_create() -> None:
-    policy = SuperParentDelegationPolicy()
-    parent = Run(id="parent", repo_name="repo", status=RunStatus.ACTIVE)
-    child = Run(
-        id="child-1",
-        repo_name="repo",
-        status=RunStatus.ACTIVE,
-        parent_run_id="parent",
-        parent_slice_id="slice-1",
-        routine_id="child-routine",
-    )
-
-    decision = policy.decision_for_create_child(
-        parent,
-        [child],
-        child_run_id="child-1",
-        max_child_runs=20,
-        resolved_child_run_ids=set(),
-    )
-
-    assert decision.kind == "stale_command_ignored"
-    assert decision.reason == "duplicate_child_create"

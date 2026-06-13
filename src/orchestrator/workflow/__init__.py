@@ -3,11 +3,6 @@
 from typing import TYPE_CHECKING, Any
 
 from orchestrator.workflow.artifacts import Artifact, ArtifactRegistry
-from orchestrator.workflow.child_templates import (
-    ChildSliceSpec,
-    ChildWorkflowTemplateId,
-    compile_child_routine_from_spec,
-)
 from orchestrator.workflow.engine import (
     Clock,
     ConditionEvalError,
@@ -242,7 +237,6 @@ from orchestrator.workflow.agent import (
 
 if TYPE_CHECKING:
     from orchestrator.workflow.graph_driver import GraphRunDriver, GraphRunOutcome
-    from orchestrator.workflow.parent_oversight import ParentOversightService
     from orchestrator.workflow.service import WorkflowService, find_step_config, find_task_config
 from orchestrator.workflow.completion import handle_run_completion
 from orchestrator.workflow.dry_run import (
@@ -270,46 +264,15 @@ from orchestrator.workflow.delegation import (
     DelegationState,
     FanOutDelegationPolicy,
     FanOutFacts,
-    SuperParentDelegationPolicy,
     apply_delegate_command,
     build_fan_out_facts,
-    result_from_child_evidence,
-    work_from_child_run,
     work_from_fan_out_child,
 )
-from orchestrator.workflow.oversight import (
-    ACCEPTANCE_OUTCOMES,
-    REVISION_OUTCOMES,
-    ChildOversightSummary,
-    EvidenceValidationIssue,
-    EvidenceValidationResult,
-    EvidenceOutcome,
-    FinalValidationMarker,
-    InvalidEvidenceSummary,
-    OversightAttentionItem,
-    OversightEvidenceSummary,
-    OversightTerminalGuard,
-    ParentOversightSnapshot,
-    RunEvidenceBundle,
-    RunEvidenceCommand,
-    RunEvidenceTestResult,
-    reduce_parent_oversight,
-    reduce_parent_oversight_state,
-    TargetInventoryItem,
-    validate_run_evidence_item,
-    validate_run_evidence_items,
-)
-from orchestrator.workflow.oversight_projection import (
-    delegation_decision_from_parent_snapshot,
-    project_parent_oversight,
-)
-from orchestrator.workflow.oversight_facts import (
+from orchestrator.workflow.legacy_run_facts import (
     APPEND_ONLY_OVERSIGHT_LIST_KEYS,
-    COORDINATION_OVERSIGHT_FACT_KEYS,
     DURABLE_PARENT_OVERSIGHT_FACT_KEYS,
     SET_UNION_OVERSIGHT_LIST_KEYS,
     durable_parent_oversight_patch,
-    extract_parent_oversight_facts,
 )
 from orchestrator.workflow.merge_readiness import (
     Gate,
@@ -322,8 +285,6 @@ __all__ = [
     "Artifact",
     "ArtifactRegistry",
     # Engine (errors, gates, grades, transitions, condition evaluation)
-    "ChildSliceSpec",
-    "ChildWorkflowTemplateId",
     "_build_step_outcomes",
     "_create_repeat_step_copies",
     "_find_step_config",
@@ -342,7 +303,6 @@ __all__ = [
     "InvalidTransitionError",
     "NoOpEmitter",
     "Parser",
-    "ParentOversightService",
     "StepOutcome",
     "Token",
     "Tokenizer",
@@ -353,7 +313,6 @@ __all__ = [
     "WorkflowError",
     "check_run_completion",
     "check_step_progression",
-    "compile_child_routine_from_spec",
     "evaluate_checklist_gate",
     "evaluate_condition",
     "evaluate_gate",
@@ -581,49 +540,18 @@ __all__ = [
     "DelegationState",
     "FanOutDelegationPolicy",
     "FanOutFacts",
-    "SuperParentDelegationPolicy",
     "apply_delegate_command",
     "build_fan_out_facts",
-    "result_from_child_evidence",
-    "work_from_child_run",
     "work_from_fan_out_child",
     # Oversight reducer
-    "ACCEPTANCE_OUTCOMES",
     "APPEND_ONLY_OVERSIGHT_LIST_KEYS",
-    "COORDINATION_OVERSIGHT_FACT_KEYS",
     "DURABLE_PARENT_OVERSIGHT_FACT_KEYS",
-    "REVISION_OUTCOMES",
     "SET_UNION_OVERSIGHT_LIST_KEYS",
-    "ChildOversightSummary",
-    "EvidenceOutcome",
-    "EvidenceValidationIssue",
-    "EvidenceValidationResult",
-    "FinalValidationMarker",
-    "InvalidEvidenceSummary",
-    "OversightAttentionItem",
-    "OversightEvidenceSummary",
-    "OversightTerminalGuard",
-    "ParentOversightSnapshot",
-    "RunEvidenceBundle",
-    "RunEvidenceCommand",
-    "RunEvidenceTestResult",
-    "TargetInventoryItem",
-    "delegation_decision_from_parent_snapshot",
     "durable_parent_oversight_patch",
-    "extract_parent_oversight_facts",
-    "project_parent_oversight",
-    "reduce_parent_oversight",
-    "reduce_parent_oversight_state",
-    "validate_run_evidence_item",
-    "validate_run_evidence_items",
 ]
 
 
 def __getattr__(name: str) -> Any:  # noqa: ANN401
-    if name == "ParentOversightService":
-        from orchestrator.workflow.parent_oversight import ParentOversightService
-
-        return ParentOversightService
     if name in {"GraphRunDriver", "GraphRunOutcome"}:
         from orchestrator.workflow.graph_driver import GraphRunDriver, GraphRunOutcome
 

@@ -287,15 +287,15 @@ class TestCLIMCPInfo:
                 tmpdir,
                 [mcp],
                 available_tools=[
-                    "orchestrator_update_parent_oversight",
-                    "orchestrator_get_parent_oversight",
+                    "orchestrator_wait_for_run",
+                    "orchestrator_get_run_evidence",
                 ],
             )
 
             config = json.loads(agent._mcp_json_path(tmpdir).read_text())
             assert config["mcpServers"]["orchestrator"]["url"] == _scoped_orchestrator_url(
-                "orchestrator_get_parent_oversight",
-                "orchestrator_update_parent_oversight",
+                "orchestrator_get_run_evidence",
+                "orchestrator_wait_for_run",
             )
 
     def test_orchestrator_mcp_json_scoped_to_workflow_tools_by_default(self):
@@ -327,12 +327,12 @@ class TestCLIMCPInfo:
         mcp = MCPServerConfig(name="orchestrator", url="http://localhost:8000/mcp/sse")
         ctx = _make_context(
             mcp_servers=[mcp],
-            available_tools=["orchestrator_get_parent_oversight"],
+            available_tools=["orchestrator_wait_for_run"],
         )
 
         prompt = CLIAgent.build_prompt(ctx.prompt, ctx)
 
-        assert _scoped_orchestrator_url("orchestrator_get_parent_oversight") in prompt
+        assert _scoped_orchestrator_url("orchestrator_wait_for_run") in prompt
         assert "http://localhost:8000/mcp/sse" not in prompt
 
     def test_claude_args_include_explicit_mcp_config(self):

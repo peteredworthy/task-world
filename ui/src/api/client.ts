@@ -24,8 +24,6 @@ import type {
   GlobalConfig,
   ModelProfileInfo,
   PendingAction,
-  AcceptChildRunResponse,
-  ParentOversightResponse,
   ProjectRoutineResponse,
   ProjectRoutinesListResponse,
   RecoverRequest,
@@ -407,20 +405,6 @@ export const api = {
 
   getBranchStatus(runId: string): Promise<BranchStatusResponse> {
     return fetchApi('/api/runs/' + runId + '/branch-status');
-  },
-
-  getParentOversight(runId: string): Promise<ParentOversightResponse> {
-    return fetchApi('/api/runs/' + runId + '/oversight');
-  },
-
-  refreshParentOversight(runId: string): Promise<ParentOversightResponse> {
-    return fetchApi('/api/runs/' + runId + '/oversight/refresh', { method: 'POST' });
-  },
-
-  acceptChildRun(parentRunId: string, childRunId: string): Promise<AcceptChildRunResponse> {
-    return fetchApi('/api/runs/' + parentRunId + '/children/' + childRunId + '/accept', {
-      method: 'POST',
-    });
   },
 
   backMerge(runId: string): Promise<void> {
