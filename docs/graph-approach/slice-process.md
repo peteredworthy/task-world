@@ -217,7 +217,7 @@ carrier in Phase 4). Both are numbered 3.x.
 | Slice | Status | Spec |
 |---|---|---|
 | 3.1 Recursive horizon planner (kernel) | ✅ done | slice-3.1-spec.md |
-| 3.7 Retained planner session | ⬜ planned | slice-3.7-spec.md |
+| 3.7 Retained planner session | ⬜ next | slice-3.7-spec.md |
 | 3.8 Parent/child re-expressed as planner chain | ⬜ planned | slice-3.8-spec.md |
 
 ### Frontend / observability track (PRD §26)
@@ -232,7 +232,12 @@ of §26. The remaining §26 requirements are sliced here:
 | 3.3 Node-detail drill-down | ✅ done | slice-3.3-spec.md | Node detail: inputs/outputs/file-state/callback history; "link to facts" |
 | 3.4 Scheduler & leases view | ✅ done | slice-3.4-spec.md | Scheduler view (ready/blocked/waiting); active+suspended leases |
 | 3.5 File-state diff & residue/gatekeeper viewer | ✅ done | slice-3.5-spec.md | File-state diff & manifest summary |
-| 3.6 Human decisions, appeals & review-readiness | ⬜ next | slice-3.6-spec.md | Human decisions pending; appeals/oversight; review readiness/blockers |
+| 3.6 Human decisions, appeals & review-readiness | ✅ done | slice-3.6-spec.md | Human decisions pending; appeals/oversight; review readiness/blockers |
+
+**§26 frontend/observability track complete (3.2–3.6).** Graph runs are now
+inspectable end-to-end (timeline, node detail, scheduler/leases, file-state/
+gatekeeper, decisions/appeals/review) — the Phase 4 prerequisite for retiring the
+legacy oversight UI is satisfied.
 
 Known regression folded into 3.2 (now FIXED): graph-mode runs previously emitted
 **zero** `agent_output` activity events because `GraphDispatchExecutor` never
