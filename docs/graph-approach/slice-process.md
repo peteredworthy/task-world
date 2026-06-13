@@ -150,7 +150,13 @@ retires this gate**; slice 2.8 adds graph startup/crash recovery wiring.
 | Slice | Status | Spec |
 |---|---|---|
 | 2.7 Production graph run driver | ✅ done | slice-2.7-spec.md |
-| 2.8 Graph startup recovery wiring | ⬜ planned | (spec TBD) |
+| 2.8 Graph startup recovery wiring | ⬜ next | slice-2.8-spec.md |
+
+Slice 2.5 received a final independent crash-safety re-audit
+(`slice-audits/reaudit-2.5-final.md`, verdict ACCEPT, no gaps), so 2.8 is
+pure recovery wiring with no 2.5 remediation folded in. 2.8 is built on the
+graph execution path as the live dogfood gate (first real graph-mode run in
+the server).
 
 Slice 2.7 ran as orchestrator run `04818168` (codex_server / gpt-5.5,
 first-pass all-A). Audit-pass correction before merge: the builder's Alembic
