@@ -150,13 +150,40 @@ retires this gate**; slice 2.8 adds graph startup/crash recovery wiring.
 | Slice | Status | Spec |
 |---|---|---|
 | 2.7 Production graph run driver | ✅ done | slice-2.7-spec.md |
-| 2.8 Graph startup recovery wiring | ⬜ next | slice-2.8-spec.md |
+| 2.8 Graph run lifecycle + recovery | ✅ done | slice-2.8-spec.md |
 
 Slice 2.5 received a final independent crash-safety re-audit
-(`slice-audits/reaudit-2.5-final.md`, verdict ACCEPT, no gaps), so 2.8 is
-pure recovery wiring with no 2.5 remediation folded in. 2.8 is built on the
-graph execution path as the live dogfood gate (first real graph-mode run in
-the server).
+(`slice-audits/reaudit-2.5-final.md`, verdict ACCEPT, no gaps), so 2.8 carries
+no 2.5 remediation.
+
+### Dogfood gate outcome (live graph runs through the server)
+
+Running graph-mode runs through the production `GraphRunDriver` (the gate) was
+done directly rather than via a graph-built slice, because a graph run cannot
+build the fixes for its own lifecycle. The live runs surfaced and we fixed four
+real latent defects (each committed with tests):
+
+1. `_sweep_stale_runs` paused graph runs as `no_executor_running` at 60s —
+   graph runs now excluded from the legacy executor sweeper/startup recovery.
+2. Driver infinite-spin when an agent ends without a callback — no-progress
+   signature guard (schedule_tick emits per-tick audit events).
+3. `graph_outbox` UNIQUE(event_id) violation on re-driven runs — production
+   driver now uses UUID event ids + a wall clock.
+4. Operator cancel/pause did not stop the driver loop — `drive_to_quiescence`
+   now honours a `should_continue` check.
+
+**Proven live:** routine → graph compile → worker dispatch → real codex agent
+execution, surviving the sweeper, with UUID-safe ids, no crash/spin, and the
+§13 agent_died→requeue retry path firing. **Test-covered (integration):**
+worker → verifier → `accepted` → `run_state` completed → `Run.status`
+COMPLETED (`test_graph_run_driver.py`), dead-lease resume, idempotent re-arm.
+
+A fully-green live run to COMPLETED was blocked only by **codex account quota
+exhaustion** (sessions fail with "usage limit for GPT-5.3-Codex-Spark" even
+when the run requests gpt-5.5 — an external codex/app-server limit, not a graph
+defect; the run's model config threads correctly through
+`StaticGraphAgentFactory`). Re-run the live gate once codex quota resets, per
+the 2.8 spec's "Manual dogfood gate".
 
 Slice 2.7 ran as orchestrator run `04818168` (codex_server / gpt-5.5,
 first-pass all-A). Audit-pass correction before merge: the builder's Alembic
