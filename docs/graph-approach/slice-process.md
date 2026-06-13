@@ -231,8 +231,8 @@ of §26. The remaining §26 requirements are sliced here:
 | 3.2 Live graph-run activity timeline | ✅ done | slice-3.2-spec.md | Activity/event timeline (+ fixed the graph-run `on_output` regression) |
 | 3.3 Node-detail drill-down | ✅ done | slice-3.3-spec.md | Node detail: inputs/outputs/file-state/callback history; "link to facts" |
 | 3.4 Scheduler & leases view | ✅ done | slice-3.4-spec.md | Scheduler view (ready/blocked/waiting); active+suspended leases |
-| 3.5 File-state diff & residue/gatekeeper viewer | ⬜ next | slice-3.5-spec.md | File-state diff & manifest summary |
-| 3.6 Human decisions, appeals & review-readiness | ⬜ planned | slice-3.6-spec.md | Human decisions pending; appeals/oversight; review readiness/blockers |
+| 3.5 File-state diff & residue/gatekeeper viewer | ✅ done | slice-3.5-spec.md | File-state diff & manifest summary |
+| 3.6 Human decisions, appeals & review-readiness | ⬜ next | slice-3.6-spec.md | Human decisions pending; appeals/oversight; review readiness/blockers |
 
 Known regression folded into 3.2 (now FIXED): graph-mode runs previously emitted
 **zero** `agent_output` activity events because `GraphDispatchExecutor` never
