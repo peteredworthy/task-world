@@ -355,8 +355,8 @@ oversight UI.
 
 | Slice | Status | Spec | Depends on |
 |---|---|---|---|
-| 4.1 Graph runs become the default carrier | ⬜ planned | slice-4.1-spec.md | gate D, 3.2–3.6 |
-| 4.2 Retire the parent/child oversight layer | ⬜ planned | slice-4.2-spec.md | 3.8, 3.6, 4.1 |
+| 4.1 Graph runs become the default carrier | ✅ done (run 7ff67bbe) | slice-4.1-spec.md | gate D, 3.2–3.6 |
+| 4.2 Retire the parent/child oversight layer | ⬜ next | slice-4.2-spec.md | 3.8, 3.6, 4.1 |
 | 4.3 Conclude the carrier experiment (data) | ⬜ planned | slice-4.3-spec.md | 4.1, 4.2 |
 
 Execution order for the remaining work: dogfood gate (D) → 3.5 → 3.6 → 3.7 →
