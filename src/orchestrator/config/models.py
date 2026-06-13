@@ -351,6 +351,13 @@ class DryRunConfig(BaseModel):
     report_path: str
 
 
+class ChildRoutineRefConfig(BaseModel):
+    """Legacy child routine reference for planner-chain translation."""
+
+    routine: str
+    label: str | None = None
+
+
 class MCPServerConfig(BaseModel):
     """Configuration for an external MCP server available during a step."""
 
@@ -400,6 +407,7 @@ class StepConfig(BaseModel):
     transitions: StepTransitions | None = None
     type: StepType = StepType.STANDARD
     dry_run: DryRunConfig | None = None
+    child_routines: list[ChildRoutineRefConfig] = Field(default_factory=lambda: [])
     available_tools: list[str] | None = None
     mcp_servers: list[MCPServerConfig] | None = None
     step_auto_verify: list[AutoVerifyItemConfig] = Field(default_factory=lambda: [])
@@ -445,6 +453,8 @@ class StepConfig(BaseModel):
                 overlapping.append("type")
             if self.dry_run is not None:
                 overlapping.append("dry_run")
+            if self.child_routines:
+                overlapping.append("child_routines")
             if self.available_tools is not None:
                 overlapping.append("available_tools")
             if self.mcp_servers is not None:
@@ -461,6 +471,10 @@ class StepConfig(BaseModel):
             if self.title is None:
                 raise ValueError(
                     f"Step '{self.id}' must have a 'title' (or use 'file' to reference an external step)."
+                )
+            if self.child_routines and self.kind != "planner":
+                raise ValueError(
+                    f"Step '{self.id}' declares 'child_routines' but is not a planner step."
                 )
             if not self.tasks and self.kind != "planner":
                 raise ValueError(

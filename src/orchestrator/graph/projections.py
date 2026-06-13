@@ -39,6 +39,7 @@ class GraphProjection(TypedDict):
     planner_session_states: dict[str, str]
     planner_session_current_nodes: dict[str, str]
     planner_session_carryovers: dict[str, str | None]
+    planner_region_labels: dict[str, str]
 
 
 class SchedulerBlockedNode(TypedDict):
@@ -125,6 +126,7 @@ def initial_projection() -> GraphProjection:
         "planner_session_states": {},
         "planner_session_current_nodes": {},
         "planner_session_carryovers": {},
+        "planner_region_labels": {},
     }
 
 
@@ -195,6 +197,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "planner_session_states": dict(state.get("planner_session_states", {})),
         "planner_session_current_nodes": dict(state.get("planner_session_current_nodes", {})),
         "planner_session_carryovers": dict(state.get("planner_session_carryovers", {})),
+        "planner_region_labels": dict(state.get("planner_region_labels", {})),
     }
 
     if event.event_type == "run_lifecycle_changed":
@@ -224,6 +227,9 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 generation_index = event.payload.get("generation_index")
                 if isinstance(generation_index, int) and not isinstance(generation_index, bool):
                     next_state["planner_generations"][node_id] = generation_index
+                region_label = event.payload.get("region_label")
+                if isinstance(region_label, str):
+                    next_state["planner_region_labels"][node_id] = region_label
                 session_id = event.payload.get("session_id")
                 if isinstance(session_id, str):
                     next_state["planner_sessions"][node_id] = session_id
@@ -417,6 +423,7 @@ def project_planner_chain(events: list[EventEnvelope]) -> list[dict[str, Any]]:
             "generation_index": projection["planner_generations"].get(node_id, 0),
             "session_id": projection["planner_sessions"].get(node_id),
             "lease_generation": _latest_lease_generation(events, node_id),
+            "region_label": _planner_region_label(events, projection, node_id),
             "state": projection["node_states"].get(node_id),
             "successor_node_id": projection["planner_successors"].get(node_id),
         }
@@ -439,10 +446,15 @@ def project_planner_session(events: list[EventEnvelope]) -> dict[str, Any]:
             "carryover_record_id": None,
         }
 
-    generations = [
+    generations: list[dict[str, Any]] = [
         {
             "node_id": event.payload["node_id"],
             "lease_generation": event.payload["generation"],
+            "region_label": _planner_region_label(
+                events,
+                projection,
+                str(event.payload["node_id"]),
+            ),
             "state": _planner_generation_state(events, str(event.payload["lease_id"])),
         }
         for event in events
@@ -928,6 +940,48 @@ def _latest_lease_generation(events: list[EventEnvelope], node_id: str) -> int |
         if isinstance(value, int) and not isinstance(value, bool):
             generation = value
     return generation
+
+
+def _planner_region_label(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+    node_id: str,
+) -> str | None:
+    label = projection["planner_region_labels"].get(node_id)
+    if label is not None:
+        return label
+    generation_index = projection["planner_generations"].get(node_id)
+    if generation_index is None:
+        return None
+    labels = _seeded_planner_chain_labels(events)
+    return labels.get(generation_index)
+
+
+def _seeded_planner_chain_labels(events: list[EventEnvelope]) -> dict[int, str]:
+    labels: dict[int, str] = {}
+    for event in events:
+        if event.event_type != "node_created":
+            continue
+        raw_planner_chain = event.payload.get("planner_chain")
+        if not isinstance(raw_planner_chain, dict):
+            continue
+        planner_chain = cast(dict[str, Any], raw_planner_chain)
+        regions = planner_chain.get("regions")
+        if not isinstance(regions, list):
+            continue
+        for raw_region in cast(list[Any], regions):
+            if not isinstance(raw_region, dict):
+                continue
+            region = cast(dict[str, Any], raw_region)
+            generation_index = region.get("generation_index")
+            region_label = region.get("region_label")
+            if (
+                isinstance(generation_index, int)
+                and not isinstance(generation_index, bool)
+                and isinstance(region_label, str)
+            ):
+                labels.setdefault(generation_index, region_label)
+    return labels
 
 
 def _planner_generation_state(events: list[EventEnvelope], lease_id: str) -> str:

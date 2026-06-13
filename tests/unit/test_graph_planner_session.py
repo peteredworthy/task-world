@@ -147,8 +147,18 @@ def test_project_planner_session() -> None:
         "session_id": "session-1",
         "state": "attached",
         "generations": [
-            {"node_id": "planner-0", "lease_generation": 1, "state": "active"},
-            {"node_id": "planner-1", "lease_generation": 2, "state": "active"},
+            {
+                "node_id": "planner-0",
+                "lease_generation": 1,
+                "region_label": None,
+                "state": "active",
+            },
+            {
+                "node_id": "planner-1",
+                "lease_generation": 2,
+                "region_label": None,
+                "state": "active",
+            },
         ],
         "current_node_id": "planner-1",
         "carryover_record_id": "summary-carryover-1",

@@ -12,6 +12,7 @@ from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     EventEnvelope,
     compile_routine,
+    project_decision_view,
     project_planner_chain,
     project_planner_session,
     project_run_state,
@@ -35,17 +36,34 @@ class SequentialIds:
 
 
 @pytest.mark.asyncio
-async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
-    engine, session_factory = await _session_factory(tmp_path / "planner-session-flow.db")
+async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
+    engine, session_factory = await _session_factory(tmp_path / "parent-child-flow.db")
     controller = GraphController(
         session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
     )
-    run_id = "planner-session-flow"
+    run_id = "parent-child-flow"
     try:
-        await _seed_planner_run(controller, run_id)
+        await _seed_parent_child_run(controller, run_id)
         events = await _read_events(session_factory, run_id)
-        events, head_lease = await _complete_node(
-            session_factory, controller, run_id, "planner-plan", events
+        events = await _complete_node(session_factory, controller, run_id, "planner-parent", events)
+        events = await _command(
+            session_factory,
+            controller,
+            run_id,
+            "submit_patch",
+            _patch_payload(
+                events,
+                "patch-child-one",
+                "planner-parent",
+                _region_ops("one", "planner-child-two"),
+                carryover_record_id="summary-one",
+            ),
+        )
+        events = await _drive_region(session_factory, controller, run_id, events, "one")
+
+        assert project_run_state(events) == "active"
+        events = await _complete_node(
+            session_factory, controller, run_id, "planner-child-two", events
         )
         events = await _command(
             session_factory,
@@ -54,136 +72,71 @@ async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
             "submit_patch",
             _patch_payload(
                 events,
-                "patch-h1",
-                "planner-plan",
-                _region_ops("h1", "planner-1"),
-                carryover_record_id="carryover-h1",
+                "patch-child-two",
+                "planner-child-two",
+                _region_ops("two", None),
             ),
         )
-        events = await _drive_region(session_factory, controller, run_id, events, "h1")
-        events, successor_lease = await _complete_node(
-            session_factory, controller, run_id, "planner-1", events
-        )
-        events = await _command(
-            session_factory,
-            controller,
-            run_id,
-            "submit_patch",
-            _patch_payload(events, "patch-h2", "planner-1", _region_ops("h2", None)),
-        )
-        events = await _drive_region(session_factory, controller, run_id, events, "h2")
+        events = await _drive_region(session_factory, controller, run_id, events, "two")
 
-        session = project_planner_session(events)
-        assert session["session_id"] == head_lease.payload["session_id"]
-        assert successor_lease.payload["session_id"] == head_lease.payload["session_id"]
-        assert successor_lease.payload["generation"] != head_lease.payload["generation"]
-        assert session["generations"] == [
-            {
-                "node_id": "planner-plan",
-                "lease_generation": head_lease.payload["generation"],
-                "region_label": None,
-                "state": "released",
-            },
-            {
-                "node_id": "planner-1",
-                "lease_generation": successor_lease.payload["generation"],
-                "region_label": None,
-                "state": "released",
-            },
+        assert project_run_state(events) == "completed"
+        assert [entry["region_label"] for entry in project_planner_chain(events)] == [
+            "child-one",
+            "child-two",
         ]
-        assert any(
-            event.event_type == "session_state_changed"
-            and event.payload["state"] == "suspended"
-            and event.payload["lease_generation"] == head_lease.payload["generation"]
-            for event in events
-        )
-        assert any(
-            event.event_type == "session_state_changed"
-            and event.payload["state"] == "attached"
-            and event.payload["lease_generation"] == successor_lease.payload["generation"]
-            for event in events
-        )
+        assert project_planner_session(events)["carryover_record_id"] == "summary-one"
+        assert {event.run_id for event in events} == {run_id}
+        assert not any(_contains_legacy_child_artifact(event.payload) for event in events)
 
         replayed = await _read_events(session_factory, run_id)
         assert project_run_state(replayed) == project_run_state(events)
-        assert project_planner_session(replayed) == project_planner_session(events)
         assert project_planner_chain(replayed) == project_planner_chain(events)
+        assert project_planner_session(replayed) == project_planner_session(events)
     finally:
         await engine.dispose()
 
 
 @pytest.mark.asyncio
-async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> None:
-    engine, session_factory = await _session_factory(tmp_path / "planner-session-auth.db")
+async def test_child_oversight_maps_to_in_chain_appeal(tmp_path: Path) -> None:
+    engine, session_factory = await _session_factory(tmp_path / "parent-child-appeal.db")
     controller = GraphController(
         session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
     )
-    run_id = "planner-session-auth"
+    run_id = "parent-child-appeal"
     try:
-        await _seed_planner_run(controller, run_id)
+        await _seed_parent_child_run(controller, run_id)
         events = await _read_events(session_factory, run_id)
-        events, head_lease = await _complete_node(
-            session_factory, controller, run_id, "planner-plan", events
-        )
+        events = await _complete_node(session_factory, controller, run_id, "planner-parent", events)
         events = await _command(
             session_factory,
             controller,
             run_id,
             "submit_patch",
-            _patch_payload(events, "patch-h1", "planner-plan", _region_ops("h1", "planner-1")),
+            _patch_payload(
+                events,
+                "patch-child-appeal",
+                "planner-parent",
+                [
+                    *_region_ops("one", None),
+                    {
+                        "op": "create_appeal",
+                        "node_id": "appeal-child-one",
+                        "kind": "appeal",
+                        "state": "planned",
+                        "appealed_node_id": "verifier-one",
+                        "appeal_type": "invalid_test",
+                        "task_region_id": "region-one",
+                    },
+                ],
+            ),
         )
-        events = await _drive_region(session_factory, controller, run_id, events, "h1")
-        events = await _command(
-            session_factory,
-            controller,
-            run_id,
-            "schedule_tick",
-            {"base_snapshot_id": "snapshot-h1", "max_grants": 10},
-        )
-        successor_lease = next(
-            event
-            for event in events
-            if event.event_type == "lease_granted" and event.payload["node_id"] == "planner-1"
-        )
-        await _command(
-            session_factory,
-            controller,
-            run_id,
-            "acknowledge_start",
-            _start_payload(successor_lease),
-        )
-        events = await _command(
-            session_factory,
-            controller,
-            run_id,
-            "submit_callback",
-            {
-                **_callback_payload("planner-1", successor_lease, []),
-                "lease_generation": head_lease.payload["generation"],
-                "session_id": head_lease.payload["session_id"],
-                "idempotency_key": "stale-planner-1",
-            },
-        )
-        assert any(event.event_type == "callback_rejected_stale" for event in events)
 
-        events = await _command(
-            session_factory,
-            controller,
-            run_id,
-            "submit_callback",
-            _callback_payload("planner-1", successor_lease, []),
-        )
-        events = await _command(
-            session_factory,
-            controller,
-            run_id,
-            "submit_patch",
-            _patch_payload(events, "patch-h2", "planner-1", _region_ops("h2", None)),
-        )
-        events = await _drive_region(session_factory, controller, run_id, events, "h2")
-
-        assert project_run_state(events) == "completed"
-        assert project_planner_session(events)["session_id"] == head_lease.payload["session_id"]
+        projection = project_decision_view(events)
+        assert projection["appeals"] == [
+            {"node_id": "appeal-child-one", "state": "planned", "outcome": None}
+        ]
+        assert {event.run_id for event in events} == {run_id}
+        assert not any(_contains_legacy_child_artifact(event.payload) for event in events)
     finally:
         await engine.dispose()
 
@@ -196,12 +149,21 @@ async def _session_factory(
     return engine, create_session_factory(engine)
 
 
-async def _seed_planner_run(controller: GraphController, run_id: str) -> None:
+async def _seed_parent_child_run(controller: GraphController, run_id: str) -> None:
     routine = RoutineConfig(
-        id="planner",
-        name="Planner",
-        planner_generation_budget=8,
-        steps=[StepConfig(id="Plan", kind="planner", title="Plan")],
+        id="parent-child",
+        name="Parent Child",
+        steps=[
+            StepConfig(
+                id="Parent",
+                kind="planner",
+                title="Parent",
+                child_routines=[
+                    {"routine": "child-one"},
+                    {"routine": "child-two"},
+                ],
+            )
+        ],
     )
     compiled = compile_routine(routine, FixedClock(), SequentialIds(), run_id=run_id)
     await controller.handle_command(
@@ -212,7 +174,8 @@ async def _seed_planner_run(controller: GraphController, run_id: str) -> None:
     )
     position = await controller.current_position(run_id)
     result = await controller.handle_command(run_id, position, "accept_run", {})
-    await controller.handle_command(run_id, result.projection_position, "start", {})
+    result = await controller.handle_command(run_id, result.projection_position, "start", {})
+    assert result.projection_position > 0
 
 
 async def _complete_node(
@@ -221,7 +184,7 @@ async def _complete_node(
     run_id: str,
     node_id: str,
     events: list[EventEnvelope],
-) -> tuple[list[EventEnvelope], EventEnvelope]:
+) -> list[EventEnvelope]:
     events = await _command(
         session_factory,
         controller,
@@ -235,14 +198,13 @@ async def _complete_node(
         if event.event_type == "lease_granted" and event.payload["node_id"] == node_id
     )
     await _command(session_factory, controller, run_id, "acknowledge_start", _start_payload(lease))
-    events = await _command(
+    return await _command(
         session_factory,
         controller,
         run_id,
         "submit_callback",
         _callback_payload(node_id, lease, []),
     )
-    return events, lease
 
 
 async def _drive_region(
@@ -388,7 +350,7 @@ def _patch_payload(
         "ops": ops,
     }
     if carryover_record_id is not None:
-        payload["carryover_summary"] = carryover_record_id
+        payload["carryover_record_id"] = carryover_record_id
     return payload
 
 
@@ -432,7 +394,6 @@ def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:
     ]
     if successor_id is None:
         return ops
-    generation = int(successor_id.rsplit("-", 1)[1])
     ops.append(
         {
             "op": "create_node",
@@ -441,11 +402,10 @@ def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:
                 "kind": "planner",
                 "role": "planner",
                 "state": "planned",
-                "generation_index": generation,
+                "generation_index": 1,
                 "inputs": [
                     {"port": "region_summary", "direction": "input", "required": True},
                     {"port": "accepted_file_state", "direction": "input", "required": True},
-                    {"port": "session_carryover", "direction": "input", "required": False},
                 ],
             },
         }
@@ -460,7 +420,11 @@ def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:
                 "region_summary",
             ),
             _selector_edge(
-                f"edge-file-{prefix}", worker_id, "file_state", successor_id, "accepted_file_state"
+                f"edge-file-{prefix}",
+                worker_id,
+                "file_state",
+                successor_id,
+                "accepted_file_state",
             ),
         ]
     )
@@ -512,3 +476,15 @@ def _callback_payload(
             "output_records": output_records,
         },
     }
+
+
+def _contains_legacy_child_artifact(payload: dict[str, Any]) -> bool:
+    legacy_terms = {
+        "child_run_id",
+        "parent_run_id",
+        "worktree_path",
+        "child_worktree_path",
+        "merge_step",
+        "merge_commit",
+    }
+    return any(term in payload for term in legacy_terms) or payload.get("kind") == "merge"

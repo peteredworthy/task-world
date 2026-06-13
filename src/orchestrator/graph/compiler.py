@@ -222,46 +222,58 @@ class _Compiler:
 
     def _create_planner_head(self, step: StepConfig, step_index: int) -> str:
         planner_id = f"planner-{_slug(step.id)}"
-        self._node(
-            {
-                "node_id": planner_id,
-                "kind": "planner",
-                "state": "planned",
-                "role": "planner",
-                "generation_index": 0,
-                "session_intent": "retained_planner_session",
-                "step_id": step.id,
-                "step_index": step_index,
-                "title": step.title,
-                "step_context": step.step_context,
-                "authority": {
-                    "allowed_actions": ["submit_patch", "request_clarification"],
-                    "resource_claims": [{"mode": "graph_write", "scope": "graph"}],
+        payload: dict[str, Any] = {
+            "node_id": planner_id,
+            "kind": "planner",
+            "state": "planned",
+            "role": "planner",
+            "generation_index": 0,
+            "session_intent": "retained_planner_session",
+            "step_id": step.id,
+            "step_index": step_index,
+            "title": step.title,
+            "step_context": step.step_context,
+            "authority": {
+                "allowed_actions": ["submit_patch", "request_clarification"],
+                "resource_claims": [{"mode": "graph_write", "scope": "graph"}],
+            },
+            "inputs": [
+                {
+                    "port": "routine_snapshot",
+                    "direction": "input",
+                    "schema": "RoutineSnapshot",
+                    "required": True,
+                }
+            ],
+            "outputs": [
+                {
+                    "port": "graph_patch",
+                    "direction": "output",
+                    "schema": "GraphPatch",
+                    "record_layers": ["graph_record"],
                 },
-                "inputs": [
+                {
+                    "port": "completion",
+                    "direction": "output",
+                    "schema": "NodeCompletion",
+                    "record_layers": ["graph_record"],
+                },
+            ],
+        }
+        if step.child_routines:
+            payload["planner_chain"] = {
+                "source": "legacy_parent_child",
+                "regions": [
                     {
-                        "port": "routine_snapshot",
-                        "direction": "input",
-                        "schema": "RoutineSnapshot",
-                        "required": True,
+                        "generation_index": index,
+                        "region_label": child.label or child.routine,
+                        "child_routine": child.routine,
                     }
-                ],
-                "outputs": [
-                    {
-                        "port": "graph_patch",
-                        "direction": "output",
-                        "schema": "GraphPatch",
-                        "record_layers": ["graph_record"],
-                    },
-                    {
-                        "port": "completion",
-                        "direction": "output",
-                        "schema": "NodeCompletion",
-                        "record_layers": ["graph_record"],
-                    },
+                    for index, child in enumerate(step.child_routines)
                 ],
             }
-        )
+            payload["region_label"] = step.child_routines[0].label or step.child_routines[0].routine
+        self._node(payload)
         self._bind_routine_snapshot(planner_id)
         return planner_id
 

@@ -74,6 +74,7 @@ def test_empty_projection() -> None:
         "planner_session_states": {},
         "planner_session_current_nodes": {},
         "planner_session_carryovers": {},
+        "planner_region_labels": {},
     }
 
 
