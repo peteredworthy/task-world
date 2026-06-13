@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import RunStatus
+from datetime import UTC, datetime
+from uuid import uuid4
+
 from orchestrator.config.models import RoutineConfig
 from orchestrator.graph import (
     EventEnvelope,
-    FakeClock,
-    SequentialIdGenerator,
     project_leases,
     project_node_states,
     project_ready_nodes,
@@ -38,6 +39,25 @@ if TYPE_CHECKING:
     from orchestrator.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
+
+
+class SystemClock:
+    """Wall-clock time source for production graph runs (real lease expiry)."""
+
+    def now(self) -> datetime:
+        return datetime.now(UTC)
+
+
+class UuidIdGenerator:
+    """Globally-unique id source for production graph runs.
+
+    Event ids must be unique across driver invocations: the graph_outbox table
+    is keyed by event_id, so a re-driven/resumed run that regenerated sequential
+    ids would collide with already-stored outbox rows. UUIDs avoid that.
+    """
+
+    def next_id(self, prefix: str = "") -> str:
+        return f"{prefix}-{uuid4().hex}"
 
 
 @dataclass(frozen=True)
@@ -96,8 +116,8 @@ class GraphRunDriver:
     ) -> None:
         self._session_factory = session_factory
         self._create_service = create_service
-        self._clock = clock or FakeClock()
-        self._id_gen = id_gen or SequentialIdGenerator()
+        self._clock = clock or SystemClock()
+        self._id_gen = id_gen or UuidIdGenerator()
         self._runtime_builder = runtime_builder or build_graph_runtime
         self._dispatcher_factory = dispatcher_factory or OutboxDispatcher
 
