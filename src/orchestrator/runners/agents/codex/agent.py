@@ -28,7 +28,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-from orchestrator.git import get_agent_cache_write_paths, get_worktree_git_write_paths
+from orchestrator.git import (
+    WorktreeCommitError,
+    get_agent_cache_write_paths,
+    get_worktree_git_write_paths,
+)
 from orchestrator.runners.agents.codex.common import (
     CODEX_SERVER_TOOL_ALLOWLIST,
     JsonRpcTransport,
@@ -627,7 +631,32 @@ class CodexServerAgent:
                     parser.record_dynamic_tool_result(
                         str(req_id), success=False, output=str(cb_exc)
                     )
-                    await transport.send(build_dynamic_tool_call_response(req_id, success=False))
+                    await transport.send(
+                        build_dynamic_tool_call_response(req_id, success=False, output=str(cb_exc))
+                    )
+                except WorktreeCommitError as commit_exc:
+                    # The agent submitted but the pre-submit commit gate (ruff /
+                    # pyright / pytest pre-commit hooks) failed.  This is a
+                    # builder-fixable rejection, not an infra failure: feed the
+                    # hook output back to the agent as a failed tool result and
+                    # CONTINUE the session so it can fix and resubmit — mirroring
+                    # the HTTP /submit endpoint's 409 reject-with-feedback. The
+                    # run stays ACTIVE; only a RunWorktreeCommitFailed event was
+                    # recorded by the service.  This must NOT crash the session.
+                    feedback = (
+                        "Submission rejected: pre-submit checks failed. Fix the "
+                        "following and call submit again:\n" + str(commit_exc)
+                    )
+                    logger.warning(
+                        "CodexServerAgent: submission rejected by commit gate for "
+                        "tool %r — feeding back to agent and continuing: %s",
+                        tool_name,
+                        commit_exc,
+                    )
+                    parser.record_dynamic_tool_result(str(req_id), success=False, output=feedback)
+                    await transport.send(
+                        build_dynamic_tool_call_response(req_id, success=False, output=feedback)
+                    )
                 except Exception as cb_exc:
                     # Callback raised an unexpected error (GateBlockedError, DB error, etc.).
                     # Send failure response to unblock the codex server, then re-raise

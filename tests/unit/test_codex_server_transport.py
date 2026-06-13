@@ -20,6 +20,7 @@ from typing import Any, cast
 
 import pytest
 
+from orchestrator.git import WorktreeCommitError
 from orchestrator.runners import CodexServerAgent, RealStdioTransport
 from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
@@ -372,6 +373,51 @@ async def test_execute_silently_drops_disallowed_tool_call_events() -> None:
     )
 
     assert submitted == [True]
+
+
+async def test_execute_submit_commit_failure_feeds_back_and_continues() -> None:
+    """A submit whose commit gate fails is rejected with feedback, not crashed.
+
+    Regression: a WorktreeCommitError raised by on_submit (the pre-submit
+    ruff/pyright/pytest commit gate) used to bubble up through the generic
+    exception handler and kill the codex session (AgentExecutionError →
+    run paused as agent_execution_error). The builder-fixable rejection must
+    instead be returned to the agent as a failed tool result carrying the hook
+    output, so it can fix and resubmit within the same session — mirroring the
+    HTTP /submit endpoint's 409 reject-with-feedback.
+    """
+    notifications = [
+        _tool_call_request("submit", {}, 11),
+        _turn_completed(),
+    ]
+    agent, transport = _make_agent(notifications)
+    submit_calls: list[bool] = []
+
+    async def failing_submit() -> None:
+        submit_calls.append(True)
+        raise WorktreeCommitError(
+            "/tmp/worktree",
+            "pyright..............Failed\n  graph.py:154 error: ...",
+        )
+
+    # Must NOT raise — the session continues past the rejected submit.
+    result = await agent.execute(
+        context=_ctx(),
+        on_checklist_update=_noop_checklist,
+        on_submit=failing_submit,
+    )
+
+    assert submit_calls == [True]
+    assert isinstance(result, ExecutionResult)
+    # A failure tool-call response for the submit request (id=11) was sent back
+    # to the agent, carrying the actionable hook output as feedback.
+    submit_responses = [m for m in transport.sent if m.get("id") == 11 and "result" in m]
+    assert submit_responses, "No tool-call response was sent for the submit request"
+    resp = submit_responses[-1]
+    assert resp["result"]["success"] is False
+    text = resp["result"]["contentItems"][0]["text"]
+    assert "Submission rejected" in text
+    assert "pyright" in text
 
 
 async def test_execute_tool_call_event_fires_matching_callback() -> None:

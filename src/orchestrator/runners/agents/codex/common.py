@@ -152,17 +152,27 @@ def extract_dynamic_tool_call(
     return (int(req_id), tool_name, tool_args)
 
 
-def build_dynamic_tool_call_response(req_id: int, success: bool = True) -> dict[str, Any]:
+def build_dynamic_tool_call_response(
+    req_id: int, success: bool = True, output: str | None = None
+) -> dict[str, Any]:
     """Build the JSON-RPC response for an ``item/tool/call`` server request.
 
     Args:
         req_id: The request ID from the server's ``item/tool/call`` message.
         success: Whether the tool call succeeded.
+        output: Optional detail delivered to the agent as the tool result text.
+            When provided it REPLACES the generic message — this is how a
+            rejected submission's actionable feedback (failing pre-submit
+            checks, invalid-state errors) reaches the agent so it can fix and
+            retry within the same session.
 
     Returns:
         A JSON-RPC 2.0 response dict to send back to the server.
     """
-    text = "Tool executed successfully." if success else "Tool execution failed."
+    if output:
+        text = output
+    else:
+        text = "Tool executed successfully." if success else "Tool execution failed."
     return {
         "jsonrpc": "2.0",
         "id": req_id,
