@@ -436,12 +436,14 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         stale_run_sweeper = _asyncio.create_task(_sweep_stale_runs())
 
     # Start signal consumer — must start before any signals can be enqueued (R3).
+    from orchestrator.api.deps import make_graph_runner
     from orchestrator.workflow import SignalConsumer
 
     signal_consumer = SignalConsumer(
         session_factory=session_factory,
         create_service=service_factory,
         workflow_runner=make_workflow_runner(getattr(app.state, "runner_executor", None)),
+        graph_runner=make_graph_runner(session_factory, service_factory),
         workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
     )
     app.state.signal_consumer = signal_consumer

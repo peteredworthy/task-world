@@ -109,6 +109,7 @@ class CreateRunCommand(BaseModel):
     status: RunStatus = RunStatus.DRAFT
     pause_reason: str | None = None
     last_error: str | None = None
+    execution_mode: str = "legacy"
     config: dict[str, Any] = Field(default_factory=dict)
     parent_run_id: str | None = None
     parent_task_id: str | None = None
@@ -463,6 +464,7 @@ def build_create_run_command(run: Run, *, project_path: str = "") -> CreateRunCo
         status=run.status,
         pause_reason=run.pause_reason,
         last_error=run.last_error,
+        execution_mode=run.execution_mode,
         config=run.config,
         parent_run_id=run.parent_run_id,
         parent_task_id=run.parent_task_id,
@@ -524,6 +526,7 @@ async def handle_create_run(
         status=cmd.status,
         pause_reason=cmd.pause_reason,
         last_error=cmd.last_error,
+        execution_mode=cmd.execution_mode,
         config=cmd.config,
         parent_run_id=cmd.parent_run_id,
         parent_task_id=cmd.parent_task_id,

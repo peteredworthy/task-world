@@ -501,6 +501,7 @@ class RoutineConfig(BaseModel):
     steps: list[StepConfig]
     builder_agent: str | None = None
     verifier_agent: str | None = None
+    execution_mode: Literal["legacy", "graph"] = "legacy"
     env_files: list[EnvFileConfig] = Field(default_factory=lambda: [])
     clarifications: ClarificationsConfig | None = None
     strict_validation: bool = False

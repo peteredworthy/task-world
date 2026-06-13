@@ -45,6 +45,7 @@ class RunModel(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, index=True)
     pause_reason: Mapped[str | None] = mapped_column(String, nullable=True)
     last_error: Mapped[str | None] = mapped_column(String, nullable=True)
+    execution_mode: Mapped[str] = mapped_column(String, nullable=False, default="legacy")
 
     # Routine reference
     routine_id: Mapped[str | None] = mapped_column(String, nullable=True)

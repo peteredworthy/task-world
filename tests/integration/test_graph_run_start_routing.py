@@ -1,0 +1,130 @@
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from orchestrator.config.enums import AgentRunnerType
+from orchestrator.config.models import RoutineConfig
+from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.state.factory import create_run_from_routine
+from orchestrator.workflow import SignalConsumer, WorkflowService
+
+
+def _routine_payload() -> dict[str, Any]:
+    return {
+        "id": "graph-routing",
+        "name": "Graph Routing",
+        "steps": [
+            {
+                "id": "step-1",
+                "title": "Step 1",
+                "tasks": [{"id": "task-1", "title": "Task"}],
+            }
+        ],
+    }
+
+
+async def test_create_run_records_execution_mode(
+    _shared_app_fixture: tuple[AsyncClient, Any, Path, Path, Any],
+    git_repo: Path,
+) -> None:
+    client, _drain, _, _, _ = _shared_app_fixture
+
+    response = await client.post(
+        "/api/runs",
+        json={
+            "repo_name": git_repo.name,
+            "branch": "main",
+            "routine_embedded": _routine_payload(),
+            "execution_mode": "graph",
+            "agent_runner_type": "cli_subprocess",
+        },
+    )
+
+    assert response.status_code == 201
+    created = response.json()
+    fetched = await client.get(f"/api/runs/{created['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["execution_mode"] == "graph"
+
+
+async def test_legacy_run_defaults_execution_mode_legacy(
+    _shared_app_fixture: tuple[AsyncClient, Any, Path, Path, Any],
+    git_repo: Path,
+) -> None:
+    client, _drain, _, _, _ = _shared_app_fixture
+
+    response = await client.post(
+        "/api/runs",
+        json={
+            "repo_name": git_repo.name,
+            "branch": "main",
+            "routine_embedded": _routine_payload(),
+            "agent_runner_type": "cli_subprocess",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["execution_mode"] == "legacy"
+
+
+@pytest.mark.asyncio
+async def test_run_start_routes_graph_mode_to_driver(tmp_path: Path) -> None:
+    engine = create_engine(tmp_path / "routing.db")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    graph_called = asyncio.Event()
+    workflow_called = False
+    called_run_ids: list[str] = []
+
+    async def create_service(session: AsyncSession) -> WorkflowService:
+        return WorkflowService(session)
+
+    async def graph_runner(run_id: str) -> None:
+        called_run_ids.append(run_id)
+        graph_called.set()
+
+    async def workflow_runner(workflow: Any) -> None:
+        nonlocal workflow_called
+        workflow_called = True
+
+    try:
+        run_id = "graph-routing-run"
+        await _create_run(session_factory, run_id, execution_mode="graph")
+        consumer = SignalConsumer(
+            session_factory,
+            create_service,
+            workflow_runner=workflow_runner,
+            graph_runner=graph_runner,
+            poll_interval=100.0,
+        )
+        async with session_factory() as session:
+            service = await create_service(session)
+            await consumer._handle_run_start(run_id, None, session, service)
+
+        await asyncio.wait_for(graph_called.wait(), timeout=2)
+        assert called_run_ids == [run_id]
+        assert workflow_called is False
+        assert run_id not in consumer._active_workflows
+    finally:
+        await engine.dispose()
+
+
+async def _create_run(
+    session_factory: async_sessionmaker[AsyncSession],
+    run_id: str,
+    *,
+    execution_mode: str,
+) -> None:
+    routine = RoutineConfig.model_validate(_routine_payload())
+    run = create_run_from_routine(routine, repo_name="routing-repo", source_branch="main")
+    run.id = run_id
+    run.execution_mode = execution_mode
+    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+    async with session_factory() as session:
+        await WorkflowService(session).create_run(run)

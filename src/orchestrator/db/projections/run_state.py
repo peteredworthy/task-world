@@ -177,7 +177,7 @@ class RunStateProjector:
                     text(
                         "INSERT OR IGNORE INTO runs"
                         " (id, repo_name, status, pause_reason, last_error,"
-                        " config, routine_id, parent_run_id, parent_task_id,"
+                        " execution_mode, config, routine_id, parent_run_id, parent_task_id,"
                         " routine_sha, routine_source, routine_embedded,"
                         " routine_path, routine_commit, parent_slice_id,"
                         " runner_type, runner_config, verifier_model,"
@@ -190,7 +190,7 @@ class RunStateProjector:
                         " token_usage_by_model,"
                         " created_at, updated_at, started_at, completed_at, runner_started_at)"
                         " VALUES (:id, :repo_name, :status, :pause_reason, :last_error,"
-                        " :config, :routine_id,"
+                        " :execution_mode, :config, :routine_id,"
                         " :parent_run_id, :parent_task_id,"
                         " :routine_sha, :routine_source, :routine_embedded,"
                         " :routine_path, :routine_commit, :parent_slice_id,"
@@ -210,6 +210,7 @@ class RunStateProjector:
                         "status": getattr(event.status, "value", event.status),
                         "pause_reason": event.pause_reason,
                         "last_error": event.last_error,
+                        "execution_mode": event.execution_mode,
                         "config": json.dumps(event.config),
                         "routine_id": event.routine_id or None,
                         "parent_run_id": event.parent_run_id,
@@ -478,7 +479,7 @@ class RunStateProjector:
             text(
                 "INSERT OR IGNORE INTO runs"
                 " (id, repo_name, status, pause_reason, last_error,"
-                " routine_id, routine_sha, routine_source, routine_embedded,"
+                " execution_mode, routine_id, routine_sha, routine_source, routine_embedded,"
                 " routine_path, routine_commit, parent_run_id, parent_task_id, parent_slice_id,"
                 " oversight_state, runner_type, runner_config, verifier_model,"
                 " worktree_enabled, worktree_path, delete_worktree_on_completion,"
@@ -489,7 +490,7 @@ class RunStateProjector:
                 " total_tokens_cache, total_duration_ms, total_num_actions,"
                 " token_usage_by_model)"
                 " VALUES (:id, :repo_name, :status, :pause_reason, :last_error,"
-                " :routine_id, :routine_sha, :routine_source, :routine_embedded,"
+                " :execution_mode, :routine_id, :routine_sha, :routine_source, :routine_embedded,"
                 " :routine_path, :routine_commit, :parent_run_id, :parent_task_id,"
                 " :parent_slice_id,"
                 " :oversight_state, :runner_type, :runner_config, :verifier_model,"
@@ -507,6 +508,7 @@ class RunStateProjector:
                 "status": snapshot.get("status") or getattr(event.status, "value", event.status),
                 "pause_reason": snapshot.get("pause_reason"),
                 "last_error": snapshot.get("last_error"),
+                "execution_mode": snapshot.get("execution_mode") or event.execution_mode,
                 "routine_id": snapshot.get("routine_id") or event.routine_id or None,
                 "routine_sha": snapshot.get("routine_sha"),
                 "routine_source": snapshot.get("routine_source"),

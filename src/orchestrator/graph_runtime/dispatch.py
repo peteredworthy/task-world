@@ -583,6 +583,8 @@ def _output_records_for_submit(
     candidate_id = str(node.get("candidate_id") or f"candidate-{context.node_id}")
     task_region_id = str(node.get("task_region_id") or context.node_id)
     attempt_number = int(node.get("attempt_number", 0))
+    if context.node_kind == "planner":
+        return []
     if context.node_kind == "verifier":
         verdict = "passed" if _grades_pass(grades) else "failed"
         return [

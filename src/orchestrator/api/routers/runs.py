@@ -313,6 +313,7 @@ def _run_to_response(run: Run, *, is_graph_backed: bool = False) -> RunResponse:
         pause_reason=run.pause_reason,
         is_graph_backed=is_graph_backed,
         last_error=run.last_error,
+        execution_mode=run.execution_mode,
         routine_id=run.routine_id,
         routine_sha=run.routine_sha,
         routine_source=run.routine_source.value if run.routine_source else None,
@@ -448,6 +449,9 @@ def _build_run_from_request(
 
     if request.merge_strategy is not None:
         run.merge_strategy = request.merge_strategy
+
+    routine_execution_mode = getattr(routine_config, "execution_mode", None)
+    run.execution_mode = request.execution_mode or routine_execution_mode or "legacy"
 
     if request.agent_runner_type is not None:
         run.agent_runner_type = AgentRunnerType(request.agent_runner_type)

@@ -13,6 +13,7 @@ from orchestrator.config.enums import AgentRunnerType, MergeStrategy
 
 _VALID_AGENT_TYPES = [e.value for e in AgentRunnerType]
 _VALID_MERGE_STRATEGIES = [e.value for e in MergeStrategy]
+_VALID_EXECUTION_MODES = ["legacy", "graph"]
 
 
 def _validate_agent_runner_type(v: str | None) -> str | None:
@@ -49,6 +50,7 @@ class CreateRunRequest(ApiModel):
     agent_runner_config: dict[str, Any] = {}
     env_files: EnvFileRequestConfig | None = None
     merge_strategy: str | None = None
+    execution_mode: str | None = None
 
     @field_validator("agent_runner_type", mode="before")
     @classmethod
@@ -64,6 +66,18 @@ class CreateRunRequest(ApiModel):
         if lowered not in _VALID_MERGE_STRATEGIES:
             raise ValueError(
                 f"Invalid merge_strategy '{v}'. Valid options: {', '.join(_VALID_MERGE_STRATEGIES)}"
+            )
+        return lowered
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        lowered = v.lower()
+        if lowered not in _VALID_EXECUTION_MODES:
+            raise ValueError(
+                f"Invalid execution_mode '{v}'. Valid options: {', '.join(_VALID_EXECUTION_MODES)}"
             )
         return lowered
 
@@ -89,6 +103,7 @@ class CreateChildRunRequest(ApiModel):
     agent_runner_config: dict[str, Any] = {}
     env_files: EnvFileRequestConfig | None = None
     merge_strategy: str | None = None
+    execution_mode: str | None = None
     parent_slice_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
     next_action_decision: Literal[
         "continue",
@@ -111,6 +126,18 @@ class CreateChildRunRequest(ApiModel):
         if lowered not in _VALID_MERGE_STRATEGIES:
             raise ValueError(
                 f"Invalid merge_strategy '{v}'. Valid options: {', '.join(_VALID_MERGE_STRATEGIES)}"
+            )
+        return lowered
+
+    @field_validator("execution_mode", mode="before")
+    @classmethod
+    def validate_execution_mode(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        lowered = v.lower()
+        if lowered not in _VALID_EXECUTION_MODES:
+            raise ValueError(
+                f"Invalid execution_mode '{v}'. Valid options: {', '.join(_VALID_EXECUTION_MODES)}"
             )
         return lowered
 
@@ -316,6 +343,7 @@ class RunResponse(ApiModel):
     pause_reason: str | None = None
     last_error: str | None = None
     is_graph_backed: bool = False
+    execution_mode: str = "legacy"
     routine_id: str | None = None
     routine_sha: str | None = None
     routine_source: str | None = None

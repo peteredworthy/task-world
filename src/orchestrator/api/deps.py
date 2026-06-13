@@ -362,3 +362,18 @@ def make_workflow_preparer(
         return await executor.prepare_worktree(run_id, reset_worktree=reset_worktree)
 
     return _prepare
+
+
+def make_graph_runner(
+    session_factory: async_sessionmaker[AsyncSession],
+    service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]],
+) -> Callable[[str], Awaitable[None]]:
+    """Return a graph run driver callback for ``SignalConsumer``."""
+
+    async def _run(run_id: str) -> None:
+        from orchestrator.workflow.graph_driver import GraphRunDriver
+
+        driver = GraphRunDriver(session_factory, service_factory)
+        await driver.run(run_id)
+
+    return _run

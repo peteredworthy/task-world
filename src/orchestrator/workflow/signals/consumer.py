@@ -63,6 +63,7 @@ class SignalConsumer:
         *,
         poll_interval: float = 0.1,
         workflow_runner: Callable[[RunWorkflow], Awaitable[None]] | None = None,
+        graph_runner: Callable[[str], Awaitable[None]] | None = None,
         workflow_preparer: Callable[[str, dict[str, Any] | None], Awaitable[bool]] | None = None,
         projector: RunLifecycleProjector | None = None,
     ) -> None:
@@ -70,6 +71,7 @@ class SignalConsumer:
         self._create_service = create_service
         self._poll_interval = poll_interval
         self._workflow_runner = workflow_runner
+        self._graph_runner = graph_runner
         self._workflow_preparer = workflow_preparer
         if projector is None:
             from orchestrator.db import RunLifecycleProjector
@@ -79,6 +81,7 @@ class SignalConsumer:
 
         # RunWorkflow instances owned by this consumer (keyed by run_id)
         self._active_workflows: dict[str, RunWorkflow] = {}
+        self._active_graph_runs: set[str] = set()
         # Per-run signal-processing tasks
         self._run_tasks: dict[str, asyncio.Task[None]] = {}
 
@@ -376,7 +379,7 @@ class SignalConsumer:
         session: AsyncSession,
         service: WorkflowService,
     ) -> None:
-        """RUN_START: DRAFT → ACTIVE, create RunWorkflow, register."""
+        """RUN_START: DRAFT → ACTIVE, create the selected run driver, register."""
         if self._workflow_preparer is not None:
             prepared = await self._workflow_preparer(run_id, payload)
             if not prepared:
@@ -387,6 +390,13 @@ class SignalConsumer:
                 return
 
         run = await service.apply_start_run(run_id)
+        if getattr(run, "execution_mode", "legacy") == "graph":
+            self._active_graph_runs.add(run_id)
+            logger.info("SignalConsumer: RUN_START for %s — graph driver registered", run_id)
+            if self._graph_runner is not None:
+                asyncio.create_task(self._safe_run_graph_driver(run_id))
+            return
+
         workflow = RunWorkflow(
             run_id=run_id,
             agent_runner_type=run.agent_runner_type,
@@ -567,6 +577,18 @@ class SignalConsumer:
             logger.exception("SignalConsumer: workflow for %s failed", run_id)
         finally:
             self._active_workflows.pop(run_id, None)
+
+    async def _safe_run_graph_driver(self, run_id: str) -> None:
+        """Run a graph driver via the injected callback, cleaning up on completion."""
+        try:
+            if self._graph_runner is not None:
+                await self._graph_runner(run_id)
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            logger.exception("SignalConsumer: graph driver for %s failed", run_id)
+        finally:
+            self._active_graph_runs.discard(run_id)
 
     # ------------------------------------------------------------------
     # Startup redelivery

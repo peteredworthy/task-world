@@ -745,6 +745,43 @@ class WorkflowService:
         await commit_with_event_outbox(self._session)
         return await self._repo.get(run_id)
 
+    async def apply_complete_run(self, run_id: str) -> Run:
+        """Complete a run (ACTIVE -> COMPLETED) via event append and projection."""
+        run = await self._repo.get(run_id)
+        if run.status == RunStatus.COMPLETED:
+            return run
+        if run.status != RunStatus.ACTIVE:
+            raise InvalidTransitionError(run.status.value, RunStatus.COMPLETED.value)
+
+        now = self._clock.now()
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=run.status,
+                new_status=RunStatus.COMPLETED,
+                timestamp=now,
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
+        result = await self._repo.get(run_id)
+
+        if self._env_lifecycle is not None and result.worktree_path and result.env_file_specs:
+            await self._env_lifecycle.on_run_end(
+                run_id=run_id,
+                repo_name=result.repo_name,
+                worktree_path=Path(result.worktree_path),
+                success=True,
+            )
+
+        worktree_manager = self._create_worktree_manager(result)
+        if worktree_manager is not None:
+            handle_run_completion(result, worktree_manager)
+
+        return result
+
     async def _pause_or_cancel_run_for_parent_control(
         self,
         parent: Run,
