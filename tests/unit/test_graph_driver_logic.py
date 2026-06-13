@@ -142,3 +142,42 @@ def test_outcome_classification() -> None:
     assert blocked.blocked_reason == "graph quiescent without completion"
     assert failed.completed is False
     assert failed.blocked_reason == "graph failed"
+
+
+@pytest.mark.asyncio
+async def test_drive_stops_when_should_continue_false() -> None:
+    """An external cancel/pause (should_continue → False) halts the drive loop
+    immediately, without issuing a schedule_tick — so a cancelled graph run
+    stops retrying dead agents."""
+    controller = RecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+    reader = ScriptedProjectionReader(
+        snapshots=[
+            GraphProjectionSnapshot(
+                run_state="active",
+                ready_nodes=["worker-1"],
+                active_leases={},
+                schedulable_nodes=["worker-1"],
+                task_states={"s/t": "in_progress"},
+            )
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+
+    async def never_continue() -> bool:
+        return False
+
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+        should_continue=never_continue,
+    )
+
+    assert controller.commands == []  # no schedule_tick issued
+    assert dispatcher.calls == 0
+    assert outcome.completed is False

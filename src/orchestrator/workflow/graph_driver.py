@@ -216,17 +216,27 @@ class GraphRunDriver:
                     "GraphRunDriver: recovery for %s failed; proceeding to drive", run_id
                 )
 
+        async def _still_active() -> bool:
+            current = await self._get_run(run_id)
+            return current.status == RunStatus.ACTIVE
+
         outcome = await self.drive_to_quiescence(
             run_id,
             controller=controller,
             dispatcher=dispatcher,
             executor=executor,
             read_projection=self._read_projection,
+            should_continue=_still_active,
         )
-        if outcome.completed:
-            await self._apply_complete(run_id)
-        else:
-            await self._apply_pause(run_id, "graph_blocked", outcome.blocked_reason)
+        # Only bridge graph state onto a run that is still ACTIVE. If the run was
+        # cancelled/paused/failed out from under the driver, leave its status as
+        # the operator/other path set it.
+        current = await self._get_run(run_id)
+        if current.status == RunStatus.ACTIVE:
+            if outcome.completed:
+                await self._apply_complete(run_id)
+            else:
+                await self._apply_pause(run_id, "graph_blocked", outcome.blocked_reason)
         return outcome
 
     async def drive_to_quiescence(
@@ -237,9 +247,15 @@ class GraphRunDriver:
         dispatcher: GraphLoopDispatcher,
         executor: GraphLoopExecutor,
         read_projection: Callable[[str], Awaitable[GraphProjectionSnapshot]],
+        should_continue: Callable[[], Awaitable[bool]] | None = None,
     ) -> GraphRunOutcome:
         previous_signature: tuple[Any, ...] | None = None
         while True:
+            # Stop driving if the run was cancelled/paused/failed externally, so
+            # an operator action (or a failed bridge) halts the agent-dispatch
+            # loop instead of retrying dead agents indefinitely.
+            if should_continue is not None and not await should_continue():
+                return classify_graph_outcome(run_id, await read_projection(run_id))
             position = await controller.current_position(run_id)
             await controller.handle_command(
                 run_id,
