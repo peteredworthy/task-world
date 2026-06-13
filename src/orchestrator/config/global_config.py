@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
+
 from pydantic import BaseModel
 
 from orchestrator.config.models import NudgerConfig as AgentNudgerConfig
@@ -23,6 +24,10 @@ class DatabaseConfig(BaseModel):
 
 class RoutinesConfig(BaseModel):
     dirs: list[str] = []
+
+
+class ExecutionConfig(BaseModel):
+    default_execution_mode: Literal["legacy", "graph"] = "graph"
 
 
 class AgentsConfig(BaseModel):
@@ -99,6 +104,7 @@ class GlobalConfig(BaseModel):
     server: ServerConfig = ServerConfig()
     database: DatabaseConfig = DatabaseConfig()
     routines: RoutinesConfig = RoutinesConfig()
+    execution: ExecutionConfig = ExecutionConfig()
     agents: AgentsConfig = AgentsConfig()
     dashboard: DashboardConfig = DashboardConfig()
     nudger: NudgerConfig = NudgerConfig()

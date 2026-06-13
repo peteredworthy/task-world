@@ -53,7 +53,7 @@ async def test_create_run_records_execution_mode(
     assert fetched.json()["execution_mode"] == "graph"
 
 
-async def test_legacy_run_defaults_execution_mode_legacy(
+async def test_explicit_legacy_run_records_execution_mode_legacy(
     _shared_app_fixture: tuple[AsyncClient, Any, Path, Path, Any],
     git_repo: Path,
 ) -> None:
@@ -65,6 +65,7 @@ async def test_legacy_run_defaults_execution_mode_legacy(
             "repo_name": git_repo.name,
             "branch": "main",
             "routine_embedded": _routine_payload(),
+            "execution_mode": "legacy",
             "agent_runner_type": "cli_subprocess",
         },
     )

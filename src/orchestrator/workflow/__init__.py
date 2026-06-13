@@ -241,6 +241,7 @@ from orchestrator.workflow.agent import (
 )
 
 if TYPE_CHECKING:
+    from orchestrator.workflow.graph_driver import GraphRunDriver, GraphRunOutcome
     from orchestrator.workflow.parent_oversight import ParentOversightService
     from orchestrator.workflow.service import WorkflowService, find_step_config, find_task_config
 from orchestrator.workflow.completion import handle_run_completion
@@ -552,6 +553,8 @@ __all__ = [
     "truncate_to_tokens",
     # Service & Completion
     "DryRunResult",
+    "GraphRunDriver",
+    "GraphRunOutcome",
     "WorkflowService",
     "build_dry_run_context",
     "build_dry_run_prompt",
@@ -621,6 +624,14 @@ def __getattr__(name: str) -> Any:  # noqa: ANN401
         from orchestrator.workflow.parent_oversight import ParentOversightService
 
         return ParentOversightService
+    if name in {"GraphRunDriver", "GraphRunOutcome"}:
+        from orchestrator.workflow.graph_driver import GraphRunDriver, GraphRunOutcome
+
+        values = {
+            "GraphRunDriver": GraphRunDriver,
+            "GraphRunOutcome": GraphRunOutcome,
+        }
+        return values[name]
     if name in {"WorkflowService", "find_step_config", "find_task_config"}:
         from orchestrator.workflow.service import (
             WorkflowService,

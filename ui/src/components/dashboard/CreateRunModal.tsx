@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
-import { useRepos, useAgentRunners, useCreateRun, useStartRun, useRoutine } from '../../hooks/useApi';
+import { useRepos, useAgentRunners, useCreateRun, useStartRun, useRoutine, useGlobalConfig } from '../../hooks/useApi';
 import { Spinner } from '../Spinner';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import { useCreateRunModal } from '../../hooks/useCreateRunModal';
@@ -30,6 +30,7 @@ interface FormState {
   targetBranch: string;
   selectedAgentIndex: string; // index into allAgents array, '' means none
   autoStart: boolean;
+  executionMode: 'legacy' | 'graph';
   configJson: string;
   /** Structured agent runner config values (field name → value), updated by AgentRunnerConfigForm */
   agentConfigValues: Record<string, unknown>;
@@ -45,6 +46,7 @@ const INITIAL_FORM: FormState = {
   targetBranch: '',
   selectedAgentIndex: '',
   autoStart: true,
+  executionMode: 'graph',
   configJson: '{}',
   agentConfigValues: {},
   configError: '',
@@ -74,6 +76,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
   const { data: agents, isLoading: loadingAgents } = useAgentRunners();
   const createRun = useCreateRun();
   const startRun = useStartRun();
+  const { data: globalConfig } = useGlobalConfig();
   const dialogRef = useRef<HTMLDivElement>(null);
   const { preSelectedRoutine } = useCreateRunModal();
 
@@ -129,13 +132,14 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
         ...INITIAL_FORM,
         prevOpen: true,
         selectedRoutine: preSelectedRoutine ?? '',
+        executionMode: globalConfig?.default_execution_mode ?? 'graph',
       });
       setRoutineSelection(null);
     } else if (!open && wasOpenRef.current) {
       setForm(prev => ({ ...prev, prevOpen: false }));
     }
     wasOpenRef.current = open;
-  }, [open, preSelectedRoutine]);
+  }, [globalConfig?.default_execution_mode, open, preSelectedRoutine]);
 
   // Escape key to close
   useEffect(() => {
@@ -204,6 +208,7 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
         config,
         agent_runner_type: selectedAgent?.agent_runner_type || undefined,
         agent_runner_config: agentConfig,
+        execution_mode: form.executionMode,
       });
 
       if (form.autoStart) {
@@ -511,6 +516,38 @@ export function CreateRunModal({ open, onClose }: CreateRunModalProps) {
                     })}
                   </div>
                 )}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-1.5 text-sm font-medium text-text-secondary mb-2">
+                  <span className="text-base leading-none">{'\u26A1'}</span>
+                  Carrier
+                </label>
+                <div className="grid grid-cols-2 gap-2.5">
+                  {(['graph', 'legacy'] as const).map(mode => {
+                    const selected = form.executionMode === mode;
+                    return (
+                      <button
+                        key={mode}
+                        type="button"
+                        onClick={() => setForm(prev => ({ ...prev, executionMode: mode }))}
+                        className={
+                          `rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                            selected
+                              ? 'border-accent-purple bg-accent-purple/10 text-text-primary'
+                              : 'border-border bg-bg-card text-text-secondary hover:border-border-hover hover:bg-bg-hover'
+                          }`
+                        }
+                        aria-pressed={selected}
+                      >
+                        <span className="block font-medium capitalize">{mode}</span>
+                        {mode === globalConfig?.default_execution_mode && (
+                          <span className="mt-0.5 block text-[11px] text-text-muted">Default</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {/* Agent Runner Configuration (shown when agent is selected) */}

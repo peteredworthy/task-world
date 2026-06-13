@@ -11,6 +11,7 @@ vi.mock('../../../hooks/useApi', () => ({
   useCreateRun: vi.fn(),
   useStartRun: vi.fn(),
   useRoutine: vi.fn(),
+  useGlobalConfig: vi.fn(),
 }));
 
 vi.mock('../../../components/BranchSelector', () => ({
@@ -34,6 +35,7 @@ const mockUseStartRun = vi.mocked(useApiModule.useStartRun);
 const mockUseRepos = vi.mocked(useApiModule.useRepos);
 const mockUseAgentRunners = vi.mocked(useApiModule.useAgentRunners);
 const mockUseRoutine = vi.mocked(useApiModule.useRoutine);
+const mockUseGlobalConfig = vi.mocked(useApiModule.useGlobalConfig);
 
 const createRunContextValue = {
   isOpen: true,
@@ -66,6 +68,15 @@ function setupDefaultMocks() {
   mockUseAgentRunners.mockReturnValue({ data: [], isLoading: false } as any);
   mockUseStartRun.mockReturnValue({ isPending: false, mutateAsync: vi.fn() } as any);
   mockUseRoutine.mockReturnValue({ data: null } as any);
+  mockUseGlobalConfig.mockReturnValue({
+    data: {
+      dashboard_refresh_interval_seconds: 5,
+      dashboard_max_recent_runs: 50,
+      default_execution_mode: 'graph',
+      agents_openhands_url: null,
+      agents_default_type: null,
+    },
+  } as any);
 }
 
 describe('CreateRunModal — model validation error display', () => {
@@ -117,5 +128,23 @@ describe('CreateRunModal — model validation error display', () => {
 
     expect(screen.queryByText(/Failed to create run/)).not.toBeInTheDocument();
     expect(screen.queryByText(/is not available/)).not.toBeInTheDocument();
+  });
+});
+
+describe('CreateRunModal — execution carrier', () => {
+  it('shows graph as the default carrier and allows legacy opt-out', () => {
+    setupDefaultMocks();
+    mockUseCreateRun.mockReturnValue({
+      isError: false,
+      error: null,
+      isPending: false,
+      mutateAsync: vi.fn(),
+    } as any);
+
+    renderModal();
+
+    expect(screen.getByRole('button', { name: /graph/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Default')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /legacy/i })).toHaveAttribute('aria-pressed', 'false');
   });
 });

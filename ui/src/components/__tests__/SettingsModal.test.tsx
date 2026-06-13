@@ -42,6 +42,7 @@ describe('SettingsModal', () => {
     const config: GlobalConfig = {
       dashboard_refresh_interval_seconds: 5,
       dashboard_max_recent_runs: 75,
+      default_execution_mode: 'graph',
       agents_openhands_url: null,
       agents_default_type: 'cli_subprocess',
     };

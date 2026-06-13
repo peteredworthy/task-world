@@ -31,6 +31,7 @@ class TestLoadGlobalConfig:
         assert config.server.port == 9000
         assert config.server.host == "0.0.0.0"  # default preserved
         assert config.database.path == "orchestrator.db"  # other sections default
+        assert config.execution.default_execution_mode == "graph"
 
     def test_full_config(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.yaml"
@@ -50,6 +51,8 @@ agents:
 dashboard:
   refresh_interval_seconds: 10
   max_recent_runs: 100
+execution:
+  default_execution_mode: "legacy"
 nudger:
   check_interval_seconds: 30
   nudge_after_seconds: 120
@@ -62,6 +65,7 @@ nudger:
         assert len(config.routines.dirs) == 2
         assert config.agents.default_type == "cli_subprocess"
         assert config.dashboard.max_recent_runs == 100
+        assert config.execution.default_execution_mode == "legacy"
         assert config.nudger.nudge_after_seconds == 120
 
     def test_invalid_yaml_raises_config_load_error(self, tmp_path: Path) -> None:
@@ -82,3 +86,7 @@ nudger:
         assert config.agents.openhands_url is None
         assert config.agents.allowed_types is None
         assert config.agents.codex_session_timeout_minutes == 120
+
+    def test_execution_config_defaults_to_graph(self) -> None:
+        config = GlobalConfig()
+        assert config.execution.default_execution_mode == "graph"

@@ -390,6 +390,7 @@ def _resolve_child_source_branch(*, parent_run: Run, request_branch: str | None)
 def _build_run_from_request(
     request: CreateRunRequest | CreateChildRunRequest,
     routine_dirs: list[tuple[Path, RoutineSource]],
+    config: GlobalConfig,
     *,
     repo_name: str | None = None,
     branch: str | None = None,
@@ -451,7 +452,9 @@ def _build_run_from_request(
         run.merge_strategy = request.merge_strategy
 
     routine_execution_mode = getattr(routine_config, "execution_mode", None)
-    run.execution_mode = request.execution_mode or routine_execution_mode or "legacy"
+    run.execution_mode = (
+        request.execution_mode or routine_execution_mode or config.execution.default_execution_mode
+    )
 
     if request.agent_runner_type is not None:
         run.agent_runner_type = AgentRunnerType(request.agent_runner_type)
@@ -494,10 +497,11 @@ async def create_run(
     request: CreateRunRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
+    config: Annotated[GlobalConfig, Depends(get_global_config)],
     codex_models_fn: Annotated[Callable[[], list[str]], Depends(get_codex_models_fn)],
 ) -> RunResponse:
     """Create a new run from a routine (by ID or embedded inline)."""
-    run, _ = _build_run_from_request(request, routine_dirs)
+    run, _ = _build_run_from_request(request, routine_dirs, config)
 
     # Validate Codex model selection before persisting the run.
     if run.agent_runner_type is not None and run.agent_runner_config:
@@ -522,12 +526,14 @@ async def create_child_run(
     request: CreateChildRunRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
+    config: Annotated[GlobalConfig, Depends(get_global_config)],
 ) -> RunResponse:
     """Create a child run linked to an oversight parent run."""
     parent = await service.get_run(parent_run_id)
     run, _ = _build_run_from_request(
         request,
         routine_dirs,
+        config,
         repo_name=request.repo_name or parent.repo_name,
         branch=_resolve_child_source_branch(parent_run=parent, request_branch=request.branch),
     )

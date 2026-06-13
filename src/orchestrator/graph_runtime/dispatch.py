@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.graph import EventEnvelope, GraphProjection
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
-from orchestrator.graph_runtime.errors import CompromisedFileStateError
+from orchestrator.graph_runtime.errors import CompromisedFileStateError, StaleProjectionError
 from orchestrator.graph_runtime.file_state import (
     apply_cleanup_requested,
     capture_file_state_boundary,
@@ -290,21 +290,22 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "payload_hash": _payload_hash(output_records),
             "output_records": output_records,
         }
-        result = await self._controller.handle_command(
+        payload_data: dict[str, object] = {
+            "node_id": context.node_id,
+            "execution_id": context.execution_id,
+            "lease_id": context.lease_id,
+            "lease_generation": context.lease_generation,
+            "base_snapshot_id": context.base_snapshot_id,
+            "observed_graph_position": observed_position,
+            "idempotency_key": f"{context.dispatch_event_id}:{context.execution_id}:submit",
+            "payload_hash": payload["payload_hash"],
+            "payload": payload,
+        }
+        result = await self._handle_command_retry_stale(
             context.run_id,
             observed_position,
             "submit_callback",
-            {
-                "node_id": context.node_id,
-                "execution_id": context.execution_id,
-                "lease_id": context.lease_id,
-                "lease_generation": context.lease_generation,
-                "base_snapshot_id": context.base_snapshot_id,
-                "observed_graph_position": observed_position,
-                "idempotency_key": f"{context.dispatch_event_id}:{context.execution_id}:submit",
-                "payload_hash": payload["payload_hash"],
-                "payload": payload,
-            },
+            payload_data,
         )
         await self._record_gatekeeper_verdicts(context, result.projection_position, result.events)
 
@@ -319,6 +320,32 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "reason": reason or "runtime_process_died",
             },
         )
+
+    async def _handle_command_retry_stale(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object],
+    ) -> Any:
+        try:
+            return await self._controller.handle_command(
+                run_id,
+                expected_position,
+                command_type,
+                payload,
+            )
+        except StaleProjectionError:
+            current_position = await self._current_position(run_id)
+            retry_payload = dict(payload)
+            if "observed_graph_position" in retry_payload:
+                retry_payload["observed_graph_position"] = current_position
+            return await self._controller.handle_command(
+                run_id,
+                current_position,
+                command_type,
+                retry_payload,
+            )
 
     async def _current_position(self, run_id: str) -> int:
         async with self._session_factory() as session:
@@ -594,7 +621,55 @@ def _output_records_for_submit(
     task_region_id = str(node.get("task_region_id") or context.node_id)
     attempt_number = int(node.get("attempt_number", 0))
     if context.node_kind == "planner":
+        role = str(node.get("role") or "")
+        if role == "fan_out_reader":
+            return [
+                {
+                    "record_id": candidate_id,
+                    "record_kind": "output",
+                    "producer_node_id": context.node_id,
+                    "port": "reader_output",
+                    "schema": "FanOutInputs",
+                    "candidate_id": candidate_id,
+                    "task_region_id": task_region_id,
+                    "attempt_number": attempt_number,
+                    "value": {"summary": "fan-out inputs submitted by graph runner"},
+                }
+            ]
+        if role == "fan_out_join":
+            return [
+                {
+                    "record_id": candidate_id,
+                    "record_kind": "output",
+                    "producer_node_id": context.node_id,
+                    "port": "fan_out_inputs",
+                    "schema": "FanOutJoinedInputs",
+                    "candidate_id": candidate_id,
+                    "task_region_id": task_region_id,
+                    "attempt_number": attempt_number,
+                    "value": {"summary": "fan-out join submitted by graph runner"},
+                }
+            ]
         return []
+    if context.node_kind == "check":
+        command_definition = node.get("command_definition")
+        return [
+            {
+                "record_id": f"check-{context.execution_id}",
+                "record_kind": "output",
+                "producer_node_id": context.node_id,
+                "port": "check_result",
+                "schema": "CheckResult",
+                "candidate_id": candidate_id,
+                "task_region_id": task_region_id,
+                "attempt_number": attempt_number,
+                "value": {
+                    "status": "passed",
+                    "exit_code": 0,
+                    "command": command_definition,
+                },
+            }
+        ]
     if context.node_kind == "verifier":
         verdict = "passed" if _grades_pass(grades) else "failed"
         return [

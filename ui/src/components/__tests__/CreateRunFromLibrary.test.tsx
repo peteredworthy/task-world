@@ -17,6 +17,7 @@ import {
   useBranchCount,
   useBranches,
   useValidateRoutine,
+  useGlobalConfig,
 } from '../../hooks/useApi';
 import type { RoutineSummary } from '../../types/routines';
 import type { ProjectRoutineResponse } from '../../types/repos';
@@ -32,6 +33,7 @@ vi.mock('../../hooks/useApi', () => ({
   useBranchCount: vi.fn(),
   useBranches: vi.fn(),
   useValidateRoutine: vi.fn(),
+  useGlobalConfig: vi.fn(),
 }));
 
 afterEach(() => {
@@ -210,6 +212,16 @@ describe('CreateRunModal – pre-selected routine from Routine Library', () => {
       mutateAsync: vi.fn(),
       isPending: false,
     } as unknown as ReturnType<typeof useValidateRoutine>);
+
+    vi.mocked(useGlobalConfig).mockReturnValue({
+      data: {
+        dashboard_refresh_interval_seconds: 5,
+        dashboard_max_recent_runs: 50,
+        default_execution_mode: 'graph',
+        agents_openhands_url: null,
+        agents_default_type: null,
+      },
+    } as ReturnType<typeof useGlobalConfig>);
   }
 
   function renderModal(preSelectedRoutine: string | null) {

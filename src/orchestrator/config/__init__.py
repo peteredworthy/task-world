@@ -12,7 +12,7 @@ from orchestrator.config.enums import (
     StepType,
     TaskStatus,
 )
-from orchestrator.config.global_config import GlobalConfig, PathsConfig
+from orchestrator.config.global_config import ExecutionConfig, GlobalConfig, PathsConfig
 from orchestrator.config.models import (
     AutoVerifyConfig,
     AutoVerifyItemConfig,
@@ -52,6 +52,7 @@ __all__ = [
     "ChecklistStatus",
     "Complexity",
     "DryRunConfig",
+    "ExecutionConfig",
     "GateType",
     "GlobalConfig",
     "ModelProfile",

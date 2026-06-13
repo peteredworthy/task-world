@@ -25,9 +25,11 @@ async def test_get_config(client: AsyncClient) -> None:
     data = response.json()
     assert "dashboard_refresh_interval_seconds" in data
     assert "dashboard_max_recent_runs" in data
+    assert "default_execution_mode" in data
     assert "agents_openhands_url" in data
     assert "agents_default_type" in data
 
     # Check default values
     assert data["dashboard_refresh_interval_seconds"] == 5
     assert data["dashboard_max_recent_runs"] == 50
+    assert data["default_execution_mode"] == "graph"

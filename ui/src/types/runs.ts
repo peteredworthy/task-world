@@ -325,4 +325,5 @@ export interface CreateRunRequest {
   config?: Record<string, unknown>;
   agent_runner_type?: string;
   agent_runner_config?: Record<string, unknown>;
+  execution_mode?: 'legacy' | 'graph';
 }
