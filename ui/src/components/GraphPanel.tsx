@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { useGraphEvents, useGraphProjection } from '../hooks/useApi';
-import type { GraphEventResponse, GraphProjectionResponse, RunResponse } from '../types';
+import type { ActivityEvent, GraphEventResponse, GraphProjectionResponse, RunResponse } from '../types';
 
 interface GraphPanelProps {
   runId: string;
   run: RunResponse;
   open: boolean;
   onClose: () => void;
+  activityEvents?: ActivityEvent[];
 }
 
 function runStateChipClass(runState: string | null): string {
@@ -22,7 +23,43 @@ function runStateChipClass(runState: string | null): string {
   return 'bg-accent-cyan/15 text-accent-cyan';
 }
 
-function NodeStatesTable({ projection }: { projection: GraphProjectionResponse }) {
+function NodeStatesTable({
+  projection,
+  events,
+  activityEvents,
+}: {
+  projection: GraphProjectionResponse;
+  events: GraphEventResponse[];
+  activityEvents: ActivityEvent[];
+}) {
+  const nodeActivity = useMemo(() => {
+    const nodeTaskKeys = new Map<string, Set<string>>();
+    for (const event of events) {
+      if (event.event_type !== 'node_created') continue;
+      const nodeId = event.payload.node_id;
+      if (typeof nodeId !== 'string') continue;
+      const keys = new Set<string>([nodeId]);
+      for (const field of ['task_id', 'task_region_id']) {
+        const value = event.payload[field];
+        if (typeof value === 'string' && value.length > 0) keys.add(value);
+      }
+      nodeTaskKeys.set(nodeId, keys);
+    }
+
+    const latestByNode = new Map<string, string>();
+    for (const event of activityEvents) {
+      if (event.event_type !== 'agent_output') continue;
+      const taskId = event.payload.task_id;
+      const lines = event.payload.lines;
+      if (typeof taskId !== 'string' || !Array.isArray(lines) || lines.length === 0) continue;
+      const latestLine = String(lines[lines.length - 1]);
+      for (const [nodeId, keys] of nodeTaskKeys) {
+        if (keys.has(taskId)) latestByNode.set(nodeId, latestLine);
+      }
+    }
+    return latestByNode;
+  }, [activityEvents, events]);
+
   const rows = useMemo(() => {
     const leases = Object.values(projection.leases);
     return Object.entries(projection.node_states)
@@ -35,9 +72,10 @@ function NodeStatesTable({ projection }: { projection: GraphProjectionResponse }
           state,
           leaseId: lease?.lease_id ?? null,
           leaseState: lease?.state ?? null,
+          latestOutput: nodeActivity.get(nodeId) ?? null,
         };
       });
-  }, [projection.leases, projection.node_states]);
+  }, [nodeActivity, projection.leases, projection.node_states]);
 
   return (
     <div>
@@ -48,13 +86,14 @@ function NodeStatesTable({ projection }: { projection: GraphProjectionResponse }
             <tr>
               <th className="pr-3 pb-1">node_id</th>
               <th className="pr-3 pb-1">state</th>
-              <th className="pb-1">lease</th>
+              <th className="pr-3 pb-1">lease</th>
+              <th className="pb-1">live activity</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={3} className="py-2 text-text-muted italic">
+                <td colSpan={4} className="py-2 text-text-muted italic">
                   No node state records yet
                 </td>
               </tr>
@@ -69,6 +108,15 @@ function NodeStatesTable({ projection }: { projection: GraphProjectionResponse }
                   </td>
                   <td className="py-2 text-text-secondary">
                     {row.leaseId ? `${row.leaseId} (${row.leaseState})` : '-'}
+                  </td>
+                  <td className="py-2 text-text-secondary">
+                    {row.latestOutput ? (
+                      <span className="block max-w-[12rem] truncate font-mono text-[11px]" title={row.latestOutput}>
+                        {row.latestOutput}
+                      </span>
+                    ) : (
+                      <span className="text-text-muted">-</span>
+                    )}
                   </td>
                 </tr>
               ))
@@ -150,7 +198,7 @@ function EventModal({
   );
 }
 
-export function GraphPanel({ runId, run, open, onClose }: GraphPanelProps) {
+export function GraphPanel({ runId, run, open, onClose, activityEvents = [] }: GraphPanelProps) {
   const { data: projection } = useGraphProjection(runId);
   const { data: events = [] } = useGraphEvents(runId);
   const [showEvents, setShowEvents] = useState(false);
@@ -190,7 +238,7 @@ export function GraphPanel({ runId, run, open, onClose }: GraphPanelProps) {
         </div>
 
         <div className="mt-4 space-y-4">
-          <NodeStatesTable projection={projection} />
+          <NodeStatesTable projection={projection} events={events} activityEvents={activityEvents} />
           <TaskStatesSection projection={projection} run={run} />
           <button
             type="button"

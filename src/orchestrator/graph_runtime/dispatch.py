@@ -7,6 +7,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -101,6 +102,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         process_registry: GraphProcessRegistry | None = None,
         residue_classifier: ResidueClassifier | None = None,
         max_gatekeeper_items_per_boundary: int = 20,
+        on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._controller = controller
@@ -110,6 +112,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self._process_registry = process_registry
         self._residue_classifier = residue_classifier
         self._max_gatekeeper_items_per_boundary = max_gatekeeper_items_per_boundary
+        self._on_agent_output = on_agent_output
 
     async def dispatch(self, item: OutboxItem) -> None:
         if item.kind == "snapshot_cleanup":
@@ -163,10 +166,15 @@ class GraphDispatchExecutor(SideEffectExecutor):
             async def on_grade(req_id: str, grade: str, grade_reason: str | None) -> None:
                 grades.append((req_id, grade, grade_reason))
 
+            async def on_output(lines: list[str]) -> None:
+                if self._on_agent_output is not None:
+                    await self._on_agent_output(context, lines)
+
             await runner.execute(
                 self._execution_context(context),
                 on_checklist_update,
                 on_submit,
+                on_output=on_output,
                 on_grade=on_grade if context.node_kind == "verifier" else None,
             )
         except Exception as exc:
@@ -445,6 +453,7 @@ def build_graph_runtime(
     worktree_path: str | Path,
     runner_type: AgentRunnerType,
     runner_config: dict[str, Any] | None = None,
+    on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
 ) -> tuple[GraphController, GraphDispatchExecutor]:
     """Assemble graph controller and dispatch executor without API imports."""
 
@@ -454,6 +463,7 @@ def build_graph_runtime(
         controller,
         StaticGraphAgentFactory(runner_type, runner_config),
         worktree_path=worktree_path,
+        on_agent_output=on_agent_output,
     )
     return controller, executor
 

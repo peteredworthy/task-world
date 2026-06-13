@@ -59,6 +59,11 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
       return 'Step completed';
     case 'agent_error':
       return (payload.error_message as string) || 'Agent error';
+    case 'agent_output': {
+      const lines = payload.lines as string[] | undefined;
+      if (lines && lines.length > 0) return lines.join('\n');
+      return 'Agent output';
+    }
     default:
       return eventType.replace(/_/g, ' ');
   }
@@ -1045,10 +1050,11 @@ export function TaskDetailCard({
                   }
 
                   const isError = ev.event_type === 'agent_error';
+                  const isOutput = ev.event_type === 'agent_output';
                   return (
-                    <div key={ev.id} className="flex items-center gap-2 text-xs">
-                      <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + (isError ? 'bg-status-failed' : 'bg-border')} />
-                      <span className={isError ? 'text-status-failed font-medium' : 'text-text-secondary'}>
+                    <div key={ev.id} className="flex items-start gap-2 text-xs">
+                      <span className={'mt-1 w-1.5 h-1.5 rounded-full shrink-0 ' + (isError ? 'bg-status-failed' : isOutput ? 'bg-accent-cyan' : 'bg-border')} />
+                      <span className={(isError ? 'text-status-failed font-medium' : 'text-text-secondary') + (isOutput ? ' font-mono whitespace-pre-wrap break-words' : '')}>
                         {eventLabel(ev.event_type, ev.payload)}
                       </span>
                       <span className="text-text-muted ml-auto text-[10px] whitespace-nowrap">

@@ -23,6 +23,7 @@ const TASK_EVENT_TYPES = new Set([
   'checklist_gate_evaluated',
   'grades_evaluated',
   'agent_error',
+  'agent_output',
 ]);
 
 /**

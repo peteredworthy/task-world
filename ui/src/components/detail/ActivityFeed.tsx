@@ -48,6 +48,11 @@ function eventLabel(eventType: string, payload: Record<string, unknown>): string
     }
     case 'agent_error':
       return (payload.error_message as string) || 'Agent error';
+    case 'agent_output': {
+      const lines = payload.lines as string[] | undefined;
+      if (lines && lines.length > 0) return lines.join('\n');
+      return 'Agent output';
+    }
     default:
       return eventType.replace(/_/g, ' ');
   }
@@ -177,10 +182,11 @@ function TaskGroupCard({
         {group.events.map(ev => {
           const isError = ev.event_type === 'agent_error';
           const isSkipped = ev.event_type === 'step_skipped';
+          const isOutput = ev.event_type === 'agent_output';
           return (
-            <div key={ev.id} className="flex items-center gap-2 text-xs">
-              <span className={'w-1.5 h-1.5 rounded-full shrink-0 ' + eventDotColor(ev.event_type)} />
-              <span className={isError || isSkipped ? (isError ? 'text-status-failed font-medium' : 'text-status-paused font-medium') : 'text-text-secondary'}>
+            <div key={ev.id} className="flex items-start gap-2 text-xs">
+              <span className={'mt-1 w-1.5 h-1.5 rounded-full shrink-0 ' + (isOutput ? 'bg-accent-cyan' : eventDotColor(ev.event_type))} />
+              <span className={(isError || isSkipped ? (isError ? 'text-status-failed font-medium' : 'text-status-paused font-medium') : 'text-text-secondary') + (isOutput ? ' font-mono whitespace-pre-wrap break-words' : '')}>
                 {eventLabel(ev.event_type, ev.payload)}
               </span>
               <span className="text-text-muted ml-auto text-[10px] whitespace-nowrap">
@@ -398,7 +404,7 @@ export function ActivityFeed({
             const taskId = taskSummary.id;
             const taskTitle = taskSummary.title || taskSummary.config_id;
             const stepTitle = step.title || step.config_id;
-            const eventGroup = groupByTaskId.get(taskId);
+            const eventGroup = groupByTaskId.get(taskId) ?? groupByTaskId.get(taskSummary.config_id);
             const statusOnly = statusOnlyByTaskId.get(taskId);
 
             if (eventGroup) {

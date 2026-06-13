@@ -26,6 +26,7 @@ from orchestrator.graph import (
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime import (
     GraphController,
+    GraphDispatchContext,
     GraphDispatchExecutor,
     GraphEventStore,
     OutboxDispatcher,
@@ -113,6 +114,7 @@ class GraphRunDriver:
             OutboxDispatcher,
         ]
         | None = None,
+        on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._create_service = create_service
@@ -120,6 +122,7 @@ class GraphRunDriver:
         self._id_gen = id_gen or UuidIdGenerator()
         self._runtime_builder = runtime_builder or build_graph_runtime
         self._dispatcher_factory = dispatcher_factory or OutboxDispatcher
+        self._on_agent_output = on_agent_output
 
     async def run(self, run_id: str) -> GraphRunOutcome:
         run = await self._get_run(run_id)
@@ -187,13 +190,18 @@ class GraphRunDriver:
             )
             await self._bootstrap_graph_lifecycle(run_id)
 
+        runtime_kwargs: dict[str, Any] = {
+            "worktree_path": Path(run.worktree_path),
+            "runner_type": run.agent_runner_type,
+            "runner_config": run.agent_runner_config,
+        }
+        if self._on_agent_output is not None:
+            runtime_kwargs["on_agent_output"] = self._on_agent_output
         controller, executor = self._runtime_builder(
             self._session_factory,
             self._clock,
             self._id_gen,
-            worktree_path=Path(run.worktree_path),
-            runner_type=run.agent_runner_type,
-            runner_config=run.agent_runner_config,
+            **runtime_kwargs,
         )
         dispatcher = self._dispatcher_factory(self._session_factory, executor, self._clock)
 

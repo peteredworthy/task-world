@@ -890,6 +890,7 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
           run={run}
           open={showGraphPanel}
           onClose={() => setShowGraphPanel(false)}
+          activityEvents={events}
         />
       )}
 

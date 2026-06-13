@@ -922,9 +922,11 @@ async def get_activity(
     for step in run.steps:
         step_title = step.title or step.config_id
         step_lookup[step.id] = step_title
+        step_lookup[step.config_id] = step_title
         for task in step.tasks:
             task_title = task.title or task.config_id
             task_lookup[task.id] = (task_title, step_title)
+            task_lookup[task.config_id] = (task_title, step_title)
 
     # Fetch limit+1 to determine has_more
     rows = await event_store.get_events_paginated(
@@ -1000,9 +1002,11 @@ async def stream_activity(
         for step in run.steps:
             step_title = step.title or step.config_id
             step_lookup[step.id] = step_title
+            step_lookup[step.config_id] = step_title
             for task in step.tasks:
                 task_title = task.title or task.config_id
                 task_lookup[task.id] = (task_title, step_title)
+                task_lookup[task.config_id] = (task_title, step_title)
 
         last_id = since_id
         poll_interval = 0.5  # Poll every 500ms for new events

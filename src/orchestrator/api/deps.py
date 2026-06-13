@@ -35,6 +35,7 @@ from orchestrator.runners import AgentRunnerExecutor, fetch_codex_models
 from orchestrator.runners.agent_detector import ToolDetector
 
 if TYPE_CHECKING:
+    from orchestrator.graph_runtime import GraphDispatchContext
     from orchestrator.graph_runtime.store import GraphEventStore
 
 
@@ -369,11 +370,31 @@ def make_graph_runner(
     service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]],
 ) -> Callable[[str], Awaitable[None]]:
     """Return a graph run driver callback for ``SignalConsumer``."""
+    from orchestrator.runners import OutputBatcher
+
+    output_batcher = OutputBatcher(session_factory=session_factory)
+
+    async def on_agent_output(context: "GraphDispatchContext", lines: list[str]) -> None:
+        task_id = str(
+            context.node_payload.get("task_id")
+            or context.node_payload.get("task_region_id")
+            or context.node_id
+        )
+        attempt_num = int(context.node_payload.get("attempt_number") or 1)
+        for line in lines:
+            await output_batcher.add_line(context.run_id, task_id, attempt_num, line)
 
     async def _run(run_id: str) -> None:
         from orchestrator.workflow.graph_driver import GraphRunDriver
 
-        driver = GraphRunDriver(session_factory, service_factory)
-        await driver.run(run_id)
+        driver = GraphRunDriver(
+            session_factory,
+            service_factory,
+            on_agent_output=on_agent_output,
+        )
+        try:
+            await driver.run(run_id)
+        finally:
+            await output_batcher.flush_immediate()
 
     return _run
