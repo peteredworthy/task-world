@@ -196,6 +196,51 @@ first graph run dispatched codex fine). Re-run the live gate with a fresh codex
 app-server, per the 2.8 spec's "Manual dogfood gate" — a no-op or commit-and-
 clean worker on a trivial embedded routine completes the full pipeline.
 
+### Gate D status after the 2026-06-13 (Phase 3 completion) session
+
+Re-attempted the live no-op graph gate (trivial embedded routine, worker → verifier
+→ accepted → COMPLETED) across **three** agent runners; the graph driver/kernel
+behaved correctly in every case (compiled the minimal graph, granted the worker
+lease, dispatched, applied the §13 `agent_died`→requeue retry, kept the verifier
+correctly deferred on `missing_required_input:candidate_under_test`, and went to a
+**safe quiescence** — no spin, no crash, no UUID collision, clean boundary path).
+The block is entirely in the **agent-runner → submit** layer:
+
+1. **`codex_server`** (runs `ff93bdb6`, prior `826daa37`): persistent
+   `Transport error communicating with codex app-server` on every per-run
+   app-server spawn. `fetch_codex_models()` still answers (the GUI app-server at
+   PID 661 is fine), but the spawned `--listen stdio://` transports fail. Needs a
+   **fresh Codex.app** (the documented fix) — external, not a graph defect. The
+   same codex path built slices 3.3–3.8 cleanly earlier this session, so it
+   degraded mid-session under load.
+2. **`cli_subprocess`** (claude CLI, run `c202dc5c`): worker dies with
+   `[Errno 7] Argument list too long: '/usr/bin/git'` — the CLI's internal git
+   usage enumerates the worktree's ~32k untracked `.venv` files as git argv,
+   exceeding macOS `ARG_MAX` (1 MB). Environmental to the large-`.venv` worktree
+   (same condition behind the slice-2.4 boundary fix), surfaced through the CLI's
+   git calls. A fix would scope/ignore the dependency dir for the agent's git
+   view, or run the agent with the `.venv` excluded.
+3. **`claude_sdk`** (run `b05722ac`): the worker dispatches and reaches `running`
+   (acknowledge_start fires), but the agent finishes its turn **without calling
+   the `submit` tool** — no callback, no `agent_died` — so the node stays leased
+   and the driver bails via the no-progress guard. This is the **first time a real
+   (non-fake) agent has driven a graph worker node**: the integration test
+   (`test_graph_run_driver.py`) proves the pipeline with a fake agent that calls
+   `on_submit` directly, but a real agent completing a graph worker via the submit
+   MCP tool is **unproven**. Worth a focused look: confirm the graph-dispatch
+   worker prompt/tooling actually instructs+exposes `submit` (it is wired in
+   `dispatch.py::_run_agent.on_submit`), and consider treating "agent task
+   finished with no submit and no death" as an `agent_died` so it retries rather
+   than stranding the lease.
+
+**To resume the gate:** restart Codex.app for a healthy app-server, then re-run the
+no-op graph gate with codex (script `/tmp/gate_run.py`-equivalent:
+`routine_embedded` = graph-gate-noop, `agent_runner_type: codex_server`,
+`agent_runner_config.model: gpt-5.5`, `execution_mode: graph`), start it, and
+poll to terminal. If codex still fails, pursue item 3 (real-agent submit in graph
+mode) with `claude_sdk`, which is not subject to the codex outage or the cli
+`.venv` argv issue.
+
 Slice 2.7 ran as orchestrator run `04818168` (codex_server / gpt-5.5,
 first-pass all-A). Audit-pass correction before merge: the builder's Alembic
 migration declared a merge `down_revision` against an ancestor + descendant;
