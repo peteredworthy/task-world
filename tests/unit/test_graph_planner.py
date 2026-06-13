@@ -130,6 +130,8 @@ def test_parallel_successor_planners_rejected() -> None:
         {
             "node_id": "planner-0",
             "generation_index": 0,
+            "session_id": None,
+            "lease_generation": None,
             "state": "completed",
             "successor_node_id": None,
         }
@@ -144,12 +146,16 @@ def test_project_planner_chain() -> None:
         {
             "node_id": "planner-0",
             "generation_index": 0,
+            "session_id": None,
+            "lease_generation": None,
             "state": "completed",
             "successor_node_id": "planner-1",
         },
         {
             "node_id": "planner-1",
             "generation_index": 1,
+            "session_id": None,
+            "lease_generation": None,
             "state": "planned",
             "successor_node_id": None,
         },

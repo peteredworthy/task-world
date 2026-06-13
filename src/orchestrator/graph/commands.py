@@ -341,6 +341,15 @@ def _apply_callback_command(
                 },
             )
         )
+        session_event = _planner_session_state_event(
+            projection,
+            request.node_id,
+            "suspended",
+            request.lease_generation,
+            make_event,
+        )
+        if session_event is not None:
+            output.append(session_event)
     return output
 
 
@@ -756,6 +765,8 @@ def _apply_patch_command(
                 ),
             ]
 
+    parent_session_id = projection["planner_sessions"].get(patch.proposed_by_node_id)
+    carryover_record_id = _carryover_record_id(payload)
     output = [
         make_event(
             "graph_patch_accepted",
@@ -765,11 +776,33 @@ def _apply_patch_command(
                 "actor_role": actor_role,
                 "proposed_by_node_id": patch.proposed_by_node_id,
                 "successor_planner_node_ids": successor_planner_node_ids,
+                "session_id": parent_session_id,
+                "carryover_record_id": carryover_record_id,
             },
         )
     ]
     for op in patch.ops:
-        output.extend(_patch_op_events(op, make_event))
+        output.extend(
+            _patch_op_events(
+                op,
+                make_event,
+                inherited_session_id=parent_session_id,
+                carryover_record_id=carryover_record_id,
+            )
+        )
+    if carryover_record_id is not None and successor_planner_node_ids:
+        output.append(
+            make_event(
+                "input_bound",
+                {
+                    "edge_id": f"edge-session-carryover-{successor_planner_node_ids[0]}",
+                    "to_node_id": successor_planner_node_ids[0],
+                    "to_port": "session_carryover",
+                    "record_ids": [carryover_record_id],
+                    "bound_at_position": 0,
+                },
+            )
+        )
     return output
 
 
@@ -785,6 +818,14 @@ def _successor_planner_node_ids(patch: PatchEnvelope) -> list[str]:
         if isinstance(node_id, str):
             node_ids.append(node_id)
     return node_ids
+
+
+def _carryover_record_id(payload: dict[str, Any]) -> str | None:
+    for key in ("carryover_summary", "carryover_record_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
 
 
 def _planner_budget_rejection(
@@ -884,20 +925,38 @@ def _apply_schedule_tick(
             continue
         if node_id not in readied_node_ids:
             output.append(make_event("node_ready", {"node_id": node_id}))
+        planner_session_id = _planner_session_id(projection, node_id, id_gen)
+        lease_generation = _next_lease_generation(projection, node_id)
+        lease_payload: dict[str, Any] = {
+            "lease_id": lease_id,
+            "node_id": node_id,
+            "generation": lease_generation,
+            "execution_id": id_gen.next_id("exec"),
+            "base_snapshot_id": base_snapshot_id,
+            "expires_at": (clock.now() + timedelta(seconds=lease_seconds)).isoformat(),
+            "resource_claims": claims,
+        }
+        if planner_session_id is not None:
+            lease_payload["session_id"] = planner_session_id
         output.append(
             make_event(
                 "lease_granted",
-                {
-                    "lease_id": lease_id,
-                    "node_id": node_id,
-                    "generation": 1,
-                    "execution_id": id_gen.next_id("exec"),
-                    "base_snapshot_id": base_snapshot_id,
-                    "expires_at": (clock.now() + timedelta(seconds=lease_seconds)).isoformat(),
-                    "resource_claims": claims,
-                },
+                lease_payload,
             )
         )
+        if planner_session_id is not None:
+            output.append(
+                make_event(
+                    "session_state_changed",
+                    {
+                        "session_id": planner_session_id,
+                        "state": "attached",
+                        "node_id": node_id,
+                        "lease_generation": lease_generation,
+                        "carryover_record_id": _session_carryover_record_id(projection, node_id),
+                    },
+                )
+            )
         output.append(
             make_event(
                 "node_state_changed",
@@ -940,6 +999,75 @@ def _base_snapshot_id_for_node(
             if isinstance(first_record_id, str) and first_record_id:
                 return first_record_id
     return None
+
+
+def _planner_session_id(
+    projection: GraphProjection,
+    node_id: str,
+    id_gen: IdGenerator,
+) -> str | None:
+    if not _is_chain_planner(projection, node_id):
+        return None
+    session_id = projection["planner_sessions"].get(node_id)
+    if isinstance(session_id, str):
+        return session_id
+    return id_gen.next_id("session")
+
+
+def _next_lease_generation(projection: GraphProjection, node_id: str) -> int:
+    if not _is_chain_planner(projection, node_id):
+        return 1
+    session_id = projection["planner_sessions"].get(node_id)
+    generations = [
+        lease.get("generation")
+        for lease in projection["leases"].values()
+        if session_id is not None
+        and lease.get("session_id") == session_id
+        and isinstance(lease.get("generation"), int)
+    ]
+    return max(cast(list[int], generations), default=0) + 1
+
+
+def _session_carryover_record_id(projection: GraphProjection, node_id: str) -> str | None:
+    binding = projection["input_bindings"].get(node_id, {}).get("session_carryover")
+    if binding is None:
+        return None
+    record_ids = binding.get("record_ids")
+    if not isinstance(record_ids, list) or not record_ids:
+        return None
+    record_id = cast(list[Any], record_ids)[0]
+    return record_id if isinstance(record_id, str) else None
+
+
+def _planner_session_state_event(
+    projection: GraphProjection,
+    node_id: str,
+    state: str,
+    lease_generation: int,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> EventEnvelope | None:
+    if not _is_chain_planner(projection, node_id):
+        return None
+    session_id = projection["planner_sessions"].get(node_id)
+    if not isinstance(session_id, str):
+        return None
+    return make_event(
+        "session_state_changed",
+        {
+            "session_id": session_id,
+            "state": state,
+            "node_id": node_id,
+            "lease_generation": lease_generation,
+            "carryover_record_id": _session_carryover_record_id(projection, node_id),
+        },
+    )
+
+
+def _is_chain_planner(projection: GraphProjection, node_id: str) -> bool:
+    return (
+        projection["node_kinds"].get(node_id) == "planner"
+        and projection["node_roles"].get(node_id) == "planner"
+    )
 
 
 def _apply_acknowledge_start(
@@ -1551,10 +1679,20 @@ def _nonnegative_float(value: Any) -> float:
 def _patch_op_events(
     op: PatchOp,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    *,
+    inherited_session_id: str | None = None,
+    carryover_record_id: str | None = None,
 ) -> list[EventEnvelope]:
     op_payload = _op_payload(op)
     if op.op == "create_node" and isinstance(op.node, dict):
-        return [make_event("node_created", dict(op.node))]
+        node_payload = dict(op.node)
+        if node_payload.get("kind") == "planner" and node_payload.get("role") == "planner":
+            if inherited_session_id is not None:
+                node_payload.setdefault("session_id", inherited_session_id)
+            _ensure_optional_session_carryover_input(node_payload)
+            if carryover_record_id is not None:
+                node_payload["carryover_record_id"] = carryover_record_id
+        return [make_event("node_created", node_payload)]
     if op.op == "create_edge":
         edge_id = op_payload.get("edge_id")
         required = op_payload.get("required")
@@ -1653,6 +1791,24 @@ def _patch_op_events(
             )
         ]
     return []
+
+
+def _ensure_optional_session_carryover_input(node_payload: dict[str, Any]) -> None:
+    inputs = node_payload.get("inputs")
+    if not isinstance(inputs, list):
+        node_payload["inputs"] = [
+            {"port": "session_carryover", "direction": "input", "required": False}
+        ]
+        return
+    typed_inputs = cast(list[Any], inputs)
+    for raw_input in typed_inputs:
+        if not isinstance(raw_input, dict):
+            continue
+        input_payload = cast(dict[str, Any], raw_input)
+        if input_payload.get("port") == "session_carryover":
+            input_payload["required"] = False
+            return
+    typed_inputs.append({"port": "session_carryover", "direction": "input", "required": False})
 
 
 def _expired_lease_events(

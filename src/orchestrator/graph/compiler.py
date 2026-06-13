@@ -229,6 +229,7 @@ class _Compiler:
                 "state": "planned",
                 "role": "planner",
                 "generation_index": 0,
+                "session_intent": "retained_planner_session",
                 "step_id": step.id,
                 "step_index": step_index,
                 "title": step.title,

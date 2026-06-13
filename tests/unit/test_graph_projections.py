@@ -70,6 +70,10 @@ def test_empty_projection() -> None:
         "planner_generation_budget": 8,
         "planner_successors": {},
         "planner_generations": {},
+        "planner_sessions": {},
+        "planner_session_states": {},
+        "planner_session_current_nodes": {},
+        "planner_session_carryovers": {},
     }
 
 

@@ -51,6 +51,7 @@ PLANNER_SUCCESSOR_PORTS = {
     "region_summary",
     "accepted_file_state",
     "outstanding_failures",
+    "session_carryover",
 }
 
 

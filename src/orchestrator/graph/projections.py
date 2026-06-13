@@ -35,6 +35,10 @@ class GraphProjection(TypedDict):
     planner_generation_budget: int
     planner_successors: dict[str, str]
     planner_generations: dict[str, int]
+    planner_sessions: dict[str, str]
+    planner_session_states: dict[str, str]
+    planner_session_current_nodes: dict[str, str]
+    planner_session_carryovers: dict[str, str | None]
 
 
 class SchedulerBlockedNode(TypedDict):
@@ -117,6 +121,10 @@ def initial_projection() -> GraphProjection:
         "planner_generation_budget": 8,
         "planner_successors": {},
         "planner_generations": {},
+        "planner_sessions": {},
+        "planner_session_states": {},
+        "planner_session_current_nodes": {},
+        "planner_session_carryovers": {},
     }
 
 
@@ -183,6 +191,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "planner_generation_budget": state.get("planner_generation_budget", 8),
         "planner_successors": dict(state.get("planner_successors", {})),
         "planner_generations": dict(state.get("planner_generations", {})),
+        "planner_sessions": dict(state.get("planner_sessions", {})),
+        "planner_session_states": dict(state.get("planner_session_states", {})),
+        "planner_session_current_nodes": dict(state.get("planner_session_current_nodes", {})),
+        "planner_session_carryovers": dict(state.get("planner_session_carryovers", {})),
     }
 
     if event.event_type == "run_lifecycle_changed":
@@ -212,6 +224,11 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 generation_index = event.payload.get("generation_index")
                 if isinstance(generation_index, int) and not isinstance(generation_index, bool):
                     next_state["planner_generations"][node_id] = generation_index
+                session_id = event.payload.get("session_id")
+                if isinstance(session_id, str):
+                    next_state["planner_sessions"][node_id] = session_id
+                    next_state["planner_session_states"].setdefault(session_id, "detached")
+                    next_state["planner_session_carryovers"].setdefault(session_id, None)
             if task_region_id is not None:
                 next_state["node_task_regions"][node_id] = task_region_id
             if attempt_number is not None:
@@ -262,6 +279,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             }
             if isinstance(generation, int):
                 lease["generation"] = generation
+            session_id = event.payload.get("session_id")
+            if isinstance(session_id, str):
+                lease["session_id"] = session_id
+                next_state["planner_sessions"][node_id] = session_id
             expires_at = event.payload.get("expires_at")
             if isinstance(expires_at, str):
                 lease["expires_at"] = expires_at
@@ -287,6 +308,21 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             if resource_claims:
                 lease["resource_claims"] = resource_claims
             next_state["leases"][lease_id] = lease
+    elif event.event_type == "session_state_changed":
+        session_id = event.payload.get("session_id")
+        session_state = event.payload.get("state")
+        if isinstance(session_id, str) and isinstance(session_state, str):
+            next_state["planner_session_states"][session_id] = session_state
+            node_id = event.payload.get("node_id")
+            if session_state == "attached" and isinstance(node_id, str):
+                next_state["planner_session_current_nodes"][session_id] = node_id
+            elif session_state in {"suspended", "detached", "dead"}:
+                next_state["planner_session_current_nodes"].pop(session_id, None)
+            carryover_record_id = event.payload.get("carryover_record_id")
+            if isinstance(carryover_record_id, str):
+                next_state["planner_session_carryovers"][session_id] = carryover_record_id
+            elif carryover_record_id is None and "carryover_record_id" in event.payload:
+                next_state["planner_session_carryovers"][session_id] = None
     elif event.event_type in {
         "lease_suspended",
         "lease_revoked",
@@ -379,11 +415,51 @@ def project_planner_chain(events: list[EventEnvelope]) -> list[dict[str, Any]]:
         {
             "node_id": node_id,
             "generation_index": projection["planner_generations"].get(node_id, 0),
+            "session_id": projection["planner_sessions"].get(node_id),
+            "lease_generation": _latest_lease_generation(events, node_id),
             "state": projection["node_states"].get(node_id),
             "successor_node_id": projection["planner_successors"].get(node_id),
         }
         for node_id in ordered
     ]
+
+
+def project_planner_session(events: list[EventEnvelope]) -> dict[str, Any]:
+    projection = _project(events)
+    session_ids = list(projection["planner_session_states"])
+    if not session_ids:
+        session_ids = list(projection["planner_sessions"].values())
+    session_id = sorted(set(session_ids))[0] if session_ids else None
+    if session_id is None:
+        return {
+            "session_id": None,
+            "state": None,
+            "generations": [],
+            "current_node_id": None,
+            "carryover_record_id": None,
+        }
+
+    generations = [
+        {
+            "node_id": event.payload["node_id"],
+            "lease_generation": event.payload["generation"],
+            "state": _planner_generation_state(events, str(event.payload["lease_id"])),
+        }
+        for event in events
+        if event.event_type == "lease_granted"
+        and event.payload.get("session_id") == session_id
+        and isinstance(event.payload.get("node_id"), str)
+        and isinstance(event.payload.get("lease_id"), str)
+        and isinstance(event.payload.get("generation"), int)
+    ]
+    generations.sort(key=lambda generation: int(generation["lease_generation"]))
+    return {
+        "session_id": session_id,
+        "state": projection["planner_session_states"].get(session_id),
+        "generations": generations,
+        "current_node_id": projection["planner_session_current_nodes"].get(session_id),
+        "carryover_record_id": projection["planner_session_carryovers"].get(session_id),
+    }
 
 
 def project_node_states(events: list[EventEnvelope]) -> dict[str, str]:
@@ -841,6 +917,33 @@ def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
         if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
             return event.position
     return 0
+
+
+def _latest_lease_generation(events: list[EventEnvelope], node_id: str) -> int | None:
+    generation: int | None = None
+    for event in events:
+        if event.event_type != "lease_granted" or event.payload.get("node_id") != node_id:
+            continue
+        value = event.payload.get("generation")
+        if isinstance(value, int) and not isinstance(value, bool):
+            generation = value
+    return generation
+
+
+def _planner_generation_state(events: list[EventEnvelope], lease_id: str) -> str:
+    state = "active"
+    for event in events:
+        if event.payload.get("lease_id") != lease_id:
+            continue
+        if event.event_type == "lease_suspended":
+            state = "suspended"
+        elif event.event_type == "lease_released":
+            state = "released"
+        elif event.event_type == "lease_revoked":
+            state = "revoked"
+        elif event.event_type == "lease_expired":
+            state = "expired"
+    return state
 
 
 def _ready_nodes(node_states: dict[str, str]) -> list[str]:
