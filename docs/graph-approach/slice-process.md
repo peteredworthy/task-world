@@ -205,12 +205,46 @@ caller. The live dogfood gate (graph-mode run executing in the server) is
 implementable as of this slice — run it manually per the 2.7 spec's
 "Manual dogfood gate" section.
 
-## Phase 3 (Dynamic planning)
+## Phase 3 (Dynamic planning + frontend/observability)
+
+Phase 3 has two tracks that proceed in parallel: the **dynamic-planning** track
+(the kernel/runtime payoff features) and the **frontend/observability** track
+(realising PRD §26 so graph runs are inspectable as they become the default
+carrier in Phase 4). Both are numbered 3.x.
+
+### Dynamic-planning track
 
 | Slice | Status | Spec |
 |---|---|---|
 | 3.1 Recursive horizon planner (kernel) | ✅ done | slice-3.1-spec.md |
+| 3.7 Retained planner session | ⬜ planned | (spec TBD) |
+| 3.8 Parent/child re-expressed as planner chain | ⬜ planned | (spec TBD) |
+
+### Frontend / observability track (PRD §26)
+
+2.6 shipped the first UI slice (read-only graph API + `GraphIndicator`/
+`GraphPanel` + the `graph: <state>` projection-vs-fact label) — roughly a third
+of §26. The remaining §26 requirements are sliced here:
+
+| Slice | Status | Spec | §26 coverage |
+|---|---|---|---|
+| 3.2 Live graph-run activity timeline | ⬜ next | slice-3.2-spec.md | Activity/event timeline (+ fixes the graph-run `on_output` regression) |
+| 3.3 Node-detail drill-down | ⬜ planned | slice-3.3-spec.md | Node detail: inputs/outputs/file-state/callback history; "link to facts" |
+| 3.4 Scheduler & leases view | ⬜ planned | slice-3.4-spec.md | Scheduler view (ready/blocked/waiting); active+suspended leases |
+| 3.5 File-state diff & residue/gatekeeper viewer | ⬜ planned | slice-3.5-spec.md | File-state diff & manifest summary |
+| 3.6 Human decisions, appeals & review-readiness | ⬜ planned | slice-3.6-spec.md | Human decisions pending; appeals/oversight; review readiness/blockers |
+
+Known regression folded into 3.2: graph-mode runs currently emit **zero**
+`agent_output` activity events because `GraphDispatchExecutor` never wires
+`on_output`, so the live activity timeline is blank for graph runs.
 
 Slice 3.1 ran as orchestrator run `38ab0331` (codex_server / gpt-5.5,
 3 builder/verifier rounds: termination-invariant bypass and parallel-planner
 fork both caught by the auditor and fixed). All six rubric criteria graded A.
+
+## Phase 4 (Converge)
+
+Graph runs become the default carrier; the parent/child oversight layer is
+deleted; the loop-vs-routine-vs-graph mode experiment concludes by data. The
+§26 frontend track (3.2–3.6) is a prerequisite for deleting the legacy
+oversight UI. No slices specced yet.
