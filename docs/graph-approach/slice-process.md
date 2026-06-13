@@ -228,15 +228,20 @@ of §26. The remaining §26 requirements are sliced here:
 
 | Slice | Status | Spec | §26 coverage |
 |---|---|---|---|
-| 3.2 Live graph-run activity timeline | ⬜ next | slice-3.2-spec.md | Activity/event timeline (+ fixes the graph-run `on_output` regression) |
-| 3.3 Node-detail drill-down | ⬜ planned | slice-3.3-spec.md | Node detail: inputs/outputs/file-state/callback history; "link to facts" |
+| 3.2 Live graph-run activity timeline | ✅ done | slice-3.2-spec.md | Activity/event timeline (+ fixed the graph-run `on_output` regression) |
+| 3.3 Node-detail drill-down | ⬜ next | slice-3.3-spec.md | Node detail: inputs/outputs/file-state/callback history; "link to facts" |
 | 3.4 Scheduler & leases view | ⬜ planned | slice-3.4-spec.md | Scheduler view (ready/blocked/waiting); active+suspended leases |
 | 3.5 File-state diff & residue/gatekeeper viewer | ⬜ planned | slice-3.5-spec.md | File-state diff & manifest summary |
 | 3.6 Human decisions, appeals & review-readiness | ⬜ planned | slice-3.6-spec.md | Human decisions pending; appeals/oversight; review readiness/blockers |
 
-Known regression folded into 3.2: graph-mode runs currently emit **zero**
-`agent_output` activity events because `GraphDispatchExecutor` never wires
-`on_output`, so the live activity timeline is blank for graph runs.
+Known regression folded into 3.2 (now FIXED): graph-mode runs previously emitted
+**zero** `agent_output` activity events because `GraphDispatchExecutor` never
+wired `on_output`. 3.2 threads an injected `on_agent_output` callback (emitter
+above the import boundary) so graph runs now stream live activity.
+
+Slice 3.2 ran as orchestrator run `e3c8089d` (codex_server / gpt-5.5,
+first-pass all-A; 12 files, 752 insertions). Verified from main: 2671 unit +
+1164 integration + 433 frontend pass; import boundary + kernel purity intact.
 
 Slice 3.1 ran as orchestrator run `38ab0331` (codex_server / gpt-5.5,
 3 builder/verifier rounds: termination-invariant bypass and parallel-planner
