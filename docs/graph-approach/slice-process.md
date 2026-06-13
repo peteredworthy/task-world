@@ -217,8 +217,8 @@ carrier in Phase 4). Both are numbered 3.x.
 | Slice | Status | Spec |
 |---|---|---|
 | 3.1 Recursive horizon planner (kernel) | ✅ done | slice-3.1-spec.md |
-| 3.7 Retained planner session | ⬜ planned | (spec TBD) |
-| 3.8 Parent/child re-expressed as planner chain | ⬜ planned | (spec TBD) |
+| 3.7 Retained planner session | ⬜ planned | slice-3.7-spec.md |
+| 3.8 Parent/child re-expressed as planner chain | ⬜ planned | slice-3.8-spec.md |
 
 ### Frontend / observability track (PRD §26)
 
@@ -229,8 +229,8 @@ of §26. The remaining §26 requirements are sliced here:
 | Slice | Status | Spec | §26 coverage |
 |---|---|---|---|
 | 3.2 Live graph-run activity timeline | ✅ done | slice-3.2-spec.md | Activity/event timeline (+ fixed the graph-run `on_output` regression) |
-| 3.3 Node-detail drill-down | ⬜ next | slice-3.3-spec.md | Node detail: inputs/outputs/file-state/callback history; "link to facts" |
-| 3.4 Scheduler & leases view | ⬜ planned | slice-3.4-spec.md | Scheduler view (ready/blocked/waiting); active+suspended leases |
+| 3.3 Node-detail drill-down | ✅ done | slice-3.3-spec.md | Node detail: inputs/outputs/file-state/callback history; "link to facts" |
+| 3.4 Scheduler & leases view | ⬜ next | slice-3.4-spec.md | Scheduler view (ready/blocked/waiting); active+suspended leases |
 | 3.5 File-state diff & residue/gatekeeper viewer | ⬜ planned | slice-3.5-spec.md | File-state diff & manifest summary |
 | 3.6 Human decisions, appeals & review-readiness | ⬜ planned | slice-3.6-spec.md | Human decisions pending; appeals/oversight; review readiness/blockers |
 
@@ -242,6 +242,23 @@ above the import boundary) so graph runs now stream live activity.
 Slice 3.2 ran as orchestrator run `e3c8089d` (codex_server / gpt-5.5,
 first-pass all-A; 12 files, 752 insertions). Verified from main: 2671 unit +
 1164 integration + 433 frontend pass; import boundary + kernel purity intact.
+
+Slice 3.3 ran as orchestrator run `d6cf51be` (codex_server / gpt-5.5;
+11 files, +703). The builder completed but its submit predated the codex
+submission-feedback fix and hit a **latent orchestrator gap**: a
+`WorktreeCommitError` from the pre-submit commit gate (2 pyright errors —
+`len()` over `isinstance`-narrowed lists in `graph.py`) was re-raised in the
+codex agent's `_dispatch_tool_call` generic handler, killing the session and
+pausing the run as `agent_execution_error` instead of bouncing the hook output
+back to the builder for a fix. **Fixed (`8f62b04c`)**: `WorktreeCommitError` is
+now caught alongside `InvalidTransitionError` and returned to the agent as a
+failed tool result carrying the hook output (`build_dynamic_tool_call_response`
+gained an `output` arg so feedback reaches the model); the session continues so
+the builder fixes and resubmits in-session — matching the HTTP `/submit`
+endpoint's 409 reject-with-feedback and the claude-SDK tool-error path. The 3.3
+pyright errors were hand-fixed before merge (the run predated the fix);
+subsequent slices self-heal. Verified from main: import boundary + kernel
+purity zero; 436 frontend pass; pyright clean.
 
 Slice 3.1 ran as orchestrator run `38ab0331` (codex_server / gpt-5.5,
 3 builder/verifier rounds: termination-invariant bypass and parallel-planner
