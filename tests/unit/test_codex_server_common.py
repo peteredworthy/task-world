@@ -15,6 +15,7 @@ from orchestrator.runners import (
     enforce_tool_allowlist,
     extract_codex_model_ids,
     extract_item_activity_line,
+    extract_token_usage_update,
     extract_turn_error,
     extract_turn_usage,
     fetch_codex_models,
@@ -578,7 +579,12 @@ def test_extract_turn_usage_with_input_output_tokens() -> None:
         },
     }
     result = extract_turn_usage(msg)
-    assert result == {"tokens_read": 1500, "tokens_write": 300, "tokens_cache": 50}
+    assert result == {
+        "tokens_read": 1500,
+        "tokens_write": 300,
+        "tokens_cache": 50,
+        "tokens_reasoning": 0,
+    }
 
 
 def test_extract_turn_usage_with_prompt_completion_tokens() -> None:
@@ -597,7 +603,12 @@ def test_extract_turn_usage_with_prompt_completion_tokens() -> None:
         },
     }
     result = extract_turn_usage(msg)
-    assert result == {"tokens_read": 2000, "tokens_write": 400, "tokens_cache": 100}
+    assert result == {
+        "tokens_read": 2000,
+        "tokens_write": 400,
+        "tokens_cache": 100,
+        "tokens_reasoning": 0,
+    }
 
 
 def test_extract_turn_usage_without_usage_field() -> None:
@@ -607,7 +618,7 @@ def test_extract_turn_usage_without_usage_field() -> None:
         "params": {"turn": {"status": "completed"}},
     }
     result = extract_turn_usage(msg)
-    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0, "tokens_reasoning": 0}
 
 
 def test_extract_turn_usage_non_terminal_notification() -> None:
@@ -617,7 +628,7 @@ def test_extract_turn_usage_non_terminal_notification() -> None:
         "params": {"delta": "hello"},
     }
     result = extract_turn_usage(msg)
-    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0, "tokens_reasoning": 0}
 
 
 def test_extract_turn_usage_empty_usage_dict() -> None:
@@ -627,7 +638,7 @@ def test_extract_turn_usage_empty_usage_dict() -> None:
         "params": {"turn": {"status": "completed", "usage": {}}},
     }
     result = extract_turn_usage(msg)
-    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0, "tokens_reasoning": 0}
 
 
 def test_extract_turn_usage_cache_read_input_tokens() -> None:
@@ -796,3 +807,108 @@ def test_extract_turn_error_from_dict_and_string() -> None:
         == "rate limited"
     )
     assert extract_turn_error({**base, "params": {"turn": {"status": "failed"}}}) is None
+
+
+# ---------------------------------------------------------------------------
+# extract_token_usage_update
+# ---------------------------------------------------------------------------
+
+
+def test_extract_token_usage_update_total_cumulative() -> None:
+    """extract_token_usage_update extracts cumulative token usage from total_token_usage."""
+    import json
+    from pathlib import Path
+
+    fixture_path = (
+        Path(__file__).parent.parent / "fixtures" / "codex" / "thread_token_usage_updated.json"
+    )
+    msg = json.loads(fixture_path.read_text())
+    result = extract_token_usage_update(msg)
+    assert result is not None
+    # From total_token_usage: inputTokens=2500, cachedInputTokens=1200,
+    # outputTokens=450, reasoningOutputTokens=120
+    assert result["tokens_read"] == 2500
+    assert result["tokens_cache"] == 1200
+    # Reasoning folded into write: 450 + 120 = 570
+    assert result["tokens_write"] == 570
+    assert result["tokens_reasoning"] == 120
+
+
+def test_extract_token_usage_update_camel_and_snake() -> None:
+    """extract_token_usage_update handles both camelCase and snake_case field names."""
+    # Test camelCase (from fixture)
+    msg_camel = {
+        "method": "thread/tokenUsage/updated",
+        "params": {
+            "total_token_usage": {
+                "inputTokens": 1000,
+                "cachedInputTokens": 200,
+                "outputTokens": 150,
+                "reasoningOutputTokens": 50,
+            }
+        },
+    }
+    result = extract_token_usage_update(msg_camel)
+    assert result is not None
+    assert result["tokens_read"] == 1000
+    assert result["tokens_cache"] == 200
+    assert result["tokens_write"] == 200  # 150 + 50
+    assert result["tokens_reasoning"] == 50
+
+    # Test snake_case
+    msg_snake = {
+        "method": "thread/tokenUsage/updated",
+        "params": {
+            "total_token_usage": {
+                "input_tokens": 800,
+                "cached_input_tokens": 100,
+                "output_tokens": 120,
+                "reasoning_output_tokens": 30,
+            }
+        },
+    }
+    result = extract_token_usage_update(msg_snake)
+    assert result is not None
+    assert result["tokens_read"] == 800
+    assert result["tokens_cache"] == 100
+    assert result["tokens_write"] == 150  # 120 + 30
+    assert result["tokens_reasoning"] == 30
+
+
+def test_extract_token_usage_update_non_usage_returns_none() -> None:
+    """extract_token_usage_update returns None for non-usage notifications."""
+    msg = {
+        "method": "item/agentMessage/delta",
+        "params": {"delta": "hello"},
+    }
+    assert extract_token_usage_update(msg) is None
+
+    msg2 = {
+        "method": "turn/completed",
+        "params": {"turn": {"status": "completed"}},
+    }
+    assert extract_token_usage_update(msg2) is None
+
+
+def test_extract_turn_usage_reasoning_folded() -> None:
+    """extract_turn_usage also folds reasoning into write for parity."""
+    msg = {
+        "method": "turn/completed",
+        "params": {
+            "turn": {
+                "status": "completed",
+                "usage": {
+                    "input_tokens": 500,
+                    "output_tokens": 100,
+                    "reasoning_output_tokens": 25,
+                    "cache_read_tokens": 50,
+                },
+            }
+        },
+    }
+    result = extract_turn_usage(msg)
+    # Reasoning folded into write: 100 + 25 = 125
+    assert result["tokens_read"] == 500
+    assert result["tokens_write"] == 125
+    assert result["tokens_reasoning"] == 25
+    assert result["tokens_cache"] == 50

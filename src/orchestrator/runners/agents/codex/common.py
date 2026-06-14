@@ -423,6 +423,112 @@ def is_terminal_notification(notification: dict[str, Any]) -> tuple[bool, str]:
     return (True, status)
 
 
+def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] | None:
+    """Extract token usage from a ``thread/tokenUsage/updated`` notification.
+
+    The codex app-server (v0.139.0+) delivers incremental token usage via
+    ``thread/tokenUsage/updated`` notifications with a cumulative/per-turn split.
+    This function tolerantly locates the usage object regardless of params nesting
+    and maps camelCase/snake_case field names to the orchestrator's normalized keys.
+
+    Field mapping (reasoning is folded into write; the billed-output convention):
+      - ``inputTokens|input_tokens`` → ``tokens_read``
+      - ``cachedInputTokens|cached_input_tokens|cache_read_input_tokens`` → ``tokens_cache``
+      - ``outputTokens|output_tokens`` + ``reasoningOutputTokens|reasoning_output_tokens``
+        → ``tokens_write`` (reasoning folded into write)
+      - ``reasoningOutputTokens|reasoning_output_tokens`` → ``tokens_reasoning``
+        (also surfaced separately for observability)
+
+    Args:
+        notification: A parsed JSON-RPC notification dict.
+
+    Returns:
+        Dict with keys ``tokens_read``, ``tokens_write``, ``tokens_cache``,
+        ``tokens_reasoning`` when the notification is ``thread/tokenUsage/updated``,
+        otherwise ``None``.
+    """
+    if notification.get("method") != "thread/tokenUsage/updated":
+        return None
+
+    params = notification.get("params", {})
+
+    # Locate the usage object tolerantly: prefer cumulative total_token_usage,
+    # else last_token_usage, else recursively find the first dict with inputTokens|input_tokens.
+    usage: dict[str, Any] | None = None
+    for wrapper_key in ("total_token_usage", "totalTokenUsage"):
+        wrapper = params.get(wrapper_key)
+        if isinstance(wrapper, dict):
+            usage = cast(dict[str, Any], wrapper)
+            break
+
+    if usage is None:
+        for wrapper_key in ("last_token_usage", "lastTokenUsage"):
+            wrapper = params.get(wrapper_key)
+            if isinstance(wrapper, dict):
+                usage = cast(dict[str, Any], wrapper)
+                break
+
+    if usage is None:
+        # Recursive search for the first dict with inputTokens|input_tokens.
+        def _find_usage(obj: object) -> dict[str, Any] | None:
+            if isinstance(obj, dict):
+                obj_dict = cast(dict[str, Any], obj)
+                if "inputTokens" in obj_dict or "input_tokens" in obj_dict:
+                    return obj_dict
+                for value in obj_dict.values():
+                    found = _find_usage(value)
+                    if found is not None:
+                        return found
+            return None
+
+        usage = _find_usage(params)
+
+    if usage is None:
+        return None
+
+    result: dict[str, int] = {
+        "tokens_read": 0,
+        "tokens_write": 0,
+        "tokens_cache": 0,
+        "tokens_reasoning": 0,
+    }
+
+    # Input tokens
+    for key in ("inputTokens", "input_tokens"):
+        val = usage.get(key)
+        if val is not None:
+            result["tokens_read"] = int(val)
+            break
+
+    # Cache tokens
+    for key in ("cachedInputTokens", "cached_input_tokens", "cache_read_input_tokens"):
+        val = usage.get(key)
+        if val is not None:
+            result["tokens_cache"] = int(val)
+            break
+
+    # Output tokens (base)
+    output_tokens = 0
+    for key in ("outputTokens", "output_tokens"):
+        val = usage.get(key)
+        if val is not None:
+            output_tokens = int(val)
+            break
+
+    # Reasoning output tokens (folded into write for billing, but also surfaced separately)
+    reasoning_tokens = 0
+    for key in ("reasoningOutputTokens", "reasoning_output_tokens"):
+        val = usage.get(key)
+        if val is not None:
+            reasoning_tokens = int(val)
+            break
+
+    result["tokens_reasoning"] = reasoning_tokens
+    result["tokens_write"] = output_tokens + reasoning_tokens
+
+    return result
+
+
 def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
     """Extract token usage from a ``turn/completed`` notification.
 
@@ -432,15 +538,16 @@ def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
     - ``input_tokens`` / ``prompt_tokens`` → ``tokens_read``
     - ``output_tokens`` / ``completion_tokens`` → ``tokens_write``
     - ``cache_read_tokens`` / ``cached_tokens`` / ``cache_read_input_tokens`` → ``tokens_cache``
+    - ``reasoning_output_tokens`` → folded into ``tokens_write``
 
     Args:
         notification: A parsed JSON-RPC notification dict.
 
     Returns:
-        Dict with keys ``tokens_read``, ``tokens_write``, ``tokens_cache``.
-        All values default to 0 when usage data is absent.
+        Dict with keys ``tokens_read``, ``tokens_write``, ``tokens_cache``,
+        ``tokens_reasoning``. All values default to 0 when usage data is absent.
     """
-    result = {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+    result = {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0, "tokens_reasoning": 0}
 
     if notification.get("method") != "turn/completed":
         return result
@@ -466,11 +573,23 @@ def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
             break
 
     # Output/completion tokens — camelCase (protocol) then snake_case (fallback)
+    output_tokens = 0
     for key in ("outputTokens", "output_tokens", "completion_tokens"):
         val = usage.get(key)
         if val is not None:
-            result["tokens_write"] = int(val)
+            output_tokens = int(val)
             break
+
+    # Reasoning output tokens (folded into write for billing, but also surfaced separately)
+    reasoning_tokens = 0
+    for key in ("reasoningOutputTokens", "reasoning_output_tokens"):
+        val = usage.get(key)
+        if val is not None:
+            reasoning_tokens = int(val)
+            break
+
+    result["tokens_reasoning"] = reasoning_tokens
+    result["tokens_write"] = output_tokens + reasoning_tokens
 
     # Cache tokens — camelCase (protocol) then snake_case (fallback)
     for key in ("cacheReadTokens", "cache_read_tokens", "cached_tokens", "cache_read_input_tokens"):

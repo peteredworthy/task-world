@@ -46,6 +46,7 @@ from orchestrator.runners.agents.codex.common import (
     extract_turn_error,
     extract_dynamic_tool_call,
     extract_tool_call_from_notification,
+    extract_token_usage_update,
     extract_turn_usage,
     is_terminal_notification,
     normalize_codex_metrics,
@@ -699,8 +700,22 @@ class CodexServerAgent:
                     on_grade,
                     on_complete_recovery,
                 )
+                # Accumulate usage: cumulative wins (last value overwrites), or sum per-turn.
+                # thread/tokenUsage/updated sends cumulative total_token_usage, so we keep
+                # the latest. turn/completed usage is used only if no token updates were seen.
+                if usage:
+                    if not turn_usage:
+                        turn_usage = usage
+                    else:
+                        # Cumulative update: latest wins for each field.
+                        for k, v in usage.items():
+                            if v > turn_usage.get(k, 0):
+                                turn_usage[k] = v
                 if terminal:
-                    turn_usage = usage
+                    # If turn/completed has usage but we've already accumulated token updates,
+                    # keep the accumulated values (they're more complete).
+                    if not turn_usage:
+                        turn_usage = usage
                 return terminal
 
             # First drain any notifications buffered during the request-response phase.
@@ -987,6 +1002,8 @@ class CodexServerAgent:
             ``(True, usage)`` if this is a terminal notification
             (``turn/completed``), where *usage* is the token usage dict
             extracted from the turn payload.
+            ``(False, usage)`` for ``thread/tokenUsage/updated`` notifications,
+            where *usage* is the interim token usage dict.
             ``(False, {})`` otherwise.
 
         Raises:
@@ -995,7 +1012,12 @@ class CodexServerAgent:
             AgentExecutionError: When ``turn/completed`` has
                 ``status: "systemError"``.
         """
-        # Check for terminal state first.
+        # Check for token usage updates (cumulative or per-turn).
+        usage_update = extract_token_usage_update(msg)
+        if usage_update is not None:
+            return (False, usage_update)
+
+        # Check for terminal state.
         terminal, status = is_terminal_notification(msg)
         if terminal:
             if status == "interrupted":
