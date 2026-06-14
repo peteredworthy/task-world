@@ -90,6 +90,11 @@ from orchestrator.git.utils import (
     reset_worktree_changes,
     reset_worktree_to_ref,
 )
+from orchestrator.git.contamination import (
+    dirty_paths,
+    find_leaked_paths,
+    resolve_main_worktree,
+)
 from orchestrator.git.worktree import (
     WorktreeInfo,
     WorktreeManager,
@@ -98,6 +103,9 @@ from orchestrator.git.worktree import (
 )
 
 __all__ = [
+    "dirty_paths",
+    "find_leaked_paths",
+    "resolve_main_worktree",
     "_apply_resolutions",
     "_build_hunk_reverse_patch",
     "_build_line_reverse_patch",

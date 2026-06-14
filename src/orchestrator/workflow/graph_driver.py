@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -15,6 +16,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from orchestrator.config.models import RoutineConfig
+from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktree
 from orchestrator.graph import (
     EventEnvelope,
     project_leases,
@@ -228,6 +230,15 @@ class GraphRunDriver:
                     "GraphRunDriver: recovery for %s failed; proceeding to drive", run_id
                 )
 
+        # Worktree-isolation guard: snapshot the repo's MAIN worktree dirty set
+        # before driving, so any path the run leaks into it (an agent escaping its
+        # worktree) is flagged immediately rather than discovered later via failing
+        # tests. See git/contamination.py and the repos-symlink contamination note.
+        main_worktree = await asyncio.to_thread(resolve_main_worktree, Path(run.worktree_path))
+        before_dirty: set[str] = (
+            await asyncio.to_thread(dirty_paths, main_worktree) if main_worktree else set()
+        )
+
         async def _still_active() -> bool:
             current = await self._get_run(run_id)
             return current.status == RunStatus.ACTIVE
@@ -249,6 +260,21 @@ class GraphRunDriver:
                 await self._apply_complete(run_id)
             else:
                 await self._apply_pause(run_id, "graph_blocked", outcome.blocked_reason)
+
+        if main_worktree is not None:
+            leaked = find_leaked_paths(
+                before_dirty, await asyncio.to_thread(dirty_paths, main_worktree)
+            )
+            if leaked:
+                logger.error(
+                    "GraphRunDriver: run %s leaked %d path(s) into the repo main "
+                    "worktree %s: %s — worktree-isolation breach; investigate before "
+                    "trusting main",
+                    run_id,
+                    len(leaked),
+                    main_worktree,
+                    sorted(leaked)[:20],
+                )
         return outcome
 
     async def drive_to_quiescence(
