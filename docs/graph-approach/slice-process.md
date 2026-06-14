@@ -356,8 +356,18 @@ oversight UI.
 | Slice | Status | Spec | Depends on |
 |---|---|---|---|
 | 4.1 Graph runs become the default carrier | ✅ done (run 7ff67bbe) | slice-4.1-spec.md | gate D, 3.2–3.6 |
-| 4.2 Retire the parent/child oversight layer | ⬜ next | slice-4.2-spec.md | 3.8, 3.6, 4.1 |
-| 4.3 Conclude the carrier experiment (data) | ⬜ planned | slice-4.3-spec.md | 4.1, 4.2 |
+| 4.2 Retire the parent/child oversight layer | ✅ done (run 97f6db4e, −8.9k lines) | slice-4.2-spec.md | 3.8, 3.6, 4.1 |
+| 4.3 Conclude the carrier experiment (data) | ✅ done | slice-4.3-spec.md | 4.1, 4.2 |
+
+**Phase 4 complete (Converge).** Graph is the default carrier (4.1); the legacy
+parent/child oversight layer is deleted (4.2, ~8.9k lines, history preserved
+read-only); the carrier experiment is concluded with data
+(`carrier-comparison.md` + `scripts/compare_carriers.py`): graph delivers the
+3-sub-agent pattern's independent-reviewer correctness structurally at comparable
+agent-token cost (the auditor adds ~62% output tokens over a single agent), so it
+becomes the carrier with legacy kept as a one-line-reversible opt-out. Follow-up
+observability gaps recorded in the comparison doc (codex + graph token capture;
+graph verifier grades in /activity).
 
 Execution order for the remaining work: dogfood gate (D) → 3.5 → 3.6 → 3.7 →
 3.8 → 4.1 → 4.2 → 4.3. 4.1 must not flip the default until gate D is green; 4.2
